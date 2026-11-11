@@ -1006,7 +1006,8 @@ def test_the_auto_tagging_samplers_match_the_nodes_that_tag():
     # The sweep's set must name exactly the node classes whose sample call
     # hands sampler_latent a sampler name. Sampler Custom passes None. Every
     # call also hands it the pair tag (cfg_pair), which the sweep predicts
-    # with auto_pair_differs.
+    # with auto_pair_differs, and the UltraTex views tag (adapters/flux_views),
+    # which no sweep cell carries.
     tagging, untagged, pairless = set(), set(), set()
     for path in sorted((REPO / "src" / "dgx_monarch" / "nodes").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -1017,11 +1018,11 @@ def test_the_auto_tagging_samplers_match_the_nodes_that_tag():
                     named = not (isinstance(call.args[1], ast.Constant)
                                  and call.args[1].value is None)
                     (tagging if named else untagged).add(klass.name)
-                    if len(call.args) != 3:
+                    if len(call.args) != 4:
                         pairless.add(klass.name)
     assert tagging == set(matrix.UNCOND_TAGGING_SAMPLERS)
     assert untagged == {"DGXMonarchSamplerCustom"}
-    assert not pairless, f"sampler_latent called without the pair tag in {sorted(pairless)}"
+    assert not pairless, f"sampler_latent called without the pair and views tags in {sorted(pairless)}"
 
 
 def test_the_sweep_predicts_the_pair_tag_from_the_prompt_texts():
@@ -2404,18 +2405,19 @@ def test_a_checkpoint_comfy_cannot_load_drops_its_set_with_a_note(tmp_path):
     assert _local(cells, "plain")["label"] == "render"
 
 
-def test_a_pinned_checkpoint_refuses_class_k_wherever_its_pins_run(tmp_path):
+def test_a_pinned_checkpoint_refuses_class_k_wherever_its_pins_run_off_one_gpu(tmp_path):
     """Without sequence parallelism a pinned approximate kernel runs as on one
-    GPU, so the worker's guard refuses class K under the Sol-Attn waiver on
-    single (alone, reading the binding), cfg2, dp2, cfg2+fsdp and dp2+fsdp."""
+    GPU. On one GPU the checkpoint's own pins run as stock runs them and ask
+    nothing; on cfg2, dp2, cfg2+fsdp and dp2+fsdp the worker's guard refuses
+    class K under the Sol-Attn waiver."""
     config = _pinned_int8(tmp_path)
     config.update(toggles={"auto_gate": ["off"]},
                   toggle_presets={"auto_gate": ["cfg2+fsdp", "dp2+fsdp"]})
     cells, _pruned, _unmatched = matrix.build_cells(config)
     guard = "sol_attn:checkpoint_pin"
     local = _local(cells, "pinned")
-    assert (local["preset"], local["label"], local["basis"]) == ("single", "refuse:K", "header")
-    assert (local["waiver"], local["waiver_guards"]) == (True, [guard])
+    assert (local["preset"], local["label"], local["basis"]) == ("single", "render", "guard")
+    assert (local["waiver"], local["waiver_guards"]) == (False, [])
     assert local["checkpoint_pins"] == {"comfy_kitchen_int8": 2}
     for preset in ("cfg2", "dp2"):
         cell = _pick(cells, "pinned", preset)
@@ -2475,21 +2477,28 @@ def test_an_unpinned_int8_checkpoint_keeps_its_numeric_bar(tmp_path):
                                      "bar": "step-nrms", "probe_steps": 1}, preset
 
 
-def test_a_pinned_bf16_checkpoint_meets_the_fsdp_launch_contract_first(tmp_path):
-    """The FSDP shard build of a bf16 file would clear its pins, but a header
-    that pins one never reaches it: the uint8 config tensors leave the launch
-    precision unproven, and the launch contract refuses class P above the pin
-    rule. Its resident cells still meet the pin guard."""
+def test_a_pinned_bf16_checkpoint_reaches_the_fsdp_shard_build_which_clears_its_pins(tmp_path):
+    """The launch check does not count the uint8 config tensors, so a bf16 header
+    that pins proves bf16 and reaches the shard build, which clears its pins: the
+    cell answers as the same file without pins does. Its resident cells still meet
+    the pin guard."""
     config = _pin_rig(tmp_path, {
         "pinnedbf": ({"blocks.0.attn": PIN_INT8}, torch.bfloat16),
         "plainbf": ({}, torch.bfloat16)})
     cells, _pruned, _unmatched = matrix.build_cells(config)
     assert _pick(cells, "pinnedbf", "cfg2")["label"] == "refuse:K"
     for preset in ("cfg2+fsdp", "dp2+fsdp"):
-        pinned = _pick(cells, "pinnedbf", preset)
-        assert (pinned["launch_quant"], pinned["label"], pinned["basis"]) == (
-            "unknown", "refuse:P", "guard"), preset
-        assert _pick(cells, "plainbf", preset)["launch_quant"] == "bf16", preset
+        pinned, plain = _pick(cells, "pinnedbf", preset), _pick(cells, "plainbf", preset)
+        assert pinned["launch_quant"] == plain["launch_quant"] == "bf16", preset
+        assert (pinned["label"], pinned["basis"]) == (plain["label"], plain["basis"]), preset
+    from dgx_monarch import attention_pins
+
+    pin = {"blocks.0.attn.comfy_attention": attention_pins.BlockPin("comfy_kitchen_int8", bound=True)}
+    summary = matrix.pin_summary(pin, matrix.topology_from_preset("cfg2+fsdp", 2), "bf16")
+    assert summary is not None and summary.public()["attention_pins_dropped"] == {
+        attention_pins.DROPPED_FSDP: 1}
+    kept = matrix.pin_summary(pin, matrix.topology_from_preset("cfg2+fsdp", 2), "int8")
+    assert kept is not None and kept.public()["attention_pins_ran"] is True  # the direct wrap keeps them
 
 
 @pytest.mark.parametrize(("sampler", "waivable"), [("euler", False), ("euler_cfg_pp", True)])
@@ -2511,10 +2520,13 @@ def test_a_pinned_cfg_cell_at_cfg_one_is_waivable_only_where_the_grant_renders(
         # Without the pins the same cell answers the cfg rule (or renders).
         plain = _pick(cells, "plain", preset, **over)["label"]
         assert plain == ("render" if waivable else "refuse:P"), preset
-    # dp2 and single run no cfg wrapper, so the grant renders there.
-    for cell in (_pick(cells, "pinned", "dp2"), _local(cells, "pinned")):
-        assert (cell["label"], cell["waiver"], cell["waiver_guards"]) == (
-            "refuse:K", True, [guard]), cell["preset"]
+    # dp2 runs no cfg wrapper, so the grant renders there; on one GPU the
+    # checkpoint's own pins ask nothing.
+    cell = _pick(cells, "pinned", "dp2")
+    assert (cell["label"], cell["waiver"], cell["waiver_guards"]) == ("refuse:K", True, [guard])
+    local = _local(cells, "pinned")
+    assert (local["label"], local["basis"], local["waiver"], local["waiver_guards"]) == (
+        "render", "guard", False, [])
 
 
 def test_a_sol_kernel_without_sequence_parallelism_refuses_class_p_before_the_pins(tmp_path):
@@ -2612,11 +2624,11 @@ def test_a_pinned_nvfp4_cell_on_cfg2_carries_no_shard_quant_waiver(tmp_path):
         cell = _pick(cells, "chromapin", preset, artifact_quant="nvfp4")
         assert (cell["label"], cell["waiver"]) == ("refuse:K", True), preset
         assert shard in cell["waiver_guards"] and pin not in cell["waiver_guards"], preset
-    # One GPU runs no shard bar, so the pin guard answers there and its grant renders.
+    # One GPU runs no shard bar, and the checkpoint's own pins ask nothing there.
     single = [cell for cell in cells if cell["template"] == "chromapin"
               and cell["session"] == "local" and "nvfp4" in cell["artifact_quant"]]
     assert [(cell["label"], cell["basis"], cell["waiver"], cell["waiver_guards"])
-            for cell in single] == [("refuse:K", "header", True, [pin])]
+            for cell in single] == [("render", "guard", False, [])]
     # The same cell without the pins keeps the shard-quant card, and the
     # unpinned bf16 artifact of the pinned template renders.
     plain = _pick(cells, "chromaplain", "cfg2", artifact_quant="nvfp4")

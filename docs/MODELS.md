@@ -27,7 +27,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 | [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. BF16 and NVFP4 Ulysses text to image up to 1536 square matched one GPU exactly. Since the fused-norm parity change, edits and text to image at 704 square or below on uly2 are bit-identical to one GPU too, confirmed on hardware on 2026-10-16. See the [tested configurations](VALIDATION.md#evidence-flux-3-klein). |
 | [MOSS-Image SFT and Base](#model-moss-image-sft) | Text-to-image, and a JSON layout prompt on SFT | Needs ComfyUI 0.42.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Keep the template's 50 Euler steps at CFG 3 on the `normal` scheduler and its Skip Layer Guidance (DGX Monarch) node, which skips layer 22 on the negative pass; cfg2 refuses while that skip is on. BF16 Ulysses matched one GPU exactly, up to 2048 square on SFT; see the [tested configurations](VALIDATION.md#evidence-moss-image-sft). |
 | [Kromoss](#model-kromoss) | Text-to-image at 50 steps, and at 8 steps with a DMD LoRA | A MOSS-Image Base fine-tune on the same files and adapter. Pin the manifest's revision: the vendor replaces the files under the same names. Use the DMD LoRAs with the BF16 file: a LoRA on the INT8 file refuses. BF16 Ulysses at 1024 and 1536 square matched one GPU exactly; see the [tested configurations](VALIDATION.md#evidence-kromoss). |
-| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.44.0 or newer. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. On stock residency the BF16 DiT does not fit one Spark beside the BF16 upsampler: the loader refuses before anything loads, names the files that fit and offers the slab card, which renders it on one Spark. BF16, INT8 ConvRot and W4A8 matched stock on one rank, and uly2 matched one rank, on hardware on 2026-11-05. |
+| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.45.0 or newer, as this whole release does. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. On stock residency the BF16 DiT does not fit one Spark beside the BF16 upsampler: the loader refuses before anything loads, names the files that fit and offers the slab card, which renders it on one Spark. BF16, INT8 ConvRot and W4A8 matched stock on one rank, and uly2 matched one rank, on hardware on 2026-11-05. |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -98,9 +98,9 @@ that match the tested configurations in its model details. See
 | Flux 1 Dev | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Padded ring is guarded; distilled checkpoints use CFG 1. Use converted LoRAs. [Details](#model-flux-1-dev) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux 1 Schnell | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | CFG 1; Schnell-specific padded inputs remain unmeasured. [Details](#model-flux-1-schnell) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux2 | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | FP8-mixed Ulysses and BF16 `uly2+fsdp` were compared with references. LoRA/FSDP rendered, but its reference ran out of memory. [Details](#model-flux2) · [Workflow](../example_workflows/dgx-monarch-flux2-t2i.json) |
-| FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Step-distilled; CFG 1, euler, 16 steps or fewer. BF16 and NVFP4 uly2 text to image up to 1536 square is bit-identical to one GPU, and at one step to stock. ring2 is measured, one-step NRMS 0.026 to 0.183 against one GPU, so use uly2; padded ring needs a waiver. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. NVFP4 refuses FSDP. Before the fused-norm parity change, uly2 edits and uly2 text to image at 704 square or below differed from one GPU, up to one-step NRMS 0.117 for the NVFP4 edit; after it they are bit-identical in BF16 and NVFP4, confirmed on hardware on 2026-10-16. Edits scale each reference to 1 MP. Public LoRA: none; mechanism tested with a synthetic LoRA. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
+| FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Step-distilled; CFG 1, euler, 16 steps or fewer. BF16 and NVFP4 uly2 text to image up to 1536 square is bit-identical to one GPU, and at one step to stock. ring2 is measured, one-step NRMS 0.026 to 0.183 against one GPU, so use uly2; padded ring needs a waiver. INT8 files pin an approximate attention kernel: a world of one GPU renders with it as stock does and asks nothing, cfg2, dp2 and a two-rank `single` (which resolves to dp2) ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. NVFP4 refuses FSDP. Before the fused-norm parity change, uly2 edits and uly2 text to image at 704 square or below differed from one GPU, up to one-step NRMS 0.117 for the NVFP4 edit; after it they are bit-identical in BF16 and NVFP4, confirmed on hardware on 2026-10-16. Edits scale each reference to 1 MP. Public LoRA: none; mechanism tested with a synthetic LoRA. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
 | FLUX.3 Klein Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3.5, 25 steps, euler. cfg2 is measured, not the same math: bit-identical when the prompt encodes past one 80-row block; on a shorter prompt it stays within the one-step floor but full renders diverge, and auto never picks it. ring2 is measured, one-step NRMS 0.011 to 0.057, and padded ring needs a waiver. Edits use uly2 or single in BF16 and NVFP4: the NVFP4 edit read one-step NRMS 0.019 on uly2 before the fused-norm parity change, and uly2 edits are bit-identical to one GPU after it, confirmed on hardware on 2026-10-16. Same uly2, INT8, FSDP and LoRA notes as FLUX.3 Klein. [Details](#model-flux-3-klein-base) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json) |
-| MOSS-Image SFT | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with Skip Layer Guidance (DGX Monarch) skipping layer 22 on the negative pass. BF16 uly2 is bit-identical to one GPU from 1024 to 2048 square, one step and full schedule, and at one step to stock from 512 to 2048 square. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin; since the INT8 dispatch fix, confirmed on hardware on 2026-10-21, INT8 uly2 is bit-identical to a pin-stripped one-GPU render, where it read one-step NRMS 0.027 to 0.036 earlier that day. cfg2 refuses while the skip is on; with it off, a prompt and a negative of different lengths split on cfg2 bit-identical to one GPU, and an equal-length pair is measured, one-step NRMS 0.023 to 0.026, so auto never picks cfg2. ring2 is measured, one-step NRMS 0.0025 to 0.031 without a LoRA, so use uly2; padded ring needs a waiver, and ring2 with a LoRA is not supported. `uly2+fsdp` is bit-identical to resident uly2. NVFP4 and an fp8 `weight_dtype` cast refuse on uly2, ring and cfg2. A LoRA on the INT8 files refuses class P on every topology ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)); BF16 with a LoRA renders. Reference-image edits for edit LoRAs run on one GPU only and refuse class P on every cluster topology ([TROUBLESHOOTING #130](TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)). An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch, as a hardware run observed on uly2 and ring2 on 2026-10-27; on single, cfg2 and dp2 row 0 it was bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). The loader preflight prices the 19.31 GB BF16 encoder beside the DiT. [Details](#model-moss-image-sft) · [Workflow](../example_workflows/dgx-monarch-moss-image-t2i.json) |
+| MOSS-Image SFT | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with Skip Layer Guidance (DGX Monarch) skipping layer 22 on the negative pass. BF16 uly2 is bit-identical to one GPU from 1024 to 2048 square, one step and full schedule, and at one step to stock from 512 to 2048 square. INT8 files pin an approximate attention kernel: a world of one GPU renders with it as stock does and asks nothing, cfg2, dp2 and a two-rank `single` (which resolves to dp2) ask for the Sol-Attn waiver, and uly2 drops the pin; since the INT8 dispatch fix, confirmed on hardware on 2026-10-21, INT8 uly2 is bit-identical to a pin-stripped one-GPU render, where it read one-step NRMS 0.027 to 0.036 earlier that day. cfg2 refuses while the skip is on; with it off, a prompt and a negative of different lengths split on cfg2 bit-identical to one GPU, and an equal-length pair is measured, one-step NRMS 0.023 to 0.026, so auto never picks cfg2. ring2 is measured, one-step NRMS 0.0025 to 0.031 without a LoRA, so use uly2; padded ring needs a waiver, and ring2 with a LoRA is not supported. `uly2+fsdp` is bit-identical to resident uly2. NVFP4 and an fp8 `weight_dtype` cast refuse on uly2, ring and cfg2. A LoRA on the INT8 files refuses class P on every topology ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)); BF16 with a LoRA renders. Reference-image edits for edit LoRAs run on one GPU only and refuse class P on every cluster topology ([TROUBLESHOOTING #130](TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)). An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch, as a hardware run observed on uly2 and ring2 on 2026-10-27; on single, cfg2 and dp2 row 0 it was bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). The loader preflight prices the 19.31 GB BF16 encoder beside the DiT. [Details](#model-moss-image-sft) · [Workflow](../example_workflows/dgx-monarch-moss-image-t2i.json) |
 | MOSS-Image Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with the same layer-22 skip. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule; its FSDP reading comes from the scoped sweep. Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-moss-image-base) · [Workflow](../example_workflows/dgx-monarch-moss-image-base-t2i.json) |
 | Kromoss | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | MOSS-Image Base fine-tune; no header field tells it from Base or SFT. CFG 3, 50 steps, euler on the `normal` scheduler, with the layer-22 skip, or 8 Euler steps on `simple` at CFG 1 with a DMD LoRA, where cfg2 has nothing to split and refuses. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule. The DMD LoRAs render the same on uly2 and one GPU; with the classic bake of earlier releases they read one-step NRMS 0.0365 to 0.0635 against stock at strengths 0.8 and 1.0, because stock applies them at cast time, and this release bakes the weight that cast computes, not yet measured on this file ([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)). Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-kromoss) · [Workflow](../example_workflows/dgx-monarch-kromoss-t2i.json) |
 | p-h3-image | 🔒 | ✗ | ★ | 🔒 | 🔒 | **HW** | A MiniMax H3 DiT with one video latent frame, on the H3 adapter: batch one, cfg2 and dp2 refuse, padded ring needs a waiver, and the W4A8 file refuses FSDP. Needs ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0; without any H3 shift the image latent refuses class P ([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)). BF16, INT8 ConvRot and W4A8 on one rank are pixel-identical to stock and uly2 to one rank; the LoRA route on the pruned INT8 H3 file is pixel-identical to stock; BF16 on `uly2+fsdp` runs after the first-use gate's clean-reload proof on that preset. On one Spark the BF16 DiT beside the BF16 prompt upsampler refuses at the loader, before any load, and the refusal names the INT8 ConvRot and W4A8 files ([TROUBLESHOOTING #52](TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)). [Details](#model-p-h3-image) · [Workflow](../example_workflows/dgx-monarch-p-h3-image.json) |
@@ -415,6 +415,8 @@ text encoder, the resident fp8mixed Ulysses path that auto selects mostly
 refused class C: all six explicit uly2 and ring2 records, and 5 of 6
 lever-free auto records. The store now places stock weights at load time and checks memory against the
 full placement peak. A hardware test of that path admitted the load and rendered.
+UltraTex conditioning on FLUX.2 Klein Base 9B runs on one GPU, uly2 and
+uly2+fsdp only ([UltraTex](#model-ultratex)).
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-flux2).
 
@@ -478,10 +480,12 @@ every comparison; [BENCHMARKS](BENCHMARKS.md#flux3-klein-one-gpu-uly2-and-cfg2-2
 has the walls.
 
 **Known limitations.** The INT8 ConvRot files pin comfy-kitchen's INT8
-attention, an approximate kernel, on 33 blocks: single, cfg2 and dp2 ask for
-the Sol-Attn waiver ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)),
-and uly2 drops the pins and runs exact attention, so a uly2 INT8 render
-differs from stock INT8 on one GPU by construction. NVFP4 refuses FSDP, and
+attention, an approximate kernel, on 33 blocks. In a world of one GPU the file renders
+with that kernel, as stock ComfyUI does, and asks nothing; cfg2 and dp2 ask
+for the Sol-Attn waiver ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel));
+uly2 drops the pins and runs exact attention, which stock ComfyUI cannot do
+with that file. The two differ a little, and the render record says which
+ran: "kept" for the pins, "dropped" for exact attention. NVFP4 refuses FSDP, and
 it is a capacity choice: uly2 NVFP4 equals one-GPU NVFP4, which is not a
 fidelity claim against BF16. The diffusers-layout `variants/fp8r` file loads
 in stock ComfyUI with its scales dropped and is refused
@@ -660,11 +664,13 @@ comparison;
 has the walls.
 
 **Known limitations.** The INT8 ConvRot files pin comfy-kitchen's INT8
-attention, an approximate kernel, on all 42 blocks: single, cfg2 and dp2 ask
-for the Sol-Attn waiver ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)), and uly2 drops the
-pins and runs exact attention, so a uly2 INT8 render differs from stock INT8
-on one GPU by construction and matches a one-GPU render of a copy with the
-pins removed. On uly2, ring and cfg2 only BF16 and INT8 ConvRot
+attention, an approximate kernel, on all 42 blocks. In a world of one GPU the file
+renders with that kernel, as stock ComfyUI does, and asks nothing; cfg2 and
+dp2 ask for the Sol-Attn waiver ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel));
+uly2 drops the pins and runs exact attention, which stock ComfyUI cannot do
+with that file, and matches a one-GPU render of a copy with the pins removed.
+The two differ a little, and the render record says which ran: "kept" for
+the pins, "dropped" for exact attention. On uly2, ring and cfg2 only BF16 and INT8 ConvRot
 run: an NVFP4 file, and an fp8 `weight_dtype` cast on a BF16 file, refuse
 class P there and run on single and dp2. The joint stream holds every image
 row and every text row, so an odd total pads at world 2: uly2 and single
@@ -1061,6 +1067,21 @@ The weights are under the MiniMax H3 Community License, the same terms as the
 H3 files. The Qwen3-VL-4B parts of the text encoder and the prompt upsampler,
 based on Qwen3.5-9B, are under the Apache License 2.0.
 
+**MiniMax-H3-Image is a different model.** MiniMax's own image release, which
+ComfyUI 0.45.0 or newer supports, drops H3's audio stream and carries six output heads on
+a sigma grid in the file's `config` metadata; ComfyUI builds it as
+`MiniMaxH3Image`, never as `MiniMaxH3`, and the header detector names it
+`minimax_h3_image` from the same key paths. Its BF16 file reads `bf16`, its 51
+F16 adaLN linears counting as islands, and its INT8 ConvRot and W4A8 files read
+`int8` and `w4a8`; every one of its DiT files, BF16 included, pins
+comfy-kitchen's INT8 attention on all 50 blocks. This release refuses the
+family class P at the loader, before any load, in every format
+([TROUBLESHOOTING #150](TROUBLESHOOTING.md#150-a-minimax-h3-image-render-refuses-at-the-loader)),
+and a file without its sigma grid first ([#149](TROUBLESHOOTING.md#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid));
+render it with stock ComfyUI 0.45.0 or newer on one GPU. Its VAE
+(`MiniMaxH3ImageVAE`, one still frame) decodes on the driver, as p-h3-image's
+does. No p-h3-image file changes.
+
 <a id="model-longcat-image"></a>
 
 ### LongCat-Image
@@ -1141,7 +1162,7 @@ Detail status (`Qwen Image 2.1`): **HW**.
 
 **Tested configurations.** Twelve DiT formats, named text/masked/ten-reference recipes, and cache-off/default/INT8/INT4 tests against native ComfyUI with the same cache settings. The named 25-step T2I, masked-edit and ten-reference controls produced identical complete latents and RGBA pixels to their native references.
 
-**Known limitations.** Ulysses admits only TORCH_FLASH. A checkpoint that pins an attention kernel on its attention modules, such as comfy-kitchen Sol, still renders with the TORCH_FLASH path there, ComfyUI's default exact backend (torch scaled dot product attention when the worker cannot import xformers); the adapter logs the pin once at debug level and ignores it ([ADAPTERS.md](ADAPTERS.md)). Without sequence parallelism the pin runs as in stock ComfyUI, the render record names it, and a pinned approximate kernel asks for the Sol-Attn waiver first; under FSDP a bf16 or fp16 checkpoint that pins refuses class P at the launch check instead ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)). Compressed caches matched native ComfyUI using the same cache settings. INT8 and INT4 caching are approximate; these tests do not show equality with cache off. No claim covers a DiT and cache quantization cross-product, FSDP, unlisted workflows, locked pixels, the prompt enhancer or FunControlNet. ComfyUI 503d785f0 (2026-10-22) gave the forward a writable prefix K/V cache, which stock uses for cache device `auto` under dynamic VRAM in place of the cache these tests measured. On such a ComfyUI a Ulysses render with `auto` and a dynamic patcher refuses class P on every rank before any exchange; `gpu`, `cpu` and `off` take stock's earlier branch and are not affected ([TROUBLESHOOTING #134](TROUBLESHOOTING.md#134-a-qwen-image-21-ulysses-render-with-the-cache-device-auto-refuses-on-comfyui-503d785f0-or-later)). In CPU tests on the rig the sharded forward stays bit-identical to stock on that commit and on a071826fd, with the cache off and on; it has not been re-run on hardware there.
+**Known limitations.** Ulysses admits only TORCH_FLASH. A checkpoint that pins an attention kernel on its attention modules, such as comfy-kitchen Sol, still renders with the TORCH_FLASH path there, ComfyUI's default exact backend (torch scaled dot product attention when the worker cannot import xformers); the adapter logs the pin once at debug level and ignores it ([ADAPTERS.md](ADAPTERS.md)). Without sequence parallelism the pin runs as in stock ComfyUI, the render record names it, and in a world of one GPU the checkpoint's own pin runs as stock runs it and asks nothing; elsewhere a pinned approximate kernel asks for the Sol-Attn waiver first, and under FSDP a bf16 or fp16 checkpoint's pins drop in the shard build, recorded, with no card ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)). Compressed caches matched native ComfyUI using the same cache settings. INT8 and INT4 caching are approximate; these tests do not show equality with cache off. No claim covers a DiT and cache quantization cross-product, FSDP, unlisted workflows, locked pixels, the prompt enhancer or FunControlNet. ComfyUI 503d785f0 (2026-10-22) gave the forward a writable prefix K/V cache, which stock uses for cache device `auto` under dynamic VRAM in place of the cache these tests measured. On such a ComfyUI a Ulysses render with `auto` and a dynamic patcher refuses class P on every rank before any exchange; `gpu`, `cpu` and `off` take stock's earlier branch and are not affected ([TROUBLESHOOTING #134](TROUBLESHOOTING.md#134-a-qwen-image-21-ulysses-render-with-the-cache-device-auto-refuses-on-comfyui-503d785f0-or-later)). In CPU tests on the rig the sharded forward stays bit-identical to stock on that commit and on a071826fd, with the cache off and on; it has not been re-run on hardware there.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-qwen-image-2-1).
 
@@ -1571,7 +1592,7 @@ Detail status (`Wan-Animate 2`): **HW**.
 
 **Tested configurations.** Base twelve-format Ulysses probes, named Base/Distilled portrait recipes, official INT8 ConvRot acceleration and INT8/BF16 warm full-decode sequences. Only each cold leg matched its preserved baseline; changed-seed/prompt outputs were distinct.
 
-**Known limitations.** Sharded renders need TORCH_FLASH; any other kernel refuses. On sharded renders, a checkpoint that pins a kernel on its attention modules, such as comfy-kitchen Sol, renders its self-attention with the TORCH_FLASH path, ComfyUI's default exact backend (torch scaled dot product attention when the worker cannot import xformers), and the adapter logs the pin once at debug level and ignores it. The stock cross-attention ignores the pin too and runs that default backend ([ADAPTERS.md](ADAPTERS.md)). Without sequence parallelism the pin runs as in stock ComfyUI, the render record names it, and a pinned approximate kernel asks for the Sol-Attn waiver first; under FSDP a bf16 or fp16 checkpoint that pins refuses class P at the launch check instead ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)). The warm tests do not cover slab/low-RSS, first-use LoRA, FSDP, ring, cache, background replacement or other shapes. Every Wan-Animate 2 template ships `slab_weights=off` and `lora_low_rss=off`. Keep ordinary residency for the warm recipes; other shapes or background applications may need larger memory reserves. Explicit `lora_low_rss=off` refuses FSDP with a LoRA on these templates (class P, `validate_fsdp_launch_loras`), and the INT8 checkpoint refuses it whatever `lora_low_rss` is, because its shards are quantized (`refuse_fsdp_lora_checkpoint_property`). Run a LoRA recipe on a resident topology. On the BF16 warm and memory-saver templates the resident LoRA backup is about one BF16 model per rank: on 2026-11-05 each actor kept about 34 GiB after loading the BF16 base with its LoRA. A new strength, order or removal reuses that backup, and the price credits it, so such a change is admitted where it fits; a new LoRA on that held base is priced without the backup and can still refuse on the pair's head with Old model in the way, which Clear and retry, or Always clear and retry, then renders. On 2026-11-05, before that credit, a strength change from 1.0 to 0.8 refused 13.3 GiB short there and rendered after Clear and retry; the credited change has no hardware record yet. A change whose patched weights the backup does not hold drops the copy and loads base and LoRA fresh: on the memory-saver template that sampled in 41.4 s, where the in-place swap it replaces took 269.4 s ([VALIDATION](VALIDATION.md#evidence-wan-animate-2)).
+**Known limitations.** Sharded renders need TORCH_FLASH; any other kernel refuses. On sharded renders, a checkpoint that pins a kernel on its attention modules, such as comfy-kitchen Sol, renders its self-attention with the TORCH_FLASH path, ComfyUI's default exact backend (torch scaled dot product attention when the worker cannot import xformers), and the adapter logs the pin once at debug level and ignores it. The stock cross-attention ignores the pin too and runs that default backend ([ADAPTERS.md](ADAPTERS.md)). Without sequence parallelism the pin runs as in stock ComfyUI, the render record names it, and in a world of one GPU the checkpoint's own pin runs as stock runs it and asks nothing; elsewhere a pinned approximate kernel asks for the Sol-Attn waiver first, and under FSDP a bf16 or fp16 checkpoint's pins drop in the shard build, recorded, with no card ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)). The warm tests do not cover slab/low-RSS, first-use LoRA, FSDP, ring, cache, background replacement or other shapes. Every Wan-Animate 2 template ships `slab_weights=off` and `lora_low_rss=off`. Keep ordinary residency for the warm recipes; other shapes or background applications may need larger memory reserves. Explicit `lora_low_rss=off` refuses FSDP with a LoRA on these templates (class P, `validate_fsdp_launch_loras`), and the INT8 checkpoint refuses it whatever `lora_low_rss` is, because its shards are quantized (`refuse_fsdp_lora_checkpoint_property`). Run a LoRA recipe on a resident topology. On the BF16 warm and memory-saver templates the resident LoRA backup is about one BF16 model per rank: on 2026-11-05 each actor kept about 34 GiB after loading the BF16 base with its LoRA. A new strength, order or removal reuses that backup, and the price credits it, so such a change is admitted where it fits; a new LoRA on that held base is priced without the backup and can still refuse on the pair's head with Old model in the way, which Clear and retry, or Always clear and retry, then renders. On 2026-11-05, before that credit, a strength change from 1.0 to 0.8 refused 13.3 GiB short there and rendered after Clear and retry; the credited change has no hardware record yet. A change whose patched weights the backup does not hold drops the copy and loads base and LoRA fresh: on the memory-saver template that sampled in 41.4 s, where the in-place swap it replaces took 269.4 s ([VALIDATION](VALIDATION.md#evidence-wan-animate-2)).
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-wan-animate-2).
 
@@ -1737,6 +1758,24 @@ DiT and runs on this adapter; [its own section](#model-p-h3-image) covers its
 files, its template and ModelSamplingMiniMaxH3 (DGX Monarch), which sets the
 two H3 shifts on every Worker.
 
+**ComfyUI 0.45.0.** This release needs ComfyUI 0.45.0 or newer (docs/INSTALL.md).
+ComfyUI ede4e5f (#17655, in 0.45.0) changed the output head's last argument
+from the two flow shifts to one sigma grid per stream, and moved a stacked
+PDD head's block choice onto that grid. The sharded forward builds the grids
+with stock's arithmetic and reads the installed head's form when it binds:
+under sequence parallelism, a stacked head on an older ComfyUI, or a head
+form this release does not know, refuses class P before the render starts
+([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+Every H3 and p-h3-image file listed here has a one-block head, which never
+reads that argument, so each renders as it did on 0.44.0. On CPU the sharded
+forward returns stock's bits at world 1 on 0.45.0 with one, two and four head
+blocks, the sampler's table on the head grid, off it, and in steps that span
+several head intervals (`tests/test_h3_head_form_comfy.py`). Stock's own stacked-head output differs
+between 0.44.0 and 0.45.0 for a schedule off the head grid, so a pixel compare
+across the two releases means nothing. The H3 records below ran on ComfyUI
+`8a98ecf58` (v0.44.0 code); the 0.45.0 rows are NOT RUN
+([VALIDATION](VALIDATION.md#comfyui-0450)).
+
 **Sol-H3-VAE decoder.** Sol-H3-VAE (`Efficient-Large-Model/Sol-H3-VAE`, file
 `sol_h3_vae.safetensors`) is H3's video decoder pruned to 24 layers and
 distilled to decode the whole clip in one pass, with attention over local
@@ -1802,6 +1841,57 @@ not fit. Declare still-versus-clip guide shape correctly and respect guide
 preflight: clip encoding has a separate large memory peak. Unlisted/chained
 guides, large clips and guide decode quality have no passing reference comparison. Fun ControlNet
 takes a stock MODEL and cannot be wired into this distributed graph.
+
+<a id="model-ultratex"></a>
+
+## UltraTex texturing on FLUX.2 Klein 9B
+
+UltraTex paints a reference image's look onto a 3D mesh as a grid of views,
+which ComfyUI then bakes into the mesh's texture. It is not a checkpoint of
+its own: it is two LoRAs (albedo, and metallic and roughness) for FLUX.2 Klein
+Base 9B, a fine-tuned VAE, and ComfyUI's UltraTex Conditioning node, all from
+ComfyUI 0.45.0 or newer. Klein Base 9B reads `flux2` from its header, so the
+Flux2 adapter runs it. With the node's conditioning, stock's Flux forward
+tiles each sample's views (6, or the 4 side views) into one image and drops
+the background tokens before the blocks; the latent batch holds the views,
+so an Empty Flux 2 Latent of batch 6 is one sample.
+
+**Topologies.** One GPU, uly2 and uly2+fsdp. On CPU against ComfyUI 0.45.0
+the uly2 forward returns stock's bits in the Flux 1, Flux 2 and LongCat
+layouts, with the view grid alone, the token masks alone, a view reference on
+a tile away from the front and all three together, at batch 1 and 2 and on odd
+and even token counts, and under FSDP the token-mask
+step runs on the wrapped model with nothing to gather
+([Adapters](ADAPTERS.md#flux-family-view-conditioning-ultratex)). cfg2 and dp2
+split the batch, which is a sample's views, ring is not stock's math, and no
+Ulysses degree above 2 has been checked, so a Flux, Flux 2 or LongCat render whose
+conditioning carries UltraTex inputs refuses there before dispatch
+([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
+On two GPUs `auto` keeps uly2 for Flux 2 at every size and skips LongCat's
+cfg2 row for such a render, saying so in its reason; on a wider mesh it
+refuses, since no proven topology tiles the world. No hardware render has run
+yet.
+
+**Files.** The `Comfy-Org/UltraTex` repository on Hugging Face:
+
+| File | Folder | Size |
+|---|---|---|
+| `flux-2-klein-base-9b_bf16.safetensors` | `models/diffusion_models` | 18.16 GB |
+| `flux-2-klein-base-9b_int8_convrot.safetensors` | `models/diffusion_models` | 9.44 GB |
+| `flux-2-klein-9b_distill_lora_avg_rank_345_bf16.safetensors` | `models/loras` | 1.96 GB |
+| `ultratex_flux2_klein_9b_albedo_lora_bf16.safetensors` | `models/loras` | 478 MB |
+| `ultratex_flux2_klein_9b_metallic_roughness_lora_bf16.safetensors` | `models/loras` | 478 MB |
+| `ultratex_flux2_vae_fp32.safetensors` | `models/vae` | 336 MB |
+| `flux-2-klein-9b_empty_prompt.safetensors` | `models/embeddings` | 25 MB |
+
+**Graph.** ComfyUI's sample graph loads the DiT, the distill LoRA at 0.5 and
+an UltraTex LoRA at 1.0, and samples at CFG 1 with euler. In a DGX Monarch
+graph both LoRAs go on Load LoRA (DGX Monarch), and the UltraTex Conditioning
+output feeds the DGX Monarch sampler's positive input. The sample graph's
+Model Sparse Attention and Differential Diffusion nodes patch a stock MODEL
+and do not wire to a DGX Monarch model. The LoRAs use PEFT key names, which
+ComfyUI 0.45.0 maps for Flux on every Worker as stock does; older ComfyUI has
+neither the node nor that key map.
 
 <a id="int8-gemm-kernel"></a>
 
@@ -2040,7 +2130,8 @@ a still at or under 1.2 MP, which decodes in about a second; a MiniMax H3
 still, which is one chunk; a VAE that came from a checkpoint rather than a VAE
 loader file, since no Worker can name its bytes; and every encode. On ComfyUI
 0.44.0 and later, so do the Sol-H3-VAE decoder, which decodes the whole clip
-in one pass, the p-h3-image VAE, which decodes one frame, and a VAE that went
+in one pass, the p-h3-image VAE, which decodes one frame, and on 0.45.0 and
+later the MiniMax-H3-Image VAE, which decodes one frame too, and a VAE that went
 through the VAE Compute Dtype node with a dtype other than `default`: that
 node keeps the weights the loader built and changes only the compute dtype,
 while a Worker builds its VAE in one dtype, so its decode may differ. Each

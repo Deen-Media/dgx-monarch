@@ -137,11 +137,11 @@ trained at boot, because sysfs reads it the same as an uncabled port;
 `dgxm doctor` reports that rail. When the panel is idle, the last render's
 line also names the topology it ran, its auto table row, its last seconds per
 step, and any attention kernel the model pinned per attention module, with
-whether it ran
+whether it was kept
 ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
 When both models of a dual-model cfg2 render pin, that part gives one clause
 per model, such as
-`pinned: cond model: ..., ran; uncond model: ..., dropped (...)`.
+`pinned: cond model: ..., kept; uncond model: ..., dropped (...)`.
 Each render times a step against its own previous step, so the
 second leader of a dp>1 render, or another render in the same Fleet wave,
 cannot shrink that number to the gap between two messages. `dgxm top` draws

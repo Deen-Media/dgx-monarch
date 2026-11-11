@@ -18453,7 +18453,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "302d04602c40b1048f1baf13e614dbc68ca82da8a94bceb541f2dfae3aaa5eb6",
+      "digest": "57a6f0903c3eb29c482d9843549dc8010dc007b1dee8128acf92d3a889f603d3",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-flux3-klein-base-edit",
       "interfaces": {
@@ -18494,7 +18494,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "bea33a2b522fa570fa56eca5a408b5f5addc769c381761a67bc84c31a039bc8c",
+      "digest": "16a56b2fdf766a170c545f3afe26fc0663a02313d901cf9fbbaefbe1f0b43c90",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-flux3-klein-base-t2i",
       "interfaces": {
@@ -18535,7 +18535,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "ec330a509a958eda49aed5981957b64cb065e921b7d4f8ef414691e4d4b05bde",
+      "digest": "2cfe5e99e223a16e64aa78193a5debe2005ea691a9d9643520be2f8c9d75ffb4",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-flux3-klein-edit",
       "interfaces": {
@@ -18576,7 +18576,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "25840ba5cb160b1a3cf1099849a3fa36c9759e6f5e904d05476aa3b219e96fb1",
+      "digest": "5c971ff8da0a6fec57c6056570e20b7fb33d030a3cfa11fa3c783b0d2ec4b779",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-flux3-klein-t2i",
       "interfaces": {
@@ -19068,7 +19068,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "cc8c791a8750ca911ee7bc550e5fe7d446c1f47a5a09d7d43fc9a07b9d983bdb",
+      "digest": "1c0385d9f88b3ef9261b5800bddd2969f2494cec774fe8686c52f57c5c12f642",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-kromoss-t2i",
       "interfaces": {
@@ -19806,7 +19806,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "240722f268d2769383288d2e561ac649a4e6abbacac1cb5cc28539685e854017",
+      "digest": "5fd3decee6a086e6bdc3e8f92e94054dd70da03c27943d1404ed76d0ca0dfc15",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-moss-image-base-t2i",
       "interfaces": {
@@ -19847,7 +19847,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "44e4e7c5593ba15af6b08811145b3917814236ee6eda83f0719060af6377a4ff",
+      "digest": "153c6d705e7d84abf8ca9308bcaac60f8b521a588dc502dbb0ce827998e8e365",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-moss-image-layout-t2i",
       "interfaces": {
@@ -19888,7 +19888,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "e3a339ce9a74d311f0537b7e0d5908f7a118be3982a3e9fba71d668d179cb48d",
+      "digest": "8d08f6c013d11e410195ca1a3813183747bb7643281e2ff2ed5cfffd40d7fc30",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-moss-image-t2i",
       "interfaces": {

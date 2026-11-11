@@ -837,31 +837,40 @@ def pinning_loras(config: dict, lora_names: list[str]) -> list[str]:
 
 
 def pin_summary(pins: dict[str, attention_pins.BlockPin] | None,
-                topo: Topology) -> attention_pins.PinSummary | None:
+                topo: Topology, launch_quant: str | None = None) -> attention_pins.PinSummary | None:
     """What one rank of this topology renders of these pins, by the runtime's summary.
 
     ``attention_pins.summarize`` decides which pins run: sequence parallelism
     drops every one. The stand-in carries the pins where the load scan caches
-    them on a loaded model, which is all ``summarize`` reads. That attribute's
+    them on a loaded model, and they are the checkpoint's own by construction
+    (build_cells drops a LoRA arm that pins), so in a world of one GPU they ask
+    nothing, as the runtime's ``checkpoint_only`` reads them. That attribute's
     name is private to attention_pins (``_SCAN_ATTR``), and the harness reads
     it on purpose so the src tree stays untouched: a rename there breaks the
     pinned tests here at once, with an AttributeError.
 
-    No pin reads as cleared by the FSDP shard build. That build reloads only a
-    bf16 or fp16 file, and a header that pins one never reaches it: its uint8
-    config tensors leave the launch precision unproven, so the launch contract
-    refuses the cell class P first (``validate_fsdp_launch_quant``, above the
-    pin rule in label_cell). An fp8 or int8 file takes the direct wrap, which
-    keeps its pins (adapters/fsdp.py).
+    Under FSDP a bf16 or fp16 file (``launch_quant``) takes the shard build,
+    which reloads the weights through ``load_state_dict`` without the config
+    keys, so ComfyAttention clears every pin and the record says dropped
+    (``attention_pins.note_injected``). The launch check does not count the
+    uint8 config tensors (``fsdp_islands.proof_bytes_by_dtype``), so a pinned
+    header reaches that build. A checkpoint ComfyUI loads as quantized tensors
+    takes the direct wrap, which keeps its pins (adapters/fsdp.py). The runtime
+    picks the path by that, not by the launch kind; an fp8 file whose weights
+    load as plain float8 tensors would take the shard build, and no listed fp8
+    file pins.
     """
     if not pins:
         return None
+    if topo.fsdp and launch_quant in ("bf16", "fp16"):
+        pins = {key: replace(pin, cleared=True, bound=False) for key, pin in pins.items()}
     loaded = SimpleNamespace(model=SimpleNamespace(**{attention_pins._SCAN_ATTR: dict(pins)}))
-    return attention_pins.summarize([loaded], sequence_parallel=topo.sequence_parallel > 1)
+    return attention_pins.summarize([loaded], sequence_parallel=topo.sequence_parallel > 1,
+                                    checkpoint_only=True)
 
 
 def pin_refusal(pins: dict[str, attention_pins.BlockPin] | None, topo: Topology,
-                family: str, world: int) -> BaseException | None:
+                family: str, world: int, launch_quant: str | None = None) -> BaseException | None:
     """The refusal the pin guard raises for these pins on this topology, or None.
 
     The worker's own call (actor/sample_protocol.py): the guard reads the
@@ -869,7 +878,7 @@ def pin_refusal(pins: dict[str, attention_pins.BlockPin] | None, topo: Topology,
     ones on every other topology.
     """
     try:
-        attention_pins.assert_waived(pin_summary(pins, topo), asdict(topo),
+        attention_pins.assert_waived(pin_summary(pins, topo, launch_quant), asdict(topo),
                                      family=family, alone=world < 2)
     except Exception as exc:
         return exc
@@ -1080,7 +1089,8 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     # any load, and sol_attention.make_sol_usp_attention refuses class P there,
     # which the sol block below answers.
     sol_first = sol_attention.is_sol_kernel(cell["attention"]) and topo.ulysses * topo.ring < 2
-    exc = None if sol_first else pin_refusal(facts.get("pins"), topo, family, world)
+    exc = None if sol_first else pin_refusal(facts.get("pins"), topo, family, world,
+                                             cell.get("launch_quant"))
     shard_quant_guard = quant_activation_scale.SHARD_QUANT_GUARDS.get(family)
     if shard_quant_guard and "nvfp4" in cell["artifact_quant"] \
             and quant_activation_scale.plan_for_topology(
@@ -1410,13 +1420,20 @@ def known_wrong_reference(reference_cell: dict | None) -> bool:
     """Whether the cell this one is scored against renders a pinned approximate kernel.
 
     The second reading beside ``known_wrong_kernel``, of the other side of the
-    comparison. The reference refuses class K under the checkpoint pin guard,
-    so it renders only under that waiver, running the pinned kernel. A cell of
-    the same checkpoint on uly2 or ring2 drops the pins and runs the Init
-    widget's kernel instead, so the two differ however exact this cell is.
+    comparison. Either the reference refuses class K under the checkpoint pin
+    guard and renders only under that waiver, or it is a one-GPU cell, where the
+    checkpoint's own pins run as stock runs them and ask nothing. Both run the
+    pinned kernel. A cell of the same checkpoint on uly2 or ring2 drops the pins
+    and runs the Init widget's kernel instead, so the two differ however exact
+    this cell is.
     """
-    return bool(reference_cell) and attention_pins.SOL_ATTN_PIN_GUARD in (
-        reference_cell.get("waiver_guards") or [])
+    if not reference_cell:
+        return False
+    if attention_pins.SOL_ATTN_PIN_GUARD in (reference_cell.get("waiver_guards") or []):
+        return True
+    pinned = attention_pins._approximate(reference_cell.get("checkpoint_pins") or {})
+    return bool(pinned) and reference_cell.get("session") == "local" \
+        and reference_cell.get("label") == "render"
 
 
 def _numeric_bar(cell: dict, steps: int, reference_cell: dict | None = None) -> str:

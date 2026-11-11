@@ -754,10 +754,21 @@ class _H3RefinerBlock(torch.nn.Module):
         return self.attn(x, transformer_options=transformer_options)
 
 
+class _H3Head:
+    """ComfyUI 0.45.0's output head form, which the adapter reads at inject."""
+
+    video_dim = 4
+    video_out = types.SimpleNamespace(weight=torch.zeros(4, 1))
+
+    def forward(self, x, t_emb, video_seg, audio_seg, sigma, sample_sigmas, grids):
+        raise AssertionError("the fake head never runs")
+
+
 class _FakeH3(torch.nn.Module):
     def __init__(self, pins, pinned):
         super().__init__()
         self.blocks = []
+        self.final_layer = _H3Head()
         self.token_refiner = types.SimpleNamespace(blocks=[
             _H3RefinerBlock(pins, pinned) for _ in range(2)])
 

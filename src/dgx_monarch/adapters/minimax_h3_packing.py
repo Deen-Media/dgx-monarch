@@ -1,7 +1,8 @@
-"""Per-token MiniMax H3 packing and checkpoint timestep embeddings.
+"""Per-token MiniMax H3 packing, checkpoint timestep embeddings and the head's grids.
 
 The adapter owns sharding, pad exclusion, and topology refusals. This module
-uses ComfyUI only to move the curve table onto the compute device.
+uses ComfyUI only to move the curve table onto the compute device and to read
+the installed output head's signature.
 """
 from __future__ import annotations
 
@@ -20,6 +21,98 @@ H3_SEG_MODALITY: dict[str, int] = {
     "text": 1, "video": 0, "audio": 2,
     "cond": 0, "ref_img": 0, "cond_audio": 2, "ref_audio": 2,
 }
+
+
+# The name of the ``FinalLayer.forward`` parameter after ``sample_sigmas``.
+# ComfyUI ede4e5f (v0.45.0) made it one decreasing sigma grid per output
+# stream; 0.44.x took the two flow shifts there and built each grid inside the
+# head.
+HEAD_GRIDS = "grids"
+HEAD_SHIFTS = "shifts"
+H3_COMFY_FLOOR = "0.45.0"
+HEAD_FORM_TROUBLESHOOTING = 147
+
+
+def head_blocks(final_layer: Any) -> int:
+    """The PDD head blocks the output bank holds; 1 for a plain head.
+
+    Read from the live weight, as stock reads ``pdd_steps``.
+    """
+    return int(final_layer.video_out.weight.shape[0]) // int(final_layer.video_dim)
+
+
+def head_form(final_layer: Any) -> str:
+    """The installed head's form, read once at inject, or a class P refusal.
+
+    ``grids`` is the head of ComfyUI 0.45.0 or newer. ``shifts`` is the older
+    head's: a one-block head never reads that slot, so the shifts render what v1.4.0 rendered,
+    bit for bit; a stacked head there, or a name this build does not know,
+    refuses here, before any collective, instead of failing inside the head.
+    """
+    values = list(inspect.signature(type(final_layer).forward).parameters.values())
+    positional = [p for p in values if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                                                  inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+    name = positional[7].name if len(positional) > 7 else None
+    # The call passes the receiver and seven arguments by position and no keyword:
+    # it fits when eight positional slots exist (or *args takes the rest) and no
+    # parameter beyond them, positional or keyword-only, lacks a default.
+    takes_eight = len(positional) >= 8 or any(
+        p.kind is inspect.Parameter.VAR_POSITIONAL for p in values)
+    required_after = [p for p in positional[8:] if p.default is inspect.Parameter.empty] + [
+        p for p in values
+        if p.kind is inspect.Parameter.KEYWORD_ONLY and p.default is inspect.Parameter.empty]
+    if not takes_eight or required_after:
+        name = None
+    if name == HEAD_GRIDS or (name == HEAD_SHIFTS and head_blocks(final_layer) == 1):
+        return name
+    if name == HEAD_SHIFTS:
+        what = (f"this checkpoint's output head stacks {head_blocks(final_layer)} PDD blocks, "
+                "and this Worker's ComfyUI is older than 0.45.0")
+    elif name is None:
+        what = ("this Worker's ComfyUI has a MiniMax H3 output head whose arguments do not "
+                "match the call this build makes")
+    else:
+        what = (f"this Worker's ComfyUI has a MiniMax H3 output head that takes {name!r} "
+                f"where this build passes {HEAD_GRIDS!r}")
+    # Class P: a collective render's artifact_identity preflight (mesh_rpc.py) holds every
+    # rank to the driver's ComfyUI commit first, so every rank reads this head alike. A
+    # ComfyUI that is not a git checkout reports "unknown" there and is not held.
+    raise UnsupportedModelError(refusal(
+        RefusalClass.PHYSICS,
+        f"minimax_h3: {what}. This build drives MiniMax H3 "
+        f"on ComfyUI {H3_COMFY_FLOOR} or newer, where the head takes one sigma grid "
+        "per stream. Update ComfyUI on every host to "
+        f"{H3_COMFY_FLOOR} or newer, then reset the Attached mesh; or take a true "
+        "single-GPU reference (mode=local, gpus_per_host=1) (docs/MODELS.md).",
+        troubleshooting=HEAD_FORM_TROUBLESHOOTING,
+    ))
+
+
+def pdd_grid(steps: int, flow_shift: float, time_shift_sigma: Any) -> list[float]:
+    """Stock's ``pdd_grid`` (ComfyUI 0.45.0): the uniform base grid through a flow shift.
+
+    Built from the declared ``time_shift_sigma`` with stock's own arithmetic, so
+    the adapter imports no name 0.44.x lacks; the pdd head seam holds it equal
+    to stock's grid.
+    """
+    return [time_shift_sigma(k / steps, 1.0, flow_shift) for k in range(steps, -1, -1)]
+
+
+def head_schedule(form: str, final_layer: Any, shifts: tuple[float, ...],
+                  time_shift_sigma: Any, grid: Any = None) -> tuple:
+    """``FinalLayer.forward``'s last argument for the installed head form.
+
+    ``shifts`` holds one flow shift per output stream, video first. ``grid`` is
+    a checkpoint's own explicit sigma grid, the one grid of a model without an
+    audio stream, which the head takes as given. No caller passes ``grid`` yet;
+    the MiniMax-H3-Image adapter will, for its ``pdd_sigmas``.
+    """
+    if form == HEAD_SHIFTS:
+        return tuple(shifts)
+    if grid is not None:
+        return ([float(sigma) for sigma in grid],)
+    steps = head_blocks(final_layer)
+    return tuple(pdd_grid(steps, shift, time_shift_sigma) for shift in shifts)
 
 
 def _build_packed_layout(packed_layout_cls, payload, text_len, latent_t,

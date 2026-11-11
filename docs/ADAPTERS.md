@@ -297,6 +297,36 @@ than stacks on a repeat call.
    takes other parameters than the bound one repeats, is left unbound and
    logged, and `tests/test_adaln_parity_blocks.py` names the change against an
    installed ComfyUI.
+
+   <a id="flux-family-view-conditioning-ultratex"></a>
+   **Flux-family view conditioning (UltraTex).** ComfyUI 0.45.0 gave the Flux
+   forward three conditioning inputs for the UltraTex LoRAs: `view_grid`,
+   which tiles each run of n consecutive batch rows (one sample's views) into
+   one image; `token_keep`, which `model_base.Flux.extra_conds` computes once
+   through the diffusion model's `preprocess_token_masks` and which keeps only
+   foreground tokens of the target and the references; and `reference_views`,
+   which places a reference over its view's tile. Stock `Flux._forward`
+   applies all three around `forward_orig`, and the Flux, Flux2 and LongCat
+   adapters rebind `forward_orig` alone, so stock's own code tiles, drops and
+   places on every topology, and the sharded forward shards the stream stock's
+   `forward_orig` takes. The kept count is usually odd, which the vouched pad
+   exclusion covers, and the fused-norm counts above are that stream's, so
+   they stay stock's. `tests/test_flux_views_comfy_exactness.py` holds uly2
+   to stock's bits on a real ComfyUI on CPU: in FLUX.2's layout with the view
+   grid alone, the token masks alone, a view reference on a tile away from the
+   front (where `reference_views` moves stock's positions; on the front tile it
+   changes nothing) and all three together, batch 1 and 2, odd and even
+   streams, every fused-norm launch at stock's rows, and the FSDP2 wrap running
+   `preprocess_token_masks` and the forward; and in Flux 1's and LongCat's
+   layouts with all three together and with the moved view reference.
+   `preprocess_token_masks` touches no module and no parameter, so FSDP
+   replicates nothing for it; the `outside forward modules` seam holds that
+   with the module-free table below. cfg-parallel and data parallelism split
+   the batch, whose rows are the views, ring is not stock's math, and no
+   Ulysses degree above 2 is proven, so `adapters/flux_views.py` refuses a
+   render whose prompts carry any of the three on those topologies, on the
+   driver and on every Worker rank, and auto skips the cfg rows for it
+   (TROUBLESHOOTING #148).
 2. **USP attention routing** for every attention over the sharded sequence:
    * blocks that are pure self-attention: thread
      `usp_options(transformer_options, ctx.usp_attention)` into the block loop;
@@ -435,8 +465,9 @@ than stacks on a repeat call.
    cfg2+fsdp and dp2+fsdp) leaves every stock attention call in place, so a
    pin runs there as it does in stock ComfyUI on one GPU, with the FSDP
    cases below. Dropping the pin there would break the cfg2
-   same-math gate, which compares against one GPU, so the pack detects,
-   records and waives it instead (`attention_pins.py`):
+   same-math gate, which compares against one GPU, so the pack detects and
+   records it instead and, off a world of one GPU or for a LoRA's pin,
+   waives it (`attention_pins.py`):
 
    * **Detection.** Once per fresh load, before injection and before
      ComfyUI stages any LoRA, the pack walks the loaded model and keeps every
@@ -452,8 +483,10 @@ than stacks on a repeat call.
    * **Record.** The render finish record carries `attention_pins` (pinned
      attention modules per kernel; Sol's tau is part of the kernel's name),
      `attention_pins_ran` and `attention_pins_dropped` (modules per reason a
-     pin does not run). `attention_pins_ran` is true when ComfyUI dispatches
-     every pinned module to its pinned kernel, as on one GPU; the kernel
+     pin does not run). `attention_pins_ran` is true when the pack kept every
+     pinned module's kernel: the pins come from the load and the topology,
+     and the record does not count attention calls. A kept pin is dispatched
+     by ComfyUI to its pinned kernel, as on one GPU; the kernel
      itself still runs exact attention on a masked call (Sol) or on a float32
      call with `low_precision_attention` off (int8). The count is per
      attention module, so a block whose self- and cross-attention are both
@@ -462,13 +495,13 @@ than stacks on a repeat call.
      the gate ledger's capability context, is unchanged, so no combination
      gates again. The sidebar's last-render line and the
      `benchmark/run_matrix.py` console show them as, for example, "pinned:
-     comfy_kitchen_sol tau=0.7 x 40 modules, ran"; run_matrix result rows
+     comfy_kitchen_sol tau=0.7 x 40 modules, kept"; run_matrix result rows
      carry the three fields. Under dual-model cfg2 each cfg rank renders its
      own checkpoint, so the fields add the two models' modules, as one rank
      holding both does. When both models pin, `attention_pins_models` keeps
      each model's own three fields under `cond` and `uncond`, run_matrix rows
      carry it too, and the line gives one clause per model, for example
-     "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; uncond
+     "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, kept; uncond
      model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped (kernel
      unavailable on this host)".
    * **Waiver.** Both kernels ComfyUI binds are approximate by construction.
@@ -482,11 +515,29 @@ than stacks on a repeat call.
      is neither: the checkpoint or LoRA picked it, and it runs on both legs
      of the cfg2 same-math gate, so that gate cannot see it. So it takes the
      waiver too. A kernel this project has not classified counts as
-     approximate. When a pinned approximate kernel would run, the render
-     refuses with class K under the guard `sol_attn:checkpoint_pin` before
-     any sampling, and runs, stamped, once the operator grants the Sol-Attn
-     waiver for that checkpoint, topology and world
+     approximate. In a world of one GPU (one rank: `mode=local` with one GPU,
+     or one Spark by itself) a checkpoint's own header pins run as stock
+     ComfyUI runs them, so they ask nothing: no refusal, no stamp and no
+     ledger row, and the first-use ceremony runs every leg with them. A
+     `single` preset on a two-rank mesh resolves to dp2 on the Worker and
+     keeps the card.
+     "Its own" is read strictly (`attention_pins_source.py`): any LoRA object
+     patch on a `comfy_attention` path counts as a LoRA pin, one that restates
+     the header pin unchanged included, and so does a module the forward would
+     run that differs from the load scan in kernel or tau, such as a LoRA's
+     module left live. Everywhere else, when a pinned approximate kernel would
+     run, the render refuses with class K under the guard
+     `sol_attn:checkpoint_pin` before any sampling, and runs, stamped, once
+     the operator grants the Sol-Attn waiver for that checkpoint, topology
+     and world
      ([docs/TROUBLESHOOTING.md #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+     cfg2, dp2 and their `+fsdp` forms keep that rule for a header pin
+     wherever the pins run, which is the fp8 and int8 direct wrap and every
+     form without FSDP: docs/VALIDATION.md records cfg2 against the pinned
+     one-GPU render identical on the vendor-length prompt and at one-step
+     NRMS 0.015 to 0.016 on the one-block prompt, and the cause of that gap
+     is not established. A bf16 or fp16 file under `+fsdp` follows the
+     shard-build rule stated with the FSDP cases below.
      The card says the kernel is approximate by construction and claims no
      measurement for it. The pack decides from the pins, the LoRA stack and the
      topology, never from whether ComfyUI could bind the kernel on this host,
@@ -505,14 +556,23 @@ than stacks on a repeat call.
    dropped the pins. The record names two other cases where a pin does not
    run. The FSDP shard build of a bf16 or fp16 checkpoint reloads the
    sharded weights through `load_state_dict`, and `ComfyAttention` clears
-   its config on any load whose state dict lacks the key, so a pin that
-   reached that build would not run, and the record would name it. No
-   safetensors checkpoint whose own header pins reaches it today: its uint8
-   config tensors leave the FSDP launch check unable to prove a bf16 or fp16
-   core (`fsdp_islands.header_core_kind`), so every `+fsdp` preset refuses
-   that file class P (`validate_fsdp_launch_quant`) before any shard build.
-   An fp8 or int8 checkpoint takes the direct wrap, which reloads nothing, so
-   its pins stay, run and ask for the waiver as on a resident topology. A
+   its config on any load whose state dict lacks the key, so the build
+   clears every pin it meets, and the record says dropped. The FSDP
+   launch check does not count a uint8 config tensor
+   (`fsdp_islands.proof_bytes_by_dtype`), since it is no weight, so a bf16 or
+   fp16 checkpoint whose own header pins now proves its precision and reaches
+   that build, which clears its pins. The rule: class K guards a pinned kernel
+   that runs; where the bf16 or fp16 FSDP shard build drops the pins, nothing
+   approximate runs, no card asks, and the record says dropped (FSDP shard
+   build), on every `+fsdp` preset and for every family. The Init widget's
+   kernel runs instead, so the render differs from stock's pinned
+   render on one GPU by construction, as on uly2. The one such shipped file,
+   MiniMax-H3-Image's BF16 DiT, meets the family's loader refusal first until
+   its adapter lands
+   ([TROUBLESHOOTING #150](TROUBLESHOOTING.md#150-a-minimax-h3-image-render-refuses-at-the-loader)).
+   A checkpoint ComfyUI loads as quantized tensors (the fp8 and int8 files
+   listed here) takes the direct wrap, which reloads nothing, so its pins
+   stay, run and ask for the waiver as on a resident topology. A
    LoRA's pin is
    expected to run under either wrap, since `patch_model` puts it in place
    after the wrap; no hardware run has checked that yet. A kernel ComfyUI
@@ -523,9 +583,13 @@ than stacks on a repeat call.
    tensor refuses, so slab residency and the low-RSS LoRA staging keep these
    uint8 tensors on the host. Without that, a pinned checkpoint under slab
    residency and a pinned LoRA under low-RSS staging would each fail to load:
-   a CPU reproduction shows the decode error, though no hardware load has
-   checked either path yet. Slab residency prices a LoRA that holds only
-   these tensors as no bake, because it patches no weight.
+   a CPU reproduction shows the decode error. Since a checkpoint's own pins
+   run in a world of one GPU, slab residency with pins runs there;
+   `tests/test_attention_pin_slab_comfy.py` holds a slab load against a stock
+   load of the same pinned file through ComfyUI's real `ComfyAttention`
+   (config, kernel and tau equal), and no hardware load has checked either
+   path yet. Slab residency prices a LoRA that holds only these tensors as no
+   bake, because it patches no weight.
 
    Under dual-model cfg2 each rank checks the checkpoint it holds and its
    LoRA stack, and the dm-cfg2 readiness exchange makes the other rank
@@ -535,9 +599,11 @@ than stacks on a repeat call.
    checkpoint that pins.
 
    The first-use ceremony carries no waiver, so a ceremony on a pinned
-   combination ends on this guard, as it does for every class-K guard, and
-   changes no residency setting. On a resident topology a risky combination
-   (a LoRA stack, or slab residency requested) then renders under stock
+   combination that asks ends on this guard, as it does for every class-K
+   guard, and changes no residency setting; in a world of one GPU the
+   checkpoint's own pins ask nothing, so there the ceremony runs as for an
+   unpinned file. On a resident topology a risky combination (a LoRA stack, or
+   slab residency requested) then renders under stock
    residency, the limit TROUBLESHOOTING #84 describes for Sol. FSDP has no
    stock residency to fall back to. Under `auto_gate=first_use`, a render on
    cfg2+fsdp or dp2+fsdp needs a Gate PASS, and the ceremony that would earn
@@ -1379,6 +1445,23 @@ than stacks on a repeat call.
    factor 27 against a fitted 21.5) covers that at world 2; a larger world
    needs a refit.
 
+   **MiniMax H3 output head and block loop.** The H3 adapter rebinds only
+   `_forward`, so stock's `forward` still runs it inside ComfyUI's malloc
+   graph under comfy-managed residency, and the sharded block loop pops the prefetch queue as stock does:
+   every block with `malloc_scope="block"`, then one closing pop with the same
+   scope, queue or not, so each block stays one scope of the recorded
+   allocation plan. The output head runs once, on the gathered stream at
+   stock's rows. Its last argument follows ComfyUI 0.45.0, one sigma grid per
+   stream built with stock's `pdd_grid` arithmetic from the two flow shifts
+   (`adapters/minimax_h3_packing.head_schedule`); injection reads the
+   installed head's form once (`head_form`) and refuses class P where this
+   build cannot drive it: a stacked PDD head on 0.44.x's form, or a name it
+   does not know ([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+   A one-block head on 0.44.x's form never reads that argument and goes on,
+   as v1.4.0 rendered it. `tests/test_h3_head_form_comfy.py` holds the head,
+   the grid and the pops to stock on the installed ComfyUI, and canary seam 25
+   reads the three values the head is handed.
+
    Comfy model-option attention hooks are a separate contract. Stock patch
    nodes such as NAG consume `MODEL`, while DGX loaders publish `DGXM_MODEL`,
    so they cannot be wired into an ordinary DGX graph. If an out-of-tree
@@ -1487,6 +1570,17 @@ The worker applies two capacity and performance transforms in
   where replication is still correct but not needed. The same seam reads the
   class-scoped rows with a reader that follows subscripted attributes and
   checks them against forward hooks on a tiny real model.
+
+  Two more tables name methods `extra_conds` reaches that replicate nothing.
+  The refused-call table names one whose input every topology but one GPU
+  refuses first (MOSS-Image's `preprocess_refs`). The module-free table names
+  one that touches no module and no parameter: Flux's
+  `preprocess_token_masks` (ComfyUI 0.45.0, UltraTex), which pads, tiles and
+  builds position ids. The seam runs that call on a tiny real Flux with a
+  forward hook on every module that owns a parameter and a torch function
+  mode that records every call handed one, so the canary fails the day the
+  method reaches either. Both tables are inert on a ComfyUI whose model lacks
+  the method.
 
 ## Registration
 

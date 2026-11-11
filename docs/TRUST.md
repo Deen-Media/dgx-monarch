@@ -533,7 +533,7 @@ copied from historical evidence.
    [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization"), and
    [`worker_authorization.py:145-155`](../src/dgx_monarch/actor/worker_authorization.py#L145-L155 "anchor:assert_resident_artifact_identity"),
    with production call order at
-   [`sample_protocol.py:181-459`](../src/dgx_monarch/actor/sample_protocol.py#L181-L459 "anchor:run_sample").
+   [`sample_protocol.py:181-462`](../src/dgx_monarch/actor/sample_protocol.py#L181-L462 "anchor:run_sample").
    Driver and worker failures are covered by
    [`test_fleet.py:678-712`](../tests/test_fleet.py#L678-L712 "anchor:test_fleet_forces_stock_policy_until_exact_context_pass"),
    [`test_fleet.py:753-822`](../tests/test_fleet.py#L753-L822 "anchor:test_fleet_preserves_requested_policy_only_for_exact_context_pass"),
@@ -618,7 +618,7 @@ copied from historical evidence.
     Authorization, setup binding, driver validation, and
     worker revalidation are
     [`gate_identity.py:343-482`](../src/dgx_monarch/nodes/gate_identity.py#L343-L482 "anchor:authorize_normal_render"),
-    [`render_submit.py:250-488`](../src/dgx_monarch/nodes/render_submit.py#L250-L488 "anchor:_submit_render_guarded"),
+    [`render_submit.py:250-489`](../src/dgx_monarch/nodes/render_submit.py#L250-L489 "anchor:_submit_render_guarded"),
     [`mesh_residency.py:96-161`](../src/dgx_monarch/mesh_residency.py#L96-L161 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:253-397`](../src/dgx_monarch/mesh_residency.py#L253-L397 "anchor:assert_normal_render_residency_grant"),
     [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"), and
@@ -815,7 +815,7 @@ copied from historical evidence.
    the automatic path is
    [`auto_gate.py:146-151`](../src/dgx_monarch/nodes/auto_gate.py#L146-L151 "anchor:auto_gate_context"),
    and the node's NOT RUN branch is
-   [`gate_node.py:111-123`](../src/dgx_monarch/nodes/gate_node.py#L111-L123 "anchor:gate"),
+   [`gate_node.py:112-125`](../src/dgx_monarch/nodes/gate_node.py#L112-L125 "anchor:gate"),
    covered by `tests/test_accuracy_waivers.py` and `tests/test_sol_attention.py`.
 
 ## Grant paths
@@ -834,7 +834,7 @@ copied from historical evidence.
   boundaries are
   [`gate_identity.py:282-296`](../src/dgx_monarch/nodes/gate_identity.py#L282-L296 "anchor:model_for_request"),
   [`gate_identity.py:343-482`](../src/dgx_monarch/nodes/gate_identity.py#L343-L482 "anchor:authorize_normal_render"),
-  [`render_submit.py:250-488`](../src/dgx_monarch/nodes/render_submit.py#L250-L488 "anchor:_submit_render_guarded"),
+  [`render_submit.py:250-489`](../src/dgx_monarch/nodes/render_submit.py#L250-L489 "anchor:_submit_render_guarded"),
   [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:145-155`](../src/dgx_monarch/actor/worker_authorization.py#L145-L155 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
@@ -942,7 +942,7 @@ copied from historical evidence.
   same transaction get no skip
   ([`gate_inconclusive.py:265-265`](../src/dgx_monarch/nodes/gate_inconclusive.py#L265-L265 "anchor:remember_kind")).
   This is enforced at
-  [`common.py:306-384`](../src/dgx_monarch/nodes/common.py#L306-L384 "anchor:run_render"),
+  [`common.py:307-385`](../src/dgx_monarch/nodes/common.py#L307-L385 "anchor:run_render"),
   [`auto_gate.py:211-279`](../src/dgx_monarch/nodes/auto_gate.py#L211-L279 "anchor:auto_gate_required"),
   [`auto_gate.py:282-490`](../src/dgx_monarch/nodes/auto_gate.py#L282-L490 "anchor:maybe_auto_gate"), and
   [`pipeline.py:282-368`](../src/dgx_monarch/nodes/pipeline.py#L282-L368 "anchor:_push_bound"), with
