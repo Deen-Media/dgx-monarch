@@ -32,15 +32,21 @@ not match the same batch on a box without this pack, in either direction;
 both sides match for a single image.
 
 ``vae_decode_route`` also wraps ``VAE.decode`` (Worker-assisted decode, armed
-by the Init node, so after node import). This wrapper is installed first and
-sits inside that one, so each item goes through the route's own decode.
-``uninstall`` here restores ``__wrapped__`` and would drop a wrapper installed
-over it, so it is for tests, where nothing else is installed.
+by the Init node, so after node import and outside this wrapper). The two do
+not meet on a batch this rule splits. Through VAE Decode the route takes only
+the MiniMax H3 video VAE, whose frames this rule leaves whole; for every image
+VAE it declines that entry and calls on to this wrapper, which runs stock's
+decode once an item. Through VAE Decode (Tiled) the route splits stock's own
+tile loop, which already walks the batch one item at a time, and this rule
+does not wrap that entry. ``uninstall`` here restores ``__wrapped__`` and
+would drop a wrapper installed over it, so it is for tests, where nothing else
+is installed.
 """
 from __future__ import annotations
 
 import functools
 import os
+import sys
 import threading
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -109,26 +115,37 @@ def install_driver() -> str:
     return "installed"
 
 
+def _vae_class() -> Any:
+    """ComfyUI's ``VAE`` class, only if this process already imported ``comfy.sd``.
+
+    It imports nothing itself: importing ComfyUI here would pick its device
+    before the process that owns it does. The ComfyUI process has imported
+    ``comfy.sd`` long before it loads a node pack.
+    """
+    module = sys.modules.get("comfy.sd")
+    if module is None:
+        raise ImportError("comfy.sd is not imported in this process")
+    return module.VAE
+
+
 def install() -> None:
     """Wrap ``comfy.sd.VAE.encode`` and ``decode`` once."""
-    import comfy.sd
-
+    vae = _vae_class()
     with _INSTALL_LOCK:
         for entry in ("encode", "decode"):
-            current = getattr(comfy.sd.VAE, entry)
+            current = getattr(vae, entry)
             if not getattr(current, _KEY, False):
-                setattr(comfy.sd.VAE, entry, by_item(current))
+                setattr(vae, entry, by_item(current))
 
 
 def uninstall() -> None:
     """Undo ``install`` (tests)."""
-    import comfy.sd
-
+    vae = _vae_class()
     with _INSTALL_LOCK:
         for entry in ("encode", "decode"):
-            current = getattr(comfy.sd.VAE, entry)
+            current = getattr(vae, entry)
             if getattr(current, _KEY, False):
-                setattr(comfy.sd.VAE, entry, current.__wrapped__)
+                setattr(vae, entry, current.__wrapped__)
 
 
 __all__ = ["DISABLE_ENV", "ENABLE_ENV", "ON_BY_DEFAULT", "by_item", "install", "install_driver",

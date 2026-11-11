@@ -165,6 +165,50 @@ def test_stocks_encode_follows_the_reading_and_the_rules_does_not(comfy_sd):
     assert not torch.equal(ruled[1], stock[6])
 
 
+def test_install_imports_nothing_of_comfyui_itself(monkeypatch):
+    monkeypatch.delitem(sys.modules, "comfy.sd", raising=False)
+    monkeypatch.setenv(vae_item_batches.ENABLE_ENV, "1")
+    monkeypatch.delenv(vae_item_batches.DISABLE_ENV, raising=False)
+    assert vae_item_batches.install_driver() == "no_comfy"
+    assert "comfy.sd" not in sys.modules
+
+
+def test_under_the_worker_assisted_decode_wrapper_an_image_batch_still_runs_one_item_a_batch(comfy_sd, monkeypatch):
+    """vae_decode_route wraps VAE.decode outside this rule once the Init node arms it.
+
+    For an image VAE it declines the plain decode entry and calls on, so the
+    rule's result is unchanged: one tensor whatever memory reads.
+    """
+    import comfy.utils
+
+    from dgx_monarch import vae_decode_route
+
+    torch.set_num_threads(2)
+    vae = _toy_vae(comfy_sd)
+    latents = torch.randn(4, 4, 8, 8, generator=torch.Generator().manual_seed(4))
+
+    def decode():
+        return vae.decode(latents)
+
+    decode.need = vae.memory_used_decode(tuple(latents.shape), vae.vae_dtype)
+    stock = {name: getattr(comfy_sd.VAE, name) for name in ("decode", "decode_tiled")}
+    stock_tiled = comfy.utils.tiled_scale_multidim
+    vae_item_batches.install()
+    try:
+        alone = _under_readings(vae, decode, 4)
+        vae_decode_route.install()
+        monkeypatch.setattr(vae_decode_route, "_ARMED", (lambda: None, "no mesh"))
+        assert getattr(comfy_sd.VAE.decode, "_dgxm_vae_decode_route", False) is True
+        assert getattr(comfy_sd.VAE.decode.__wrapped__, "__wrapped__", None) is stock["decode"]
+        under_route = _under_readings(vae, decode, 4)
+    finally:
+        for name, function in stock.items():
+            setattr(comfy_sd.VAE, name, function)
+        comfy.utils.tiled_scale_multidim = stock_tiled
+    for batch in (1, 2, 3, 4):
+        assert torch.equal(under_route[batch], alone[1]), batch
+
+
 def test_the_rules_decode_is_one_tensor_whatever_memory_reads(comfy_sd):
     torch.set_num_threads(2)
     vae = _toy_vae(comfy_sd)

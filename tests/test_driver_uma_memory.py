@@ -155,6 +155,18 @@ def test_install_leaves_comfyuis_reading_alone(monkeypatch, case, expected):
     assert mm.get_free_memory is stock
 
 
+def test_install_imports_nothing_of_comfyui_itself(monkeypatch):
+    """A process that has not imported ComfyUI's model management is left to do so in its own time."""
+    monkeypatch.delenv(uma.DISABLE_ENV, raising=False)
+    monkeypatch.setattr(uma.sys, "platform", "linux")
+    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    assert uma.install_driver() == "no_comfy"
+    assert "comfy.model_management" not in sys.modules
+    # Without ComfyUI's own MemAvailable reader the figure is psutil's.
+    monkeypatch.delitem(sys.modules, "comfy.system_memory", raising=False)
+    assert uma.host_available_bytes() > 0 and "comfy.system_memory" not in sys.modules
+
+
 @pytest.mark.parametrize("broken", ["available", "total_of", "default_device"])
 def test_a_failure_of_the_correction_answers_with_comfyuis_own_reading(broken, caplog):
     """The function runs at every batch choice of the user's graph: it must never raise."""

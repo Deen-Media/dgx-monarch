@@ -75,14 +75,15 @@ def device_free_bytes(available_bytes: int, total_bytes: int) -> int:
 
 def host_available_bytes() -> int:
     """MemAvailable, through ComfyUI's own reader where it has one (it knows cgroup limits)."""
-    try:
-        import comfy.system_memory as system_memory
+    reader = getattr(sys.modules.get("comfy.system_memory"), "virtual_memory_available", None)
+    if callable(reader):
+        try:
+            return int(reader())
+        except Exception:
+            pass
+    import psutil
 
-        return int(system_memory.virtual_memory_available())
-    except Exception:
-        import psutil
-
-        return int(psutil.virtual_memory().available)
+    return int(psutil.virtual_memory().available)
 
 
 def integrated_total_bytes(torch: Any, device: Any) -> int | None:
@@ -139,9 +140,16 @@ def corrected_reading(original: Reading, total_of: Callable[[Any], int | None],
 
 
 def _comfy() -> tuple[Any, Any]:
-    import comfy.model_management as model_management
-    import torch
+    """ComfyUI's model management and torch, only if this process already imported them.
 
+    It imports nothing itself: importing ComfyUI's model management here would
+    pick its device and read its flags before the process that owns them does.
+    The ComfyUI process has imported both long before it loads a node pack.
+    """
+    model_management = sys.modules.get("comfy.model_management")
+    torch = sys.modules.get("torch")
+    if model_management is None or torch is None:
+        raise ImportError("comfy.model_management is not imported in this process")
     return model_management, torch
 
 
