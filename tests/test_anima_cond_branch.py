@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import platform
 import sys
 import types
 from concurrent.futures import ThreadPoolExecutor
@@ -47,6 +48,19 @@ from module_location_helpers import from_checkout
 
 COMFY_DIR = os.path.abspath(os.environ.get("COMFYUI_DIR", os.path.expanduser("~/ComfyUI")))
 STEPS, CFG, SEED = 3, 4.0, 42
+# Equal bits where the CPU GEMMs agree per row whatever the call's shape or the
+# operands' memory (aarch64), else float32 rounding: the x86 canary runner's
+# GEMMs can round a row apart at another batch or on a copied weight.
+_EXACT_GEMM = platform.machine() == "aarch64"
+
+
+def _same(candidate: torch.Tensor, reference: torch.Tensor) -> bool:
+    if candidate.shape != reference.shape:
+        return False
+    if _EXACT_GEMM:
+        return torch.equal(candidate, reference)
+    return torch.equal(candidate, reference) or torch.allclose(
+        candidate, reference, rtol=2e-5, atol=2e-5)
 # Raw rows of different length on both streams, as on the shipped graph, so
 # off the bind cond and uncond cannot share a model call.
 PAIRS = {"differing": ((14, 12), (9, 7)), "equal": ((14, 12), None)}
@@ -94,6 +108,18 @@ def comfy():
             sys.modules.pop(name, None)
         sys.modules.update(preserved)
         sys.path[:] = path_before
+
+
+@pytest.fixture(autouse=True)
+def _drop_loaded_models(comfy):
+    """Each test loads its own models of about 0.55 GB, and ComfyUI's model
+    management keeps every sampled one listed; drop them after each test so
+    the file's peak stays near one test's need."""
+    yield
+    import gc
+
+    sys.modules["comfy.model_management"].unload_all_models()
+    gc.collect()
 
 
 def _tiny_state(ops, anima_class) -> dict:
@@ -205,9 +231,12 @@ class _Probe:
     def batches(self) -> list[int]:
         return [int(call["x"].shape[0]) for call in self.calls]
 
-    def same_calls_as(self, other: _Probe) -> bool:
+    def same_calls_as(self, other: _Probe, equal=torch.equal) -> bool:
+        """Every call's inputs against ``other``'s. Calls of the same shapes on
+        the same weights compare by bits; ``equal=_same`` where the weights
+        were copied (an FSDP wrap)."""
         return len(self.calls) == len(other.calls) and all(
-            mine[key].shape == theirs[key].shape and torch.equal(mine[key], theirs[key])
+            mine[key].shape == theirs[key].shape and equal(mine[key], theirs[key])
             for mine, theirs in zip(self.calls, other.calls, strict=True)
             for key in ("x", "t", "context"))
 
@@ -365,7 +394,8 @@ def test_the_workers_ksampler_makes_stocks_model_calls_after_the_load_hook(monke
         assert unbound_probe.batches() == [2] * STEPS
         assert unbound_probe.adapter == [False] * STEPS
         assert unbound_probe.folds == [True] * STEPS
-    assert torch.equal(before, expected)
+    # Batch-1 calls against stock's batch-2 ones: bits on aarch64 only.
+    assert _same(before, expected)
 
 
 def test_the_bind_is_idempotent_and_survives_a_patcher_clone_and_a_lora_clone(comfy):
@@ -437,8 +467,8 @@ def test_the_bound_adapter_runs_before_the_first_fsdp_forward_on_plain_parameter
     first = events.index("forward")
     assert events[:first] == [("adapter", True, True)] * 2
     assert not any(isinstance(event, tuple) for event in events[first:])
-    assert probe.same_calls_as(stock_probe)
-    assert torch.equal(samples, expected)
+    assert probe.same_calls_as(stock_probe, equal=_same)
+    assert _same(samples, expected)
 
 
 # --- The persistence canary ---------------------------------------------------------
@@ -517,6 +547,7 @@ def test_the_bound_branch_survives_sample_bake_hot_swap_and_unbake(comfy, tmp_pa
     for key in patches:
         name = key[0] if isinstance(key, tuple) else key
         assert torch.equal(live_tensor(patcher.model, name), file_state[name[len("diffusion_model."):]]), name
-    assert torch.equal(sample(patcher), first)
+    # Restored bytes in new tensors: bits on aarch64, float32 rounding elsewhere.
+    assert _same(sample(patcher), first)
     probe.close()
     assert probe.adapter == [True, True] * 4
