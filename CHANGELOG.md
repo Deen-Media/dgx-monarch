@@ -423,7 +423,9 @@
   header again as ComfyUI's own reader does, and the driver and every Worker
   refuse it with the class and sentence its intact header gets. A
   MiniMax-H3-Image `config` nested past the JSON parser's limit, which also
-  got no verdict, now counts as no sigma grid. A file no stock reader can read
+  got no verdict, now counts as no sigma grid, and a `_quantization_metadata`
+  of JSON `null`, which ComfyUI reads as a table that names no layer, no
+  longer turns the dropped-scale refusal off. A file no stock reader can read
   keeps ComfyUI's own load error, and a header read that ends with no verdict
   on the file refuses class P
   ([TROUBLESHOOTING #151](docs/TROUBLESHOOTING.md#151-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).

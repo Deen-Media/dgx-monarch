@@ -857,16 +857,16 @@
     },
     "tests/test_dropped_scale_gate.py": {
       "test_a_file_comfy_reads_whole_passes": "9e84d408dc03b9da",
-      "test_a_scale_comfy_would_drop_refuses_and_names_its_layers": "b5a9fab0a8bc4c17",
+      "test_a_scale_comfy_would_drop_refuses_and_names_its_layers": "75ad155a4e3a0cd6",
       "test_an_unreadable_or_foreign_path_answers_none": "12a0ee2a0dd0db8f",
-      "test_both_funnels_pass_a_file_comfy_reads_whole": "d1532fcb92f4e99d",
-      "test_both_funnels_refuse_the_same_class_p_text_before_anything_loads": "5837f29f0d05bd38",
+      "test_both_funnels_pass_a_file_comfy_reads_whole": "a97eb477fa2b374c",
+      "test_both_funnels_refuse_the_same_class_p_text_before_anything_loads": "7a28d67921b66274",
       "test_comfy_drops_a_packed_scale_with_no_record_under_dynamic_vram": "5da8162e593dbc10",
       "test_comfy_loads_an_unrecorded_layer_without_error_and_drops_its_scale": "65dbc4e512894ed4",
       "test_the_l2p_gate_keeps_its_own_text_and_number": "5b2641e104e5ddbe",
-      "test_the_replay_names_the_keys_comfys_own_load_hands_the_model": "b1454aa9fb4da2d8",
+      "test_the_replay_names_the_keys_comfys_own_load_hands_the_model": "5f2ad9f9f20eaeac",
       "test_the_replay_strips_the_prefix_comfy_picks": "679960d5b85dc316",
-      "test_the_staged_flux3_files_pass_and_the_fp8r_variant_refuses": "f1aac97face85059"
+      "test_the_staged_flux3_files_pass_and_the_fp8r_variant_refuses": "1ee090553c768e7a"
     },
     "tests/test_family_adapter_select.py": {
       "test_a_child_model_still_binds_its_own_family": "610d4a577af029b3",
@@ -2751,11 +2751,12 @@
       "test_a_damaged_header_gets_the_refusal_its_intact_header_gets_on_both_paths": "325def91afea2738",
       "test_a_damaged_l2p_header_logs_the_key_paths_the_gate_read": "af23792eb66bd840",
       "test_a_file_no_stock_reader_can_read_keeps_no_verdict": "272ca16eda0b2b11",
-      "test_a_process_that_cannot_import_detection_gets_no_verdict": "0954cc0875eddb98",
+      "test_a_process_that_cannot_import_detection_gets_no_verdict": "1b95a37ea3953f70",
       "test_a_read_that_fails_with_no_parse_verdict_refuses_class_p": "47c5b0c8732c9a7e",
       "test_a_sound_header_never_reaches_the_second_read_and_keeps_its_verdict": "79e4a8c64fdd1d3b",
+      "test_comfy_raises_on_every_quantization_table_the_gate_gives_no_verdict_on": "e170830dcc6bebbe",
       "test_metadata_is_read_as_comfys_own_reader_hands_it_on": "acd3e7957f20d860",
-      "test_quantization_metadata_nested_past_the_limit_refuses_but_a_parse_error_does_not": "1ca798138f5fb7bb",
+      "test_quantization_metadata_nested_past_the_limit_refuses_but_a_parse_error_does_not": "f5a30e66b069f041",
       "test_the_last_copy_of_a_key_written_twice_is_the_one_the_gate_reads": "6d9ceebb29306653",
       "test_the_second_read_names_what_comfys_own_readers_hand_on": "2e97c3389ed2db2e",
       "test_what_the_gate_calls_no_header_no_stock_reader_reads": "29023e4612929609"

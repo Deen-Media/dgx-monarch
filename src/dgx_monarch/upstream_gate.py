@@ -208,7 +208,8 @@ def _convert_old_quants(keys: dict[str, str], metadata: dict[str, str]) -> dict[
 
     With ``_quantization_metadata`` in the header, every layer its ``layers``
     table names gains a ``<layer>.comfy_quant`` key, spelled as the table
-    spells it, and nothing else changes. Without it, a bare ``scaled_fp8`` key
+    spells it, and nothing else changes; a table that is JSON ``null`` names
+    no layer, and ComfyUI loads on. Without it, a bare ``scaled_fp8`` key
     marks the legacy layout: the marker goes, each ``<layer>.scale_weight``
     becomes ``<layer>.weight_scale`` and its layer gains a ``comfy_quant``
     record, and each ``scale_input`` becomes ``input_scale``. ComfyUI also
@@ -218,7 +219,8 @@ def _convert_old_quants(keys: dict[str, str], metadata: dict[str, str]) -> dict[
     out = dict(keys)
     if "_quantization_metadata" in metadata:
         try:
-            layers = list(json.loads(metadata["_quantization_metadata"])["layers"].keys())
+            table = json.loads(metadata["_quantization_metadata"])
+            layers = [] if table is None else list(table["layers"].keys())
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             # Not JSON, no ``layers``, or ``layers`` not a map: ComfyUI raises on the
             # same text, so its load fails and no scale drops silently.
@@ -379,8 +381,10 @@ def _verdict(path: str | None) -> tuple[int, tuple[str, ...]] | None:
     if not path or not str(path).lower().endswith((".safetensors", ".sft")):
         return None
     try:
+        if not os.path.isfile(str(path)):  # missing, or a folder: the load's own error stands
+            return None
         identity = _identity(str(path))
-    except (OSError, ValueError):  # no such file: the load's own error stands
+    except (OSError, ValueError):
         return None
     try:
         l2p_layout, layers, h3_image_number = _read_by_identity(*identity)

@@ -329,6 +329,10 @@ def _no_header(base: str, damage: str) -> bytes:
 NO_HEADER = ("shorter than 8 bytes", "length zero", "length past the file", "length 2**62",
              "length that cuts the JSON short", "not JSON", "a trailing comma", "a list at the top",
              "not UTF-8")
+# ``_quantization_metadata`` texts ComfyUI's own convert_old_quants raises on (held against
+# it by the last test in this file): the scale check's one no-verdict exit.
+QUANT_PARSE_ERRORS = ("{not json", '{"format": "x"}', '{"layers": ["a"]}', '{"layers": null}',
+                      "7", '"layers"', "false", "[]")
 
 
 @pytest.mark.parametrize("damage", NO_HEADER)
@@ -388,12 +392,17 @@ def test_quantization_metadata_nested_past_the_limit_refuses_but_a_parse_error_d
     tensors, _metadata = PASSES["nvfp4_with_its_metadata"]
     deep = Path(_write_header(models / "deep.safetensors", tensors, {"_quantization_metadata": DEEP})).name
     _assert_on_both_paths(models, deep, UNREAD)
-    for text in ("{not json", json.dumps({"format": "x"}), json.dumps({"layers": ["a"]}), "7", '"layers"'):
+    for text in QUANT_PARSE_ERRORS:
         name = Path(_write_header(models / "parse.safetensors", tensors,
                                   {"_quantization_metadata": text})).name
         with pytest.raises(upstream_gate.QuantMetadataError):
             upstream_gate.uncovered_scaled_layers(str(models / name))
         assert _number(models, name) is None and _driver(name) is None and _worker(name) is None
+    # JSON null is no parse error to ComfyUI: it reads a table that names no layer, loads on
+    # and drops the scale. So it is no way past the dropped-scale refusal either.
+    null = Path(_write_header(models / "null.safetensors", tensors, {"_quantization_metadata": "null"})).name
+    assert upstream_gate.uncovered_scaled_layers(str(models / null)) == ("single_blocks.0.q_proj",)
+    _assert_on_both_paths(models, null, SCALES)
     # The same damaged table beside a damaged header: still no verdict, as before.
     _meta, pairs, size = _pairs("scales")
     table = ("__metadata__", json.dumps({"_quantization_metadata": "{not json"}))
@@ -405,7 +414,11 @@ def test_quantization_metadata_nested_past_the_limit_refuses_but_a_parse_error_d
 
 def test_a_process_that_cannot_import_detection_gets_no_verdict(models, monkeypatch):
     """A headless caller with no torch (the sweep matrix, a tool) loads nothing, so a
-    failed import is no refusal there. Any other error out of the read is the closed default."""
+    failed import is no refusal there. Any other error out of the read is the closed default.
+    A folder named like a checkpoint is nothing a loader can open: no verdict either."""
+    (models / "folder.safetensors").mkdir()
+    assert _number(models, "folder.safetensors") is None
+    assert _driver("folder.safetensors") is None and _worker("folder.safetensors") is None
     name = _write(models, "l2p.safetensors", _damage("l2p", "intact"))
 
     def cannot_import(*_identity):
@@ -588,3 +601,24 @@ def test_what_the_gate_calls_no_header_no_stock_reader_reads(stock, real_comfy, 
     assert stock(path) == {"safetensors": None, "own": None}
     assert upstream_gate._lenient_header(str(path)) is None
     assert upstream_gate._lenient_header(str(tmp_path / "absent.safetensors")) is None
+
+
+def test_comfy_raises_on_every_quantization_table_the_gate_gives_no_verdict_on(real_comfy):
+    """The premise of the scale check's no-verdict exit, against ComfyUI's own converter.
+    JSON null is the one damaged table it does not raise on: it names no layer and the
+    load goes on, so the gate reads it the same way and the dropped-scale refusal stands."""
+    import torch
+
+    def comfy_keys(text: str) -> set[str]:
+        state, _metadata = real_comfy.utils.convert_old_quants(
+            {"a.weight": torch.zeros(1)}, "", {"_quantization_metadata": text})
+        return set(state)
+
+    for text in QUANT_PARSE_ERRORS:
+        with pytest.raises((ValueError, KeyError, TypeError, AttributeError)):
+            comfy_keys(text)
+        with pytest.raises(upstream_gate.QuantMetadataError):
+            upstream_gate.comfy_load_keys({"a.weight": "BF16"}, {"_quantization_metadata": text})
+    for text in ("null", '{"layers": {}}', '{"layers": {"a": {"format": "int8"}}}'):
+        replay = upstream_gate.comfy_load_keys({"a.weight": "BF16"}, {"_quantization_metadata": text})
+        assert set(replay) == comfy_keys(text), text
