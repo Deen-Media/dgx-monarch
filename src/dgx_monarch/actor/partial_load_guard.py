@@ -173,6 +173,11 @@ def install(base_patcher: Any, world: int | None, topology: Any = None) -> None:
     box's free memory, one call later.
     """
     if not world or int(world) <= 1:
+        # One rank cannot disagree with itself, and a partial load there is
+        # exact for every patched layer but one kind, which has its own check.
+        from . import lora_partial_load
+
+        lora_partial_load.install_guard(base_patcher)
         return
     import comfy.patcher_extension as pe
 

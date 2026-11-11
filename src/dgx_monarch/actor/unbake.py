@@ -20,6 +20,7 @@ from typing import Any
 import torch
 
 from ..log import get_logger
+from .load_renames import load_time_renames, with_renamed
 from .unbake_file import (
     _ST_TO_TORCH as _ST_TO_TORCH,
 )
@@ -207,19 +208,18 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                     "checkpoint changed after its header was validated"
                 )
 
+            renames = load_time_renames(model, header)  # a key ComfyUI renames at load: the file's name
+
             def _map_plain(key: str, tensor: torch.Tensor) -> bool:
-                for cand in _candidate_file_keys(key):
+                candidates = with_renamed(_candidate_file_keys(key), renames, key)
+                for cand in candidates:
                     ft = header.get(cand)
-                    if (
-                        ft is None
-                        or ft.dtype != tensor.dtype
-                        or ft.shape != tuple(tensor.shape)
-                    ):
+                    if ft is None or ft.dtype != tensor.dtype or ft.shape != tuple(tensor.shape):
                         continue
                     if _bytes_match(fd, ft, tensor):
                         record.mapped[key] = ft
                         return True
-                for cand in _candidate_file_keys(key):
+                for cand in candidates:
                     ft = header.get(cand)
                     if ft is None:
                         continue

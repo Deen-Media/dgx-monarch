@@ -272,6 +272,14 @@ MODEL_PATCH_TOUCHPOINTS: tuple[Touchpoint, ...] = (
           "double_layers", "single_layers", positional=("model", "start_percent", "end_percent")),
     _call("comfy.lora", "calculate_shape", positional=("patches", "weight", "key")),
     _call("comfy.utils", "get_attr", positional=("obj", "attr")),
+    # The sample-time estimate actor/held_rows_price.py reads and re-prices, and
+    # the mask rule it counts kept tokens with (UltraTex, ComfyUI 0.45.0, the
+    # oldest this release runs on). A rename of the rule would leave an UltraTex
+    # render on stock's whole-token estimate, so the canary names it here.
+    _call("comfy.ldm.flux.model", "foreground_tokens", positional=("mask", "h", "w")),
+    _call("comfy.sampler_helpers", "estimate_memory", positional=("model", "noise_shape", "conds")),
+    _call("comfy.model_base", "BaseModel.memory_required", "cond_shapes", positional=("self", "input_shape")),
+    _call("comfy.model_base", "BaseModel.extra_conds_shapes", positional=("self",)),
 )
 
 

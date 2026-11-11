@@ -142,6 +142,24 @@
       "waivable": false
     },
     {
+      "site": "actor/lora_partial_load.py::check::OffloadedInputQuantError#0",
+      "class": "C",
+      "guard": "partial_load_divergence",
+      "waivable": false
+    },
+    {
+      "site": "actor/lora_partial_load.py::check::OffloadedInputQuantError#1",
+      "class": "C",
+      "guard": "partial_load_divergence",
+      "waivable": false
+    },
+    {
+      "site": "actor/lora_partial_load.py::check::OffloadedInputQuantError#2",
+      "class": "C",
+      "guard": "partial_load_divergence",
+      "waivable": false
+    },
+    {
       "site": "actor/lora_shape_guard.py::assert_patch_shapes_fit::UnsupportedModelError#0",
       "class": "P",
       "guard": null,

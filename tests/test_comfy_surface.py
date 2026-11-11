@@ -113,6 +113,12 @@ class _SourceBaseModel:
     def process_latent_out(self, latent):
         return latent
 
+    def memory_required(self, input_shape, cond_shapes=None):
+        del input_shape, cond_shapes
+
+    def extra_conds_shapes(self, **kwargs):
+        del kwargs
+
 
 class _SourceBaseModelMissingDiffusion(_SourceBaseModel):
     def __init__(self):

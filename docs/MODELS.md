@@ -2065,6 +2065,19 @@ cfg2 row for such a render, saying so in its reason; on a wider mesh it
 refuses, since no proven topology tiles the world. No hardware render has run
 yet.
 
+**Memory.** ComfyUI prices a render before it samples, from the whole latent
+and every reference, and keeps on the GPU only the weights that price leaves
+room for. The token drop is not in that price: six views at 2048 a view count
+212,992 latent cells, 81.1 GiB on Klein Base 9B in BF16, where the masked
+call holds about 90,600 rows. A Worker prices the rows each prompt's call
+holds and takes the largest: 34.5 GiB for that render when the negative
+carries the same conditioning, and 37.4 GiB when the negative is wired from
+the bare prompt, whose call holds the whole latent. So the model stays whole
+where the box has room for the render
+([TROUBLESHOOTING #79](TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
+There is nothing to set. A LoRA stack with `lora_low_rss` off still holds
+ComfyUI's weight backup, about the checkpoint again on every box.
+
 **Files.** The `Comfy-Org/UltraTex` repository on Hugging Face:
 
 | File | Folder | Size |

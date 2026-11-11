@@ -40,11 +40,18 @@ other plain tensor still raises.
 
 LoRA on quantized shards is not admitted: a quantized key refuses before any
 write.
+
+A key ComfyUI renames as it loads the file (FLUX stores a q/k norm weight as
+``<...>_norm.scale``; the model and a LoRA call it ``<...>_norm.weight``) is
+read under the file's name, taken from ComfyUI's own rename
+(``actor/load_renames.py``) and byte-verified like any other key. A key the
+file holds under no name refuses class P before any write.
 """
 from __future__ import annotations
 
 import math
 import os
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -53,6 +60,7 @@ from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from ..transfer_utils import failure_summary, safe_call
 from . import lora_cast_time
+from .load_renames import load_time_renames, with_renamed
 from .unbake import UnbakeError, UnbakeRecord, _is_quantized, live_tensor
 from .unbake_file import (
     _ST_TO_TORCH,
@@ -142,25 +150,65 @@ def write_shard(
         local.copy_(chunk.to(device=local.device, dtype=local.dtype))
 
 
-def _file_tensor(header: dict[str, _FileTensor], key: str, param: torch.Tensor) -> _FileTensor:
-    for cand in _candidate_file_keys(key):
+def _file_tensor(
+    header: dict[str, _FileTensor], key: str, param: torch.Tensor,
+    renames: dict[str, str] | None = None,
+    matches: Callable[[_FileTensor], bool] | None = None,
+) -> _FileTensor:
+    """The checkpoint tensor a patcher key restores from.
+
+    ``renames`` is ``load_time_renames`` for this model and file: a key ComfyUI
+    renames at load (FLUX's ``<...>_norm.scale``, held as ``<...>_norm.weight``)
+    sits under none of the namespace spellings, and is tried last.
+
+    ``matches`` is the byte check against the live rows. A file may hold a
+    tensor under the key's own name and another under the name ComfyUI loaded
+    it from; the first candidate of the live dtype and shape whose bytes match
+    is the one, as in the resident capture (``unbake._map_plain``). With no
+    match the first candidate of the right dtype and shape is returned, and
+    the caller's own check then says the model is not pristine.
+    """
+    fits: _FileTensor | None = None
+    misfit: tuple[str, _FileTensor] | None = None
+    for cand in with_renamed(_candidate_file_keys(key), renames, key):
         ft = header.get(cand)
         if ft is None:
             continue
         if ft.dtype != param.dtype or ft.shape != tuple(param.shape):
-            # This is the in-bake backstop for an fp32 island cast live, which the
-            # header check (adapters.detect.fsdp_lora_admission_property) cannot
-            # predict. Every rank loads the same file and casts it the same way, so
-            # the class P tag is rank symmetric (docs/DESIGN.md section 5.4).
-            raise UnbakeError(refusal(
-                RefusalClass.PHYSICS,
-                f"checkpoint tensor {cand} is {ft.dtype}/{ft.shape} but the live "
-                f"parameter is {param.dtype}/{tuple(param.shape)}; a LoRA under FSDP "
-                "needs the file's own dtype (no live cast). Use a resident topology "
-                "for this file, or a bf16 artifact with no fp32 islands."
-            ))
-        return ft
-    raise UnbakeError(f"no checkpoint tensor for key {key}")
+            misfit = misfit or (cand, ft)
+            continue
+        if matches is None or matches(ft):
+            return ft
+        fits = fits or ft
+    if fits is not None:
+        return fits
+    if misfit is not None:
+        cand, ft = misfit
+        # This is the in-bake backstop for an fp32 island cast live, which the
+        # header check (adapters.detect.fsdp_lora_admission_property) cannot
+        # predict. Every rank loads the same file and casts it the same way, so
+        # the class P tag is rank symmetric (docs/DESIGN.md section 5.4).
+        raise UnbakeError(refusal(
+            RefusalClass.PHYSICS,
+            f"checkpoint tensor {cand} is {ft.dtype}/{ft.shape} but the live "
+            f"parameter is {param.dtype}/{tuple(param.shape)}; a LoRA under FSDP "
+            "needs the file's own dtype (no live cast). Use a resident topology "
+            "for this file, or a bf16 artifact with no fp32 islands."
+        ))
+    # No tensor under the key's own name, a namespace spelling of it, or a name
+    # ComfyUI renames to it at load (a weight ComfyUI builds from part of a
+    # tensor lands here too). Under FSDP the file is the only pristine copy
+    # (no backup exists for a sharded weight), so the bake cannot go on. Every
+    # rank reads the same header for the same stack, so the class P tag is rank
+    # symmetric, and capture_record raises it before any shard is written.
+    raise UnbakeError(refusal(
+        RefusalClass.PHYSICS,
+        f"a LoRA in this stack patches {key}, and the checkpoint file holds no "
+        "tensor under that name, and none that ComfyUI renames to it at load. A "
+        "LoRA under FSDP bakes from the file and restores from it, so it needs one. "
+        "Use a resident topology for this stack (the same preset without "
+        "+fsdp, which keeps its own copy of the weight), or drop the LoRA that "
+        "patches this key."))
 
 
 def _torch_dtype(ft: _FileTensor) -> torch.dtype:
@@ -231,6 +279,9 @@ def capture_record(
     record = UnbakeRecord(
         path=base_path, file_size=parsed.file_size, file_mtime_ns=parsed.file_mtime_ns,
         file_dev=parsed.file_dev, file_ino=parsed.file_ino, file_ctime_ns=parsed.file_ctime_ns)
+    # A key ComfyUI renames as it loads the file is found under the file's name;
+    # the byte check below still has to pass on it.
+    renames = load_time_renames(model, header)
     with open(base_path, "rb") as f:
         fd = f.fileno()
         for key in keys:
@@ -245,7 +296,10 @@ def capture_record(
                     f"quantized key {key} under FSDP: LoRA on quantized shards is "
                     "not admitted. Use a resident topology for this file, or a "
                     "bf16, fp16, or plain-dtype fp8 checkpoint under FSDP."))
-            ft = _file_tensor(header, key, param)
+            def rows_match(cand: _FileTensor, param: torch.Tensor = param) -> bool:
+                return _shard_bytes_match(fd, cand, param, rank, world, replicated)
+
+            ft = _file_tensor(header, key, param, renames, matches=rows_match)
             if not _shard_bytes_match(fd, ft, param, rank, world, replicated):
                 raise UnbakeError(
                     f"live shard of {key} does not match the checkpoint bytes on rank "
