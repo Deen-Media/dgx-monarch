@@ -173,3 +173,16 @@ def test_an_unload_that_frees_nothing_is_not_priced_again(monkeypatch, tmp_path,
         loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None, slot="cond")
     assert calls.unload == 1 and len(asked) == 1 and "unloaded" not in str(raised.value)
     assert TE_BYTES and "40.0 GiB is available" in str(raised.value)
+
+
+def test_a_model_comfyui_keeps_is_not_asked_for_a_second_time(monkeypatch, tmp_path, box):
+    """ComfyUI gave up a 1 GiB VAE and kept its encoder, and the load is still 6 GiB short:
+    the second pass prices on the new reading and makes no second unload for what stayed."""
+    mesh, asked = _rigged(monkeypatch, tmp_path, box, held_gib=None)
+    calls = _comfy(monkeypatch, box, models=((H3TextEncoder, TE_BYTES), (H3VideoVAE, 1 * _GIB)),
+                   kept=(H3TextEncoder,))
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None, slot="cond")
+    assert calls.unload == 1 and len(asked) == 2
+    assert "the driver unloaded the 1 model (H3VideoVAE)" in str(raised.value)
+    assert "41.0 GiB is available" in str(raised.value)

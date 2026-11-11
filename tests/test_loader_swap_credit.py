@@ -105,6 +105,9 @@ def test_only_the_slot_the_load_goes_into_is_credited():
     assert not _credit(replace(cond_holds, slot="uncond", would_load="fresh"), slot="uncond")
     assert not _credit(cond_holds, slot="uncond"), "the Worker's row is for another slot"
     assert not _credit(cond_holds, slot=""), "a load whose slot is not known gets no credit"
+    # The row's own check, not only the caller's filter over the rows.
+    assert swap_credit._row_credit(cond_holds, "uncond") == (0, "")
+    assert swap_credit._row_credit(cond_holds, "cond") == (int(22.17 * _GIB), FLUX1)
 
 
 def test_nothing_but_the_workers_own_credit_counts():

@@ -2220,7 +2220,9 @@
       "test_an_h3_render_with_nothing_to_drop_is_priced_as_before": "bcb589c04c917a89",
       "test_any_other_error_ends_the_credit_too": "e8be3b78aa0ce344",
       "test_no_credit_leaves_the_rescue_as_it_was": "7d0ef429c3f96f8f",
+      "test_the_driver_footprint_counts_the_drop_only_for_a_load_it_charges": "647cceeb4430c520",
       "test_the_kill_switch_and_a_fault_give_no_credit": "c815e38725672e8f",
+      "test_the_reference_and_pose_price_counts_the_drop_only_for_a_load_it_charges": "396ba56934edf3c2",
       "test_the_unload_still_runs_when_the_credit_falls_short_and_both_count": "6bd200e08e3ec48c"
     },
     "tests/test_requeue_price.py": {

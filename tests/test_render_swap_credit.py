@@ -224,3 +224,53 @@ def test_a_true_shortage_at_the_render_site_still_refuses(monkeypatch, tmp_path,
     with pytest.raises(mesh_safety.StockLoadCapacityError) as raised:
         render_preflight.activation_footprint_preflight_for_request(rig_.model, _request(), _h3_latent())
     assert "already count that the Worker on this box drops flux1-dev.safetensors" in str(raised.value)
+
+
+# The other two prices that read the credit: each takes it only beside its own weight charge.
+
+@pytest.mark.parametrize("resident, counted", [(False, True), (True, False)])
+def test_the_driver_footprint_counts_the_drop_only_for_a_load_it_charges(
+        monkeypatch, box, resident, counted):
+    """Weights the driver reads as loaded are charged nothing, so their price has no drop to count."""
+    from dgx_monarch import driver_footprint
+
+    box.mem = 40 * _GIB
+    seen: list = []
+    monkeypatch.setattr(driver_footprint, "estimate_driver_footprint", lambda **given:
+                        seen.append(given) or SimpleNamespace(weight_bytes=0))
+    monkeypatch.setattr(driver_footprint, "driver_footprint_preflight", lambda *_a, **_k: None)
+    monkeypatch.setattr(driver_footprint, "ref_pixel_volume_from_latents", lambda *_a: (0, 0, 0))
+    model = SimpleNamespace(unet_name=UNET, options=None, mesh=SimpleNamespace(
+        topology_preset="auto", worker_args={}, handle=None))
+    with swap_credit.applying(CREDIT) as applied:
+        render_preflight._driver_footprint_preflight_for_request(
+            model, {}, "minimax_h3", "", weights_loaded=resident)
+    assert [given["weights_resident"] for given in seen] == [resident]
+    assert seen[0]["mem_available"] == box.mem + (CREDIT.bytes if counted else 0)
+    assert applied.used is counted
+
+
+@pytest.mark.parametrize("resident, counted", [(False, True), (True, False)])
+def test_the_reference_and_pose_price_counts_the_drop_only_for_a_load_it_charges(
+        tmp_path, box, resident, counted):
+    """One GiB short of the activations: the 22 GiB drop is room only where the load is pending."""
+    shape = (1, 16, 21, 60, 104)
+    tokens = mesh_safety.ref_pose_token_counts(shape, (), None)[0]
+    need = (tokens * mesh_safety.REF_POSE_TOKEN_FAMILIES["wan_scail"]
+            * mesh_safety._ACTIVATION_BF16_BYTES * mesh_safety._ACTIVATION_BLOCK_FACTOR)
+    box.mem = need - 1 * _GIB
+    path = tmp_path / "scail.safetensors"
+    path.write_bytes(b"")
+
+    def price():
+        mesh_safety.activation_footprint_preflight(
+            "wan_scail", str(path), "scail", video_shape=shape, weights_resident=resident)
+
+    with swap_credit.applying(CREDIT) as applied:
+        if counted:
+            price()
+        else:
+            with pytest.raises(mesh_safety.StockLoadCapacityError) as raised:
+                price()
+            assert f"exceeds {box.mem / _GIB:.1f} GiB available" in str(raised.value)
+    assert applied.used is counted
