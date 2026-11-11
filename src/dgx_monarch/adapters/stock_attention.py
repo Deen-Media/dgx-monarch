@@ -25,7 +25,8 @@ log the pin, because it sees the module.
 
 Only ``inject_usp`` uses these. Topologies without sequence parallelism keep
 every stock call, so a pin runs there as it does in stock ComfyUI, and
-``attention_pins`` records it and asks for the waiver (docs/ADAPTERS.md).
+``attention_pins`` records it, and asks for the waiver except for a checkpoint's
+own pins in a world of one GPU (docs/ADAPTERS.md).
 """
 from __future__ import annotations
 

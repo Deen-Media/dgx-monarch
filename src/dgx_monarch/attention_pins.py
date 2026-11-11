@@ -11,12 +11,15 @@ place before a render. ``wrap_attn`` runs ``function`` unless the call carries
 an ``optimized_attention_override``.
 
 Under sequence parallelism no attention call runs a pin (docs/ADAPTERS.md).
-Every topology without it (on a two-rank pair: single, cfg2, dp2, cfg2+fsdp and
-dp2+fsdp) keeps every stock call, so a pin runs as it does on one GPU, except
-where the FSDP shard build cleared it (``note_injected``). This module finds the
-pins, says in the render record which ran, and refuses a render whose pin would
-run an approximate kernel until the operator grants the class-K Sol-Attn waiver
-(docs/TROUBLESHOOTING.md #117).
+Every topology without it (single, cfg2, dp2, cfg2+fsdp and dp2+fsdp) keeps
+every stock call, so a pin runs as it does on one GPU, except where the FSDP
+shard build cleared it (``note_injected``). This module finds the pins, says in
+the render record which it kept, and refuses a render whose pin would run an
+approximate kernel until the operator grants the class-K Sol-Attn waiver
+(docs/TROUBLESHOOTING.md #117). One case asks nothing: in a world of one GPU,
+the checkpoint's own header pins, unchanged (``attention_pins_source``), run as
+stock runs them. The record reads the pins from the load and the topology; it
+does not count attention calls.
 
 Cost: one ``named_modules`` walk per fresh load (``scan_loaded``), cached on the
 loaded model. Each render reads that cache and the patcher's object patches, a
@@ -257,6 +260,8 @@ class PinSummary:
     running: dict[str, int]
     dropped: dict[str, int]
     live: dict[str, int] | None = None
+    # Every pin is the checkpoint's own, unchanged (attention_pins_source).
+    checkpoint_only: bool = False
 
     @property
     def ran(self) -> bool:
@@ -277,15 +282,21 @@ class PinSummary:
         return fields if model is None else {**fields, MODEL_KEY: model}
 
 
-def summarize(patchers: Iterable[Any], *, sequence_parallel: bool) -> PinSummary | None:
-    """Summarize the pins of the patchers this rank renders, or None when none pin."""
+def summarize(patchers: Iterable[Any], *, sequence_parallel: bool,
+              checkpoint_only: bool | None = None) -> PinSummary | None:
+    """Summarize the pins of the patchers this rank renders, or None when none pin.
+
+    ``checkpoint_only`` None reads each patcher (``attention_pins_source``); a
+    header-only prediction (benchmark/sweep/matrix.py) passes True.
+    """
+    from .attention_pins_source import checkpoint_only as own
+
     kernels: dict[str, int] = {}
     live: dict[str, int] = {}
     running: dict[str, int] = {}
     dropped: dict[str, int] = {}
-    for patcher in patchers:
-        if patcher is None:
-            continue
+    rendered = [patcher for patcher in patchers if patcher is not None]
+    for patcher in rendered:
         for pin in effective_pins(patcher).values():
             kernels[pin.label] = kernels.get(pin.label, 0) + 1
             reason = (DROPPED_SEQUENCE_PARALLEL if sequence_parallel
@@ -299,7 +310,8 @@ def summarize(patchers: Iterable[Any], *, sequence_parallel: bool) -> PinSummary
                 dropped[reason] = dropped.get(reason, 0) + 1
     if not kernels:
         return None
-    return PinSummary(kernels, running, dropped, live)
+    owned = all(own(patcher) for patcher in rendered) if checkpoint_only is None else checkpoint_only
+    return PinSummary(kernels, running, dropped, live, owned)
 
 
 def render_summary(worker: Any, patchers: Iterable[Any]) -> PinSummary | None:
@@ -345,11 +357,17 @@ def assert_waived(summary: PinSummary | None, topology: Mapping[str, Any] | None
     cfg2, whose rank refuses on its own pins while the card names the
     conditional checkpoint every grant of that render is keyed on. A grant
     fires the ledger's use row once per dispatch and stamps the output.
+
+    In a world of one GPU (``alone``) the checkpoint's own header pins, unchanged
+    (``PinSummary.checkpoint_only``), run as stock ComfyUI runs them: nothing
+    is asked, nothing stamped and no ledger row written, before the waiver is
+    read. A LoRA's pin, or a live module that differs, still refuses there.
     """
     from . import accuracy_waiver
+    from .attention_pins_source import ALONE_SOURCE
     from .refusal import RefusalClass, refusal
 
-    if summary is None:
+    if summary is None or (alone and summary.checkpoint_only):
         return
     approximate = summary.approximate_running if alone else summary.approximate_live
     if not approximate or accuracy_waiver.waived(SOL_ATTN_PIN_GUARD):
@@ -368,7 +386,8 @@ def assert_waived(summary: PinSummary | None, topology: Mapping[str, Any] | None
         f"{_phrase(approximate)}{total}, set by "
         f"{_source(pinned_by)} or a LoRA in its stack through ComfyUI's comfy_attention "
         f"config. Topology {label} runs no sequence parallelism, so ComfyUI runs each "
-        f"pinned kernel as it does on one GPU. What each kernel does: {risks}. An "
+        f"pinned kernel as it does on one GPU. "
+        f"{ALONE_SOURCE if alone else ''}What each kernel does: {risks}. An "
         "approximate kernel is known-wrong math by construction, so this refuses by "
         "default. Two remedies: grant the Sol-Attn accuracy waiver for this checkpoint, "
         "topology and world, which stamps the output, or pick a sequence-parallel "
@@ -437,14 +456,14 @@ def merge(rows: Iterable[Any]) -> dict[str, Any] | None:
 
 
 def _clause(record: Any) -> str:
-    """One model's pins and what ran: "comfy_kitchen_sol x 40 modules, ran"."""
+    """One model's pins and what it kept: "comfy_kitchen_sol x 40 modules, kept"."""
     counts = record.get("attention_pins") if isinstance(record, Mapping) else None
     if not isinstance(record, Mapping) or not isinstance(counts, Mapping) or not counts:
         return ""
     pinned = ", ".join(f"{label} x {count} module{'s' if count != 1 else ''}"
                        for label, count in sorted(counts.items()))
     if record.get("attention_pins_ran") is True:
-        return f"{pinned}, ran"
+        return f"{pinned}, kept"
     reasons = record.get("attention_pins_dropped")
     reasons = reasons if isinstance(reasons, Mapping) else {}
     why = ", ".join(sorted(str(reason) for reason in reasons))
@@ -452,14 +471,14 @@ def _clause(record: Any) -> str:
     total = sum(n for n in counts.values() if isinstance(n, int))
     if not why or dropped >= total:
         return f"{pinned}, dropped" + (f" ({why})" if why else "")
-    return f"{pinned}, ran on {total - dropped}, dropped on {dropped} ({why})"
+    return f"{pinned}, kept on {total - dropped}, dropped on {dropped} ({why})"
 
 
 def describe(record: Mapping[str, Any] | None) -> str:
-    """One line for a result row or a log: "pinned: comfy_kitchen_sol x 40 modules, ran".
+    """One line for a result row or a log: "pinned: comfy_kitchen_sol x 40 modules, kept".
 
     Under dual-model cfg2, when both models pin, one clause per model:
-    "pinned: cond model: ..., ran; uncond model: ..., dropped (...)".
+    "pinned: cond model: ..., kept; uncond model: ..., dropped (...)".
     """
     models = record.get(MODELS_FIELD) if isinstance(record, Mapping) else None
     entries = (sorted(models.items(), key=lambda item: str(item[0]))

@@ -2405,18 +2405,19 @@ def test_a_checkpoint_comfy_cannot_load_drops_its_set_with_a_note(tmp_path):
     assert _local(cells, "plain")["label"] == "render"
 
 
-def test_a_pinned_checkpoint_refuses_class_k_wherever_its_pins_run(tmp_path):
+def test_a_pinned_checkpoint_refuses_class_k_wherever_its_pins_run_off_one_gpu(tmp_path):
     """Without sequence parallelism a pinned approximate kernel runs as on one
-    GPU, so the worker's guard refuses class K under the Sol-Attn waiver on
-    single (alone, reading the binding), cfg2, dp2, cfg2+fsdp and dp2+fsdp."""
+    GPU. On one GPU the checkpoint's own pins run as stock runs them and ask
+    nothing; on cfg2, dp2, cfg2+fsdp and dp2+fsdp the worker's guard refuses
+    class K under the Sol-Attn waiver."""
     config = _pinned_int8(tmp_path)
     config.update(toggles={"auto_gate": ["off"]},
                   toggle_presets={"auto_gate": ["cfg2+fsdp", "dp2+fsdp"]})
     cells, _pruned, _unmatched = matrix.build_cells(config)
     guard = "sol_attn:checkpoint_pin"
     local = _local(cells, "pinned")
-    assert (local["preset"], local["label"], local["basis"]) == ("single", "refuse:K", "header")
-    assert (local["waiver"], local["waiver_guards"]) == (True, [guard])
+    assert (local["preset"], local["label"], local["basis"]) == ("single", "render", "guard")
+    assert (local["waiver"], local["waiver_guards"]) == (False, [])
     assert local["checkpoint_pins"] == {"comfy_kitchen_int8": 2}
     for preset in ("cfg2", "dp2"):
         cell = _pick(cells, "pinned", preset)
@@ -2519,10 +2520,13 @@ def test_a_pinned_cfg_cell_at_cfg_one_is_waivable_only_where_the_grant_renders(
         # Without the pins the same cell answers the cfg rule (or renders).
         plain = _pick(cells, "plain", preset, **over)["label"]
         assert plain == ("render" if waivable else "refuse:P"), preset
-    # dp2 and single run no cfg wrapper, so the grant renders there.
-    for cell in (_pick(cells, "pinned", "dp2"), _local(cells, "pinned")):
-        assert (cell["label"], cell["waiver"], cell["waiver_guards"]) == (
-            "refuse:K", True, [guard]), cell["preset"]
+    # dp2 runs no cfg wrapper, so the grant renders there; on one GPU the
+    # checkpoint's own pins ask nothing.
+    cell = _pick(cells, "pinned", "dp2")
+    assert (cell["label"], cell["waiver"], cell["waiver_guards"]) == ("refuse:K", True, [guard])
+    local = _local(cells, "pinned")
+    assert (local["label"], local["basis"], local["waiver"], local["waiver_guards"]) == (
+        "render", "guard", False, [])
 
 
 def test_a_sol_kernel_without_sequence_parallelism_refuses_class_p_before_the_pins(tmp_path):
@@ -2620,11 +2624,11 @@ def test_a_pinned_nvfp4_cell_on_cfg2_carries_no_shard_quant_waiver(tmp_path):
         cell = _pick(cells, "chromapin", preset, artifact_quant="nvfp4")
         assert (cell["label"], cell["waiver"]) == ("refuse:K", True), preset
         assert shard in cell["waiver_guards"] and pin not in cell["waiver_guards"], preset
-    # One GPU runs no shard bar, so the pin guard answers there and its grant renders.
+    # One GPU runs no shard bar, and the checkpoint's own pins ask nothing there.
     single = [cell for cell in cells if cell["template"] == "chromapin"
               and cell["session"] == "local" and "nvfp4" in cell["artifact_quant"]]
     assert [(cell["label"], cell["basis"], cell["waiver"], cell["waiver_guards"])
-            for cell in single] == [("refuse:K", "header", True, [pin])]
+            for cell in single] == [("render", "guard", False, [])]
     # The same cell without the pins keeps the shard-quant card, and the
     # unpinned bf16 artifact of the pinned template renders.
     plain = _pick(cells, "chromaplain", "cfg2", artifact_quant="nvfp4")

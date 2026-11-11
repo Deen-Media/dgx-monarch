@@ -465,8 +465,9 @@ than stacks on a repeat call.
    cfg2+fsdp and dp2+fsdp) leaves every stock attention call in place, so a
    pin runs there as it does in stock ComfyUI on one GPU, with the FSDP
    cases below. Dropping the pin there would break the cfg2
-   same-math gate, which compares against one GPU, so the pack detects,
-   records and waives it instead (`attention_pins.py`):
+   same-math gate, which compares against one GPU, so the pack detects and
+   records it instead and, off a world of one GPU or for a LoRA's pin,
+   waives it (`attention_pins.py`):
 
    * **Detection.** Once per fresh load, before injection and before
      ComfyUI stages any LoRA, the pack walks the loaded model and keeps every
@@ -482,8 +483,10 @@ than stacks on a repeat call.
    * **Record.** The render finish record carries `attention_pins` (pinned
      attention modules per kernel; Sol's tau is part of the kernel's name),
      `attention_pins_ran` and `attention_pins_dropped` (modules per reason a
-     pin does not run). `attention_pins_ran` is true when ComfyUI dispatches
-     every pinned module to its pinned kernel, as on one GPU; the kernel
+     pin does not run). `attention_pins_ran` is true when the pack kept every
+     pinned module's kernel: the pins come from the load and the topology,
+     and the record does not count attention calls. A kept pin is dispatched
+     by ComfyUI to its pinned kernel, as on one GPU; the kernel
      itself still runs exact attention on a masked call (Sol) or on a float32
      call with `low_precision_attention` off (int8). The count is per
      attention module, so a block whose self- and cross-attention are both
@@ -492,13 +495,13 @@ than stacks on a repeat call.
      the gate ledger's capability context, is unchanged, so no combination
      gates again. The sidebar's last-render line and the
      `benchmark/run_matrix.py` console show them as, for example, "pinned:
-     comfy_kitchen_sol tau=0.7 x 40 modules, ran"; run_matrix result rows
+     comfy_kitchen_sol tau=0.7 x 40 modules, kept"; run_matrix result rows
      carry the three fields. Under dual-model cfg2 each cfg rank renders its
      own checkpoint, so the fields add the two models' modules, as one rank
      holding both does. When both models pin, `attention_pins_models` keeps
      each model's own three fields under `cond` and `uncond`, run_matrix rows
      carry it too, and the line gives one clause per model, for example
-     "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; uncond
+     "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, kept; uncond
      model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped (kernel
      unavailable on this host)".
    * **Waiver.** Both kernels ComfyUI binds are approximate by construction.
@@ -512,11 +515,29 @@ than stacks on a repeat call.
      is neither: the checkpoint or LoRA picked it, and it runs on both legs
      of the cfg2 same-math gate, so that gate cannot see it. So it takes the
      waiver too. A kernel this project has not classified counts as
-     approximate. When a pinned approximate kernel would run, the render
-     refuses with class K under the guard `sol_attn:checkpoint_pin` before
-     any sampling, and runs, stamped, once the operator grants the Sol-Attn
-     waiver for that checkpoint, topology and world
+     approximate. In a world of one GPU (one rank: `mode=local` with one GPU,
+     or one Spark by itself) a checkpoint's own header pins run as stock
+     ComfyUI runs them, so they ask nothing: no refusal, no stamp and no
+     ledger row, and the first-use ceremony runs every leg with them. A
+     `single` preset on a two-rank mesh resolves to dp2 on the Worker and
+     keeps the card.
+     "Its own" is read strictly (`attention_pins_source.py`): any LoRA object
+     patch on a `comfy_attention` path counts as a LoRA pin, one that restates
+     the header pin unchanged included, and so does a module the forward would
+     run that differs from the load scan in kernel or tau, such as a LoRA's
+     module left live. Everywhere else, when a pinned approximate kernel would
+     run, the render refuses with class K under the guard
+     `sol_attn:checkpoint_pin` before any sampling, and runs, stamped, once
+     the operator grants the Sol-Attn waiver for that checkpoint, topology
+     and world
      ([docs/TROUBLESHOOTING.md #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+     cfg2, dp2 and their `+fsdp` forms keep that rule for a header pin
+     wherever the pins run, which is the fp8 and int8 direct wrap and every
+     form without FSDP: docs/VALIDATION.md records cfg2 against the pinned
+     one-GPU render identical on the vendor-length prompt and at one-step
+     NRMS 0.015 to 0.016 on the one-block prompt, and the cause of that gap
+     is not established. A bf16 or fp16 file under `+fsdp` follows the
+     shard-build rule stated with the FSDP cases below.
      The card says the kernel is approximate by construction and claims no
      measurement for it. The pack decides from the pins, the LoRA stack and the
      topology, never from whether ComfyUI could bind the kernel on this host,
@@ -535,13 +556,16 @@ than stacks on a repeat call.
    dropped the pins. The record names two other cases where a pin does not
    run. The FSDP shard build of a bf16 or fp16 checkpoint reloads the
    sharded weights through `load_state_dict`, and `ComfyAttention` clears
-   its config on any load whose state dict lacks the key, so a pin that
-   reached that build would not run, and the record would name it. The FSDP
+   its config on any load whose state dict lacks the key, so the build
+   clears every pin it meets, and the record says dropped. The FSDP
    launch check does not count a uint8 config tensor
    (`fsdp_islands.proof_bytes_by_dtype`), since it is no weight, so a bf16 or
    fp16 checkpoint whose own header pins now proves its precision and reaches
-   that build, which clears its pins. The rule: class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP shard build drops the pins, nothing approximate runs, no card asks, and the record says dropped (FSDP shard build), on every `+fsdp` preset and for every family. The Init
-   widget's kernel runs instead, so the render differs from stock's pinned
+   that build, which clears its pins. The rule: class K guards a pinned kernel
+   that runs; where the bf16 or fp16 FSDP shard build drops the pins, nothing
+   approximate runs, no card asks, and the record says dropped (FSDP shard
+   build), on every `+fsdp` preset and for every family. The Init widget's
+   kernel runs instead, so the render differs from stock's pinned
    render on one GPU by construction, as on uly2. The one such shipped file,
    MiniMax-H3-Image's BF16 DiT, meets the family's loader refusal first until
    its adapter lands
@@ -559,9 +583,13 @@ than stacks on a repeat call.
    tensor refuses, so slab residency and the low-RSS LoRA staging keep these
    uint8 tensors on the host. Without that, a pinned checkpoint under slab
    residency and a pinned LoRA under low-RSS staging would each fail to load:
-   a CPU reproduction shows the decode error, though no hardware load has
-   checked either path yet. Slab residency prices a LoRA that holds only
-   these tensors as no bake, because it patches no weight.
+   a CPU reproduction shows the decode error. Since a checkpoint's own pins
+   run in a world of one GPU, slab residency with pins runs there;
+   `tests/test_attention_pin_slab_comfy.py` holds a slab load against a stock
+   load of the same pinned file through ComfyUI's real `ComfyAttention`
+   (config, kernel and tau equal), and no hardware load has checked either
+   path yet. Slab residency prices a LoRA that holds only these tensors as no
+   bake, because it patches no weight.
 
    Under dual-model cfg2 each rank checks the checkpoint it holds and its
    LoRA stack, and the dm-cfg2 readiness exchange makes the other rank
@@ -571,9 +599,11 @@ than stacks on a repeat call.
    checkpoint that pins.
 
    The first-use ceremony carries no waiver, so a ceremony on a pinned
-   combination ends on this guard, as it does for every class-K guard, and
-   changes no residency setting. On a resident topology a risky combination
-   (a LoRA stack, or slab residency requested) then renders under stock
+   combination that asks ends on this guard, as it does for every class-K
+   guard, and changes no residency setting; in a world of one GPU the
+   checkpoint's own pins ask nothing, so there the ceremony runs as for an
+   unpinned file. On a resident topology a risky combination (a LoRA stack, or
+   slab residency requested) then renders under stock
    residency, the limit TROUBLESHOOTING #84 describes for Sol. FSDP has no
    stock residency to fall back to. Under `auto_gate=first_use`, a render on
    cfg2+fsdp or dp2+fsdp needs a Gate PASS, and the ceremony that would earn

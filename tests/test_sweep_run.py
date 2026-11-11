@@ -1900,7 +1900,7 @@ def test_the_session_still_replaces_the_fleet_where_the_residue_could_answer(
 
 def test_a_cell_scored_against_a_pinned_reference_names_the_reference(monkeypatch, tmp_path):
     # A uly2 cell of a pinned checkpoint runs exact attention against a
-    # reference that renders the pinned kernel under the waiver
+    # reference that renders the pinned kernel, on one GPU as stock does
     # (matrix.known_wrong_reference). Its line names that reference, not this
     # cell's own kernel, which is no approximation.
     monkeypatch.setattr(run, "compare_outputs", lambda *args, **kwargs: {
@@ -1915,8 +1915,8 @@ def test_a_cell_scored_against_a_pinned_reference_names_the_reference(monkeypatc
     assert record["verdict"] == "PASS" and record["findings"] == []
     line = record["waived_render"]
     assert record["notes"] == [line] and line.startswith(f"{matrix.WAIVED_BAR} 0.07 ")
-    assert "sol_attn:checkpoint_pin" in line and "TORCH_FLASH" not in line
-    assert "this cell and its reference" not in line
+    assert "the reference renders the checkpoint's pinned approximate attention kernel" in line
+    assert "TORCH_FLASH" not in line and "this cell renders" not in line
     # A cfg2 or dp2 cell of the same checkpoint runs the pins too, under its own grant.
     held = _fidelity_cell(probe=True, attention="TORCH_FLASH",
                           waiver_guards=["sol_attn:checkpoint_pin"],
@@ -1924,8 +1924,9 @@ def test_a_cell_scored_against_a_pinned_reference_names_the_reference(monkeypatc
                                      "bar": matrix.WAIVED_BAR, "probe_steps": 1})
     record = {"verdict": "PASS", "findings": [], "notes": []}
     run._fidelity(record, held, tmp_path, 0.10)
-    assert record["verdict"] == "PASS" and "this cell and its reference both render" in \
-        record["waived_render"]
+    line = record["waived_render"]
+    assert record["verdict"] == "PASS" and "sol_attn:checkpoint_pin waiver" in line
+    assert "its one-GPU reference renders it as stock ComfyUI does" in line
 
 
 def test_a_card_no_cell_grants_is_dismissed_so_the_next_grant_finds_one(monkeypatch, tmp_path):

@@ -1982,8 +1982,10 @@ clean-reload proof before it samples.
 It never names a file this graph would then refuse: a DiT file is named only
 when a graph here names it (the artifact manifest lists it) and none of the
 refusals the driver can read from its header applies, so no INT8 MOSS-Image
-file beside a LoRA (#129), no W4A8 file on a `*+fsdp` preset, and no file that
-pins an attention kernel off Ulysses and ring (#117). The pair is not offered
+file beside a LoRA (#129), no W4A8 file on a `*+fsdp` preset, and no file whose
+pins would ask for the Sol-Attn waiver: one that pins an attention kernel on a
+pair without Ulysses or ring, or in a world of one GPU beside a LoRA that pins
+(#117). The pair is not offered
 beside a LoRA. For H3,
 try a smaller text encoder, a pruned/quantized DiT, fewer or smaller references,
 a smaller canvas/clip, or more free host memory. Pruned int8/fp8 reference-video
@@ -4353,11 +4355,10 @@ refiners and encoders every rank runs whole) uses ComfyUI's default exact
 backend ([ADAPTERS.md](ADAPTERS.md) lists each site). Under sequence
 parallelism the card appears only when the widget selects Sol. A topology
 without sequence parallelism keeps every stock attention call, so a pin runs
-there as it does in stock ComfyUI, and the render refuses with this same card
-until the operator grants it
-([#117](#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel),
-which also covers the FSDP launch check a bf16 or fp16 checkpoint that pins
-meets first).
+there as it does in stock ComfyUI. In a world of one GPU a checkpoint's own pin
+asks nothing; elsewhere, and for a LoRA's pin, the render refuses with this
+same card until the operator grants it
+([#117](#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
 
 **The kernel is optional and is not a dependency of this project.** The opt-in
 installer plans every configured Worker interpreter. First stop ComfyUI and
@@ -6080,35 +6081,51 @@ LoRA with `.comfy_attention.config` keys, pin an attention kernel on each
 attention module. It ships two such kernels, `comfy_kitchen_sol` (sparse
 attention, with a tau) and `comfy_kitchen_int8` (q, k, v and the attention
 weights rounded to 8 bits), and both are approximate by construction. On a
-topology without sequence parallelism (on a two-rank pair: single, cfg2, dp2,
-cfg2+fsdp and dp2+fsdp) ComfyUI runs the pinned kernel as it does on one GPU,
-so dgx-monarch refuses before any sampling unless the operator has granted the
-waiver. The message names the kernels, the number of attention modules and
-the topology; [ADAPTERS.md](ADAPTERS.md) has the contract. On cfg2+fsdp and
-dp2+fsdp an fp8 or int8 checkpoint keeps its pins, and they ask too. A bf16 or
-fp16 checkpoint whose own header pins asks nothing there: the FSDP launch check
-does not count its uint8 config tensors, and the shard build reloads the
-weights without them, so its pins do not run. The Init widget's kernel runs
+topology without sequence parallelism ComfyUI runs the pinned kernel as it
+does on one GPU. In a world of one GPU (one rank: `mode=local` with one GPU,
+or one Spark by itself) the checkpoint's own pins run as stock ComfyUI runs
+them, so nothing refuses and nothing is stamped. On cfg2 and dp2, on a
+`single` preset on a two-rank mesh, which resolves to dp2 on the Worker, on
+cfg2+fsdp and dp2+fsdp for an fp8 or int8 checkpoint, which keeps its pins,
+and in a world of one GPU when a LoRA in the stack sets, restates or changes a
+pin, dgx-monarch refuses before any sampling unless the operator has granted
+the waiver. The message names the kernels, the number of attention
+modules and the topology; [ADAPTERS.md](ADAPTERS.md) has the contract. cfg2
+and dp2 keep the card for a checkpoint's own pins because a cfg2 render
+measured a small gap against the pinned one-GPU render on a short prompt
+(docs/VALIDATION.md, FLUX.3 Klein), whose cause is not established. On
+cfg2+fsdp and dp2+fsdp an fp8 or int8 checkpoint keeps its pins, and they ask
+too. A bf16 or fp16 checkpoint whose own header pins asks nothing there: the
+FSDP launch check does not count its uint8 config tensors, and the shard build
+reloads the weights without them, so its pins do not run. The Init widget's kernel runs
 instead, so the render differs from stock's pinned render on one GPU by
 construction, as on uly2, and the record says dropped (FSDP shard build).
 
 The FLUX.3 Image Klein INT8 ConvRot files are the first shipped checkpoints
 that pin a kernel: comfy-kitchen's INT8 attention on 33 attention modules, the
-five image blocks and the 28 single blocks. Their testing graphs ask for the
-waiver on single, cfg2 and dp2 and render without it on uly2, which drops the
-pins and runs exact attention, so a uly2 render differs from stock INT8 on one
-GPU by construction. The BF16 and NVFP4 files pin nothing, and the shipped
-FLUX.3 templates use BF16.
+five image blocks and the 28 single blocks. Their testing graphs render on
+one GPU with the pins and no card, ask for the waiver on cfg2 and dp2, and
+render without it on uly2, which drops the pins and runs exact attention, so a
+uly2 render differs from stock INT8 on one GPU by construction. The BF16 and
+NVFP4 files pin nothing, and the shipped FLUX.3 templates use BF16.
 
 The MOSS-Image INT8 ConvRot files, the SFT, Base and Kromoss checkpoints, pin
 comfy-kitchen's INT8 attention on all 42 blocks and on neither text-embedder
-block. Their testing graphs ask for the waiver on single, cfg2 and dp2 and
-render without it on uly2, which drops the pins and runs exact attention, so
-a uly2 render differs from stock INT8 on one GPU by construction. The BF16
-files pin nothing, and the shipped MOSS-Image templates use BF16.
+block. Their testing graphs render on one GPU with the pins and no card, ask
+for the waiver on cfg2 and dp2, and render without it on uly2, which drops the
+pins and runs exact attention, so a uly2 render differs from stock INT8 on one
+GPU by construction. The BF16 files pin nothing, and the shipped MOSS-Image
+templates use BF16.
 
-**What to do:** either accept the card and queue the render again, or pick a
-sequence-parallel topology such as uly2, where dgx-monarch drops every pin and
+**Which to pick.** On one GPU a pinned file renders with its publisher's INT8
+attention, as stock ComfyUI does. On uly2 it renders with exact attention,
+which stock ComfyUI cannot do with that file. The two differ a little, and the
+render record says which one ran: "kept" for the pins, "dropped (sequence
+parallelism)" for exact attention.
+
+**What to do:** either accept the card and queue the render again, render on
+one GPU without the LoRA that sets the pin, or pick a sequence-parallel
+topology such as uly2, where dgx-monarch drops every pin and
 the Init widget's kernel runs (exact under TORCH_FLASH; the Sol card appears
 there only if the widget selects Sol). The card grants the Sol-Attn waiver
 for this checkpoint, topology and world; headless, set
@@ -6137,8 +6154,10 @@ default `slab_weights=auto` makes it risky, so a checkpoint that pins pays
 for it even with no LoRA. After the ceremony the combination renders
 under stock residency, and that answer stands for the rest of the ComfyUI
 session: the grant does not run the ceremony again, and each new session
-runs it once more. To keep the slab and low-RSS levers, grant the card and
-set `auto_gate=off` for that graph
+runs it once more. On one GPU a checkpoint's own pins meet no guard, so the
+ceremony there runs every leg with the pins, slab residency included, and
+keeps the levers. To keep the slab and low-RSS levers on cfg2, grant the card
+and set `auto_gate=off` for that graph
 ([#66](#66-the-gate-says-inconclusive-on-a-graph-with-no-lora),
 [#67](#67-what-auto_gateoff-costs-and-what-it-does-not)).
 
@@ -6147,16 +6166,18 @@ set `auto_gate=off` for that graph
 modules per kernel), `attention_pins_ran` and `attention_pins_dropped`
 (modules per reason). The sidebar's last-render line, the run_matrix console
 and the driver log print one line, for example "render pinned:
-comfy_kitchen_sol tau=0.7 x 40 modules, ran". Under dual-model cfg2 each cfg
+comfy_kitchen_sol tau=0.7 x 40 modules, kept". Under dual-model cfg2 each cfg
 rank renders its own checkpoint, so the three fields add the two models'
 modules. When both models pin, `attention_pins_models` carries each model's
 own fields under `cond` and `uncond`, and the line gives one clause per
 model, for example "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20
-modules, ran; uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped
+modules, kept; uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped
 (kernel unavailable on this host)". The count is per attention
 module, so a block whose self- and cross-attention are both pinned counts
-twice. "ran" means ComfyUI dispatched each pinned module to its pinned kernel,
-as on one GPU; the kernel itself still runs exact attention on a masked call
+twice. "kept" means dgx-monarch left each pinned module's kernel in place: the
+record reads the pins from the load and the topology, and it does not count
+attention calls. A kept pin is dispatched by ComfyUI to its pinned kernel, as
+on one GPU; the kernel itself still runs exact attention on a masked call
 (Sol) or on a float32 call with `low_precision_attention` off (int8). A pin
 does not run for one of three reasons: `sequence parallelism`; `FSDP shard
 build`, for a pin the shard build of a bf16 or fp16 checkpoint cleared on any
@@ -6194,7 +6215,8 @@ text's length, not the image's. `--blocks N` pins only the first N modules.
 Load the file with a LoRA loader at strength 1.0, since strength 0 stages no
 pin. On cfg2 under `auto_gate=first_use` the first queue runs the first-use
 ceremony above, then shows the card; after the grant expect a stamped render
-on stock residency whose record reads "ran". On uly2 expect no card and a
+on stock residency whose record reads "kept". On one GPU the probe LoRA's pin
+is a LoRA's, so it shows the card there too. On uly2 expect no card and a
 record that reads "dropped (sequence parallelism)"; on cfg2+fsdp or dp2+fsdp
 under `auto_gate=first_use` expect the refusal above even after the grant. The file
 patches no weight, and slab residency prices it as no bake.
