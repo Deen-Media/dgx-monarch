@@ -2073,6 +2073,30 @@ Two stock loads over that slab were admitted with no refusal that day, so no
 credit for it has been needed yet
 ([VALIDATION](VALIDATION.md#capacity-checks-2026-11-05)).
 
+**ComfyUI in the driver reads the box as it is.** The checks above are the
+pack's own and read MemAvailable. ComfyUI has readers of its own in the driver
+process, and on unified memory one of them is wrong. comfy-aimdo, which places
+every weight of a DynamicVRAM model, reads MemAvailable from `/proc/meminfo` on
+an integrated Linux GPU, against a floor of a sixteenth of the device clamped
+to 2 and 8 GiB (7.6 GiB on a Spark). ComfyUI's Python
+`model_management.get_free_memory` reads `torch.cuda.mem_get_info`, which on
+GB10 follows MemFree: a few GiB once the page cache is full or a Worker holds a
+model, with tens of GiB available. That reading does not place weights. It
+sets how many images a VAE takes in a batch, whether a decode tiles, whether
+stock sampling runs cond and uncond in one forward, when the allocator cache is
+flushed and the free figure the UI shows, so those choices moved with the page
+cache, and a VAE's result for an image depends on the batch it shared. At node
+import the pack replaces the device-free term of that function with MemAvailable
+less comfy-aimdo's floor (`driver_uma_memory.install_driver`), on Linux and
+only where the driver's CUDA device reports itself integrated, the gate the
+actors' correction uses (TROUBLESHOOTING #12). Every other device and the
+allocator's cached-free bytes stay ComfyUI's own. The floor is the driver's
+alone: an actor's loads are priced before a byte is read, and nothing prices a
+VAE batch. `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` leaves ComfyUI's reading in
+place. What it does not settle: a batch whose estimate is most of the box (six
+2048 views in one VAE batch are priced at 82.8 GiB) still splits by what the
+session has available.
+
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a
 purge, and a purge runs only when the thread that owns them allocates again

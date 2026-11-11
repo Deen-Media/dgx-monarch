@@ -467,6 +467,21 @@
 
 ### Rendering
 
+- On a DGX Spark the driver's ComfyUI now reads free memory as MemAvailable
+  less a 7.6 GiB floor, not the device figure that follows MemFree. ComfyUI
+  sizes VAE batches, picks tiled against untiled decodes and batches cond with
+  uncond from that reading, so a few minutes into a session (page cache full,
+  a Worker holding a model) it encoded images one or two at a time and tiled
+  decodes that fit, and the same graph gave different conditioning from run to
+  run: on 2026-11-11 six UltraTex views encoded in other VAE batch splits came
+  out 56 to 64 percent of their values apart, which read as two identity
+  misses. Weights were never affected (comfy-aimdo already reads MemAvailable
+  on an integrated GPU). The reading is installed at node import on an
+  integrated CUDA device only; `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` turns it
+  off. A stock render recorded with little MemFree can change once, since its
+  batches no longer split. A batch priced at most of the box (six 2048 views)
+  still splits by what the session has available
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
   class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,

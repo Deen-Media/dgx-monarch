@@ -10,7 +10,7 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from dgx_monarch import demo_inputs, fp8_compute  # noqa: E402
+from dgx_monarch import demo_inputs, driver_uma_memory, fp8_compute  # noqa: E402
 from dgx_monarch.kernels import int8_gemm  # noqa: E402
 from dgx_monarch.mesh import install_fault_hook  # noqa: E402
 from dgx_monarch.nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS  # noqa: E402
@@ -25,6 +25,13 @@ int8_gemm.install_driver()
 # One `FP8 compute:` line per model ComfyUI builds in this process, naming the
 # operations class it picked (docs/MODELS.md, FP8 compute paths). It only logs.
 fp8_compute.install_driver()
+
+# On a GPU that shares the host's memory (a DGX Spark), ComfyUI's free-memory
+# reading follows MemFree and its VAE batch and tile choices swing with the
+# page cache. This process then reads MemAvailable less a floor
+# (src/dgx_monarch/driver_uma_memory.py). A discrete GPU is left alone, it
+# never raises, and DGXM_DISABLE_DRIVER_UMA_MEMORY=1 turns it off.
+driver_uma_memory.install_driver()
 
 # Copy the templates' demo images, clips and music into ComfyUI's input folder
 # where it lacks them, never replacing a file (src/dgx_monarch/demo_inputs.py).

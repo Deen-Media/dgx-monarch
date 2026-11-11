@@ -626,6 +626,21 @@ the host. bf16 krea2 then renders single-copy. Confirm the log line
 untouched and fp8 is unchanged (it always fit the estimate). Still tight?
 Drop the page cache too ([#5](#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc)) so host-available is not crowded.
 
+**The driver's ComfyUI has the same reading, with another symptom.** Its
+weights are placed by comfy-aimdo, which reads MemAvailable on an integrated
+GPU, so a model does not hang there. But the same `get_free_memory` sizes VAE
+batches and picks tiled against untiled decodes, so on a Spark a few minutes
+into a session the driver encoded a batch of images one or two at a time,
+tiled decodes that fit, and gave the same graph different conditioning from
+one run to the next (a VAE's result for an image depends on the batch it
+shared). The fix is automatic too: at node import the pack makes the driver's
+ComfyUI read MemAvailable less a 7.6 GiB floor on an integrated CUDA device.
+Confirm the driver log line `unified memory: ComfyUI in this process now reads
+free memory as MemAvailable`. `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` on the driver
+turns it off. A batch priced at most of the box still splits by what the
+session has available ([DESIGN](DESIGN.md), "ComfyUI in the driver reads the
+box as it is").
+
 ## 13. uly2+fsdp / ring2+fsdp render deadlocks (hangs, no error)
 
 **Symptom:** an FSDP topology combined with sequence parallelism (uly2+fsdp;
