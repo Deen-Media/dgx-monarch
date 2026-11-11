@@ -2160,6 +2160,49 @@ Two stock loads over that slab were admitted with no refusal that day, so no
 credit for it has been needed yet
 ([VALIDATION](VALIDATION.md#capacity-checks-2026-11-05)).
 
+**ComfyUI in the driver reads the box as it is.** The checks above are the
+pack's own and read MemAvailable. ComfyUI has readers of its own in the driver
+process, and on unified memory one of them is wrong. comfy-aimdo, which places
+every weight of a DynamicVRAM model, reads MemAvailable from `/proc/meminfo` on
+an integrated Linux GPU, against a floor of a sixteenth of the device clamped
+to 2 and 8 GiB (7.6 GiB on a Spark). ComfyUI's Python
+`model_management.get_free_memory` reads `torch.cuda.mem_get_info`, which on
+GB10 follows MemFree: a few GiB once the page cache is full, with tens of GiB
+available. With DynamicVRAM on that reading does not place weights. With it
+off, ComfyUI's classic loader reads it to choose which models to unload and,
+under `--disable-dynamic-vram`, how much of a model to load. It sets how many
+images a VAE takes in a batch, whether SeedVR2's VAE decodes tiled, whether
+stock sampling runs cond and uncond in one forward, when the allocator cache is
+flushed and the free figure the UI shows, so those choices moved with the page
+cache, and a VAE's result for an image depends on the batch it shared. At node
+import the pack replaces the device-free term of that function with MemAvailable
+less comfy-aimdo's floor (`driver_uma_memory.install_driver`), on Linux and
+only where the driver's CUDA device reports itself integrated, the gate the
+actors' correction uses (TROUBLESHOOTING #12). Every other device and the
+allocator's cached-free bytes stay ComfyUI's own. The floor is the driver's
+alone: an actor's loads are priced before a byte is read, and nothing prices a
+VAE batch. `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` leaves ComfyUI's reading in
+place. What it does not settle: a batch whose estimate is most of the box (six
+2048 views in one VAE batch are priced at 82.8 GiB) still splits by what the
+session has available. `dgxm doctor`'s `driver memory reading` row says which
+reading the running driver has, from the driver's own `/system_stats`.
+
+**One image a VAE batch is the rule that does not read memory, and it is off
+by default.** Any rule that divides memory by an estimate moves when memory
+moves. `vae_item_batches` runs an image VAE's encode or decode of N items as N
+calls of ComfyUI's own function on one item, so each call's batch count is 1
+whatever memory reads and the result is one fixed tensor for a given input; a
+video VAE, whose frames are one item, is left alone. It is not what stock
+gives when stock has room: a stock ComfyUI with memory for the whole batch
+encodes each image beside the others, and a VAE's result for an image depends
+on that, so with the rule on a batch of images does not match the same batch
+on a box without this pack (a single image matches either way). The rule goes
+on by default only when hardware has shown that it costs under 5 percent of
+the VAE's own time, that one graph gives one conditioning at every size, and
+that its result for N images is N separate stock encodes bit for bit.
+`DGXM_VAE_ITEM_BATCHES=1` on the driver turns it on until then, and
+`DGXM_DISABLE_VAE_ITEM_BATCHES=1` turns it off whatever the default.
+
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a
 purge, and a purge runs only when the thread that owns them allocates again
@@ -2867,6 +2910,10 @@ dgx-monarch/
 │   ├── swap_credit.py         # the copy a load's own slot drops first, counted
 │   │                          #   at the driver host's prices from the Worker's
 │   │                          #   own credit (nodes/loader_relief.py asks)
+│   ├── driver_uma_memory.py   # on unified memory, ComfyUI's free-memory reading
+│   │                          #   in the driver is MemAvailable less a floor (§5.9)
+│   ├── vae_item_batches.py    # one image a VAE batch, a batch rule that does
+│   │                          #   not read memory; off unless switched on
 │   ├── vae_decode_route.py    # Worker-assisted VAE decode (§5.6): the knob,
 │   │                          #   the keyed stock-decode wrappers and the split
 │   ├── vae_decode_plan.py     # unit plans read off ComfyUI's own loops, and
@@ -3041,6 +3088,8 @@ dgx-monarch/
 │       ├── update_worker_lifecycle.py # generation-bound Worker update settlement
 │       ├── vae_decode_row.py   # doctor row: the decode knob and the driver's
 │       │                       #   last VAE decode, read over HTTP
+│       ├── driver_memory_row.py # doctor row: which free-memory reading the
+│       │                       #   running driver has, from its /system_stats
 │       ├── update_worktree.py  # owned detached-worktree cleanup
 │       └── update_worker_attestation.py # exact remote source/pin-payload proof
 ├── web/js/dgx_monarch_readiness_model.js # pure fail-closed browser normalizer
@@ -3281,8 +3330,11 @@ Every milestone must satisfy this checklist:
 - GB10 has GPUDirect RDMA off (`cuMemGdrSupport 0`), so NCCL stages through
   host memory: about 17 GiB/s busbw for a 2-rank 256 MiB all-reduce inside
   Monarch actors.
-- On unified memory the page cache competes with GPU allocations and the
-  ComfyUI planner reads free memory, so doctor warns and suggests drop_caches.
+- On unified memory the page cache competes with GPU allocations, so doctor
+  warns and suggests drop_caches. ComfyUI's own planner also read free memory
+  there; the pack corrects that reading in its actors and in the driver
+  (§5.9, "ComfyUI in the driver reads the box as it is"), and doctor's
+  `driver memory reading` row says which reading the running driver has.
 - Monarch bring-up failures map to preflight checks and troubleshooting entries.
 - `scripts/setup_env.sh` documents the aarch64 torchaudio constraint, which
   applies only to ComfyUI before v0.38.0.
