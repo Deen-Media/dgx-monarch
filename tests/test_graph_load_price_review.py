@@ -281,7 +281,8 @@ def test_the_loader_short_box_keeps_142s_fields_and_its_window():
     offer = old_model.ClearOffer("new.safetensors", (box,), 1, True)
     assert "A clear would not make room in the load window: new needs 50.0 GiB" in (
         old_model.no_room(offer))
-    assert "gain, window=window)" in inspect.getsource(old_model_clear.loader_offer)
+    source = inspect.getsource(old_model_clear.loader_offer)
+    assert "dropped=" in source and "left_bytes=" in source and "window=window)" in source
 
 
 # --- 5. the DiT ceiling clears every failing window -------------------------

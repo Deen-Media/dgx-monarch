@@ -278,7 +278,7 @@ def preflight_h3_activation_for_request(
         mesh = getattr(model, "mesh", None)
         if not _co_resident_enough(mesh):
             return
-        avail = mesh_safety.mem_available_bytes()
+        avail = mesh_safety.pending_load_available_bytes()
         if avail is None:
             return  # off Linux: host MemAvailable bounds nothing here
         rows = h3_rows.rows_from_request(request, latent, video_shape=latent_shape,

@@ -55,7 +55,7 @@ def price_cached_loader(model: Any, prompt: object, uncond: object = None,
     specs = [model]
     if isinstance(uncond, Mapping) and getattr(model, "mesh", None) is not None:
         specs.append(SimpleNamespace(mesh=model.mesh, unet_name=uncond.get("unet_name"),
-                                     options=uncond.get("options")))
+                                     options=uncond.get("options"), slot="uncond"))
     for spec in specs:
         if _due(spec, prompt):
             _price(spec, prompt, site)
@@ -66,7 +66,8 @@ def _price(spec: Any, prompt: Mapping, site: str) -> None:
 
     def price() -> None:
         loader_preflight.preflight_loader_footprint(
-            mesh, spec.unet_name, getattr(spec, "options", None), prompt, site=site)
+            mesh, spec.unet_name, getattr(spec, "options", None), prompt, site=site,
+            slot=str(getattr(spec, "slot", "") or ""))
 
     try:
         price()

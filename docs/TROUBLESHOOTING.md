@@ -2222,6 +2222,25 @@ checkpoint the process loads. Slab is currently the only eligible kind, so
 enabled toggle checked and disabled; unset the variable and restart the driver
 to change it. Automatic rescue never grants an accuracy waiver.
 
+**A load that replaces a model counts the drop first.** A Worker drops the
+model in a slot before it loads another into it, and a stock model's drop
+returns its copy at once. So when this check does not fit, the driver asks the
+Workers on its own box what they hold and counts that copy as available, at
+the loader and at the render-site checks that price a pending load. A load
+that then fits goes ahead with no card, and the driver log says why: "fits on
+the head once the Worker there drops flux1-dev, which frees at least 22.2
+GiB". A refusal that still stands says what it counted: "The Worker on the
+head drops flux1-dev before this load, which frees at least 22.2 GiB, and
+<model> is still N GiB short after that." Only the model in the slot the load
+goes into counts, and only a stock one: a slab or comfy-managed resident, an
+FSDP shard and a model in the other slot are priced as still held. Under
+`auto` the graph's own driver models load before the old model is dropped, so
+they must fit beside it. Before 2026-11-11 this check priced the new model
+beside the old one: flux1-dev and then LTX 2.3 was 13.3 GiB short with 22.2
+GiB about to be dropped, and MiniMax-H3-Image INT8 after BF16 was 11.9 GiB
+short with 37.5 GiB about to be dropped. No hardware render has run with the
+credit yet.
+
 **Old model in the way:** when a model loaded earlier still holds the
 memory a load needs, and a clear of the attached mesh would make room on every
 short box, the refusal says "the old model (<name>) is still loaded on the

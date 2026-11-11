@@ -215,7 +215,7 @@ class DGXMonarchUNETLoader:
 
         def price_load():
             rescue = loader_preflight.preflight_loader_footprint(
-                mesh, unet_name, options, prompt)
+                mesh, unet_name, options, prompt, slot=self.SLOT)
             if rescue is None:
                 # Always project consent: worker capacity checks may offer rescue
                 # even when this family-scoped driver estimator made no claim.

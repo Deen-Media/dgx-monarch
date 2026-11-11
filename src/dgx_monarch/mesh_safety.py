@@ -15,6 +15,7 @@ from typing import Any
 from . import absorb_fire as _absorb
 from . import delivery_faults as _delivery_faults
 from . import mesh_residency as _mesh_residency
+from . import swap_credit as _swap_credit
 from .config import ClusterConfig
 from .error_utils import failure_summary
 
@@ -280,6 +281,12 @@ def mem_available_bytes() -> int | None:
     return None
 
 
+def pending_load_available_bytes() -> int | None:
+    """MemAvailable for a price that charges a pending DiT load: the reading plus the copy
+    the Worker drops before that load, while a swap credit is in force (swap_credit.py)."""
+    return _swap_credit.credited(mem_available_bytes())
+
+
 def gpu_is_integrated() -> bool:
     """CUDA integrated/UMA device probe; False on discrete or unknown."""
     try:
@@ -407,7 +414,7 @@ def activation_footprint_preflight(
     bytes_per_token = hidden_dim * _ACTIVATION_BF16_BYTES * _ACTIVATION_BLOCK_FACTOR
     activation_bytes = tokens_per_rank * bytes_per_token
     estimate = weight_bytes + activation_bytes
-    avail = mem_available_bytes()
+    avail = pending_load_available_bytes()
     if avail is None or estimate <= avail:
         return
     max_tokens_per_rank = max((avail - weight_bytes) // max(bytes_per_token, 1), 0)

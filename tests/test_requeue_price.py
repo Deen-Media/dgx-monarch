@@ -223,7 +223,7 @@ def test_a_dual_model_guider_prices_its_second_checkpoint_too(_prompt, monkeypat
                     "inputs": {"unet_name": DIT_INT8, "weight_dtype": "default"}}
     seen: list = []
     monkeypatch.setattr(loader_preflight, "preflight_loader_footprint",
-                        lambda _mesh, unet, _options, _graph, site: seen.append((unet, site)))
+                        lambda _mesh, unet, _options, _graph, site, slot: seen.append((unet, site, slot)))
 
     class Rendered(Exception):
         pass
@@ -238,7 +238,9 @@ def test_a_dual_model_guider_prices_its_second_checkpoint_too(_prompt, monkeypat
         samplers.DGXMonarchSamplerCustom().sample(
             types.SimpleNamespace(seed=42), guider, object(), torch.tensor([1.0, 0.0]),
             {"samples": torch.zeros(1, 16, 1, 8, 8)}, prompt=graph)
-    assert seen == [(DIT, graph_load_price.SITE_SAMPLER), (DIT_INT8, graph_load_price.SITE_SAMPLER)]
+    # Each checkpoint is priced for its own slot (this stand-in model names none), so a swap
+    # credit never crosses slots.
+    assert seen == [(DIT, graph_load_price.SITE_SAMPLER, ""), (DIT_INT8, graph_load_price.SITE_SAMPLER, "uncond")]
 
 
 def test_encodes_and_activations_stay_with_the_render_site_checks(_prompt, monkeypatch):

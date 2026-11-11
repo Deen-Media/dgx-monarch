@@ -4,6 +4,20 @@
 
 ### Everyday use
 
+- Changing model in one session no longer meets the Old model in the way card
+  when the box has room. A Worker drops the model in a slot before it loads
+  another into it, and the driver's own checks did not count that: flux1-dev
+  and then the shipped LTX 2.3 template needed 80.8 GiB against 67.5 available
+  with 22.2 GiB about to be dropped, and MiniMax-H3-Image INT8 after BF16
+  needed 46.0 GiB against 34.1 with the 37.5 GiB BF16 file in the same slot.
+  The loader's check and the render-site checks for a pending load now count
+  the copy the load's own slot drops, as the cross-rank agreement already did:
+  a stock model only, that slot only, at the size the Worker reports. Nothing
+  to set, and nothing is cleared that was not dropped before. A load that
+  still does not fit refuses as before and says what it counted, and the card
+  is offered only where a clear returns more than the drop. Not yet run on
+  hardware
+  ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)).
 - MiniMax-H3-Image (ComfyUI 0.45.0) runs on its own sharded adapter: stock's
   own packing on every rank, sequence shards with exact pad exclusion on
   Ulysses, and the stacked output head on the checkpoint's grid at stock's

@@ -260,7 +260,7 @@ def _driver_footprint_preflight_for_request(
                 or driver_footprint.dtype_cast_requested(
                     getattr(model, "options", None))):
             return
-        avail = mesh_safety.mem_available_bytes()
+        avail = mesh_safety.pending_load_available_bytes()
         if avail is None:
             return  # off Linux: host MemAvailable bounds nothing here
         unet_name = getattr(model, "unet_name", "") or family
@@ -361,7 +361,7 @@ def activation_footprint_preflight_for_request(
     if family in mesh_safety.REF_POSE_TOKEN_FAMILIES:
         steps.append(lambda: _ref_pose_activation_preflight(
             family, path, unet_name, request, video_shape))
-    driver_unload.check_with_unload(steps, subject=unet_name, handle=getattr(
+    driver_unload.check_with_unload(steps, subject=unet_name, swap=(model, request), handle=getattr(
         getattr(model, "mesh", None), "handle", None))
 
 

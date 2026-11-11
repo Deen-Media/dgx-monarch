@@ -997,7 +997,7 @@ def loader_rig(monkeypatch):
     monkeypatch.setattr(loader_preflight, "preflight_comfy_managed_topology",
                         lambda *_a: events.append("comfy-managed"))
     monkeypatch.setattr(loader_preflight, "preflight_loader_footprint",
-                        lambda *_a: events.append("footprint"))
+                        lambda *_a, **_k: events.append("footprint"))
     monkeypatch.setattr(loader_preflight, "record_rescue_row", lambda *_a, **_k: None)
     monkeypatch.setattr(consent_projection, "project_for_loader", lambda *_a, **_k: None)
     monkeypatch.setattr(render_preflight, "preflight_sol_sequence_parallel",

@@ -2237,6 +2237,30 @@ hardware had rendered it with 39.9 GiB left at its lowest. Credited, stage 2
 needs 34.3 GiB. The Worker's own ladder prices after its drop, so it never
 needs the credit.
 
+**The driver host's own prices count the same drop.** The loader preflight and
+the render-site checks that charge a pending DiT load (the driver footprint,
+the MiniMax H3 activation price, the reference and pose price) read the driver
+host's MemAvailable, where the head's Worker shares the box. Until 2026-11-11
+they priced the new DiT beside the model its slot was about to drop, so a user
+who changed model in one session met the Old model in the way card with room
+on the box: flux1-dev held and then LTX 2.3 needed 80.8 GiB against 67.5
+available with 22.2 GiB about to be dropped, and MiniMax-H3-Image INT8 after
+BF16 needed 46.0 GiB against 34.1 with the 37.5 GiB BF16 DiT in the same slot.
+Now a price that does not fit asks the Workers on the driver host the
+agreement's own quote and counts the copy the load's own slot drops first
+(`swap_credit.py`, `nodes/loader_relief.py`): a swap only, a stock resident
+only, the slot the load goes into only, at the figure the Worker reports, and
+for a change on the file the slot already holds only a drop the Worker's own
+price named. A load that fits asks no Worker. A deferred load must also leave
+room for the graph's driver models beside the old model, which load before the
+first render drops it. The credit is tried before any card and before the
+driver unloads ComfyUI's models, a refusal that still stands says what was
+counted, and the card is weighed against the uncredited price as at the
+agreement. A credited load forgets the dropped model's loader memo, so that
+model is priced when it comes back. Nothing here clears a Worker: the store
+drops the slot as it did before, and the agreement then prices the load on
+every rank with its own credit.
+
 **A LoRA change on a held base is the same credit.** When the resident is a
 stock copy of the same file and the store would keep it and re-apply the new
 stack in place (`actor/store_bake.swaps_in_place`, published in the store

@@ -35,7 +35,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
-from . import client_lease, mesh_safety
+from . import client_lease, mesh_safety, swap_credit
 from .log import get_logger
 from .render_memory_price import RenderMemoryPriceError
 
@@ -318,14 +318,32 @@ def _first_refusal(steps: Sequence[Callable[[], object]], start: int,
     return None
 
 
+def _swap_credit(swap: tuple[Any, Any] | None) -> swap_credit.SwapCredit:
+    """What the Worker on this host drops before the render's pending load."""
+    if swap is None or mesh_safety.env_enabled(DRIVER_UNLOAD_DISABLE_ENV):
+        return swap_credit.NONE
+    try:
+        from .nodes import loader_relief
+
+        return loader_relief.render_credit(*swap)
+    except Exception as exc:  # no credit is the price as it was
+        log.info("render preflight read no swap credit (%r)", exc)
+        return swap_credit.NONE
+
+
 def check_with_unload(steps: Sequence[Callable[[], object]], *, handle: Any = None,
                       subject: str = "this render",
                       is_refusal: Callable[[BaseException], bool] = is_capacity_refusal,
-                      ) -> None:
-    """Run ``steps`` in order, freeing what the driver host can get back
-    before one refuses.
+                      swap: tuple[Any, Any] | None = None) -> None:
+    """Run ``steps`` in order, counting and freeing what the driver host can
+    get back before one refuses.
 
-    A capacity refusal stops the run. If nothing is running, the driver
+    A capacity refusal stops the run. ``swap`` is the render's model and
+    request: where its DiT load is still pending and replaces a stock resident
+    in its own slot, the Worker drops that model first, so its copy is counted
+    as available (``swap_credit.py``) and the steps run again from the one that
+    refused, and so does every later run. If one still refuses and nothing is
+    running, the driver
     unloads the models ComfyUI holds in this process and runs the steps again
     from the one that refused: the steps before it passed on a lower reading.
     If one still refuses and ``handle`` is a live mesh that completed setup,
@@ -338,8 +356,26 @@ def check_with_unload(steps: Sequence[Callable[[], object]], *, handle: Any = No
     """
     steps = list(steps)
     first = _first_refusal(steps, 0, is_refusal)
-    if first is not None:
+    if first is None:
+        return
+    credit = _swap_credit(swap)
+    if not credit:
         _after_refusal(steps, *first, handle, subject, is_refusal)
+        return
+    counted = (f"the Worker on {credit.box or 'this host'} drops "
+               f"{credit.dropped or 'the old model'} before this load, which frees at least "
+               f"{credit.gib} GiB")
+    with swap_credit.applying(credit):
+        again = _first_refusal(steps, first[0], is_refusal)
+        if again is None:
+            log.info("render preflight: %s fits once %s", subject, counted)
+            return
+        try:
+            _after_refusal(steps, *again, handle, subject, is_refusal)
+        except Exception as exc:
+            if not is_refusal(exc):
+                raise
+            _raise_amended(exc, f"The figures above already count that {counted}.")
 
 
 def _after_refusal(steps: Sequence[Callable[[], object]], index: int,
