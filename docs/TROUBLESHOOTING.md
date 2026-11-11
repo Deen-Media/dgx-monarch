@@ -8222,46 +8222,49 @@ rather than the DGX Monarch loader. There is no waiver and no env var.
 **Symptom:** a DGX Monarch UNET loader, sampler or Identity Gate refuses class P
 with "The prompt expander is on and its task prompt is empty", or with "The
 prompt expander is on and the request cannot reach it", before the DiT loads
-or a picture renders. It happens in a MiniMax-H3-Image template after the
-If/Else Switch is set to true.
+or a picture renders. It happens in a MiniMax-H3-Image graph whose switch
+titled `If/Else Switch (expander on or off)` is true.
 
 **Cause:** the MiniMax-H3-Image templates wire the prompt expander as ComfyUI's
 own templates do. Replace Text puts the request into a task prompt where the
 task prompt says `{input text}`, Generate Text runs the expander model on that
-text, and Extract Text from JSON reads the caption out of the answer. ComfyUI's
-templates carry MiniMax's task prompt and system prompt in the two text boxes.
-The DGX Monarch templates ship those boxes empty and the switch false, because
-this project does not ship MiniMax's text.
+text, and Extract Text from JSON reads the caption out of the answer. The two
+shipped templates carry this project's own task prompt and system prompt in
+the two text boxes, with the switch false. So an empty task prompt box in one
+of them means someone emptied it, and a task prompt without `{input text}`
+means someone replaced the text and left the marker out. The testing graph
+`dgx-monarch-test-minimax-h3-image-grid` ships both boxes empty on purpose,
+and refuses this way if its switch is set to true.
 
 With the switch true and the task prompt box empty, Replace Text hands on an
-empty text whatever the request says. Generate Text answers an empty prompt,
-Extract Text from JSON finds no caption, and the model renders from that with
-no error from ComfyUI. A task prompt that lacks `{input text}` fails the same
-way: the expander runs and the request never reaches it. dgx-monarch reads the
-chain in the prompt graph and refuses both. On a first queue the UNET loader
+empty text whatever the request says, and Generate Text answers an empty
+prompt. If that answer holds a caption the model renders from it, and if it
+holds none the graph falls back to the request, after the expander has spent
+its time on nothing. A task prompt that lacks `{input text}` is worse: the
+expander writes a caption for the task prompt alone, and the render ignores
+the request. ComfyUI raises no error for either. dgx-monarch reads the chain
+in the prompt graph and refuses both. On a first queue the UNET loader
 answers, before the DiT loads. On a re-queue ComfyUI keeps the loader's
 output and does not run it again, so a sampler or Identity Gate answers: by
-then ComfyUI has loaded the expander and run it on the empty prompt, and the
-refusal still comes before the render.
+then ComfyUI has loaded the expander and run it, and the refusal still comes
+before the render. A Fleet sampler receives no prompt graph and cannot answer
+on a re-queue; the loader answers for it on a first queue.
 
-Only what the graph states is read. Generate Text must be a node a DGX
-Monarch sampler or Identity Gate takes its inputs from, so an expander that
-runs only for an extra Preview as Text, with the switch false, refuses
-nothing. It must be fed by a Replace Text node whose text is typed or comes
-from a Text box, and every If/Else Switch or Soft Switch in the running graph
-must state its
-choice, typed on the node or through a Boolean box wired to it. A graph wired
-another way is left alone, so a switch driven by some other node, or a Branch
-node, turns this check off for that graph.
+Only what the graph states is read. Generate Text must be a node ComfyUI is
+sure to run for a DGX Monarch sampler, Fleet sampler or Identity Gate, so an
+expander that runs only for an extra Preview as Text, with the switch false,
+refuses nothing. It must be fed by a Replace Text node whose text is typed or
+comes from a Text box. A switch counts by what it states, typed on the node
+or through a Boolean box wired to it. An expander behind an If/Else Switch or
+Soft Switch that states no choice, or behind a Branch node, is not sure to
+run, and refuses nothing. The templates' own empty-caption fallback is such a
+switch, driven by Compare Text, and does not quiet the refusal: ComfyUI must
+run the expander to decide it.
 
-**Fix:** set the If/Else Switch to false, and the request goes to the model as
-written. To run the expander, fill both boxes first. MiniMax publishes the text
-in its Hugging Face repository `MiniMaxAI/MiniMax-H3-Image-PE`:
-`prompt/t2i/task_prompt.txt` for text to image, `prompt/edit/task_prompt.txt`
-for the edit, and `prompt/t2i/system_prompt.txt` for the system prompt box of
-both. The task prompt must hold `{input text}` where the request belongs.
-ComfyUI's text to image template ends its task prompt with the lines
-`input_text: {input text}` and `output_text:`, and its edit template ends with
-`User input: {input text}` and `output_text:`. Read MiniMax's licence before
-you use its text ([MODELS.md](MODELS.md#model-minimax-h3-image) links it). No consent
-or waiver applies.
+**Fix:** set the switch titled `If/Else Switch (expander on or off)` to false,
+and the request goes to the model as written. To run the expander, put a task
+prompt back in the box: load the template again for the shipped text, or
+write your own with `{input text}` where the request belongs and an answer
+that holds the caption under the key `expanded_caption`
+([MODELS.md](MODELS.md#model-minimax-h3-image) says more). No consent or
+waiver applies.

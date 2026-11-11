@@ -1875,27 +1875,39 @@ again.
 **A prompt expander that cannot see the request refuses before the render.** The
 MiniMax-H3-Image templates wire ComfyUI's expander chain, Replace Text into
 Generate Text into Extract Text from JSON behind a lazy switch, and ship it
-off with the task prompt box empty, because the text ComfyUI's templates carry
-there is MiniMax's and this project does not ship it. With the switch on and
-that box empty, Replace Text hands on an empty text whatever the request says,
-and ComfyUI renders from what the expander makes of it with no error. A task
-prompt without the marker Replace Text fills loses the request the same way.
-Both are wrong pictures on any world or budget, so the UNET loader refuses
+off. The two shipped templates carry this project's own task prompt and
+system prompt in the chain's text boxes, because the text ComfyUI's templates
+carry there is MiniMax's and this project does not ship it; the testing graph
+keeps both boxes empty. With the switch on and the task prompt box empty,
+Replace Text hands on an empty text whatever the request says, and the
+expander answers nothing the user asked. A task prompt without the marker
+Replace Text fills loses the request the same way, and ComfyUI raises no
+error for either.
+Neither is a render the user asked for, on any world or budget: the first
+spends the expander on nothing and renders from what it wrote or, through
+the fallback below, from the request it was meant to improve, and the second
+renders something else. So the UNET loader refuses
 them class P beside the upstream gate, before the batch preflight, the policy
 card, the price and `ensure_live`, and a sampler or Identity Gate refuses them
 ahead of its re-queue price, since a re-queue that only flips the switch never
 runs the loader. ComfyUI has run the expander by then, as it runs every node
-upstream of the sampler, and the refusal still comes before the render. Only
-what the graph states is read: a Generate Text node that a DGX Monarch sampler
-or Identity Gate takes its inputs from (`nodes/graph_live.py`, walked from
-those nodes, so an expander that runs only for a Preview as Text beside the
-path refuses nothing), fed by a Replace Text node whose text is typed or
-comes from a Text box, with every switch in the running graph stating its
-choice, typed or through a Boolean box. The live walk keeps both branches of a
-switch it cannot decide, the safe side for a price; here that side would
-refuse a render whose expander is off, so such a graph, one that runs a Branch
-node, one wired another way and one the read fails on all refuse nothing
-(`nodes/expander_prompt.py`).
+upstream of the sampler, and the refusal still comes before the render. A
+Fleet sampler receives no prompt graph, so the loader's call answers for it.
+Only what the graph states is read: a Generate Text node ComfyUI is sure to
+run for a DGX Monarch sampler, Fleet sampler or Identity Gate
+(`nodes/graph_live.py`, its `sure` walk from those nodes, so an expander that
+runs only for a Preview as Text beside the path refuses nothing), fed by a
+Replace Text node whose text is typed or comes from a Text box. The live walk
+keeps both branches of a switch it cannot decide, the safe side for a price;
+here that side would refuse a render whose expander is off. So the sure walk
+follows a switch's branch only when the switch states its choice, typed or
+through a Boolean box, and follows no input of a Branch node. It still follows
+what feeds a switch's own `switch` input, which ComfyUI must run to choose.
+That is what keeps the refusal standing in the shipped graphs: an answer with
+no caption falls back to the request through a second If/Else whose `switch`
+reads Compare Text over the caption, and with the outer switch on the
+expander runs whichever way that fallback goes. A graph wired another way and
+one the read fails on refuse nothing (`nodes/expander_prompt.py`).
 
 **A declared shard build is priced as a shard.** Both windows charge the whole
 file, which is what a stock load places, and under a `*+fsdp` preset no rank

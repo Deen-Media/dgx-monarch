@@ -486,9 +486,10 @@ from Comfy-Org/MiniMax-H3-Image: the INT8 ConvRot DiT, the INT8 ConvRot text
 encoder, the FP16 VAE and `qwen3.5_9b_w4a8_gptq.safetensors`, the prompt
 expander. Stage all four for either graph: ComfyUI checks every loader's file
 name when a graph is queued. The expander takes memory from the first render
-with a graph's If/Else switch true. Both templates ship it false, so as
-shipped neither loads it, and both ship the expander's two prompt boxes empty
-([MODELS](MODELS.md#model-minimax-h3-image) says how to fill them). The BF16
+with a graph's expander switch true. Both templates ship it false, so as
+shipped neither loads it. The expander's two prompt boxes hold this project's
+own texts, so turning the switch on needs no further file
+([MODELS](MODELS.md#model-minimax-h3-image) says what it costs). The BF16
 and W4A8 DiTs and the
 other two text encoders have no manifest row, because no template names them
 ([MODELS](MODELS.md#model-minimax-h3-image) lists all eight files).

@@ -19725,7 +19725,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "1c2b3d9e4f9010d14db9daeb01588b02c278e7aa94a8894ba06bf5b5db105c67",
+      "digest": "2f5da077b379119c934ad10d1623183aaea8bdd90e6694a173c4cf3b925bcf0c",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-minimax-h3-image-edit",
       "interfaces": {
@@ -19766,7 +19766,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "d3df24fb2d650fd3c0d065cb1701fe78308c9094372bba932f650963fe454ac8",
+      "digest": "259477a2600e536fd6fb691a6c3902a18f274a78f4845c3d7c9e7098a845a520",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-minimax-h3-image-t2i",
       "interfaces": {

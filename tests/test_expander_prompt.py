@@ -1,22 +1,24 @@
 """A prompt expander that cannot see the request refuses before the DiT loads or a picture renders.
 
-The MiniMax-H3-Image templates wire ComfyUI's expander chain and ship it off,
-with the task prompt box empty: the text ComfyUI's own templates carry there is
-MiniMax's, and this repository holds none of it. Replace Text over an empty
-task prompt is an empty text, so with the switch on Generate Text answers an
-empty prompt, Extract Text from JSON finds no caption, and the model renders
-from whatever came out with no error anywhere. ComfyUI raises nothing for
-that, so a DGX Monarch loader, sampler or Identity Gate reads the chain in the
-prompt graph and refuses, class P.
+The MiniMax-H3-Image templates wire ComfyUI's expander chain and ship it off.
+The two shipped templates carry this project's own task prompt and system
+prompt; the testing graph ships both boxes empty, and a user may empty or
+replace a task prompt. Replace Text over an empty task prompt is an empty
+text, so with the switch on Generate Text answers an empty prompt and the
+render follows what comes of that, with no error anywhere. ComfyUI raises
+nothing for that, so a DGX Monarch loader, sampler or Identity Gate reads the
+chain in the prompt graph and refuses, class P.
 
 These tests hold the sentence, where it answers, and that it answers nothing
-else: a graph with the switch off, a filled task prompt, an expander wired
-some other way, a switch whose choice the graph does not state, and every
-other committed template. CPU only: the graphs are read as JSON, and stubs
-stand in for ComfyUI and the fleet.
+else: a graph with the switch off, the shipped texts with the switch on, an
+expander wired some other way or behind a switch whose choice the graph does
+not state, and every other committed template. They hold that the templates'
+empty-caption fallback does not quiet the refusal. CPU only: the graphs are
+read as JSON, and stubs stand in for ComfyUI and the fleet.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 import types
@@ -54,9 +56,8 @@ TEMPLATES = {path.stem: path for path in (
 DIT = "minimax_h3_image_pruned_int8_convrot.safetensors"
 # A task prompt of this test's own, with the marker where the request belongs.
 FILLED = "Rewrite the request as one caption.\ninput_text: {input text}\noutput_text:"
-# The same without the marker: MiniMax's own file ends its text to image task
-# prompt with a bare pair of braces, so a paste that skips the Note's last step
-# looks like this.
+# The same without the marker, as a replacement text that keeps a bare pair of
+# braces where the marker belongs would read.
 UNMARKED = "Rewrite the request as one caption.\ninput_text: {}\noutput_text:"
 
 
@@ -71,15 +72,34 @@ def _one(graph: dict, class_type: str) -> tuple[str, dict]:
     return key, node["inputs"]
 
 
-def _switched_on(name: str, task: str | None = None) -> dict:
-    """The shipped graph with its If/Else switch on and, when given, a task prompt."""
+def _outer(graph: dict) -> tuple[str, dict]:
+    """The If/Else switch a reader sets. The other one, the empty-caption fallback,
+    takes its choice from Compare Text over a link."""
+    ((key, inputs),) = [(key, node["inputs"]) for key, node in graph.items()
+                        if node["class_type"] == "ComfySwitchNode"
+                        and isinstance(node["inputs"].get("switch"), bool)]
+    return key, inputs
+
+
+def _with_task(name: str, task: str | None, on: bool) -> dict:
     graph = _graph(name)
-    _, switch = _one(graph, "ComfySwitchNode")
-    switch["switch"] = True
+    _, switch = _outer(graph)
+    switch["switch"] = on
     if task is not None:
         _, splice = _one(graph, "StringReplace")
         graph[splice["string"][0]]["inputs"]["value"] = task
     return graph
+
+
+def _switched_on(name: str, task: str | None = "") -> dict:
+    """The graph with its switch on over an emptied task prompt box, or over ``task``;
+    None keeps the box as the graph ships it."""
+    return _with_task(name, task, True)
+
+
+def _emptied(name: str) -> dict:
+    """The graph with its switch off and its task prompt box emptied."""
+    return _with_task(name, "", False)
 
 
 def _empty_sentence(graph: dict) -> str:
@@ -95,6 +115,62 @@ def test_the_shipped_graph_refuses_nothing(name):
     graph = _graph(name)
     assert expander_prompt.dead_expander(graph) is None
     assert expander_prompt.refuse_dead_expander(graph) is None
+
+
+@pytest.mark.parametrize("name", [T2I, EDIT])
+def test_the_shipped_texts_with_the_switch_on_refuse_nothing(name):
+    """The two shipped graphs hold this project's task prompts, each with the marker."""
+    graph = _switched_on(name, None)
+    assert expander_prompt.dead_expander(graph) is None
+    assert expander_prompt.refuse_dead_expander(graph) is None
+
+
+def test_the_testing_graph_with_the_switch_on_refuses():
+    """Its boxes ship empty, so turning its expander on is the case the refusal is for."""
+    graph = _switched_on(GRID, None)
+    assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
+
+
+@pytest.mark.parametrize("name", FAMILY_GRAPHS)
+@pytest.mark.parametrize("task", ["", UNMARKED])
+def test_the_empty_caption_fallback_does_not_quiet_the_refusal(name, task):
+    """The fallback is a second If/Else whose choice comes from Compare Text, a switch
+    that states no choice. Neither of its branches is sure to run, but its `switch`
+    input is: ComfyUI must run Compare Text, and so the expander, to choose. With the
+    outer switch true the refusal therefore still decides."""
+    graph = _switched_on(name, task)
+    outer_id, outer = _outer(graph)
+    fallback_id = outer["on_true"][0]
+    fallback = graph[fallback_id]["inputs"]
+    compare_id, _ = _one(graph, "StringCompare")
+    expand_id, _ = _one(graph, "TextGenerateV2")
+    assert graph[fallback_id]["class_type"] == "ComfySwitchNode" and fallback_id != outer_id
+    assert fallback["switch"] == [compare_id, 0]
+    assert graph_live.skipped_branch(graph[fallback_id]) is None
+    sure = graph_live.live_nodes(graph, sure=True)
+    assert {fallback_id, compare_id, expand_id} <= sure
+    sentence = expander_prompt.dead_expander(graph)
+    assert sentence is not None and sentence.startswith("The prompt expander is on and ")
+    assert ("its task prompt is empty" in sentence) is (task == "")
+    with pytest.raises(UnsupportedModelError):
+        expander_prompt.refuse_dead_expander(graph)
+
+
+@pytest.mark.parametrize("name", FAMILY_GRAPHS)
+def test_with_the_outer_switch_false_nothing_of_the_expander_runs(name):
+    """The outer switch is lazy and states false, so ComfyUI never asks for the
+    fallback, Compare Text, Extract Text from JSON, Generate Text or the expander's
+    loader: the walk the loader prices with drops them all, and so does the sure one."""
+    graph = _with_task(name, None, False)
+    _, outer = _outer(graph)
+    expand_id, expand = _one(graph, "TextGenerateV2")
+    chain = {outer["on_true"][0], expand_id, expand["clip"][0],
+             *(_one(graph, kind)[0] for kind in
+               ("StringCompare", "StringTrim", "JsonExtractString", "StringReplace"))}
+    assert not chain & graph_live.live_nodes(graph)
+    assert not chain & graph_live.live_nodes(graph, sure=True)
+    outer["switch"] = True
+    assert chain <= graph_live.live_nodes(graph)
 
 
 @pytest.mark.parametrize("name", FAMILY_GRAPHS)
@@ -114,7 +190,7 @@ def test_the_switch_on_over_the_empty_task_prompt_refuses_class_p(name):
     assert "The prompt expander is on and its task prompt is empty." in text
     assert "No picture was rendered." in text
     assert "Fill the text box wired to Replace Text with the task prompt" in text
-    assert "set the If/Else Switch to false" in text
+    assert "set the switch titled If/Else Switch (expander on or off) to false" in text
     assert text.isascii() and len(text) < 1000
 
 
@@ -170,7 +246,7 @@ def test_only_what_the_graph_states_is_read():
     # Generate Text fed by something other than Replace Text.
     graph = _switched_on(T2I)
     _, expand = _one(graph, "TextGenerateV2")
-    _, switch = _one(graph, "ComfySwitchNode")
+    _, switch = _outer(graph)
     expand["prompt"] = list(switch["on_false"])
     assert expander_prompt.dead_expander(graph) is None
     # Generate Text with a typed prompt.
@@ -181,8 +257,8 @@ def test_only_what_the_graph_states_is_read():
 @pytest.mark.parametrize("name", FAMILY_GRAPHS)
 def test_a_switch_driven_by_a_boolean_box_is_read_as_that_box(name):
     """ComfyUI's own edit template drives its If/Else switch from a Boolean box."""
-    graph = _graph(name)
-    _, switch = _one(graph, "ComfySwitchNode")
+    graph = _emptied(name)
+    _, switch = _outer(graph)
     graph["900"] = {"class_type": "PrimitiveBoolean", "inputs": {"value": True}}
     switch["switch"] = ["900", 0]
     assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
@@ -191,12 +267,13 @@ def test_a_switch_driven_by_a_boolean_box_is_read_as_that_box(name):
     assert expander_prompt.refuse_dead_expander(graph) is None
 
 
-def test_a_switch_whose_choice_the_graph_does_not_state_refuses_nothing():
+def test_an_expander_behind_a_switch_that_states_no_choice_refuses_nothing():
     """The live walk keeps both branches of such a switch, right for a price; the
-    expander may well be off, and a refusal there would stop a good render."""
+    expander may well be off, and a refusal there would stop a good render. The sure
+    walk follows neither branch."""
     # Driven by a node this cannot read.
     graph = _switched_on(T2I)
-    _, switch = _one(graph, "ComfySwitchNode")
+    _, switch = _outer(graph)
     graph["900"] = {"class_type": "SomeBooleanMaker", "inputs": {}}
     switch["switch"] = ["900", 0]
     assert expander_prompt.dead_expander(graph) is None
@@ -206,10 +283,10 @@ def test_a_switch_whose_choice_the_graph_does_not_state_refuses_nothing():
     assert expander_prompt.dead_expander(graph) is None
     # One branch left open: ComfyUI may evaluate either.
     graph = _switched_on(T2I)
-    _, switch = _one(graph, "ComfySwitchNode")
+    _, switch = _outer(graph)
     del switch["on_false"]
     assert expander_prompt.dead_expander(graph) is None
-    # A second switch elsewhere in the running graph that states no choice.
+    # The render itself behind a switch that states no choice: it is not sure to run.
     graph = _switched_on(T2I)
     _, save = _one(graph, "SaveImage")
     graph["900"] = {"class_type": "ComfySoftSwitchNode",
@@ -220,19 +297,34 @@ def test_a_switch_whose_choice_the_graph_does_not_state_refuses_nothing():
     assert expander_prompt.dead_expander(graph) is None
     # ComfyUI's Branch node is lazy too, and nothing here reads which branch it runs.
     graph = _switched_on(T2I)
-    extract_id, _ = _one(graph, "JsonExtractString")
-    graph["900"] = {"class_type": "BranchNode", "inputs": {"branch0": [extract_id, 0]}}
+    _, outer = _outer(graph)
+    graph["900"] = {"class_type": "BranchNode", "inputs": {"branch0": list(outer["on_true"])}}
+    outer["on_true"] = ["900", 0]
     assert expander_prompt.dead_expander(graph) is None
     assert expander_prompt.refuse_dead_expander(graph) is None
+
+
+def test_an_undecided_node_beside_the_render_path_does_not_turn_the_check_off():
+    """Only what stands between the expander and a render matters. A Branch node or a
+    switch that states no choice elsewhere in the graph leaves the refusal standing."""
+    graph = _switched_on(T2I)
+    extract_id, _ = _one(graph, "JsonExtractString")
+    graph["900"] = {"class_type": "BranchNode", "inputs": {"branch0": [extract_id, 0]}}
+    graph["901"] = {"class_type": "ComfySoftSwitchNode",
+                    "inputs": {"switch": ["902", 0], "on_true": [extract_id, 0],
+                               "on_false": [extract_id, 0]}}
+    graph["902"] = {"class_type": "SomeBooleanMaker", "inputs": {}}
+    graph["903"] = {"class_type": "PreviewAny", "inputs": {"source": ["901", 0]}}
+    assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
 
 
 @pytest.mark.parametrize("name", FAMILY_GRAPHS)
 @pytest.mark.parametrize("tap", ["extract", "thinking", "replace"])
 def test_an_expander_that_runs_only_for_a_preview_refuses_nothing(name, tap):
-    """The switch is false and the boxes are empty, as shipped, and one more Preview
+    """The switch is false and the task prompt box is empty, and one more Preview
     as Text hangs on the chain. ComfyUI runs the expander for that preview alone; the
     picture takes the request as written, so there is nothing to refuse."""
-    graph = _graph(name)
+    graph = _emptied(name)
     extract_id, _ = _one(graph, "JsonExtractString")
     expand_id, _ = _one(graph, "TextGenerateV2")
     splice_id, _ = _one(graph, "StringReplace")
@@ -241,7 +333,7 @@ def test_an_expander_that_runs_only_for_a_preview_refuses_nothing(name, tap):
     assert expander_prompt.dead_expander(graph) is None
     assert expander_prompt.refuse_dead_expander(graph) is None
     # The same graph with the switch on feeds the render from the expander, and refuses.
-    _, switch = _one(graph, "ComfySwitchNode")
+    _, switch = _outer(graph)
     switch["switch"] = True
     assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
 
@@ -250,8 +342,8 @@ def test_an_expander_that_runs_only_for_a_preview_refuses_nothing(name, tap):
 def test_comfyuis_layout_with_the_preview_on_the_text_path_still_refuses(name):
     """ComfyUI's templates wire switch, then Preview as Text, then the conditioning
     prompt. Preview as Text hands its string on, so the render still reads the chain."""
-    graph = _graph(name)
-    switch_id, switch = _one(graph, "ComfySwitchNode")
+    graph = _emptied(name)
+    switch_id, switch = _outer(graph)
     preview_id, _ = _one(graph, "PreviewAny")
     _, cond = _one(graph, "MiniMaxH3ImageConditioning")
     assert cond["prompt"] == [switch_id, 0]
@@ -282,6 +374,73 @@ def test_the_render_classes_are_the_nodes_that_call_the_refusal():
     loaders = {"DGXMonarchUNETLoader", "DGXMonarchUncondUNETLoader"}
     assert calling - loaders == set(expander_prompt.RENDER_CLASSES)
     assert loaders <= calling
+    # The Fleet sampler renders and cannot call it: it receives no prompt graph. It is
+    # a root of the walk all the same, and the UNET loader's call answers for it.
+    fleet = pack.NODE_CLASS_MAPPINGS["DGXMonarchFleetKSampler"]
+    assert "prompt" not in inspect.signature(fleet.fleet).parameters
+    assert set(expander_prompt.ROOT_CLASSES) == {*expander_prompt.RENDER_CLASSES,
+                                                 "DGXMonarchFleetKSampler"}
+
+
+@pytest.mark.parametrize("name", [T2I, EDIT])
+def test_a_fleet_render_that_reads_the_expander_refuses_at_the_loader(monkeypatch, name):
+    """Fleet takes a per-job positive from a conditioning node. With the expander on
+    over an empty task prompt, each job would render from what the expander made of
+    nothing, so the loader's call refuses the graph."""
+    graph = _switched_on(name)
+    sampler_id, sampler = _one(graph, "DGXMonarchKSampler")
+    cond_id, _ = _one(graph, "MiniMaxH3ImageConditioning")
+    assert sampler["positive"] == [cond_id, 0]
+    graph[sampler_id]["class_type"] = "DGXMonarchFleetKSampler"
+    assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
+    fake = types.ModuleType("folder_paths")
+    fake.get_full_path = lambda _kind, _name: None  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "folder_paths", fake)
+    reached: list = []
+    monkeypatch.setattr(loaders, "ensure_live", _explode(reached, "ensure_live"))
+    monkeypatch.setattr(loader_preflight, "preflight_loader_footprint",
+                        _explode(reached, "the footprint card"))
+    monkeypatch.setattr(render_validation, "preflight_graph_batch_divides_dp",
+                        _explode(reached, "the batch preflight"))
+    monkeypatch.setattr(loader_preflight, "preflight_comfy_managed_topology",
+                        _explode(reached, "the policy card"))
+    with pytest.raises(UnsupportedModelError) as raised:
+        loaders.DGXMonarchUNETLoader().load(_model().mesh, DIT, prompt=graph)
+    assert _empty_sentence(graph) in str(raised.value) and reached == []
+    # The same Fleet graph with the switch false sends the request, and refuses nothing.
+    _, outer = _outer(graph)
+    outer["switch"] = False
+    assert expander_prompt.dead_expander(graph) is None
+
+
+def _switch_graph(choice: object) -> dict:
+    """An output that reads a switch whose branches are two text nodes."""
+    return {"1": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": "a"}},
+            "2": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": "b"}},
+            "3": {"class_type": "SomeBooleanMaker", "inputs": {}},
+            "4": {"class_type": "ComfySwitchNode",
+                  "inputs": {"switch": choice, "on_true": ["1", 0], "on_false": ["2", 0]}},
+            "5": {"class_type": "SaveText", "inputs": {"text": ["4", 0]}}}
+
+
+def test_the_sure_walk_follows_only_what_a_switch_is_certain_to_run():
+    # A stated choice reads the same either way: the unselected branch is dropped.
+    for choice, kept in ((True, "1"), (False, "2")):
+        expected = frozenset({kept, "4", "5", "3"})
+        assert graph_live.live_nodes(_switch_graph(choice)) == expected
+        assert graph_live.live_nodes(_switch_graph(choice), sure=True) == expected
+    # A wired choice: the price keeps both branches, and the sure walk keeps neither,
+    # but it keeps what feeds the `switch` input, which ComfyUI must run to choose.
+    wired = _switch_graph(["3", 0])
+    assert graph_live.live_nodes(wired) == frozenset({"1", "2", "3", "4", "5"})
+    assert graph_live.live_nodes(wired, sure=True) == frozenset({"3", "4", "5"})
+    # A Branch node's inputs are not followed by the sure walk.
+    branch = _switch_graph(True)
+    branch["4"] = {"class_type": "BranchNode", "inputs": {"branch0": ["1", 0], "branch1": ["2", 0]}}
+    assert graph_live.live_nodes(branch) == frozenset({"1", "2", "3", "4", "5"})
+    assert graph_live.live_nodes(branch, sure=True) == frozenset({"3", "4", "5"})
+    # Named roots start the same walk.
+    assert graph_live.live_nodes(wired, roots=["4"], sure=True) == frozenset({"3", "4"})
 
 
 def test_the_refusal_and_every_link_name_the_expander_entry():
@@ -313,7 +472,7 @@ def test_a_graph_it_cannot_read_refuses_nothing(prompt):
 
 
 def test_a_read_that_fails_refuses_nothing(monkeypatch):
-    def broken(_prompt):
+    def broken(*_args, **_kwargs):
         raise RuntimeError("unreadable")
 
     monkeypatch.setattr(graph_live, "live_nodes", broken)
@@ -323,18 +482,20 @@ def test_a_read_that_fails_refuses_nothing(monkeypatch):
 
 
 def test_no_other_committed_template_meets_the_refusal_as_shipped_or_switched_on():
-    """Every committed graph as shipped, and again with each If/Else switch on."""
+    """Every committed graph as shipped, and again with each typed If/Else switch on.
+    Only the testing graph, whose task prompt box ships empty, then refuses."""
     assert len(TEMPLATES) > 100
     refused = []
     for name in TEMPLATES:
         graph = _graph(name)
         assert expander_prompt.dead_expander(graph) is None, name
-        switches = [node for node in graph.values() if node["class_type"] == "ComfySwitchNode"]
+        switches = [node for node in graph.values() if node["class_type"] == "ComfySwitchNode"
+                    and isinstance(node["inputs"].get("switch"), bool)]
         for node in switches:
             node["inputs"]["switch"] = True
         if switches and expander_prompt.dead_expander(graph) is not None:
             refused.append(name)
-    assert sorted(refused) == sorted(FAMILY_GRAPHS)
+    assert refused == [GRID]
 
 
 # ---- Where it answers ------------------------------------------------------------
