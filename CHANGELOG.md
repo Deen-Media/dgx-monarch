@@ -482,19 +482,25 @@
   host copies behind a warning that they "did not verify against the
   checkpoint"; they are now restored from the file like every other key, and
   the warning is gone.
-- A Worker that ComfyUI loads only partly now computes a LoRA's small patched
-  weights as its full load and stock do. ComfyUI's classic patcher gives every
-  patched module it leaves off the device a cast-time patch; stock bakes a
-  module of 16 KiB or less (a norm weight) with its classic recipe. On GB10
-  the two round a BF16 norm weight with a diff apart on about 7 percent of its
-  values, so a one-GPU render under memory pressure with `lora_low_rss` off
-  used other norm weights than the same render with room. Such a key now
-  takes the classic recipe when its layer casts. A quantized layer had a
-  larger gap in the same state: ComfyUI's classic cast adds the LoRA to the
-  dequantized weight and never requantizes, so a patched INT8 ConvRot layer's
-  output landed about 0.01 NRMS from the full load's; its cast now returns the
-  requantized weight stock's cast computes. Found by reading and held by CPU
-  tests against ComfyUI's own patcher; no hardware render isolates either.
+- A Worker that ComfyUI loads only partly now computes a LoRA's patched weights
+  as its full load does. ComfyUI's classic patcher gives every patched module
+  it leaves off the device a cast-time patch, and that patch is the full
+  load's weight only for a plain weight above 16 KiB stored in the forward's
+  dtype. Every other patched key (a module of 16 KiB or less such as a norm
+  weight, a weight stored in another dtype than the forward such as a plain
+  FP8 file, a quantized Linear) now takes the weight the full load bakes when
+  its layer casts. On GB10 the old patch rounded a BF16 norm weight with a
+  diff apart on about 7 percent of its values, and a patched INT8 ConvRot
+  layer's output landed about 0.01 NRMS from the full load's. On an FP8, NVFP4
+  or MXFP8 file the weight is not enough: ComfyUI's classic forward leaves a
+  patched layer's input unquantized in that state. With `lora_low_rss` off, a
+  one-GPU render that would run such a layer off the device now stops before
+  sampling with a class C message that names `lora_low_rss` on (the Spark
+  default, which was never affected); it used to render with another output
+  than a full load and say nothing. A GPU with memory of its own keeps the
+  baked weight in host RAM instead, where there is room, and renders. Found by
+  reading and held by CPU tests against ComfyUI's own patcher; no hardware
+  render isolates any of it, and the kept path cannot run on a Spark.
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
   class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,

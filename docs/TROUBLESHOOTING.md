@@ -7978,12 +7978,19 @@ stock: a module of 16 KiB or less, a LoRA that resizes the weight, or a
 parameter other than a weight or bias. So does a key where stock's first
 forward uses another weight than the later ones, a weight stored in another
 dtype than the forward or a quantized layer on a full-precision matmul; the
-log names the first such key and why. A partial load keeps the same weights:
-where ComfyUI leaves a patched module off the device, a plain key of this kind
-takes the classic bake when its layer casts, and a quantized Linear's weight
-takes the requantized weight of stock's cast, not the patch ComfyUI's classic
-patcher would run on the dequantized weight. The log names the first key of
-each kind once (`is off the device after a partial load`). Comfy-managed residency runs ComfyUI's
+log names the first such key and why. A partial load keeps the full load's weights:
+where ComfyUI leaves a patched module off the device, every key whose full
+load is not ComfyUI's own cast-time patch takes the full load's weight when
+its layer casts. The log names the first key of each kind once (`is off the
+device after a partial load`). An FP8, NVFP4 or MXFP8 layer needs more than
+the weight: ComfyUI's classic forward leaves its input unquantized while a
+cast-time patch is attached, so the layer matches a full load only from a
+weight baked once and kept on the module. A GPU with memory of its own keeps
+that copy in host RAM while there is room. A Spark shares one pool, so with
+`lora_low_rss` off a render that would leave such a patched layer off the
+device stops before sampling with a `[dgxm:C guard=partial_load_divergence]`
+message. With `lora_low_rss` on (the default on a Spark) the LoRA is baked
+under a full load before any offload, and the output is the full load's. Comfy-managed residency runs ComfyUI's
 own patcher and was always stock. MOSS-Image's INT8 files keep the #129
 refusal until a hardware run measures a LoRA on them with this bake.
 

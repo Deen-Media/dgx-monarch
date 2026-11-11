@@ -67,6 +67,9 @@ REFUSAL_CLASSES = frozenset({
     "PackedDataParallelError",
     "PackedCfgParallelError",
     "PartialLoadDivergenceError",
+    # One rank: a patched layer that quantizes its input is off the device and its
+    # bake could not be kept (actor/lora_kept_bake.py).
+    "OffloadedInputQuantError",
     "RenderMemoryPriceError",
     "DualModelLoadDivergenceError",
     # The post-load readiness exchange (actor/rank_readiness.py). Class P on

@@ -1175,6 +1175,7 @@
       "test_worker_runs_one_live_precision_scan_after_preparation": "631aabd4f2736278"
     },
     "tests/test_fsdp_lora.py": {
+      "test_a_key_the_file_holds_under_both_names_binds_the_one_whose_bytes_match": "d21486de80849b8d",
       "test_a_renamed_key_still_has_to_match_the_files_bytes": "94293770af71f641",
       "test_bake_finds_a_key_comfy_renames_at_load_under_its_file_name": "25628240766989c7",
       "test_bake_key_refuses_a_quantized_setter_typed": "71bb0753ed8e141f",
@@ -1732,6 +1733,16 @@
       "test_the_same_file_card_needs_room_for_the_price_a_fresh_fleet_pays": "0a8b6535cb516c31",
       "test_the_worker_quote_for_b3s_state_reaches_the_card": "f9c7a9748e4a0cf9"
     },
+    "tests/test_lora_kept_bake.py": {
+      "test_a_bake_that_fails_leaves_the_module_as_comfyui_had_it": "c4720845cad8788b",
+      "test_a_kept_module_survives_every_move_comfyui_makes": "2307b09d7a2ae6e6",
+      "test_an_fp8_layer_left_off_the_device_computes_the_full_loads_output_from_a_kept_bake": "1d8569daf0892d2d",
+      "test_layers_that_quantize_their_input_take_the_room_first": "efc4f215bcf66467",
+      "test_nothing_is_kept_where_the_load_device_shares_the_hosts_memory": "e73f394c1925c4e3",
+      "test_the_single_rank_guard_rides_prepare_sampling_once": "63ff7b9be4a655ab",
+      "test_which_layers_quantize_their_input": "a1b4c27e75093e8c",
+      "test_with_no_room_for_the_bake_the_fp8_layer_differs_and_the_render_is_refused": "7dbe785bd23702bc"
+    },
     "tests/test_lora_quant_guard.py": {
       "test_a_fresh_load_refuses_before_the_lora_build_and_leaves_the_slot_empty": "9b8857d765a73145",
       "test_a_fresh_load_stays_open_without_the_refused_pair": "e30addb54751a7c5",
@@ -2190,19 +2201,19 @@
       "test_the_seam_reads_the_class_forward": "84e59e03d906552e"
     },
     "tests/test_refusal_classes.py": {
-      "test_class_rules_hold_at_every_classified_site": "5cafc4648318999d",
-      "test_classified_refusal_sites_match_the_ledger": "be492398677a7e60",
-      "test_every_declared_exception_is_classified_as_refusal_or_not": "c75c730d6a89ada5",
+      "test_class_rules_hold_at_every_classified_site": "8f4eca96bcf0ee34",
+      "test_classified_refusal_sites_match_the_ledger": "cf6fed1dc6b50624",
+      "test_every_declared_exception_is_classified_as_refusal_or_not": "30136a7d739c6854",
       "test_every_waivable_guard_message_names_the_panel_and_the_env_fallback": "28e23825921f635e",
       "test_guard_vocabulary_agrees_with_the_frozen_ledger_vocabulary": "9525b2023313c356",
-      "test_guard_vocabulary_is_claimed_or_explicitly_reserved": "b06905c2cff4cc89",
+      "test_guard_vocabulary_is_claimed_or_explicitly_reserved": "8b8c1fe4e223127f",
       "test_no_new_refusal_site_is_waiting_for_a_class": "82412ec786e3f2c4",
       "test_only_a_canonical_leading_tag_proves_a_worker_refusal": "eaff670a0563f6f1",
       "test_refusal_refuses_an_inconsistent_declaration": "c937a109121a10ba",
       "test_tag_shaped_literal_text_cannot_mint_an_ownership_tag": "909cf89fd9e2d665",
       "test_tag_survives_the_wire_wrapping": "4861bd618de7118b",
       "test_two_tags_in_one_text_refuse_to_parse": "81c1b836b85aff72",
-      "test_untagged_refusal_sites_never_grow": "7b06423caf6d5b8c"
+      "test_untagged_refusal_sites_never_grow": "14ee772b92f80f4b"
     },
     "tests/test_render_memory_price.py": {
       "test_a_broken_estimator_fails_open": "c39352b9efc9b171",

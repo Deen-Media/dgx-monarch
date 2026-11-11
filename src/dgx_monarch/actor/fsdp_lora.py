@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import math
 import os
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -152,30 +153,48 @@ def write_shard(
 def _file_tensor(
     header: dict[str, _FileTensor], key: str, param: torch.Tensor,
     renames: dict[str, str] | None = None,
+    matches: Callable[[_FileTensor], bool] | None = None,
 ) -> _FileTensor:
     """The checkpoint tensor a patcher key restores from.
 
     ``renames`` is ``load_time_renames`` for this model and file: a key ComfyUI
     renames at load (FLUX's ``<...>_norm.scale``, held as ``<...>_norm.weight``)
     sits under none of the namespace spellings, and is tried last.
+
+    ``matches`` is the byte check against the live rows. A file may hold a
+    tensor under the key's own name and another under the name ComfyUI loaded
+    it from; the first candidate of the live dtype and shape whose bytes match
+    is the one, as in the resident capture (``unbake._map_plain``). With no
+    match the first candidate of the right dtype and shape is returned, and
+    the caller's own check then says the model is not pristine.
     """
+    fits: _FileTensor | None = None
+    misfit: tuple[str, _FileTensor] | None = None
     for cand in with_renamed(_candidate_file_keys(key), renames, key):
         ft = header.get(cand)
         if ft is None:
             continue
         if ft.dtype != param.dtype or ft.shape != tuple(param.shape):
-            # This is the in-bake backstop for an fp32 island cast live, which the
-            # header check (adapters.detect.fsdp_lora_admission_property) cannot
-            # predict. Every rank loads the same file and casts it the same way, so
-            # the class P tag is rank symmetric (docs/DESIGN.md section 5.4).
-            raise UnbakeError(refusal(
-                RefusalClass.PHYSICS,
-                f"checkpoint tensor {cand} is {ft.dtype}/{ft.shape} but the live "
-                f"parameter is {param.dtype}/{tuple(param.shape)}; a LoRA under FSDP "
-                "needs the file's own dtype (no live cast). Use a resident topology "
-                "for this file, or a bf16 artifact with no fp32 islands."
-            ))
-        return ft
+            misfit = misfit or (cand, ft)
+            continue
+        if matches is None or matches(ft):
+            return ft
+        fits = fits or ft
+    if fits is not None:
+        return fits
+    if misfit is not None:
+        cand, ft = misfit
+        # This is the in-bake backstop for an fp32 island cast live, which the
+        # header check (adapters.detect.fsdp_lora_admission_property) cannot
+        # predict. Every rank loads the same file and casts it the same way, so
+        # the class P tag is rank symmetric (docs/DESIGN.md section 5.4).
+        raise UnbakeError(refusal(
+            RefusalClass.PHYSICS,
+            f"checkpoint tensor {cand} is {ft.dtype}/{ft.shape} but the live "
+            f"parameter is {param.dtype}/{tuple(param.shape)}; a LoRA under FSDP "
+            "needs the file's own dtype (no live cast). Use a resident topology "
+            "for this file, or a bf16 artifact with no fp32 islands."
+        ))
     # No tensor under the key's own name, a namespace spelling of it, or a name
     # ComfyUI renames to it at load (a weight ComfyUI builds from part of a
     # tensor lands here too). Under FSDP the file is the only pristine copy
@@ -277,7 +296,10 @@ def capture_record(
                     f"quantized key {key} under FSDP: LoRA on quantized shards is "
                     "not admitted. Use a resident topology for this file, or a "
                     "bf16, fp16, or plain-dtype fp8 checkpoint under FSDP."))
-            ft = _file_tensor(header, key, param, renames)
+            def rows_match(cand: _FileTensor, param: torch.Tensor = param) -> bool:
+                return _shard_bytes_match(fd, cand, param, rank, world, replicated)
+
+            ft = _file_tensor(header, key, param, renames, matches=rows_match)
             if not _shard_bytes_match(fd, ft, param, rank, world, replicated):
                 raise UnbakeError(
                     f"live shard of {key} does not match the checkpoint bytes on rank "

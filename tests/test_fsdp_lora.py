@@ -420,6 +420,39 @@ def test_bake_finds_a_key_comfy_renames_at_load_under_its_file_name(tmp_path, mo
         torch.distributed.destroy_process_group()
 
 
+@pytest.mark.parametrize("own_name_holds", ["other bytes", "another dtype", "another shape"])
+def test_a_key_the_file_holds_under_both_names_binds_the_one_whose_bytes_match(tmp_path, monkeypatch, own_name_holds):
+    """ComfyUI loaded the renamed tensor; the file also holds one under the key's own name.
+
+    The lookup used to stop at the first name the header has, bind the wrong
+    tensor and call the model not pristine. It now byte-checks each candidate,
+    as the resident capture does, and binds the tensor the model holds.
+    """
+    import torch.distributed.fsdp
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    _install_comfy_stub(monkeypatch)
+    model, path, lin, norm = _norm_model(tmp_path)
+    decoy = {"other bytes": torch.tensor([9.0, 9.0, 9.0, 9.0]).to(torch.bfloat16),
+             "another dtype": torch.tensor([1.0, 1.5, 2.0, 2.5], dtype=torch.float32),
+             "another shape": torch.ones(8).to(torch.bfloat16)}[own_name_holds]
+    _write_safetensors(path, {"blocks.0.lin.weight": lin, _NORM_KEY: decoy, _NORM_FILE_KEY: norm})
+    try:
+        model = _one_rank_fsdp(tmp_path, model)
+        record = fsdp_lora.capture_record(model, [_NORM_KEY], str(path), 0, 1)
+        header = fsdp_lora.read_safetensors_header(str(path))
+        assert record.mapped[_NORM_KEY] == header[_NORM_FILE_KEY]
+        assert record.mapped[_NORM_KEY] != header[_NORM_KEY]
+        # With neither tensor equal to the live rows the model is not pristine, as before.
+        with torch.no_grad():
+            fsdp_lora.local_shard(model.blocks[0].query_norm.weight).add_(1)
+        with pytest.raises(UnbakeError, match=r"not pristine|needs the file's own dtype"):
+            fsdp_lora.capture_record(model, [_NORM_KEY], str(path), 0, 1)
+    finally:
+        torch.distributed.destroy_process_group()
+
+
 def test_a_renamed_key_still_has_to_match_the_files_bytes(tmp_path, monkeypatch):
     """The rename only names a candidate; the byte check decides."""
     import torch.distributed.fsdp

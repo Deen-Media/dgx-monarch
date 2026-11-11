@@ -187,3 +187,25 @@ def test_no_registered_config_raises_and_every_rename_names_a_header_key(support
         if renames:
             renaming.append(cls.__name__)
     assert "Flux2" in renaming and "Flux" in renaming, renaming
+
+
+def test_the_map_is_the_same_in_every_process_for_two_names_renamed_onto_one():
+    """Python salts str hashing per process, so a map built by walking a set can pick
+    another file key on each rank when two file names load onto one model key. The map
+    walks the header in file order, so the last one wins in every process, as it does in
+    the dict ComfyUI builds."""
+    import subprocess
+
+    code = (
+        "from types import SimpleNamespace\n"
+        "from dgx_monarch.actor.load_renames import load_time_renames\n"
+        "def rule(sd):\n"
+        "    return {(k.rsplit('.', 1)[0] + '.weight' if k.endswith(('.scale', '.alt')) else k): v\n"
+        "            for k, v in sd.items()}\n"
+        "header = {f'b.{i}.norm.{s}': None for i in range(8) for s in ('scale', 'alt')}\n"
+        "model = SimpleNamespace(model_config=SimpleNamespace(process_unet_state_dict=rule))\n"
+        "print(sorted(load_time_renames(model, header).items()))\n")
+    outs = {subprocess.run([sys.executable, "-c", code], env={**os.environ, "PYTHONHASHSEED": str(seed)},
+                           capture_output=True, text=True, check=True).stdout for seed in range(4)}
+    assert len(outs) == 1, outs
+    assert outs.pop().count(".alt'") == 8

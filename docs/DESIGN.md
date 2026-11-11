@@ -724,7 +724,13 @@ names (`actor/load_renames.py`), and the rank's rows are byte-verified against
 it like any other key. A config that also builds weights as it renames
 (PixelDiT strips `net.` and splits a modulation weight in two) keeps the map
 for the keys it only moves; a weight built from part of a tensor has no file
-name. A patched key the file holds under no name refuses
+name. A name only proposes a tensor: where a file holds one under the key's
+own name and another under the name ComfyUI loaded it from, each candidate of
+the live dtype and shape is byte-checked and the first that matches is bound.
+That check is the last arbiter and it samples three 4 KiB windows, so a wrong
+binding would take a config that loads two file tensors onto one key, a load
+order other than the header's, and two tensors equal in those windows; no
+registered config does the first. A patched key the file holds under no name refuses
 class P in `capture_record`, before any shard is written. With `lora_low_rss` off a sharded model
 refuses the stack, typed. The checkpoint itself must also be admitted for the
 bake, before any load, on every `lora_low_rss` or `auto_gate` setting
@@ -970,20 +976,35 @@ resizes the weight, a parameter other than a weight or bias) keeps the classic
 bake, and so does a key whose cast does not settle on one weight: a weight
 stored in another dtype than the forward, or a quantized layer on a
 full-precision matmul, where stock's first forward uses another weight than
-the later ones. The same weights hold for a module ComfyUI leaves off the
-device, in a partial load or a partial unload under memory pressure. ComfyUI's
-classic patcher gives every such patched module a cast-time patch and runs it
-on the weight in the forward's dtype, dequantized. For a plain weight above
-16 KiB that is stock's cast-time weight. For two kinds of key it is not: a
-plain key stock bakes classically (stock force-loads a module of 16 KiB or
-less; on GB10 the two recipes round a BF16 norm weight with a diff apart on
-about 7 percent of its values), and a quantized weight, which ComfyUI's
-classic cast never requantizes (an INT8 ConvRot layer's output lands about
-0.01 NRMS from the full load's). After each `load` and `partially_unload` the
-patch on such a key is swapped for one that computes the full load's weight
-when the layer casts: the classic recipe for the first kind, the requantized
-cast-time weight for the second. A quantized key the cast-time bake does not
-serve keeps ComfyUI's own patch. Comfy-managed residency
+the later ones. A module ComfyUI leaves off the device, in a partial load or a
+partial unload under memory pressure, computes with the full load's weights
+too. ComfyUI's classic patcher gives every such patched module a cast-time
+patch that runs on the weight in the forward's dtype, dequantized, and that is
+the full load's weight only for a plain weight above 16 KiB stored in the
+forward's dtype. After each `load` and `partially_unload`, the patch on every
+other key is swapped for one that runs the full load's own
+`patch_weight_to_device` on the module's stored weight when the layer casts:
+ComfyUI's classic bake for a module of 16 KiB or less (on GB10 the two recipes
+round a BF16 norm weight with a diff apart on about 7 percent of its values)
+and for a weight stored in another dtype than the forward, and stock's
+requantized weight for a quantized Linear (ComfyUI's classic cast never
+requantizes; an INT8 ConvRot layer's output lands about 0.01 NRMS from the
+full load's). A quantized weight outside a Linear keeps ComfyUI's own patch.
+On a format that also quantizes the layer's input (FP8, NVFP4, MXFP8) the
+weight at cast is the full load's and the output is not, because ComfyUI's
+classic forward quantizes the input only when the layer carries no cast-time
+patch. Only a weight baked once and stored on the module, with the patch taken
+off, closes that (`actor/lora_kept_bake.py`), and it costs a second copy of
+the layer beside ComfyUI's backup. On a GPU with memory of its own that copy
+is host RAM, and a module is kept while the host has the room above the 5 GiB
+floor; that also spares the bake on every cast. On a GPU that shares the
+host's memory the copy would come out of the room ComfyUI just held back for
+the render, so nothing is kept there: a weight-only format computes its weight
+at each cast, and a render with a patched input-quantizing layer off the
+device is refused, class C, before its first forward
+(`partial_load_divergence`, raised at one rank by `lora_kept_bake.check`),
+naming `lora_low_rss` on, the Spark default, which bakes under a full load and
+has neither gap. Comfy-managed residency
 runs ComfyUI's own patcher and is not touched. The bake-equivalence canary compares the bake with comfy.ops' own
 cast on INT8 ConvRot and BF16 layers, and the keys it bakes at cast time with
 the keys stock's own `ModelPatcherDynamic.load` chooses on both sides of the
@@ -2607,6 +2628,9 @@ dgx-monarch/
 │   │   │                      #   render clone, and the H3 shift's Worker refusals
 │   │   ├── lora_shape_guard.py # the refusal of a LoRA patch that changes a
 │   │   │                      #   weight's shape, before any bake
+│   │   ├── lora_kept_bake.py  # a full load's baked weight kept on a module
+│   │   │                      #   ComfyUI leaves off the device, and the one-rank
+│   │   │                      #   refusal where an FP8 layer cannot keep one
 │   │   ├── vae_decode.py      # the vae_decode endpoint and the one resident
 │   │   │                      #   decode VAE an actor may hold (§5.6)
 │   │   └── rdma_handoff.py    # durable worker descriptor ownership + ACK
