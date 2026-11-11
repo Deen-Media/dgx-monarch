@@ -70,3 +70,23 @@ def test_the_negative_control_and_only_it_differs(tmp_path):
     assert "self_check_row_dependent" in differs
     if EXACT:
         assert differs == {"self_check_row_dependent"} and record["all_equal"]
+
+
+def _record(diff, equal):
+    rows = [{"call": name, "rank": rank, "real_rows": 12, "equal": equal, "max_abs_diff": diff}
+            for name in REAL_CALLS for rank in (0, 1)]
+    control = {"call": "self_check_row_dependent", "rank": 0, "real_rows": 12, "equal": False,
+               "max_abs_diff": 0.5}
+    return {"calls": [*rows, control]}
+
+
+def test_the_x86_bound_admits_rounding_and_refuses_a_real_error(monkeypatch):
+    """The off-aarch64 branch, forced: float rounding passes, a 1e-3 error fails, and the
+    negative control never decides the verdict."""
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "EXACT", False)
+    assert _equal_or_close(_record(1e-6, False))
+    assert not _equal_or_close(_record(1e-3, False))
+    monkeypatch.setattr(module, "EXACT", True)
+    assert _equal_or_close(_record(0.0, True))
+    assert not _equal_or_close(_record(1e-6, False))
