@@ -1323,6 +1323,18 @@
       "waivable": false
     },
     {
+      "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "worker_runtime.py::cohort_runtime::WorkerRuntimeMismatch#0",
       "class": "P",
       "guard": null,

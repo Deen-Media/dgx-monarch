@@ -427,6 +427,23 @@
   before dispatch, and auto skips the cfg rows for it. No hardware render has
   run yet ([MODELS](docs/MODELS.md#model-ultratex),
   [TROUBLESHOOTING #148](docs/TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
+- MiniMax-H3-Image, which ComfyUI 0.45.0 added, is detected from its header
+  as `minimax_h3_image` and refused class P at the loader, before any load, on
+  every topology and in every format, until its adapter lands. Render it with
+  stock ComfyUI 0.45.0 or newer on one GPU meanwhile
+  ([TROUBLESHOOTING #150](docs/TROUBLESHOOTING.md#150-a-minimax-h3-image-render-refuses-at-the-loader)).
+  A file of the family whose config metadata has no sigma grid
+  (`transformer.pdd_sigmas`), which stock ComfyUI fails to build, refuses
+  first ([TROUBLESHOOTING #149](docs/TROUBLESHOOTING.md#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)).
+  The family's BF16 file reads `bf16` (its 51 F16 adaLN linears are islands),
+  and its INT8 ConvRot and W4A8 files read `int8` and `w4a8`. MiniMax H3 video
+  and p-h3-image files read and render as before. For every family, the FSDP
+  launch check no longer counts a checkpoint's uint8 attention pins
+  (`<block>.comfy_attention.config`), so a bf16 or fp16 file that pins proves
+  its precision where it refused class P. On every `+fsdp` preset the shard
+  build then clears those pins: the Init widget's kernel runs, no card asks,
+  and the record says dropped, as ADAPTERS describes. No listed bf16 or fp16
+  file pins except MiniMax-H3-Image's, which the loader refuses first.
 - uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1 fill each
   fused-norm call of their sharded blocks to the rows one GPU normalizes, as
   FLUX.3 and MOSS-Image already did. comfy-kitchen's fused AdaLN picks its

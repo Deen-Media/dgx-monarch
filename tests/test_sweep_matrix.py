@@ -2476,21 +2476,28 @@ def test_an_unpinned_int8_checkpoint_keeps_its_numeric_bar(tmp_path):
                                      "bar": "step-nrms", "probe_steps": 1}, preset
 
 
-def test_a_pinned_bf16_checkpoint_meets_the_fsdp_launch_contract_first(tmp_path):
-    """The FSDP shard build of a bf16 file would clear its pins, but a header
-    that pins one never reaches it: the uint8 config tensors leave the launch
-    precision unproven, and the launch contract refuses class P above the pin
-    rule. Its resident cells still meet the pin guard."""
+def test_a_pinned_bf16_checkpoint_reaches_the_fsdp_shard_build_which_clears_its_pins(tmp_path):
+    """The launch check does not count the uint8 config tensors, so a bf16 header
+    that pins proves bf16 and reaches the shard build, which clears its pins: the
+    cell answers as the same file without pins does. Its resident cells still meet
+    the pin guard."""
     config = _pin_rig(tmp_path, {
         "pinnedbf": ({"blocks.0.attn": PIN_INT8}, torch.bfloat16),
         "plainbf": ({}, torch.bfloat16)})
     cells, _pruned, _unmatched = matrix.build_cells(config)
     assert _pick(cells, "pinnedbf", "cfg2")["label"] == "refuse:K"
     for preset in ("cfg2+fsdp", "dp2+fsdp"):
-        pinned = _pick(cells, "pinnedbf", preset)
-        assert (pinned["launch_quant"], pinned["label"], pinned["basis"]) == (
-            "unknown", "refuse:P", "guard"), preset
-        assert _pick(cells, "plainbf", preset)["launch_quant"] == "bf16", preset
+        pinned, plain = _pick(cells, "pinnedbf", preset), _pick(cells, "plainbf", preset)
+        assert pinned["launch_quant"] == plain["launch_quant"] == "bf16", preset
+        assert (pinned["label"], pinned["basis"]) == (plain["label"], plain["basis"]), preset
+    from dgx_monarch import attention_pins
+
+    pin = {"blocks.0.attn.comfy_attention": attention_pins.BlockPin("comfy_kitchen_int8", bound=True)}
+    summary = matrix.pin_summary(pin, matrix.topology_from_preset("cfg2+fsdp", 2), "bf16")
+    assert summary is not None and summary.public()["attention_pins_dropped"] == {
+        attention_pins.DROPPED_FSDP: 1}
+    kept = matrix.pin_summary(pin, matrix.topology_from_preset("cfg2+fsdp", 2), "int8")
+    assert kept is not None and kept.public()["attention_pins_ran"] is True  # the direct wrap keeps them
 
 
 @pytest.mark.parametrize(("sampler", "waivable"), [("euler", False), ("euler_cfg_pp", True)])
