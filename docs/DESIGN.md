@@ -734,8 +734,11 @@ MiniMax-H3-Image keeps its 51 adaLN linears on the curve basis in F16 beside a
 bf16 core, so its header reads `bf16` and the header proof counts those bytes
 as island bytes (`adapters/minimax_h3_image_header.py`); the loaded-model side
 of that rule belongs to the family's adapter. The header proof does not count
-a uint8 attention pin (`<block>.comfy_attention.config`), which is no weight, so
-a bf16 or fp16 file that pins reaches the shard build, and the rule is: class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP shard build drops the pins, nothing approximate runs, no card asks, and the record says dropped (FSDP shard build), on every `+fsdp` preset and for every family.
+a uint8 attention pin (`<block>.comfy_attention.config`), which is no weight,
+so a bf16 or fp16 file that pins reaches the shard build, and the rule is:
+class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP shard
+build drops the pins, nothing approximate runs, no card asks, and the record
+says dropped (FSDP shard build), on every `+fsdp` preset and for every family.
 fp32 parameters inside a bf16 core are islands
 (`adapters/fsdp_islands.py`): when they hold at most 5%
 of the checkpoint bytes the header proof still reads `bf16`, the live scan
@@ -1471,7 +1474,7 @@ whether a bypass is allowed.
 | **P** physics | the model, ComfyUI, or the machine cannot do it: batch caps a family's DiT at 1, no kernel carries the mask, the checkpoint bytes on disk do not match themselves. | **None.** No consent, no waiver, no env var. The message must name the working alternative, because that is all the user can act on. |
 | **C** capacity-protective | a preflight: this will not fit here. | **Never a bare refusal.** Offer the fitting strategy first (slab residency through one click), refuse outright only once the ladder is spent, and then say what would fit. Consent-clearable where a rescue exists and the identity-gate ledger reads clear for those bytes. |
 | **U** unproven correctness | family validation, first-load-stock, Gate results, and untested fold degrees. Correctness is unproven; no error has been measured. | **Always consent-bypassable.** Log the bypass, write a permanent waiver row, then proceed. Neither U guard has a card this release (`waivable_now` is False for both) and no site raises class U: a rescue grant covers first-load-stock for its load, and an explicit slab request loads a family without slab validation. |
-| **K** known-wrong math | measured or by-construction wrongness: attended pad rows on ring, an approximate attention kernel the operator selected, an approximate kernel a checkpoint or LoRA pins on an attention module where nothing drops the pin, and a sharded nvfp4 render of a family measured past the fidelity floor. | **Refuse by default.** The ring divisibility-pad guard carries an expert waiver: one card in the accuracy style carrying the measured wrongness in its own text, `DGXM_WAIVE_KNOWN_WRONG=ring_pad` headless, never auto-eligible, and every render under it stamped. The Sol-Attn kernel carries the same shape under `DGXM_WAIVE_KNOWN_WRONG=sol_attn`, and a sharded nvfp4 render of a measured family carries it under `DGXM_WAIVE_KNOWN_WRONG=shard_quant_scale`. The card and the headless value use the unscoped name. Sol-Attn raises family-scoped at the kernel and under `sol_attn:checkpoint_pin` where a pinned approximate kernel would run (docs/ADAPTERS.md); shard-quant raises family-scoped at every site; ring pad raises scoped for MiniMax H3 and unscoped at the adapter-base backstop. Historical PixelDiT waiver rows remain readable, but that guard was retired after the exact-gather fix passed hardware parity. |
+| **K** known-wrong math | measured or by-construction wrongness: attended pad rows on ring, an approximate attention kernel the operator selected, an approximate kernel a checkpoint or LoRA pins on an attention module where nothing drops the pin (except a checkpoint's own header pins in a world of one GPU, which run as stock ComfyUI runs them and ask nothing; a `single` preset on a two-rank mesh resolves to dp2 on the Worker and keeps the guard), and a sharded nvfp4 render of a family measured past the fidelity floor. | **Refuse by default.** The ring divisibility-pad guard carries an expert waiver: one card in the accuracy style carrying the measured wrongness in its own text, `DGXM_WAIVE_KNOWN_WRONG=ring_pad` headless, never auto-eligible, and every render under it stamped. The Sol-Attn kernel carries the same shape under `DGXM_WAIVE_KNOWN_WRONG=sol_attn`, and a sharded nvfp4 render of a measured family carries it under `DGXM_WAIVE_KNOWN_WRONG=shard_quant_scale`. The card and the headless value use the unscoped name. Sol-Attn raises family-scoped at the kernel and under `sol_attn:checkpoint_pin` where a pinned approximate kernel would run outside a world of one GPU, or in one where a LoRA sets the pin or a live attention module differs from the checkpoint's (docs/ADAPTERS.md); shard-quant raises family-scoped at every site; ring pad raises scoped for MiniMax H3 and unscoped at the adapter-base backstop. Historical PixelDiT waiver rows remain readable, but that guard was retired after the exact-gather fix passed hardware parity. |
 
 Two related boundaries:
 
@@ -1676,8 +1679,12 @@ refuses; neither can downgrade the running process.
 
 **A class-K guard that blocks the ceremony answers first.** Gate proof renders
 ignore accuracy waivers. A class-K refusal therefore blocks every proof
-attempt for that combination. Stock-capable residency paths can continue to
-the ordinary render, where an explicit waiver may apply. Comfy-managed
+attempt for that combination. A checkpoint's own attention pins in a world of
+one GPU meet no guard, so a ceremony there runs every leg with the pins, on
+every residency, as the render does. A bf16 or fp16 file under `+fsdp` meets
+no guard either, by the shard-build rule in the precision paragraph above.
+Stock-capable residency paths can continue to the ordinary render, where an
+explicit waiver may apply. Comfy-managed
 residency cannot fall back in-process, so it reports the class-K refusal and
 card directly instead of asking the user to repeat the same failing proof.
 

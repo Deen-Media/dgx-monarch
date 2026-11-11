@@ -444,6 +444,24 @@
   build then clears those pins: the Init widget's kernel runs, no card asks,
   and the record says dropped, as ADAPTERS describes. No listed bf16 or fp16
   file pins except MiniMax-H3-Image's, which the loader refuses first.
+- A change in behaviour in a world of one GPU (one Spark by itself, or
+  `mode=local` with one GPU): a checkpoint's own attention pins now run as
+  stock ComfyUI runs them, with no Sol-Attn waiver card, no stamp and no
+  ledger row, and the first-use ceremony runs every leg with them, slab
+  residency included. The FLUX.3 Klein and MOSS-Image INT8 ConvRot files (the
+  SFT, Base and Kromoss checkpoints) render there with their publisher's INT8
+  attention as stock does; on uly2 they render with exact attention, which
+  stock cannot do with those files. The two differ a little, and the render
+  record says which ran. A pin a LoRA sets, restates or changes still asks in
+  a world of one GPU, as does a live attention module that differs from the
+  checkpoint's. A `single` preset on a two-rank mesh resolves to dp2 on the
+  Worker and keeps the card. cfg2, dp2 and their `+fsdp` forms still ask for
+  the waiver wherever the pins run; a bf16 or fp16 file under `+fsdp` renders
+  with its pins dropped and recorded, with no card ([TROUBLESHOOTING
+  #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+- The render record's pin line says "kept" where it said "ran": the record
+  reads the pins from the load and the topology and does not count attention
+  calls. The field names are unchanged.
 - Fix: the Workers prepare Anima's text as stock ComfyUI does, so a Worker's
   one-GPU Anima render is expected to equal stock's. Stock runs a prompt in
   inference mode, where Anima's `extra_conds` runs the text adapter and pads

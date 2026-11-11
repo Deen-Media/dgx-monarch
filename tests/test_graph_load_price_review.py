@@ -102,16 +102,63 @@ def test_a_twin_the_lora_route_refuses_is_never_named(monkeypatch):
         _Mesh(), _kromoss(lora=False), KROMOSS)
 
 
-def test_a_twin_that_pins_attention_is_named_only_where_sequence_parallelism_drops_the_pin(
+def test_a_twin_that_pins_attention_is_named_only_where_its_pins_ask_nothing(
         monkeypatch, tmp_path):
-    """A pinned approximate kernel runs, and refuses class K, off Ulysses and ring (#117)."""
+    """On one GPU the twin's own pins run as stock runs them, and Ulysses and ring
+    drop them; a pair without sequence parallelism runs them, and a pinned
+    approximate kernel refuses class K there (#117)."""
     _write_safetensors(tmp_path / "diffusion_models" / KROMOSS_INT8,
                        ("blocks.0.weight", "blocks.0.attn.comfy_attention.config"))
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 40 * _GIB)
-    assert KROMOSS_INT8 not in _refuse(_Mesh(), _kromoss(lora=False), KROMOSS)
+    assert KROMOSS_INT8 in _refuse(_Mesh(), _kromoss(lora=False), KROMOSS)
     loader_preflight.reset_memos()
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 34 * _GIB)
     assert KROMOSS_INT8 in _refuse(_pair("uly2"), _kromoss(lora=False), KROMOSS)
+    loader_preflight.reset_memos()
+    assert KROMOSS_INT8 not in _refuse(_pair("dp2"), _kromoss(lora=False), KROMOSS)
+
+
+def test_on_one_gpu_a_pinned_twin_beside_a_lora_that_pins_is_never_named(monkeypatch, tmp_path):
+    """A LoRA's pin refuses class K on one GPU too, so the twin would meet it."""
+    from dgx_monarch.nodes import graph_twins
+
+    def lora_path(folder, name):
+        candidate = tmp_path / folder / name
+        return str(candidate) if candidate.is_file() else None
+
+    monkeypatch.setattr(sys.modules["folder_paths"], "get_full_path", lora_path)
+
+    lora = tmp_path / "loras" / "pinning_lora.safetensors"
+    lora.parent.mkdir(parents=True, exist_ok=True)
+    _write_safetensors(lora, ("diffusion_model.blocks.0.attn.comfy_attention.config",))
+    plain = tmp_path / "loras" / "plain_lora.safetensors"
+    _write_safetensors(plain, ("diffusion_model.blocks.0.lora_A.weight",))
+    assert graph_twins._loras_pin(("pinning_lora.safetensors",))
+    assert not graph_twins._loras_pin(("plain_lora.safetensors",))
+    assert graph_twins._loras_pin(("absent_lora.safetensors",))  # unreadable reads as a pin
+
+    def raising(folder, name):
+        raise OSError("models folder unreadable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys.modules["folder_paths"], "get_full_path", raising)
+        assert graph_twins._loras_pin(("plain_lora.safetensors",))  # a raise reads as a pin
+    # The wiring, not only the helper: a pinned bf16 twin a graph here names.
+    twin = tmp_path / "diffusion_models" / "pinned_twin_bf16.safetensors"
+    twin.parent.mkdir(parents=True, exist_ok=True)
+    _write_safetensors(twin, ("blocks.0.weight", "blocks.0.attn.comfy_attention.config"))
+    monkeypatch.setattr(graph_twins, "shipped_files",
+                        lambda: frozenset({("diffusion_models", twin.name)}))
+
+    def admitted(loras, mesh):
+        return graph_twins.twin_admitted(str(twin), "bf16", family="flux3", loras=loras, mesh=mesh)
+
+    assert admitted((), _Mesh())
+    assert admitted(("plain_lora.safetensors",), _Mesh())
+    assert not admitted(("pinning_lora.safetensors",), _Mesh())
+    assert not admitted((), _pair("dp2"))
+    assert admitted(("pinning_lora.safetensors",), _pair("uly2"))
+    assert not admitted((), types.SimpleNamespace(topology_preset="single"))  # no world: not one GPU
 
 
 def test_a_file_no_graph_here_names_is_never_named():

@@ -847,7 +847,9 @@ def pin_summary(pins: dict[str, attention_pins.BlockPin] | None,
 
     ``attention_pins.summarize`` decides which pins run: sequence parallelism
     drops every one. The stand-in carries the pins where the load scan caches
-    them on a loaded model, which is all ``summarize`` reads. That attribute's
+    them on a loaded model, and they are the checkpoint's own by construction
+    (build_cells drops a LoRA arm that pins), so in a world of one GPU they ask
+    nothing, as the runtime's ``checkpoint_only`` reads them. That attribute's
     name is private to attention_pins (``_SCAN_ATTR``), and the harness reads
     it on purpose so the src tree stays untouched: a rename there breaks the
     pinned tests here at once, with an AttributeError.
@@ -868,7 +870,8 @@ def pin_summary(pins: dict[str, attention_pins.BlockPin] | None,
     if topo.fsdp and launch_quant in ("bf16", "fp16"):
         pins = {key: replace(pin, cleared=True, bound=False) for key, pin in pins.items()}
     loaded = SimpleNamespace(model=SimpleNamespace(**{attention_pins._SCAN_ATTR: dict(pins)}))
-    return attention_pins.summarize([loaded], sequence_parallel=topo.sequence_parallel > 1)
+    return attention_pins.summarize([loaded], sequence_parallel=topo.sequence_parallel > 1,
+                                    checkpoint_only=True)
 
 
 def pin_refusal(pins: dict[str, attention_pins.BlockPin] | None, topo: Topology,
@@ -1422,13 +1425,20 @@ def known_wrong_reference(reference_cell: dict | None) -> bool:
     """Whether the cell this one is scored against renders a pinned approximate kernel.
 
     The second reading beside ``known_wrong_kernel``, of the other side of the
-    comparison. The reference refuses class K under the checkpoint pin guard,
-    so it renders only under that waiver, running the pinned kernel. A cell of
-    the same checkpoint on uly2 or ring2 drops the pins and runs the Init
-    widget's kernel instead, so the two differ however exact this cell is.
+    comparison. Either the reference refuses class K under the checkpoint pin
+    guard and renders only under that waiver, or it is a one-GPU cell, where the
+    checkpoint's own pins run as stock runs them and ask nothing. Both run the
+    pinned kernel. A cell of the same checkpoint on uly2 or ring2 drops the pins
+    and runs the Init widget's kernel instead, so the two differ however exact
+    this cell is.
     """
-    return bool(reference_cell) and attention_pins.SOL_ATTN_PIN_GUARD in (
-        reference_cell.get("waiver_guards") or [])
+    if not reference_cell:
+        return False
+    if attention_pins.SOL_ATTN_PIN_GUARD in (reference_cell.get("waiver_guards") or []):
+        return True
+    pinned = attention_pins._approximate(reference_cell.get("checkpoint_pins") or {})
+    return bool(pinned) and reference_cell.get("session") == "local" \
+        and reference_cell.get("label") == "render"
 
 
 def _numeric_bar(cell: dict, steps: int, reference_cell: dict | None = None) -> str:

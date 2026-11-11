@@ -187,26 +187,26 @@ export function railLineParts(rows) {
 
 const byName = ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0);
 
-// One model's pins and what ran: "comfy_kitchen_sol x 40 modules, ran".
+// One model's pins and what it kept: "comfy_kitchen_sol x 40 modules, kept".
 function pinClause(record) {
     if (!isRecord(record) || !isRecord(record.attention_pins)) return "";
     const counts = Object.entries(record.attention_pins)
         .filter(([, n]) => Number.isInteger(n) && n >= 0).sort(byName);
     if (!counts.length) return "";
     const pinned = counts.map(([k, n]) => `${k} x ${n} module${n !== 1 ? "s" : ""}`).join(", ");
-    if (record.attention_pins_ran === true) return `${pinned}, ran`;
+    if (record.attention_pins_ran === true) return `${pinned}, kept`;
     const reasons = isRecord(record.attention_pins_dropped)
         ? Object.entries(record.attention_pins_dropped).filter(([, n]) => Number.isInteger(n)) : [];
     const why = reasons.map(([r]) => r).sort().join(", ");
     const dropped = reasons.reduce((sum, [, n]) => sum + n, 0);
     const total = counts.reduce((sum, [, n]) => sum + n, 0);
     if (!why || dropped >= total) return `${pinned}, dropped${why ? ` (${why})` : ""}`;
-    return `${pinned}, ran on ${total - dropped}, dropped on ${dropped} (${why})`;
+    return `${pinned}, kept on ${total - dropped}, dropped on ${dropped} (${why})`;
 }
 
-// The kernels the model pinned per attention module and whether they ran, the
-// line attention_pins.describe writes: "pinned: comfy_kitchen_sol tau=0.7 x 40
-// modules, ran", or one clause per model when both models of a dual-model
+// The kernels the model pinned per attention module and whether it kept them,
+// the line attention_pins.describe writes: "pinned: comfy_kitchen_sol tau=0.7 x 40
+// modules, kept", or one clause per model when both models of a dual-model
 // cfg2 render pin. Empty when the record carries no pins.
 export function pinnedAttention(last) {
     if (!isRecord(last)) return "";
