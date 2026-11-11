@@ -66,7 +66,8 @@ def grid_missing(metadata: Mapping[str, Any] | None) -> bool:
 
     ComfyUI reads the grid with ``json.loads(metadata["config"])["transformer"]``
     and passes it to the model, which takes no default. A grid that is not a
-    non-empty list of numbers, or a config that is not JSON, counts as missing.
+    non-empty list of numbers, or a config the parser cannot read (not JSON, or
+    nested past its recursion limit), counts as missing.
     The length against ``pdd_steps`` is not checked here; the family's adapter
     checks it when it retires the family refusal.
     """
@@ -75,7 +76,7 @@ def grid_missing(metadata: Mapping[str, Any] | None) -> bool:
         return True
     try:
         config = json.loads(raw)
-    except ValueError:
+    except Exception:  # ValueError, or RecursionError on a config nested too deep
         return True
     transformer = config.get("transformer") if isinstance(config, dict) else None
     grid = transformer.get("pdd_sigmas") if isinstance(transformer, dict) else None

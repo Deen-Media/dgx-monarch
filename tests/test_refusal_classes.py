@@ -120,6 +120,10 @@ NOT_REFUSAL_CLASSES = frozenset({
     # its own failed read, never by a rank, so it carries no class tag and the
     # finish-phase failure abandons the lease as before.
     "NativeReturnLatchedError",
+    # The upstream gate's own signal that ``_quantization_metadata`` cannot be
+    # parsed, by it or by ComfyUI: ``_verdict`` reads it as no verdict and the
+    # refusal a user sees, if any, is ComfyUI's own load error.
+    "QuantMetadataError",
     "ClusterConfigError",
     "ClusterSmokeError",
     # The pre-dial attach refusal (worker_proc_id.py): a lifecycle fault the

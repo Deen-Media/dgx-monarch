@@ -291,6 +291,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/__init__.py::_forced_adapter::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/attention_capability.py::assert_kernel_capability::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1330,6 +1336,12 @@
     },
     {
       "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#4",
       "class": "P",
       "guard": null,
       "waivable": false

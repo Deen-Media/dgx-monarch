@@ -37,6 +37,7 @@ on:
       - "tests/test_chroma_cfg_pad_forward.py"
       - "tests/test_chroma_text_projections.py"
       - "tests/test_dropped_scale_gate.py"
+      - "tests/test_upstream_gate_damaged_header.py"
       - "tests/test_fsdp_lora_replicated.py"
       - "tests/test_ideogram4_stock_equivalence.py"
 
@@ -240,11 +241,13 @@ jobs:
       # The dropped-scale gate replays ComfyUI's diffusion-model load on key
       # names; this checks the replay against ComfyUI's own load, key for key,
       # and that ComfyUI still drops an unrecorded fp8, int8 or packed scale.
+      # The second file holds the gate's reading of a damaged header against
+      # ComfyUI's own two readers: what they still load, and what neither reads.
       - name: Dropped-scale header gate vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
           COMFYUI_DIR: ../ComfyUI
-        run: pytest -q tests/test_dropped_scale_gate.py
+        run: pytest -q tests/test_dropped_scale_gate.py tests/test_upstream_gate_damaged_header.py
       # A LoRA key on a parameter the FSDP wrap replicates bakes to ComfyUI's
       # own patch_weight_to_device bits on a one-rank gloo group.
       - name: FSDP LoRA replicated-parameter bake vs comfy master (CPU)
@@ -487,6 +490,7 @@ jobs:
           tests/test_auto_latent_downscale.py
           tests/test_chroma_text_projections.py
           tests/test_dropped_scale_gate.py
+          tests/test_upstream_gate_damaged_header.py
           tests/test_fsdp_lora_replicated.py
           tests/test_ideogram4_stock_equivalence.py
           tests/test_qwen_text_projections.py

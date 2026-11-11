@@ -347,6 +347,65 @@ def test_the_registry_order_resolves_a_family_two_adapters_answer():
     assert type(scail[0]).__name__ == "SCAIL2Adapter"
 
 
+def test_a_forced_family_refuses_a_comfy_class_named_as_another_model(
+        stub_registry, monkeypatch):
+    """A ComfyUI class can subclass a class a family owns and still be another
+    model, with no adapter of its own registered ahead to take it. Ancestry
+    alone would bind the parent adapter over its forward; a named entry
+    refuses it, and its subclasses, class P. A derivative ComfyUI does not
+    define still binds."""
+    import comfy.model_base as model_base
+
+    from dgx_monarch import adapters as adapters_mod
+    from dgx_monarch.adapters import UnsupportedModelError, adapter_for
+    from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
+
+    image = type("AlphaImage", (_Alpha,), {})
+    monkeypatch.setattr(model_base, "AlphaImage", image, raising=False)
+    monkeypatch.setattr(adapters_mod, "_FORCE_REFUSED",
+                        {"alpha": ("NotInThisComfy", "AlphaImage")})
+    for model in (image(), type("AlphaImageFinetune", (image,), {})()):
+        with pytest.raises(UnsupportedModelError) as excinfo:
+            adapter_for(model, "alpha")
+        message = str(excinfo.value)
+        assert "'alpha'" in message and type(model).__name__ in message
+        assert "AlphaImage subclasses a class the alpha adapter owns" in message
+        tag = parse_refusal_tag(message)
+        assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+        assert tag.guard is None and tag.waivable is False
+    assert not stub_registry.alpha.injected
+    assert adapter_for(_AlphaChild(), "alpha") is stub_registry.alpha
+    assert adapter_for(_Alpha(), "alpha") is stub_registry.alpha
+    # The entry is the family's own: another family's binding is untouched.
+    assert adapter_for(_Child(), "child") is stub_registry.child
+
+
+def test_a_forced_minimax_h3_does_not_bind_the_image_model(monkeypatch):
+    """ComfyUI 0.45.0's MiniMaxH3Image subclasses MiniMaxH3 and is another
+    model: no audio stream, its own output heads. A forced `minimax_h3` must
+    refuse it class P, naming the class. This holds whichever check answers:
+    the named entry today, or the owner check once an adapter for the image
+    model is registered ahead of H3's. H3 itself and a derivative ComfyUI
+    does not define still bind."""
+    from dgx_monarch.adapters import ADAPTERS, UnsupportedModelError, adapter_for
+    from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
+    from fake_model_base_helpers import install_fake_model_base
+
+    model_base = install_fake_model_base(
+        monkeypatch, {"MiniMaxH3": None, "MiniMaxH3Image": "MiniMaxH3"})
+    with pytest.raises(UnsupportedModelError) as excinfo:
+        adapter_for(model_base.MiniMaxH3Image(), "minimax_h3")
+    message = str(excinfo.value)
+    assert "'minimax_h3'" in message and "MiniMaxH3Image" in message
+    tag = parse_refusal_tag(message)
+    assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+    assert tag.guard is None and tag.waivable is False
+    video = next(adapter for adapter in ADAPTERS if adapter.family == "minimax_h3")
+    assert adapter_for(model_base.MiniMaxH3(), "minimax_h3") is video
+    finetune = type("MiniMaxH3Finetune", (model_base.MiniMaxH3,), {})
+    assert adapter_for(finetune(), "minimax_h3") is video
+
+
 def _write_safetensors(path, metadata):
     """A minimal valid safetensors container carrying `metadata`."""
     header = {"__metadata__": metadata,
