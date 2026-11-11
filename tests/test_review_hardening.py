@@ -552,8 +552,10 @@ def test_store_marks_other_slot_gpu_evicted():
     from dgx_monarch.actor.model_store import ModelStore
     s = ModelStore()
     s.current, s.uncond = object(), object()  # both slots resident
-    # Dropping or hot-swapping cond runs comfy's global unload, which evicts
-    # uncond's GPU weights too; cond re-materializes here.
+    # A quant hot-swap of cond, or the drop of a slab or shard build there, runs
+    # comfy's global unload, which evicts uncond's GPU weights too; cond
+    # re-materializes here. A stock drop on unified memory leaves uncond loaded
+    # (resident_ledger.unload_dropped) and does not come this way.
     s._mark_other_slot_evicted("cond")
     assert s._gpu_evicted == {"uncond"}
     # a reuse of uncond would clear it (that reuse pays the reload)

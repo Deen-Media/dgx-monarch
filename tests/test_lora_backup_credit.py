@@ -328,9 +328,18 @@ def test_a_partly_loaded_resident_carries_no_swap_credit(lowvram, credited):
     assert bool(swap_credit.from_answers([_answer(0, row)], "cond")) is credited
 
 
-@pytest.mark.parametrize(("lowvram", "credited"), [(True, False), (False, True)])
-def test_the_workers_own_quote_gives_a_partly_loaded_resident_no_credit(quote, lowvram, credited):
+@pytest.mark.parametrize(("lowvram", "global_unload", "credited"), [
+    (True, False, True),      # the drop detaches it in place: nothing is copied
+    (True, True, False),      # the earlier drop: its device weights go to the host first
+    (False, False, True),
+    (False, True, True),      # a whole load was always pinned and dropped without a copy
+])
+def test_the_workers_own_quote_credits_a_partly_loaded_resident_only_where_its_drop_copies_nothing(
+        quote, monkeypatch, lowvram, global_unload, credited):
     """End to end through ``worker_capacity.quote``: another file in the slot, so the load is a swap."""
+    from dgx_monarch.actor import resident_ledger
+
+    monkeypatch.setenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, "1" if global_unload else "")
     other = "flux-2-klein.safetensors"
     store = _b3_store(stack=(), model__model_lowvram=lowvram, base__backup={},
                       stored__base_key=(other, ()), stored__request_key=(other, (), (), "bf16"))
@@ -340,22 +349,55 @@ def test_the_workers_own_quote_gives_a_partly_loaded_resident_no_credit(quote, l
     assert (head.measured.get("dropped") == other) is credited
 
 
-@pytest.mark.parametrize(("other_held", "credited"), [(True, False), (False, True)])
-def test_a_swap_beside_a_held_other_slot_is_not_credited(quote, other_held, credited):
-    """The drop runs ComfyUI's global unload with only the dropped slot pinned, so a model held
-    in the other slot is copied to the host before anything is freed."""
-    import copy
+@pytest.mark.parametrize(("other_slot", "global_unload", "credited", "why"), [
+    (None, False, True, "nothing in the other slot"),
+    (None, True, True, "nothing in the other slot, under the earlier drop too"),
+    ("whole", False, True, "the drop leaves the other slot loaded, and pins it for comfy's later unload"),
+    ("whole", True, False, "the global unload copies the other slot's model to the host first"),
+    ("partial", False, False, "a partly loaded other slot cannot be pinned: comfy's later unload copies it"),
+    ("comfy_managed", False, False, "comfy-managed weights are ComfyUI's to move"),
+])
+def test_a_swap_beside_a_held_other_slot_is_credited_only_where_nothing_is_copied(
+        quote, monkeypatch, other_slot, global_unload, credited, why):
+    """The earlier drop ran ComfyUI's global unload with only the dropped slot pinned, so a model
+    held in the other slot was copied to the host before anything was freed. The Worker reports
+    where its drop copies nothing (``resident_ledger.drop_copies_nothing``), and only there
+    does the credit stand."""
+    from dgx_monarch.actor import resident_ledger
 
+    monkeypatch.setenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, "1" if global_unload else "")
     other = "flux-2-klein.safetensors"
     store = _b3_store(stack=(), base__backup={}, stored__base_key=(other, ()),
                       stored__request_key=(other, (), (), "bf16"))
-    if other_held:
-        store.uncond = copy.copy(store.current)     # the dual-model graph's second DiT, still held
+    if other_slot is not None:
+        # The dual-model graph's second DiT, still held: a model of its own.
+        store.uncond = _b3_store(stack=(), base__backup={},
+                                 model__model_lowvram=other_slot == "partial").current
+        if other_slot == "comfy_managed":
+            store.uncond.residency_rung = cq.RUNG_COMFY_MANAGED
     head = quote(store, [], available=int(100 * _GIB))
     assert head.would_load == "swap"
-    assert (head.holds_resident.get("uncond") is not None) is other_held
-    assert (head.measured.get("credit_bytes", 0) > 0) is credited
-    assert ("dropped" in head.measured) is credited
+    assert (head.holds_resident.get("uncond") is not None) is (other_slot is not None)
+    assert (head.measured.get("credit_bytes", 0) > 0) is credited, why
+    assert ("dropped" in head.measured) is credited, why
+
+
+def test_a_slab_resident_is_never_told_its_drop_copies_nothing(monkeypatch):
+    """A slab keeps the global unload its close waits for, so the flag stays off for its slot.
+    So does every drop on a discrete GPU, where an offload frees device memory."""
+    from dgx_monarch.actor import resident_ledger
+
+    monkeypatch.delenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, raising=False)
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
+    store = _b3_store(stored__slab=object())
+    drops: dict = {}
+    worker_capacity._resident_facts(None, store, {}, {}, {}, drops)
+    assert drops == {"cond": False, "uncond": False}
+    stock, beside = _b3_store().current, _b3_store().current
+    assert resident_ledger.drop_copies_nothing(stock, None) and resident_ledger.drop_copies_nothing(stock, beside)
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: False)
+    assert not resident_ledger.drop_copies_nothing(stock, None)
+    assert not resident_ledger.drop_copies_nothing(stock, beside)
 
 
 def test_one_question_with_both_loads_gives_each_rank_the_rows_of_the_slots_it_holds(quote):

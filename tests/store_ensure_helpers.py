@@ -140,7 +140,7 @@ class _FakeSlab:
 def rig(monkeypatch):
     reset_slab_lifetime(monkeypatch)
     calls = SimpleNamespace(
-        load=0, unload_all=0, soft_empty=0, slabs=[], slab_refs=[],
+        load=0, unload_all=0, own_unloads=0, soft_empty=0, slabs=[], slab_refs=[],
         base_refs=[], live_models=[], close_guard=None, close_events=[],
         model_options=[],
     )
@@ -155,6 +155,26 @@ def rig(monkeypatch):
 
     mm_stub.unload_all_models = unload_all_models
 
+    class _Loaded:
+        """ComfyUI's record of one loaded model. A drop unloads only its own model's
+        records (``resident_ledger.unload_without_offload``), through ``model_unload``.
+        That step runs the stub's ``unload_all_models``, read when it is called, so a
+        test that replaces that function still fails or records the store's unload."""
+
+        def __init__(self, base):
+            self._model = weakref.ref(base)     # a weak reference, as LoadedModel holds
+
+        @property
+        def model(self):
+            return self._model()
+
+        def model_unload(self):
+            calls.own_unloads += 1      # this model's own unload, not the store-wide one
+            mm_stub.unload_all_models()
+            return True
+
+    mm_stub.current_loaded_models = []
+
     comfy = types.ModuleType("comfy")
     comfy_sd = types.ModuleType("comfy.sd")
 
@@ -164,6 +184,7 @@ def rig(monkeypatch):
         base = _FakeBase()
         calls.base_refs.append(weakref.ref(base))
         calls.live_models.append(base)
+        mm_stub.current_loaded_models.append(_Loaded(base))
         return base
 
     comfy_sd.load_diffusion_model = load_diffusion_model

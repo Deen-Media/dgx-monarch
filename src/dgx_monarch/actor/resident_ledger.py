@@ -27,10 +27,16 @@ import gc
 import time
 from typing import Any
 
+from .. import mesh_safety
 from ..log import get_logger
 from ..transfer_utils import failure_summary
 
 log = get_logger(__name__)
+
+# ``DGXM_DISABLE_COPY_FREE_DROP=1`` on a Worker: every drop goes back to
+# ComfyUI's global unload, and the swap credit's guard for a partly loaded
+# resident and a held other slot stands again (``drop_copies_nothing``).
+COPY_FREE_DROP_DISABLE_ENV = "DGXM_DISABLE_COPY_FREE_DROP"
 
 # ComfyUI's own spelling of "load all of it": LoadedModel.model_load turns a
 # lowvram budget of 0 into this before it calls partially_load.
@@ -80,15 +86,141 @@ def declare(patcher: Any, residency: str) -> str | None:
     return None
 
 
-def unload_without_offload(mm: Any, patchers: tuple) -> None:
-    """Unload discarded models without creating a full host copy.
+def detaches_alone(stored: Any) -> bool:
+    """Whether a drop of this resident leaves every other model ComfyUI holds loaded.
 
-    ComfyUI detaches a clone by moving its weights to its offload device. For
-    fully loaded models being discarded, first set every clone's offload device
-    to its load device so detach moves nothing. This avoids a slow, potentially
-    out-of-memory copy. Partially loaded models keep the default offload path
+    A plain stock resident on unified memory does, unless
+    ``DGXM_DISABLE_COPY_FREE_DROP=1``. On a discrete GPU the global unload
+    stays: an offload there frees device memory the next load may need. A
+    slab and a shard build keep it too: their owners close only after every
+    model that could reference their memory is detached.
+    """
+    return (not mesh_safety.env_enabled(COPY_FREE_DROP_DISABLE_ENV)
+            and mesh_safety.gpu_is_integrated()
+            and getattr(stored, "slab", None) is None
+            and getattr(stored, "fsdp_checkpoint_pin", None) is None
+            and not getattr(getattr(stored, "base_patcher", None), "_dgxm_fsdp", False))
+
+
+def stays_on_device(stored: Any) -> bool:
+    """Whether a held slot can be pinned so that no later unload copies it to the host.
+
+    Asked only on unified memory (``detaches_alone`` is the gate), where an
+    offload is a copy inside one pool that frees nothing. ``None``, an empty
+    slot, has nothing to copy. A held one qualifies when ComfyUI holds it
+    whole and the store placed it: a stock resident, or a slab or shard base,
+    which is pinned at load already. A partly loaded model would have its host
+    part copied to the device by the pin, and a comfy-managed one is ComfyUI's
+    to move.
+    """
+    if stored is None:
+        return True
+    from . import store_residency
+
+    model = getattr(getattr(stored, "base_patcher", None), "model", None)
+    return (model is not None and not getattr(model, "model_lowvram", False)
+            and store_residency.describe(stored)["residency"] in ("stock", "slab"))
+
+
+def drop_copies_nothing(stored: Any, other: Any) -> bool:
+    """Whether dropping ``stored`` beside ``other``, the slot that stays, moves no weight to the host.
+
+    One answer for the drop and for the price. ``unload_dropped`` does what
+    this says, and the quote endpoint reports it, so the swap credit counts a
+    drop only where it is true (``capacity_lora_bake.credit_stock_swap``):
+
+    - the dropped model is detached in place, whole or partly loaded;
+    - the slot that stays is not touched by the drop;
+    - and it is pinned to its device, so the unload ComfyUI runs at the next
+      load that does not use it moves nothing either. On a Worker smart memory
+      is off, and ``load_models_gpu`` then unloads every other loaded model.
+    """
+    return detaches_alone(stored) and stays_on_device(other)
+
+
+def unload_dropped(mm: Any, stored: Any, other: Any, everything: bool = False) -> bool:
+    """Unload the slot the store is dropping. True when the other slot was left loaded.
+
+    ``everything`` is the store-wide unload (``ModelStore.unload_all``), which
+    must leave ComfyUI holding no model at all and so keeps the global unload.
+    Otherwise only the dropped model's records leave ComfyUI's loaded list; a
+    model both slots share stays.
+
+    - A model ComfyUI holds whole is pinned to its load device and unloaded by
+      ComfyUI's own ``model_unload``, so its detach moves nothing.
+    - A partly loaded model cannot be pinned (the pin would copy its host part
+      to the device), and ComfyUI's detach would copy its device part to the
+      host. Both are waste for weights about to be thrown away. It leaves the
+      list by the step ComfyUI itself takes when it replaces a clone in
+      ``load_models_gpu``: ``detach(unpatch_all=False)`` and the finalizer's
+      detach, which move no weight. Its pinned-memory records and its backup
+      are released here, since no unpatch runs.
+
+    ``other``, the slot that stays, is pinned where ``stays_on_device`` allows.
+    A resident that does not detach alone takes ``unload_without_offload``.
+    """
+    patchers = (stored.base_patcher, stored.active_patcher)
+    if everything or not detaches_alone(stored):
+        unload_without_offload(mm, patchers)
+        return False
+    kept = tuple(patcher for patcher in (getattr(other, "base_patcher", None),
+                                         getattr(other, "active_patcher", None)) if patcher is not None)
+    if kept and stays_on_device(other):
+        pin_to_load_device(mm, kept)
+    pin_to_load_device(mm, patchers)
+    shared = {id(getattr(patcher, "model", None)) for patcher in kept}
+    dropped = {id(patcher.model) for patcher in patchers
+               if getattr(patcher, "model", None) is not None} - shared
+    loaded = getattr(mm, "current_loaded_models", [])
+    for index in range(len(loaded) - 1, -1, -1):
+        entry = loaded[index]
+        patcher: Any = getattr(entry, "model", None)
+        model = getattr(patcher, "model", None)
+        if model is None or id(model) not in dropped:
+            continue
+        if not getattr(model, "model_lowvram", False):
+            if entry.model_unload():
+                loaded.pop(index)
+            continue
+        loaded.pop(index)
+        patcher.offload_device = patcher.load_device  # its option patches stay where they are
+        patcher.detach(unpatch_all=False)
+        unpin = getattr(patcher, "unpin_all_weights", None)
+        if callable(unpin):
+            unpin()
+        backup = getattr(patcher, "backup", None)
+        if isinstance(backup, dict):
+            backup.clear()
+        finalizer = getattr(entry, "model_finalizer", None)
+        if finalizer is not None:
+            finalizer.detach()
+        entry.model_finalizer = entry.real_model = None
+    mm.soft_empty_cache()
+    return True
+
+
+def mark_after_drop(store: Any, slot: str, alone: bool) -> None:
+    """Record what a finished drop of ``slot`` did to the other slot.
+
+    A drop that detached alone left it loaded, so only ``slot``'s own mark is
+    cleared. The global unload took the other slot's GPU weights with it.
+    """
+    if alone:
+        store._gpu_evicted.discard(slot)
+    else:
+        store._mark_other_slot_evicted(slot)
+
+
+def unload_without_offload(mm: Any, patchers: tuple) -> None:
+    """Unload discarded models through ComfyUI's global unload, without a host copy of a whole load.
+
+    The drop of a slab or a shard build, and every drop under
+    ``DGXM_DISABLE_COPY_FREE_DROP=1``. ComfyUI detaches a clone by moving its
+    weights to its offload device. For fully loaded models being discarded,
+    first set every clone's offload device to its load device so detach moves
+    nothing. Partially loaded models keep the default offload path here,
     because pinning them would first copy their remaining host weights to the
-    device.
+    device, and every other loaded model is unloaded with them.
     """
     pin_to_load_device(mm, patchers)
     mm.unload_all_models()
@@ -131,7 +263,7 @@ def collect_dropped() -> None:
 def flush_dropped(mm: Any, slot: str) -> None:
     """Return a dropped model's cached device blocks to the host, best effort.
 
-    ``unload_without_offload`` flushes while the store still holds the weights.
+    The unload (``unload_dropped``) flushes while the store still holds the weights.
     After those references are cleared, flush again so ``MemAvailable`` and the
     next capacity quote reflect the released memory. The model is already
     dropped; a flush failure only leaves capacity quotes pessimistic.

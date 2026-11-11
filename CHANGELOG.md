@@ -12,11 +12,15 @@
   needed 46.0 GiB against 34.1 with the 37.5 GiB BF16 file in the same slot.
   The loader's check and the render-site checks for a pending load now count
   the copy the load's own slot drops, as the cross-rank agreement already did:
-  a stock model only, that slot only, at the size the Worker reports. A model
-  ComfyUI holds only partly is not counted, and neither is a drop beside a
-  model held in the other slot, because such a drop copies weights to the host
-  before it frees anything. In a graph with two diffusion models the count
-  leaves the room the other slot's load takes. Nothing to
+  a stock model only, that slot only, at the size the Worker reports. On
+  unified memory the Worker's drop of a stock model now copies nothing to the host: it detaches
+  only the model it drops, whole or partly loaded, where ComfyUI's global
+  unload copied a partly loaded model's weights, and a model held in the other
+  slot, to the host first. A model in the other slot stays loaded, so its next
+  render reloads nothing. Where a drop could still copy (a partly loaded or
+  comfy-managed model in the other slot, or `DGXM_DISABLE_COPY_FREE_DROP=1`
+  on the Worker) it is not counted. In a graph with two diffusion models the
+  count leaves the room the other slot's load takes. Nothing to
   set, and nothing is cleared that was not dropped before. If that does not
   make room, the loader also unloads the models ComfyUI holds on the driver
   host, which ComfyUI reloads on demand, and prices the load again, as the

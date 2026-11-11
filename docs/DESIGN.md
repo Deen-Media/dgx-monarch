@@ -903,7 +903,8 @@ uncertain-arena rules live in `actor/slab_arena.py`,
 - `request_key = (unet_name, options, lora_signature, quant_kind)`: the store
   reuses an exact match on the same artifact identity, with no fresh load and
   no swap; a slot that a global unload evicted reloads its GPU weights on that
-  reuse.
+  reuse. On unified memory a stock slot's drop is not a global unload: it
+  leaves the other slot loaded (`resident_ledger.unload_dropped`).
 - `base_key = (unet_name, options)`: a match with a different LoRA stack is a
   **hot-swap**. The store clones the pristine base patcher (its weights stay on
   the GPU) and applies the new stack with stock's cast-time math (below), so the
@@ -923,8 +924,10 @@ uncertain-arena rules live in `actor/slab_arena.py`,
   path's own.
   A strength change, a reorder or a removal of a held LoRA keeps the in-place
   swap, because the backup holds every weight it patches, and so does a store
-  whose other slot holds a model, because the drop's global unload would push
-  that model off the GPU the same slow way. The test counts the weights the new
+  whose other slot holds a model. That gate dates from the drop's global
+  unload, which pushed that model off the GPU the same slow way; on unified
+  memory a stock drop no longer touches the other slot, and the gate stays until the
+  route beside a held slot is measured on hardware. The test counts the weights the new
   stack patches, while ComfyUI's cost is every placed weight its backup lacks,
   so it matches that cost only for a LoRA that patches nearly every weight, as
   the Wan distill LoRA does. A strength change on a narrow LoRA stays in place
@@ -2252,16 +2255,39 @@ agreement's own quote and counts the copy the load's own slot drops first
 Worker's own price credited, the row that names the drop and its bytes, so the
 driver never admits on a drop the agreement would not count: a stock resident
 only, never a slab-priced row, a reuse or a LoRA change that keeps its base.
-The Worker's price gives no such credit for a stock resident ComfyUI holds
-only partly (`model_lowvram`): the store pins only a whole load to its device
-before it drops it, so ComfyUI's detach copies a partly loaded model's device
-weights to the host before it frees them, and the box dips by that copy
-before anything comes back. The same holds for a model in the other slot: the
-drop runs ComfyUI's global unload with only the dropped slot pinned, so a model
-the other slot holds is copied to the host first. The rule is one sentence: no
-credit where the drop copies anything to the host before it frees the old
-model. Such a resident is priced as held, at the agreement and here, and the
-card's clear replaces it.
+The rule under the credit is one sentence: no credit where the drop copies
+anything to the host before it frees the old model. A drop through ComfyUI's
+global unload did that in two cases. The store pins only a whole load to its
+device, so ComfyUI's detach copied the device weights of a model it held only
+partly (`model_lowvram`) to the host. And only the dropped slot was pinned, so
+a model the other slot held was unloaded to the host with it. Both copies are
+waste on unified memory, where an offload frees nothing, and both are gone
+there for a stock resident (`actor/resident_ledger.unload_dropped`; a discrete
+GPU keeps the global unload, since an offload frees device memory). The drop
+runs under the actor's GPU lock as before and touches fewer models than the
+global unload did, so nothing a running render needs is moved. It takes only
+the dropped model's records out of ComfyUI's loaded list: a whole load pinned
+and unloaded by ComfyUI's own `model_unload`, a partly loaded one by the step
+ComfyUI takes when it replaces a clone (`detach(unpatch_all=False)`), which
+moves no weight. The slot that stays is left loaded, so nothing reloads, and
+it is pinned to its device as slab and shard bases already are, so the unload
+ComfyUI runs at the next load that does not use it moves nothing either (with
+smart memory off, as on a Worker, `load_models_gpu` unloads every other
+model). ComfyUI prices the next load of an unloaded model at its whole size
+whether its weights went to the host or stayed pinned, and reads free memory
+live, so the pin changes no whole-or-partial load decision. The Worker reports
+where its drop copies nothing (`drop_copy_free` in the slot's snapshot entry,
+from the same predicate the drop runs on), and only there does the credit
+stand beside a partly loaded resident or a held other slot. It does not where
+the other slot is partly loaded or comfy-managed, on a discrete GPU, for a
+slab or shard build, which keep the global unload their owners close after,
+or under `DGXM_DISABLE_COPY_FREE_DROP=1`, which restores the earlier drop. The
+store-wide unload (`unload_all`, the clear) keeps the global unload too, since
+ComfyUI must hold no model after it. A
+resident with no credit is priced as held, at the agreement and here, and the
+card's clear replaces it. The tests run the drop on ComfyUI's real classes on
+CPU (the copy-free drop seam of the canary); the dip itself, the memory that
+returns and the kept slot's next render are hardware legs.
 It counts only the slot the load goes into, and only onto a price that charges
 the DiT's own load: one that reads the weights as resident (the loader's memo;
 an explicit preset at the render-site footprint and H3 prices) has no drop to
@@ -2624,7 +2650,8 @@ dgx-monarch/
 │   │   ├── sample_protocol.py # the GPUWorker sample body `_sample_impl` runs
 │   │   ├── slab_wrap.py       # minimal DLPack view of slab-owned byte ranges
 │   │   ├── resident_ledger.py # tells comfy what a slab or a shard already
-│   │   │                      #   holds, so its sample-time load stops asking
+│   │   │                      #   holds, so its sample-time load stops asking;
+│   │   │                      #   and drops a slot with no host copy
 │   │   ├── store_load.py      # fresh-load path of ensure: ladder, load, adoption
 │   │   ├── store_load_ownership.py # exact fresh-load resource/slot transaction
 │   │   ├── store_slab_admit.py # the slab capacity check, its card text, and

@@ -363,22 +363,27 @@ def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
     slot's snapshot entry (``actor/worker_capacity._resident_bytes``) when the
     entry still describes the resident those figures were read from; the arena
     a stock load retains is not. A slab, comfy-managed or FSDP resident, a slot whose
-    load or cleanup is in flight, a resident ComfyUI holds only partly, whose drop
-    copies its device weights to the host first, and a slot whose drop would move a
-    model held in the other slot to the host are priced as held.
+    load or cleanup is in flight are priced as held. So are a resident ComfyUI
+    holds only partly and a slot beside a held other slot, wherever the Worker
+    does not report that its drop copies nothing to the host: the global unload
+    copies a partly loaded model's device weights, and the other slot's model,
+    to the host before it frees anything.
     """
     from dataclasses import replace
 
     held_bytes = held.get("resident_bytes") if isinstance(held, dict) else None
-    # ComfyUI's global unload inside the drop moves the other slot's model off the
-    # device (the store pins only the slot it drops), a host copy made before
-    # anything is freed: with the other slot held, the drop dips the box first.
+    # A drop through ComfyUI's global unload moves the other slot's model off the
+    # device (only the dropped slot is pinned), and a partly loaded model's own
+    # device weights with it: host copies made before anything is freed, so the
+    # drop dips the box first. The guard stands unless the Worker says its drop
+    # copies nothing (``drop_copy_free``, actor/resident_ledger.drop_copies_nothing).
     holds = (context or {}).get("holds_resident") or {}
     other_held = any(word for name, word in holds.items() if name != (context or {}).get("slot"))
+    copies = isinstance(held, dict) and bool(held.get("resident_partial") or other_held) \
+        and not held.get("drop_copy_free")
     if (getattr(fit, "credit_bytes", 0) > 0 or (context or {}).get("would_load") != "swap"
             or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None
-            or not isinstance(held, dict) or held.get("residency") != "stock"
-            or held.get("resident_partial") or other_held
+            or not isinstance(held, dict) or held.get("residency") != "stock" or copies
             or not isinstance(held_bytes, int) or isinstance(held_bytes, bool) or held_bytes <= 0):
         return fit
     credited = replace(fit, credit_bytes=held_bytes, dropped=str(held.get("resident_name") or "a model"))

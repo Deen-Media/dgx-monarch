@@ -17,7 +17,7 @@ from typing import Any
 
 from ..log import get_logger
 from ..transfer_utils import failure_summary
-from . import actor_footprint, capacity_quote, store_fsdp
+from . import actor_footprint, capacity_quote, resident_ledger, store_fsdp
 from .capacity_quote import RankPrice
 
 log = get_logger(__name__)
@@ -164,7 +164,8 @@ def _backup_bytes(worker: Any, store: Any, stored: Any, slot: str) -> int:
 
 def _resident_facts(worker: Any, store: Any, keys: dict[str, str | None] | None = None,
                     backups: dict[str, int] | None = None,
-                    partials: dict[str, bool] | None = None) -> dict[str, Any]:
+                    partials: dict[str, bool] | None = None,
+                    drops: dict[str, bool] | None = None) -> dict[str, Any]:
     """What a clear of this actor would return, for the old-model card.
 
     The name comes from the store itself, never parsed back out of the
@@ -174,7 +175,9 @@ def _resident_facts(worker: Any, store: Any, keys: dict[str, str | None] | None 
     receives the request key of each resident read, in the snapshot's form, so
     the caller can bind these figures to the snapshot it prices against;
     ``backups`` receives each slot's ``_backup_bytes`` in the same pass, and
-    ``partials`` whether ComfyUI holds the slot's model only partly.
+    ``partials`` whether ComfyUI holds the slot's model only partly, and
+    ``drops`` whether the slot's drop would copy nothing to the host
+    (``resident_ledger.drop_copies_nothing``, the store's own answer).
     """
     names: dict[str, str | None] = {}
     sizes: dict[str, int] = {}
@@ -192,16 +195,21 @@ def _resident_facts(worker: Any, store: Any, keys: dict[str, str | None] | None 
         if partials is not None:
             # ComfyUI's detach copies a partly loaded model's device weights to the
             # host before it frees them (resident_ledger.pin_to_load_device pins only
-            # a whole load), so that drop dips the box first: no swap credit for it.
+            # a whole load), so that drop dips the box first: no swap credit for it,
+            # unless the store's drop detaches it in place (``drops``).
             model = getattr(getattr(stored, "base_patcher", None), "model", None)
             partials[slot] = bool(name) and bool(getattr(model, "model_lowvram", False))
+        if drops is not None:
+            stays = getattr(store, "current" if slot == capacity_quote.SLOT_UNCOND else "uncond", None)
+            drops[slot] = bool(name) and resident_ledger.drop_copies_nothing(stored, stays)
     return {"resident_names": names, "resident_bytes": sizes,
             "arena_bytes": actor_footprint.arena_bytes()}
 
 
 def _with_resident_bytes(snapshot: Any, facts: dict[str, Any], keys: dict[str, str | None],
                          backups: dict[str, int] | None = None,
-                         partials: dict[str, bool] | None = None) -> dict:
+                         partials: dict[str, bool] | None = None,
+                         drops: dict[str, bool] | None = None) -> dict:
     """The store snapshot with each held slot's GPU copy and name beside its residency.
 
     The swap credit reads them (``capacity_lora_bake.credit_stock_swap``): a load
@@ -222,7 +230,8 @@ def _with_resident_bytes(snapshot: Any, facts: dict[str, Any], keys: dict[str, s
         out[slot] = {**entry, "resident_bytes": int(facts["resident_bytes"].get(slot) or 0),
                      "resident_name": facts["resident_names"].get(slot) or "",
                      "backup_bytes": int((backups or {}).get(slot) or 0),
-                     "resident_partial": bool((partials or {}).get(slot))}
+                     "resident_partial": bool((partials or {}).get(slot)),
+                     "drop_copy_free": bool((drops or {}).get(slot))}
     return out
 
 
@@ -371,8 +380,9 @@ def quote(worker: Any, request: Any) -> dict:
     keys: dict[str, str | None] = {}
     backups: dict[str, int] = {}
     partials: dict[str, bool] = {}
-    facts = _resident_facts(worker, store, keys, backups, partials)
-    snapshot = _with_resident_bytes(store.snapshot(), facts, keys, backups, partials)
+    drops: dict[str, bool] = {}
+    facts = _resident_facts(worker, store, keys, backups, partials, drops)
+    snapshot = _with_resident_bytes(store.snapshot(), facts, keys, backups, partials, drops)
     pinned = _pinned_staging()
     charged = 0
     for spec in _my_slots(worker, specs):

@@ -1702,9 +1702,10 @@
       "test_a_lora_the_held_stack_lacks_keeps_146s_price_and_card": "09317b9b0f704a1c",
       "test_a_partly_loaded_resident_carries_no_swap_credit": "63f2b95c5c17df50",
       "test_a_reorder_is_credited_the_backup": "de8daa564aa89194",
+      "test_a_slab_resident_is_never_told_its_drop_copies_nothing": "fc7529dc76b2c1fa",
       "test_a_stack_of_the_held_files_is_credited_the_backup": "b50f18bde0f88cea",
       "test_a_stack_whose_files_cannot_be_sized_gets_no_backup_credit": "f705c9a0bbfd8792",
-      "test_a_swap_beside_a_held_other_slot_is_not_credited": "db7ac3b0cf063c06",
+      "test_a_swap_beside_a_held_other_slot_is_credited_only_where_nothing_is_copied": "f44ad518eb54efde",
       "test_b3_strength_change_is_admitted_with_the_backup_credited": "d85326495285f4ea",
       "test_one_question_with_both_loads_gives_each_rank_the_rows_of_the_slots_it_holds": "8878065991b76970",
       "test_the_backup_credit_docs_agree_with_section_5_9": "7d0e33484f42e387",
@@ -1715,7 +1716,7 @@
       "test_the_rescue_card_words_name_the_backup": "88e672dc6f08ecf7",
       "test_the_worker_reports_the_backup_only_for_the_measured_state": "d5072182535c2920",
       "test_the_worker_reports_the_host_bytes_of_b3s_backup": "903d369676ec1bc7",
-      "test_the_workers_own_quote_gives_a_partly_loaded_resident_no_credit": "2d1143f05d4f177b"
+      "test_the_workers_own_quote_credits_a_partly_loaded_resident_only_where_its_drop_copies_nothing": "fb8a06616bb23b9f"
     },
     "tests/test_lora_change_route.py": {
       "test_a_same_file_row_with_no_stock_credit_keeps_the_plain_rule": "136edabdc80cec1c",
