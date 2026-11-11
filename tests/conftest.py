@@ -195,15 +195,22 @@ def _source_only_imports_end_with_the_test():
             os.environ[name] = value
 
 
+# pytest's package setup imports the repository-root __init__.py, the pack
+# entrypoint, before any fixture runs, so the switch is set when conftest loads.
+os.environ["DGXM_DEMO_INPUTS"] = "off"
+
+
 @pytest.fixture(autouse=True)
 def _the_battery_places_no_demo_inputs(monkeypatch):
     """No test, and no process a test starts, copies demo inputs into ComfyUI.
 
     The pack entrypoint copies the templates' demo inputs into ComfyUI's input
     folder at import (``demo_inputs.py``), and a shell may export any value of
-    its switch. Assigning it here covers a test that runs the entrypoint in
-    this process or in a child. ``tests/test_demo_inputs.py`` clears it to
-    point the copy at scratch folders.
+    its switch. The assignment above covers pytest's own import of the
+    entrypoint. This second guard covers a test that changed the switch and a
+    later test that runs the entrypoint in this process or in a child.
+    ``tests/test_demo_inputs.py`` clears it to point the copy at scratch
+    folders.
     """
     monkeypatch.setenv("DGXM_DEMO_INPUTS", "off")
 

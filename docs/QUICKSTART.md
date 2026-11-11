@@ -84,7 +84,8 @@ Templates carry placeholder filenames, not model downloads. Put the files in
 place and select them on the loader widgets before you queue. The images,
 clips and music the input nodes name do come with the pack: at start it copies
 each one ComfyUI's input folder lacks and never replaces a file already there
-(set `DGXM_DEMO_INPUTS=off` to skip this). They are drawn shapes, a stick
+(set `DGXM_DEMO_INPUTS=off` to skip this); a demo file you delete comes back
+at the next start unless the switch is off. They are drawn shapes, a stick
 figure and a synthetic music loop, so a template opens and runs; load your own
 images, clips and music for real work. If a family is
 blocked, its Note says so and names the

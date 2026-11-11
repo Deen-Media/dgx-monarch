@@ -14,6 +14,8 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
+import subprocess
 import sys
 import types
 from fnmatch import fnmatch
@@ -111,6 +113,32 @@ def _graph_sizes() -> dict[str, tuple[int, int]]:
 
 def test_the_battery_turns_the_copy_off_for_every_other_test(_switch_unset):
     assert _switch_unset == "off"
+
+
+@pytest.mark.parametrize("exported", [None, "on"], ids=["unset", "on"])
+def test_a_test_run_places_nothing_where_comfy_is_importable(tmp_path, exported):
+    # pytest imports the repository-root __init__.py, the pack entrypoint, as
+    # the root package's setup, before any fixture runs. Where ComfyUI's
+    # folder_paths is importable, only the switch conftest sets as it loads
+    # keeps a test run out of that input folder. The child run here finds a
+    # stand-in folder_paths that names a scratch folder, and no other.
+    stand_in, target = tmp_path / "comfy", tmp_path / "input"
+    stand_in.mkdir()
+    target.mkdir()
+    (stand_in / "folder_paths.py").write_text(
+        f"def get_input_directory():\n    return {str(target)!r}\n", encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if key != "DGXM_DEMO_INPUTS"}
+    if exported is not None:
+        env["DGXM_DEMO_INPUTS"] = exported
+    env.update(PYTHONPATH=os.pathsep.join([str(ROOT / "src"), str(stand_in)]), PYTHONDONTWRITEBYTECODE="1")
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+         "tests/test_cpu_gates.py::test_ci_and_the_opt_out_skip_the_gates"],
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=300, check=False)
+    placed = sorted(path.name for path in target.iterdir())
+    assert not placed, f"a test run placed {len(placed)} demo file(s) in the input folder it found: {placed}"
+    assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-4000:]
+    assert "1 passed" in result.stdout
 
 
 def test_each_place_that_runs_the_entrypoint_turns_the_copy_off_itself():
@@ -340,3 +368,4 @@ def test_a_template_note_says_the_pack_places_its_demo_inputs_and_no_other_note_
 def test_the_docs_name_the_copy_and_its_switch(page):
     text = " ".join((ROOT / page).read_text(encoding="utf-8").split())
     assert "DGXM_DEMO_INPUTS=off" in text and "ComfyUI's input folder" in text
+    assert re.search(r"demo file (you delete comes back|a user deletes returns) at the next start", text)

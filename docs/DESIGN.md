@@ -2367,17 +2367,18 @@ import, and only the demo inputs its shipped templates name
 (`example_workflows/input`, drawn by `tools/gen_demo_inputs.py`).
 `demo_inputs.py` copies each one into that folder when its name is absent
 there. It never creates the folder. It creates each file exclusively, never
-replaces, truncates or follows a file,
-link or folder already there, removes a copy it could not finish, logs every
-name it placed, and never raises into ComfyUI's startup; a copy that stops
-part way logs one WARNING that names what it placed. A demo file a user
-deletes returns at the next start. `DGXM_DEMO_INPUTS=off` turns the copy off.
-The test battery and the entrypoint canary assign that switch whatever the
-shell exports, and the tests of the copy point it at scratch folders, so none
-writes into a shared ComfyUI tree. Two other paths put files in that folder
-at a person's request, and this rule does not cover them: a Studio upload,
-through ComfyUI's own upload route, and the sweep's test media, when an
-operator runs `benchmark/sweep/media.py`.
+replaces, truncates or follows a file, link or folder already there, removes
+a copy it could not finish, logs every name it placed, and never raises into
+ComfyUI's startup; a copy that stops part way logs one WARNING that names
+what it placed. A demo file a user deletes returns at the next start.
+`DGXM_DEMO_INPUTS=off` turns the copy off. pytest imports the entrypoint as
+the root package before any fixture runs, so the test battery assigns that
+switch when its conftest loads, and the entrypoint canary assigns it before it
+runs the entrypoint, each whatever the shell exports. The tests of the copy
+point it at scratch folders. So none writes into a shared ComfyUI tree. Two
+other paths put files in that folder at a person's request, and this rule
+does not cover them: a Studio upload, through ComfyUI's own upload route, and
+the sweep's test media, when an operator runs `benchmark/sweep/media.py`.
 
 Readiness, profile compilation, guided setup, repair, receipts, verified update,
 and cluster smoke have CPU unit tests and two-Spark hardware checks.
