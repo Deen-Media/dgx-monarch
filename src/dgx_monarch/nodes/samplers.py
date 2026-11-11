@@ -7,6 +7,7 @@ cluster is a node swap, not a rebuild.
 from __future__ import annotations
 
 from ..accuracy_waiver import STAMPED_RESULT_KEY
+from ..adapters.flux_views import conditioning_carries_views, request_carries_views
 from ..cfg_pair import text_rows_differ
 from ..constants import GUIDER_TYPE, MODEL_TYPE, NODE_CATEGORY
 from ..mesh import ensure_live
@@ -107,7 +108,8 @@ class DGXMonarchKSampler:
             "_dgxm_krea2_ref_preflight": krea2_ref_preflight_summary(positive, negative),
         }
         out = run_render(model, request, sampler_latent(
-            latent_image, sampler_name, text_rows_differ(positive, negative)),
+            latent_image, sampler_name, text_rows_differ(positive, negative),
+            conditioning_carries_views(positive, negative)),
             cfg_value=float(cfg), steps_hint=int(steps))
         out.pop("_dgxm_denoised", None)
         return _sampler_result(out)
@@ -184,7 +186,8 @@ class DGXMonarchKSamplerPipeline:
         # Tag once: the first-use check, the first render and every pushed
         # render resolve the same topology from it.
         latent_image = sampler_latent(
-            latent_image, sampler_name, text_rows_differ(positive, negative))
+            latent_image, sampler_name, text_rows_differ(positive, negative),
+            conditioning_carries_views(positive, negative))
         from .. import adoption_evidence
 
         adoption_evidence.require_inactive_context("DGXMonarchKSamplerPipeline")
@@ -316,7 +319,8 @@ class DGXMonarchKSamplerAdvanced:
             "_dgxm_krea2_ref_preflight": krea2_ref_preflight_summary(positive, negative),
         }
         out = run_render(model, request, sampler_latent(
-            latent_image, sampler_name, text_rows_differ(positive, negative)),
+            latent_image, sampler_name, text_rows_differ(positive, negative),
+            conditioning_carries_views(positive, negative)),
             cfg_value=float(cfg), steps_hint=int(steps))
         out.pop("_dgxm_denoised", None)
         return _sampler_result(out)
@@ -410,8 +414,9 @@ class DGXMonarchSamplerCustom:
         model: ModelSpec = guider["model"]
         requeue_price.price_cached_loader(model, prompt, guider.get("uncond_model"))
         # A SAMPLER object carries no name, so the cfg++ tag stays off and auto
-        # keeps the CFG-1 skip; the pair tag comes from the guider's own pair.
-        latent = sampler_latent(latent_image, None, bool(guider.get(CFG_PAIR_DIFFERS_METADATA_KEY)))
+        # keeps the CFG-1 skip; the pair and views tags come from the guider's own pair.
+        latent = sampler_latent(latent_image, None, bool(guider.get(CFG_PAIR_DIFFERS_METADATA_KEY)),
+                                request_carries_views({"guider": guider["spec"]}))
         wire_noise = _canonical_noise_for_wire(noise)
         schedule_steps = custom_schedule_steps(sigmas)
 

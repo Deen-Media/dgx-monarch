@@ -20,7 +20,9 @@ tiles are not independent; an LTX VAE whose decode draws unseeded noise
 image VAEs and every unknown class run the reference decode. So do two
 MiniMax H3 decoders in ComfyUI 0.44.0 or newer: the Sol-H3-VAE decoder
 (``noncausal``) decodes the whole clip in one pass, with no temporal chunk for
-a Worker, and the p-h3-image VAE (``PH3ImageVAE``) decodes one frame.
+a Worker, and the p-h3-image VAE (``PH3ImageVAE``) decodes one frame, as does
+the MiniMax-H3-Image VAE (``MiniMaxH3ImageVAE``) of ComfyUI 0.45.0 or newer, which
+ComfyUI's loader flags ``not_video``.
 """
 from __future__ import annotations
 

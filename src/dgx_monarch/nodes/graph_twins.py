@@ -145,8 +145,8 @@ def twin_admitted(path: str, kind: str | None, *, family: str, loras: tuple[str,
     driver can tell before any load. Each test is a refusal that file would
     otherwise meet: class P for the LoRA route (TROUBLESHOOTING #129), the FSDP
     launch and the upstream gate, class K for a pinned kernel off sequence
-    parallelism (#117), except the twin's own pins on one rank, which run as
-    stock runs them while no LoRA of the graph pins."""
+    parallelism (#117), except the twin's own pins in a world of one GPU, which
+    run as stock runs them while no LoRA of the graph pins."""
     from .. import lora_quant_guard, upstream_gate
     from ..adapters.fsdp import FSDP_ADMITTED_CHECKPOINT_KINDS
     from ..topology import declares_fsdp
