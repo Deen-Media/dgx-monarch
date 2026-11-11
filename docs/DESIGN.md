@@ -2261,6 +2261,16 @@ model is priced when it comes back. Nothing here clears a Worker: the store
 drops the slot as it did before, and the agreement then prices the load on
 every rank with its own credit.
 
+When the credit does not make room, the loader also unloads the models ComfyUI
+holds on the driver host, as the render-site checks do before they refuse, and
+prices the whole load again from a fresh reading with the graph's driver
+models charged whole. It does so once a load, never while a render is running
+in this driver, and not under `DGXM_DISABLE_DRIVER_UNLOAD=1`. The loader's
+price already counts held models against the graph's own, so the unload makes
+room only by what ComfyUI held beyond them, another graph's larger encoder;
+in the two records above it would have added nothing, and the credit alone
+makes the room.
+
 **A LoRA change on a held base is the same credit.** When the resident is a
 stock copy of the same file and the store would keep it and re-apply the new
 stack in place (`actor/store_bake.swaps_in_place`, published in the store

@@ -186,7 +186,8 @@ def test_a_deferred_load_needs_room_for_its_driver_models_beside_the_old_model(m
 
 def test_no_slot_no_fleet_and_a_fault_mean_no_relief(monkeypatch):
     shape = _shape("ltx", avail=67.51, file=21.86)
-    assert _relieve(monkeypatch, shape, _held(FLUX1, 22.17), new=LTX23, slot="")[1] is loader_relief.NONE
+    unasked = _relieve(monkeypatch, shape, _held(FLUX1, 22.17), new=LTX23, slot="")[1]
+    assert not unasked.fits and not unasked.credit and unasked.asked is loader_relief.UNASKED
 
     def broken(*_a, **_k):
         raise RuntimeError("quote endpoint gone")

@@ -11,6 +11,15 @@ is raised:
    (``swap_credit.py`` holds the rule). A deferred load must also leave room
    for the graph's driver models beside the old model, because they load on
    the driver before the first render drops it.
+2. **ComfyUI's own models on this host.** If the credit does not make room,
+   the driver unloads what ComfyUI holds here, as the render-site checks do
+   before they refuse (``driver_unload.py``): ComfyUI reloads each on demand.
+   Never while a render is running in this driver, and never twice for one
+   load. The loader then prices the whole load again from a fresh reading,
+   with the graph's driver models charged whole, since none of them is held
+   any more. The loader's price already counts held models against this
+   graph's own (``loader_graph.credited_terms``), so the unload makes room
+   only by what ComfyUI held beyond them: another graph's larger encoder.
 
 Every step is read-only or ComfyUI's own unload, and none clears a Worker:
 the Worker drops the model it replaces as it always did. A fault anywhere means
@@ -25,7 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .. import old_model, swap_credit
+from .. import driver_unload, mesh_safety, old_model, swap_credit
 from ..log import get_logger
 from . import graph_load_price, loader_graph, old_model_clear
 
@@ -52,59 +61,100 @@ class Relief:
     short_bytes: int = 0
     beside_short_bytes: int = 0
     box: str = ""
+    # ComfyUI's models were unloaded just now: the loader prices the load again.
+    unloaded: driver_unload.Unloaded | None = None
+    # Why the driver kept ComfyUI's models although the load does not fit.
+    kept: str = ""
 
-    def sentence(self, unet_name: str) -> str:
-        """What a refusal that still stands says was counted, with a leading space."""
-        if not self.credit:
-            return ""
-        old = old_model.display_name(self.credit.dropped) or "the old model"
-        new = old_model.display_name(unet_name)
-        freed = (f" The Worker on {self.box} drops {old} before this load, which frees at "
-                 f"least {self.credit.gib} GiB")
-        if self.short_bytes:
-            return f"{freed}, and {new} is still {_gib(self.short_bytes)} GiB short after that."
-        return (f"{freed}, and that would make room for {new}. But this graph's driver models "
+    def sentence(self, unet_name: str, unloaded: driver_unload.Unloaded | None = None) -> str:
+        """What a refusal that still stands says was counted and freed, with a leading space."""
+        parts = []
+        if self.credit:
+            old = old_model.display_name(self.credit.dropped) or "the old model"
+            new = old_model.display_name(unet_name)
+            freed = (f"The Worker on {self.box} drops {old} before this load, which frees at "
+                     f"least {self.credit.gib} GiB")
+            parts.append(
+                f"{freed}, and {new} is still {_gib(self.short_bytes)} GiB short after that."
+                if self.short_bytes else
+                f"{freed}, and that would make room for {new}. But this graph's driver models "
                 f"load first, beside {old}, and they are {_gib(self.beside_short_bytes)} GiB short.")
+        if unloaded is not None:
+            parts.append(unloaded.refusal_sentence())
+        elif self.kept:
+            parts.append(self.kept)
+        return "".join(f" {part}" for part in parts)
 
 
 NONE = Relief()
 
 
+def _unload_driver_models(mesh: Any) -> tuple[driver_unload.Unloaded | None, str]:
+    """Unload what ComfyUI holds on this host, or say why the driver kept it."""
+    if mesh_safety.env_enabled(driver_unload.DRIVER_UNLOAD_DISABLE_ENV):
+        return None, ""
+    mm = driver_unload.comfy_model_management()
+    held = driver_unload.held_models(mm) if mm is not None else []
+    if not held:
+        return None, ""
+    busy = driver_unload.busy_reason(getattr(mesh, "handle", None))
+    if busy:
+        count = len(held)
+        return None, (f"The driver did not unload the {count} model{'' if count == 1 else 's'} "
+                      f"ComfyUI holds on this host before refusing, because {busy}; queue again "
+                      "once that work ends.")
+    outcome = driver_unload.unload(mm, held)
+    if not outcome.names:
+        return None, ""
+    # Nothing ComfyUI held is loaded now, so no earlier charge stands for it.
+    loader_graph.reset_charged_artifacts()
+    return outcome, ""
+
+
 def relieve(shape: Any, windows: Callable[[Any], tuple[Any, ...]], *, mesh: Any,
-            unet_name: str, options: Any, slot: str) -> Relief:
-    """Count what the box gets back before this load; never raises.
+            unet_name: str, options: Any, slot: str,
+            tried: driver_unload.Unloaded | None = None) -> Relief:
+    """Count, then free, what the box gets back before this load; never raises.
 
     ``shape`` is the loader's own (``loader_preflight._Shape``) and ``windows``
     prices one. ``slot`` is the slot the load goes into; with none known the
-    Workers are not asked and nothing is credited.
+    Workers are not asked and nothing is credited. ``tried`` is the unload an
+    earlier pass of this load made, so it is not made again. A result with
+    ``unloaded`` set tells the loader to price the load again from the start.
     """
+    relief = NONE
     try:
-        if not slot:
-            return NONE
-        asked = old_model_clear.driver_host_answers(mesh, unet_name, options, slot)
+        asked = old_model_clear.driver_host_answers(mesh, unet_name, options, slot) if slot else UNASKED
         box = graph_load_price.driver_box(mesh)
         credit = (swap_credit.from_answers(asked.mine, slot, unet_name, box=box)
-                  if asked is not None else swap_credit.NONE)
-        if not credit:
-            return Relief(asked=asked, box=box)
-        priced = windows(replace(shape, mem_available=shape.mem_available + credit.bytes))
-        short = max((window.shortfall for window in priced
-                     if not graph_load_price.fits_box(window)), default=0)
-        # A deferred load: the driver builds this graph's models before the
-        # first render, while the Worker still holds the old model.
-        beside = max(shape.floor_reserve + shape.load_stack_bytes - shape.mem_available, 0)
-        return Relief(fits=not short and not beside, credit=credit, asked=asked,
-                      short_bytes=short, beside_short_bytes=beside, box=box)
+                  if slot and asked is not None else swap_credit.NONE)
+        relief = Relief(asked=asked, box=box)
+        if credit:
+            priced = windows(replace(shape, mem_available=shape.mem_available + credit.bytes))
+            short = max((window.shortfall for window in priced
+                         if not graph_load_price.fits_box(window)), default=0)
+            # A deferred load: the driver builds this graph's models before the
+            # first render, while the Worker still holds the old model.
+            beside = max(shape.floor_reserve + shape.load_stack_bytes - shape.mem_available, 0)
+            relief = Relief(fits=not short and not beside, credit=credit, asked=asked,
+                            short_bytes=short, beside_short_bytes=beside, box=box)
+        if relief.fits or tried is not None:
+            return relief
+        unloaded, kept = _unload_driver_models(mesh)
+        return replace(relief, unloaded=unloaded, kept=kept)
     except Exception as exc:
         log.info("loader preflight could not count what the driver host gets back before "
                  "this load (%r); its own price stands", exc)
-        return NONE
+        return relief
 
 
-def admitted(relief: Relief, cleared: dict[str, None], unet_name: str,
-             mem_available: int) -> None:
-    """Record a load the credit let through: one journal line, and the dropped
-    model's "already loaded" memo forgotten, since its Worker no longer holds it."""
+def admitted(relief: Relief, cleared: dict[str, None], unet_name: str, mem_available: int,
+             unloaded: driver_unload.Unloaded | None = None) -> None:
+    """Record a load the relief let through: a journal line for an unload that
+    made the room, and for a credit one more, with the dropped model's "already
+    loaded" memo forgotten, since its Worker no longer holds it."""
+    if unloaded is not None:
+        log.info(unloaded.log_line(unet_name))
     if not relief.fits:
         return
     dropped = relief.credit.dropped

@@ -17,7 +17,10 @@ its allocator cache through the Worker ``clear_vram`` endpoint at ``soft``
 MemAvailable again and runs the checks once more from the one that refused.
 Only the last answer refuses, and its text says what was unloaded and released
 and what MemAvailable read around each step (docs/TROUBLESHOOTING.md #56).
-Both steps are rescues: a check that passes runs neither.
+Both steps are rescues: a check that passes runs neither. Before either, a
+render whose DiT load is still pending counts the model that load replaces
+(``swap_credit.py``). The loader preflight runs the same credit and the same
+unload through ``nodes/loader_relief.py``, with this module's calls.
 
 Three things this path never touches. A render still running in this driver:
 the driver keeps the models and the caches, and the refusal says why. The

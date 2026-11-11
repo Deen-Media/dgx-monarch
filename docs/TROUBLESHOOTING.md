@@ -2241,6 +2241,18 @@ GiB about to be dropped, and MiniMax-H3-Image INT8 after BF16 was 11.9 GiB
 short with 37.5 GiB about to be dropped. No hardware render has run with the
 credit yet.
 
+**Then ComfyUI's own models.** If the drop does not make room, the loader
+unloads the models ComfyUI holds on the driver host, which ComfyUI reloads on
+demand, and prices the load again, as the render-time check below does
+([#56](#56-minimax-h3-render-refused-activation-footprint-preflight)). A load
+that then fits goes ahead, and the driver log names the models and the two
+MemAvailable readings. A refusal that still stands carries them too: "Before
+refusing, the driver unloaded the 2 models (...) ComfyUI held on this host".
+The loader keeps the models while a render is running in this driver and says
+so. This helps only where ComfyUI held more than this graph's own driver
+models need, since this check already counts held models against them.
+`DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the unload off here too.
+
 **Old model in the way:** when a model loaded earlier still holds the
 memory a load needs, and a clear of the attached mesh would make room on every
 short box, the refusal says "the old model (<name>) is still loaded on the

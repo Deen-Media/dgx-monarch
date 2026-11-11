@@ -13,8 +13,12 @@
   The loader's check and the render-site checks for a pending load now count
   the copy the load's own slot drops, as the cross-rank agreement already did:
   a stock model only, that slot only, at the size the Worker reports. Nothing
-  to set, and nothing is cleared that was not dropped before. A load that
-  still does not fit refuses as before and says what it counted, and the card
+  to set, and nothing is cleared that was not dropped before. If that does
+  not make room, the loader also unloads the models ComfyUI holds on the
+  driver host, which ComfyUI reloads on demand, and prices the load again, as
+  the render-time checks already did; never while a render is running. A load
+  that still does not fit refuses as before and says what it counted and
+  unloaded, and the card
   is offered only where a clear returns more than the drop. Not yet run on
   hardware
   ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)).

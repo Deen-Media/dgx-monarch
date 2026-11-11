@@ -340,7 +340,7 @@ def _lead(binding: driver_footprint.DriverFootprintEstimate, window: str, shape:
 
 def preflight_loader_footprint(
     mesh: Any, unet_name: str, options: Mapping[str, Any] | None,
-    prompt: object = None, site: str = graph_load_price.SITE_LOADER, slot: str = "",
+    prompt: object = None, site: str = graph_load_price.SITE_LOADER, slot: str = "", unloaded: Any = None,
 ) -> consent_rescue.RescueLoad | None:
     """Refuse an unaffordable eager load or apply an allowed slab rescue.
 
@@ -348,8 +348,8 @@ def preflight_loader_footprint(
     rank mutation. It fails open except for a completed over-budget estimate
     and a forced family this checkpoint cannot carry. ``site`` is the sampler
     when ComfyUI kept the loader's output from an earlier queue (requeue_price).
-    ``slot`` is the slot the load goes into; a price that does not fit counts
-    what the Worker there drops first (``loader_relief``) before any card.
+    ``slot`` is the slot the load goes into; a price that does not fit counts what the Worker there
+    drops first, then unloads ComfyUI's models and prices again (``loader_relief``), before any card.
     """
     graph_load_price.note_priced(unet_name)
     try:
@@ -435,9 +435,12 @@ def preflight_loader_footprint(
         relief = loader_relief.NONE
         if not (fits_box(transient) and fits_box(settled)):
             relief = loader_relief.relieve(shape, lambda priced: _windows(priced, slab=effective_slab),
-                                           mesh=mesh, unet_name=unet_name, options=options, slot=slot)
+                                           mesh=mesh, unet_name=unet_name, options=options, slot=slot,
+                                           tried=unloaded)
+            if relief.unloaded is not None:  # ComfyUI's models are gone: price it all again
+                return preflight_loader_footprint(mesh, unet_name, options, prompt, site, slot, relief.unloaded)
         if relief.fits or (fits_box(transient) and fits_box(settled)):
-            loader_relief.admitted(relief, _CLEARED_UNETS, unet_name, avail)
+            loader_relief.admitted(relief, _CLEARED_UNETS, unet_name, avail, unloaded)
             remember(_CLEARED_UNETS, memo_key)
             note_stack_charged(terms)
             if fsdp_world:
@@ -462,7 +465,7 @@ def preflight_loader_footprint(
             **_lead(binding, window, shape, unet_name=unet_name, family=family,
                     quant_kind=quant_kind, terms=terms, deferred=deferred, prompt=prompt,
                     slab=effective_slab, mesh=mesh, worker_args=worker_args, site=site)}
-        words["lead"] += relief.sentence(unet_name)
+        words["lead"] += relief.sentence(unet_name, unloaded)
         blocked = consent_projection.projection_blocker(worker_args)
         rescue_transient, rescue_settled = _windows(shape, slab=True)
         # A slab under a cast keeps the cast copy beside the file and saves nothing.
