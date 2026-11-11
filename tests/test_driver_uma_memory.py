@@ -361,8 +361,29 @@ def test_real_comfyuis_vae_takes_its_batch_from_the_installed_reading(comfy_cpu,
     assert sizes == [6]
 
 
+def test_the_surface_canary_holds_the_order_the_wrapper_calls_with():
+    """An upstream change of the two leading parameters fails the daily canary, not a user's render."""
+    from dgx_monarch import comfy_surface
+
+    (touchpoint,) = [t for t in comfy_surface.TOUCHPOINTS if t.path == "comfy.model_management.get_free_memory"]
+    assert touchpoint.positional == ("dev", "torch_free_too")
+
+    def reordered(torch_free_too=False, dev=None):
+        return 0
+
+    with pytest.raises(RuntimeError, match="positional parameter order changed"):
+        comfy_surface._assert_touchpoint(reordered, touchpoint)
+    comfy_surface._assert_touchpoint(lambda dev=None, torch_free_too=False, for_dynamic=False: 0, touchpoint)
+
+
 def test_real_comfyuis_reading_is_the_shape_the_wrapper_replaces(comfy_cpu):
-    """A local pin on the term the wrapper replaces, until the forward-contracts canary lands."""
+    """A pin on the device term the wrapper replaces.
+
+    The surface canary (comfy_surface.py) holds the call shape: the two leading
+    positional parameters, in the order the wrapper passes them. A touchpoint
+    reads a signature and cannot see a function body, so the three lines of
+    the term are held here, by source.
+    """
     import inspect
 
     assert list(inspect.signature(comfy_cpu.get_free_memory).parameters) == ["dev", "torch_free_too"]
