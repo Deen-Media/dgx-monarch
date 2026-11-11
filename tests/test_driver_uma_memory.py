@@ -155,11 +155,59 @@ def test_install_leaves_comfyuis_reading_alone(monkeypatch, case, expected):
     assert mm.get_free_memory is stock
 
 
-def test_an_actors_patch_replaces_the_drivers_reading():
-    """The actor's patch looks for its own marker only, so it never keeps a driver's reading."""
-    reading = _reading(_stock(device_free=5 * GIB), available=66 * GIB)
-    assert getattr(reading, uma.DRIVER_MARK) is True
-    assert not getattr(reading, uma.ACTOR_MARK, False)
+@pytest.mark.parametrize("broken", ["available", "total_of", "default_device"])
+def test_a_failure_of_the_correction_answers_with_comfyuis_own_reading(broken, caplog):
+    """The function runs at every batch choice of the user's graph: it must never raise."""
+    def fails(*_args):
+        raise OSError("/proc/meminfo is gone")
+
+    stock = _stock(device_free=5 * GIB)
+    reading = uma.corrected_reading(
+        stock, fails if broken == "total_of" else _total_of,
+        fails if broken == "default_device" else (lambda: INTEGRATED),
+        fails if broken == "available" else (lambda: 66 * GIB))
+    device = None if broken == "default_device" else INTEGRATED
+    with caplog.at_level("WARNING"):
+        assert reading(device) == stock(device) == 8 * GIB
+        assert reading(device, True) == (8 * GIB, 3 * GIB)
+    assert caplog.text.count("the unified-memory reading failed") == 1  # said once, not at every call
+
+
+def test_an_actors_patch_replaces_the_drivers_reading(monkeypatch):
+    """The actor's own patch (actor/comfy_bridge.py), run over a driver's reading.
+
+    An actor process can import this pack's entry point (a Worker that loads
+    custom nodes) or inherit a driver's module. Its patch looks for its own
+    marker only, so it installs its reading whatever it finds, and a Worker's
+    loads keep the reading its identity records were taken with: psutil's
+    available memory over the actors on the host, no floor.
+    """
+    from dgx_monarch.actor import comfy_bridge
+
+    device = Device("cuda")
+    driver_reading = _reading(_stock(device_free=5 * GIB), available=66 * GIB)
+    assert getattr(driver_reading, uma.DRIVER_MARK) is True
+    mm = SimpleNamespace(get_free_memory=driver_reading, get_torch_device=lambda: device)
+    comfy = SimpleNamespace(model_management=mm)
+    torch = SimpleNamespace(cuda=SimpleNamespace(
+        get_device_properties=lambda _device: SimpleNamespace(is_integrated=1),
+        memory_stats=lambda _device: {"reserved_bytes.all.current": 5 * GIB, "active_bytes.all.current": 2 * GIB}))
+    psutil = SimpleNamespace(virtual_memory=lambda: SimpleNamespace(available=66 * GIB))
+    for name, module in (("comfy", comfy), ("comfy.model_management", mm), ("torch", torch), ("psutil", psutil)):
+        monkeypatch.setitem(sys.modules, name, module)
+
+    comfy_bridge._patch_uma_free_memory(2)
+
+    actor_reading = mm.get_free_memory
+    assert actor_reading is not driver_reading
+    assert getattr(actor_reading, uma.ACTOR_MARK) is True and not getattr(actor_reading, uma.DRIVER_MARK, False)
+    assert actor_reading(device) == 66 * GIB // 2 + 3 * GIB  # over two actors, no floor
+    assert actor_reading(device, True) == (66 * GIB // 2 + 3 * GIB, 3 * GIB)
+    # And the other order: a driver install that meets an actor's reading leaves it.
+    monkeypatch.setattr(uma, "_comfy", lambda: (mm, torch))
+    monkeypatch.setattr(uma.sys, "platform", "linux")
+    monkeypatch.delenv(uma.DISABLE_ENV, raising=False)
+    assert uma.install_driver() == "already" and mm.get_free_memory is actor_reading
 
 
 @pytest.fixture(scope="module")

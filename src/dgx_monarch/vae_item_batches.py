@@ -21,6 +21,13 @@ its frames are one item along time, not a batch.
 
 What it costs is speed where a batch of N beats N batches of one. What it
 changes once: today's full-batch bits.
+
+To settle before anyone installs it: ``vae_decode_route`` also wraps
+``VAE.decode`` (Worker-assisted decode, armed by the Init node, so after node
+import). Installed first, this wrapper sits inside that one and each item goes
+through the route's own decode; ``uninstall`` here restores ``__wrapped__``
+and would drop a wrapper installed over it, so it is for tests, where nothing
+else is installed.
 """
 from __future__ import annotations
 

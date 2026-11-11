@@ -103,20 +103,34 @@ def corrected_reading(original: Reading, total_of: Callable[[Any], int | None],
     ``total_of(device)`` is the device's total on unified memory and ``None``
     elsewhere; a device it answers ``None`` for gets ``original`` untouched.
     The allocator's cached-free bytes are ``original``'s, added as stock adds
-    them.
+    them. If ``total_of`` or ``available`` raises, the call returns
+    ``original``'s answer and one WARNING is logged.
     """
     totals: dict[str, int | None] = {}
+    warned: list[bool] = []
 
     def free_memory(dev: Any = None, torch_free_too: bool = False) -> Any:
-        device = default_device() if dev is None else dev
-        name = str(device)
-        if name not in totals:
-            totals[name] = total_of(device)
-        total = totals[name]
+        # ComfyUI calls this at every batch and load choice of the user's graph.
+        # A failure of the correction must cost the correction, never the render.
+        free = 0
+        try:
+            device = default_device() if dev is None else dev
+            name = str(device)
+            if name not in totals:
+                totals[name] = total_of(device)
+            total = totals[name]
+            if total is not None:
+                free = device_free_bytes(available(), total)
+        except Exception as exc:
+            if not warned:
+                warned.append(True)
+                log.warning("the unified-memory reading failed (%s: %s); ComfyUI's own free-memory "
+                            "reading answers from here on", type(exc).__name__, exc)
+            return original(dev, torch_free_too)
         if total is None:
             return original(dev, torch_free_too)
         _stock_free, cached_free = original(device, True)
-        free = device_free_bytes(available(), total) + cached_free
+        free += cached_free
         return (free, cached_free) if torch_free_too else free
 
     setattr(free_memory, DRIVER_MARK, True)
