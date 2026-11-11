@@ -3961,7 +3961,7 @@ of the reference, while its own Flux forward drops the background tokens
 before the blocks. On 2026-11-11 six views at 2048 a view on FLUX.2 Klein
 Base 9B were priced at 212,992 latent cells, 81.1 GiB, where the masked call
 held 90,597 rows, 34.5 GiB at the same factor; four views were priced at
-68.7 GiB for 57,597 rows, 21.9 GiB. With 75 and 81 GiB available each rank of
+68.7 GiB for 57,597 rows, 21.9 GiB. At six views, with 75 and 81 GiB available, each rank of
 a uly2 pair offloaded most of the 17 GiB model and this guard refused, and a
 one-GPU Worker offloaded all of it. A Worker now hands ComfyUI's estimate the
 kept counts for the length of ComfyUI's own `prepare_sampling` call

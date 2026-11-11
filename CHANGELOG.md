@@ -471,7 +471,7 @@
   sample-time estimate counts every token of every view, of the normal atlas
   and of the reference, while its Flux forward drops the background tokens:
   six views at 2048 a view on FLUX.2 Klein Base 9B were priced at 81.1 GiB
-  for a masked call that held 90,597 rows, 34.5 GiB at the same factor. On two
+  for a masked call that held 90,597 rows, 34.5 GiB at the same factor. At six views, on two
   Sparks with 75 and 81 GiB available each rank offloaded most of the 17 GiB
   model and the render refused class C at `partial_load_divergence`; on one
   GPU ComfyUI offloaded the whole model and streamed it. A Worker now hands

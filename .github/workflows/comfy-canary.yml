@@ -50,6 +50,7 @@ on:
       - "tests/test_flux3_comfy_exactness.py"
       - "tests/test_flux3_cond_branch.py"
       - "tests/test_flux_views_comfy_exactness.py"
+      - "tests/test_held_rows_price.py"
       - "tests/test_anima_cond_branch.py"
       - "tests/test_moss_image_comfy_exactness.py"
       - "tests/test_moss_image_parity.py"
@@ -331,6 +332,14 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_flux_views_comfy_exactness.py
+      # A Worker prices an UltraTex render at the rows stock's forward keeps
+      # (actor/held_rows_price.py): the kept count must equal stock's own
+      # token_keep, and a render with no masks must get stock's figure. The
+      # regular CI job has no ComfyUI, so all but one case skip there.
+      - name: UltraTex held-rows price vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_held_rows_price.py
       # Anima's text branch: the Worker's bind of stock's extra_conds under
       # inference mode, stock's model calls on the Worker's KSampler path, and
       # the persistence canary with LoRA units on the llm_adapter.
@@ -526,6 +535,7 @@ jobs:
           tests/test_flux3_comfy_exactness.py
           tests/test_flux3_cond_branch.py
           tests/test_flux_views_comfy_exactness.py
+          tests/test_held_rows_price.py
           tests/test_qwen_image21_adapter.py
           tests/test_qwen_image21_prefix_cache.py
           tests/test_adaln_parity_blocks.py

@@ -40,13 +40,30 @@ render above that is the unmasked negative's 98,304 cells, 37.4 GiB, and
 for cond and uncond in one call, takes the largest target of any cond at
 twice the batch and every cond's kept references.
 
+A masked call holds its references once a sample, not once a call:
+``CONDList.process_cond`` repeats each reference to the latent batch, and
+under a view grid ``Flux._forward`` takes every n-th row of it, one row a
+sample, before it keeps the masked tokens and joins them to that sample's
+target. So a call of B samples holds B times the kept target of one sample
+plus B times the kept references, and that is what the minimum counts.
+
+The count runs ``foreground_tokens`` on the conditioning's tensors where they
+are, on the CPU, and stock's forward runs it on the device. An antialiased
+resize can round a token at the rule's 0.5/255 line either way, a few cells
+of price and no decision.
+
 What it never does:
 
-- Price above stock. Each count is capped at stock's own, and the estimate is
-  read before and after: a priced figure above stock's drops the correction.
+- Price above stock. A call whose held rows exceed stock's figure keeps
+  stock's figure: stock counts each reference once a call, the forward once
+  a sample. And the estimate is read before and after: a priced figure above
+  stock's drops the correction.
 - Guess. A cond with no masks keeps stock's counts, and a batch the view grid
   does not divide, a mask count that is not the grid's, a reference count
   that is not stock's, or any error keeps stock's figure.
+- Fall back in silence. A ComfyUI whose forward drops tokens under a mask
+  rule this module cannot find gets one warning when the wrapper is
+  installed and one a render that carries masks.
 - Reach the cond batch rule. ``_calc_cond_batch`` reads the same
   ``memory_required`` during sampling to decide whether cond and uncond share
   a call; the correction is gone before sampling starts, so that decision is
@@ -78,6 +95,12 @@ WRAPPER_KEY = "dgx_monarch_held_rows_price"
 _SHADOWED = ("extra_conds_shapes", "memory_required")
 _REF_SHAPE_KEY = "ref_latents"
 _ABSENT = object()
+# The one sentence for a ComfyUI whose Flux forward drops tokens under another rule's name.
+_NO_MASK_RULE = (
+    "this ComfyUI has no comfy.ldm.flux.model.foreground_tokens, the rule this price counts "
+    "kept tokens with, so a render with UltraTex token masks keeps ComfyUI's own estimate, "
+    "which counts every token: at large sizes ComfyUI may then offload part of the model and "
+    "a pair refuse at partial_load_divergence (docs/TROUBLESHOOTING.md #79)")
 
 
 @dataclass(frozen=True)
@@ -156,11 +179,32 @@ def _ref_cells(foreground_tokens: Any, cond: Mapping, patch: int) -> tuple[int, 
 
 
 def held_cells(base_model: Any, noise_shape: Any, conds: Any) -> HeldCells | None:
-    """What this render's calls hold, or None where stock's estimate already says it.
+    """What this render's calls hold, or None where stock's estimate stands.
+
+    Stock's stands where it already says what the calls hold, and where the
+    largest call holds more than stock counts: with more than one sample a
+    call the forward holds each reference once a sample, stock counts it once
+    a call, and this price never goes above stock's.
+    """
+    held = _call_cells(base_model, noise_shape, conds)
+    if held is None:
+        return None
+    if sum(held.largest) > sum(held.stock):
+        log.info(
+            "held-rows price: the largest call any cond makes holds %d latent cells and "
+            "ComfyUI's estimate counts %d, which takes each reference once a call where the "
+            "forward holds it once a sample; ComfyUI's own estimate stands",
+            sum(held.largest), sum(held.stock))
+        return None
+    return held if held.corrects else None
+
+
+def _call_cells(base_model: Any, noise_shape: Any, conds: Any) -> HeldCells | None:
+    """The cells each cond's own call holds, or None for a render with no masks.
 
     Each cond is read as its own call: a masked cond holds its kept target and
-    kept references, any other cond stock's latent and stock's count of its
-    references (``extra_conds_shapes``, asked of stock itself).
+    kept references, each once a sample, and any other cond stock's latent and
+    stock's count of its references (``extra_conds_shapes``, asked of stock itself).
     """
     entries = list(_cond_entries(conds))
     if not any(cond.get("token_masks") is not None for cond in entries):
@@ -168,8 +212,11 @@ def held_cells(base_model: Any, noise_shape: Any, conds: Any) -> HeldCells | Non
     import comfy.ldm.flux.model as flux_model
 
     foreground_tokens = getattr(flux_model, "foreground_tokens", None)
+    if foreground_tokens is None:
+        # Masks are here and the rule that reads them is not: say so, never fall back in silence.
+        raise LookupError(_NO_MASK_RULE)
     patch = getattr(getattr(base_model, "diffusion_model", None), "patch_size", None)
-    if foreground_tokens is None or not isinstance(patch, int) or patch < 1 or len(noise_shape) < 3:
+    if not isinstance(patch, int) or patch < 1 or len(noise_shape) < 3:
         return None
     stock_target = _cells(noise_shape)
     calls: list[tuple[int, int]] = []
@@ -185,11 +232,13 @@ def held_cells(base_model: Any, noise_shape: Any, conds: Any) -> HeldCells | Non
         kept = counted[0] if counted is not None and counted[1] == full else full
         if kept < full:
             refs[id(cond["token_masks"])] = (kept, full)
-        calls.append((stock_target if target is None else target, kept))
-    held = HeldCells(
+        # Stock's forward holds every reference once a sample (Flux._forward takes r[::n]),
+        # where stock's count takes it once a call.
+        samples = int(noise_shape[0]) // len(cond["view_grid"]) if target is not None else 1
+        calls.append((stock_target if target is None else target, kept * samples))
+    return HeldCells(
         batch=int(noise_shape[0]), stock=(stock_target, stock_refs), refs=refs,
         largest=max(calls, key=sum), target=max(target for target, _ in calls))
-    return held if held.corrects else None
 
 
 def _shadow(base_model: Any, noise_shape: Any, held: HeldCells) -> dict:
@@ -253,27 +302,30 @@ def make_wrapper():
         conds = args[2] if len(args) > 2 else kwargs.get("conds")
         base_model = getattr(patcher, "model", None)
         saved = None
+        # One finally over the pricing and the call: whatever leaves this frame, an
+        # interrupt included, the model object gets its own two methods back.
         try:
-            held = held_cells(base_model, noise_shape, conds)
-            if held is not None:
-                stock = _minimum(patcher, noise_shape, conds)
-                saved = _shadow(base_model, noise_shape, held)
-                priced = _minimum(patcher, noise_shape, conds)
-                if priced > stock:
-                    raise ValueError(f"priced {priced:.0f} B above stock's {stock:.0f} B")
-                log.info(
-                    "held-rows price: ComfyUI's sample-time estimate counts %d latent cells "
-                    "for this render (%d target, %d reference); after the token drop the "
-                    "largest call a cond makes holds %d (%d target, %d reference); the load "
-                    "is priced at %.1f GiB in place of %.1f GiB",
-                    sum(held.stock), *held.stock, sum(held.largest), *held.largest,
-                    priced / 2**30, stock / 2**30)
-        except Exception as exc:
-            if saved is not None:
-                _restore(base_model, saved)
-                saved = None
-            log.warning("held-rows price: left at ComfyUI's own estimate (%s)", failure_summary(exc))
-        try:
+            try:
+                held = held_cells(base_model, noise_shape, conds)
+                if held is not None:
+                    stock = _minimum(patcher, noise_shape, conds)
+                    saved = _shadow(base_model, noise_shape, held)
+                    priced = _minimum(patcher, noise_shape, conds)
+                    if priced > stock:
+                        raise ValueError(f"priced {priced:.0f} B above stock's {stock:.0f} B")
+                    log.info(
+                        "held-rows price: ComfyUI's sample-time estimate counts %d latent cells "
+                        "for this render (%d target, %d reference); the largest call any cond "
+                        "makes holds %d (%d target, %d reference); the load is priced at "
+                        "%.1f GiB in place of %.1f GiB",
+                        sum(held.stock), *held.stock, sum(held.largest), *held.largest,
+                        priced / 2**30, stock / 2**30)
+            except Exception as exc:
+                if saved is not None:
+                    _restore(base_model, saved)
+                    saved = None
+                log.warning("held-rows price: left at ComfyUI's own estimate (%s)",
+                            failure_summary(exc))
             return executor(*args, **kwargs)
         finally:
             if saved is not None:
@@ -292,8 +344,13 @@ def install(base_patcher: Any, family: str | None) -> None:
 
     if family not in VIEW_FAMILIES:
         return
+    import comfy.ldm.flux.model as flux_model
     import comfy.patcher_extension as pe
 
+    if (hasattr(getattr(flux_model, "Flux", None), "preprocess_token_masks")
+            and not callable(getattr(flux_model, "foreground_tokens", None))):
+        # This ComfyUI drops tokens and the rule this module counts them with has moved.
+        log.warning("held-rows price: %s", _NO_MASK_RULE)
     options = base_patcher.model_options
     if pe.get_wrappers_with_key(
         pe.WrappersMP.PREPARE_SAMPLING, WRAPPER_KEY, options, is_model_options=True
