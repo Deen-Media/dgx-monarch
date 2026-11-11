@@ -875,8 +875,10 @@
       "test_a_derivative_of_a_child_binds_the_child_not_the_parent": "d1f8b4e5999ce813",
       "test_a_forced_family_binds_the_derivative_subclass_detection_refuses": "6c9e37c7ccabfadb",
       "test_a_forced_family_never_reaches_the_vouched_auto_slab_rung": "8edbb2afdf3fcfe5",
+      "test_a_forced_family_refuses_a_comfy_class_named_as_another_model": "299e58dc774d3400",
       "test_a_forced_family_the_model_is_not_refuses_naming_both": "afec77a82fa38ca3",
       "test_a_forced_load_does_not_write_the_family_memo": "740904bccba5bfcc",
+      "test_a_forced_minimax_h3_does_not_bind_the_image_model": "b4596c8a73d820eb",
       "test_a_forced_render_says_so_once_with_what_the_header_read": "616d24c78b092c88",
       "test_a_named_family_reads_back_stripped": "f8e628598a507a32",
       "test_a_non_safetensors_path_is_left_alone": "911cdd099be50522",
@@ -1814,6 +1816,11 @@
       "test_unpadded_sequence_passes_an_empty_drop_rows": "092ad06e09d9cbb9",
       "test_unvetted_segment_kind_refusal_carries_the_class_p_tag": "be9975183362086e"
     },
+    "tests/test_minimax_h3_image_comfy_detection.py": {
+      "test_a_forced_minimax_h3_refuses_the_image_class_comfy_builds": "178ee413b318b467",
+      "test_comfy_and_the_detector_name_the_same_family_from_the_same_keys": "049d47500fd07376",
+      "test_the_image_model_takes_no_default_for_its_grid": "2b232c48ad35ca87"
+    },
     "tests/test_minimax_h3_image_header.py": {
       "test_a_file_without_its_sigma_grid_refuses_first": "e1322c4060749807",
       "test_a_format_with_no_row_takes_the_path_any_unvalidated_format_takes": "3ca22d5c559215e9",
@@ -2090,7 +2097,7 @@
     "tests/test_refusal_classes.py": {
       "test_class_rules_hold_at_every_classified_site": "5cafc4648318999d",
       "test_classified_refusal_sites_match_the_ledger": "be492398677a7e60",
-      "test_every_declared_exception_is_classified_as_refusal_or_not": "b5a33ef3163bc0a1",
+      "test_every_declared_exception_is_classified_as_refusal_or_not": "c75c730d6a89ada5",
       "test_every_waivable_guard_message_names_the_panel_and_the_env_fallback": "28e23825921f635e",
       "test_guard_vocabulary_agrees_with_the_frozen_ledger_vocabulary": "9525b2023313c356",
       "test_guard_vocabulary_is_claimed_or_explicitly_reserved": "b06905c2cff4cc89",
@@ -2738,6 +2745,20 @@
       "test_world_one_takes_no_note": "8c96966c6e6c3951",
       "test_zimage_cfg_auto_reason_matches_asymmetric_trim_contract": "9fe4c0cac32eb9ea",
       "test_zimage_ulysses_auto_reason_records_hardware_result": "4b5f79d018fd3279"
+    },
+    "tests/test_upstream_gate_damaged_header.py": {
+      "test_a_config_nested_past_the_parsers_limit_counts_as_a_missing_grid": "5fd78cb0cf76cbcd",
+      "test_a_damaged_header_gets_the_refusal_its_intact_header_gets_on_both_paths": "325def91afea2738",
+      "test_a_damaged_l2p_header_logs_the_key_paths_the_gate_read": "af23792eb66bd840",
+      "test_a_file_no_stock_reader_can_read_keeps_no_verdict": "272ca16eda0b2b11",
+      "test_a_process_that_cannot_import_detection_gets_no_verdict": "0954cc0875eddb98",
+      "test_a_read_that_fails_with_no_parse_verdict_refuses_class_p": "47c5b0c8732c9a7e",
+      "test_a_sound_header_never_reaches_the_second_read_and_keeps_its_verdict": "79e4a8c64fdd1d3b",
+      "test_metadata_is_read_as_comfys_own_reader_hands_it_on": "acd3e7957f20d860",
+      "test_quantization_metadata_nested_past_the_limit_refuses_but_a_parse_error_does_not": "1ca798138f5fb7bb",
+      "test_the_last_copy_of_a_key_written_twice_is_the_one_the_gate_reads": "6d9ceebb29306653",
+      "test_the_second_read_names_what_comfys_own_readers_hand_on": "2e97c3389ed2db2e",
+      "test_what_the_gate_calls_no_header_no_stock_reader_reads": "29023e4612929609"
     },
     "tests/test_upstream_gated_artifact.py": {
       "test_263_still_reports_and_does_not_refuse": "ff8a6a5e47dcca67",

@@ -4818,6 +4818,9 @@ matched key paths, so a record can confirm which spelling the gate read.
 
 The same gate refuses a checkpoint whose weight scales ComfyUI would drop; see
 [#120](#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales).
+A damaged header does not turn this refusal off: the gate reads a header its
+strict reader refuses as ComfyUI's own reader does
+([#151](#151-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 
 ## 92. A render refuses with `FsdpGateProofError`, and the retry says the same thing
 
@@ -6464,7 +6467,9 @@ scales and names its format only in header fields ComfyUI does not read, and
 and no record, so stock ComfyUI fails at the first step.
 The gate reads the header alone, on the driver before capacity or mesh work
 and again at every Worker's load entry point, and replays ComfyUI's load
-steps on the key names.
+steps on the key names. A header its strict reader refuses is read again as
+ComfyUI's own reader reads it, so a damaged header gets this refusal too
+([#151](#151-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 
 **Fix:** use an export of the same model in ComfyUI's quantized layout, whose
 quantized layers carry `comfy_quant` keys or a `_quantization_metadata` table,
@@ -8080,6 +8085,9 @@ model is built; a config that is not JSON, or that holds no list of numbers
 there, fails earlier or later with another error. The header gate reads the same metadata
 (`adapters/minimax_h3_image_header.py`) and stops the file first. It answers
 before every other refusal this family meets, since it is a fault of the file.
+A config the JSON parser cannot read, one nested past its limit included,
+counts as no grid, and a damaged header is read as ComfyUI's own reader reads it
+([#151](#151-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 
 **Fix:** use the file as Comfy-Org/MiniMax-H3-Image publishes it; every one of
 its DiT files carries the grid. For a file you exported yourself, write the
@@ -8111,3 +8119,39 @@ they key on MiniMax H3 video.
 through ComfyUI's own Load Diffusion Model node rather than the DGX Monarch
 loader. No consent or waiver applies. This refusal retires when the
 MiniMax-H3-Image adapter lands.
+
+## 151. A render refuses because the header gate could not read the checkpoint's header
+
+**Symptom:** the DGX Monarch loader refuses class P with "the upstream gate
+could not read this checkpoint's safetensors header", before anything loads. A
+Worker that gets the same file refuses with the same sentence. It names no
+guard and offers no card and no waiver. The log carries one WARNING line,
+opening `upstream gate:`, that names the error the read ended with.
+
+**Cause:** the header gate decides four refusals from a file's safetensors
+header alone
+([#91](#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down),
+[#120](#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales),
+[#149](#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)
+and #150). It reads the header with a strict reader first. That reader refuses
+headers stock ComfyUI still loads: a tensor entry, a metadata key or a
+descriptor field written twice, an empty tensor name, tensors that share
+bytes, metadata that is not all strings. So when the strict read fails, the
+gate reads the header again as ComfyUI's own reader does (the 8-byte length,
+then plain JSON, where the last copy of a key written twice wins) and the same
+four refusals answer on what ComfyUI would load. A damaged header therefore
+gets every refusal its intact header gets, with the same sentence, and the log
+carries an INFO line, opening `upstream gate:`, that says why the strict read
+failed. A file that neither safetensors nor ComfyUI can read (no length field,
+a length past the end of the file, a header that is not UTF-8 JSON, JSON that
+is not an object) gets no verdict from the gate; ComfyUI's own load error
+stands. This entry is what is left: the read failed in a way that is no
+verdict on the file, such as a header or quantization metadata nested past the
+JSON parser's limit, or a read error after the file opened. The gate cannot
+show that ComfyUI would fail on that file too, and a load that skipped the
+gate could render wrong with no error, so it refuses.
+
+**Fix:** restore the file from the export or download it came from; no writer
+of safetensors files produces such a header. To render the file as it is, use
+stock ComfyUI on one GPU through ComfyUI's own Load Diffusion Model node
+rather than the DGX Monarch loader. There is no waiver and no env var.

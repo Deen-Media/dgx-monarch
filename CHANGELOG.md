@@ -414,6 +414,22 @@
 
 ### Rendering
 
+- A damaged safetensors header no longer turns the loader's header refusals
+  off. Before, a header the strict reader refused (a tensor entry or metadata
+  key written twice, an empty tensor name, tensors sharing bytes, metadata
+  that is not all strings) got no verdict, so a Z-Image L2P file, a file whose
+  weight scales ComfyUI drops or a MiniMax-H3-Image file loaded as if the gate
+  were not there, while stock ComfyUI still read it. The gate now reads such a
+  header again as ComfyUI's own reader does, and the driver and every Worker
+  refuse it with the class and sentence its intact header gets. A
+  MiniMax-H3-Image `config` nested past the JSON parser's limit, which also
+  got no verdict, now counts as no sigma grid. A file no stock reader can read
+  keeps ComfyUI's own load error, and a header read that ends with no verdict
+  on the file refuses class P
+  ([TROUBLESHOOTING #151](docs/TROUBLESHOOTING.md#151-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
+  A forced `family_adapter=minimax_h3` no longer binds the MiniMax H3 video
+  adapter to a MiniMax-H3-Image model
+  ([MODELS](docs/MODELS.md#running-finetunes)).
 - UltraTex, the FLUX.2 Klein 9B LoRAs that ComfyUI 0.45.0 paints a mesh
   texture with, runs on one GPU, uly2 and uly2+fsdp. Its conditioning tiles a
   sample's views into one image and drops background tokens inside stock's

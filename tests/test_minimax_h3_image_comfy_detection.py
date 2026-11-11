@@ -134,3 +134,20 @@ def test_the_image_model_takes_no_default_for_its_grid(comfy):
         assert unet["image_model"] == h3_image.FAMILY and "pdd_sigmas" not in unet
         assert h3_image.grid_missing(metadata)
     assert not h3_image.grid_missing(h3i.METADATA)
+
+
+def test_a_forced_minimax_h3_refuses_the_image_class_comfy_builds(comfy):
+    """A forced ``family_adapter=minimax_h3`` binds by class ancestry, and ComfyUI's
+    ``MiniMaxH3Image`` subclasses ``MiniMaxH3``. The video adapter must not take it."""
+    if comfy.older:
+        pytest.skip("this ComfyUI predates MiniMax-H3-Image (ComfyUI 0.45.0 added it)")
+    from dgx_monarch.adapters import UnsupportedModelError, adapter_for
+    from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
+
+    model_base = sys.modules["comfy.model_base"]
+    with pytest.raises(UnsupportedModelError) as raised:
+        adapter_for(object.__new__(model_base.MiniMaxH3Image), "minimax_h3")
+    assert "MiniMaxH3Image" in str(raised.value)
+    tag = parse_refusal_tag(str(raised.value))
+    assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+    assert adapter_for(object.__new__(model_base.MiniMaxH3), "minimax_h3").family == "minimax_h3"
