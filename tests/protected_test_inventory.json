@@ -1734,13 +1734,19 @@
       "test_the_worker_quote_for_b3s_state_reaches_the_card": "f9c7a9748e4a0cf9"
     },
     "tests/test_lora_partial_load.py": {
+      "test_a_full_load_that_fails_refuses_whatever_the_format": "5de86a31e5a77fcc",
       "test_a_partial_load_with_a_lora_is_made_whole_by_the_low_rss_bake": "3cde01bdfa6723c3",
+      "test_a_route_that_reports_success_is_checked_against_the_model_itself": "7217514fb7f91256",
       "test_a_store_slot_is_reachable_from_its_model": "eca5b2a0418b8458",
       "test_a_whole_load_a_dynamic_patcher_and_a_model_with_no_stack_are_left_alone": "2a6c080a73dd4de0",
+      "test_the_check_runs_on_every_model_prepare_sampling_loaded": "119d4e59552ca19a",
+      "test_the_pread_loader_is_told_from_the_mmap_loader_by_its_own_mark": "b8afc3a536e46ad6",
+      "test_the_room_rule_counts_every_moved_layer_when_the_weights_are_file_pages": "97b35d1a6f52a4bf",
       "test_the_route_is_for_a_load_device_that_shares_the_hosts_memory": "46fb4895be3db57a",
+      "test_the_route_leaves_the_other_models_of_the_sampling_loaded": "1fd9cd4a7393fd9c",
       "test_the_single_rank_check_rides_prepare_sampling_once": "d70a089678593858",
       "test_where_the_route_cannot_be_taken_a_weight_only_format_renders_from_cast_time_weights": "7bfea2676be13f5e",
-      "test_where_the_route_cannot_be_taken_an_fp8_layer_is_refused_and_nothing_is_half_baked": "8bfe0195a6f5dc1c",
+      "test_where_the_route_cannot_be_taken_an_fp8_layer_is_refused_and_nothing_is_half_baked": "6a2448ed8e44a227",
       "test_which_layers_quantize_their_input": "165baceabc7cd92f"
     },
     "tests/test_lora_quant_guard.py": {

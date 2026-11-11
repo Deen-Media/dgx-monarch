@@ -7987,7 +7987,10 @@ leave a one-GPU load partial where it can help it: before sampling it bakes
 the whole stack under a full load and frees ComfyUI's backup, as `lora_low_rss`
 does, and logs `took the low-RSS route for this load`. That needs room for
 ComfyUI's backup of the patched layers still off the device while it bakes; a
-stack change on that model then reloads it from disk. Where there is no room
+stack change on that model then reloads it from disk. If that full load itself
+fails, the render stops with the same class C tag and says so, because ComfyUI
+unloads a model whose load fails and sampling it would run without the LoRA.
+Where there is no room
 the cast-time weights stand, which is exact for BF16 and INT8 files but slower
 a step. An FP8, NVFP4 or MXFP8 layer needs more than the weight (ComfyUI's
 classic forward leaves its input unquantized while a cast-time patch is

@@ -37,8 +37,20 @@ for every weight-only format. A render that would run a patched
 input-quantizing layer off the device is refused, class C, before its first
 forward, with what was tried and what would fit.
 
-Nothing is cleared before the full load has succeeded, so a refusal or a
-failure leaves the model as ComfyUI had it.
+Nothing is cleared before the full load has succeeded, so a route that is not
+taken leaves the model as ComfyUI loaded it. A full load that fails does not:
+ComfyUI undoes a load that raises (``ModelPatcher.partially_load`` calls
+``detach()``), which leaves the model unpatched and unloaded. Sampling it
+would render without the LoRA, so any failure of the route refuses the
+render, class C, whatever the format. And after a route that reports success
+``check`` reads the model itself (patched, whole, counted as loaded, still
+held by ComfyUI) and refuses if it is not what a full load leaves.
+
+The route loads the rest of the model through the model's own patcher, as
+ComfyUI does when a loaded model may use more memory, and not through
+``load_models_gpu``: that would free every other model the sampling loaded
+(a dual-model guider's other checkpoint) and unpatch its LoRA. The check
+runs on every model ``prepare_sampling`` loaded.
 """
 from __future__ import annotations
 
@@ -121,10 +133,44 @@ def _host_room() -> int:
     return int(psutil.virtual_memory().available) - ABSOLUTE_HOST_FLOOR_BYTES
 
 
-def make_whole(patcher: Any) -> str | None:
-    """Take the low-RSS route for this partial load. ``None`` when taken, else why it was not."""
-    from . import lora_cast_time, store_bake
+def _host_copies_are_file_pages() -> bool:
+    """Whether the weights off the device are file pages (the mmap loader) and not the Worker's own copy.
 
+    The Worker's pread loader marks ``safetensors.safe_open`` (the flag worker_status reports). Without
+    it a checkpoint is memory-mapped, and moving a layer onto the device takes new memory for it.
+    """
+    try:
+        import safetensors
+
+        return not getattr(safetensors.safe_open, "_dgxm_pread", False)
+    except Exception:
+        return True
+
+
+def _room_needed(patcher: Any, pending: list[tuple[str, Any]]) -> int:
+    """Host bytes the full load needs beyond what the partial load holds."""
+    from . import lora_cast_time
+
+    need = sum(lora_cast_time._module_bytes(module) for _key, module in pending)  # ComfyUI's backup of each
+    if _host_copies_are_file_pages():
+        need += max(0, int(patcher.model_size()) - int(patcher.loaded_size()))  # and every layer it moves
+    return need
+
+
+def _registered(patcher: Any) -> bool:
+    """Whether ComfyUI's model manager holds this patcher's model as loaded."""
+    import comfy.model_management as mm
+
+    return any(getattr(loaded.model, "model", None) is patcher.model for loaded in mm.current_loaded_models)
+
+
+def make_whole(patcher: Any) -> str | None:
+    """Take the low-RSS route for this partial load. ``None`` when taken, else why it was not.
+
+    It raises if the full load raises. ComfyUI undoes a load that fails
+    (``ModelPatcher.partially_load`` calls ``detach()``), so the caller must
+    refuse the render then.
+    """
     slot = getattr(patcher.model, STORED, None)
     stored = slot() if callable(slot) else None
     if stored is None:
@@ -133,21 +179,45 @@ def make_whole(patcher: Any) -> str | None:
         return ("this GPU has memory of its own, and ComfyUI loaded the model partly because it does "
                 "not fit there whole")
     pending = _patched_off_device(patcher)
-    need = sum(lora_cast_time._module_bytes(module) for _key, module in pending)
+    need = _room_needed(patcher, pending)
     room = _host_room()
     if need > room:
         return (f"baking the {len(pending)} patched layer(s) still off the device needs {need / _GIB:.1f} GiB "
-                f"for ComfyUI's backup of them while it bakes, and {max(0, room) / _GIB:.1f} GiB is available "
-                f"above the {ABSOLUTE_HOST_FLOOR_BYTES / _GIB:.0f} GiB floor")
-    store_bake._merge_and_free(patcher)  # a full load bakes the rest; then the backup and the patches go
+                f"while it bakes, and {max(0, room) / _GIB:.1f} GiB is available above the "
+                f"{ABSOLUTE_HOST_FLOOR_BYTES / _GIB:.0f} GiB floor")
+    # Load the rest of this one model through its own patcher, as ComfyUI's LoadedModel does when a
+    # loaded model may use more memory (model_use_more_vram): no free_memory pass, so no other model
+    # this sampling loaded (a dual-model guider's other checkpoint) is unloaded. Then the tail of
+    # store_bake._merge_and_free: the backup and the patches go.
+    import gc
+
+    patcher.partially_load(patcher.load_device, extra_memory=1e32)
+    patcher.backup.clear()
+    patcher.backup_buffers.clear()
+    patcher.patches.clear()
+    gc.collect()
     active = getattr(stored, "active_patcher", None)
     if active is not None and active is not patcher:
         active.patches.clear()  # the same stack on the store's own patcher: it is baked in now
     stored.base_baked, stored.unbake = True, None
     log.info("LoRA bake: ComfyUI loaded this model partly with a LoRA stack and lora_low_rss off, so the "
              "Worker took the low-RSS route for this load: baked %d more patched layer(s) under a full "
-             "load and freed ComfyUI's backup (%.1f GiB of room was needed for it while baking). A stack "
+             "load and freed ComfyUI's backup (%.1f GiB of room was needed while baking). A stack "
              "change on this model reloads it from disk", len(pending), need / _GIB)
+    return None
+
+
+def _what_is_wrong_after_the_route(patcher: Any, was_registered: bool) -> str | None:
+    """A second wall, read from the model and not from the route: what it lacks to sample with its LoRA."""
+    model = patcher.model
+    if getattr(model, "current_weight_patches_uuid", None) is None:
+        return "ComfyUI holds its weights as unpatched"
+    if getattr(model, "model_lowvram", False) or _patched_off_device(patcher):
+        return "part of it is still off the device with a cast-time patch"
+    if not getattr(model, "model_loaded_weight_memory", 0):
+        return "ComfyUI counts none of it as loaded"
+    if was_registered and not _registered(patcher):
+        return "ComfyUI no longer holds it as a loaded model"
     return None
 
 
@@ -157,12 +227,31 @@ def check(patcher: Any) -> None:
     if (model is None or not getattr(model, "model_lowvram", False) or patcher.is_dynamic()
             or not getattr(patcher, "patches", None)):
         return
+    was_registered = _registered(patcher)
     try:
         why_not = make_whole(patcher)
     except Exception as exc:
-        # Nothing was cleared: ComfyUI's backup and the cast-time patches are as its own load left them.
-        why_not = f"the full load it needs failed ({type(exc).__name__}: {exc})"
+        # ComfyUI undoes a load that fails (ModelPatcher.partially_load calls detach()): the model is
+        # no longer the partial load prepare_sampling left, and sampling it would run without its LoRA.
+        raise OffloadedInputQuantError(refusal(
+            RefusalClass.CAPACITY,
+            "a LoRA stack is on a model ComfyUI loaded only partly, and the full load the Worker ran "
+                f"to bake it whole failed ({type(exc).__name__}: {exc}). ComfyUI unloads a model whose "
+                "load fails, so nothing was sampled. What would fit: lora_low_rss on (the default on a "
+                "DGX Spark), which bakes at load time before anything else holds the memory; more free "
+                "memory on this box; or the render without the LoRA.",
+            guard=GUARD, waivable=False, troubleshooting=TROUBLESHOOTING)) from exc
     if why_not is None:
+        wrong = _what_is_wrong_after_the_route(patcher, was_registered)
+        if wrong is not None:
+            raise OffloadedInputQuantError(refusal(
+                RefusalClass.CAPACITY,
+                "a LoRA stack is on a model ComfyUI loaded only partly, and after the Worker loaded "
+                    f"the rest to bake it whole the model is not as a full load leaves it: {wrong}. "
+                    "Sampling it could run without its LoRA, so nothing was sampled. Reset the attached "
+                    "mesh so the model loads again, and turn lora_low_rss on (the default on a DGX Spark), "
+                    "which bakes at load time.",
+                guard=GUARD, waivable=False, troubleshooting=TROUBLESHOOTING))
         return
     short = inexact(patcher)
     if not short:
@@ -186,7 +275,7 @@ def check(patcher: Any) -> None:
 
 
 def install_guard(base_patcher: Any) -> None:
-    """Run ``check`` after ComfyUI's ``prepare_sampling`` load on this patcher, once.
+    """Run ``check`` after ComfyUI's ``prepare_sampling`` load, once, on every model it loaded.
 
     A process with no ComfyUI to import has no ComfyUI load to check, and is left alone.
     """
@@ -201,9 +290,17 @@ def install_guard(base_patcher: Any) -> None:
 
     def wrapper(executor: Any, *args: Any, **kwargs: Any) -> Any:
         result = executor(*args, **kwargs)
-        # prepare_sampling(model, ...): its first argument is the patcher it just loaded.
-        patcher = args[0] if args else kwargs.get("model")
-        if hasattr(patcher, "is_dynamic") and hasattr(patcher, "model"):
+        # prepare_sampling(model, ...) returns (real model, conds, the models it loaded). Its first
+        # argument is the patcher it loaded; a dual-model guider's other checkpoint is among the rest,
+        # and a later load can leave an earlier model partly loaded after that model's own check.
+        loaded = [args[0] if args else kwargs.get("model")]
+        if isinstance(result, tuple) and len(result) > 2 and isinstance(result[2], list | tuple):
+            loaded.extend(result[2])
+        seen: set[int] = set()
+        for patcher in loaded:
+            if id(patcher) in seen or not (hasattr(patcher, "is_dynamic") and hasattr(patcher, "model")):
+                continue
+            seen.add(id(patcher))
             check(patcher)
         return result
 

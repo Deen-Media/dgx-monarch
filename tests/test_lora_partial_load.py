@@ -265,12 +265,11 @@ def _refused(patcher):
     return message
 
 
-@pytest.mark.parametrize("wall", ["no room", "a GPU of its own", "not a store model", "the full load fails"])
+@pytest.mark.parametrize("wall", ["no room", "a GPU of its own", "not a store model"])
 def test_where_the_route_cannot_be_taken_an_fp8_layer_is_refused_and_nothing_is_half_baked(
         installed, monkeypatch, wall):
     import torch
 
-    from dgx_monarch.actor import store_bake
 
     build, outputs, cpu = _rig()
     (expected,) = _full_load(build, outputs, cpu)
@@ -283,14 +282,9 @@ def test_where_the_route_cannot_be_taken_an_fp8_layer_is_refused_and_nothing_is_
         monkeypatch.setattr(lora_partial_load, "_host_room", lambda: 0)
     elif wall == "a GPU of its own":
         monkeypatch.setattr(lora_partial_load, "shares_host_memory", lambda patcher: False)
-    elif wall == "the full load fails":
-        def fails(active, base_path=None):
-            raise RuntimeError("out of memory")
-        monkeypatch.setattr(store_bake, "_merge_and_free", fails)
     message = _refused(patcher)
     said = {"no room": "is available above the 5 GiB floor", "a GPU of its own": "this GPU has memory of its own",
-            "not a store model": "not one the Worker's store holds",
-            "the full load fails": "the full load it needs failed (RuntimeError: out of memory)"}[wall]
+            "not a store model": "not one the Worker's store holds"}[wall]
     assert said in message
     # The model is as ComfyUI's own load left it: pristine weight, its patch, its stack, no backup, the slot unmarked.
     assert torch.equal(q.weight._qdata, pristine) and len(q.weight_function) == 1
@@ -367,3 +361,174 @@ def test_the_single_rank_check_rides_prepare_sampling_once(installed, monkeypatc
     result = wrappers[0](lambda *args, **kwargs: ("real model", "conds", []), patcher, (1, 4, 8, 8), {})
     assert result == ("real model", "conds", [])
     assert root.model_lowvram is False and torch.equal(outputs(root)[0], expected) and slot.base_baked is True
+
+
+def _class_c(message):
+    assert parse_leading_refusal_tag(message) == RefusalTag(
+        refusal_class=RefusalClass.CAPACITY, guard="partial_load_divergence", waivable=False)
+
+
+def test_a_full_load_that_fails_refuses_whatever_the_format(installed, monkeypatch):
+    """ComfyUI undoes a load that raises: the model is left unpatched and unloaded.
+
+    A weight-only stack then has nothing "inexact" on it, and the check used to
+    let the render go on with no LoRA at all. ComfyUI's own bake is made to run
+    out of memory at its second key, in the middle of the route.
+    """
+    import comfy.model_patcher as comfy_mp
+    import torch
+
+    build, outputs, cpu = _rig(("int8_tensorwise", "int8_tensorwise"))
+    pristine_root, _unused = build()
+    no_lora = outputs(pristine_root)
+    root, patcher = build()
+    slot = _slot(patcher)
+    patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    routed = comfy_mp.ModelPatcher.patch_weight_to_device
+    calls = []
+
+    def runs_out_of_memory(self, key, *args, **kwargs):
+        calls.append(key)
+        if len(calls) == 2:
+            raise torch.OutOfMemoryError("out of memory in the middle of the bake")
+        return routed(self, key, *args, **kwargs)
+
+    monkeypatch.setattr(comfy_mp.ModelPatcher, "patch_weight_to_device", runs_out_of_memory)
+    with pytest.raises(lora_partial_load.OffloadedInputQuantError) as raised:
+        lora_partial_load.check(patcher)
+    monkeypatch.undo()
+    message = str(raised.value)
+    _class_c(message)
+    for words in ("the full load the Worker ran to bake it whole failed (OutOfMemoryError",
+                  "ComfyUI unloads a model whose load fails", "nothing was sampled", "lora_low_rss on"):
+        assert words in message, words
+    assert isinstance(raised.value.__cause__, torch.OutOfMemoryError)
+    assert slot.base_baked is False and slot.unbake == "a record from an earlier stack"
+    # What the refusal stops: ComfyUI's rollback left the model with no LoRA in its weights.
+    assert all(torch.equal(got, bare) for got, bare in zip(outputs(root), no_lora, strict=True))
+
+
+@pytest.mark.parametrize("left", ["still partial", "unpatched", "not counted as loaded", "dropped by ComfyUI"])
+def test_a_route_that_reports_success_is_checked_against_the_model_itself(installed, monkeypatch, left):
+    """The second wall reads the model, not the route: anything short of a full load's state refuses."""
+    import comfy.model_management as mm
+
+    build, _outputs, cpu = _rig(("int8_tensorwise",))
+    root, patcher = build()
+    slot = _slot(patcher)
+    patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    mm.current_loaded_models.insert(0, mm.LoadedModel(patcher))
+    take = lora_partial_load.make_whole
+
+    def says_it_worked(patcher):
+        if left == "still partial":
+            return None  # nothing was loaded
+        assert take(patcher) is None
+        if left == "unpatched":
+            root.current_weight_patches_uuid = None
+        elif left == "not counted as loaded":
+            root.model_loaded_weight_memory = 0
+        else:
+            mm.current_loaded_models.clear()
+        return None
+
+    monkeypatch.setattr(lora_partial_load, "make_whole", says_it_worked)
+    with pytest.raises(lora_partial_load.OffloadedInputQuantError) as raised:
+        lora_partial_load.check(patcher)
+    message = str(raised.value)
+    _class_c(message)
+    said = {"still partial": "part of it is still off the device with a cast-time patch",
+            "unpatched": "ComfyUI holds its weights as unpatched",
+            "not counted as loaded": "ComfyUI counts none of it as loaded",
+            "dropped by ComfyUI": "ComfyUI no longer holds it as a loaded model"}[left]
+    assert said in message and "is not as a full load leaves it" in message and "Reset the attached mesh" in message
+    assert slot is not None
+
+
+def test_the_route_leaves_the_other_models_of_the_sampling_loaded(installed, monkeypatch):
+    """A dual-model guider's other checkpoint: ComfyUI's model manager would free it and unpatch its LoRA.
+
+    The route loads the rest of one model through that model's own patcher and
+    never calls the manager.
+    """
+    import comfy.model_management as mm
+    import torch
+
+    def never(*args, **kwargs):
+        raise AssertionError("the route must not run ComfyUI's model manager: it frees every other model")
+
+    build, outputs, cpu = _rig()
+    (expected,) = _full_load(build, outputs, cpu)
+    other_root, other = build()
+    other.load(cpu, full_load=True)
+    mm.current_loaded_models.insert(0, mm.LoadedModel(other))
+    root, patcher = build()
+    slot = _slot(patcher)
+    patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    mm.current_loaded_models.insert(0, mm.LoadedModel(patcher))
+    monkeypatch.setattr(mm, "load_models_gpu", never)
+    monkeypatch.setattr(mm, "free_memory", never)
+    lora_partial_load.check(patcher)
+    assert root.model_lowvram is False and slot.base_baked is True
+    assert torch.equal(outputs(root)[0], expected)
+    assert [loaded.model for loaded in mm.current_loaded_models] == [patcher, other]  # both still held
+    assert other_root.current_weight_patches_uuid is not None and other.patches  # and the other still patched
+    assert torch.equal(outputs(other_root)[0], expected)
+
+
+def test_the_check_runs_on_every_model_prepare_sampling_loaded(installed):
+    """A later load can leave an earlier model partly loaded after that model's own check has run."""
+    import comfy.patcher_extension as pe
+    import torch
+
+    from dgx_monarch.actor import partial_load_guard
+
+    build, outputs, cpu = _rig()
+    (expected,) = _full_load(build, outputs, cpu)
+    root, patcher = build()
+    other_root, other = build()
+    slots = [_slot(patcher), _slot(other)]
+    partial_load_guard.install(patcher, 1)
+    (wrapper,) = pe.get_wrappers_with_key(
+        pe.WrappersMP.PREPARE_SAMPLING, lora_partial_load.WRAPPER_KEY, patcher.model_options, is_model_options=True)
+    patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    other.load(cpu, lowvram_model_memory=1, full_load=False)
+    wrapper(lambda *args, **kwargs: ("real model", "conds", [other, patcher]), patcher, (1, 4, 8, 8), {})
+    for model_root, slot in zip((root, other_root), slots, strict=True):
+        assert model_root.model_lowvram is False and slot.base_baked is True
+        assert torch.equal(outputs(model_root)[0], expected)
+
+
+def test_the_room_rule_counts_every_moved_layer_when_the_weights_are_file_pages(installed, monkeypatch):
+    """Under the mmap loader the host copies are page cache, so moving a layer onto the device takes new memory."""
+    from dgx_monarch.actor import lora_cast_time
+
+    build, _outputs, cpu = _rig(("int8_tensorwise", "float8_e4m3fn"))
+    root, patcher = build()
+    slot = _slot(patcher)
+    patcher.patches.pop("diffusion_model.q0.weight")  # one layer off the device carries no patch
+    patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    patched = lora_cast_time._module_bytes(root.diffusion_model.q1)
+    off_device = int(patcher.model_size()) - int(patcher.loaded_size())
+    assert off_device > patched
+    pending = lora_partial_load._patched_off_device(patcher)
+    monkeypatch.setattr(lora_partial_load, "_host_copies_are_file_pages", lambda: False)
+    assert lora_partial_load._room_needed(patcher, pending) == patched  # pread: only ComfyUI's backups
+    monkeypatch.setattr(lora_partial_load, "_host_copies_are_file_pages", lambda: True)
+    assert lora_partial_load._room_needed(patcher, pending) == patched + off_device
+    # Room for the backups alone is not enough then, and the route is not taken.
+    monkeypatch.setattr(lora_partial_load, "_host_room", lambda: patched)
+    why_not = lora_partial_load.make_whole(patcher)
+    assert why_not is not None and "is available above the 5 GiB floor" in why_not
+    assert root.model_lowvram is True and slot.base_baked is False
+
+
+def test_the_pread_loader_is_told_from_the_mmap_loader_by_its_own_mark(monkeypatch):
+    import safetensors
+
+    monkeypatch.delattr(safetensors.safe_open, "_dgxm_pread", raising=False)
+    assert lora_partial_load._host_copies_are_file_pages() is True
+    marked = lambda *args, **kwargs: None  # noqa: E731
+    marked._dgxm_pread = True
+    monkeypatch.setattr(safetensors, "safe_open", marked)
+    assert lora_partial_load._host_copies_are_file_pages() is False

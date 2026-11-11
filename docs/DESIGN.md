@@ -1002,7 +1002,18 @@ later stack change reloads from disk. It takes the route where the load device
 shares the host's memory, as a Spark's does, and the host has room above the
 5 GiB floor for the backups of the patched weights still off the device, which
 ComfyUI keeps while it bakes; the model then holds less memory than the
-partial load did. Nothing is cleared before the full load has succeeded. Where
+partial load did (under the mmap loader the host copies are file pages, so
+the room must also cover every layer the load moves). The rest of the model
+is loaded through the model's own patcher and not through ComfyUI's model
+manager, which would free every other model the sampling loaded, a dual-model
+guider's other checkpoint among them, and unpatch its LoRA; and the check runs
+on every model `prepare_sampling` loaded. Nothing is cleared before the full
+load has succeeded. A full load that fails is another matter: ComfyUI undoes a
+load that raises and leaves the model unpatched and unloaded, so any failure
+of the route refuses the render, class C, whatever the format, and after a
+route that reports success the check reads the model itself (patched, whole,
+counted as loaded, still held by ComfyUI) and refuses if it is not what a
+full load leaves. Where
 the route cannot be taken (no room, or a GPU with memory of its own, which was
 loaded partly because the model does not fit it) the cast-time weights stand,
 exact for every weight-only format, and a render with a patched

@@ -34,6 +34,8 @@ class StoredModel:
     def __post_init__(self) -> None:
         # The model points back at its slot, weakly, so the one-GPU partial-load route
         # (actor/lora_partial_load.py) can mark the slot baked when it bakes the model whole.
+        # A deep copy of the model would share the reference and point at this slot, and a
+        # model that carries it cannot be pickled; no path in the pack copies or pickles one.
         model = getattr(self.base_patcher, "model", None)
         if model is not None:
             try:
