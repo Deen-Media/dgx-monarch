@@ -40,6 +40,12 @@ other plain tensor still raises.
 
 LoRA on quantized shards is not admitted: a quantized key refuses before any
 write.
+
+A key ComfyUI renames as it loads the file (FLUX stores a q/k norm weight as
+``<...>_norm.scale``; the model and a LoRA call it ``<...>_norm.weight``) is
+read under the file's name, taken from ComfyUI's own rename
+(``actor/load_renames.py``) and byte-verified like any other key. A key the
+file holds under no name refuses class P before any write.
 """
 from __future__ import annotations
 
@@ -53,6 +59,7 @@ from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from ..transfer_utils import failure_summary, safe_call
 from . import lora_cast_time
+from .load_renames import load_time_renames, with_renamed
 from .unbake import UnbakeError, UnbakeRecord, _is_quantized, live_tensor
 from .unbake_file import (
     _ST_TO_TORCH,
@@ -142,8 +149,17 @@ def write_shard(
         local.copy_(chunk.to(device=local.device, dtype=local.dtype))
 
 
-def _file_tensor(header: dict[str, _FileTensor], key: str, param: torch.Tensor) -> _FileTensor:
-    for cand in _candidate_file_keys(key):
+def _file_tensor(
+    header: dict[str, _FileTensor], key: str, param: torch.Tensor,
+    renames: dict[str, str] | None = None,
+) -> _FileTensor:
+    """The checkpoint tensor a patcher key restores from.
+
+    ``renames`` is ``load_time_renames`` for this model and file: a key ComfyUI
+    renames at load (FLUX's ``<...>_norm.scale``, held as ``<...>_norm.weight``)
+    sits under none of the namespace spellings, and is tried last.
+    """
+    for cand in with_renamed(_candidate_file_keys(key), renames, key):
         ft = header.get(cand)
         if ft is None:
             continue
@@ -160,7 +176,19 @@ def _file_tensor(header: dict[str, _FileTensor], key: str, param: torch.Tensor) 
                 "for this file, or a bf16 artifact with no fp32 islands."
             ))
         return ft
-    raise UnbakeError(f"no checkpoint tensor for key {key}")
+    # No tensor under the key's own name, a namespace spelling of it, or the
+    # name ComfyUI loads it from. Under FSDP the file is the only pristine copy
+    # (no backup exists for a sharded weight), so the bake cannot go on. Every
+    # rank reads the same header for the same stack, so the class P tag is rank
+    # symmetric, and capture_record raises it before any shard is written.
+    raise UnbakeError(refusal(
+        RefusalClass.PHYSICS,
+        f"a LoRA in this stack patches {key}, and the checkpoint file holds no "
+        "tensor under that name or under the name ComfyUI loads it from. A LoRA "
+        "under FSDP bakes from the file and restores from it, so it needs one. "
+        "Use a resident topology for this stack (the same preset without "
+        "+fsdp, which keeps its own copy of the weight), or drop the LoRA that "
+        "patches this key."))
 
 
 def _torch_dtype(ft: _FileTensor) -> torch.dtype:
@@ -231,6 +259,9 @@ def capture_record(
     record = UnbakeRecord(
         path=base_path, file_size=parsed.file_size, file_mtime_ns=parsed.file_mtime_ns,
         file_dev=parsed.file_dev, file_ino=parsed.file_ino, file_ctime_ns=parsed.file_ctime_ns)
+    # A key ComfyUI renames as it loads the file is found under the file's name;
+    # the byte check below still has to pass on it.
+    renames = load_time_renames(model, header)
     with open(base_path, "rb") as f:
         fd = f.fileno()
         for key in keys:
@@ -245,7 +276,7 @@ def capture_record(
                     f"quantized key {key} under FSDP: LoRA on quantized shards is "
                     "not admitted. Use a resident topology for this file, or a "
                     "bf16, fp16, or plain-dtype fp8 checkpoint under FSDP."))
-            ft = _file_tensor(header, key, param)
+            ft = _file_tensor(header, key, param, renames)
             if not _shard_bytes_match(fd, ft, param, rank, world, replicated):
                 raise UnbakeError(
                     f"live shard of {key} does not match the checkpoint bytes on rank "

@@ -716,7 +716,13 @@ the resident bake exactly; a key leaving the stack is restored with one
 contiguous pread of the rank's rows. A key on a module the wrap replicates
 (the outside-forward census below) bakes as a world-1 shard: every rank writes
 the whole merged tensor, which is the resident bake, and any other unsharded
-parameter still raises. With `lora_low_rss` off a sharded model
+parameter still raises. A key ComfyUI renames as it loads the file is read
+under the file's name: a FLUX file stores a q/k norm weight as
+`<...>_norm.scale`, and the model and a LoRA call it `<...>_norm.weight`. The
+file's name comes from the model config's own rename, run over the header's
+names (`actor/load_renames.py`), and the rank's rows are byte-verified against
+it like any other key. A patched key the file holds under no name refuses
+class P in `capture_record`, before any shard is written. With `lora_low_rss` off a sharded model
 refuses the stack, typed. The checkpoint itself must also be admitted for the
 bake, before any load, on every `lora_low_rss` or `auto_gate` setting
 (`adapters/fsdp_lora_admission.py`). Admitted: bf16, fp16, and a
@@ -910,7 +916,11 @@ uncertain-arena rules live in `actor/slab_arena.py`,
   result matches stock ComfyUI.
   Under `lora_low_rss` the swap instead restores the LoRA-covered weights from
   the checkpoint in place and bakes the new stack (lazy un-bake); a swap that
-  fails recoverably drops the slot for a fresh load.
+  fails recoverably drops the slot for a fresh load. A patched key is bound to
+  its checkpoint tensor by name and verified by bytes; a key ComfyUI renames as
+  it loads the file (a FLUX q/k norm weight, `<...>_norm.scale` in the file and
+  `<...>_norm.weight` in the model) is found under the file's name, taken from
+  the model config's own rename (`actor/load_renames.py`).
 - Outside `lora_low_rss`, a hot-swap on a stock base that ComfyUI has placed on
   the GPU is a fresh load instead when ComfyUI holds no host copy of a weight
   the new stack patches (`store_bake.copies_off_the_gpu`). ComfyUI re-applies a

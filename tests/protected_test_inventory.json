@@ -1175,8 +1175,11 @@
       "test_worker_runs_one_live_precision_scan_after_preparation": "631aabd4f2736278"
     },
     "tests/test_fsdp_lora.py": {
+      "test_a_renamed_key_still_has_to_match_the_files_bytes": "94293770af71f641",
+      "test_bake_finds_a_key_comfy_renames_at_load_under_its_file_name": "25628240766989c7",
       "test_bake_key_refuses_a_quantized_setter_typed": "71bb0753ed8e141f",
       "test_bake_writes_the_shard_and_the_next_forward_sees_it": "713ed5266344fe11",
+      "test_capture_refuses_a_key_with_no_checkpoint_tensor_typed": "88b6c6c99438cc63",
       "test_capture_refuses_a_krea2_style_dtype_mismatch_typed": "73c17eaaef4bef37",
       "test_capture_refuses_a_quantized_key_typed": "dac01f846d45ec37",
       "test_capture_refuses_a_shard_that_is_not_pristine": "541ea2f6f6e3e573",
@@ -1195,6 +1198,7 @@
       "test_refuse_unless_fsdp_lora_admits_is_a_noop_when_admitted": "1056a13daabb82bc"
     },
     "tests/test_fsdp_lora_replicated.py": {
+      "test_a_norm_weight_comfy_renames_at_load_bakes_under_fsdp_as_the_resident_layer": "205febed75d0f0db",
       "test_a_plain_tensor_outside_the_census_still_raises": "843bcfaf21efec10",
       "test_a_quantized_key_on_a_census_module_still_refuses_class_p": "86fca3c2f858db56",
       "test_a_replicated_key_captures_bakes_verifies_and_restores_whole": "662d22e0264e71bc",

@@ -467,6 +467,18 @@
 
 ### Rendering
 
+- A LoRA that patches a weight ComfyUI renames at load now bakes under FSDP.
+  A FLUX checkpoint stores a q/k norm weight as `<...>_norm.scale` and the
+  model holds it as `<...>_norm.weight`; a LoRA with diffs for those weights
+  (the FLUX.2 Klein 9B distill LoRA carries 27) stopped a `*+fsdp` render in
+  the Worker with a bare `no checkpoint tensor for key` error on 2026-11-11.
+  The shard bake now finds the tensor under the file's name, from ComfyUI's
+  own rename, and verifies its bytes as for any key. A patched key the file
+  holds under no name refuses with a class P sentence before any shard is
+  written. With `lora_low_rss` on and no FSDP the same keys used to stay as
+  host copies behind a warning that they "did not verify against the
+  checkpoint"; they are now restored from the file like every other key, and
+  the warning is gone.
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
   class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,
