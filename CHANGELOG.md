@@ -524,6 +524,29 @@
   with a class C message that says what was tried. `lora_low_rss` on, the
   Spark default, was never affected. Found by reading and held by CPU tests
   against ComfyUI's own patcher; no hardware render isolates any of it yet.
+- On a DGX Spark the driver's ComfyUI now reads free memory as MemAvailable
+  less a 7.6 GiB floor, not the device figure that follows MemFree. ComfyUI
+  sizes VAE batches and batches cond with uncond from that reading, so a few
+  minutes into a session, once the page cache had filled, it encoded images
+  one or two at a time, and the same graph gave different conditioning from
+  run to run: on 2026-11-11 six UltraTex views encoded in other VAE batch
+  splits came out 56 to 64 percent of their values apart, which read as two
+  identity misses. With DynamicVRAM on, ComfyUI's default where comfy-aimdo is
+  installed, weights were never affected: comfy-aimdo already reads
+  MemAvailable on an integrated GPU. With it off (`--disable-dynamic-vram`,
+  `--highvram`, `--gpu-only`, `--novram`), ComfyUI's classic loader reads this
+  figure to choose which models to unload, and under `--disable-dynamic-vram`
+  how much of a model to load, so a model that streamed there now loads whole
+  and fewer models are unloaded. Every caller of the function in the process
+  follows the reading, third-party node packs included. The reading is installed at node import on an
+  integrated CUDA device only; `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` turns it
+  off, and `dgxm doctor` has a `driver memory reading` row that says which
+  reading the running driver has. A stock render recorded with little MemFree
+  can change once, since its batches no longer split. A batch priced at most
+  of the box (six 2048 views) still splits by what the session has available;
+  `DGXM_VAE_ITEM_BATCHES=1` on the driver tries the rule that never reads
+  memory, one image a VAE batch, which is off by default
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
   class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,

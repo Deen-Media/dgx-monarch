@@ -57,7 +57,7 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     # Memory policy. The globals are hard requirements even where their first
     # read has a fallback: a write to a renamed knob fails silently and leaves
     # workers off the configured memory settings.
-    _call("comfy.model_management", "get_free_memory", "dev", "torch_free_too"),
+    _call("comfy.model_management", "get_free_memory", positional=("dev", "torch_free_too")),
     _call("comfy.model_management", "get_torch_device"),
     _call("comfy.model_management", "load_models_gpu", "force_full_load", positional=("models",)),
     _call("comfy.model_management", "unload_all_models"),
