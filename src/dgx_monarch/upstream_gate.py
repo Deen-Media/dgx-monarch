@@ -226,12 +226,21 @@ def _read_by_identity(
     header = read_safetensors_header(path)
     if is_zimage_l2p_from_keys(list(header.tensors)):
         return True, (), None
+    # Decided from keys and the config metadata alone, before any quantization
+    # metadata is parsed, so a damaged ``_quantization_metadata`` cannot cancel it.
     h3_image_number = None
     if detect_family_from_keys(list(header.tensors)) == h3_image.FAMILY:
         h3_image_number = (H3_IMAGE_GRID_TROUBLESHOOTING if h3_image.grid_missing(header.metadata)
                            else H3_IMAGE_FAMILY_TROUBLESHOOTING)
-    uncovered = _dropped_scale_layers(comfy_load_keys(
-        {key: info.dtype for key, info in header.tensors.items()}, header.metadata))
+    try:
+        uncovered = _dropped_scale_layers(comfy_load_keys(
+            {key: info.dtype for key, info in header.tensors.items()}, header.metadata))
+    except Exception:
+        if h3_image_number is None:
+            # No verdict. Stock ComfyUI fails to parse the same metadata at load
+            # (comfy.utils.convert_old_quants), so no scale is silently dropped.
+            raise
+        uncovered = ()  # the family's refusal stands when the scale check cannot finish
     if uncovered:
         from .log import get_logger
 

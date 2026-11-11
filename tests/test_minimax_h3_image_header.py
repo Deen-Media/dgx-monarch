@@ -230,6 +230,54 @@ def test_the_driver_and_the_worker_refuse_class_p_with_one_sentence(files, monke
     assert worker.store.calls == [], "the store was entered on a refused artifact"
 
 
+_DAMAGED_QUANT_METADATA = {"not-json": "{not json", "no-layers": json.dumps({"format_version": 1}),
+                           "layers-a-list": json.dumps({"layers": ["blocks.0.attn.qkv_proj"]})}
+
+
+@pytest.mark.parametrize("damage", sorted(_DAMAGED_QUANT_METADATA))
+@pytest.mark.parametrize("grid", [True, False], ids=["grid", "no-grid"])
+def test_damaged_quantization_metadata_cannot_cancel_the_familys_refusal(files, monkeypatch, damage, grid):
+    """The grid and the family are read before any quantization metadata is parsed,
+    and the family's refusal stands when the scale check cannot finish: the driver
+    and the Worker refuse with the class and sentence the intact header gets."""
+    def explode(*_args, **_kwargs):
+        raise AssertionError("an answer below the gate ran")
+
+    monkeypatch.setattr(loader_preflight, "preflight_comfy_managed_topology", explode)
+    monkeypatch.setattr(loader_preflight, "preflight_loader_footprint", explode)
+    from dgx_monarch.nodes import loaders
+
+    monkeypatch.setattr(loaders, "ensure_live", explode)
+    config = h3i.METADATA if grid else {}
+    intact = h3i.write(files / f"intact_{damage}_{grid}.safetensors", "int8_convrot", blocks=2,
+                       metadata=dict(config))
+    damaged = h3i.write(files / f"damaged_{damage}_{grid}.safetensors", "int8_convrot", blocks=2,
+                        metadata={**config, "_quantization_metadata": _DAMAGED_QUANT_METADATA[damage]})
+    expected = upstream_gate.refusal_for(str(intact))
+    assert expected is not None and expected[1] == (FAMILY if grid else GRID)
+    assert upstream_gate.refusal_for(str(damaged)) == expected
+    with pytest.raises(UnsupportedModelError) as driver:
+        DGXMonarchUNETLoader().load(_mesh(), damaged.name)
+    with pytest.raises(UnsupportedModelError) as reference:
+        DGXMonarchUNETLoader().load(_mesh(), intact.name)
+    assert str(driver.value) == str(reference.value)
+    tag = parse_leading_refusal_tag(str(driver.value))
+    assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+    worker = _worker()
+    with pytest.raises(UnsupportedModelError) as funnel:
+        store_fsdp.ensure(worker, damaged.name, {}, [])
+    assert str(funnel.value) == str(reference.value)
+    assert worker.store.calls == []
+
+
+def test_damaged_quantization_metadata_on_another_family_gives_no_verdict(tmp_path):
+    """Outside this family the gate stands down, as before: stock ComfyUI cannot parse
+    the same metadata either (comfy.utils.convert_old_quants), so no scale drops silently."""
+    path = h3i.write(tmp_path / "h3.safetensors", "int8_convrot", blocks=2, audio=True,
+                     metadata={**h3i.METADATA, "_quantization_metadata": "{not json"})
+    assert upstream_gate.refusal_for(str(path)) is None
+
+
 def test_forcing_the_h3_video_adapter_cannot_walk_past_the_gate(files):
     worker = _worker(family_override="minimax_h3")
     with pytest.raises(UnsupportedModelError) as raised:

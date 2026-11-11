@@ -19,7 +19,9 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import re
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -37,6 +39,17 @@ _DTYPES = {"F32": torch.float32, "BF16": torch.bfloat16, "F16": torch.float16,
 def _comfy_dir() -> str:
     value = os.environ.get("COMFYUI_DIR") or os.environ.get("COMFY_DIR") or "~/ComfyUI"
     return os.path.abspath(os.path.expanduser(value))
+
+
+# ComfyUI 0.45.0 added MiniMax-H3-Image; a tree at or past it must carry the family.
+_FAMILY_SINCE = (0, 45, 0)
+
+
+def _comfy_version(comfy_dir: str) -> tuple[int, ...] | None:
+    """The checkout's ``comfyui_version.py`` version, read as tools/fp8_paths.py reads it."""
+    path = Path(comfy_dir) / "comfyui_version.py"
+    found = re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)', path.read_text()) if path.is_file() else None
+    return tuple(int(part) for part in found.groups()) if found else None
 
 
 def _is_comfy_module(name: str) -> bool:
@@ -64,8 +77,15 @@ def comfy():
             minimax = pytest.importorskip("comfy.ldm.minimax.model")
         finally:
             sys.argv = original_argv
+        version = _comfy_version(comfy_dir)
+        # The no-family branch is allowed only on a ComfyUI known to predate the
+        # family; an unknown version must carry it, so removed support fails here.
+        older = version is not None and version < _FAMILY_SINCE
+        has_family = hasattr(supported, "MiniMaxH3Image")
+        assert has_family or older, (
+            f"ComfyUI {version} at {comfy_dir} has no MiniMaxH3Image, which 0.45.0 added")
         yield SimpleNamespace(detection=detection, supported=supported, minimax=minimax,
-                              has_family=hasattr(supported, "MiniMaxH3Image"))
+                              has_family=has_family, older=older)
     finally:
         gone = [name for name, module in list(sys.modules.items())
                 if _is_comfy_module(name) or from_checkout(module, comfy_dir)]
@@ -89,10 +109,11 @@ def test_comfy_and_the_detector_name_the_same_family_from_the_same_keys(comfy, k
     found = comfy.detection.detect_unet_config(video, "", metadata=h3i.METADATA)
     assert found is not None and found.get("image_model") == "minimax_h3"
     unet = comfy.detection.detect_unet_config(image, "", metadata=h3i.METADATA)
-    if not comfy.has_family:
+    if comfy.older:
         # Before 0.45.0 an image file detects as nothing, never as H3 video.
         assert unet is None
         return
+    assert unet is not None, "this ComfyUI no longer detects MiniMax-H3-Image"
     assert unet["image_model"] == h3_image.FAMILY
     assert unet["pdd_sigmas"] == h3i.GRID and unet["pdd_steps"] == 6
     assert unet["latents_dim"] == 24  # 576 head rows over 4 * pdd_steps
@@ -103,7 +124,7 @@ def test_comfy_and_the_detector_name_the_same_family_from_the_same_keys(comfy, k
 
 def test_the_image_model_takes_no_default_for_its_grid(comfy):
     """Why the gate refuses a file without the grid: stock fails to build it."""
-    if not comfy.has_family:
+    if comfy.older:
         pytest.skip("this ComfyUI predates MiniMax-H3-Image (ComfyUI 0.45.0 added it)")
     grid = inspect.signature(comfy.minimax.MiniMaxH3ImageModel.__init__).parameters["pdd_sigmas"]
     assert grid.default is inspect.Parameter.empty

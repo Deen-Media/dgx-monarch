@@ -1819,6 +1819,8 @@
       "test_a_format_with_no_row_takes_the_path_any_unvalidated_format_takes": "3ca22d5c559215e9",
       "test_a_pinned_bf16_file_of_any_family_now_proves_bf16": "e29aa35c6d10c8cd",
       "test_an_f16_tensor_that_is_no_adaln_island_keeps_the_fp16_reading": "4f5b106947990f22",
+      "test_damaged_quantization_metadata_cannot_cancel_the_familys_refusal": "63ed23277d095be9",
+      "test_damaged_quantization_metadata_on_another_family_gives_no_verdict": "442eaccc7d81ffb1",
       "test_each_published_format_reads_as_the_family_and_what_it_is": "45e54bbdfb7236fe",
       "test_forcing_the_h3_video_adapter_cannot_walk_past_the_gate": "27367fe110affb7e",
       "test_the_driver_and_the_worker_refuse_class_p_with_one_sentence": "6a5c2c830233b842",
