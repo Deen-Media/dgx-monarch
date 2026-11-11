@@ -83,6 +83,8 @@ const EXPECTED: Record<string, [string, string]> = {
   'mage-flow-t2i-turbo': [STILL, PNG],
   'mage-flow-t2i': [STILL, PNG],
   'minimax-h3-guide': [CLIP_EDIT, FRAMES_AUDIO],
+  'minimax-h3-image-edit': [STILL_EDIT, PNG],
+  'minimax-h3-image-t2i': [STILL, PNG],
   'minimax-h3-mp4': [CLIP, MP4],
   'minimax-h3-t2va': [CLIP, FRAMES_AUDIO],
   'moss-image-base-t2i': [STILL, PNG],

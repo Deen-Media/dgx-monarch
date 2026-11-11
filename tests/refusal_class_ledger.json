@@ -1198,6 +1198,18 @@
       "waivable": false
     },
     {
+      "site": "nodes/expander_prompt.py::refuse_dead_expander::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/expander_prompt.py::refuse_dead_expander::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "nodes/fleet_policy.py::_fleet_worker_policy::ComfyManagedResidencyError#0",
       "class": "P",
       "guard": null,

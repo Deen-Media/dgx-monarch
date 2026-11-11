@@ -126,8 +126,9 @@ class DGXMonarchIdentityGate:
                     "DGX Monarch identity gate NOT RUN: " + skip)
             return latent_image, report
         # A re-queue whose UNET Loader output ComfyUI kept is priced here, as at a sampler.
-        from . import graph_load_price, requeue_price
+        from . import expander_prompt, graph_load_price, requeue_price
 
+        expander_prompt.refuse_dead_expander(prompt)
         requeue_price.price_cached_loader(model, prompt, site=graph_load_price.SITE_GATE)
         result = runtime.run_identity_ceremony(
             model,

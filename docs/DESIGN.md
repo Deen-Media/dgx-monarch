@@ -1872,6 +1872,31 @@ that load beside a held DiT is not caught here, and freeing the encoders at the
 sampler waits for a walk that knows which models the rest of the prompt loads
 again.
 
+**A prompt expander that cannot see the request refuses before the render.** The
+MiniMax-H3-Image templates wire ComfyUI's expander chain, Replace Text into
+Generate Text into Extract Text from JSON behind a lazy switch, and ship it
+off with the task prompt box empty, because the text ComfyUI's templates carry
+there is MiniMax's and this project does not ship it. With the switch on and
+that box empty, Replace Text hands on an empty text whatever the request says,
+and ComfyUI renders from what the expander makes of it with no error. A task
+prompt without the marker Replace Text fills loses the request the same way.
+Both are wrong pictures on any world or budget, so the UNET loader refuses
+them class P beside the upstream gate, before the batch preflight, the policy
+card, the price and `ensure_live`, and a sampler or Identity Gate refuses them
+ahead of its re-queue price, since a re-queue that only flips the switch never
+runs the loader. ComfyUI has run the expander by then, as it runs every node
+upstream of the sampler, and the refusal still comes before the render. Only
+what the graph states is read: a Generate Text node that a DGX Monarch sampler
+or Identity Gate takes its inputs from (`nodes/graph_live.py`, walked from
+those nodes, so an expander that runs only for a Preview as Text beside the
+path refuses nothing), fed by a Replace Text node whose text is typed or
+comes from a Text box, with every switch in the running graph stating its
+choice, typed or through a Boolean box. The live walk keeps both branches of a
+switch it cannot decide, the safe side for a price; here that side would
+refuse a render whose expander is off, so such a graph, one that runs a Branch
+node, one wired another way and one the read fails on all refuse nothing
+(`nodes/expander_prompt.py`).
+
 **A declared shard build is priced as a shard.** Both windows charge the whole
 file, which is what a stock load places, and under a `*+fsdp` preset no rank
 ever places it: each holds `file/world`, and the streaming build assigns

@@ -5,7 +5,9 @@ Signature canaries do not cover template widgets. A widget added, removed or
 retyped upstream can invalidate a converted graph or shift its values. Against
 ComfyUI's nodes.NODE_CLASS_MAPPINGS and this pack's nodes, this canary checks:
 
-1. Widget names and order match INPUT_TYPES, excluding frontend-added widgets.
+1. Widget names and order match INPUT_TYPES, excluding frontend-added widgets,
+   and each dynamic combo key the generator lists is one ComfyUI offers and
+   reveals the same child widgets in the same order (dynamic_widget_errors).
 2. Every required input has a link or widget value.
 3. Every supplied input remains declared by the node.
 4. CLIPLoader type values belong to ComfyUI's choices.
@@ -223,6 +225,37 @@ def dynamic_prompt_errors(schema: dict, inputs: dict) -> list[str]:
     return errors
 
 
+def dynamic_widget_errors(node_class: str, generated: list, declared_names: list,
+                          schema: dict) -> list[str]:
+    """The generator's dynamic combo rows against this ComfyUI's schema.
+
+    tools/gen_templates.py DYNAMIC_WIDGETS lists, per dynamic combo, the keys
+    a committed graph may hold and the child widgets each reveals. Every
+    listed key must be one ComfyUI offers, and must reveal the same widgets
+    in the same order: the converter reads a graph's ``widgets_values`` by
+    them, so a child ComfyUI adds, drops or moves shifts every later value.
+    """
+    errors = []
+    for name in generated:
+        listed = getattr(name, "children", None)
+        if listed is None:
+            continue
+        spec = (schema.get("required") or {}).get(name) or (schema.get("optional") or {}).get(name)
+        offered = _choices(spec) or []
+        declared = next((other for other in declared_names if other == name), None)
+        revealed = getattr(declared, "children", {})
+        for key, children in listed.items():
+            if key not in offered:
+                errors.append(f"widget map: {node_class}.{name} lists the key {key!r}, "
+                              f"which comfy master does not offer: {offered!r}")
+            elif [str(child) for child in children] != [str(c) for c in revealed.get(key, [])]:
+                errors.append(
+                    f"widget map: {node_class}.{name} key {key!r} generated children "
+                    f"{[str(child) for child in children]} but comfy master reveals "
+                    f"{[str(c) for c in revealed.get(key, [])]}")
+    return errors
+
+
 def main() -> None:
     node_classes = _comfy_and_pack_nodes()
     from comfy_api.internal import _ComfyNodeInternal
@@ -290,6 +323,8 @@ def main() -> None:
                 f"widget map: {node_class} generated as {generated} but comfy "
                 f"master declares {comfy_names[node_class]}"
             )
+        failures.extend(dynamic_widget_errors(node_class, generated, comfy_names[node_class],
+                                              declared))
 
     if failures:
         for line in failures:

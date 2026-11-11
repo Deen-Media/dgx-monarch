@@ -383,10 +383,10 @@ def test_a_forced_family_refuses_a_comfy_class_named_as_another_model(
 def test_a_forced_minimax_h3_does_not_bind_the_image_model(monkeypatch):
     """ComfyUI 0.45.0's MiniMaxH3Image subclasses MiniMaxH3 and is another
     model: no audio stream, its own output heads. A forced `minimax_h3` must
-    refuse it class P, naming the class. This holds whichever check answers:
-    the named entry today, or the owner check once an adapter for the image
-    model is registered ahead of H3's. H3 itself and a derivative ComfyUI
-    does not define still bind."""
+    refuse it class P, naming the class. The image model's own adapter
+    registers ahead of H3's, so the owner check refuses a forced `minimax_h3`
+    on it, naming that adapter; H3 itself and a derivative ComfyUI does not
+    define still bind."""
     from dgx_monarch.adapters import ADAPTERS, UnsupportedModelError, adapter_for
     from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
     from fake_model_base_helpers import install_fake_model_base

@@ -296,6 +296,39 @@ A staged graph takes the probe count in every stage, so a two-stage probe is
 two sampler steps. The step-nrms floor is a one-step number. Re-run the null
 A/B (section 4) on a staged template before reading a staged probe against it.
 
+**Dynamic combos.** A ComfyUI dynamic combo reveals child widgets by the key
+it holds, and the frontend stores them right after the combo. The converter
+reads them under their dotted names, `resize_type.megapixels` for one, from
+the driver's `/object_info` or, offline, from `DYNAMIC_WIDGETS` in
+`tools/gen_templates.py`. That table lists only the keys committed graphs
+hold, so a graph that picks another key stops the offline conversion and
+names the key: add its children to the table. A child that shares a name with
+a top-level input of its node stays with that input, which keeps Save Video's
+`codec` where every committed MP4 graph has always had it. A combo fed by a
+link selects no option, as in ComfyUI, so none of its children is set; the
+frontend still stores the children its own value reveals, and the converter
+passes over their slots so the widgets after them read their own.
+`tests/test_sweep_convert_dynamic.py` holds every node that reveals no child
+to the reading it had before.
+
+**A graph whose prompt a language model writes.** The three MiniMax-H3-Image
+graphs wire a prompt expander behind an If/Else switch and ship the switch
+off, so each sends the request as written and its cells are identity rows
+like any other. A cell whose graph has the switch on is not an identity row.
+The text its DiT renders is then written at queue time by a language model on
+the driver, with ComfyUI's sampled decoding, and sampled text from this
+expander file can change from run to run at a fixed seed: its draft head
+re-fits the draft tree from measured step time, and every step draws one
+token a tree row from the seeded generator. Such a cell's number carries
+whatever the expander wrote on each arm, so record its caption and score
+identity on the graph as shipped. The expander also needs its task prompt and
+system prompt boxes filled, which the shipped graphs leave empty; with the
+switch on and the task prompt empty, the loader refuses class P before the
+DiT loads
+([TROUBLESHOOTING #153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)),
+and the matrix, which labels a cell from its family, file and preset, does
+not predict that refusal.
+
 ## 4. Running a scoped sweep
 
 **The config.** Copy `benchmark/sweep/sweep.example.toml` somewhere rig-local
