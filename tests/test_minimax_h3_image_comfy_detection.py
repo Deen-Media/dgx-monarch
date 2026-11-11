@@ -5,7 +5,7 @@ model when ``audio_patch_proj.weight`` is absent, by ``video_patch_proj.weight``
 and ``condition_proj.weight`` (``comfy/model_detection.py``), and builds
 ``MiniMaxH3ImageModel`` with ``pdd_sigmas`` from the file's ``config`` metadata
 and no default for it. ``detect._SIGNATURES`` carries the same two paths after
-H3's row, and the upstream gate refuses a file without the grid (#147). A
+H3's row, and the upstream gate refuses a file without the grid (#149). A
 ComfyUI before 0.45.0 detects no image file at all, and never as H3 video.
 
 These fail the day ComfyUI changes how it names the family: its needles, its

@@ -2,8 +2,8 @@
 
 ComfyUI 0.45.0 added the model (upstream pull request 17655); this release carries
 no forward for it, so the upstream gate refuses every file of the family before
-any load (TROUBLESHOOTING #148), and a file whose config metadata lacks the sigma
-grid first (#147). The headers come from ``minimax_h3_image_headers``: the
+any load (TROUBLESHOOTING #150), and a file whose config metadata lacks the sigma
+grid first (#149). The headers come from ``minimax_h3_image_headers``: the
 published files' names, dtypes, shapes and metadata, with no weights.
 ``tests/test_minimax_h3_image_comfy_detection.py`` holds the family's needles
 against ComfyUI's own detection.
@@ -145,7 +145,7 @@ def test_a_pinned_bf16_file_of_any_family_now_proves_bf16(tmp_path):
 def test_a_file_without_its_sigma_grid_refuses_first(tmp_path, metadata):
     path = h3i.write(tmp_path / "nogrid.safetensors", "bf16", blocks=2, metadata=metadata)
     body, number = upstream_gate.refusal_for(str(path))
-    assert number == GRID == 147
+    assert number == GRID == 149
     assert _heading(GRID).startswith("A MiniMax-H3-Image file refuses")
     assert body == upstream_gate.H3_IMAGE_GRID_REFUSAL
     assert "transformer.pdd_sigmas" in body
@@ -155,7 +155,7 @@ def test_a_file_without_its_sigma_grid_refuses_first(tmp_path, metadata):
 def test_with_its_grid_the_family_refuses_and_names_the_stock_path(files):
     for kind in h3i.KINDS:
         body, number = upstream_gate.refusal_for(str(files / f"{kind}.safetensors"))
-        assert number == FAMILY == 148
+        assert number == FAMILY == 150
         assert body == upstream_gate.H3_IMAGE_FAMILY_REFUSAL
     assert _heading(FAMILY).startswith("A MiniMax-H3-Image render refuses")
     for token in ("minimax_h3_image", "ComfyUI 0.45.0", "Load Diffusion Model",
@@ -222,7 +222,7 @@ def test_the_driver_and_the_worker_refuse_class_p_with_one_sentence(files, monke
     tag = parse_leading_refusal_tag(str(driver.value))
     assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
     assert tag.guard is None and tag.waivable is False
-    assert "docs/TROUBLESHOOTING.md #148" in str(driver.value)
+    assert "docs/TROUBLESHOOTING.md #150" in str(driver.value)
     worker = _worker()
     with pytest.raises(UnsupportedModelError) as funnel:
         store_fsdp.ensure(worker, "int8_convrot.safetensors", {}, [])

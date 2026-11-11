@@ -37,7 +37,7 @@ ISLAND_HEADER_DTYPE = "F32"
 PIN_CONFIG_SUFFIX = ".comfy_attention.config"
 # Modules a family runs outside its diffusion model's forward. ComfyUI calls
 # ``BaseModel.extra_conds`` once per sampling, before the denoise loop, and
-# four supported families reach into the diffusion model from there (Flux3's
+# four supported families run diffusion-model modules from there (Flux3's
 # early text and reference streams through the class-scoped table below). No FSDP2
 # pre-forward hook has gathered anything at that point, so a sharded weight is
 # a DTensor meeting a plain text state, which fails at the first addmm. Key the
@@ -98,6 +98,16 @@ CLASS_OUTSIDE_FORWARD_MODULE_PATHS: dict[str, tuple[str, ...]] = {
 # rank. The canary holds this table as it holds the two above.
 REFUSED_OUTSIDE_FORWARD_CALLS: dict[str, tuple[str, ...]] = {
     "MOSSImage": ("preprocess_refs",),
+}
+# Diffusion-model methods a family's extra_conds calls that touch no module and
+# no parameter, so FSDP has nothing to gather or replicate for them and the wrap
+# reads nothing here. Flux.extra_conds (ComfyUI 61e524b, v0.45.0) calls
+# preprocess_token_masks for UltraTex token masks: plain tensor work and
+# process_img, which pads, rearranges and builds position ids
+# (adapters/flux_views.py). The canary runs the call on a tiny real model with
+# every parameter watched, so it fails the day the method reaches one.
+MODULE_FREE_OUTSIDE_FORWARD_CALLS: dict[str, tuple[str, ...]] = {
+    "Flux": ("preprocess_token_masks",),
 }
 
 

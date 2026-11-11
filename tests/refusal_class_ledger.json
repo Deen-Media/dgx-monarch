@@ -513,6 +513,18 @@
       "waivable": false
     },
     {
+      "site": "adapters/flux_views.py::refuse_auto_views::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/flux_views.py::refuse_unproven_views::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/fsdp.py::fsdp_load_capacity_check::StockLoadCapacityError#0",
       "class": "C",
       "guard": "stock_load_preflight",
@@ -682,6 +694,12 @@
     },
     {
       "site": "adapters/minimax_h3_packing.py::h3_modulation_plan::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_packing.py::head_form::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false

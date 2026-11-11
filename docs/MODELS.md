@@ -27,7 +27,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 | [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. BF16 and NVFP4 Ulysses text to image up to 1536 square matched one GPU exactly. Since the fused-norm parity change, edits and text to image at 704 square or below on uly2 are bit-identical to one GPU too, confirmed on hardware on 2026-10-16. See the [tested configurations](VALIDATION.md#evidence-flux-3-klein). |
 | [MOSS-Image SFT and Base](#model-moss-image-sft) | Text-to-image, and a JSON layout prompt on SFT | Needs ComfyUI 0.42.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Keep the template's 50 Euler steps at CFG 3 on the `normal` scheduler and its Skip Layer Guidance (DGX Monarch) node, which skips layer 22 on the negative pass; cfg2 refuses while that skip is on. BF16 Ulysses matched one GPU exactly, up to 2048 square on SFT; see the [tested configurations](VALIDATION.md#evidence-moss-image-sft). |
 | [Kromoss](#model-kromoss) | Text-to-image at 50 steps, and at 8 steps with a DMD LoRA | A MOSS-Image Base fine-tune on the same files and adapter. Pin the manifest's revision: the vendor replaces the files under the same names. Use the DMD LoRAs with the BF16 file: a LoRA on the INT8 file refuses. BF16 Ulysses at 1024 and 1536 square matched one GPU exactly; see the [tested configurations](VALIDATION.md#evidence-kromoss). |
-| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.44.0 or newer. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. On stock residency the BF16 DiT does not fit one Spark beside the BF16 upsampler: the loader refuses before anything loads, names the files that fit and offers the slab card, which renders it on one Spark. BF16, INT8 ConvRot and W4A8 matched stock on one rank, and uly2 matched one rank, on hardware on 2026-11-05. |
+| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.45.0 or newer, as this whole release does. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. On stock residency the BF16 DiT does not fit one Spark beside the BF16 upsampler: the loader refuses before anything loads, names the files that fit and offers the slab card, which renders it on one Spark. BF16, INT8 ConvRot and W4A8 matched stock on one rank, and uly2 matched one rank, on hardware on 2026-11-05. |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -415,6 +415,8 @@ text encoder, the resident fp8mixed Ulysses path that auto selects mostly
 refused class C: all six explicit uly2 and ring2 records, and 5 of 6
 lever-free auto records. The store now places stock weights at load time and checks memory against the
 full placement peak. A hardware test of that path admitted the load and rendered.
+UltraTex conditioning on FLUX.2 Klein Base 9B runs on one GPU, uly2 and
+uly2+fsdp only ([UltraTex](#model-ultratex)).
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-flux2).
 
@@ -1070,8 +1072,8 @@ F16 adaLN linears counting as islands, and its INT8 ConvRot and W4A8 files read
 `int8` and `w4a8`; every one of its DiT files, BF16 included, pins
 comfy-kitchen's INT8 attention on all 50 blocks. This release refuses the
 family class P at the loader, before any load, in every format
-([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-a-minimax-h3-image-render-refuses-at-the-loader)),
-and a file without its sigma grid first ([#147](TROUBLESHOOTING.md#147-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid));
+([TROUBLESHOOTING #150](TROUBLESHOOTING.md#150-a-minimax-h3-image-render-refuses-at-the-loader)),
+and a file without its sigma grid first ([#149](TROUBLESHOOTING.md#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid));
 render it with stock ComfyUI 0.45.0 or newer on one GPU. Its VAE
 (`MiniMaxH3ImageVAE`, one still frame) decodes on the driver, as p-h3-image's
 does. No p-h3-image file changes.
@@ -1752,6 +1754,24 @@ DiT and runs on this adapter; [its own section](#model-p-h3-image) covers its
 files, its template and ModelSamplingMiniMaxH3 (DGX Monarch), which sets the
 two H3 shifts on every Worker.
 
+**ComfyUI 0.45.0.** This release needs ComfyUI 0.45.0 or newer (docs/INSTALL.md).
+ComfyUI ede4e5f (#17655, in 0.45.0) changed the output head's last argument
+from the two flow shifts to one sigma grid per stream, and moved a stacked
+PDD head's block choice onto that grid. The sharded forward builds the grids
+with stock's arithmetic and reads the installed head's form when it binds:
+under sequence parallelism, a stacked head on an older ComfyUI, or a head
+form this release does not know, refuses class P before the render starts
+([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+Every H3 and p-h3-image file listed here has a one-block head, which never
+reads that argument, so each renders as it did on 0.44.0. On CPU the sharded
+forward returns stock's bits at world 1 on 0.45.0 with one, two and four head
+blocks, the sampler's table on the head grid, off it, and in steps that span
+several head intervals (`tests/test_h3_head_form_comfy.py`). Stock's own stacked-head output differs
+between 0.44.0 and 0.45.0 for a schedule off the head grid, so a pixel compare
+across the two releases means nothing. The H3 records below ran on ComfyUI
+`8a98ecf58` (v0.44.0 code); the 0.45.0 rows are NOT RUN
+([VALIDATION](VALIDATION.md#comfyui-0450)).
+
 **Sol-H3-VAE decoder.** Sol-H3-VAE (`Efficient-Large-Model/Sol-H3-VAE`, file
 `sol_h3_vae.safetensors`) is H3's video decoder pruned to 24 layers and
 distilled to decode the whole clip in one pass, with attention over local
@@ -1817,6 +1837,57 @@ not fit. Declare still-versus-clip guide shape correctly and respect guide
 preflight: clip encoding has a separate large memory peak. Unlisted/chained
 guides, large clips and guide decode quality have no passing reference comparison. Fun ControlNet
 takes a stock MODEL and cannot be wired into this distributed graph.
+
+<a id="model-ultratex"></a>
+
+## UltraTex texturing on FLUX.2 Klein 9B
+
+UltraTex paints a reference image's look onto a 3D mesh as a grid of views,
+which ComfyUI then bakes into the mesh's texture. It is not a checkpoint of
+its own: it is two LoRAs (albedo, and metallic and roughness) for FLUX.2 Klein
+Base 9B, a fine-tuned VAE, and ComfyUI's UltraTex Conditioning node, all from
+ComfyUI 0.45.0 or newer. Klein Base 9B reads `flux2` from its header, so the
+Flux2 adapter runs it. With the node's conditioning, stock's Flux forward
+tiles each sample's views (6, or the 4 side views) into one image and drops
+the background tokens before the blocks; the latent batch holds the views,
+so an Empty Flux 2 Latent of batch 6 is one sample.
+
+**Topologies.** One GPU, uly2 and uly2+fsdp. On CPU against ComfyUI 0.45.0
+the uly2 forward returns stock's bits in the Flux 1, Flux 2 and LongCat
+layouts, with the view grid alone, the token masks alone, a view reference on
+a tile away from the front and all three together, at batch 1 and 2 and on odd
+and even token counts, and under FSDP the token-mask
+step runs on the wrapped model with nothing to gather
+([Adapters](ADAPTERS.md#flux-family-view-conditioning-ultratex)). cfg2 and dp2
+split the batch, which is a sample's views, ring is not stock's math, and no
+Ulysses degree above 2 has been checked, so a Flux, Flux 2 or LongCat render whose
+conditioning carries UltraTex inputs refuses there before dispatch
+([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
+On two GPUs `auto` keeps uly2 for Flux 2 at every size and skips LongCat's
+cfg2 row for such a render, saying so in its reason; on a wider mesh it
+refuses, since no proven topology tiles the world. No hardware render has run
+yet.
+
+**Files.** The `Comfy-Org/UltraTex` repository on Hugging Face:
+
+| File | Folder | Size |
+|---|---|---|
+| `flux-2-klein-base-9b_bf16.safetensors` | `models/diffusion_models` | 18.16 GB |
+| `flux-2-klein-base-9b_int8_convrot.safetensors` | `models/diffusion_models` | 9.44 GB |
+| `flux-2-klein-9b_distill_lora_avg_rank_345_bf16.safetensors` | `models/loras` | 1.96 GB |
+| `ultratex_flux2_klein_9b_albedo_lora_bf16.safetensors` | `models/loras` | 478 MB |
+| `ultratex_flux2_klein_9b_metallic_roughness_lora_bf16.safetensors` | `models/loras` | 478 MB |
+| `ultratex_flux2_vae_fp32.safetensors` | `models/vae` | 336 MB |
+| `flux-2-klein-9b_empty_prompt.safetensors` | `models/embeddings` | 25 MB |
+
+**Graph.** ComfyUI's sample graph loads the DiT, the distill LoRA at 0.5 and
+an UltraTex LoRA at 1.0, and samples at CFG 1 with euler. In a DGX Monarch
+graph both LoRAs go on Load LoRA (DGX Monarch), and the UltraTex Conditioning
+output feeds the DGX Monarch sampler's positive input. The sample graph's
+Model Sparse Attention and Differential Diffusion nodes patch a stock MODEL
+and do not wire to a DGX Monarch model. The LoRAs use PEFT key names, which
+ComfyUI 0.45.0 maps for Flux on every Worker as stock does; older ComfyUI has
+neither the node nor that key map.
 
 <a id="int8-gemm-kernel"></a>
 

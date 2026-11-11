@@ -637,6 +637,18 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   `CONDCrossAttn` folds some unequal lengths too
   (`cfg_dispatch.cross_attn_pair_folds`), so its records would need that rule
   before they could take the scope (VALIDATION.md);
+- a Flux, Flux 2 or LongCat render whose conditioning carries UltraTex view
+  inputs (`view_grid`, `token_masks`, `reference_views`, ComfyUI 0.45.0)
+  skips every cfg row: stock's forward reads the batch as each sample's
+  views, and a cfg split cuts them apart or runs batch-1 calls no test has
+  compared with one GPU's. The sampler, Gate and Sampler Custom nodes tag the
+  latent beside the pair tag, so every resolving site reads the same answer,
+  and the reason names the skipped row. Where data parallelism or ring would
+  remain, on a mesh wider than two GPUs, auto refuses (class P): only one GPU,
+  uly2 and uly2+fsdp have been checked equal to stock for these inputs (on CPU
+  so far), and an
+  explicit preset outside them refuses alike (`adapters/flux_views.py`,
+  TROUBLESHOOTING #148);
 - sage auto-on only for fp8 + USP at high res;
 - FSDP only when the model does not fit resident (capacity mode), never for speed;
 - every auto decision logs its row and reason, for example

@@ -321,6 +321,7 @@ def _submit_render_guarded(
         render_preflight.preflight_krea2_reference_latents(model, ref_summary, topo)
         model_patch_preflight.preflight_moss_image_reference_images(model, ref_summary, topo)
         model_patch_preflight.preflight_moss_image_attention_bias(model, request, topo)
+        model_patch_preflight.preflight_flux_views(model, request, topo)
         render_preflight.preflight_minimax_h3_topology(model, topo)
         model_patch_preflight.preflight_model_patches(model, topo, request)
         model_patch_preflight.preflight_h3_sigma_shift(model, request, latent)
