@@ -6091,10 +6091,10 @@ modules and the topology; [ADAPTERS.md](ADAPTERS.md) has the contract. cfg2
 and dp2 keep the card for a checkpoint's own pins because a cfg2 render
 measured a small gap against the pinned one-GPU render on a short prompt
 (docs/VALIDATION.md, FLUX.3 Klein), whose cause is not established. On
-cfg2+fsdp and dp2+fsdp an fp8 or int8 checkpoint keeps its pins, and they ask too. A bf16 or
-fp16 checkpoint whose own header pins asks nothing there: the FSDP launch check
-does not count its uint8 config tensors, and the shard build reloads the
-weights without them, so its pins do not run. The Init widget's kernel runs
+cfg2+fsdp and dp2+fsdp an fp8 or int8 checkpoint keeps its pins, and they ask
+too. A bf16 or fp16 checkpoint whose own header pins asks nothing there: the
+FSDP launch check does not count its uint8 config tensors, and the shard build
+reloads the weights without them, so its pins do not run. The Init widget's kernel runs
 instead, so the render differs from stock's pinned render on one GPU by
 construction, as on uly2, and the record says dropped (FSDP shard build).
 

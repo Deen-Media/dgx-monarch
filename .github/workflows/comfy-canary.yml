@@ -413,10 +413,13 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_minimax_h3_image_comfy_detection.py
-      # On one rank a checkpoint's own attention pins run, so slab residency
-      # with pins runs: a slab load must hand ComfyAttention the pin a stock
-      # load hands it, bound to the same kernel and tau.
-      - name: Attention pins through slab residency vs comfy master (CPU)
+      # In a world of one GPU a checkpoint's own attention pins run, so slab
+      # residency with pins runs: a slab load must hand ComfyAttention the pin a
+      # stock load hands it, bound to the same kernel and tau. The one-GPU rule
+      # also trusts ComfyUI's load path to put the checkpoint's pin back after a
+      # LoRA clone before the next forward; the same file drives a real patcher
+      # through it.
+      - name: Attention pins through slab residency and ComfyUI's restore vs comfy master (CPU)
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_attention_pin_slab_comfy.py

@@ -843,8 +843,8 @@ def pin_summary(pins: dict[str, attention_pins.BlockPin] | None,
     ``attention_pins.summarize`` decides which pins run: sequence parallelism
     drops every one. The stand-in carries the pins where the load scan caches
     them on a loaded model, and they are the checkpoint's own by construction
-    (build_cells drops a LoRA arm that pins), so on one rank they ask nothing,
-    as the runtime's ``checkpoint_only`` reads them. That attribute's
+    (build_cells drops a LoRA arm that pins), so in a world of one GPU they ask
+    nothing, as the runtime's ``checkpoint_only`` reads them. That attribute's
     name is private to attention_pins (``_SCAN_ATTR``), and the harness reads
     it on purpose so the src tree stays untouched: a rename there breaks the
     pinned tests here at once, with an AttributeError.

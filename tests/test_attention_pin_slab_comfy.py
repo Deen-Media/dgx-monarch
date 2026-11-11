@@ -1,4 +1,5 @@
-"""Real ComfyUI: slab residency hands ComfyAttention the pin a stock load hands it.
+"""Real ComfyUI: slab residency hands ComfyAttention the pin a stock load hands it,
+and ComfyUI's own load path puts the checkpoint's pin back before a forward.
 
 On one rank a checkpoint's own attention pins now run as stock runs them, so
 slab residency with pins runs for the first time (docs/ADAPTERS.md, attention
@@ -15,6 +16,16 @@ test records each tensor's placement: the pin configs stay on the host and a
 weight does not. It calls ``load_state_dict`` itself, so it does not run the
 slab's ``BaseModel.load_model_weights`` hook (``assign=True``), which casts only
 parameters and buffers and leaves the uint8 configs as they are.
+
+The one-GPU rule (``attention_pins_source.checkpoint_only``) also trusts ComfyUI
+to put a staged LoRA's ``comfy_attention`` module back to the checkpoint's before
+the next clone's forward: ``load_models_gpu`` detaches the old clone without
+unpatching, and the new clone's ``partially_load`` runs ``unpatch_model``, which
+restores the shared ``object_patches_backup``, then ``patch_model``. The second
+test drives a real ``ModelPatcher`` through that path, from a LoRA clone back to
+the checkpoint clone and back again, with the model already loaded, and checks
+the module a forward sees and what the guard reads. An upstream change of that
+order turns it red.
 
 What a hardware leg must still show: a slab-resident pinned file on GB10 binds
 and runs the kernel. Skipped where ComfyUI is not importable; the comfy-canary
@@ -65,11 +76,13 @@ def comfy():
             utils = pytest.importorskip("comfy.utils")
             pytest.importorskip("comfy.model_base")
             attention = pytest.importorskip("comfy.ldm.modules.attention")
+            patcher = pytest.importorskip("comfy.model_patcher")
+            management = pytest.importorskip("comfy.model_management")
         finally:
             sys.argv = original_argv
         if not hasattr(attention, "ComfyAttention"):
             pytest.skip("this ComfyUI has no per-block attention pins")
-        yield SimpleNamespace(utils=utils, attention=attention)
+        yield SimpleNamespace(utils=utils, attention=attention, patcher=patcher, management=management)
     finally:
         gone = [name for name, module in list(sys.modules.items())
                 if _is_comfy_module(name) or from_checkout(module, comfy_dir)]
@@ -178,3 +191,90 @@ def test_a_slab_load_binds_each_pin_as_a_stock_load_does(comfy, tmp_path, monkey
         summary = attention_pins.summarize([patcher], sequence_parallel=False)
         assert summary is not None and summary.checkpoint_only
         attention_pins.assert_waived(summary, {}, alone=True)  # one rank: nothing asked
+
+
+class _Seen(torch.nn.Module):
+    """A block whose forward records the ``comfy_attention`` module it would hand
+    ``optimized_attention`` as ``preferred_attention``, as ComfyUI's blocks do."""
+
+    def __init__(self, comfy, seen: list):
+        super().__init__()
+        self.attn = torch.nn.Module()
+        self.attn.comfy_attention = comfy.attention.ComfyAttention()
+        self.attn.qkv = torch.nn.Linear(4, 4, bias=False)
+        self.seen = seen
+
+    def forward(self, x):
+        self.seen.append(self.attn.comfy_attention)
+        return self.attn.qkv(x)
+
+
+class _Model(torch.nn.Module):
+    def __init__(self, blocks):
+        super().__init__()
+        self.blocks = torch.nn.ModuleList(blocks)
+
+    def forward(self, x):
+        for block in self.blocks:
+            x = block(x)
+        return x
+
+
+def test_comfyui_puts_the_checkpoints_pin_back_before_the_next_clones_forward(comfy, monkeypatch):
+    import comfy_kitchen
+
+    monkeypatch.setattr(comfy.attention, "COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE", True)
+    monkeypatch.setattr(comfy_kitchen, "int8_attention_is_available", lambda *a, **k: True)
+    monkeypatch.setattr(comfy_kitchen, "sol_attn_is_available", lambda *a, **k: True)
+    seen: list = []
+    dm = _Model([_Seen(comfy, seen) for _ in range(2)])
+    dm.load_state_dict({"blocks.0.attn.comfy_attention.config": torch.tensor(
+        list(json.dumps([{"attention": "comfy_kitchen_int8"}]).encode()), dtype=torch.uint8),
+        **{f"blocks.{i}.attn.qkv.weight": torch.ones(4, 4) for i in range(2)}}, strict=False)
+    root = torch.nn.Module()
+    root.diffusion_model = dm
+    cpu = torch.device("cpu")
+    base = comfy.patcher.ModelPatcher(root, load_device=cpu, offload_device=cpu)
+    attention_pins.scan_loaded(base)  # what fresh_load does for every load
+    header = dm.blocks[0].attn.comfy_attention
+    path = "diffusion_model.blocks.0.attn.comfy_attention"
+    staged = torch.tensor(list(json.dumps([{"attention": "comfy_kitchen_sol", "tau": 0.5}]).encode()),
+                          dtype=torch.uint8)
+    lora = base.clone()
+    assert lora.add_patches({f"{path}.config": ("config", (staged,))})
+    own = base.clone()
+
+    def forward_sees(clone):
+        """Load the clone as a sample does, run a forward, return what block 0 saw."""
+        comfy.management.load_models_gpu([clone])
+        seen.clear()
+        clone.model.diffusion_model(torch.ones(1, 4))
+        return seen[0]
+
+    def asks(clone) -> bool:
+        summary = attention_pins.summarize([clone], sequence_parallel=False)
+        assert summary is not None
+        try:
+            attention_pins.assert_waived(summary, {}, alone=True)
+        except Exception as exc:
+            assert attention_pins.SOL_ATTN_PIN_GUARD in str(exc)
+            return True
+        return False
+
+    try:
+        for _round in range(2):  # the second round starts with the model already loaded
+            module = forward_sees(lora)
+            assert module is not header
+            assert attention_pins.block_pin(module).label == "comfy_kitchen_sol tau=0.5"
+            assert asks(lora), "a LoRA's pin must keep class K in a world of one GPU"
+            # Before ComfyUI unpatches, the LoRA's module is still in place; the guard
+            # reads the backup ComfyUI will restore, so the checkpoint clone asks nothing.
+            assert dm.blocks[0].attn.comfy_attention is not header
+            assert not asks(own)
+            module = forward_sees(own)
+            assert module is header, "ComfyUI did not put the checkpoint's pin back"
+            assert attention_pins.block_pin(module).label == "comfy_kitchen_int8"
+            assert not asks(own)
+            assert forward_sees(own) is header  # loading the loaded clone again changes nothing
+    finally:
+        comfy.management.unload_all_models()
