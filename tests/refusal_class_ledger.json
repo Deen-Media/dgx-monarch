@@ -142,7 +142,7 @@
       "waivable": false
     },
     {
-      "site": "actor/lora_kept_bake.py::check::OffloadedInputQuantError#0",
+      "site": "actor/lora_partial_load.py::check::OffloadedInputQuantError#0",
       "class": "C",
       "guard": "partial_load_divergence",
       "waivable": false

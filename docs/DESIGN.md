@@ -993,18 +993,23 @@ full load's). A quantized weight outside a Linear keeps ComfyUI's own patch.
 On a format that also quantizes the layer's input (FP8, NVFP4, MXFP8) the
 weight at cast is the full load's and the output is not, because ComfyUI's
 classic forward quantizes the input only when the layer carries no cast-time
-patch. Only a weight baked once and stored on the module, with the patch taken
-off, closes that (`actor/lora_kept_bake.py`), and it costs a second copy of
-the layer beside ComfyUI's backup. On a GPU with memory of its own that copy
-is host RAM, and a module is kept while the host has the room above the 5 GiB
-floor; that also spares the bake on every cast. On a GPU that shares the
-host's memory the copy would come out of the room ComfyUI just held back for
-the render, so nothing is kept there: a weight-only format computes its weight
-at each cast, and a render with a patched input-quantizing layer off the
-device is refused, class C, before its first forward
-(`partial_load_divergence`, raised at one rank by `lora_kept_bake.check`),
-naming `lora_low_rss` on, the Spark default, which bakes under a full load and
-has neither gap. Comfy-managed residency
+patch, and the bake on every cast costs time. So on one GPU the Worker does not
+leave such a load partial where it can help it: after ComfyUI's
+`prepare_sampling` load and before the first forward, `actor/lora_partial_load.py`
+takes for that load the route `lora_low_rss` takes (a bake under a full load,
+then ComfyUI's backup and the patches freed) and marks the slot baked, so a
+later stack change reloads from disk. It takes the route where the load device
+shares the host's memory, as a Spark's does, and the host has room above the
+5 GiB floor for the backups of the patched weights still off the device, which
+ComfyUI keeps while it bakes; the model then holds less memory than the
+partial load did. Nothing is cleared before the full load has succeeded. Where
+the route cannot be taken (no room, or a GPU with memory of its own, which was
+loaded partly because the model does not fit it) the cast-time weights stand,
+exact for every weight-only format, and a render with a patched
+input-quantizing layer off the device is refused, class C, before its first
+forward (`partial_load_divergence`, raised at one rank by
+`lora_partial_load.check`), saying what was tried. `lora_low_rss` on, the Spark
+default, bakes at load time and never reaches this. Comfy-managed residency
 runs ComfyUI's own patcher and is not touched. The bake-equivalence canary compares the bake with comfy.ops' own
 cast on INT8 ConvRot and BF16 layers, and the keys it bakes at cast time with
 the keys stock's own `ModelPatcherDynamic.load` chooses on both sides of the
@@ -2628,9 +2633,9 @@ dgx-monarch/
 │   │   │                      #   render clone, and the H3 shift's Worker refusals
 │   │   ├── lora_shape_guard.py # the refusal of a LoRA patch that changes a
 │   │   │                      #   weight's shape, before any bake
-│   │   ├── lora_kept_bake.py  # a full load's baked weight kept on a module
-│   │   │                      #   ComfyUI leaves off the device, and the one-rank
-│   │   │                      #   refusal where an FP8 layer cannot keep one
+│   │   ├── lora_partial_load.py # a one-GPU partial load with a LoRA stack: the
+│   │   │                      #   low-RSS bake taken for that load, or the
+│   │   │                      #   refusal where an FP8 layer would differ
 │   │   ├── vae_decode.py      # the vae_decode endpoint and the one resident
 │   │   │                      #   decode VAE an actor may hold (§5.6)
 │   │   └── rdma_handoff.py    # durable worker descriptor ownership + ACK

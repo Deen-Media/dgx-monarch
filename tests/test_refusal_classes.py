@@ -68,7 +68,7 @@ REFUSAL_CLASSES = frozenset({
     "PackedCfgParallelError",
     "PartialLoadDivergenceError",
     # One rank: a patched layer that quantizes its input is off the device and its
-    # bake could not be kept (actor/lora_kept_bake.py).
+    # load could not be made whole (actor/lora_partial_load.py).
     "OffloadedInputQuantError",
     "RenderMemoryPriceError",
     "DualModelLoadDivergenceError",

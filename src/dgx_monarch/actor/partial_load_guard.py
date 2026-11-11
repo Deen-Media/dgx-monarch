@@ -175,9 +175,9 @@ def install(base_patcher: Any, world: int | None, topology: Any = None) -> None:
     if not world or int(world) <= 1:
         # One rank cannot disagree with itself, and a partial load there is
         # exact for every patched layer but one kind, which has its own check.
-        from . import lora_kept_bake
+        from . import lora_partial_load
 
-        lora_kept_bake.install_guard(base_patcher)
+        lora_partial_load.install_guard(base_patcher)
         return
     import comfy.patcher_extension as pe
 

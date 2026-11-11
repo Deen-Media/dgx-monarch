@@ -491,16 +491,20 @@
   FP8 file, a quantized Linear) now takes the weight the full load bakes when
   its layer casts. On GB10 the old patch rounded a BF16 norm weight with a
   diff apart on about 7 percent of its values, and a patched INT8 ConvRot
-  layer's output landed about 0.01 NRMS from the full load's. On an FP8, NVFP4
-  or MXFP8 file the weight is not enough: ComfyUI's classic forward leaves a
-  patched layer's input unquantized in that state. With `lora_low_rss` off, a
-  one-GPU render that would run such a layer off the device now stops before
-  sampling with a class C message that names `lora_low_rss` on (the Spark
-  default, which was never affected); it used to render with another output
-  than a full load and say nothing. A GPU with memory of its own keeps the
-  baked weight in host RAM instead, where there is room, and renders. Found by
-  reading and held by CPU tests against ComfyUI's own patcher; no hardware
-  render isolates any of it, and the kept path cannot run on a Spark.
+  layer's output landed about 0.01 NRMS from the full load's. Computing that
+  weight on every cast is slower a step, and on an FP8, NVFP4 or MXFP8 file
+  the weight is not enough: ComfyUI's classic forward leaves a patched layer's
+  input unquantized in that state, so the render differed from a full load and
+  said nothing. So with `lora_low_rss` off a one-GPU Worker now makes such a
+  load whole before sampling where it can: it bakes the stack under a full
+  load and frees ComfyUI's backup, the route `lora_low_rss` takes, and logs
+  one line. It needs room for the backup of the patched layers still off the
+  device while it bakes, and a later stack change on that model reloads it
+  from disk. Where there is no room, BF16 and INT8 files render from the
+  cast-time weights, and an FP8-family file with a LoRA stops before sampling
+  with a class C message that says what was tried. `lora_low_rss` on, the
+  Spark default, was never affected. Found by reading and held by CPU tests
+  against ComfyUI's own patcher; no hardware render isolates any of it yet.
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
   class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,

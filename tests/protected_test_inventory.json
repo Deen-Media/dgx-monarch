@@ -1733,15 +1733,15 @@
       "test_the_same_file_card_needs_room_for_the_price_a_fresh_fleet_pays": "0a8b6535cb516c31",
       "test_the_worker_quote_for_b3s_state_reaches_the_card": "f9c7a9748e4a0cf9"
     },
-    "tests/test_lora_kept_bake.py": {
-      "test_a_bake_that_fails_leaves_the_module_as_comfyui_had_it": "c4720845cad8788b",
-      "test_a_kept_module_survives_every_move_comfyui_makes": "2307b09d7a2ae6e6",
-      "test_an_fp8_layer_left_off_the_device_computes_the_full_loads_output_from_a_kept_bake": "1d8569daf0892d2d",
-      "test_layers_that_quantize_their_input_take_the_room_first": "efc4f215bcf66467",
-      "test_nothing_is_kept_where_the_load_device_shares_the_hosts_memory": "e73f394c1925c4e3",
-      "test_the_single_rank_guard_rides_prepare_sampling_once": "63ff7b9be4a655ab",
-      "test_which_layers_quantize_their_input": "a1b4c27e75093e8c",
-      "test_with_no_room_for_the_bake_the_fp8_layer_differs_and_the_render_is_refused": "7dbe785bd23702bc"
+    "tests/test_lora_partial_load.py": {
+      "test_a_partial_load_with_a_lora_is_made_whole_by_the_low_rss_bake": "3cde01bdfa6723c3",
+      "test_a_store_slot_is_reachable_from_its_model": "eca5b2a0418b8458",
+      "test_a_whole_load_a_dynamic_patcher_and_a_model_with_no_stack_are_left_alone": "2a6c080a73dd4de0",
+      "test_the_route_is_for_a_load_device_that_shares_the_hosts_memory": "46fb4895be3db57a",
+      "test_the_single_rank_check_rides_prepare_sampling_once": "d70a089678593858",
+      "test_where_the_route_cannot_be_taken_a_weight_only_format_renders_from_cast_time_weights": "7bfea2676be13f5e",
+      "test_where_the_route_cannot_be_taken_an_fp8_layer_is_refused_and_nothing_is_half_baked": "8bfe0195a6f5dc1c",
+      "test_which_layers_quantize_their_input": "165baceabc7cd92f"
     },
     "tests/test_lora_quant_guard.py": {
       "test_a_fresh_load_refuses_before_the_lora_build_and_leaves_the_slot_empty": "9b8857d765a73145",

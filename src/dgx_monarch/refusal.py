@@ -98,8 +98,8 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         "loader site owns the rescue offer; none is designed, because a waiver "
         "would authorize ranks that compute different weights. On one rank the "
         "same guard refuses a partial load that leaves a LoRA-patched layer "
-        "which quantizes its input off the device with no room to keep its "
-        "bake, since that layer would not compute what a full load computes",
+        "which quantizes its input off the device when the load cannot be made "
+        "whole, since that layer would not compute what a full load computes",
     ),
     "slab_load_preflight": GuardSpec(
         RefusalClass.CAPACITY,

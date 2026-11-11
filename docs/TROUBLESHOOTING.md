@@ -7982,15 +7982,19 @@ log names the first such key and why. A partial load keeps the full load's weigh
 where ComfyUI leaves a patched module off the device, every key whose full
 load is not ComfyUI's own cast-time patch takes the full load's weight when
 its layer casts. The log names the first key of each kind once (`is off the
-device after a partial load`). An FP8, NVFP4 or MXFP8 layer needs more than
-the weight: ComfyUI's classic forward leaves its input unquantized while a
-cast-time patch is attached, so the layer matches a full load only from a
-weight baked once and kept on the module. A GPU with memory of its own keeps
-that copy in host RAM while there is room. A Spark shares one pool, so with
-`lora_low_rss` off a render that would leave such a patched layer off the
-device stops before sampling with a `[dgxm:C guard=partial_load_divergence]`
-message. With `lora_low_rss` on (the default on a Spark) the LoRA is baked
-under a full load before any offload, and the output is the full load's. Comfy-managed residency runs ComfyUI's
+device after a partial load`). With `lora_low_rss` off, the Worker does not
+leave a one-GPU load partial where it can help it: before sampling it bakes
+the whole stack under a full load and frees ComfyUI's backup, as `lora_low_rss`
+does, and logs `took the low-RSS route for this load`. That needs room for
+ComfyUI's backup of the patched layers still off the device while it bakes; a
+stack change on that model then reloads it from disk. Where there is no room
+the cast-time weights stand, which is exact for BF16 and INT8 files but slower
+a step. An FP8, NVFP4 or MXFP8 layer needs more than the weight (ComfyUI's
+classic forward leaves its input unquantized while a cast-time patch is
+attached), so there the render stops before sampling with a
+`[dgxm:C guard=partial_load_divergence]` message that says what was tried.
+With `lora_low_rss` on (the default on a Spark) the LoRA is baked at load time
+and none of this arises. Comfy-managed residency runs ComfyUI's
 own patcher and was always stock. MOSS-Image's INT8 files keep the #129
 refusal until a hardware run measures a LoRA on them with this bake.
 
