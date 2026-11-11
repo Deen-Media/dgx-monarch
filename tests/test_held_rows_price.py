@@ -239,6 +239,42 @@ def test_a_negative_with_the_same_masks_is_priced_at_the_kept_rows(monkeypatch, 
         [2, noise_shape[1], target], cond_shapes={"ref_latents": [[1, 16, refs], [1, 16, refs]]})
 
 
+def test_the_fsdp_wrapped_model_is_priced_as_its_plain_twin(monkeypatch, comfy_flux, tmp_path):
+    """uly2+fsdp: the wrap of adapters/fsdp.py (tests/test_flux_views_comfy_exactness.py) turns
+    every block parameter into a DTensor. The price reads the model's patch size and stock's
+    shapes only, no parameter, so the wrapped model gets the plain model's figure."""
+    import torch.distributed.fsdp
+    from torch.distributed.device_mesh import init_device_mesh
+
+    from dgx_monarch.adapters.fsdp import _BLOCK_LIST_ATTRS
+    from dgx_monarch.adapters.fsdp_islands import resolve_module_path
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    twin, noise_shape, positive, *_ = _render(comfy_flux, "flux2", "all")
+    price.install(twin, "flux2")
+    want = _prepare(monkeypatch, twin, noise_shape, {"positive": positive})
+    wrapped, noise_shape, positive, *_ = _render(comfy_flux, "flux2", "all")
+    torch.distributed.init_process_group(
+        backend="gloo", init_method=f"file://{tmp_path / 'pg'}", rank=0, world_size=1)
+    try:
+        mesh = init_device_mesh("cpu", (1,))
+        dm = wrapped.model.diffusion_model
+        for parameter in dm.parameters():
+            parameter.requires_grad = False
+        for attr in _BLOCK_LIST_ATTRS:
+            for block in resolve_module_path(dm, attr) or ():
+                torch.distributed.fsdp.fully_shard(block, mesh=mesh)
+        torch.distributed.fsdp.fully_shard(dm, mesh=mesh, reshard_after_forward=True)
+        assert type(dm.img_in.weight).__name__ == "DTensor"
+        price.install(wrapped, "flux2")
+        seen = _prepare(monkeypatch, wrapped, noise_shape, {"positive": positive})
+    finally:
+        torch.distributed.destroy_process_group()
+    assert seen["shadowed"] == list(price._SHADOWED)
+    assert (seen["minimum"], seen["memory_required"]) == (want["minimum"], want["memory_required"])
+
+
 def test_an_error_in_the_count_leaves_stocks_estimate(monkeypatch, comfy_flux, caplog):
     stock = _stock(monkeypatch, comfy_flux, "flux2", "all")
     patcher, noise_shape, positive, *_ = _render(comfy_flux, "flux2", "all")
