@@ -136,6 +136,11 @@ def _toy(comfy_ltx):
         audio_attention_head_dim=HEAD_DIM, num_attention_heads=V_HEADS,
         audio_num_attention_heads=A_HEADS, caption_channels=16, num_layers=BLOCKS,
         apply_gated_attention=True, cross_attention_adaln=True,
+        # The text connectors run before the block loop and nothing here calls them;
+        # at their production defaults (30 heads of 128, two layers) they hold 709M
+        # float32 parameters, 2.8 GB a copy and three copies a case.
+        connector_attention_head_dim=HEAD_DIM, connector_num_attention_heads=1,
+        connector_num_layers=1,
         dtype=torch.float32, device="cpu", operations=ops.disable_weight_init)
     # comfy builds parameters with torch.empty; a checkpoint load fills them.
     for parameter in model.parameters():
