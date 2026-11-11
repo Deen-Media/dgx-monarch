@@ -32,6 +32,7 @@ from ..safetensors_header import SafetensorsFileIdentity
 from ..topology import Topology, topology_from_preset
 from . import (
     consent_projection,
+    expander_prompt,
     loader_gate_defer,
     loader_graph,
     loader_preflight,
@@ -203,6 +204,9 @@ class DGXMonarchUNETLoader:
         # budget, so it answers before the comfy-managed policy card, the
         # footprint card, and ensure_live healing or spawning a fleet.
         loader_preflight.preflight_upstream_gated_artifact(unet_name)
+        # A prompt expander that cannot see the request renders a wrong picture
+        # on any budget, so it answers here too, before the price and any load.
+        expander_prompt.refuse_dead_expander(prompt)
         # This runs above the footprint card; preflight_graph_batch_divides_dp says why.
         render_validation.preflight_graph_batch_divides_dp(mesh, prompt, unique_id)
         # Above the footprint card, which would otherwise offer slab residency

@@ -14,6 +14,34 @@
   family, so auto takes uly2 for it and the driver prices its packed rows and
   its text encoder before dispatch. A row-check tool records the three
   row-keyed calls at a rank's rows for the hardware run.
+- MiniMax-H3-Image ships two templates, text to image and edit, on the files
+  ComfyUI's own templates load: the INT8 ConvRot DiT and text encoder, the
+  FP16 VAE and the W4A8 prompt expander, with KSampler at 6 steps, CFG 1,
+  `euler` and `simple`. The edit scales its picture with ComfyUI's two Resize
+  Image/Mask nodes. ComfyUI's prompt expander chain is wired as ComfyUI wires
+  it, behind an If/Else switch, and ships off in both templates with its task
+  prompt and system prompt boxes empty: the text ComfyUI's templates carry
+  there is MiniMax's, and this project does not ship it. Each Note names
+  MiniMax's repository and the files to paste in. A testing graph samples the
+  checkpoint's own sigma grid through Sampler Custom (DGX Monarch). The sweep
+  labels the family's cfg2 and dp2 cells from the driver's own preflight.
+  [MODELS](docs/MODELS.md#model-minimax-h3-image) lists the eight published
+  files with their sizes and names the licence MiniMax publishes them under.
+  No render of this family has run on hardware yet
+  ([VALIDATION](docs/VALIDATION.md#minimax-h3-image)).
+- A graph whose prompt expander is on with an empty task prompt, or with one
+  that lacks the marker Replace Text fills, refuses class P at the UNET
+  loader, the samplers and Identity Gate, before the DiT loads or a picture
+  renders. ComfyUI raises no error there, and the render would follow an empty
+  or unrelated prompt
+  ([TROUBLESHOOTING #153](docs/TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
+- The sweep converter, which the template release test shares, reads the
+  child widgets a ComfyUI dynamic combo reveals, under their dotted names,
+  from a driver's schema or from the template generator's table. Every
+  committed graph converts as it did, except the nodes that hold such a
+  widget, the first to do so: the new edit graph's two resize nodes and
+  Generate Text in the three MiniMax-H3-Image graphs
+  ([SWEEP](docs/SWEEP.md#3-adding-a-template)).
 - Every image, clip and music track a shipped template's input nodes name now
   comes with the pack, in `example_workflows/input`. At start the pack copies
   each one ComfyUI's input folder lacks, and never replaces a file, link or
@@ -445,7 +473,7 @@
   adapter would take the model's nearest ComfyUI class under `auto`. A class a
   custom node derives from a supported one still binds; the models above
   refuse class P, as they do under `auto`
-  ([TROUBLESHOOTING #153](docs/TROUBLESHOOTING.md#153-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
+  ([TROUBLESHOOTING #154](docs/TROUBLESHOOTING.md#154-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
 - An extra tensor in a checkpoint no longer moves the loader's header
   refusals. Before, one tensor named like another family's key
   (`aux.dec_net.x.weight` in a Z-Image L2P file, `aux.audio_patch_proj.weight`

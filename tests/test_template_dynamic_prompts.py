@@ -11,8 +11,9 @@ encoder through a link.
 
 The flags come from the recorded driver schema
 (tests/fixtures/studio/object_info_bundled.json). A class it lacks has every
-string widget checked, the safe side; the real-ComfyUI widget canary checks
-the same rule against master's schemas. The pass itself is the canary's port of
+string widget checked, the safe side, unless SOURCE_READ_FLAGS names it with
+flags read from ComfyUI's source; the real-ComfyUI widget canary checks the
+same rule against master's schemas. The pass itself is the canary's port of
 the frontend's parser. CPU only.
 """
 from __future__ import annotations
@@ -35,6 +36,13 @@ assert _SPEC and _SPEC.loader
 canary = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(canary)
 IDEOGRAM = ("dgx-monarch-ideogram4-t2i", "dgx-monarch-test-ideogram4-lora")
+# Classes the recording lacks whose flags were read from ComfyUI's source
+# instead, each with the inputs it marks dynamicPrompts. Replace Text and
+# Extract Text from JSON mark none (comfy_extras/nodes_string.py at 0.45.0), and
+# the MiniMax-H3-Image graphs keep ComfyUI's `{input text}` marker in Replace
+# Text's find box. The widget canary reads the real schema on every run, so a
+# flag ComfyUI adds later fails there.
+SOURCE_READ_FLAGS: dict[str, tuple[str, ...]] = {"StringReplace": (), "JsonExtractString": ()}
 
 
 def _api(path: Path) -> dict:
@@ -45,6 +53,8 @@ def _api(path: Path) -> dict:
 def _flagged(node_class: str, inputs: dict) -> list[str]:
     """The inputs the browser's pass reads, or every string input when the schema lacks the class."""
     info = SCHEMA.get(node_class)
+    if info is None and node_class in SOURCE_READ_FLAGS:
+        return list(SOURCE_READ_FLAGS[node_class])
     if info is None:
         return [name for name, value in inputs.items() if isinstance(value, str)]
     return canary.dynamic_prompt_widgets(info.get("input") or {})
@@ -72,6 +82,21 @@ def test_the_recorded_schema_still_flags_clip_text_encode():
     # them, every flagged widget would pass unread.
     assert "text" in canary.dynamic_prompt_widgets(SCHEMA["CLIPTextEncode"]["input"])
     assert canary.dynamic_prompt_widgets(SCHEMA["PrimitiveStringMultiline"]["input"]) == []
+
+
+def test_the_source_read_flags_stand_in_only_where_the_recording_is_silent():
+    # A class the recording holds is read from the recording; its row here must go.
+    assert not set(SOURCE_READ_FLAGS) & set(SCHEMA)
+    # The one brace text they let through: ComfyUI's marker in Replace Text's find box.
+    marked = {(path.stem, node["class_type"], name, value)
+              for path in TEMPLATES for node in _api(path).values()
+              if node["class_type"] in SOURCE_READ_FLAGS
+              for name, value in node["inputs"].items()
+              if isinstance(value, str) and canary.process_dynamic_prompt(value) != value}
+    assert {row[1:] for row in marked} == {("StringReplace", "find", "{input text}")}
+    assert {row[0] for row in marked} == {
+        "dgx-monarch-minimax-h3-image-edit", "dgx-monarch-minimax-h3-image-t2i",
+        "dgx-monarch-test-minimax-h3-image-grid"}
 
 
 def _caption(prompt: dict) -> str:

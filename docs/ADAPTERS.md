@@ -1638,7 +1638,7 @@ supports LTXV and LTXAV.
 the model's nearest ComfyUI class, so an allowlist holds under the override
 as it holds under `auto`, and only a derivative class ComfyUI does not define
 binds, through the class it extends
-([TROUBLESHOOTING #153](TROUBLESHOOTING.md#153-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
+([TROUBLESHOOTING #154](TROUBLESHOOTING.md#154-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
 For such a derivative `matches()` runs on a bare instance of the upstream
 class that shares the model's attributes, so an instance test must read
 attributes and nothing else, as Z-Image's reads the diffusion model's pad

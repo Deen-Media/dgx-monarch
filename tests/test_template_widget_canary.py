@@ -93,3 +93,36 @@ def test_dynamic_prompt_errors_name_only_flagged_widgets_holding_rewritten_text(
     assert canary.dynamic_prompt_errors(schema, {"text": ["7", 0]}) == []
     (error,) = canary.dynamic_prompt_errors(schema, {"text": '{"caption":"x"}'})
     assert error.startswith("text holds text the browser's dynamic prompt pass rewrites")
+
+
+def test_dynamic_widget_errors_hold_the_generators_rows_to_the_schema():
+    """Each key the generator lists must be offered and reveal the same children in order."""
+    from benchmark.sweep import convert
+
+    def schema(children):
+        return {"required": {"mode": ("COMFY_DYNAMICCOMBO_V3", {"options": [
+            {"key": "on", "inputs": {"required": {name: ("FLOAT", {}) for name in children}}},
+            {"key": "off", "inputs": {}}]}), "label": ("STRING", {})}}
+
+    def generated(rows):
+        return [convert.DynamicName("mode", {key: [f"mode.{child}" for child in children]
+                                             for key, children in rows.items()}, closed=True),
+                "label"]
+
+    master = schema(["temperature", "top_k"])
+    names = convert.object_info_widget_names(master)
+    rows = {"on": ["temperature", "top_k"], "off": []}
+    assert canary.dynamic_widget_errors("Node", generated(rows), names, master) == []
+    # A child ComfyUI moved, added or dropped shifts every later value.
+    for drifted in (["top_k", "temperature"], ["temperature"], ["temperature", "top_k", "seed"]):
+        (error,) = canary.dynamic_widget_errors("Node", generated({"on": drifted}), names, master)
+        assert "Node.mode key 'on' generated children" in error
+    (error,) = canary.dynamic_widget_errors("Node", generated({"auto": []}), names, master)
+    assert "lists the key 'auto', which comfy master does not offer" in error
+    # A combo that reveals nothing on this ComfyUI still offers its keys.
+    bare = schema([])
+    assert canary.dynamic_widget_errors(
+        "Node", generated({"on": [], "off": []}), convert.object_info_widget_names(bare), bare) == []
+    (error,) = canary.dynamic_widget_errors(
+        "Node", generated(rows), convert.object_info_widget_names(bare), bare)
+    assert "but comfy master reveals []" in error

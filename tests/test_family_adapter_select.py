@@ -12,7 +12,7 @@ prove. Two properties are pinned here:
    memo; and a family the loaded model is not an instance of refuses with a
    typed class P message before any kernel runs. So does a model its family's
    adapter refuses under `auto`: a forced family binds what `auto` binds, plus
-   a derivative of a vetted class (docs/TROUBLESHOOTING.md #153).
+   a derivative of a vetted class (docs/TROUBLESHOOTING.md #154).
 """
 from __future__ import annotations
 
@@ -391,7 +391,7 @@ def test_a_forced_family_refuses_a_comfy_subclass_its_adapter_refuses_under_auto
         assert f"ComfyUI built {built}" in message
         assert "does not take this AlphaImage model under 'auto' either" in message
         assert "alpha variant AlphaImage is not vetted" in message  # the adapter's own answer
-        assert message.endswith("See docs/TROUBLESHOOTING.md #153.")
+        assert message.endswith("See docs/TROUBLESHOOTING.md #154.")
         tag = parse_refusal_tag(message)
         assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
         assert tag.guard is None and tag.waivable is False
@@ -433,10 +433,10 @@ def test_the_forced_path_honours_an_adapters_instance_test_through_the_view(
 def test_a_forced_minimax_h3_does_not_bind_the_image_model(monkeypatch):
     """ComfyUI 0.45.0's MiniMaxH3Image subclasses MiniMaxH3 and is another
     model: no audio stream, its own output heads. A forced `minimax_h3` must
-    refuse it class P, naming the class. This holds whichever check answers:
-    the named entry today, or the owner check once an adapter for the image
-    model is registered ahead of H3's. H3 itself and a derivative ComfyUI
-    does not define still bind."""
+    refuse it class P, naming the class. The image model's own adapter
+    registers ahead of H3's, so the owner check refuses a forced `minimax_h3`
+    on it, naming that adapter; H3 itself and a derivative ComfyUI does not
+    define still bind."""
     from dgx_monarch.adapters import ADAPTERS, UnsupportedModelError, adapter_for
     from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
     from fake_model_base_helpers import install_fake_model_base
@@ -465,7 +465,7 @@ def test_a_forced_minimax_h3_image_binds_its_class_and_refuses_a_comfy_subclass(
     """The image adapter names its own model class. A forced ``minimax_h3_image``
     binds that class and a class a custom node derives from it. A subclass
     ComfyUI itself defines is another model: `auto` refuses it, and so does the
-    force (docs/TROUBLESHOOTING.md #153). Neither family takes the other's model."""
+    force (docs/TROUBLESHOOTING.md #154). Neither family takes the other's model."""
     from dgx_monarch.adapters import UnsupportedModelError, adapter_for, get_adapter
     from fake_model_base_helpers import install_fake_model_base
 
@@ -488,7 +488,7 @@ def test_a_forced_minimax_h3_image_binds_its_class_and_refuses_a_comfy_subclass(
 
 
 # ComfyUI 0.45.0's class tree for the three families whose forced bind was wider than
-# `auto`: each refused class is another upstream model (docs/TROUBLESHOOTING.md #153).
+# `auto`: each refused class is another upstream model (docs/TROUBLESHOOTING.md #154).
 _WAN_REFUSED = ("WAN21_Camera", "WAN21_CausalAR", "WAN21_HuMo", "WAN21_Vace",
                 "WAN22_Animate", "WAN22_RelayVSR", "WAN22_S2V")
 _FORCED_TREE = {
@@ -514,7 +514,7 @@ def _forced_refusal(model, family):
     assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
     assert tag.guard is None and tag.waivable is False
     assert f"family_adapter={family!r} does not fit this checkpoint" in message
-    assert message.endswith("See docs/TROUBLESHOOTING.md #153.")
+    assert message.endswith("See docs/TROUBLESHOOTING.md #154.")
     return message
 
 

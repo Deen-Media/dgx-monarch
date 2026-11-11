@@ -4,7 +4,7 @@ A forced ``family_adapter`` once bound by class ancestry alone, so it took
 ComfyUI model classes its adapter refuses under ``auto``: Wan variants built on
 another diffusion model, the HunyuanVideo back-catalogue, Lumina 2.0 and
 Ming-Image under ``zimage``. Several of those forced renders were silently
-wrong (docs/TROUBLESHOOTING.md #153). MiniMax-H3-Image, which bound under
+wrong (docs/TROUBLESHOOTING.md #154). MiniMax-H3-Image, which bound under
 ``minimax_h3`` the same way, now has its own adapter registered ahead. The
 rule now asks the adapter's own ``matches()`` about the model's nearest ComfyUI
 class, so the two paths can differ only for a derivative of a vetted class.

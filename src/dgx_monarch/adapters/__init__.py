@@ -137,7 +137,7 @@ def _ancestry_owner(base_model) -> Adapter | None:
     return None
 
 
-FORCED_FAMILY_TROUBLESHOOTING = 153
+FORCED_FAMILY_TROUBLESHOOTING = 154
 
 
 def _nearest_comfy_class(base_model, model_base) -> type | None:

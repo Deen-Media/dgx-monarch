@@ -8225,7 +8225,56 @@ of safetensors files produces such a header. To render the file as it is, use
 stock ComfyUI on one GPU through ComfyUI's own Load Diffusion Model node
 rather than the DGX Monarch loader. There is no waiver and no env var.
 
-## 153. A forced `family_adapter` refuses a model its adapter does not take under `auto`
+## 153. A render refuses because the prompt expander is on with an empty task prompt
+
+**Symptom:** a DGX Monarch UNET loader, sampler or Identity Gate refuses class P
+with "The prompt expander is on and its task prompt is empty", or with "The
+prompt expander is on and the request cannot reach it", before the DiT loads
+or a picture renders. It happens in a MiniMax-H3-Image template after the
+If/Else Switch is set to true.
+
+**Cause:** the MiniMax-H3-Image templates wire the prompt expander as ComfyUI's
+own templates do. Replace Text puts the request into a task prompt where the
+task prompt says `{input text}`, Generate Text runs the expander model on that
+text, and Extract Text from JSON reads the caption out of the answer. ComfyUI's
+templates carry MiniMax's task prompt and system prompt in the two text boxes.
+The DGX Monarch templates ship those boxes empty and the switch false, because
+this project does not ship MiniMax's text.
+
+With the switch true and the task prompt box empty, Replace Text hands on an
+empty text whatever the request says. Generate Text answers an empty prompt,
+Extract Text from JSON finds no caption, and the model renders from that with
+no error from ComfyUI. A task prompt that lacks `{input text}` fails the same
+way: the expander runs and the request never reaches it. dgx-monarch reads the
+chain in the prompt graph and refuses both. On a first queue the UNET loader
+answers, before the DiT loads. On a re-queue ComfyUI keeps the loader's
+output and does not run it again, so a sampler or Identity Gate answers: by
+then ComfyUI has loaded the expander and run it on the empty prompt, and the
+refusal still comes before the render.
+
+Only what the graph states is read. Generate Text must be a node a DGX
+Monarch sampler or Identity Gate takes its inputs from, so an expander that
+runs only for an extra Preview as Text, with the switch false, refuses
+nothing. It must be fed by a Replace Text node whose text is typed or comes
+from a Text box, and every If/Else Switch or Soft Switch in the running graph
+must state its
+choice, typed on the node or through a Boolean box wired to it. A graph wired
+another way is left alone, so a switch driven by some other node, or a Branch
+node, turns this check off for that graph.
+
+**Fix:** set the If/Else Switch to false, and the request goes to the model as
+written. To run the expander, fill both boxes first. MiniMax publishes the text
+in its Hugging Face repository `MiniMaxAI/MiniMax-H3-Image-PE`:
+`prompt/t2i/task_prompt.txt` for text to image, `prompt/edit/task_prompt.txt`
+for the edit, and `prompt/t2i/system_prompt.txt` for the system prompt box of
+both. The task prompt must hold `{input text}` where the request belongs.
+ComfyUI's text to image template ends its task prompt with the lines
+`input_text: {input text}` and `output_text:`, and its edit template ends with
+`User input: {input text}` and `output_text:`. Read MiniMax's licence before
+you use its text ([MODELS.md](MODELS.md#model-minimax-h3-image) links it). No consent
+or waiver applies.
+
+## 154. A forced `family_adapter` refuses a model its adapter does not take under `auto`
 
 **Symptom:** with the Init node's `family_adapter` set to a family, a render
 refuses class P on every Worker with "family_adapter='wan' does not fit this

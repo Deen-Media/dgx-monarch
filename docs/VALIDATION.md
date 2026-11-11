@@ -3431,11 +3431,68 @@ of this family has been taken: every hardware row below is NOT RUN.
 | The row-keyed calls at a rank's rows | `tools/h3_image_row_check.py` on each DiT file at 1024, 2048 and 4096 square, every call equal on every rank | NOT RUN |
 | Identity on uly2 | uly2 against stock on one GPU on the pin-stripped copy, text to image at 1024, 2048 and 4096 square for the BF16, INT8 ConvRot and W4A8 DiTs, latents compared | NOT RUN |
 | Edits on uly2 | one and three reference pictures at 2048, against stock on one GPU on the pin-stripped copy | NOT RUN |
-| `single` with the pins | each DiT file against stock with the pins, latents identical | NOT RUN |
-| The first-use gate | on `single` and on uly2 | NOT RUN |
+| A world of one GPU with the pins | each DiT file against stock with the pins, latents identical | NOT RUN |
+| The first-use gate | in a world of one GPU and on uly2 | NOT RUN |
 | `uly2+fsdp` | BF16 and INT8 ConvRot against uly2 | NOT RUN |
 | Speed and memory | 2048 and 4096 square; activation calibration; the driver's memory with each text encoder and with the prompt expander loaded | NOT RUN |
 | A public LoRA with a head-bank key | loads and renders on uly2 against one GPU | NOT RUN |
+
+The two shipped templates and the testing graph have CPU checks only.
+`tests/test_minimax_h3_image_templates.py` holds each graph to ComfyUI's
+recipe (the four files, 6 steps, CFG 1, `euler`, `simple`, the expander chain
+wired as ComfyUI wires it), holds the switch off and the expander's task
+prompt and system prompt boxes empty in all three graphs, holds the testing
+graph's Manual Sigmas to
+the published header's grid, and holds each Note to the auto table, the
+driver's cfg and dp preflight, the gate's proof request and the manifest's
+byte counts. The template widget canary passes against ComfyUI 0.45.0 with
+the three graphs. The sweep derives cells for the three graphs over the three
+DiT files, which share one name stem, and labels cfg2, dp2 and `cfg2+fsdp`
+`refuse:P` from the driver's own preflight. The template release test's
+offline plan takes both shipped templates on uly2 at one step and skips
+neither. None of this renders a picture.
+
+The edit graph's two Resize Image/Mask nodes are the first committed nodes
+whose dynamic combo reveals a child widget, so the sweep converter, which the
+release test shares, learned to read them. `tests/test_sweep_convert_dynamic.py`
+holds every node of every committed graph that reveals no child to the flat
+reading it had before, and pins the nodes that do reveal one to five: the
+edit graph's two, and Generate Text with ComfyUI's decoding numbers in the
+three graphs. The widget canary holds the generator's child lists to ComfyUI's
+schema, and passes against ComfyUI 0.45.0.
+
+A graph whose expander is on with an empty task prompt, or with one that
+lacks the `{input text}` marker, refuses class P
+([#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
+`tests/test_expander_prompt.py` holds the sentence, holds it to the UNET
+loader, the four samplers and Identity Gate ahead of each node's own price,
+load and render, holds that an expander which runs only for an extra Preview
+as Text refuses nothing, as does a switch whose choice the graph does not
+state, and holds that no other committed graph meets the refusal, as shipped
+or with every switch on.
+
+With the If/Else switch true, a render of either template depends on text a
+language model wrote on the driver. Generate Text holds ComfyUI's sampled
+decoding numbers, and with this expander file sampled text can change from
+run to run at a fixed seed ([MODELS](MODELS.md#model-minimax-h3-image)). So
+every identity row here uses a graph with the switch false, as all three
+ship, and a row with the expander on records its caption beside the picture.
+An expander-on row needs MiniMax's task prompt and system prompt pasted into
+the two boxes by whoever runs it; this repository holds neither.
+
+| template behaviour | what a run must show | status |
+|---|---|---|
+| The text to image template | `dgx-monarch-minimax-h3-image-t2i.json` as shipped, the switch false, 6 steps at 2048 square, on the pair under `auto` and in a world of one GPU | NOT RUN |
+| The edit template | `dgx-monarch-minimax-h3-image-edit.json` as shipped, the switch false, one picture, on the pair under `auto` and in a world of one GPU | NOT RUN |
+| The expander on | each template with MiniMax's task prompt and system prompt pasted into the two boxes by whoever runs it and the switch true: the caption recorded beside the picture, and the same graph queued twice on one driver to see whether the caption repeats | NOT RUN |
+| The empty expander refuses | each template with the switch true and the two boxes as shipped: the class P refusal of [#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt) at the loader before the DiT loads, and at the sampler on a re-queue of a graph that first rendered with the switch false, after the expander has run and before the render | NOT RUN |
+| The edit template in the browser | opened from Browse Templates on ComfyUI 0.45.0: the picture sockets `images.image_1` and `images.image1` keep their wires, each Resize Image/Mask node shows its child widget with the stored value, and Queue sends the API prompt the converter writes | NOT RUN |
+| The release-test rows | both templates in the [template release test](#release-test-2026-11-04): one step, seed 1031, uly2 | NOT RUN |
+| The gate's two proof paths | the first-use gate on the text to image template, a two-step KSampler proof, and on `dgx-monarch-test-minimax-h3-image-grid`, the Sampler Custom proof on the grid's first two steps; each on uly2 and in a world of one GPU | NOT RUN |
+| The published file on uly2 | uly2 on a published, pinned DiT against stock with the pins on one GPU: the difference recorded, not scored | NOT RUN |
+| cfg2 and dp2 | each refuses class P at the driver before any load, on each DiT file | NOT RUN |
+| The other text encoders | the NVFP4 AWQ and BF16 encoders in the text to image graph, a render each, with the driver's memory | NOT RUN |
+| The sweep cells | the scoped sweep of the three graphs over the BF16, INT8 ConvRot and W4A8 DiTs; identity scored on the three graphs as shipped, which send the request as written | NOT RUN |
 
 <a id="torch-2-15"></a>
 
