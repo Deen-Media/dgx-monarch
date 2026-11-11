@@ -7979,10 +7979,11 @@ parameter other than a weight or bias. So does a key where stock's first
 forward uses another weight than the later ones, a weight stored in another
 dtype than the forward or a quantized layer on a full-precision matmul; the
 log names the first such key and why. A partial load keeps the same weights:
-where ComfyUI leaves a patched module off the device, a key of this kind takes
-the classic bake when its layer casts, not the cast-time patch ComfyUI's
-classic patcher would give it, and the log names the first such key once
-(`is off the device after a partial load`). Comfy-managed residency runs ComfyUI's
+where ComfyUI leaves a patched module off the device, a plain key of this kind
+takes the classic bake when its layer casts, and a quantized Linear's weight
+takes the requantized weight of stock's cast, not the patch ComfyUI's classic
+patcher would run on the dequantized weight. The log names the first key of
+each kind once (`is off the device after a partial load`). Comfy-managed residency runs ComfyUI's
 own patcher and was always stock. MOSS-Image's INT8 files keep the #129
 refusal until a hardware run measures a LoRA on them with this bake.
 

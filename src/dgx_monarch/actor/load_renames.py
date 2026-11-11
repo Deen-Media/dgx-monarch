@@ -40,10 +40,12 @@ def load_time_renames(model: Any, header: Iterable[str]) -> dict[str, str]:
     process = getattr(getattr(model, "model_config", None), "process_unet_state_dict", None)
     if not callable(process):
         return {}
-    present = {name for name in header if isinstance(name, str)}
+    # The file's own key order, so every rank builds the same map from the same file.
+    ordered = [name for name in header if isinstance(name, str)]
+    present = set(ordered)
     renames: dict[str, str] = {}
     for namespace in FILE_NAMESPACES:
-        names = {name[len(namespace):]: name for name in present if name.startswith(namespace)}
+        names = {name[len(namespace):]: name for name in ordered if name.startswith(namespace)}
         if not names:
             continue
         try:

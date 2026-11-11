@@ -486,8 +486,12 @@
   the two round a BF16 norm weight with a diff apart on about 7 percent of its
   values, so a one-GPU render under memory pressure with `lora_low_rss` off
   used other norm weights than the same render with room. Such a key now
-  takes the classic recipe when its layer casts. Found by reading and held by
-  a CPU test against ComfyUI's own patcher; no hardware render isolates it.
+  takes the classic recipe when its layer casts. A quantized layer had a
+  larger gap in the same state: ComfyUI's classic cast adds the LoRA to the
+  dequantized weight and never requantizes, so a patched INT8 ConvRot layer's
+  output landed about 0.01 NRMS from the full load's; its cast now returns the
+  requantized weight stock's cast computes. Found by reading and held by CPU
+  tests against ComfyUI's own patcher; no hardware render isolates either.
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
   class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,

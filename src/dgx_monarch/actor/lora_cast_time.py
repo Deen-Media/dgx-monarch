@@ -28,11 +28,12 @@ reference all call that method. The lazy swap and the FSDP bake call ``cast_time
 dynamic patcher (comfy-managed residency) keeps stock's own method. ComfyUI
 is imported only inside functions.
 
-``install`` also runs ``keep_stock_classic_on_offloaded_modules`` after the
+``install`` also runs ``keep_full_load_weights_on_offloaded_modules`` after the
 classic patcher's ``load`` and ``partially_unload``. Those two give every
-patched module they leave off the device a cast-time patch, the small ones
-included; a key stock bakes classically then takes the classic recipe when its
-layer casts, so a partial load and a full load compute with the same weights.
+patched module they leave off the device a cast-time patch that runs on the
+dequantized weight. A plain key stock bakes classically then takes the classic
+recipe when its layer casts, and a quantized key takes ``cast_time_weight``,
+so a partial load and a full load compute with the same weights.
 """
 from __future__ import annotations
 
@@ -228,20 +229,28 @@ def _patch_weight_to_device(stock: Any) -> Any:
     return patch_weight_to_device
 
 
-def _classic_at_cast(patcher: Any, key: str, module: Any, param: str) -> Any:
-    """A lowvram patch that gives ``key`` ComfyUI's classic bake each time its layer casts."""
+def _full_load_weight_at_cast(patcher: Any, key: str, module: Any, param: str, classic: bool) -> Any:
+    """A lowvram patch that gives ``key`` the weight a full load bakes, each time its layer casts.
+
+    ``classic`` is a plain key stock bakes classically: the recipe of
+    ``ModelPatcher.patch_weight_to_device`` on the module's stored weight.
+    Otherwise the key is a quantized weight: ``cast_time_weight``, the
+    requantized weight stock's cast computes, in place of the dequantized float
+    weight ComfyUI's classic cast hands the patch.
+    """
     import comfy.float
     import comfy.lora
     import comfy.model_management as mm
     import comfy.model_patcher as comfy_mp
     import comfy.utils
 
-    class ClassicAtCast(comfy_mp.LowVramPatch):
-        _dgxm_classic = True
+    class FullLoadWeightAtCast(comfy_mp.LowVramPatch):
+        _dgxm_full_load_weight = True
 
         def __call__(self, weight):
-            # The recipe of ModelPatcher.patch_weight_to_device, which stock's
-            # load runs on this key, from the module's stored weight.
+            if not classic:
+                out = cast_time_weight(patcher, self.key, weight.device)
+                return out if out is not None else comfy_mp.LowVramPatch.__call__(self, weight)
             stored = getattr(module, param)
             patches = self.prepared_patches if self.prepared_patches is not None else self.patches[self.key]
             temp = mm.cast_to_device(stored, weight.device, mm.lora_compute_dtype(weight.device), copy=True)
@@ -249,49 +258,68 @@ def _classic_at_cast(patcher: Any, key: str, module: Any, param: str) -> Any:
             out = comfy.float.stochastic_rounding(out, stored.dtype, seed=comfy.utils.string_to_seed(self.key))
             return out.to(dtype=weight.dtype)
 
-    return ClassicAtCast(key, patcher.patches)
+    return FullLoadWeightAtCast(key, patcher.patches)
 
 
-def keep_stock_classic_on_offloaded_modules(patcher: Any) -> int:
-    """Give each offloaded key stock bakes classically that bake at cast time.
+def keep_full_load_weights_on_offloaded_modules(patcher: Any) -> int:
+    """Give each offloaded patched key the weight a full load bakes, at cast time.
 
     When ComfyUI's classic patcher leaves a patched module off the device (a
     partial load, or a partial unload under memory pressure), it attaches a
-    cast-time patch to its weight and bias whatever the module's size. Stock's
-    DynamicVRAM load does that only to the keys ``stock_patches_at_cast_time``
-    names; a module of 16 KiB or less it force-loads through the classic bake.
-    On GB10 the two recipes round a BF16 norm weight with a diff apart on about
-    7 percent of its values, so a partially loaded Worker would compute other
-    weights than stock and than its own full load. This swaps the patch on such
-    a key for one that runs the classic recipe. Returns how many it swapped.
+    cast-time patch to its weight and bias, and its cast runs that patch on the
+    weight in the forward's dtype, dequantized. For a plain weight above 16 KiB
+    that is stock's cast-time weight, the one a full load bakes. For two kinds
+    of key it is not, and this swaps their patch:
+
+    - a plain key stock bakes classically (a module of 16 KiB or less, which
+      stock's DynamicVRAM load force-loads): on GB10 the two recipes round a
+      BF16 norm weight with a diff apart on about 7 percent of its values. The
+      swapped patch runs the classic recipe.
+    - a quantized weight ``cast_time_weight`` serves: ComfyUI's classic cast
+      computes with the dequantized weight plus the LoRA and never requantizes,
+      which on an INT8 ConvRot layer is another weight than stock's (a layer's
+      output about 0.01 NRMS apart). The swapped patch returns
+      ``cast_time_weight``.
+
+    A quantized key ``cast_time_weight`` does not serve keeps ComfyUI's own
+    patch. Returns how many patches it swapped.
     """
     swapped = 0
     for module in patcher.model.modules():
         for param in ("weight", "bias"):
             functions = getattr(module, param + "_function", None)
             weight = getattr(module, param, None)
-            if not functions or weight is None or _is_quantized(weight):
+            if not functions or weight is None:
                 continue
             for index, function in enumerate(functions):
                 key = getattr(function, "key", None)
                 if (not isinstance(key, str) or not getattr(function, "is_lowvram_patch", False)
-                        or getattr(function, "_dgxm_classic", False) or key not in patcher.patches):
+                        or getattr(function, "_dgxm_full_load_weight", False) or key not in patcher.patches):
                     continue
-                why = _stock_classic_reason(patcher, key, module, param, weight)
-                if why is not None:
-                    functions[index] = _classic_at_cast(patcher, key, module, param)
-                    swapped += 1
-                    _say("offloaded", "LoRA bake: %s is off the device after a partial load; its cast-time "
-                         "patch computes ComfyUI's classic bake (%s); later keys like it log nothing", key, why)
+                classic_why = _stock_classic_reason(patcher, key, module, param, weight)
+                if _is_quantized(weight):
+                    if classic_why is not None or _one_weight_reason(patcher, key, module, weight) is not None:
+                        continue
+                    why = "stock requantizes it when the layer casts"
+                elif classic_why is None:
+                    continue
+                else:
+                    why = classic_why
+                functions[index] = _full_load_weight_at_cast(
+                    patcher, key, module, param, classic=not _is_quantized(weight))
+                swapped += 1
+                _say("offloaded " + why, "LoRA bake: %s is off the device after a partial load; its "
+                     "cast-time patch computes the weight a full load bakes (%s); later keys like it "
+                     "log nothing", key, why)
     return swapped
 
 
-def _then_keep_stock_classic(stock: Any) -> Any:
+def _then_keep_full_load_weights(stock: Any) -> Any:
     """``stock`` (ModelPatcher.load or partially_unload), then the swap above."""
     def method(self, *args, **kwargs):
         out = stock(self, *args, **kwargs)
         if self.patches and not self.is_dynamic():
-            keep_stock_classic_on_offloaded_modules(self)
+            keep_full_load_weights_on_offloaded_modules(self)
         return out
 
     marked = cast(Any, method)
@@ -327,7 +355,7 @@ def install() -> bool:
             safe_call(log.warning, "LoRA bake: ComfyUI's patcher has no %s here; a partial load "
                       "keeps ComfyUI's own cast-time patch on small modules", name)
             continue
-        setattr(comfy_mp.ModelPatcher, name, _then_keep_stock_classic(method))
+        setattr(comfy_mp.ModelPatcher, name, _then_keep_full_load_weights(method))
     safe_call(log.info, "LoRA bake: stock ComfyUI's cast-time math (its DynamicVRAM default) for "
               "patched weights on this worker (docs/TROUBLESHOOTING.md #145)")
     return True
@@ -349,4 +377,4 @@ def uninstall() -> bool:
 
 
 __all__ = ["SMALL_MODULE_BYTES", "cast_time_weight", "compute_dtype", "install",
-           "keep_stock_classic_on_offloaded_modules", "stock_patches_at_cast_time", "store", "uninstall"]
+           "keep_full_load_weights_on_offloaded_modules", "stock_patches_at_cast_time", "store", "uninstall"]

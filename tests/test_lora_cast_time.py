@@ -310,8 +310,8 @@ def test_a_small_module_left_off_the_device_computes_with_stocks_classic_bake(co
     assert lora_cast_time.install() is True
     try:
         offload(patcher)
-        assert getattr(root.norm.weight_function[0], "_dgxm_classic", False)
-        assert not getattr(root.lin.weight_function[0], "_dgxm_classic", False)
+        assert getattr(root.norm.weight_function[0], "_dgxm_full_load_weight", False)
+        assert not getattr(root.lin.weight_function[0], "_dgxm_full_load_weight", False)
         assert torch.equal(_cast_weight(root.norm), stock_norm)
         assert torch.equal(_cast_weight(root.lin), stock_lin)
         # The stored weights are untouched, and an unpatch leaves the file's values.
@@ -330,3 +330,58 @@ def test_a_small_module_left_off_the_device_computes_with_stocks_classic_bake(co
 
     for name in ("load", "partially_unload", "patch_weight_to_device"):
         assert not getattr(getattr(comfy_mp.ModelPatcher, name), "_dgxm_cast_time", False)
+
+
+@pytest.mark.parametrize("route", ["partial load", "partial unload"])
+def test_a_quantized_layer_left_off_the_device_computes_with_the_full_loads_weight(comfy_cpu, route):
+    """An INT8 ConvRot layer with a LoRA, left off the device. ComfyUI's classic
+    cast hands its cast-time patch the dequantized weight and never requantizes,
+    so the layer computes with another weight than stock's cast and than a full
+    load's bake. With the route installed the cast returns stock's requantized
+    weight, and the layer's output is the full load's, bit for bit; the BF16
+    layer beside it was already the same."""
+    import comfy.model_patcher
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+
+    cpu = torch.device("cpu")
+    x = torch.randn(3, 512, generator=torch.Generator().manual_seed(2)).to(torch.bfloat16)
+
+    def build():
+        root, patches = comfy_cpu.tiny_cast_time_model()
+        patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+        patcher.add_patches(patches, 0.8)
+        return root, patcher
+
+    def offload(patcher):
+        if route == "partial load":
+            patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+        else:
+            patcher.load(cpu, full_load=True)
+            patcher.partially_unload(cpu, memory_to_free=1e12)
+
+    def outputs(root):
+        with torch.no_grad():
+            return root.diffusion_model.q(x), root.diffusion_model.p(x)
+
+    assert lora_cast_time.install() is True
+    try:
+        full_root, full = build()
+        full.load(cpu, full_load=True)
+        full_q, full_p = outputs(full_root)
+        root, patcher = build()
+        offload(patcher)
+        assert getattr(root.diffusion_model.q.weight_function[0], "_dgxm_full_load_weight", False)
+        assert not getattr(root.diffusion_model.p.weight_function[0], "_dgxm_full_load_weight", False)
+        part_q, part_p = outputs(root)
+        assert torch.equal(part_q, full_q) and torch.equal(part_p, full_p)
+    finally:
+        assert lora_cast_time.uninstall() is True
+    # ComfyUI's classic patcher alone, against the same full-load outputs: the
+    # quantized layer misses, which is the gap; the BF16 layer does not.
+    root, patcher = build()
+    offload(patcher)
+    alone_q, alone_p = outputs(root)
+    assert not torch.equal(alone_q, full_q)
+    assert torch.equal(alone_p, full_p)
