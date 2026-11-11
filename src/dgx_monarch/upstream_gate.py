@@ -133,7 +133,10 @@ def _convert_old_quants(keys: dict[str, str], metadata: dict[str, str]) -> dict[
     """
     out = dict(keys)
     if "_quantization_metadata" in metadata:
-        for layer in json.loads(metadata["_quantization_metadata"])["layers"].keys():
+        quant = json.loads(metadata["_quantization_metadata"])
+        if quant is None:  # as comfy.utils.convert_old_quants: parsed None is no metadata
+            return out
+        for layer in quant["layers"].keys():
             out[f"{layer}.comfy_quant"] = "U8"
         return out
     if "scaled_fp8" not in keys:

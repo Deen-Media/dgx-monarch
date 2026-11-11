@@ -197,11 +197,9 @@ The seams, in run order:
                               no audio stream, under MiniMaxH3Image
  56. minimax h3 image sampling  the grid the sampling reads, and KSampler simple at
                               pdd_steps steps landing on it
- 57. minimax h3 image vae      the image VAE's class chain and its single-frame
-                              flag, which the Worker decode split declines
- 58. minimax h3 image conditioning  the edit node's inputs and the payload keys
+ 57. minimax h3 image conditioning  the edit node's inputs and the payload keys
                               extra_conds publishes from it
- 59. minimax h3 image row calls  the three row-keyed calls a block makes, where
+ 58. minimax h3 image row calls  the three row-keyed calls a block makes, where
                               the row-check tool reads them
 before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
 
@@ -6460,30 +6458,6 @@ def _assert_minimax_h3_image_sampling_seam() -> None:
     assert worst < 1e-3, f"minimax h3 image sampling seam: simple at 6 steps is {worst} off the grid"
 
 
-def _assert_minimax_h3_image_vae_seam() -> None:
-    """The image VAE's class chain and single-frame flag, which the Worker decode split declines."""
-    h3 = _h3_image_or_none("minimax h3 image vae")
-    if h3 is None:
-        return
-    from types import SimpleNamespace
-
-    import comfy.ldm.minimax.vae as vae
-    import comfy.sd
-
-    from dgx_monarch.vae_decode_families import classify
-
-    mro = [cls.__name__ for cls in vae.MiniMaxH3ImageVAE.__mro__]
-    assert mro[:3] == ["MiniMaxH3ImageVAE", "H3ImageVAE", "MiniMaxH3VideoVAE"], (
-        f"minimax h3 image vae seam: the class chain is {mro}")
-    source = inspect.getsource(comfy.sd.VAE.__init__)
-    head = source[:source.index("MiniMaxH3ImageVAE(")]
-    assert "self.not_video = True" in head[head.rindex("single-frame"):], (
-        "minimax h3 image vae seam: the image VAE no longer marks itself single-frame")
-    fake = SimpleNamespace(first_stage_model=object.__new__(vae.MiniMaxH3ImageVAE), not_video=True)
-    family, why = classify(fake)
-    assert family is None and "single frames" in why, f"minimax h3 image vae seam: {why}"
-
-
 def _assert_minimax_h3_image_conditioning_seam() -> None:
     """The edit node's inputs and the payload keys extra_conds publishes from its references."""
     h3 = _h3_image_or_none("minimax h3 image conditioning")
@@ -6578,7 +6552,6 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("minimax h3 image head", _assert_minimax_h3_image_head_seam),
     ("minimax h3 image build", _assert_minimax_h3_image_build_seam),
     ("minimax h3 image sampling", _assert_minimax_h3_image_sampling_seam),
-    ("minimax h3 image vae", _assert_minimax_h3_image_vae_seam),
     ("minimax h3 image conditioning", _assert_minimax_h3_image_conditioning_seam),
     ("minimax h3 image row calls", _assert_minimax_h3_image_row_calls_seam),
 )

@@ -3368,9 +3368,9 @@ text across the shard line with presentation tags, the off-grid table, a
 payload without its layout and a refined context, with no attention pin
 running on a rank. At world 2 it compares by bits on aarch64 (the Sparks, on
 CPU) and within 2e-5 on the comfy canary's x86 runner; bit identity on GB10
-is a hardware leg (the identity rows below). Canary seams 52 to 59 hold the
-forward, the layout, the head, the build, the sampling grid, the VAE, the edit
-node's payload and the row-keyed calls. In a world of one GPU the record says
+is a hardware leg (the identity rows below). Canary seams 52 to 58 hold the
+forward, the layout, the head, the build, the sampling grid, the edit node's
+payload and the row-keyed calls. In a world of one GPU the record says
 the header pins are kept; on uly2 it says they are dropped. No hardware run has
 used this family yet.
 

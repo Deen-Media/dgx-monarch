@@ -15,8 +15,8 @@ seven-point grid, the adaLN curve table) and ask the adapter for stock's bits:
   2e-5 on the canary's x86 runner, and on GB10 a hardware leg;
 - no attention pin running on a rank, and the block loop's prefetch calls;
 - stock's ``block_index`` per block, the image model's ignored denoise mask,
-  the grid check at inject, the registry order, the FSDP outside-forward row
-  and the Worker VAE decode decline.
+  the grid check at inject, the registry order and the FSDP outside-forward row
+  (the Worker VAE decode decline is tests/test_vae_decode_split_comfy.py's).
 
 The uly2 compare on hardware is the maintainer's (docs/VALIDATION.md).
 """
@@ -311,16 +311,6 @@ def test_fsdp_replicates_h3s_outside_forward_modules_for_the_image_model(comfy):
 
     attrs = outside_forward_module_attrs(object.__new__(comfy.model_base.MiniMaxH3Image))
     assert {"condition_proj", "token_refiner"} <= set(attrs)
-
-
-def test_the_worker_vae_decode_declines_the_image_vae(comfy):
-    from dgx_monarch.vae_decode_families import classify
-
-    vae = SimpleNamespace(first_stage_model=object.__new__(comfy.vae.MiniMaxH3ImageVAE),
-                          not_video=True)
-    family, why = classify(vae)
-    assert family is None
-    assert why == "MiniMaxH3ImageVAE decodes single frames, so there is nothing to split"
 
 
 # --- world 2: the threaded two-rank harness ---------------------------------------

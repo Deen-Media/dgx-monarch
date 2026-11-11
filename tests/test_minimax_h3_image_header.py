@@ -283,6 +283,18 @@ def test_damaged_quantization_metadata_fails_closed_before_any_load(files, monke
     assert worker.store.calls == []
 
 
+def test_a_literal_null_quantization_metadata_reads_as_none_as_stock_reads_it(tmp_path):
+    """Stock's convert_old_quants treats a parsed None as no metadata and loads the file, so
+    the metadata refusal (#150) must not fire on it: the file answers as one without the key."""
+    absent = h3i.write(tmp_path / "absent.safetensors", "int8_convrot", blocks=2,
+                       metadata=dict(h3i.METADATA))
+    null = h3i.write(tmp_path / "null.safetensors", "int8_convrot", blocks=2,
+                     metadata={**h3i.METADATA, "_quantization_metadata": "null"})
+    assert upstream_gate.refusal_for(str(null)) == upstream_gate.refusal_for(str(absent))
+    verdict = upstream_gate.refusal_for(str(null))
+    assert verdict is None or verdict[1] != METADATA
+
+
 def test_damaged_quantization_metadata_on_another_family_gives_no_verdict(tmp_path):
     """Outside this family the gate stands down, as before: stock ComfyUI cannot parse
     the same metadata either (comfy.utils.convert_old_quants), so no scale drops silently."""

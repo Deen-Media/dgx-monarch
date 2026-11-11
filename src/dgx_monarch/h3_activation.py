@@ -411,7 +411,7 @@ def graph_activation_bytes(prompt: Any, sp_degree: int, *,
     would discard the complete loader-site footprint refusal.
     """
     try:
-        if family != H3_FAMILY:
+        if family not in (H3_FAMILY, H3_IMAGE_FAMILY):
             return 0, "not a packed-sequence family"
         if preflight_disabled():
             return 0, f"{mesh_safety.ACTIVATION_PREFLIGHT_DISABLE_ENV} is set"
@@ -420,13 +420,15 @@ def graph_activation_bytes(prompt: Any, sp_degree: int, *,
         degree = int(sp_degree)
         if degree < 1:
             return 0, "no sequence-parallel degree resolved"
-        rows = h3_rows.rows_from_prompt_graph(prompt)
+        image = family == H3_IMAGE_FAMILY
+        rows = h3_rows.rows_from_prompt_graph(prompt, image=image)
         if not rows.resolved:
             return 0, "no MiniMax H3 canvas node in this graph"
+        seen = ("the target frame only, text and reference rows are not visible in the graph"
+                if image else "video and audio rows only, keyframe and reference rows are "
+                "not visible in the graph")
         return (activation_bytes_for(rows, degree),
                 f"{rows.total} declared rows over {degree} rank(s) plus the "
-                f"{_gib(H3_ACTIVATION_FLOOR_BYTES)} GiB fixed activation floor; "
-                "video and audio rows only, keyframe and reference rows are "
-                "not visible in the graph")
+                f"{_gib(H3_ACTIVATION_FLOOR_BYTES)} GiB fixed activation floor; {seen}")
     except Exception:
         return 0, "row extraction failed; activations not charged"

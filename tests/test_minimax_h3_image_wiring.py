@@ -105,3 +105,37 @@ def test_the_activation_preflight_prices_the_family(monkeypatch):
         model, _image_request(), latent, family=FAMILY, path="/m.safetensors",
         unet_name="m.safetensors", memo_credit=True)
     assert len(seen) == 1 and seen[0].audio == 0 and seen[0].video == 1024
+
+
+def _image_graph(width=2048, height=2048, extra=None):
+    prompt = {"7": {"class_type": "MiniMaxH3ImageConditioning",
+                    "inputs": {"width": width, "height": height, "prompt": "x"}}}
+    prompt.update(extra or {})
+    return prompt
+
+
+def test_the_loader_site_charges_the_image_canvas():
+    """The explicit-preset check before the load prices the image's floor and target rows."""
+    from dgx_monarch.h3_calibration import H3_ACTIVATION_FLOOR_BYTES
+    from dgx_monarch.nodes import loader_graph
+
+    charged, why = loader_graph.graph_activation_bytes(_image_graph(), 2, family=FAMILY)
+    expected = h3_activation.activation_bytes_for(
+        h3_rows.H3Rows(video=64 * 64, frame_rows=64 * 64, latent_t=1, resolved=True), 2)
+    assert charged == expected > H3_ACTIVATION_FLOOR_BYTES
+    assert "the target frame only" in why
+    # A side left at 0 reads as the node's 2048 default, with no images.
+    assert loader_graph.graph_activation_bytes(_image_graph(0, 0), 2, family=FAMILY)[0] == charged
+    assert loader_graph.activation_sp_degree(
+        types.SimpleNamespace(topology_preset="uly2", world=2), FAMILY) >= 1
+
+
+def test_each_family_reads_only_its_own_canvas_nodes():
+    h3_canvas = {"3": {"class_type": "EmptyMiniMaxH3LatentAV",
+                       "inputs": {"width": 1280, "height": 704, "length": 121}}}
+    mixed = _image_graph(extra=h3_canvas)
+    image_rows = h3_rows.rows_from_prompt_graph(mixed, image=True)
+    video_rows = h3_rows.rows_from_prompt_graph(mixed)
+    assert image_rows.audio == 0 and image_rows.latent_t == 1 and image_rows.video == h3_rows.frame_rows(128, 128) == 64 * 64
+    assert video_rows.audio > 0 and video_rows.latent_t > 1
+    assert h3_rows.rows_from_prompt_graph(_image_graph()).resolved is False

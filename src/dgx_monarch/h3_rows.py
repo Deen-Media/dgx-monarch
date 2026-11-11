@@ -34,6 +34,10 @@ REF_EXTRAS_KEYS: Final[tuple[str, str]] = (REFS_KEY, KEYFRAMES_KEY)
 # The empty-latent node is the only canvas node outside the family prefix.
 H3_NODE_PREFIX: Final = "MiniMaxH3"
 H3_EMPTY_LATENT_CLASS: Final = "EmptyMiniMaxH3LatentAV"
+# MiniMax-H3-Image's conditioning node carries its canvas; 0 on a side means 2048
+# without images (comfy_extras/nodes_minimax_h3.py), the stand-in used here.
+H3_IMAGE_CANVAS_CLASS: Final = "MiniMaxH3ImageConditioning"
+H3_IMAGE_DEFAULT_SIDE: Final = 2048
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,12 +287,23 @@ def canvas_pixels_from_prompt_graph(prompt: Any) -> int:
     return best
 
 
-def rows_from_prompt_graph(prompt: Any) -> H3Rows:
+def _image_canvas_rows(inputs: Mapping[str, Any]) -> H3Rows:
+    """One MiniMax-H3-Image target frame from the conditioning node's canvas, no audio."""
+    width = _dim(inputs.get("width")) or H3_IMAGE_DEFAULT_SIDE
+    height = _dim(inputs.get("height")) or H3_IMAGE_DEFAULT_SIDE
+    rows_per_frame = frame_rows(height // H3_VAE_SPATIAL, width // H3_VAE_SPATIAL)
+    return H3Rows(video=rows_per_frame, frame_rows=rows_per_frame, latent_t=1, resolved=True)
+
+
+def rows_from_prompt_graph(prompt: Any, *, image: bool = False) -> H3Rows:
     """Return the largest canvas's loader-time packed estimate.
 
     Graph literals resolve target video and audio only; linked keyframe and
     reference geometry remains zero, a permissive undercount. Canvases are
     alternative renders, so peak memory is their maximum rather than their sum.
+    ``image`` reads MiniMax-H3-Image's conditioning nodes instead: one target
+    frame each, at 2048 on a side the node leaves at 0 (an edit that sizes from
+    its first picture may differ), text and reference rows unseen.
     """
     if not isinstance(prompt, Mapping):
         return H3Rows()
@@ -296,6 +311,12 @@ def rows_from_prompt_graph(prompt: Any) -> H3Rows:
     for node in prompt.values():
         inputs = _canvas_node(node)
         if inputs is None:
+            continue
+        if image != (node.get("class_type") == H3_IMAGE_CANVAS_CLASS):
+            continue  # each family reads only its own canvas nodes
+        if image:
+            rows = _image_canvas_rows(inputs)
+            best = rows if rows.total > best.total else best
             continue
         width = _dim(inputs.get("width"))
         height = _dim(inputs.get("height"))

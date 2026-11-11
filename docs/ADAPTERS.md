@@ -1443,7 +1443,7 @@ than stacks on a repeat call.
    checkpoint's grid through `head_schedule(..., grid=pdd_sigmas)`. Both H3
    adapters set stock's `block_index` on the options each block takes.
    `tests/test_minimax_h3_image_comfy.py` holds the forward to stock at world 1
-   and through the threaded two-rank harness, and canary seams 52 to 59 read
+   and through the threaded two-rank harness, and canary seams 52 to 58 read
    what it relies on.
 
    Comfy model-option attention hooks are a separate contract. Stock patch

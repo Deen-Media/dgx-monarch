@@ -1846,13 +1846,13 @@
       "test_the_detected_family_reaches_this_adapter_and_a_forced_h3_refuses": "33a0f277dba6ac3c",
       "test_the_refined_context_path_equals_stock": "55b2a87a72741b22",
       "test_the_registry_hands_the_image_model_to_this_adapter": "68d3b4926a35689d",
-      "test_the_worker_vae_decode_declines_the_image_vae": "4c101a28ea452095",
       "test_two_ranks_hand_every_block_stocks_operands_and_return_stocks_output": "1449a3fb9361bcd8",
       "test_two_ranks_on_a_refined_context": "3740898ac05dfd2a"
     },
     "tests/test_minimax_h3_image_header.py": {
       "test_a_file_without_its_sigma_grid_refuses_first": "b64ae73c23ee35b0",
       "test_a_format_with_no_row_takes_the_path_any_unvalidated_format_takes": "ca0df17e1ade7f36",
+      "test_a_literal_null_quantization_metadata_reads_as_none_as_stock_reads_it": "7c7a2a7c28fd3342",
       "test_a_pinned_bf16_file_of_any_family_now_proves_bf16": "e29aa35c6d10c8cd",
       "test_an_f16_tensor_that_is_no_adaln_island_keeps_the_fp16_reading": "4f5b106947990f22",
       "test_damaged_quantization_metadata_fails_closed_before_any_load": "760e89d03822830f",
