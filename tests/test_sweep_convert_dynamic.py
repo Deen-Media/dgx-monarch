@@ -140,14 +140,22 @@ def test_a_driver_schema_reads_an_unknown_key_as_revealing_nothing():
     assert api["2"]["inputs"]["thinking"] is True and api["2"]["inputs"]["mtp"] == "auto"
 
 
-def test_a_linked_dynamic_combo_selects_no_option():
+def test_a_linked_dynamic_combo_selects_no_option_and_its_stored_children_are_passed_over():
+    """The frontend keeps the children its widget value reveals in ``widgets_values``
+    whether or not a link feeds the combo. ComfyUI reads none of them behind a link,
+    and the widgets after them must still read from their own slots."""
     linked = [{"name": "sampling_mode", "link": 7}]
-    api = convert.convert(_node("TextGenerateV2", ["", 64, "on", True, True, "auto"], linked),
+    for names in (_schema_names(GENERATE_TEXT_SCHEMA), convert.repo_widget_names(ROOT)):
+        api = convert.convert(_node("TextGenerateV2", UPSTREAM_GENERATE_TEXT, linked), names)
+        inputs = api["2"]["inputs"]
+        assert inputs["sampling_mode"] == ["1", 0]
+        assert not [name for name in inputs if name.startswith("sampling_mode.")]
+        assert (inputs["max_length"], inputs["thinking"], inputs["use_default_template"],
+                inputs["mtp"]) == (8192, True, True, "auto")
+    # A stored key that reveals nothing leaves the next widget in the next slot.
+    api = convert.convert(_node("TextGenerateV2", ["", 64, "off", True, True, "auto"], linked),
                           _schema_names(GENERATE_TEXT_SCHEMA))
-    inputs = api["2"]["inputs"]
-    assert inputs["sampling_mode"] == ["1", 0]
-    assert not [name for name in inputs if name.startswith("sampling_mode.")]
-    assert (inputs["thinking"], inputs["use_default_template"], inputs["mtp"]) == (True, True, "auto")
+    assert (api["2"]["inputs"]["thinking"], api["2"]["inputs"]["mtp"]) == (True, "auto")
 
 
 def test_a_child_that_is_a_dynamic_combo_reveals_its_own_children():

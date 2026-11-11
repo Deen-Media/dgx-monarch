@@ -262,7 +262,8 @@ def _read_widgets(order: list[str], values: list, inputs: dict) -> int:
     A dynamic combo's chosen key puts the child widgets it reveals next in
     line, under their dotted names, before the widget that follows the combo:
     that is where the frontend stores them. A linked combo selects no option,
-    as in ComfyUI, so nothing follows it.
+    as in ComfyUI, so none of its children is set; the frontend still stores
+    the children its own widget value reveals, so their slots are passed over.
     """
     index = 0
     pending = list(order)
@@ -279,6 +280,9 @@ def _read_widgets(order: list[str], values: list, inputs: dict) -> int:
                 follower = values[index] if index < len(values) else None
                 if name in SEED_NAMES and isinstance(follower, str) and follower in CONTROL:
                     index += 1
+                if isinstance(name, DynamicName):
+                    # The stored key's children sit in the next slots, read by nobody.
+                    index += _read_widgets(name.revealed(values[index - 1]), values[index:], {})
             continue
         if index >= len(values):
             break

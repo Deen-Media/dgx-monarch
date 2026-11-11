@@ -7,7 +7,7 @@ read keeps every node, which is the charge the preflight made before this walk.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 # Lazy switches whose literal `switch` lets ComfyUI evaluate one branch only
@@ -65,7 +65,7 @@ def output_node(class_type: object) -> bool | None:
     return None if cls is None else getattr(cls, "OUTPUT_NODE", False) is True
 
 
-def live_nodes(prompt: Mapping) -> frozenset[str]:
+def live_nodes(prompt: Mapping, *, roots: Iterable[str] | None = None) -> frozenset[str]:
     """The nodes ComfyUI will run: those an output node reaches through links.
 
     ComfyUI runs the ancestors of its output nodes. A node whose class the
@@ -73,16 +73,23 @@ def live_nodes(prompt: Mapping) -> frozenset[str]:
     unknown class is charged rather than dropped. The walk follows links
     backwards and skips a lazy switch's unselected branch, so a model loader
     that feeds only that branch, or nothing that runs, is not priced.
+
+    ``roots`` starts the same walk from the named nodes in place of the output
+    nodes: what those nodes take their inputs from, and nothing a preview or a
+    save elsewhere in the graph runs beside them.
     """
     nodes = {str(key): node for key, node in prompt.items() if isinstance(node, Mapping)}
-    consumed: set[str] = set()
-    for node in nodes.values():
-        inputs = node.get("inputs")
-        for value in inputs.values() if isinstance(inputs, Mapping) else ():
-            consumed.update(str(link[0]) for link in links_in(value))
-    outputs = {key: output_node(node.get("class_type")) for key, node in nodes.items()}
-    pending = [key for key in nodes
-               if outputs[key] is True or (outputs[key] is None and key not in consumed)]
+    if roots is not None:
+        pending = [str(key) for key in roots]
+    else:
+        consumed: set[str] = set()
+        for node in nodes.values():
+            inputs = node.get("inputs")
+            for value in inputs.values() if isinstance(inputs, Mapping) else ():
+                consumed.update(str(link[0]) for link in links_in(value))
+        outputs = {key: output_node(node.get("class_type")) for key, node in nodes.items()}
+        pending = [key for key in nodes
+                   if outputs[key] is True or (outputs[key] is None and key not in consumed)]
     live: set[str] = set()
     while pending:
         key = pending.pop()

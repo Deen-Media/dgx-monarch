@@ -5935,9 +5935,11 @@ TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
 # The task prompt and system prompt boxes are EMPTY: the text ComfyUI's
 # templates carry there is MiniMax's own, and this repository ships none of
 # it (tests/test_minimax_h3_image_templates.py holds the boxes empty). So the
-# switch is off in every graph, the edit included, where ComfyUI's edit
-# template ships it on; a graph that turns the expander on with an empty
-# task prompt refuses (nodes/expander_prompt.py). The text to image canvas
+# switch is off in every graph, where ComfyUI's two templates ship it on
+# (text to image through its subgraph's enable_PE input, whose value wins
+# over the inner node's stored false, the edit through a Boolean box); a
+# graph that turns the expander on with an empty task prompt refuses
+# (nodes/expander_prompt.py). The text to image canvas
 # sits on the conditioning node as two numbers, where upstream wires a
 # Resolution Selector: the loader's price, the sweep and App Mode read
 # numbers, and a wired side reads as none. And Preview as Text sits beside
@@ -6020,8 +6022,9 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
             "INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's "
             "own template loads. Set width and height on MiniMax H3 Image "
             "Conditioning in multiples of 32. " + H3I_SIZES + " ")
-        differs = ("ComfyUI's template ships the switch false too, with both boxes "
-                   "filled. ")
+        differs = ("This is where this graph's defaults differ from ComfyUI's text to "
+                   "image template, which ships the switch true, through its "
+                   "subgraph's enable_PE input, and both boxes filled. ")
         paste = (
             "paste " + H3I_TASK_FILE[False] + " into the task prompt box and make "
             "its last lines read " + H3I_TASK_ENDING[False] + " and output_text:, as "
@@ -6060,7 +6063,8 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
         "render on the pair is not bit for bit the render on one GPU. cfg2 and dp2 "
         "refuse, because the DiT takes one sample a call, and a padded ring "
         "refuses. The driver holds the 27.1 GB text encoder and the 1.2 GB VAE, "
-        "and the 7.3 GB expander only while the switch is true; each Worker holds "
+        "and the 7.3 GB expander from the first render with the switch true (as "
+        "shipped, this graph never loads it); each Worker holds "
         "the 21.0 GB DiT. " + GATE + " This graph samples with KSampler (DGX "
         "Monarch), so each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 "
         "on this schedule; they span head blocks the 6-step render takes one at a "

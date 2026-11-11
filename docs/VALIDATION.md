@@ -3466,9 +3466,10 @@ lacks the `{input text}` marker, refuses class P
 ([#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
 `tests/test_expander_prompt.py` holds the sentence, holds it to the UNET
 loader, the four samplers and Identity Gate ahead of each node's own price,
-load and render, holds that a switch whose choice the graph does not state
-refuses nothing, and holds that no other committed graph meets the refusal,
-as shipped or with every switch on.
+load and render, holds that an expander which runs only for an extra Preview
+as Text refuses nothing, as does a switch whose choice the graph does not
+state, and holds that no other committed graph meets the refusal, as shipped
+or with every switch on.
 
 With the If/Else switch true, a render of either template depends on text a
 language model wrote on the driver. Generate Text holds ComfyUI's sampled

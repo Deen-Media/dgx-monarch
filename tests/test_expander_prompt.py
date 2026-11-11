@@ -226,6 +226,83 @@ def test_a_switch_whose_choice_the_graph_does_not_state_refuses_nothing():
     assert expander_prompt.refuse_dead_expander(graph) is None
 
 
+@pytest.mark.parametrize("name", FAMILY_GRAPHS)
+@pytest.mark.parametrize("tap", ["extract", "thinking", "replace"])
+def test_an_expander_that_runs_only_for_a_preview_refuses_nothing(name, tap):
+    """The switch is false and the boxes are empty, as shipped, and one more Preview
+    as Text hangs on the chain. ComfyUI runs the expander for that preview alone; the
+    picture takes the request as written, so there is nothing to refuse."""
+    graph = _graph(name)
+    extract_id, _ = _one(graph, "JsonExtractString")
+    expand_id, _ = _one(graph, "TextGenerateV2")
+    splice_id, _ = _one(graph, "StringReplace")
+    source = {"extract": [extract_id, 0], "thinking": [expand_id, 1], "replace": [splice_id, 0]}[tap]
+    graph["900"] = {"class_type": "PreviewAny", "inputs": {"source": source}}
+    assert expander_prompt.dead_expander(graph) is None
+    assert expander_prompt.refuse_dead_expander(graph) is None
+    # The same graph with the switch on feeds the render from the expander, and refuses.
+    _, switch = _one(graph, "ComfySwitchNode")
+    switch["switch"] = True
+    assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
+
+
+@pytest.mark.parametrize("name", FAMILY_GRAPHS)
+def test_comfyuis_layout_with_the_preview_on_the_text_path_still_refuses(name):
+    """ComfyUI's templates wire switch, then Preview as Text, then the conditioning
+    prompt. Preview as Text hands its string on, so the render still reads the chain."""
+    graph = _graph(name)
+    switch_id, switch = _one(graph, "ComfySwitchNode")
+    preview_id, _ = _one(graph, "PreviewAny")
+    _, cond = _one(graph, "MiniMaxH3ImageConditioning")
+    assert cond["prompt"] == [switch_id, 0]
+    cond["prompt"] = [preview_id, 0]
+    assert expander_prompt.dead_expander(graph) is None
+    switch["switch"] = True
+    assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
+
+
+def test_a_graph_with_no_dgx_monarch_render_refuses_nothing():
+    """Stock samplers render nothing through this pack, so their graphs are not read."""
+    graph = _switched_on(T2I)
+    sampler_id, _ = _one(graph, "DGXMonarchKSampler")
+    graph[sampler_id]["class_type"] = "KSampler"
+    assert expander_prompt.dead_expander(graph) is None
+
+
+def test_the_render_classes_are_the_nodes_that_call_the_refusal():
+    from dgx_monarch import nodes as pack
+
+    calling = set()
+    for class_name, cls in pack.NODE_CLASS_MAPPINGS.items():
+        method = getattr(cls, getattr(cls, "FUNCTION", ""), None)
+        code = getattr(getattr(method, "__wrapped__", method), "__code__", None)
+        if code is not None and "refuse_dead_expander" in code.co_names:
+            calling.add(class_name)
+    # The two UNET loaders call it too, and render nothing themselves.
+    loaders = {"DGXMonarchUNETLoader", "DGXMonarchUncondUNETLoader"}
+    assert calling - loaders == set(expander_prompt.RENDER_CLASSES)
+    assert loaders <= calling
+
+
+def test_the_refusal_and_every_link_name_the_expander_entry():
+    """A merge once left this number on another entry: the pointer test passes on any
+    number that exists, so the heading and the links are held to the constant here."""
+    number = expander_prompt.TROUBLESHOOTING
+    entries = (ROOT / "docs" / "TROUBLESHOOTING.md").read_text(encoding="utf-8")
+    assert (f"\n## {number}. A render refuses because the prompt expander is on "
+            "with an empty task prompt\n") in entries
+    slug = f"#{number}-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt"
+    for rel, count in (("CHANGELOG.md", 1), ("docs/MODELS.md", 1), ("docs/SWEEP.md", 1),
+                       ("docs/VALIDATION.md", 2)):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert text.count(slug) == count, rel
+        assert "-a-render-refuses-because-the-prompt-expander" not in text.replace(slug, ""), rel
+    for name in (T2I, EDIT):
+        doc = json.loads(TEMPLATES[name].read_text(encoding="utf-8"))
+        (note,) = [node["widgets_values"][0] for node in doc["nodes"] if node["type"] == "Note"]
+        assert f"(docs/TROUBLESHOOTING.md #{number})" in note
+
+
 @pytest.mark.parametrize("prompt", [None, "", [], 7, {"1": "not a node"}, {"1": {}},
                                     {"1": {"class_type": "TextGenerateV2"}},
                                     {"1": {"class_type": "TextGenerateV2",

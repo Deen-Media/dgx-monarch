@@ -8244,9 +8244,12 @@ output and does not run it again, so a sampler or Identity Gate answers: by
 then ComfyUI has loaded the expander and run it on the empty prompt, and the
 refusal still comes before the render.
 
-Only what the graph states is read. Generate Text must be a node ComfyUI
-runs, fed by a Replace Text node whose text is typed or comes from a Text box,
-and every If/Else Switch or Soft Switch in the running graph must state its
+Only what the graph states is read. Generate Text must be a node a DGX
+Monarch sampler or Identity Gate takes its inputs from, so an expander that
+runs only for an extra Preview as Text, with the switch false, refuses
+nothing. It must be fed by a Replace Text node whose text is typed or comes
+from a Text box, and every If/Else Switch or Soft Switch in the running graph
+must state its
 choice, typed on the node or through a Boolean box wired to it. A graph wired
 another way is left alone, so a switch driven by some other node, or a Branch
 node, turns this check off for that graph.

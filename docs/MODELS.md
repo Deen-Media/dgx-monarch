@@ -1119,8 +1119,9 @@ from ComfyUI's graphs, each on purpose:
 
 - The expander's task prompt and system prompt boxes are empty. ComfyUI's
   templates carry MiniMax's text there, and this project does not ship it.
-- The edit ships the switch false, where ComfyUI's edit template ships it
-  true. Text to image ships it false in both.
+- Both templates ship the switch false, where ComfyUI's ship it true: the
+  edit through a Boolean box, text to image through its subgraph's
+  `enable_PE` input.
 - The text to image canvas is two numbers on the conditioning node, where
   ComfyUI wires a Resolution Selector, because the loader's price and the
   sweep read numbers.
@@ -1181,11 +1182,13 @@ Sparks matched that listing by size and SHA-256. The
 [artifact manifest](../example_workflows/artifacts.toml) carries the address,
 size and SHA-256 of the four files the templates load.
 
-**Licence.** The weights, the prompt expander and MiniMax's prompt files are
-published under the MiniMax-H3-Image Community License Agreement, which the
+**Licence.** The weights, MiniMax's prompt expander (MiniMax-H3-Image-PE) and
+its prompt files are published under the MiniMax-H3-Image Community License
+Agreement, which the
 [model card](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image) links. The
-agreement sets where and how they may be used. Read it before you download a
-file or render with it.
+templates' expander file is a Qwen3.5 9B quantization that Comfy-Org also
+publishes in Comfy-Org/Qwen3.5. The agreement sets where and how the files it
+covers may be used. Read it before you download a file or render with it.
 
 The BF16 DiT reads `bf16`, its 51 F16 adaLN linears counting as
 islands, and the INT8 ConvRot and W4A8 DiTs read `int8` and `w4a8`. Every one
@@ -1227,12 +1230,17 @@ inside the head on the same file.
 declines it, since it decodes one frame and has nothing to split.
 
 **Memory.** The driver holds the text encoder and the VAE, and the prompt
-expander only while the If/Else switch is true: the switch is lazy, so neither
-template as shipped loads it, and the loader preflight charges it only when
-the switch is on. Each Worker holds the DiT. Under `auto` the DiT loads
-at the first render, after the driver's models. A reference picture of the
-edit's size adds about as many rows as the target, so an edit needs more
-Worker memory than text to image at the same size. No memory figure of this
+expander from the first render with the If/Else switch true: the switch is
+lazy, so neither template as shipped loads it, and the loader preflight
+charges it only when the switch is on. After such a render ComfyUI keeps the
+expander loaded until it needs the memory, and a later queue with the switch
+false is priced without it. Each Worker holds the DiT. Under `auto` the DiT
+loads at the first render, after the driver's models. A reference picture of
+the edit's size adds about as many rows as the target, so an edit needs more
+Worker memory than text to image at the same size. The loader's price, which
+runs before any load, reads the target canvas alone, so for the edit it
+counts about half the rows; the price before dispatch counts the text, the
+reference pictures and the target. No memory figure of this
 family has been measured: the activation price uses MiniMax H3's calibration,
 and the driver's memory with each text encoder and with the expander loaded is
 a NOT RUN row.

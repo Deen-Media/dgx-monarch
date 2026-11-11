@@ -304,7 +304,10 @@ the driver's `/object_info` or, offline, from `DYNAMIC_WIDGETS` in
 hold, so a graph that picks another key stops the offline conversion and
 names the key: add its children to the table. A child that shares a name with
 a top-level input of its node stays with that input, which keeps Save Video's
-`codec` where every committed MP4 graph has always had it.
+`codec` where every committed MP4 graph has always had it. A combo fed by a
+link selects no option, as in ComfyUI, so none of its children is set; the
+frontend still stores the children its own value reveals, and the converter
+passes over their slots so the widgets after them read their own.
 `tests/test_sweep_convert_dynamic.py` holds every node that reveals no child
 to the reading it had before.
 

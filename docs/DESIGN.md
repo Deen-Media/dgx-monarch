@@ -1886,8 +1886,10 @@ card, the price and `ensure_live`, and a sampler or Identity Gate refuses them
 ahead of its re-queue price, since a re-queue that only flips the switch never
 runs the loader. ComfyUI has run the expander by then, as it runs every node
 upstream of the sampler, and the refusal still comes before the render. Only
-what the graph states is read: a Generate Text node ComfyUI runs
-(`nodes/graph_live.py`), fed by a Replace Text node whose text is typed or
+what the graph states is read: a Generate Text node that a DGX Monarch sampler
+or Identity Gate takes its inputs from (`nodes/graph_live.py`, walked from
+those nodes, so an expander that runs only for a Preview as Text beside the
+path refuses nothing), fed by a Replace Text node whose text is typed or
 comes from a Text box, with every switch in the running graph stating its
 choice, typed or through a Boolean box. The live walk keeps both branches of a
 switch it cannot decide, the safe side for a price; here that side would

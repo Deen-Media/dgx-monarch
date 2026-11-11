@@ -19,14 +19,18 @@ so the sampler's refusal comes after the expander has answered, and still
 ahead of the render.
 
 Only what the graph states is read, because a refusal of a graph that would
-have rendered well is worse than none. Generate Text must be a node ComfyUI
-runs (graph_live), fed by a Replace Text node whose text is typed or comes
-from a text box. Every switch on the way must state its choice: a typed
-boolean, or a Boolean box wired to it, as ComfyUI's own edit template has.
-graph_live keeps both branches of a switch it cannot decide, the safe side for
-a price and the wrong side here, so a graph that runs such a switch, or a
-Branch node, refuses nothing. So does any graph this cannot read. A lazy node
-of another pack is not known here and reads as running all its inputs.
+have rendered well is worse than none. Generate Text must be a node a DGX
+Monarch render takes its inputs from: the walk (graph_live) starts at the
+samplers and Identity Gate that ComfyUI runs, not at every output node, so an
+expander that runs only for a Preview as Text beside the path, with the
+switch off, refuses nothing. Generate Text must be fed by a Replace Text node
+whose text is typed or comes from a text box. Every switch in the running
+graph must state its choice: a typed boolean, or a Boolean box wired to it,
+as ComfyUI's own edit template has. graph_live keeps both branches of a
+switch it cannot decide, the safe side for a price and the wrong side here,
+so a graph that runs such a switch, or a Branch node, refuses nothing. So
+does any graph this cannot read. A lazy node of another pack is not known
+here and reads as running all its inputs.
 
 Pure: no ComfyUI import and no file read.
 """
@@ -47,6 +51,11 @@ TEXT_CLASSES = ("PrimitiveStringMultiline", "PrimitiveString")
 # ComfyUI's lazy node that graph_live does not read (comfy_extras/nodes_logic.py,
 # BranchNode at 0.45.0): which branch it runs is not decided here.
 UNREAD_LAZY_CLASSES = ("BranchNode",)
+# The DGX Monarch nodes that render, each of which calls refuse_dead_expander:
+# a prompt reaches a picture only through one of these. Read-only after import.
+RENDER_CLASSES = (
+    "DGXMonarchKSampler", "DGXMonarchKSamplerPipeline", "DGXMonarchKSamplerAdvanced",
+    "DGXMonarchSamplerCustom", "DGXMonarchIdentityGate")
 TROUBLESHOOTING = 153
 
 EMPTY_TASK_PROMPT = (
@@ -125,9 +134,12 @@ def _finding(prompt: Any) -> tuple[str, dict[str, str]] | None:
         return None
     nodes = _stated({str(key): node for key, node in prompt.items()
                      if isinstance(node, Mapping)})
-    live = graph_live.live_nodes(nodes)
-    if any(_undecided(nodes[key]) for key in live):
+    # What ComfyUI runs, then what the renders among those take their inputs from.
+    running = graph_live.live_nodes(nodes)
+    if any(_undecided(nodes[key]) for key in running):
         return None
+    renders = [key for key in running if nodes[key].get("class_type") in RENDER_CLASSES]
+    live = graph_live.live_nodes(nodes, roots=renders)
     for key in sorted(live):
         node = nodes[key]
         if node.get("class_type") != GENERATE_CLASS:

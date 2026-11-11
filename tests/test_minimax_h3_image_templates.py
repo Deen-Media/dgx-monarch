@@ -352,10 +352,12 @@ def test_the_note_says_the_expander_is_wired_but_off_and_where_its_text_lives(na
     # What an expander-on render is worth as a comparison.
     assert "it can change from run to run even at a fixed seed" in note
     assert "compare renders and check identity with the switch false" in note
-    # The edit graph differs from ComfyUI's here, and says so; text to image does not.
-    assert ("where this graph's defaults differ from ComfyUI's edit template, which ships "
-            "the switch true and both boxes filled" in note) is edit
-    assert ("ComfyUI's template ships the switch false too" in note) is not edit
+    # Both of ComfyUI's templates ship the switch true (text to image through its
+    # subgraph's enable_PE input), so each graph differs from upstream here and says so.
+    assert ("where this graph's defaults differ from ComfyUI's "
+            + ("edit" if edit else "text to image") + " template, which ships the switch true") in note
+    assert "both boxes filled" in note and "switch false too" not in note
+    assert ("through its subgraph's enable_PE input" in note) is not edit
 
 
 def test_the_notes_topology_sentences_match_the_auto_table_and_the_driver():
@@ -459,6 +461,16 @@ def test_the_sweep_labels_the_family_as_the_runtime_answers(tmp_path):
             assert cell["label"] == "render", where
         elif cell["artifact_quant"] == "w4a8":
             assert cell["label"] == "refuse:P", where  # FSDP refuses the W4A8 layout
+
+
+def test_a_world_of_one_gpu_renders_every_published_file_as_the_notes_say(tmp_path):
+    """Every published DiT pins INT8 attention, and a world of one GPU keeps the pins
+    as stock does, with no waiver card: each local cell of the three graphs renders."""
+    local = [cell for cell in _sweep_cells(tmp_path) if cell["session"] == "local"]
+    assert {cell["template"] for cell in local} == set(PATHS)
+    assert {cell["artifact_quant"] for cell in local} == {"bf16", "int8_convrot", "w4a8"}
+    assert {(cell["preset"], cell["label"]) for cell in local} == {("single", "render")}
+    assert "a world of one GPU keeps the pins, as stock does" in _note(T2I)
 
 
 # ---- The driver's price behind the switch --------------------------------------
