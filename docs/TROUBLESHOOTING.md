@@ -3955,6 +3955,27 @@ Before it refuses, the driver unloads the models ComfyUI holds on the driver
 host and prices again ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight)).
 `DGXM_DISABLE_ACTIVATION_PREFLIGHT=1` on the driver is its only bypass.
 
+**A render with UltraTex token masks is priced at the rows it holds.**
+ComfyUI's estimate counts every token of every view, of the normal atlas and
+of the reference, while its own Flux forward drops the background tokens
+before the blocks. On 2026-11-11 six views at 2048 a view on FLUX.2 Klein
+Base 9B were priced at 212,992 latent cells, 81.1 GiB, where the masked call
+held 90,597 rows, 34.5 GiB at the same factor; four views were priced at
+68.7 GiB for 57,597 rows, 21.9 GiB. At six views, with 75 and 81 GiB available, each rank of
+a uly2 pair offloaded most of the 17 GiB model and this guard refused, and a
+one-GPU Worker offloaded all of it. A Worker now hands ComfyUI's estimate the
+kept counts for the length of ComfyUI's own `prepare_sampling` call
+(`actor/held_rows_price.py`), at every world size, and logs one line that
+starts `held-rows price:` with both figures. It prices each prompt as its own
+call and takes the largest. Those graphs wire the negative from the bare
+prompt, so it carries no masks and its call holds the whole latent: 98,304
+cells, 37.4 GiB at six views, and 65,536 cells, 25.0 GiB at four. A negative
+that carries the UltraTex conditioning drops the same tokens, and the price
+is the 34.5 and 21.9 GiB above. The factor, the reserve and the load decision
+stay ComfyUI's, so a box that cannot hold the model at that price still loads
+partially, and a pair still refuses here. No hardware render has run with it
+yet.
+
 **ComfyUI also picks each model call's batch per box.** It runs cond and
 uncond as one call only when its estimate of that call, times 1.5, is under the
 box's free memory, so a short box could run them as two calls while the other

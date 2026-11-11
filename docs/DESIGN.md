@@ -549,6 +549,27 @@ whole call, so code in the forward that reads the patcher's free memory, such
 as Qwen Image 2.1's prefix-cache placement, reads the leanest rank's figure
 from the start of the call.
 
+The estimate behind ComfyUI's load decision must count the rows the forward
+holds. ComfyUI prices the whole latent and every reference, and with UltraTex
+token masks its Flux forward drops the background tokens before the blocks, so
+the price ran to 2.2 to 3.1 times the rows of the largest call and a rank with room offloaded
+its weights. On a Flux, Flux 2 or LongCat base a `PREPARE_SAMPLING` wrapper
+counts the kept tokens with ComfyUI's own mask rule and hands ComfyUI's
+estimate those counts for the length of its own `prepare_sampling` call
+(`actor/held_rows_price.py`), at every world size. Each cond is priced as its
+own call and the largest decides, so a negative with no masks counts the whole
+latent and no reference, never one cond's latent with another's references.
+A masked call counts its kept references once a sample, as the forward holds
+them; where that passes stock's own count, which takes them once a call,
+stock's figure stands. A ComfyUI that renames the mask rule gets a warning at
+install and at each such render, and the canary names the rule.
+It never prices above stock, keeps stock's figure on any doubt, leaves
+`_calc_cond_batch` its own figure, and gives a rank no discount for its share
+of the sequence: the measured H3 renders hold a pair rank at about what one
+GPU holds for the whole stream, and LTX's fit puts it at 0.62, so the whole
+stream is the safe count. The partial-load guard reads ComfyUI's decision as
+before.
+
 Adapter acceptance requires identical cross-rank latent statistics and
 fidelity against a single-GPU reference within the measured noise floor.
 
