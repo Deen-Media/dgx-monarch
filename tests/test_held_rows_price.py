@@ -166,8 +166,42 @@ def test_the_price_never_exceeds_stocks(monkeypatch, comfy_flux, family, cut):
     assert seen["minimum"] <= stock["minimum"] and seen["memory_required"] <= stock["memory_required"]
 
 
-def test_a_cond_without_masks_keeps_stocks_target_count(monkeypatch, comfy_flux):
-    """Stock takes one latent shape for every cond: a negative with no masks holds every row."""
+@pytest.mark.parametrize("family", ["flux2", "flux"])
+@pytest.mark.parametrize("cut", [0, 3])
+@pytest.mark.parametrize("batch", [1, 2])
+def test_a_bare_negative_is_priced_as_its_own_call(monkeypatch, comfy_flux, family, cut, batch):
+    """The hardware graphs' form: the negative is ConditioningZeroOut of the bare prompt, so
+    it carries no masks and no reference. ComfyUI hands it to prepare_sampling at CFG 1 too.
+    Its call holds the whole latent and nothing else; the positive's holds its kept rows. The
+    minimum is the larger of the two calls, not stock's mix of one cond's latent with the
+    other's references. ``cut`` puts each call on top in turn."""
+    import comfy.sampler_helpers as helpers
+
+    patcher, noise_shape, positive, extras, keep, patch = _render(comfy_flux, family, "all", batch, cut)
+    text_dim = positive[0]["cross_attn"].shape[-1]
+    negative = helpers.convert_cond([[torch.zeros(1, 7, text_dim), {}]])
+    conds = {"positive": positive, "negative": negative}
+    stock = _prepare(monkeypatch, _patcher(patcher.model), noise_shape, conds)
+    price.install(patcher, family)
+    seen = _prepare(monkeypatch, patcher, noise_shape, conds)
+
+    base, channels = patcher.model, noise_shape[1]
+    target, refs = _kept_counts(extras, keep, patch)
+    latent = noise_shape[0] * noise_shape[2] * noise_shape[3]
+    kept_call = base.memory_required([batch, channels, target], cond_shapes={"ref_latents": [[1, 16, refs]]})
+    bare_call = base.memory_required(list(noise_shape))
+    assert seen["minimum"] == max(kept_call, bare_call) < stock["minimum"]
+    assert (kept_call > bare_call) == (batch * target + refs > latent), "the larger call must win"
+    # Cond and uncond in one call: the whole latent twice, and the kept references.
+    assert seen["memory_required"] == base.memory_required(
+        [2 * noise_shape[0], *noise_shape[1:]], cond_shapes={"ref_latents": [[1, 16, refs]]})
+    assert seen["memory_required"] < stock["memory_required"]
+    held = price.held_cells(base, noise_shape, conds)
+    assert held.target == held.stock[0] == latent and sum(held.largest) == max(batch * target + refs, latent)
+
+
+def test_a_negative_that_holds_references_and_no_masks_keeps_its_own_counts(monkeypatch, comfy_flux):
+    """A cond with references and no masks holds every row of both: its call is stock's."""
     import comfy.sampler_helpers as helpers
 
     patcher, noise_shape, positive, extras, keep, patch = _render(comfy_flux, "flux2", "all")
@@ -176,17 +210,33 @@ def test_a_cond_without_masks_keeps_stocks_target_count(monkeypatch, comfy_flux)
     negative = helpers.convert_cond([[torch.randn(1, 7, TEXT_DIM), bare]])
     conds = {"positive": positive, "negative": negative}
     held = price.held_cells(patcher.model, noise_shape, conds)
-    assert held is not None and held.target is None
+    assert held is not None and held.largest == held.stock
     price.install(patcher, "flux2")
     seen = _prepare(monkeypatch, patcher, noise_shape, conds)
     full_refs = sum(math.prod(latent.shape[2:]) for latent in extras["reference_latents"])
-    # The minimum takes the larger reference count, the negative's, and stock's target.
+    # The minimum is the negative's own call, which is stock's figure.
     assert seen["minimum"] == patcher.model.memory_required(
         list(noise_shape), cond_shapes={"ref_latents": [[1, 16, full_refs]]})
     _target, kept_refs = _kept_counts(extras, keep, patch)
     assert seen["memory_required"] == patcher.model.memory_required(
         [2 * noise_shape[0], *noise_shape[1:]],
         cond_shapes={"ref_latents": [[1, 16, kept_refs], [1, 16, full_refs]]})
+
+
+def test_a_negative_with_the_same_masks_is_priced_at_the_kept_rows(monkeypatch, comfy_flux):
+    """ConditioningZeroOut of the UltraTex conditioning keeps its extras: both conds drop alike."""
+    import comfy.sampler_helpers as helpers
+
+    patcher, noise_shape, positive, extras, keep, patch = _render(comfy_flux, "flux2", "all")
+    negative = helpers.convert_cond([[torch.zeros(1, 7, TEXT_DIM), dict(extras)]])
+    price.install(patcher, "flux2")
+    seen = _prepare(monkeypatch, patcher, noise_shape, {"positive": positive, "negative": negative})
+    target, refs = _kept_counts(extras, keep, patch)
+    base = patcher.model
+    assert seen["minimum"] == base.memory_required(
+        [1, noise_shape[1], target], cond_shapes={"ref_latents": [[1, 16, refs]]})
+    assert seen["memory_required"] == base.memory_required(
+        [2, noise_shape[1], target], cond_shapes={"ref_latents": [[1, 16, refs], [1, 16, refs]]})
 
 
 def test_an_error_in_the_count_leaves_stocks_estimate(monkeypatch, comfy_flux, caplog):
@@ -212,8 +262,8 @@ def test_a_price_above_stocks_is_dropped(monkeypatch, comfy_flux, caplog):
 
     def inflated(base_model, shape, conds):
         held = real(base_model, shape, conds)
-        return price.HeldCells(batch=held.batch, target=held.target_stock * 3,
-                               target_stock=held.target_stock, refs=held.refs)
+        return price.HeldCells(batch=held.batch, stock=held.stock, refs=held.refs,
+                               largest=(held.stock[0] * 3, held.largest[1]), target=held.target)
 
     monkeypatch.setattr(price, "held_cells", inflated)
     with caplog.at_level("WARNING", logger="dgx_monarch.actor.held_rows_price"):
@@ -245,7 +295,8 @@ def test_the_journal_names_both_figures(monkeypatch, comfy_flux, caplog):
     stock_cells = noise_shape[0] * noise_shape[2] * noise_shape[3] + sum(
         math.prod(latent.shape[2:]) for latent in extras["reference_latents"])
     assert f"counts {stock_cells} latent cells" in line
-    assert f"holds {target + refs} after the token drop ({target} target, {refs} reference)" in line
+    assert f"the largest call a cond makes holds {target + refs} ({target} target, {refs} reference)" in line
+    assert "GiB in place of" in line
 
 
 def _comfy_rule(free: float, reserve: float):

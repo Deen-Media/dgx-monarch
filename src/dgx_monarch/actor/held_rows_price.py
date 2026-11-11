@@ -13,43 +13,54 @@ With UltraTex token masks that area is not what the forward holds. Stock
 and of each masked reference before the blocks, so the blocks run on the kept
 rows only, and the estimate still counts every view, the whole normal atlas
 and the whole reference. On 2026-11-11 six views at 2048 a view on FLUX.2
-Klein Base 9B were priced at 212,992 latent cells, 81.1 GiB, where the forward
-held 90,597 rows, 34.5 GiB at the same factor, and the one-GPU render of that
-call held about 15 GiB beyond its weights. On two Sparks with 75 and 81 GiB
-available each rank offloaded most of a 17 GiB model and the partial-load
-guard refused the render class C (docs/TROUBLESHOOTING.md #79); on one GPU
-ComfyUI offloaded the whole model and streamed it a block at a time.
+Klein Base 9B were priced at 212,992 latent cells, 81.1 GiB, where the masked
+call held 90,597 rows and the one-GPU render of it held about 15 GiB beyond
+its weights. On two Sparks with 75 and 81 GiB available each rank offloaded
+most of a 17 GiB model and the partial-load guard refused the render class C
+(docs/TROUBLESHOOTING.md #79); on one GPU ComfyUI offloaded the whole model
+and streamed it a block at a time.
 
 A ``PREPARE_SAMPLING`` wrapper counts the kept tokens with ComfyUI's own mask
 rule (``comfy.ldm.flux.model.foreground_tokens``, the rule
 ``preprocess_token_masks`` applies), and for the length of ComfyUI's own
 ``prepare_sampling`` call hands its estimate those counts in place of the full
-shapes: the latent cells the kept target tokens cover, and the cells the kept
-tokens of each masked reference cover. The factor, the dtype, the batch rule,
-the reserve and the load decision stay ComfyUI's. The count is in ComfyUI's
-unit, latent cells, so a kept token of a patch-2 model (Flux 1, LongCat)
-counts four.
+shapes. The factor, the dtype, the batch rule, the reserve and the load
+decision stay ComfyUI's. The count is in ComfyUI's unit, latent cells, so a
+kept token of a patch-2 model (Flux 1, LongCat) counts four.
+
+ComfyUI's minimum, the figure the load decision reads, is one cond's call: the
+latent plus the largest reference count of any cond. Stock can add those
+because every cond holds the same latent. With masks the conds differ: a
+masked cond holds its kept target and kept references, and a cond with no
+masks (a zeroed negative wired from the bare prompt) holds the whole latent
+and no reference. So the minimum is priced at the cond whose own call holds
+most, never a mix of one cond's latent with another's references. For the
+render above that is the unmasked negative's 98,304 cells, 37.4 GiB, and
+34.5 GiB where the negative carries the masks too. ComfyUI's other figure,
+for cond and uncond in one call, takes the largest target of any cond at
+twice the batch and every cond's kept references.
 
 What it never does:
 
 - Price above stock. Each count is capped at stock's own, and the estimate is
   read before and after: a priced figure above stock's drops the correction.
-- Guess. A cond with no masks, a batch the view grid does not divide, a mask
-  count that is not the grid's, or any error keeps stock's figure.
+- Guess. A cond with no masks keeps stock's counts, and a batch the view grid
+  does not divide, a mask count that is not the grid's, a reference count
+  that is not stock's, or any error keeps stock's figure.
 - Reach the cond batch rule. ``_calc_cond_batch`` reads the same
   ``memory_required`` during sampling to decide whether cond and uncond share
   a call; the correction is gone before sampling starts, so that decision is
   the one a Worker made before this module.
 - Discount a rank's share. Under sequence parallelism a rank runs the per-token
-  layers on its window, but the hardware records hold a pair rank at about
+  layers on its window, but the measured renders hold a pair rank at about
   what one GPU holds for the whole stream (``h3_calibration``, the measured
   points), so every rank is priced at the whole kept stream.
 - Force a full load. The partial-load guard still reads ComfyUI's own choice,
   and a rank that cannot hold the model at the kept-row price still refuses.
 
 It runs at every world size: a one-GPU Worker that offloads a LoRA-patched
-model casts 27 small norm weights by another recipe than a whole load bakes
-them, so one GPU and a pair agree only when both load whole.
+model casts its small patched weights by another recipe than a whole load
+bakes them, so one GPU and a pair agree only when both load whole.
 """
 from __future__ import annotations
 
@@ -71,22 +82,26 @@ _ABSENT = object()
 
 @dataclass(frozen=True)
 class HeldCells:
-    """The latent cells one render's forward holds, in ComfyUI's estimate unit.
+    """The latent cells one render's calls hold, in ComfyUI's estimate unit.
 
-    ``target`` covers the whole latent batch, or is None where stock's count
-    stands. ``refs`` maps a cond's ``token_masks`` object to the cells its
-    kept reference tokens cover and the cells stock counts for them.
+    Target counts cover the whole latent batch. ``stock`` is what ComfyUI's
+    minimum counts: the latent and the largest reference count of any cond.
+    ``largest`` is the target and reference cells of the cond whose own call
+    holds most, ``target`` the largest target any cond holds, and ``refs``
+    maps a masked cond's ``token_masks`` object to its kept and its stock
+    reference cells.
     """
 
     batch: int
-    target: int | None
-    target_stock: int
+    stock: tuple[int, int]
+    largest: tuple[int, int]
+    target: int
     refs: dict[int, tuple[int, int]] = field(default_factory=dict)
 
     @property
     def corrects(self) -> bool:
-        target = self.target is not None and self.target < self.target_stock
-        return target or any(kept < stock for kept, stock in self.refs.values())
+        return (sum(self.largest) < sum(self.stock) or self.target < self.stock[0]
+                or any(kept < full for kept, full in self.refs.values()))
 
 
 def _cond_entries(conds: Any) -> Iterator[Mapping]:
@@ -94,6 +109,11 @@ def _cond_entries(conds: Any) -> Iterator[Mapping]:
         for cond in entries if isinstance(entries, list | tuple) else ():
             if isinstance(cond, Mapping):
                 yield cond
+
+
+def _cells(shape: Any) -> int:
+    """The cells ``memory_required`` reads from one shape: batch times everything past the channels."""
+    return int(shape[0]) * math.prod(int(side) for side in shape[2:])
 
 
 def _kept_cells(foreground_tokens: Any, mask: Any, height: int, width: int, patch: int) -> int:
@@ -120,27 +140,27 @@ def _target_cells(foreground_tokens: Any, cond: Mapping, noise_shape: Any, patch
 
 
 def _ref_cells(foreground_tokens: Any, cond: Mapping, patch: int) -> tuple[int, int] | None:
-    """Kept and stock cells of one cond's reference latents, or None where it carries no masks."""
+    """Kept and full cells of one cond's reference latents, or None where it carries no masks."""
     masks, latents = cond.get("token_masks"), cond.get("reference_latents")
     if not isinstance(masks, Mapping) or latents is None:
         return None
     ref_masks = list(masks.get("refs") or ())
-    kept = stock = 0
+    kept = full_total = 0
     for index, latent in enumerate(latents):
         full = math.prod(latent.shape[2:])
         mask = ref_masks[index] if index < len(ref_masks) else None
-        stock += full
+        full_total += full
         kept += full if mask is None else min(full, _kept_cells(
             foreground_tokens, mask, int(latent.shape[-2]), int(latent.shape[-1]), patch))
-    return kept, stock
+    return kept, full_total
 
 
 def held_cells(base_model: Any, noise_shape: Any, conds: Any) -> HeldCells | None:
-    """What this render's forward holds, or None where stock's estimate already says it.
+    """What this render's calls hold, or None where stock's estimate already says it.
 
-    Stock's estimate takes one latent shape for every cond, so the target
-    count is the largest any cond holds, and stock's own where a cond carries
-    no masks. Reference counts are per cond, as ``extra_conds_shapes`` is.
+    Each cond is read as its own call: a masked cond holds its kept target and
+    kept references, any other cond stock's latent and stock's count of its
+    references (``extra_conds_shapes``, asked of stock itself).
     """
     entries = list(_cond_entries(conds))
     if not any(cond.get("token_masks") is not None for cond in entries):
@@ -151,20 +171,24 @@ def held_cells(base_model: Any, noise_shape: Any, conds: Any) -> HeldCells | Non
     patch = getattr(getattr(base_model, "diffusion_model", None), "patch_size", None)
     if foreground_tokens is None or not isinstance(patch, int) or patch < 1 or len(noise_shape) < 3:
         return None
-    batch = int(noise_shape[0])
-    stock = batch * math.prod(int(side) for side in noise_shape[2:])
-    targets: list[int] = []
+    stock_target = _cells(noise_shape)
+    calls: list[tuple[int, int]] = []
+    stock_refs = 0
     refs: dict[int, tuple[int, int]] = {}
     for cond in entries:
+        shape = base_model.extra_conds_shapes(**cond).get(_REF_SHAPE_KEY)
+        full = _cells(shape) if shape is not None else 0
+        stock_refs = max(stock_refs, full)
         target = _target_cells(foreground_tokens, cond, noise_shape, patch)
-        if target is not None:
-            targets.append(target)
-        cells = _ref_cells(foreground_tokens, cond, patch)
-        if cells is not None:
-            refs[id(cond["token_masks"])] = cells
+        counted = _ref_cells(foreground_tokens, cond, patch)
+        # Only a reference count this module reads as stock does may be replaced.
+        kept = counted[0] if counted is not None and counted[1] == full else full
+        if kept < full:
+            refs[id(cond["token_masks"])] = (kept, full)
+        calls.append((stock_target if target is None else target, kept))
     held = HeldCells(
-        batch=batch, target_stock=stock, refs=refs,
-        target=max(targets) if len(targets) == len(entries) else None)
+        batch=int(noise_shape[0]), stock=(stock_target, stock_refs), refs=refs,
+        largest=max(calls, key=sum), target=max(target for target, _ in calls))
     return held if held.corrects else None
 
 
@@ -185,10 +209,20 @@ def _shadow(base_model: Any, noise_shape: Any, held: HeldCells) -> dict:
     def memory_required(input_shape, cond_shapes={}):  # stock's own signature and default
         shape = list(input_shape)
         # Stock passes this render's latent shape, at its batch or twice it.
-        if (held.target is not None and [int(side) for side in shape[1:]] == latent_tail
-                and int(shape[0]) % held.batch == 0):
-            shape = [int(shape[0]) // held.batch, shape[1], held.target]
-        return stock_required(shape, cond_shapes=cond_shapes)
+        if [int(side) for side in shape[1:]] != latent_tail or int(shape[0]) % held.batch:
+            return stock_required(input_shape, cond_shapes=cond_shapes)
+        calls = int(shape[0]) // held.batch
+        if calls != 1:
+            return stock_required([calls, shape[1], held.target], cond_shapes=cond_shapes)
+        # The minimum: one cond's call, the one that holds most.
+        target, refs = held.largest
+        shapes = {key: value for key, value in cond_shapes.items() if key != _REF_SHAPE_KEY}
+        given: list[Any] = list(cond_shapes.get(_REF_SHAPE_KEY) or ())
+        if refs and (len(given) != 1 or len(given[0]) != 3):
+            return stock_required(input_shape, cond_shapes=cond_shapes)
+        if refs:
+            shapes[_REF_SHAPE_KEY] = [[given[0][0], given[0][1], refs]]
+        return stock_required([1, shape[1], target], cond_shapes=shapes)
 
     saved = {name: base_model.__dict__.get(name, _ABSENT) for name in _SHADOWED}
     base_model.extra_conds_shapes = extra_conds_shapes
@@ -227,16 +261,12 @@ def make_wrapper():
                 priced = _minimum(patcher, noise_shape, conds)
                 if priced > stock:
                     raise ValueError(f"priced {priced:.0f} B above stock's {stock:.0f} B")
-                kept_refs = max((kept for kept, _ in held.refs.values()), default=0)
-                stock_refs = max((full for _, full in held.refs.values()), default=0)
                 log.info(
                     "held-rows price: ComfyUI's sample-time estimate counts %d latent cells "
-                    "for this render (%d target, %d reference) and the forward holds %d after "
-                    "the token drop (%d target, %d reference); the load is priced at %.1f GiB "
-                    "in place of %.1f GiB",
-                    held.target_stock + stock_refs, held.target_stock, stock_refs,
-                    (held.target_stock if held.target is None else held.target) + kept_refs,
-                    held.target_stock if held.target is None else held.target, kept_refs,
+                    "for this render (%d target, %d reference); after the token drop the "
+                    "largest call a cond makes holds %d (%d target, %d reference); the load "
+                    "is priced at %.1f GiB in place of %.1f GiB",
+                    sum(held.stock), *held.stock, sum(held.largest), *held.largest,
                     priced / 2**30, stock / 2**30)
         except Exception as exc:
             if saved is not None:

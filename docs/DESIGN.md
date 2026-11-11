@@ -556,11 +556,15 @@ the price ran to 2.3 to 3.1 times the held rows and a rank with room offloaded
 its weights. On a Flux, Flux 2 or LongCat base a `PREPARE_SAMPLING` wrapper
 counts the kept tokens with ComfyUI's own mask rule and hands ComfyUI's
 estimate those counts for the length of its own `prepare_sampling` call
-(`actor/held_rows_price.py`), at every world size. It never prices above
-stock, keeps stock's figure on any doubt, leaves `_calc_cond_batch` its own
-figure, and gives a rank no discount for its share of the sequence: the
-hardware records hold a pair rank at about what one GPU holds for the whole
-stream. The partial-load guard reads ComfyUI's decision as before.
+(`actor/held_rows_price.py`), at every world size. Each cond is priced as its
+own call and the largest decides, so a negative with no masks counts the whole
+latent and no reference, never one cond's latent with another's references.
+It never prices above stock, keeps stock's figure on any doubt, leaves
+`_calc_cond_batch` its own figure, and gives a rank no discount for its share
+of the sequence: the measured H3 renders hold a pair rank at about what one
+GPU holds for the whole stream, and LTX's fit puts it at 0.62, so the whole
+stream is the safe count. The partial-load guard reads ComfyUI's decision as
+before.
 
 Adapter acceptance requires identical cross-rank latent statistics and
 fidelity against a single-GPU reference within the measured noise floor.
