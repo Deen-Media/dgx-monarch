@@ -174,7 +174,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Va
         )
         from ..adapters.fsdp import apply_fsdp_capacity_mode
         from ..family_select import override_for_worker
-        from . import attention_context, partial_load_guard
+        from . import attention_context, held_rows_price, partial_load_guard
         store_fsdp.validate_injection(
             self,
             quant_kind,
@@ -183,6 +183,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Va
         partial_load_guard.install(base_patcher, getattr(self, "world", None), self.topology)
         cfg_degree = int(self.topology.get("cfg", 1))
         adapter = adapter_for(base_patcher.model, override_for_worker(self))
+        held_rows_price.install(base_patcher, getattr(adapter, "family", None))  # every world
         getattr(adapter, "prepare_base_model", lambda _model: None)(base_patcher.model)
         sp = int(self.topology.get("ulysses", 1)) * int(self.topology.get("ring", 1))
         # dm-cfg2: a dual_model_cfg family (ig4) runs the split guider at

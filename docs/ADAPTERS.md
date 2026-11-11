@@ -326,7 +326,12 @@ than stacks on a repeat call.
    Ulysses degree above 2 is proven, so `adapters/flux_views.py` refuses a
    render whose prompts carry any of the three on those topologies, on the
    driver and on every Worker rank, and auto skips the cfg rows for it
-   (TROUBLESHOOTING #148).
+   (TROUBLESHOOTING #148). ComfyUI's sample-time memory estimate counts every
+   token of every view and reference, not the kept ones, so
+   `actor/held_rows_price.py` hands that estimate the kept counts for the
+   length of ComfyUI's own `prepare_sampling`, on every Worker at every world
+   size, and the load decision stays ComfyUI's
+   ([TROUBLESHOOTING #79](TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
 2. **USP attention routing** for every attention over the sharded sequence:
    * blocks that are pure self-attention: thread
      `usp_options(transformer_options, ctx.usp_attention)` into the block loop;
