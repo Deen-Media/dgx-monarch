@@ -479,6 +479,15 @@
   host copies behind a warning that they "did not verify against the
   checkpoint"; they are now restored from the file like every other key, and
   the warning is gone.
+- A Worker that ComfyUI loads only partly now computes a LoRA's small patched
+  weights as its full load and stock do. ComfyUI's classic patcher gives every
+  patched module it leaves off the device a cast-time patch; stock bakes a
+  module of 16 KiB or less (a norm weight) with its classic recipe. On GB10
+  the two round a BF16 norm weight with a diff apart on about 7 percent of its
+  values, so a one-GPU render under memory pressure with `lora_low_rss` off
+  used other norm weights than the same render with room. Such a key now
+  takes the classic recipe when its layer casts. Found by reading and held by
+  a CPU test against ComfyUI's own patcher; no hardware render isolates it.
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
   class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,

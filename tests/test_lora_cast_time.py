@@ -201,3 +201,132 @@ def test_the_bake_takes_cast_time_on_exactly_the_keys_stocks_own_load_does(comfy
     """Stock's ModelPatcherDynamic.load chooses; the bake must choose the same keys,
     across the 16 KiB cut-off for BF16 and INT8 ConvRot, a bias and a resize."""
     assert comfy_cpu.check_stock_choice() == 17
+
+
+# A partial load. ComfyUI's classic patcher gives every patched module it leaves
+# off the device a cast-time patch, the small ones included; stock's DynamicVRAM
+# load force-loads a module of 16 KiB or less through the classic bake. With the
+# LoRA compute dtype GB10 reports (FP16) the two recipes round a BF16 norm
+# weight with a diff apart, so the tests pin that dtype on this CPU.
+
+_NORM_DIM = 1024  # 2 KiB of bf16: a module stock force-loads
+
+
+def _partial_rig():
+    import comfy.lora
+    import comfy.model_patcher
+    import comfy.ops
+    import torch
+
+    ops = comfy.ops.disable_weight_init
+
+    class _Root(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = ops.Linear(256, 64, bias=False, dtype=torch.bfloat16)  # 32 KiB: a cast-time key
+            self.norm = ops.RMSNorm(_NORM_DIM, dtype=torch.bfloat16)
+
+        def get_dtype_inference(self):
+            return torch.bfloat16
+
+    gen = torch.Generator().manual_seed(11)
+    pristine = {"lin.weight": (torch.randn(64, 256, generator=gen) * 0.05).to(torch.bfloat16),
+                "norm.weight": (1.0 + 0.2 * torch.randn(_NORM_DIM, generator=gen)).to(torch.bfloat16)}
+    lora = {"lin.lora_up.weight": torch.randn(64, 4, generator=gen) * 0.01,
+            "lin.lora_down.weight": torch.randn(4, 256, generator=gen) * 0.01,
+            "lin.alpha": torch.tensor(4.0),
+            "norm.diff": (torch.randn(_NORM_DIM, generator=gen) * 0.02).to(torch.bfloat16)}
+    patches = comfy.lora.load_lora(lora, {"lin": "lin.weight", "norm": "norm.weight"})
+    cpu = torch.device("cpu")
+
+    def build():
+        root = _Root()
+        root.lin.weight = torch.nn.Parameter(pristine["lin.weight"].clone(), requires_grad=False)
+        root.norm.weight = torch.nn.Parameter(pristine["norm.weight"].clone(), requires_grad=False)
+        patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+        patcher.add_patches(patches, 0.5)
+        return root, patcher
+
+    return build, pristine, cpu
+
+
+@pytest.fixture
+def gb10_lora_dtype(comfy_cpu):
+    """The LoRA compute dtype GB10 reports, pinned for this CPU and put back."""
+    import comfy.model_management as mm
+    import torch
+
+    cpu = torch.device("cpu")
+    before = dict(mm.LORA_COMPUTE_DTYPES)
+    mm.LORA_COMPUTE_DTYPES[cpu] = torch.float16
+    try:
+        yield
+    finally:
+        mm.LORA_COMPUTE_DTYPES.clear()
+        mm.LORA_COMPUTE_DTYPES.update(before)
+
+
+def _cast_weight(module):
+    """The weight the layer's forward computes with, through ComfyUI's own cast."""
+    import comfy.ops
+    import torch
+
+    probe = torch.zeros(1, dtype=torch.bfloat16)
+    weight, _bias, stream = comfy.ops.cast_bias_weight(module, probe, offloadable=True)
+    out = weight.clone()
+    comfy.ops.uncast_bias_weight(module, weight, None, stream)
+    return out
+
+
+@pytest.mark.parametrize("route", ["partial load", "partial unload"])
+def test_a_small_module_left_off_the_device_computes_with_stocks_classic_bake(comfy_cpu, gb10_lora_dtype, route):
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+
+    build, pristine, cpu = _partial_rig()
+    twin, reference = build()
+    # What stock's DynamicVRAM load gives each key: the force-load bake of the
+    # small module, the cast-time weight of the large one.
+    stock_norm = reference.patch_weight_to_device("norm.weight", device_to=cpu, return_weight=True, force_cast=True)
+    stock_lin = comfy_cpu.stock_cast_time_weight(twin, reference, "lin.weight")
+
+    def offload(patcher):
+        if route == "partial load":
+            patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+        else:
+            patcher.load(cpu, full_load=True)
+            patcher.partially_unload(cpu, memory_to_free=1e12)
+
+    # ComfyUI's classic patcher alone: the small module takes the cast-time
+    # recipe and misses stock's weight. This is the gap.
+    root, patcher = build()
+    offload(patcher)
+    assert root.norm.weight_function and root.lin.weight_function
+    assert not torch.equal(_cast_weight(root.norm), stock_norm)
+    patcher.unpatch_model(cpu)
+
+    root, patcher = build()
+    assert lora_cast_time.install() is True
+    try:
+        offload(patcher)
+        assert getattr(root.norm.weight_function[0], "_dgxm_classic", False)
+        assert not getattr(root.lin.weight_function[0], "_dgxm_classic", False)
+        assert torch.equal(_cast_weight(root.norm), stock_norm)
+        assert torch.equal(_cast_weight(root.lin), stock_lin)
+        # The stored weights are untouched, and an unpatch leaves the file's values.
+        assert torch.equal(root.norm.weight, pristine["norm.weight"])
+        patcher.unpatch_model(cpu)
+        assert torch.equal(root.norm.weight, pristine["norm.weight"])
+        assert torch.equal(root.lin.weight, pristine["lin.weight"])
+        assert not root.norm.weight_function
+        # A full load of the same stack bakes the same two weights.
+        patcher.load(cpu, full_load=True)
+        assert torch.equal(root.norm.weight, stock_norm)
+        assert torch.equal(root.lin.weight, stock_lin)
+    finally:
+        assert lora_cast_time.uninstall() is True
+    import comfy.model_patcher as comfy_mp
+
+    for name in ("load", "partially_unload", "patch_weight_to_device"):
+        assert not getattr(getattr(comfy_mp.ModelPatcher, name), "_dgxm_cast_time", False)

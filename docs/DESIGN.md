@@ -967,8 +967,16 @@ resizes the weight, a parameter other than a weight or bias) keeps the classic
 bake, and so does a key whose cast does not settle on one weight: a weight
 stored in another dtype than the forward, or a quantized layer on a
 full-precision matmul, where stock's first forward uses another weight than
-the later ones. Comfy-managed residency runs ComfyUI's own patcher and is not
-touched. The bake-equivalence canary compares the bake with comfy.ops' own
+the later ones. The same holds for a module ComfyUI leaves off the device, in
+a partial load or a partial unload under memory pressure. ComfyUI's classic
+patcher gives every such patched module a cast-time patch, the small ones
+included, where stock force-loads a module of 16 KiB or less through the
+classic bake; on GB10 the two recipes round a BF16 norm weight with a diff
+apart on about 7 percent of its values. After each `load` and
+`partially_unload` the patch on a key stock bakes classically is swapped for
+one that runs the classic recipe when the layer casts, so a partly loaded
+Worker computes with the weights its full load bakes. Comfy-managed residency
+runs ComfyUI's own patcher and is not touched. The bake-equivalence canary compares the bake with comfy.ops' own
 cast on INT8 ConvRot and BF16 layers, and the keys it bakes at cast time with
 the keys stock's own `ModelPatcherDynamic.load` chooses on both sides of the
 16 KiB cut-off, against ComfyUI master every day.

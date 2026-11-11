@@ -7978,7 +7978,11 @@ stock: a module of 16 KiB or less, a LoRA that resizes the weight, or a
 parameter other than a weight or bias. So does a key where stock's first
 forward uses another weight than the later ones, a weight stored in another
 dtype than the forward or a quantized layer on a full-precision matmul; the
-log names the first such key and why. Comfy-managed residency runs ComfyUI's
+log names the first such key and why. A partial load keeps the same weights:
+where ComfyUI leaves a patched module off the device, a key of this kind takes
+the classic bake when its layer casts, not the cast-time patch ComfyUI's
+classic patcher would give it, and the log names the first such key once
+(`is off the device after a partial load`). Comfy-managed residency runs ComfyUI's
 own patcher and was always stock. MOSS-Image's INT8 files keep the #129
 refusal until a hardware run measures a LoRA on them with this bake.
 
