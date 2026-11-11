@@ -400,6 +400,45 @@ def test_model_prefix_candidate(tmp_path):
     assert "diffusion_model.deep.weight" in record.mapped
 
 
+def test_a_key_comfy_renames_at_load_maps_to_the_files_tensor(tmp_path):
+    """FLUX stores a q/k norm weight as "<...>_norm.scale"; ComfyUI's model
+    config renames it to "<...>_norm.weight" at load, and a LoRA names that key.
+    The capture finds the file's tensor through the config's own rename
+    (actor/load_renames.py), so the key is file-backed like any other. On
+    2026-11-11 the 27 such keys of the FLUX.2 Klein distill LoRA stayed resident
+    behind a "did not verify against the checkpoint" warning."""
+    pristine = (1.0 + torch.randn(8)).to(torch.bfloat16)
+    path = str(tmp_path / "flux.safetensors")
+    write_safetensors(path, {"blocks.0.query_norm.scale": pristine})
+    block = nn.Module()
+    block.query_norm = nn.Module()
+    block.query_norm.weight = nn.Parameter(pristine.clone(), requires_grad=False)
+    model = nn.Module()
+    model.diffusion_model = nn.Module()
+    model.diffusion_model.blocks = nn.ModuleList([block])
+    model.model_config = SimpleNamespace(process_unet_state_dict=lambda sd: {
+        (k[:-len(".scale")] + ".weight" if k.endswith("_norm.scale") else k): v for k, v in sd.items()})
+    key = "diffusion_model.blocks.0.query_norm.weight"
+
+    record = capture_unbake_record(model, [key], path)
+    assert key in record.mapped and not record.resident
+    with torch.no_grad():
+        block.query_norm.weight.add_(1.0)  # the bake
+    restore_pristine(model, record)
+    assert torch.equal(block.query_norm.weight, pristine)
+
+    # The rename names a candidate and no more: a live weight whose bytes are
+    # not the file's stays resident, as any other key does.
+    with torch.no_grad():
+        block.query_norm.weight.add_(1.0)
+    assert key in capture_unbake_record(model, [key], path).resident
+    # Without the model's config the key has no file name, as before.
+    del model.model_config
+    with torch.no_grad():
+        block.query_norm.weight.copy_(pristine)
+    assert key in capture_unbake_record(model, [key], path).resident
+
+
 def test_stale_file_raises(rig):
     model, path, _ = rig
     record = capture_unbake_record(model, KEYS, path)
