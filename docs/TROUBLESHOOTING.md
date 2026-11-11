@@ -4822,6 +4822,10 @@ The same gate refuses a checkpoint whose weight scales ComfyUI would drop; see
 A damaged header does not turn this refusal off: the gate reads a header its
 strict reader refuses as ComfyUI's own reader does
 ([#152](#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
+An extra tensor does not turn it off either. The gate tests the exact key
+ComfyUI tests for the pixel-space decoder, `dec_net.cond_embed.weight` after
+ComfyUI's one prefix strip, so a file with some other tensor under a
+`dec_net.` name still refuses.
 
 ## 92. A render refuses with `FsdpGateProofError`, and the retry says the same thing
 
@@ -8110,6 +8114,10 @@ before every other refusal this family meets, since it is a fault of the file.
 A config the JSON parser cannot read, one nested past its limit included,
 counts as no grid, and a damaged header is read as ComfyUI's own reader reads it
 ([#152](#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
+The gate names the family by the exact keys ComfyUI tests
+(`video_patch_proj.weight` and `condition_proj.weight` present,
+`audio_patch_proj.weight` absent), so an extra tensor named like MiniMax H3's
+audio path does not move it.
 
 **Fix:** use the file as Comfy-Org/MiniMax-H3-Image publishes it; every one of
 its DiT files carries the grid. For a file you exported yourself, write the
@@ -8265,3 +8273,35 @@ ComfyUI's text to image template ends its task prompt with the lines
 `User input: {input text}` and `output_text:`. Read MiniMax's licence before
 you use its text ([MODELS.md](MODELS.md#model-minimax-h3-image) links it). No consent
 or waiver applies.
+
+## 154. A forced `family_adapter` refuses a model its adapter does not take under `auto`
+
+**Symptom:** with the Init node's `family_adapter` set to a family, a render
+refuses class P on every Worker with "family_adapter='wan' does not fit this
+checkpoint. ComfyUI built a WAN21_Vace, and the wan adapter does not take this
+WAN21_Vace model under 'auto' either", followed by the adapter's own answer.
+The refusal comes when the Worker binds its adapter, after the load and before
+any kernel runs. It names no guard and offers no card and no waiver.
+
+**Cause:** the override names the family whose topology row, capacity rules
+and adapter apply. It exists for a checkpoint whose header detection reads
+wrong or not at all, and for a class a custom node derives from one the
+adapter takes. It does not widen what an adapter takes. An adapter
+re-expresses the forward of one model, and ComfyUI builds many variants as
+subclasses of a family's class, each with a diffusion model and inputs of its
+own: the Wan variants VACE, Camera, HuMo, S2V, Animate, RelayVSR and
+CausalAR; HunyuanVideo 1.0 and its two image-to-video classes; Lumina 2.0 and
+Ming-Image beside Z-Image. `auto` refuses each of them. A forced family used
+to bind them by class ancestry alone, and
+under sequence parallelism the family's sharded forward then replaced the
+variant's own and dropped the inputs it did not know (a VACE control, camera
+conditions, audio, pose and face inputs), so the render could be wrong with
+no error. A forced family now binds a model exactly when its adapter would
+take the model's nearest ComfyUI class under `auto`: the model's own class
+when ComfyUI defines it, or the class a derivative extends.
+
+**Fix:** render the checkpoint in stock ComfyUI on one GPU, without the DGX
+Monarch nodes. Setting `family_adapter` back to `auto` does not help: `auto`
+refuses the same model at the same point. There is no waiver. A variant runs
+on the Workers once an adapter for it lands
+([ADAPTERS](ADAPTERS.md#registration)).

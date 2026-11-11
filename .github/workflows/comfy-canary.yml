@@ -38,6 +38,8 @@ on:
       - "tests/test_chroma_text_projections.py"
       - "tests/test_dropped_scale_gate.py"
       - "tests/test_upstream_gate_damaged_header.py"
+      - "tests/test_upstream_gate_extra_tensor.py"
+      - "tests/test_forced_family_comfy.py"
       - "tests/test_fsdp_lora_replicated.py"
       - "tests/test_ideogram4_stock_equivalence.py"
 
@@ -246,11 +248,23 @@ jobs:
       # and that ComfyUI still drops an unrecorded fp8, int8 or packed scale.
       # The second file holds the gate's reading of a damaged header against
       # ComfyUI's own two readers: what they still load, and what neither reads.
+      # The third holds its two family tests against ComfyUI's own detection:
+      # the gate refuses wherever ComfyUI still builds the refused model.
       - name: Dropped-scale header gate vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
           COMFYUI_DIR: ../ComfyUI
-        run: pytest -q tests/test_dropped_scale_gate.py tests/test_upstream_gate_damaged_header.py
+        run: >-
+          pytest -q tests/test_dropped_scale_gate.py tests/test_upstream_gate_damaged_header.py
+          tests/test_upstream_gate_extra_tensor.py
+      # A forced family_adapter binds what its adapter takes under auto: every
+      # class comfy.model_base defines is asked both ways, so a subclass a new
+      # ComfyUI adds refuses under a force from its first day.
+      - name: Forced family vs auto on every comfy model class (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_forced_family_comfy.py
       # A LoRA key on a parameter the FSDP wrap replicates bakes to ComfyUI's
       # own patch_weight_to_device bits on a one-rank gloo group.
       - name: FSDP LoRA replicated-parameter bake vs comfy master (CPU)
@@ -500,6 +514,8 @@ jobs:
           tests/test_chroma_text_projections.py
           tests/test_dropped_scale_gate.py
           tests/test_upstream_gate_damaged_header.py
+          tests/test_upstream_gate_extra_tensor.py
+          tests/test_forced_family_comfy.py
           tests/test_fsdp_lora_replicated.py
           tests/test_ideogram4_stock_equivalence.py
           tests/test_qwen_text_projections.py

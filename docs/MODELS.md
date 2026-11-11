@@ -2682,10 +2682,16 @@ and capacity rules. Use the actual child family for a finetune: for example,
 Chroma requires `chroma`, not its parent `flux`.
 
 The adapter must match the module tree built by ComfyUI. A mismatch refuses
-before a kernel runs and names both classes. A forced `minimax_h3` also
-refuses a MiniMax-H3-Image model: ComfyUI builds it as a subclass of MiniMax
-H3's class, but it is another model with its own forward, which its own adapter
-owns. The override has its own
+before a kernel runs and names both classes. The override does not widen what
+an adapter takes: a forced family binds a model only when its adapter would
+take the model's nearest ComfyUI class under `auto`. A class a custom node
+derives from a supported one binds through that class. Another upstream model
+refuses, such as a Wan VACE or Camera model under `wan`, HunyuanVideo 1.0
+under `hunyuan`, or Lumina 2.0 or Ming-Image under `zimage`
+([TROUBLESHOOTING #154](TROUBLESHOOTING.md#154-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
+A forced `minimax_h3` also refuses a MiniMax-H3-Image model: ComfyUI builds it
+as a subclass of MiniMax H3's class, but it is another model with its own
+forward, which its own adapter owns. The override has its own
 first-use context, so a forced run cannot reuse an `auto` result for the
 same file. Leave the override at `auto` for normal detection.
 
