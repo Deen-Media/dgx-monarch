@@ -616,12 +616,16 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
 - a cfg record can be scoped to prompt pairs whose text rows differ. One GPU
   runs such a pair as two batch-1 calls, which cfg2's per-cond dispatch
   reproduces, and folds a pair of equal rows into one batch-2 call, which
-  cfg2's two batch-1 calls do not. Anima row 47 and Boogu row 79 were measured
-  on their templates' pairs, whose rows differ; on 2026-11-07, with the first
-  Spark capped, two pairs of equal rows read off one GPU on both rows (one-step
-  NRMS 0.014 to 0.042, no full schedule matching), so those two records grant
-  only a pair the sampler node tagged. Chroma rows 20 and 19 take the same
-  scope: their pair was the shipped one, whose rows differ, and a BF16 pair of
+  cfg2's two batch-1 calls do not. Boogu row 79 was measured on its
+  template's pair, whose rows differ; on 2026-11-07, with the first Spark
+  capped, two pairs of equal rows read off one GPU (one-step NRMS 0.014 to
+  0.025, no full schedule matching), so the record grants only a pair the
+  sampler node tagged. Anima row 47 had the same scope until 2026-11-10, when
+  the Workers began to prepare Anima's text as stock does: stock pads it to
+  512 rows before the batching decision, so one GPU folds every Anima pair,
+  and the row was withdrawn (TROUBLESHOOTING #151). Chroma rows 20 and 19
+  take the same scope: their pair was the shipped one, whose rows differ, and
+  a BF16 pair of
   equal rows read NRMS 0.034 on cfg2. The tag (`cfg_pair.text_rows_differ`)
   needs one plain conditioning entry a side whose text tensors differ in rows.
   It rides on the latent beside the cfg++ tag, so every site that resolves
@@ -630,7 +634,7 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   timed conditioning, a Sampler Custom graph whose guider has no negative,
   and the dual-model guider with a second model wired stay untagged and take
   each family's Ulysses row (Chroma below 1.2 MP, which has none, the uly2
-  fallback). The rule holds because all three families' text is a
+  fallback). The rule holds because both families' text is a
   `CONDRegular` (Chroma's through Flux's `extra_conds`), which never folds
   rows that differ, and canary seam 50 (`pair-scoped text conds`) holds that
   premise against the installed ComfyUI; a family whose text is a
@@ -730,8 +734,11 @@ MiniMax-H3-Image keeps its 51 adaLN linears on the curve basis in F16 beside a
 bf16 core, so its header reads `bf16` and the header proof counts those bytes
 as island bytes (`adapters/minimax_h3_image_header.py`); the loaded-model side
 of that rule belongs to the family's adapter. The header proof does not count
-a uint8 attention pin (`<block>.comfy_attention.config`), which is no weight, so
-a bf16 or fp16 file that pins reaches the shard build, and the rule is: class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP shard build drops the pins, nothing approximate runs, no card asks, and the record says dropped (FSDP shard build), on every `+fsdp` preset and for every family.
+a uint8 attention pin (`<block>.comfy_attention.config`), which is no weight,
+so a bf16 or fp16 file that pins reaches the shard build, and the rule is:
+class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP shard
+build drops the pins, nothing approximate runs, no card asks, and the record
+says dropped (FSDP shard build), on every `+fsdp` preset and for every family.
 fp32 parameters inside a bf16 core are islands
 (`adapters/fsdp_islands.py`): when they hold at most 5%
 of the checkpoint bytes the header proof still reads `bf16`, the live scan
@@ -1467,7 +1474,7 @@ whether a bypass is allowed.
 | **P** physics | the model, ComfyUI, or the machine cannot do it: batch caps a family's DiT at 1, no kernel carries the mask, the checkpoint bytes on disk do not match themselves. | **None.** No consent, no waiver, no env var. The message must name the working alternative, because that is all the user can act on. |
 | **C** capacity-protective | a preflight: this will not fit here. | **Never a bare refusal.** Offer the fitting strategy first (slab residency through one click), refuse outright only once the ladder is spent, and then say what would fit. Consent-clearable where a rescue exists and the identity-gate ledger reads clear for those bytes. |
 | **U** unproven correctness | family validation, first-load-stock, Gate results, and untested fold degrees. Correctness is unproven; no error has been measured. | **Always consent-bypassable.** Log the bypass, write a permanent waiver row, then proceed. Neither U guard has a card this release (`waivable_now` is False for both) and no site raises class U: a rescue grant covers first-load-stock for its load, and an explicit slab request loads a family without slab validation. |
-| **K** known-wrong math | measured or by-construction wrongness: attended pad rows on ring, an approximate attention kernel the operator selected, an approximate kernel a checkpoint or LoRA pins on an attention module where nothing drops the pin, and a sharded nvfp4 render of a family measured past the fidelity floor. | **Refuse by default.** The ring divisibility-pad guard carries an expert waiver: one card in the accuracy style carrying the measured wrongness in its own text, `DGXM_WAIVE_KNOWN_WRONG=ring_pad` headless, never auto-eligible, and every render under it stamped. The Sol-Attn kernel carries the same shape under `DGXM_WAIVE_KNOWN_WRONG=sol_attn`, and a sharded nvfp4 render of a measured family carries it under `DGXM_WAIVE_KNOWN_WRONG=shard_quant_scale`. The card and the headless value use the unscoped name. Sol-Attn raises family-scoped at the kernel and under `sol_attn:checkpoint_pin` where a pinned approximate kernel would run (docs/ADAPTERS.md); shard-quant raises family-scoped at every site; ring pad raises scoped for MiniMax H3 and unscoped at the adapter-base backstop. Historical PixelDiT waiver rows remain readable, but that guard was retired after the exact-gather fix passed hardware parity. |
+| **K** known-wrong math | measured or by-construction wrongness: attended pad rows on ring, an approximate attention kernel the operator selected, an approximate kernel a checkpoint or LoRA pins on an attention module where nothing drops the pin (except a checkpoint's own header pins in a world of one GPU, which run as stock ComfyUI runs them and ask nothing; a `single` preset on a two-rank mesh resolves to dp2 on the Worker and keeps the guard), and a sharded nvfp4 render of a family measured past the fidelity floor. | **Refuse by default.** The ring divisibility-pad guard carries an expert waiver: one card in the accuracy style carrying the measured wrongness in its own text, `DGXM_WAIVE_KNOWN_WRONG=ring_pad` headless, never auto-eligible, and every render under it stamped. The Sol-Attn kernel carries the same shape under `DGXM_WAIVE_KNOWN_WRONG=sol_attn`, and a sharded nvfp4 render of a measured family carries it under `DGXM_WAIVE_KNOWN_WRONG=shard_quant_scale`. The card and the headless value use the unscoped name. Sol-Attn raises family-scoped at the kernel and under `sol_attn:checkpoint_pin` where a pinned approximate kernel would run outside a world of one GPU, or in one where a LoRA sets the pin or a live attention module differs from the checkpoint's (docs/ADAPTERS.md); shard-quant raises family-scoped at every site; ring pad raises scoped for MiniMax H3 and unscoped at the adapter-base backstop. Historical PixelDiT waiver rows remain readable, but that guard was retired after the exact-gather fix passed hardware parity. |
 
 Two related boundaries:
 
@@ -1672,8 +1679,12 @@ refuses; neither can downgrade the running process.
 
 **A class-K guard that blocks the ceremony answers first.** Gate proof renders
 ignore accuracy waivers. A class-K refusal therefore blocks every proof
-attempt for that combination. Stock-capable residency paths can continue to
-the ordinary render, where an explicit waiver may apply. Comfy-managed
+attempt for that combination. A checkpoint's own attention pins in a world of
+one GPU meet no guard, so a ceremony there runs every leg with the pins, on
+every residency, as the render does. A bf16 or fp16 file under `+fsdp` meets
+no guard either, by the shard-build rule in the precision paragraph above.
+Stock-capable residency paths can continue to the ordinary render, where an
+explicit waiver may apply. Comfy-managed
 residency cannot fall back in-process, so it reports the class-K refusal and
 card directly instead of asking the user to repeat the same failing proof.
 
@@ -2986,7 +2997,7 @@ Every milestone must satisfy this checklist:
   1.77 MP (row 68), Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15), and
   Boogu FP8 and Anima BF16 below 1.2 MP (rows 79 and 47; since 2026-11-07
   these and Chroma's rows 20 and 19 take only a prompt pair whose text rows
-  differ). Each upper band
+  differ, and row 47 was withdrawn on 2026-11-10). Each upper band
   ends at the largest size measured; the two lower bands follow rows 20 and 28
   and rest on one size, 1.05 MP. Krea2 INT8 cfg2 was exact but ran 0.97x to
   1.08x against uly2, so it kept Ulysses; LongCat cfg2 above 1.2 MP was not

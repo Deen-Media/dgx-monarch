@@ -462,7 +462,7 @@ def test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy():
     megapixels, cfg and batch value in the _auto_rows grid, so a policy change
     is a reviewed digest edit."""
     digest = hashlib.sha256("\n".join(_auto_rows(2)).encode()).hexdigest()
-    assert digest == "2bd8e526032eb95cef4d0739fc16003a778a137bb2b411234e6fdcccbd8246e7"
+    assert digest == "60cf854f88fd114894d53ac3bbc04d8c5bde697b55951aa28560a730767de2f9"
 
 
 def test_auto_never_resolves_cfg_plus_sequence():
@@ -537,3 +537,26 @@ def test_a_non_cfg_row_still_folds_leftover_dp_into_ring():
     assert decision.topology.cfg == 1
     assert decision.topology.dp == 1
     assert decision.topology.ring == 2
+
+
+# Families whose shipped files pin comfy-kitchen's attention kernels per block:
+# the FLUX.3 Klein and MOSS-Image INT8 ConvRot files (docs/MODELS.md), and every
+# MiniMax-H3-Image DiT file once that family registers.
+_PINNING_FAMILIES = ("flux3", "moss_image", "minimax_h3_image")
+
+
+@pytest.mark.parametrize("family", _PINNING_FAMILIES)
+@pytest.mark.parametrize("quant", ["bf16", "int8", "w4a8"])
+@pytest.mark.parametrize("megapixels", [0.5, 1.0, 2.0, 4.2])
+def test_auto_never_resolves_a_pinning_family_into_the_pin_guard(family, quant, megapixels):
+    """On one rank a checkpoint's own pins ask nothing, so auto may give single; on
+    the pair cfg2 and dp2 run the pins and refuse class K (TROUBLESHOOTING #117),
+    so auto must never pick them for a family whose files pin. Today no such family
+    has a cfg or dp row; a row added later for one fails here first."""
+    assert not [rule.row for rule in AUTO_TABLE if rule.family == family
+                and (rule.topology.get("cfg", 1) > 1 or rule.topology.get("dp", 1) > 1)]
+    assert choose_auto_topology(family, quant, megapixels, 1).topology.world == 1
+    for cfg_value in (1.0, 3.5):
+        topology = choose_auto_topology(family, quant, megapixels, 2, cfg_value=cfg_value).topology
+        assert topology.cfg == 1 and topology.dp == 1, (family, quant, megapixels, cfg_value)
+        assert topology.ulysses * topology.ring > 1

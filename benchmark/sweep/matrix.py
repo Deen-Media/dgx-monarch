@@ -248,9 +248,11 @@ T5_TOKENIZER = "t5_tokenizer/tokenizer.json"
 # The stream whose length decides a label, per family, with the comfy
 # tokenizer that builds it. Only families whose tokenizer comfy ships as a
 # `tokenizers` file are here; every other family counts nothing and keeps the
-# label its guards give. Anima is a partial answer: unequal T5 ids do split the
-# model call, but equal ones still need its qwen3 stream to match, and comfy
-# ships that tokenizer as vocab and merges files, which this reader cannot load.
+# label its guards give. For Anima the T5 ids are the whole answer since
+# 2026-11-10: a Worker pads the text to max(ids, 512) rows before the batching
+# decision, as stock does, so the ids alone decide whether a pair folds, and
+# its qwen3 stream, whose tokenizer comfy ships as vocab and merges files this
+# reader cannot load, decides nothing.
 TEXT_STREAMS = {
     "chroma": TextStream(T5_TOKENIZER, 1),     # text_encoders/pixart_t5.py
     "anima": TextStream(T5_TOKENIZER, 1),      # text_encoders/anima.py
@@ -455,7 +457,10 @@ def prompt_texts(graph: dict) -> dict[str, str]:
 
 
 # Families whose counted stream (TEXT_STREAMS) is not the conditioning tensor
-# the runtime's pair tag reads: Anima's count is its T5 ids, the tag its Qwen3 rows.
+# the runtime's pair tag reads: Anima's count is its T5 ids, the tag its Qwen3
+# rows, so the texts stand in and the predicted tag stays the runtime's. Since
+# 2026-11-10 no Anima row reads the tag (row 47 was withdrawn), so for Anima the
+# prediction decides nothing.
 _COUNT_IS_NOT_THE_TAGGED_ROWS = frozenset({"anima"})
 
 
@@ -467,8 +472,8 @@ def auto_pair_differs(facts: dict, cell: dict | None = None) -> bool:
     reads, the counts decide, so two texts of equal rows read as equal.
     Otherwise two different texts stand in for different rows, which holds on
     every shipped template; two texts of equal rows would then read true here
-    and false at render time, where the pair-scoped cfg rows (Anima 47, Boogu
-    79, Chroma 20 and 19) give way to Ulysses.
+    and false at render time, where the pair-scoped cfg rows (Boogu 79,
+    Chroma 20 and 19) give way to Ulysses.
     """
     counts = (cell or {}).get("text_tokens") or {}
     if len(counts) > 1 and (cell or {}).get("family") not in _COUNT_IS_NOT_THE_TAGGED_ROWS:
@@ -842,7 +847,9 @@ def pin_summary(pins: dict[str, attention_pins.BlockPin] | None,
 
     ``attention_pins.summarize`` decides which pins run: sequence parallelism
     drops every one. The stand-in carries the pins where the load scan caches
-    them on a loaded model, which is all ``summarize`` reads. That attribute's
+    them on a loaded model, and they are the checkpoint's own by construction
+    (build_cells drops a LoRA arm that pins), so in a world of one GPU they ask
+    nothing, as the runtime's ``checkpoint_only`` reads them. That attribute's
     name is private to attention_pins (``_SCAN_ATTR``), and the harness reads
     it on purpose so the src tree stays untouched: a rename there breaks the
     pinned tests here at once, with an AttributeError.
@@ -863,7 +870,8 @@ def pin_summary(pins: dict[str, attention_pins.BlockPin] | None,
     if topo.fsdp and launch_quant in ("bf16", "fp16"):
         pins = {key: replace(pin, cleared=True, bound=False) for key, pin in pins.items()}
     loaded = SimpleNamespace(model=SimpleNamespace(**{attention_pins._SCAN_ATTR: dict(pins)}))
-    return attention_pins.summarize([loaded], sequence_parallel=topo.sequence_parallel > 1)
+    return attention_pins.summarize([loaded], sequence_parallel=topo.sequence_parallel > 1,
+                                    checkpoint_only=True)
 
 
 def pin_refusal(pins: dict[str, attention_pins.BlockPin] | None, topo: Topology,
@@ -1417,13 +1425,20 @@ def known_wrong_reference(reference_cell: dict | None) -> bool:
     """Whether the cell this one is scored against renders a pinned approximate kernel.
 
     The second reading beside ``known_wrong_kernel``, of the other side of the
-    comparison. The reference refuses class K under the checkpoint pin guard,
-    so it renders only under that waiver, running the pinned kernel. A cell of
-    the same checkpoint on uly2 or ring2 drops the pins and runs the Init
-    widget's kernel instead, so the two differ however exact this cell is.
+    comparison. Either the reference refuses class K under the checkpoint pin
+    guard and renders only under that waiver, or it is a one-GPU cell, where the
+    checkpoint's own pins run as stock runs them and ask nothing. Both run the
+    pinned kernel. A cell of the same checkpoint on uly2 or ring2 drops the pins
+    and runs the Init widget's kernel instead, so the two differ however exact
+    this cell is.
     """
-    return bool(reference_cell) and attention_pins.SOL_ATTN_PIN_GUARD in (
-        reference_cell.get("waiver_guards") or [])
+    if not reference_cell:
+        return False
+    if attention_pins.SOL_ATTN_PIN_GUARD in (reference_cell.get("waiver_guards") or []):
+        return True
+    pinned = attention_pins._approximate(reference_cell.get("checkpoint_pins") or {})
+    return bool(pinned) and reference_cell.get("session") == "local" \
+        and reference_cell.get("label") == "render"
 
 
 def _numeric_bar(cell: dict, steps: int, reference_cell: dict | None = None) -> str:
