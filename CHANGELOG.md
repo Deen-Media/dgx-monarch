@@ -473,8 +473,11 @@
   (the FLUX.2 Klein 9B distill LoRA carries 27) stopped a `*+fsdp` render in
   the Worker with a bare `no checkpoint tensor for key` error on 2026-11-11.
   The shard bake now finds the tensor under the file's name, from ComfyUI's
-  own rename, and verifies its bytes as for any key. A patched key the file
-  holds under no name refuses with a class P sentence before any shard is
+  own rename, and verifies its bytes as for any key. That holds for a family
+  whose config also builds weights as it renames (PixelDiT strips `net.` and
+  splits a modulation weight in two): the keys it only moves are found, and a
+  weight it builds from part of a tensor is not in the file. A patched key the
+  file holds under no name refuses with a class P sentence before any shard is
   written. With `lora_low_rss` on and no FSDP the same keys used to stay as
   host copies behind a warning that they "did not verify against the
   checkpoint"; they are now restored from the file like every other key, and

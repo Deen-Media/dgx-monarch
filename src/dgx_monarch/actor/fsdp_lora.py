@@ -176,16 +176,17 @@ def _file_tensor(
                 "for this file, or a bf16 artifact with no fp32 islands."
             ))
         return ft
-    # No tensor under the key's own name, a namespace spelling of it, or the
-    # name ComfyUI loads it from. Under FSDP the file is the only pristine copy
+    # No tensor under the key's own name, a namespace spelling of it, or a name
+    # ComfyUI renames to it at load (a weight ComfyUI builds from part of a
+    # tensor lands here too). Under FSDP the file is the only pristine copy
     # (no backup exists for a sharded weight), so the bake cannot go on. Every
     # rank reads the same header for the same stack, so the class P tag is rank
     # symmetric, and capture_record raises it before any shard is written.
     raise UnbakeError(refusal(
         RefusalClass.PHYSICS,
         f"a LoRA in this stack patches {key}, and the checkpoint file holds no "
-        "tensor under that name or under the name ComfyUI loads it from. A LoRA "
-        "under FSDP bakes from the file and restores from it, so it needs one. "
+        "tensor under that name, and none that ComfyUI renames to it at load. A "
+        "LoRA under FSDP bakes from the file and restores from it, so it needs one. "
         "Use a resident topology for this stack (the same preset without "
         "+fsdp, which keeps its own copy of the weight), or drop the LoRA that "
         "patches this key."))

@@ -59,6 +59,46 @@ def test_a_value_that_is_not_a_header_name_is_dropped():
     assert load_time_renames(merged, header) == {}
 
 
+def _strip_and_split(state_dict):
+    """PixelDiT's kind of config: strips ``net.``, reads a shape, and splits one weight in two."""
+    width = state_dict["net.embed.weight"].shape[0]
+    out = {}
+    for key, value in state_dict.items():
+        key = key[len("net."):]
+        if key.endswith(".mod.weight"):
+            half = value.shape[0] // (2 * width) * width
+            out[key.replace(".mod.", ".mod_a.")] = value[:half].contiguous()
+            out[key.replace(".mod.", ".mod_b.")] = value.view(2, -1)[1].reshape(half, -1)
+        else:
+            out[key] = value
+    return out
+
+
+def test_a_config_that_also_builds_weights_still_maps_the_keys_it_only_moves():
+    """A weight built from part of a tensor has no file key; a moved one keeps its own."""
+    header = {"net.embed.weight": SimpleNamespace(shape=(4, 3)),
+              "net.blocks.0.attn.weight": SimpleNamespace(shape=(4, 4)),
+              "net.blocks.0.mod.weight": SimpleNamespace(shape=(16, 4))}
+    renames = load_time_renames(_model(_strip_and_split), header)
+    assert renames == {"embed.weight": "net.embed.weight",
+                       "blocks.0.attn.weight": "net.blocks.0.attn.weight"}
+    # Without the header's shapes the config's arithmetic fails: no rename is known.
+    assert load_time_renames(_model(_strip_and_split), list(header)) == {}
+
+
+def test_the_models_own_config_is_not_changed_by_the_lookup():
+    """A config that keeps state as it runs (ComfyUI's SAM3 stashes keys) runs on a copy."""
+    class Stashing:
+        def process_unet_state_dict(self, state_dict):
+            self.stash = dict(state_dict)
+            return {key.replace(".scale", ".weight"): value for key, value in state_dict.items()}
+
+    config = Stashing()
+    renames = load_time_renames(SimpleNamespace(model_config=config), {"a_norm.scale": object()})
+    assert renames == {"a_norm.weight": "a_norm.scale"}
+    assert not hasattr(config, "stash")
+
+
 @pytest.fixture(scope="module")
 def supported_models():
     """ComfyUI's real model configs with --cpu, restored afterwards."""
@@ -110,6 +150,29 @@ def test_comfyuis_flux_configs_map_a_norm_weight_to_its_scale(supported_models):
         assert renamed_file_key(
             renames, "diffusion_model.single_blocks.8.norm.key_norm.weight") == "single_blocks.8.norm.key_norm.scale"
         assert renamed_file_key(renames, "diffusion_model.double_blocks.0.img_attn.qkv.weight") is None
+
+
+def test_comfyuis_pixeldit_config_maps_moved_keys_and_leaves_split_ones_out(supported_models):
+    """PixelDiT strips ``net.`` and splits each pixel block's modulation weight in two.
+
+    The split reads tensor shapes, which used to lose the whole map; a LoRA on
+    any key of such a file then met the refusal for a tensor the file does hold.
+    """
+    if not hasattr(supported_models, "PixelDiTT2I"):
+        pytest.skip("this ComfyUI has no PixelDiT config")
+    pixel_dim, p2, width = 16, 4, 64
+    header = {"net.pixel_embedder.proj.weight": SimpleNamespace(shape=(pixel_dim, 3)),
+              "net.blocks.0.attn.qkv.weight": SimpleNamespace(shape=(3 * width, width)),
+              "net.pixel_blocks.0.adaLN_modulation.0.weight": SimpleNamespace(
+                  shape=(6 * p2 * pixel_dim, width)),
+              "net.pixel_blocks.0.adaLN_modulation.0.bias": SimpleNamespace(shape=(6 * p2 * pixel_dim,)),
+              "net_ema.blocks.0.attn.qkv.weight": SimpleNamespace(shape=(3 * width, width))}
+    model = SimpleNamespace(model_config=_config(supported_models.PixelDiTT2I))
+    renames = load_time_renames(model, header)
+    assert renames == {"pixel_embedder.proj.weight": "net.pixel_embedder.proj.weight",
+                       "blocks.0.attn.qkv.weight": "net.blocks.0.attn.qkv.weight"}
+    for built in ("pixel_blocks.0.adaLN_modulation_msa.weight", "pixel_blocks.0.adaLN_modulation_mlp.bias"):
+        assert renamed_file_key(renames, "diffusion_model." + built) is None
 
 
 def test_no_registered_config_raises_and_every_rename_names_a_header_key(supported_models):

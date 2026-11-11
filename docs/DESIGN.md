@@ -721,7 +721,10 @@ under the file's name: a FLUX file stores a q/k norm weight as
 `<...>_norm.scale`, and the model and a LoRA call it `<...>_norm.weight`. The
 file's name comes from the model config's own rename, run over the header's
 names (`actor/load_renames.py`), and the rank's rows are byte-verified against
-it like any other key. A patched key the file holds under no name refuses
+it like any other key. A config that also builds weights as it renames
+(PixelDiT strips `net.` and splits a modulation weight in two) keeps the map
+for the keys it only moves; a weight built from part of a tensor has no file
+name. A patched key the file holds under no name refuses
 class P in `capture_record`, before any shard is written. With `lora_low_rss` off a sharded model
 refuses the stack, typed. The checkpoint itself must also be admitted for the
 bake, before any load, on every `lora_low_rss` or `auto_gate` setting
