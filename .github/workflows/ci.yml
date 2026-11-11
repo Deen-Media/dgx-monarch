@@ -62,16 +62,8 @@ jobs:
       - name: Protected test inventory
         run: python tools/check_protected_tests.py --check
       - name: Refusal ledger is current
-        run: |
-          ledger=tests/refusal_class_ledger.json
-          saved="$RUNNER_TEMP/refusal_class_ledger.json"
-          cp "$ledger" "$saved"
-          trap 'cp "$saved" "$ledger"' EXIT
-          PYTHONPATH=src python tests/test_refusal_classes.py --write
-          if ! cmp --silent "$saved" "$ledger"; then
-            diff -u "$saved" "$ledger"
-            exit 1
-          fi
+        # The check mode compares in memory and writes nothing; scripts/test_cpu.sh runs the same command.
+        run: PYTHONPATH=src python tests/test_refusal_classes.py --check
       - name: mypy (full package)
         run: |
           # The dev extra does not pin mypy, so print the version this run uses.

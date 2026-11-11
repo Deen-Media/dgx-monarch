@@ -137,6 +137,16 @@ def _ancestry_owner(base_model) -> Adapter | None:
     return None
 
 
+# ComfyUI model classes a forced family must not bind, by family. Each subclasses
+# a class that family's adapter owns but is another model with a forward of its
+# own, and no adapter of its own is registered ahead to take it, so ancestry
+# alone would hand it to the parent. An entry is dead once its class has an
+# adapter registered ahead of the parent's: the owner check below then refuses
+# first. MiniMaxH3Image was the first entry; its own adapter now registers ahead
+# of H3's, so a forced minimax_h3 on it meets the owner check, and the table is empty.
+_FORCE_REFUSED: dict[str, tuple[str, ...]] = {}
+
+
 def _forced_adapter(base_model, family: str) -> Adapter:
     """Bind `family`'s adapter to `base_model` by Comfy-class ancestry.
 
@@ -144,8 +154,8 @@ def _forced_adapter(base_model, family: str) -> Adapter:
     subclass (see the Omnigen2/Boogu and MiniMaxH3 notes on ADAPTERS), and an
     override is meant to admit a derivative subclass such as a finetune. The
     adapter re-expresses the forward of the module tree Comfy built, so binding
-    is safe only when that tree is an instance of a class this family owns and
-    no more specific family owns it.
+    is safe only when that tree is an instance of a class this family owns, no
+    more specific family owns it, and it is no class ``_FORCE_REFUSED`` names.
 
     Registry order resolves a family named by more than one adapter, so
     ``wan_scail`` keeps SCAIL2 ahead of SCAIL as detection does.
@@ -184,6 +194,21 @@ def _forced_adapter(base_model, family: str) -> Adapter:
             f"{owner.family!r}, or set family_adapter back to 'auto' so "
             "detection chooses (docs/MODELS.md).",
         ))
+    import comfy.model_base as model_base
+
+    for name in _FORCE_REFUSED.get(family, ()):
+        unvetted = getattr(model_base, name, None)
+        if unvetted is not None and isinstance(base_model, unvetted):
+            raise UnsupportedModelError(refusal(
+                RefusalClass.PHYSICS,
+                f"family_adapter={family!r} does not fit this checkpoint. ComfyUI built a "
+                f"{type(base_model).__name__}. {name} subclasses a class the {family} "
+                "adapter owns but is another model with a forward of its own, which that "
+                "adapter has not vetted, so binding the named family here would compute "
+                "the wrong math. Set family_adapter back to 'auto' so detection chooses, "
+                "or render this checkpoint in plain ComfyUI without the DGX Monarch nodes "
+                "instead (docs/MODELS.md).",
+            ))
     return owner
 
 

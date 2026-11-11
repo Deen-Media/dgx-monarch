@@ -465,7 +465,7 @@ def sniff_zimage_l2p(path: str | Path) -> bool:
         return _zimage_l2p_by_identity(
             str(resolved), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
     except Exception as exc:
-        log.debug("upstream gate stood down for %s: %r", path, exc)
+        log.debug("the strict L2P sniff could not read %s: %r", path, exc)
         return False
 
 

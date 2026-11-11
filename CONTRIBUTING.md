@@ -34,6 +34,12 @@ mypy -p dgx_monarch
 bash scripts/test_cpu.sh
 ```
 
+The wrapper runs ruff, mypy and the other CI gate checks that can run on
+your box before the suite
+([scripts/README.md](scripts/README.md#cpu-test-wrapper)); the two commands
+above it also run alone. A green run covers those gates and the suite, not
+all of CI: `tests/test_cpu_gates.py` names the steps only CI runs, and CI's
+tools can be other versions than yours.
 `DGXM_TEST_PYTHON` selects the interpreter. The wrapper uses this checkout's
 source, defaults OMP/MKL to one thread and reports the 25 slowest tests; its
 120-second warning is advisory. `HYPOTHESIS_PROFILE=ci` uses deterministic
@@ -95,10 +101,12 @@ the same tool; see the [verified upstream exception](docs/TROUBLESHOOTING.md#109
 if it prints a known platform-tag failure. CI also checks the refusal ledger
 and builds and inspects both package artifacts on x64. The hosted ARM64 job
 `lint-and-unit-arm64` uses Ubuntu 24.04 and Python 3.12 for dependency,
-Torch/CUDA-build and full CPU checks; x64 covers the wheel build. To check the ledger locally, regenerate it with
-`PYTHONPATH=src python tests/test_refusal_classes.py --write` and review any
-diff in `tests/refusal_class_ledger.json`. An unexpected diff must be resolved,
-not committed just to make the check pass.
+Torch/CUDA-build and full CPU checks; x64 covers the wheel build. To check the ledger locally, run
+`PYTHONPATH=src python tests/test_refusal_classes.py --check`, the command CI
+and `scripts/test_cpu.sh` run: it prints any difference and writes nothing.
+After a reviewed change, regenerate the ledger with `--write` in place of
+`--check` and review the diff in `tests/refusal_class_ledger.json`. An
+unexpected diff must be resolved, not committed just to make the check pass.
 
 ### Test and citation maintenance
 

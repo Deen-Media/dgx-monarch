@@ -2560,7 +2560,10 @@ and capacity rules. Use the actual child family for a finetune: for example,
 Chroma requires `chroma`, not its parent `flux`.
 
 The adapter must match the module tree built by ComfyUI. A mismatch refuses
-before a kernel runs and names both classes. The override has its own
+before a kernel runs and names both classes. A forced `minimax_h3` also
+refuses a MiniMax-H3-Image model: ComfyUI builds it as a subclass of MiniMax
+H3's class, but it is another model with its own forward, which its own adapter
+owns. The override has its own
 first-use context, so a forced run cannot reuse an `auto` result for the
 same file. Leave the override at `auto` for normal detection.
 

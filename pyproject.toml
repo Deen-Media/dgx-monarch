@@ -39,7 +39,7 @@ dependencies = [
 # extra's bound.
 dev = ["ruff>=0.8", "pytest>=8", "mypy>=1.8", "hypothesis>=6.100", "pyyaml>=6",
        "aiohttp>=3.9,<4", "rich>=13", "pillow>=10", "soundfile>=0.12",
-       "CairoSVG>=2.7", "fonttools>=4", "textual>=0.80"]
+       "CairoSVG>=2.7", "fonttools>=4", "textual>=0.80", "av>=12"]
 tui = ["textual>=0.80", "nvidia-ml-py"]
 studio = ["aiohttp>=3.9,<4", "pillow>=10"]
 

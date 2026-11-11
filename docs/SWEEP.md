@@ -49,11 +49,17 @@ the label and `cfg_path` the cfg2 preset would carry, and its warm leg meets
 the "cfg2 did not split" check in section 5.
 
 A checkpoint the loader's header gate refuses reads `refuse:P`, basis
-`guard`, ahead of every topology rule. The gate refuses two shapes: the
+`guard`, ahead of every topology rule. The gate refuses the
 Z-Image L2P layout
-([TROUBLESHOOTING #91](TROUBLESHOOTING.md#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down))
-and a checkpoint whose weight scales ComfyUI would drop
-([#120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
+([TROUBLESHOOTING #91](TROUBLESHOOTING.md#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down)),
+a checkpoint whose weight scales ComfyUI would drop
+([#120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)),
+a MiniMax-H3-Image file without its sigma grid or with quantization metadata
+ComfyUI cannot parse
+([#149](TROUBLESHOOTING.md#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)
+and [#150](TROUBLESHOOTING.md#150-a-minimax-h3-image-file-refuses-because-its-quantization-metadata-cannot-be-read))
+and a header it could not read
+([#152](TROUBLESHOOTING.md#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 The matrix calls the gate itself (`upstream_gate.refusal_for`), so the label
 and the runtime read the same header rule.
 

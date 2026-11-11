@@ -2392,6 +2392,24 @@ Seven seams are held outside the behavioral suite:
    BUFFSIZE; `[fabric.generic-roce]`, `[fabric.generic-ib]`, `[fabric.single-node]`
    templates included).
 
+On its own, the pack writes into ComfyUI's input folder in one place, at
+import, and only the demo inputs its shipped templates name
+(`example_workflows/input`, drawn by `tools/gen_demo_inputs.py`).
+`demo_inputs.py` copies each one into that folder when its name is absent
+there. It never creates the folder. It creates each file exclusively, never
+replaces, truncates or follows a file, link or folder already there, removes
+a copy it could not finish, logs every name it placed, and never raises into
+ComfyUI's startup; a copy that stops part way logs one WARNING that names
+what it placed. A demo file a user deletes returns at the next start.
+`DGXM_DEMO_INPUTS=off` turns the copy off. pytest imports the entrypoint as
+the root package before any fixture runs, so the test battery assigns that
+switch when its conftest loads, and the entrypoint canary assigns it before it
+runs the entrypoint, each whatever the shell exports. The tests of the copy
+point it at scratch folders. So none writes into a shared ComfyUI tree. Two
+other paths put files in that folder at a person's request, and this rule
+does not cover them: a Studio upload, through ComfyUI's own upload route, and
+the sweep's test media, when an operator runs `benchmark/sweep/media.py`.
+
 Readiness, profile compilation, guided setup, repair, receipts, verified update,
 and cluster smoke have CPU unit tests and two-Spark hardware checks.
 Fresh installation, setup reruns, repair, and stopped-Worker readiness results
@@ -2542,6 +2560,8 @@ dgx-monarch/
 │   ├── fp8_compute.py         # [worker_args] fp8_matrix_mult on each actor
 │   │                          #   build, and the `FP8 compute:` line a wrapper
 │   │                          #   on comfy.ops.pick_operations logs per build
+│   ├── demo_inputs.py         # copies the templates' demo inputs into ComfyUI's
+│   │                          #   input folder where a name is absent (§6.1)
 │   ├── comfy_surface.py       # runtime Comfy touchpoint/signature assertion
 │   ├── stock_widget_drift.py  # stock widgets older supported ComfyUI
 │   │                          #   releases lack, and what templates hold
@@ -2807,8 +2827,11 @@ dgx-monarch/
 │                              #   reproduced rule against comfy master
 ├── tools/gen_dgxm_top_image.py # renders docs/media/dgxm-top.svg from a
 │                              #   synthetic recording
+├── tools/gen_demo_inputs.py   # draws example_workflows/input from code
 ├── example_workflows/artifacts.toml # the model files each template needs
 │                              #   staged: models subfolder, source, size, sha256
+├── example_workflows/input/   # the demo images, clips and music the templates'
+│                              #   input nodes name
 ├── benchmark/                 # matrix and sweep harnesses + quality gates
 ├── docs/                      # DESIGN.md (this), INSTALL, CLUSTER, MODELS,
 │                              #   TROUBLESHOOTING, VALIDATION, ADAPTERS
@@ -2846,7 +2869,9 @@ Line-rule exception ledger: `CEILINGS` in `tests/line_limit_helpers.py` lists
 every module above the 500-line default cap with its ceiling.
 `test_module_line_limit_exception_ledger`
 (`tests/test_surface_remediation.py`) fails when the set of modules over 500
-lines differs from that list or a module passes its ceiling. A ceiling
+lines differs from that list or a module passes its ceiling, and
+`test_design_ceiling_table_matches_the_ledger` beside it holds the table below
+to that list. A ceiling
 includes no allowance for future additions. Changing the set or a ceiling
 requires a reviewed ledger edit; new behavior should prefer an extracted
 module. An exception is not permission to fold a focused lifecycle, policy,
@@ -2868,7 +2893,7 @@ an enforced requirement. The current exceptions are:
 | `capacity_agreement.py` | 567 | the driver's collection, its one pure decision function and the fleet card it composes |
 | `actor/worker.py` | 509 | ordered checks and adapter installation for each freshly loaded base in `_inject_for_topology` |
 | `gate_ledger.py` | 527 | the ledger's protocol number and its burn history live together, so the record of why a version was retired cannot drift from the number itself |
-| `comfy_surface.py` | 526 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
+| `comfy_surface.py` | 527 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
 | `adapters/fsdp.py` | 589 | the FSDP launch contract in one place: admitted kinds and profiles, the live precision rescan, the wrap with ignored islands and quantized shards, the streaming shard build hand-off, and the shard-build price |
 | `nodes/gate_identity.py` | 583 | canonical normal/Fleet capability construction, proof-scope binding, authorization, and typed denial |
 | `nodes/loader_preflight.py` | 593 | the loader-site capacity answer in one place: the two windows, the residency ladder they are priced against and the slab rescue offer |

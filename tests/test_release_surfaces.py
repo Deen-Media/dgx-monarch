@@ -204,6 +204,7 @@ def test_sdist_manifest_carries_every_repository_surface():
         "recursive-include .github *.md *.yml",
         "recursive-include docs *",
         "recursive-include example_workflows *.jpg *.json",
+        "recursive-include example_workflows/input *.png *.mp4 *.mp3",
         "include tests/fixtures/workflows/README.md",
         "recursive-include scripts *.md *.sh",
         "recursive-include tests *.json *.py",

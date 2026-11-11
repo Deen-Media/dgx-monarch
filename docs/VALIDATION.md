@@ -3423,8 +3423,8 @@ CPU) and within 2e-5 on the comfy canary's x86 runner; bit identity on GB10
 is a hardware leg (the identity rows below). Canary seams 53 to 59 hold the
 forward, the layout, the head, the build, the sampling grid, the edit node's
 payload and the row-keyed calls. In a world of one GPU the record says
-the header pins are kept; on uly2 it says they are dropped. No hardware run has
-used this family yet.
+the header pins are kept; on uly2 it says they are dropped. No hardware render
+of this family has been taken: every hardware row below is NOT RUN.
 
 | behaviour | what a run must show | status |
 |---|---|---|
