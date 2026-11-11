@@ -53,6 +53,8 @@ def _site(
 ADAPTER_BIND_SITES: tuple[AdapterBindSite, ...] = (
     _site("anima.py", "AnimaAdapter.inject_usp", "diffusion_model", "_forward", "usp_forward",
           ("anima",), "usp", ("comfy.ldm.anima.model.Anima._forward",)),
+    _site("anima.py", "AnimaAdapter.prepare_base_model", "base_model", "extra_conds",
+          "extra_conds", ("anima",), "conds", ("comfy.model_base.Anima.extra_conds",)),
     _site("boogu.py", "BooguAdapter.inject_usp", "diffusion_model", "forward", "usp_forward",
           ("boogu",), "usp", ("comfy.ldm.boogu.model.BooguTransformer2DModel.forward",)),
     _site("boogu.py", "BooguAdapter.inject_cfg_pad_forward", "diffusion_model", "forward",

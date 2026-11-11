@@ -106,7 +106,7 @@ _SENSENOVA_KEYS = (
 
 # The closed default. A header neither reader below could read, with no proof
 # that stock ComfyUI cannot read it, would otherwise load past every refusal above.
-UNREAD_HEADER_TROUBLESHOOTING = 151
+UNREAD_HEADER_TROUBLESHOOTING = 152
 UNREAD_HEADER_REFUSAL = (
     "the upstream gate could not read this checkpoint's safetensors header, and "
     "the failure does not show that ComfyUI could not read it either. The gate "
@@ -371,7 +371,7 @@ def _verdict(path: str | None) -> tuple[int, tuple[str, ...]] | None:
     Total. An unnamed, missing or non-safetensors path answers None. So does a
     file no stock reader can read either, or one whose quantization metadata
     ComfyUI cannot parse (``_stock_fails_too``): that load fails by itself.
-    Any other failed read refuses (#151), because a load that skipped the gate
+    Any other failed read refuses (#152), because a load that skipped the gate
     could render wrong. One header read answers every question; an L2P layout
     is read once more, for the log line alone, through
     ``detect.sniff_zimage_l2p``, which logs the matched key paths. A

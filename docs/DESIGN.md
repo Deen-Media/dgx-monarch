@@ -616,12 +616,16 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
 - a cfg record can be scoped to prompt pairs whose text rows differ. One GPU
   runs such a pair as two batch-1 calls, which cfg2's per-cond dispatch
   reproduces, and folds a pair of equal rows into one batch-2 call, which
-  cfg2's two batch-1 calls do not. Anima row 47 and Boogu row 79 were measured
-  on their templates' pairs, whose rows differ; on 2026-11-07, with the first
-  Spark capped, two pairs of equal rows read off one GPU on both rows (one-step
-  NRMS 0.014 to 0.042, no full schedule matching), so those two records grant
-  only a pair the sampler node tagged. Chroma rows 20 and 19 take the same
-  scope: their pair was the shipped one, whose rows differ, and a BF16 pair of
+  cfg2's two batch-1 calls do not. Boogu row 79 was measured on its
+  template's pair, whose rows differ; on 2026-11-07, with the first Spark
+  capped, two pairs of equal rows read off one GPU (one-step NRMS 0.014 to
+  0.025, no full schedule matching), so the record grants only a pair the
+  sampler node tagged. Anima row 47 had the same scope until 2026-11-10, when
+  the Workers began to prepare Anima's text as stock does: stock pads it to
+  512 rows before the batching decision, so one GPU folds every Anima pair,
+  and the row was withdrawn (TROUBLESHOOTING #151). Chroma rows 20 and 19
+  take the same scope: their pair was the shipped one, whose rows differ, and
+  a BF16 pair of
   equal rows read NRMS 0.034 on cfg2. The tag (`cfg_pair.text_rows_differ`)
   needs one plain conditioning entry a side whose text tensors differ in rows.
   It rides on the latent beside the cfg++ tag, so every site that resolves
@@ -630,7 +634,7 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   timed conditioning, a Sampler Custom graph whose guider has no negative,
   and the dual-model guider with a second model wired stay untagged and take
   each family's Ulysses row (Chroma below 1.2 MP, which has none, the uly2
-  fallback). The rule holds because all three families' text is a
+  fallback). The rule holds because both families' text is a
   `CONDRegular` (Chroma's through Flux's `extra_conds`), which never folds
   rows that differ, and canary seam 50 (`pair-scoped text conds`) holds that
   premise against the installed ComfyUI; a family whose text is a
@@ -2993,7 +2997,7 @@ Every milestone must satisfy this checklist:
   1.77 MP (row 68), Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15), and
   Boogu FP8 and Anima BF16 below 1.2 MP (rows 79 and 47; since 2026-11-07
   these and Chroma's rows 20 and 19 take only a prompt pair whose text rows
-  differ). Each upper band
+  differ, and row 47 was withdrawn on 2026-11-10). Each upper band
   ends at the largest size measured; the two lower bands follow rows 20 and 28
   and rest on one size, 1.05 MP. Krea2 INT8 cfg2 was exact but ran 0.97x to
   1.08x against uly2, so it kept Ulysses; LongCat cfg2 above 1.2 MP was not

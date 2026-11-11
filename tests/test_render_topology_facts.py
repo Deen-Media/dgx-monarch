@@ -110,12 +110,13 @@ def test_a_cfg_pp_latent_records_the_flag_and_the_evidence_row(monkeypatch):
 
 
 @pytest.mark.parametrize(("family", "quant", "row", "fallback"),
-                         [("anima", "bf16", 47, 48), ("boogu", "fp8", 79, 78)])
+                         [("boogu", "fp8", 79, 78)])
 def test_the_pair_tag_decides_a_pair_scoped_row_and_is_recorded(monkeypatch, family, quant,
                                                                  row, fallback):
-    # Issue #52: rows 47 and 79 grant cfg2 only to a pair whose text rows
-    # differ, which the sampler node tags on the latent; untagged, auto takes
-    # the family's Ulysses row and records the cfg row it skipped.
+    # Issue #52: row 79 grants cfg2 only to a pair whose text rows differ,
+    # which the sampler node tags on the latent; untagged, auto takes the
+    # family's Ulysses row and records the cfg row it skipped. Anima's row 47
+    # had the same scope until its withdrawal on 2026-11-10.
     _header_stubs(monkeypatch, family, quant, 8)
     samples = torch.zeros(1, 16, 128, 128)
     tagged = {"samples": samples, common.CFG_PAIR_DIFFERS_METADATA_KEY: True}

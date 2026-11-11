@@ -462,7 +462,7 @@ def test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy():
     megapixels, cfg and batch value in the _auto_rows grid, so a policy change
     is a reviewed digest edit."""
     digest = hashlib.sha256("\n".join(_auto_rows(2)).encode()).hexdigest()
-    assert digest == "9eb40ed83b0984ed266616ba721c2a5711461a66eb9485d7db8d43732e20325f"
+    assert digest == "1a03f6df2f23bed0746fcfc10d1e9604fc7e34e6bbfc754036c4c3026cde5299"
 
 
 def test_auto_never_resolves_cfg_plus_sequence():

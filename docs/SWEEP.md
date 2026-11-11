@@ -43,8 +43,8 @@ An `auto` cell resolves its topology through the runtime's own
 CFG and batch size. Like the runtime, it counts a CFG++ sampler as keeping the
 unconditional pass only on the DGX Monarch sampler nodes that tag the latent
 (`UNCOND_TAGGING_SAMPLERS` in `matrix.py`). An auto cell of a family with a
-cfg row (Krea2, Chroma, LongCat, Qwen-Image, Boogu and Anima, and checkpoints
-that share their families) can therefore resolve to cfg2. It then carries
+cfg row (Krea2, Chroma, LongCat, Qwen-Image and Boogu, and checkpoints that
+share their families) can therefore resolve to cfg2. It then carries
 the label and `cfg_path` the cfg2 preset would carry, and its warm leg meets
 the "cfg2 did not split" check in section 5.
 
@@ -57,7 +57,7 @@ a checkpoint whose weight scales ComfyUI would drop
 a MiniMax-H3-Image file
 ([#149](TROUBLESHOOTING.md#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)
 and #150) and a header it could not read
-([#151](TROUBLESHOOTING.md#151-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
+([#152](TROUBLESHOOTING.md#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 The matrix calls the gate itself (`upstream_gate.refusal_for`), so the label
 and the runtime read the same header rule.
 

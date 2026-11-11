@@ -48,6 +48,7 @@ on:
       - "tests/test_flux3_comfy_exactness.py"
       - "tests/test_flux3_cond_branch.py"
       - "tests/test_flux_views_comfy_exactness.py"
+      - "tests/test_anima_cond_branch.py"
       - "tests/test_moss_image_comfy_exactness.py"
       - "tests/test_moss_image_parity.py"
       - "tests/test_moss_image_support.py"
@@ -313,6 +314,13 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_flux_views_comfy_exactness.py
+      # Anima's text branch: the Worker's bind of stock's extra_conds under
+      # inference mode, stock's model calls on the Worker's KSampler path, and
+      # the persistence canary with LoRA units on the llm_adapter.
+      - name: Anima text branch and persistence canary vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_anima_cond_branch.py
       # These two steps bind comfy's native Qwen Image 2.1 and Wan Animate 2
       # model classes from master and compare the injected sequence-parallel
       # forwards with stock on CPU. The ordinary CI job has no ComfyUI. The

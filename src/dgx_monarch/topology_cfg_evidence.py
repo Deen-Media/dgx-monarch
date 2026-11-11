@@ -200,25 +200,6 @@ CFG2_EVIDENCE: dict[int, CfgEvidence] = {
               "0.077, one-step 0.014 and 0.025",
         pairs="unequal",
     ),
-    47: CfgEvidence(
-        row=47,
-        family="anima",
-        quants=("bf16",),
-        min_mp=0.0,
-        max_mp=1.2,
-        min_world=2,
-        speedup="1.96x faster than one GPU and 1.27x faster than uly2",
-        fidelity=_BIT_IDENTICAL_UNEQUAL,
-        faster=True,
-        exact=True,
-        in_band=True,
-        basis="Campaign K 2026-10-14, dgx-monarch 65d14333, ComfyUI e8665ca8, head capped at "
-              "2100 MHz, run_matrix warm sampler walls on anima-base-v1.0 at 1024 square on "
-              "the template's prompt pair, whose text rows differ, so it takes the per-cond "
-              f"dispatch path; {_EQUAL_PAIR_READING}: full-schedule NRMS 0.0047 and 0.040, "
-              "one-step 0.015 and 0.042",
-        pairs="unequal",
-    ),
 }
 
 

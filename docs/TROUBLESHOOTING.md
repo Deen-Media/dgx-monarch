@@ -4821,7 +4821,7 @@ The same gate refuses a checkpoint whose weight scales ComfyUI would drop; see
 [#120](#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales).
 A damaged header does not turn this refusal off: the gate reads a header its
 strict reader refuses as ComfyUI's own reader does
-([#151](#151-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
+([#152](#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 
 ## 92. A render refuses with `FsdpGateProofError`, and the retry says the same thing
 
@@ -6491,7 +6491,7 @@ The gate reads the header alone, on the driver before capacity or mesh work
 and again at every Worker's load entry point, and replays ComfyUI's load
 steps on the key names. A header its strict reader refuses is read again as
 ComfyUI's own reader reads it, so a damaged header gets this refusal too
-([#151](#151-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
+([#152](#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 
 **Fix:** use an export of the same model in ComfyUI's quantized layout, whose
 quantized layers carry `comfy_quant` keys or a `_quantization_metadata` table,
@@ -8109,7 +8109,7 @@ there, fails earlier or later with another error. The header gate reads the same
 before every other refusal this family meets, since it is a fault of the file.
 A config the JSON parser cannot read, one nested past its limit included,
 counts as no grid, and a damaged header is read as ComfyUI's own reader reads it
-([#151](#151-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
+([#152](#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 
 **Fix:** use the file as Comfy-Org/MiniMax-H3-Image publishes it; every one of
 its DiT files carries the grid. For a file you exported yourself, write the
@@ -8142,7 +8142,50 @@ through ComfyUI's own Load Diffusion Model node rather than the DGX Monarch
 loader. No consent or waiver applies. This refusal retires when the
 MiniMax-H3-Image adapter lands.
 
-## 151. A render refuses because the header gate could not read the checkpoint's header
+## 151. An Anima render on the Workers differs from stock ComfyUI
+
+**Symptom:** on a release before this fix, an Anima render on the Workers
+does not match stock ComfyUI with the same files, prompts, seed and sampler,
+on any topology, `single` with `mode=local` and `gpus_per_host=1` included,
+while the Workers' own topologies match each other. On 2026-11-10 the shipped
+Anima graph at one step, seed 42, read largest difference 0.4086 and NRMS
+0.028 against stock on one GPU, with 204483 of 262144 latent values apart,
+while the Worker's `single`, row 0 of its dp2 render and `run_matrix`'s
+single reference were bit-identical.
+
+**Cause:** stock ComfyUI runs a prompt inside `torch.inference_mode()`, and a
+Worker samples on its own thread, outside it. ComfyUI's `Anima.extra_conds`
+branches on that mode. Inside it, it runs the text through the model's
+`llm_adapter` once per conditioning and pads it to 512 rows. Outside it, the
+branch ComfyUI keeps for training, it hands the forward the raw Qwen3 rows
+with the T5 ids, and the forward runs the adapter and the pad on every model
+call. Each conditioning gets the same math, but the batching differs: ComfyUI
+joins the prompt and the negative into one model call only when their text
+tensors have the same shape. In stock both have 512 rows, so each step makes
+one batch-2 call; on a Worker the raw rows of the shipped pair differ in
+length, so each step made two batch-1 calls, and GB10's matrix kernels change
+with the row count. That is the expected cause of the 0.028; as of 2026-11-10
+no hardware run on the fixed Workers has confirmed it. A CPU test against
+ComfyUI v0.45.0 and 8a98ecf58 shows the two call patterns, and that inference
+mode alone picks between them; on the CPU the latents still match, because its
+kernels do not change with the batch.
+
+**Fix:** update. On every load the Anima adapter runs stock's `extra_conds`
+under inference mode, as the FLUX.3 and MOSS-Image adapters do, so every
+topology prepares the text once per conditioning and batches the pair as stock
+does. Each Worker logs `anima text branch: preprocessed once (extra_conds)` at
+the first render after a load. Because one GPU now folds the pair into one
+batch-2 call, cfg2's two batch-1 calls, one per rank, are not the same math
+for Anima: `auto` table row 47 (cfg2 below 1.2 MP on BF16) is withdrawn and
+every Anima render under `auto` takes uly2 (row 48). Explicit cfg2 still
+renders. The comfy canary's `inference mode branches` seam lists every place
+ComfyUI's source reads or sets inference mode, reads a tensor's inference
+flag, or reads grad mode, so a new branch of this kind fails the canary before
+it reaches a render. As of 2026-11-10 no hardware run has
+compared the fixed Workers with stock
+([VALIDATION](VALIDATION.md#anima-text-branch-fix)).
+
+## 152. A render refuses because the header gate could not read the checkpoint's header
 
 **Symptom:** the DGX Monarch loader refuses class P with "the upstream gate
 could not read this checkpoint's safetensors header", before anything loads. A

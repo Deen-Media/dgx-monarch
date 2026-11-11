@@ -7,7 +7,7 @@ metadata that is not all strings. Before, any failed read meant no verdict, so
 such a file loaded past every refusal. Now the gate reads the header again as
 ComfyUI's own reader does and the same predicates answer; a file no stock
 reader can read keeps no verdict; and a read that fails with no parse verdict
-refuses class P (#151).
+refuses class P (#152).
 
 Every file here is hand-made: a header and a few zero bytes, no weights. The
 stock side (what safetensors and ComfyUI's two load paths read from the same
@@ -357,7 +357,7 @@ def _heading(number: int) -> str:
 
 @pytest.mark.parametrize("base", sorted(BASES))
 def test_a_read_that_fails_with_no_parse_verdict_refuses_class_p(models, base, monkeypatch):
-    """The closed default (#151): no proof that stock cannot read the file, so no load.
+    """The closed default (#152): no proof that stock cannot read the file, so no load.
 
     A junk value nested past the parser's limit raises RecursionError in the strict
     reader and in the lenient one. Whether ComfyUI's reader fails on it too depends on
@@ -368,7 +368,7 @@ def test_a_read_that_fails_with_no_parse_verdict_refuses_class_p(models, base, m
     with pytest.raises(RecursionError):
         read_safetensors_header(models / name)
     text = _assert_on_both_paths(models, name, UNREAD)
-    assert UNREAD == 151 and _heading(UNREAD).startswith("A render refuses because the header gate could not read")
+    assert UNREAD == 152 and _heading(UNREAD).startswith("A render refuses because the header gate could not read")
     for token in ("could not read this checkpoint's safetensors header", "Nothing was loaded",
                   "no waiver", "stock ComfyUI on one GPU", "Load Diffusion Model", "restore the file"):
         assert token in text
@@ -388,7 +388,7 @@ def test_a_read_that_fails_with_no_parse_verdict_refuses_class_p(models, base, m
 def test_quantization_metadata_nested_past_the_limit_refuses_but_a_parse_error_does_not(models):
     """The scale check gives no verdict only on the errors ComfyUI's own
     ``convert_old_quants`` raises on the same text (not JSON, no layers map). Any other
-    failure is no proof that stock fails, so it refuses (#151)."""
+    failure is no proof that stock fails, so it refuses (#152)."""
     tensors, _metadata = PASSES["nvfp4_with_its_metadata"]
     deep = Path(_write_header(models / "deep.safetensors", tensors, {"_quantization_metadata": DEEP})).name
     _assert_on_both_paths(models, deep, UNREAD)
