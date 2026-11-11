@@ -426,6 +426,17 @@ families subclass others and the first match wins, so the most specific
 adapter comes first. [ADAPTERS.md](ADAPTERS.md) is the authoring guide;
 [MODELS.md](MODELS.md) carries the per-family evidence.
 
+The Init node's `family_adapter` override names a family where detection
+reads a header wrong or not at all. It selects that family's policy and
+adapter; it does not widen what the adapter takes. A forced family binds a
+model exactly when its adapter's own `matches()` takes the model's nearest
+ComfyUI class, the first class in the model's ancestry that
+`comfy.model_base` defines. A derivative class that ComfyUI does not define
+therefore binds through the vetted class it extends, and a subclass that
+ComfyUI defines and the adapter refuses under `auto` refuses under the
+override too, class P
+([TROUBLESHOOTING #153](TROUBLESHOOTING.md#153-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
+
 Resolved cuDNN Ring attention uses an owned per-instance processor through
 xFuser's custom-processor interface and keeps xFuser's ordinary Ring
 transport. The private ATen cuDNN operator supplies the FP32 log-sum-exp values
