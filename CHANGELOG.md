@@ -466,6 +466,26 @@
 
 ### Rendering
 
+- A forced `family_adapter` no longer binds a model its adapter refuses under
+  `auto`. This changes what a forced family does. Before, forcing bound by
+  class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,
+  RelayVSR and CausalAR models, `hunyuan` took HunyuanVideo 1.0 and its two
+  image-to-video models, and `zimage` took Lumina 2.0 and Ming-Image. Under
+  sequence parallelism the family's sharded forward then replaced the
+  variant's own and dropped the inputs it did not know, so a render could be
+  wrong with no error. A forced family now binds a model exactly when its
+  adapter would take the model's nearest ComfyUI class under `auto`. A class a
+  custom node derives from a supported one still binds; the models above
+  refuse class P, as they do under `auto`
+  ([TROUBLESHOOTING #154](docs/TROUBLESHOOTING.md#154-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
+- An extra tensor in a checkpoint no longer moves the loader's header
+  refusals. Before, one tensor named like another family's key
+  (`aux.dec_net.x.weight` in a Z-Image L2P file, `aux.audio_patch_proj.weight`
+  in a MiniMax-H3-Image file with no sigma grid, or a key of any earlier row of
+  the detector's table) made the header detector read another family, and the
+  file passed the gate while ComfyUI still built the same model from it. The
+  gate now names both families by the exact keys ComfyUI's own detection tests
+  ([TROUBLESHOOTING #91](docs/TROUBLESHOOTING.md#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down)).
 - A damaged safetensors header no longer turns the loader's header refusals
   off. Before, a header the strict reader refused (a tensor entry or metadata
   key written twice, an empty tensor name, tensors sharing bytes, metadata

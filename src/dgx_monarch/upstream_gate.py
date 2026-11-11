@@ -310,8 +310,8 @@ def _read_by_identity(
     """One header read per file identity: (L2P key layout, uncovered layers,
     a MiniMax-H3-Image refusal number or None).
 
-    An L2P layout returns before the metadata is parsed, so a malformed
-    ``_quantization_metadata`` cannot turn the #91 refusal off.
+    An L2P layout returns before the scale check, and its test never raises on
+    the metadata, so a malformed ``_quantization_metadata`` cannot turn #91 off.
 
     The strict reader refuses headers that stock ComfyUI reads (a key written
     twice, an empty tensor name, shared byte ranges, metadata that is not all
@@ -319,8 +319,9 @@ def _read_by_identity(
     ``_lenient_header`` and the same predicates answer on what ComfyUI would
     load. A damaged header therefore gets every refusal an intact one gets.
     """
+    from .adapters import gate_keys
     from .adapters import minimax_h3_image_header as h3_image_header
-    from .adapters.detect import detect_family_from_keys, is_zimage_l2p_from_keys
+    from .adapters.detect import is_zimage_l2p_from_keys
     from .log import get_logger
     from .safetensors_header import read_safetensors_header
 
@@ -335,17 +336,23 @@ def _read_by_identity(
         get_logger(__name__).info(
             "upstream gate: %s failed the strict header read (%s); its header was "
             "read again as ComfyUI reads it", path, exc)
-    if is_zimage_l2p_from_keys(list(header.tensors)):
-        if isinstance(header, _LenientHeader):
-            # detect.sniff_zimage_l2p reads strictly, so it cannot log this file.
+    # Both family tests read ComfyUI's exact keys first (adapters/gate_keys.py),
+    # so an extra tensor that moves the header detector's reading cancels neither.
+    names = list(header.tensors)
+    comfy_keys = gate_keys.comfy_detection_keys(
+        {key: info.dtype for key, info in header.tensors.items()}, header.metadata)
+    if gate_keys.reads_zimage_l2p(names, comfy_keys):
+        if isinstance(header, _LenientHeader) or not is_zimage_l2p_from_keys(names):
+            # detect.sniff_zimage_l2p reads strictly and by its own needles, so it
+            # cannot log this file.
             get_logger(__name__).info(
                 "upstream gate: %s carries the Z-Image L2P decoder (%s) and no dec_net head",
-                path, ", ".join(sorted(key for key in header.tensors if key.startswith(
+                path, ", ".join(sorted(key for key in names if key.startswith(
                     "local_decoder.") or ".local_decoder." in key)[:4]))
         return True, (), None
     # Decided from keys and the config metadata alone, before any quantization
     # metadata is parsed, so a damaged ``_quantization_metadata`` cannot cancel it.
-    h3_image = detect_family_from_keys(list(header.tensors)) == h3_image_header.FAMILY
+    h3_image = gate_keys.reads_minimax_h3_image(names, comfy_keys)
     h3_image_number = (H3_IMAGE_GRID_TROUBLESHOOTING
                        if h3_image and h3_image_header.grid_missing(header.metadata) else None)
     try:

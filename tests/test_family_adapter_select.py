@@ -10,7 +10,9 @@ prove. Two properties are pinned here:
    forced run never shares a ledger row with an auto run of the same file; it
    never inherits family-level slab vouching; it never writes the family
    memo; and a family the loaded model is not an instance of refuses with a
-   typed class P message before any kernel runs.
+   typed class P message before any kernel runs. So does a model its family's
+   adapter refuses under `auto`: a forced family binds what `auto` binds, plus
+   a derivative of a vetted class (docs/TROUBLESHOOTING.md #154).
 """
 from __future__ import annotations
 
@@ -51,10 +53,24 @@ class _StubAdapter:
         self.exact_model_base_classes = exact
         self.injected = []
 
-    def matches(self, _base_model):  # pragma: no cover - never called under force
-        raise AssertionError(
-            "the forced path must not call matches(): exact-type adapters raise "
-            "there on exactly the subclasses an override exists to admit")
+    def matches(self, base_model):
+        """As the shipped adapters: a broad adapter takes every subclass, an
+        exact-type one raises on any type but those it names. The forced path
+        asks this about the model's nearest ComfyUI class."""
+        import comfy.model_base as model_base
+
+        from dgx_monarch.adapters import UnsupportedModelError
+
+        names = (*self.model_base_classes, *self.exact_model_base_classes)
+        owned = [getattr(model_base, name, None) for name in names]
+        if not any(cls is not None and isinstance(base_model, cls) for cls in owned):
+            return False
+        if not self.exact_model_base_classes or any(
+                type(base_model) is getattr(model_base, name, None)
+                for name in self.exact_model_base_classes):
+            return True
+        raise UnsupportedModelError(
+            f"{self.family} variant {type(base_model).__name__} is not vetted")
 
     def inject_usp(self, diffusion_model, ctx):
         self.injected.append(diffusion_model)
@@ -227,8 +243,9 @@ def test_a_worker_without_a_store_runs_the_auto_path():
 
 def test_a_forced_family_binds_the_derivative_subclass_detection_refuses(
         stub_registry):
-    """ComfyUI built a subclass of a class this family owns: detection's
-    exact-type adapters raise on it, and the forced family binds it."""
+    """A subclass ComfyUI does not define, built on a class this family's
+    adapter takes: detection's exact-type adapters raise on it, and the forced
+    family binds it through the class it extends."""
     from dgx_monarch.adapters import adapter_for
 
     assert adapter_for(_AlphaChild(), "alpha") is stub_registry.alpha
@@ -347,37 +364,70 @@ def test_the_registry_order_resolves_a_family_two_adapters_answer():
     assert type(scail[0]).__name__ == "SCAIL2Adapter"
 
 
-def test_a_forced_family_refuses_a_comfy_class_named_as_another_model(
+def test_a_forced_family_refuses_a_comfy_subclass_its_adapter_refuses_under_auto(
         stub_registry, monkeypatch):
-    """A ComfyUI class can subclass a class a family owns and still be another
-    model, with no adapter of its own registered ahead to take it. Ancestry
-    alone would bind the parent adapter over its forward; a named entry
-    refuses it, and its subclasses, class P. A derivative ComfyUI does not
-    define still binds."""
+    """The rule: a forced family binds a model exactly when its adapter takes
+    the model's nearest ComfyUI class under `auto`. A subclass ComfyUI defines
+    is its own nearest class, and an exact-type adapter refuses it: another
+    upstream model, whose forward the adapter does not re-express. So does a
+    derivative of that subclass. A derivative of a vetted class still binds,
+    which is what the override is for."""
     import comfy.model_base as model_base
 
-    from dgx_monarch import adapters as adapters_mod
-    from dgx_monarch.adapters import UnsupportedModelError, adapter_for
+    from dgx_monarch.adapters import UnsupportedModelError, adapter_for, get_adapter
     from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
 
     image = type("AlphaImage", (_Alpha,), {})
     monkeypatch.setattr(model_base, "AlphaImage", image, raising=False)
-    monkeypatch.setattr(adapters_mod, "_FORCE_REFUSED",
-                        {"alpha": ("NotInThisComfy", "AlphaImage")})
-    for model in (image(), type("AlphaImageFinetune", (image,), {})()):
+    for model, built in ((image(), "a AlphaImage, and"),
+                         (type("AlphaImageFinetune", (image,), {})(),
+                          "a AlphaImageFinetune, a derivative of AlphaImage, and")):
+        with pytest.raises(UnsupportedModelError):
+            get_adapter(model)  # auto refuses it
         with pytest.raises(UnsupportedModelError) as excinfo:
             adapter_for(model, "alpha")
         message = str(excinfo.value)
-        assert "'alpha'" in message and type(model).__name__ in message
-        assert "AlphaImage subclasses a class the alpha adapter owns" in message
+        assert "family_adapter='alpha' does not fit this checkpoint" in message
+        assert f"ComfyUI built {built}" in message
+        assert "does not take this AlphaImage model under 'auto' either" in message
+        assert "alpha variant AlphaImage is not vetted" in message  # the adapter's own answer
+        assert message.endswith("See docs/TROUBLESHOOTING.md #154.")
         tag = parse_refusal_tag(message)
         assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
         assert tag.guard is None and tag.waivable is False
     assert not stub_registry.alpha.injected
+    # A derivative of the vetted class: auto's exact-type test raises on it, the force binds it.
+    with pytest.raises(UnsupportedModelError):
+        get_adapter(_AlphaChild())
     assert adapter_for(_AlphaChild(), "alpha") is stub_registry.alpha
     assert adapter_for(_Alpha(), "alpha") is stub_registry.alpha
-    # The entry is the family's own: another family's binding is untouched.
     assert adapter_for(_Child(), "child") is stub_registry.child
+
+
+def test_the_forced_path_honours_an_adapters_instance_test_through_the_view(
+        stub_registry, monkeypatch):
+    """Z-Image's adapter takes its named class only when the diffusion model
+    carries learned pad tokens, because Lumina 2.0 builds the same class. The
+    forced path asks the same test, on the model or, for a derivative, on a
+    view of it as its ComfyUI class that shares its attributes."""
+    from dgx_monarch.adapters import UnsupportedModelError, adapter_for
+
+    def only_with_pads(base_model):
+        return type(base_model) is _Beta and bool(getattr(base_model, "pads", None))
+
+    monkeypatch.setattr(stub_registry.beta, "matches", only_with_pads)
+    padded, bare = _Beta(), _Beta()
+    padded.pads = 32
+    assert adapter_for(padded, "beta") is stub_registry.beta
+    with pytest.raises(UnsupportedModelError, match="does not take this _Beta model"):
+        adapter_for(bare, "beta")
+    finetune = type("BetaFinetune", (_Beta,), {})
+    padded_finetune, bare_finetune = finetune(), finetune()
+    padded_finetune.pads = 32
+    assert adapter_for(padded_finetune, "beta") is stub_registry.beta
+    assert type(padded_finetune) is finetune and padded_finetune.pads == 32  # the model is untouched
+    with pytest.raises(UnsupportedModelError, match="a derivative of _Beta"):
+        adapter_for(bare_finetune, "beta")
 
 
 def test_a_forced_minimax_h3_does_not_bind_the_image_model(monkeypatch):
@@ -409,6 +459,127 @@ def test_a_forced_minimax_h3_does_not_bind_the_image_model(monkeypatch):
     assert "which the minimax_h3_image adapter owns" in message
     image = next(adapter for adapter in ADAPTERS if adapter.family == "minimax_h3_image")
     assert adapter_for(model_base.MiniMaxH3Image(), "minimax_h3_image") is image
+
+
+def test_a_forced_minimax_h3_image_binds_its_class_and_refuses_a_comfy_subclass(monkeypatch):
+    """The image adapter names its own model class. A forced ``minimax_h3_image``
+    binds that class and a class a custom node derives from it. A subclass
+    ComfyUI itself defines is another model: `auto` refuses it, and so does the
+    force (docs/TROUBLESHOOTING.md #154). Neither family takes the other's model."""
+    from dgx_monarch.adapters import UnsupportedModelError, adapter_for, get_adapter
+    from fake_model_base_helpers import install_fake_model_base
+
+    mb = install_fake_model_base(monkeypatch, {
+        "MiniMaxH3": None, "MiniMaxH3Image": "MiniMaxH3",
+        "MiniMaxH3ImageVariant": "MiniMaxH3Image"})
+    image = mb.MiniMaxH3Image()
+    assert _bound(image, "minimax_h3_image") == "MiniMaxH3ImageAdapter"
+    assert type(get_adapter(image)).__name__ == "MiniMaxH3ImageAdapter"
+    finetune = type("H3ImageFinetune", (mb.MiniMaxH3Image,), {})()
+    assert _bound(finetune, "minimax_h3_image") == "MiniMaxH3ImageAdapter"
+    message = _forced_refusal(mb.MiniMaxH3ImageVariant(), "minimax_h3_image")
+    assert "ComfyUI built a MiniMaxH3ImageVariant, and" in message
+    assert "minimax_h3_image variant MiniMaxH3ImageVariant is a MiniMaxH3Image subclass" in message
+    derived = type("VariantFinetune", (mb.MiniMaxH3ImageVariant,), {})()
+    assert "a VariantFinetune, a derivative of MiniMaxH3ImageVariant" in _forced_refusal(
+        derived, "minimax_h3_image")
+    with pytest.raises(UnsupportedModelError, match="family_adapter='minimax_h3_image'"):
+        adapter_for(mb.MiniMaxH3(), "minimax_h3_image")
+
+
+# ComfyUI 0.45.0's class tree for the three families whose forced bind was wider than
+# `auto`: each refused class is another upstream model (docs/TROUBLESHOOTING.md #154).
+_WAN_REFUSED = ("WAN21_Camera", "WAN21_CausalAR", "WAN21_HuMo", "WAN21_Vace",
+                "WAN22_Animate", "WAN22_RelayVSR", "WAN22_S2V")
+_FORCED_TREE = {
+    "WAN21": None, "WAN22": "WAN21", "WAN21_FlowRVS": "WAN21",
+    **dict.fromkeys(_WAN_REFUSED, "WAN21"),
+    "HunyuanVideo": None, "HunyuanVideoI2V": "HunyuanVideo",
+    "HunyuanVideoSkyreelsI2V": "HunyuanVideo", "HunyuanVideo15": "HunyuanVideo",
+    "HunyuanImage21": None,
+    "Lumina2": None, "MingImage": "Lumina2", "ZImagePixelSpace": "Lumina2",
+}
+
+
+def _forced_refusal(model, family):
+    from dgx_monarch.adapters import UnsupportedModelError, adapter_for, get_adapter
+    from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
+
+    with pytest.raises(UnsupportedModelError):
+        get_adapter(model)  # what the force must not widen
+    with pytest.raises(UnsupportedModelError) as excinfo:
+        adapter_for(model, family)
+    message = str(excinfo.value)
+    tag = parse_refusal_tag(message)
+    assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+    assert tag.guard is None and tag.waivable is False
+    assert f"family_adapter={family!r} does not fit this checkpoint" in message
+    assert message.endswith("See docs/TROUBLESHOOTING.md #154.")
+    return message
+
+
+def _bound(model, family):
+    from dgx_monarch.adapters import adapter_for
+
+    adapter = adapter_for(model, family)
+    assert adapter.family == family
+    return type(adapter).__name__
+
+
+def test_the_shipped_adapters_refuse_under_force_what_they_refuse_under_auto(monkeypatch):
+    """The twelve classes a forced family bound although `auto` refuses them, on
+    the shipped registry: every one refuses, with the built class named, and so
+    does a derivative of one. What `auto` takes still binds, to the same
+    adapter, and so does a derivative of a vetted class."""
+    from dgx_monarch.adapters import get_adapter
+    from fake_model_base_helpers import install_fake_model_base
+
+    mb = install_fake_model_base(monkeypatch, _FORCED_TREE)
+    for name in _WAN_REFUSED:
+        message = _forced_refusal(getattr(mb, name)(), "wan")
+        assert f"ComfyUI built a {name}, and" in message
+        assert f"wan variant {name} is not in the dgx-monarch launch set" in message
+    derived = type("VaceFinetune", (mb.WAN21_Vace,), {})()
+    assert "a VaceFinetune, a derivative of WAN21_Vace" in _forced_refusal(derived, "wan")
+    for name in ("WAN21", "WAN22", "WAN21_FlowRVS"):
+        model = getattr(mb, name)()
+        assert _bound(model, "wan") == "WanAdapter" == type(get_adapter(model)).__name__
+    assert _bound(type("Wan22Finetune", (mb.WAN22,), {})(), "wan") == "WanAdapter"
+
+    for name in ("HunyuanVideo", "HunyuanVideoI2V", "HunyuanVideoSkyreelsI2V"):
+        message = _forced_refusal(getattr(mb, name)(), "hunyuan")
+        assert f"hunyuan variant {name} is not in the dgx-monarch launch set" in message
+        # The adapter's remedy no longer names topologies its own refusal covers.
+        assert "cfg2 or single" not in message and "stock ComfyUI on one GPU" in message
+    for name in ("HunyuanVideo15", "HunyuanImage21"):
+        assert _bound(getattr(mb, name)(), "hunyuan") == "HunyuanAdapter"
+
+
+def test_a_forced_zimage_takes_the_named_class_only_as_auto_does(monkeypatch):
+    """Lumina 2.0 builds the class Z-Image's adapter names. `auto` tells them
+    apart by the diffusion model's learned pad tokens, and the forced path asks
+    the same test: with them it binds, also through a derivative; without them
+    it refuses. Ming-Image, a subclass ComfyUI defines, refuses either way."""
+    from fake_model_base_helpers import install_fake_model_base
+
+    mb = install_fake_model_base(monkeypatch, _FORCED_TREE)
+    zimage = SimpleNamespace(pad_tokens_multiple=32)
+    lumina = SimpleNamespace(pad_tokens_multiple=None)
+
+    def model(cls, diffusion_model):
+        instance = cls()
+        instance.diffusion_model = diffusion_model
+        return instance
+
+    assert _bound(model(mb.Lumina2, zimage), "zimage") == "ZImageAdapter"
+    assert _bound(model(mb.ZImagePixelSpace, zimage), "zimage") == "ZImageAdapter"
+    finetune = type("ZImageFinetune", (mb.Lumina2,), {})
+    assert _bound(model(finetune, zimage), "zimage") == "ZImageAdapter"
+    assert "ComfyUI built a Lumina2, and" in _forced_refusal(model(mb.Lumina2, lumina), "zimage")
+    assert "a derivative of Lumina2" in _forced_refusal(model(finetune, lumina), "zimage")
+    for diffusion_model in (zimage, lumina):
+        message = _forced_refusal(model(mb.MingImage, diffusion_model), "zimage")
+        assert "does not take this MingImage model under 'auto' either" in message
 
 
 def _write_safetensors(path, metadata):

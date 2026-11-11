@@ -245,7 +245,9 @@ errors and the render ignores them; use a converted release. Row by row:
 **I have a finetune or a merge.** Init has a `family_adapter` widget for the
 case where the file header does not say what the model is. Naming the child
 family for a finetune of that child is what works; naming a parent family for
-a child model is refused, because it would compute the wrong math. A named
+a child model is refused, because it would compute the wrong math, and so is
+naming a family for another upstream model its adapter does not take, such as
+a Wan VACE file under `wan`. A named
 family declares the file's family; it neither inherits the support row's
 evidence nor enables automatic slab residency. [MODELS.md](MODELS.md) has the
 rules.

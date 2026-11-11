@@ -12054,7 +12054,7 @@
       }
     },
     {
-      "applicability": "Which model family's adapter handles this checkpoint. auto (default): detection picks it. Name a family for a finetune whose header detection reads wrong or not at all: that family's topology row, capacity preflights and adapter apply, even when ComfyUI built a derived subclass that detection refuses. A named family that does not fit the model ComfyUI built gets a typed refusal before any kernel runs, never a wrong render. It cannot make ComfyUI load a checkpoint ComfyUI cannot detect, and it does not correct a misread quantization. A forced run is gated as its own combination and never inherits a family's slab vouching: for zero-copy residency on a finetune, set slab_weights=on yourself. See docs/MODELS.md.",
+      "applicability": "Which model family's adapter handles this checkpoint. auto (default): detection picks it. Name a family for a finetune whose header detection reads wrong or not at all: that family's topology row, capacity preflights and adapter apply, also to a class a custom node derives from one the adapter takes. A named family that does not fit the model ComfyUI built, another upstream model the adapter refuses under auto included, gets a typed refusal before any kernel runs, never a wrong render. It cannot make ComfyUI load a checkpoint ComfyUI cannot detect, and it does not correct a misread quantization. A forced run is gated as its own combination and never inherits a family's slab vouching: for zero-copy residency on a finetune, set slab_weights=on yourself. See docs/MODELS.md.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": [
@@ -12128,7 +12128,7 @@
       "units": null,
       "validation": {
         "advanced": true,
-        "tooltip": "Which model family's adapter handles this checkpoint. auto (default): detection picks it. Name a family for a finetune whose header detection reads wrong or not at all: that family's topology row, capacity preflights and adapter apply, even when ComfyUI built a derived subclass that detection refuses. A named family that does not fit the model ComfyUI built gets a typed refusal before any kernel runs, never a wrong render. It cannot make ComfyUI load a checkpoint ComfyUI cannot detect, and it does not correct a misread quantization. A forced run is gated as its own combination and never inherits a family's slab vouching: for zero-copy residency on a finetune, set slab_weights=on yourself. See docs/MODELS.md."
+        "tooltip": "Which model family's adapter handles this checkpoint. auto (default): detection picks it. Name a family for a finetune whose header detection reads wrong or not at all: that family's topology row, capacity preflights and adapter apply, also to a class a custom node derives from one the adapter takes. A named family that does not fit the model ComfyUI built, another upstream model the adapter refuses under auto included, gets a typed refusal before any kernel runs, never a wrong render. It cannot make ComfyUI load a checkpoint ComfyUI cannot detect, and it does not correct a misread quantization. A forced run is gated as its own combination and never inherits a family's slab vouching: for zero-copy residency on a finetune, set slab_weights=on yourself. See docs/MODELS.md."
       }
     },
     {
