@@ -201,3 +201,337 @@ def test_the_bake_takes_cast_time_on_exactly_the_keys_stocks_own_load_does(comfy
     """Stock's ModelPatcherDynamic.load chooses; the bake must choose the same keys,
     across the 16 KiB cut-off for BF16 and INT8 ConvRot, a bias and a resize."""
     assert comfy_cpu.check_stock_choice() == 17
+
+
+# A partial load. ComfyUI's classic patcher gives every patched module it leaves
+# off the device a cast-time patch, the small ones included; stock's DynamicVRAM
+# load force-loads a module of 16 KiB or less through the classic bake. With the
+# LoRA compute dtype GB10 reports (FP16) the two recipes round a BF16 norm
+# weight with a diff apart, so the tests pin that dtype on this CPU.
+
+_NORM_DIM = 1024  # 2 KiB of bf16: a module stock force-loads
+
+
+def _partial_rig():
+    import comfy.lora
+    import comfy.model_patcher
+    import comfy.ops
+    import torch
+
+    ops = comfy.ops.disable_weight_init
+
+    class _Root(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = ops.Linear(256, 64, bias=False, dtype=torch.bfloat16)  # 32 KiB: a cast-time key
+            self.norm = ops.RMSNorm(_NORM_DIM, dtype=torch.bfloat16)
+
+        def get_dtype_inference(self):
+            return torch.bfloat16
+
+    gen = torch.Generator().manual_seed(11)
+    pristine = {"lin.weight": (torch.randn(64, 256, generator=gen) * 0.05).to(torch.bfloat16),
+                "norm.weight": (1.0 + 0.2 * torch.randn(_NORM_DIM, generator=gen)).to(torch.bfloat16)}
+    lora = {"lin.lora_up.weight": torch.randn(64, 4, generator=gen) * 0.01,
+            "lin.lora_down.weight": torch.randn(4, 256, generator=gen) * 0.01,
+            "lin.alpha": torch.tensor(4.0),
+            "norm.diff": (torch.randn(_NORM_DIM, generator=gen) * 0.02).to(torch.bfloat16)}
+    patches = comfy.lora.load_lora(lora, {"lin": "lin.weight", "norm": "norm.weight"})
+    cpu = torch.device("cpu")
+
+    def build():
+        root = _Root()
+        root.lin.weight = torch.nn.Parameter(pristine["lin.weight"].clone(), requires_grad=False)
+        root.norm.weight = torch.nn.Parameter(pristine["norm.weight"].clone(), requires_grad=False)
+        patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+        patcher.add_patches(patches, 0.5)
+        return root, patcher
+
+    return build, pristine, cpu
+
+
+@pytest.fixture
+def gb10_lora_dtype(comfy_cpu):
+    """The LoRA compute dtype GB10 reports, pinned for this CPU and put back."""
+    import comfy.model_management as mm
+    import torch
+
+    cpu = torch.device("cpu")
+    before = dict(mm.LORA_COMPUTE_DTYPES)
+    mm.LORA_COMPUTE_DTYPES[cpu] = torch.float16
+    try:
+        yield
+    finally:
+        mm.LORA_COMPUTE_DTYPES.clear()
+        mm.LORA_COMPUTE_DTYPES.update(before)
+
+
+def _cast_weight(module):
+    """The weight the layer's forward computes with, through ComfyUI's own cast."""
+    import comfy.ops
+    import torch
+
+    probe = torch.zeros(1, dtype=torch.bfloat16)
+    weight, _bias, stream = comfy.ops.cast_bias_weight(module, probe, offloadable=True)
+    out = weight.clone()
+    comfy.ops.uncast_bias_weight(module, weight, None, stream)
+    return out
+
+
+@pytest.mark.parametrize("route", ["partial load", "partial unload"])
+def test_a_small_module_left_off_the_device_computes_with_stocks_classic_bake(
+        comfy_cpu, gb10_lora_dtype, route):
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+
+    build, pristine, cpu = _partial_rig()
+    twin, reference = build()
+    # What stock's DynamicVRAM load gives each key: the force-load bake of the
+    # small module, the cast-time weight of the large one.
+    stock_norm = reference.patch_weight_to_device("norm.weight", device_to=cpu, return_weight=True, force_cast=True)
+    stock_lin = comfy_cpu.stock_cast_time_weight(twin, reference, "lin.weight")
+
+    def offload(patcher):
+        if route == "partial load":
+            patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+        else:
+            patcher.load(cpu, full_load=True)
+            patcher.partially_unload(cpu, memory_to_free=1e12)
+
+    # ComfyUI's classic patcher alone: the small module takes the cast-time
+    # recipe and misses stock's weight. This is the gap.
+    root, patcher = build()
+    offload(patcher)
+    assert root.norm.weight_function and root.lin.weight_function
+    assert not torch.equal(_cast_weight(root.norm), stock_norm)
+    patcher.unpatch_model(cpu)
+
+    root, patcher = build()
+    assert lora_cast_time.install() is True
+    try:
+        offload(patcher)
+        assert getattr(root.norm.weight_function[0], "_dgxm_full_load_weight", False)
+        assert not getattr(root.lin.weight_function[0], "_dgxm_full_load_weight", False)
+        assert torch.equal(_cast_weight(root.norm), stock_norm)
+        assert torch.equal(_cast_weight(root.lin), stock_lin)
+        # The stored weights are untouched, and an unpatch leaves the file's values.
+        assert torch.equal(root.norm.weight, pristine["norm.weight"])
+        patcher.unpatch_model(cpu)
+        assert torch.equal(root.norm.weight, pristine["norm.weight"])
+        assert torch.equal(root.lin.weight, pristine["lin.weight"])
+        assert not root.norm.weight_function
+        # A full load of the same stack bakes the same two weights.
+        patcher.load(cpu, full_load=True)
+        assert torch.equal(root.norm.weight, stock_norm)
+        assert torch.equal(root.lin.weight, stock_lin)
+    finally:
+        assert lora_cast_time.uninstall() is True
+    import comfy.model_patcher as comfy_mp
+
+    for name in ("load", "partially_unload", "patch_weight_to_device"):
+        assert not getattr(getattr(comfy_mp.ModelPatcher, name), "_dgxm_cast_time", False)
+
+
+@pytest.mark.parametrize("route", ["partial load", "partial unload"])
+def test_a_quantized_layer_left_off_the_device_computes_with_the_full_loads_weight(comfy_cpu, route):
+    """An INT8 ConvRot layer with a LoRA, left off the device. ComfyUI's classic
+    cast hands its cast-time patch the dequantized weight and never requantizes,
+    so the layer computes with another weight than stock's cast and than a full
+    load's bake. With the route installed the cast returns stock's requantized
+    weight, and the layer's output is the full load's, bit for bit; the BF16
+    layer beside it was already the same."""
+    import comfy.model_patcher
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+
+    cpu = torch.device("cpu")
+    x = torch.randn(3, 512, generator=torch.Generator().manual_seed(2)).to(torch.bfloat16)
+
+    def build():
+        root, patches = comfy_cpu.tiny_cast_time_model()
+        patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+        patcher.add_patches(patches, 0.8)
+        return root, patcher
+
+    def offload(patcher):
+        if route == "partial load":
+            patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+        else:
+            patcher.load(cpu, full_load=True)
+            patcher.partially_unload(cpu, memory_to_free=1e12)
+
+    def outputs(root):
+        with torch.no_grad():
+            return root.diffusion_model.q(x), root.diffusion_model.p(x)
+
+    assert lora_cast_time.install() is True
+    try:
+        full_root, full = build()
+        full.load(cpu, full_load=True)
+        full_q, full_p = outputs(full_root)
+        root, patcher = build()
+        offload(patcher)
+        assert getattr(root.diffusion_model.q.weight_function[0], "_dgxm_full_load_weight", False)
+        assert not getattr(root.diffusion_model.p.weight_function[0], "_dgxm_full_load_weight", False)
+        part_q, part_p = outputs(root)
+        assert torch.equal(part_q, full_q) and torch.equal(part_p, full_p)
+    finally:
+        assert lora_cast_time.uninstall() is True
+    # ComfyUI's classic patcher alone, against the same full-load outputs: the
+    # quantized layer misses, which is the gap; the BF16 layer does not.
+    root, patcher = build()
+    offload(patcher)
+    alone_q, alone_p = outputs(root)
+    assert not torch.equal(alone_q, full_q)
+    assert torch.equal(alone_p, full_p)
+
+
+def _offload(patcher, cpu, route):
+    if route == "partial load":
+        patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    else:
+        patcher.load(cpu, full_load=True)
+        patcher.partially_unload(cpu, memory_to_free=1e12)
+
+
+@pytest.mark.parametrize("store", ["float8_e4m3fn", "float32"])
+@pytest.mark.parametrize("route", ["partial load", "partial unload"])
+def test_a_plain_weight_stored_in_another_dtype_left_off_the_device_computes_with_the_full_loads_weight(
+        comfy_cpu, gb10_lora_dtype, store, route):
+    """A plain Linear above 16 KiB stored in another dtype than the forward (a plain FP8
+    file under a BF16 manual cast, an FP32 island). A full load bakes it classically, since
+    cast_time_weight declines it; ComfyUI's classic patch on the cast weight does not."""
+    import comfy.lora
+    import comfy.model_patcher
+    import comfy.ops
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+
+    dtype, cpu = getattr(torch, store), torch.device("cpu")
+
+    class _Root(torch.nn.Module):
+        manual_cast_dtype = torch.bfloat16
+
+        def __init__(self):
+            super().__init__()
+            self.lin = comfy.ops.manual_cast.Linear(512, 64, bias=False, dtype=dtype)
+
+        def get_dtype_inference(self):
+            return torch.bfloat16
+
+    gen = torch.Generator().manual_seed(5)
+    pristine = (torch.randn(64, 512, generator=gen) * 0.05).to(dtype)
+    lora = {"lin.lora_up.weight": torch.randn(64, 4, generator=gen) * 0.01,
+            "lin.lora_down.weight": torch.randn(4, 512, generator=gen) * 0.01,
+            "lin.alpha": torch.tensor(4.0)}
+    patches = comfy.lora.load_lora(lora, {"lin": "lin.weight"})
+
+    def build():
+        root = _Root()
+        root.lin.weight = torch.nn.Parameter(pristine.clone(), requires_grad=False)
+        patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+        patcher.add_patches(patches, 0.8)
+        return root, patcher
+
+    assert lora_cast_time.install() is True
+    try:
+        full_root, full = build()
+        full.load(cpu, full_load=True)
+        full_weight = _cast_weight(full_root.lin)
+        root, patcher = build()
+        _offload(patcher, cpu, route)
+        assert torch.equal(_cast_weight(root.lin), full_weight)
+    finally:
+        assert lora_cast_time.uninstall() is True
+    root, patcher = build()
+    _offload(patcher, cpu, route)
+    assert not torch.equal(_cast_weight(root.lin), full_weight)  # ComfyUI's classic patcher alone
+
+
+@pytest.mark.parametrize("route", ["partial load", "partial unload"])
+def test_a_small_quantized_layer_left_off_the_device_computes_with_the_full_loads_weight(
+        comfy_cpu, route):
+    """An INT8 ConvRot Linear of 16 KiB or less. Stock force-loads it through the classic
+    bake (the quantized setter), and so does a full load; ComfyUI's classic patch hands the
+    layer the dequantized weight plus the LoRA, never requantized."""
+    import comfy.model_patcher
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+
+    cpu = torch.device("cpu")
+    x = torch.randn(3, 256, generator=torch.Generator().manual_seed(2)).to(torch.bfloat16)
+
+    def build():
+        root, patches = comfy_cpu.tiny_cast_time_model(out_features=16, in_features=256)  # q: 4 KiB
+        patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+        patcher.add_patches(patches, 0.8)
+        return root, patcher
+
+    def output(root):
+        with torch.no_grad():
+            return root.diffusion_model.q(x)
+
+    assert lora_cast_time.install() is True
+    try:
+        full_root, full = build()
+        full.load(cpu, full_load=True)
+        expected = output(full_root)
+        root, patcher = build()
+        _offload(patcher, cpu, route)
+        assert torch.equal(output(root), expected)
+    finally:
+        assert lora_cast_time.uninstall() is True
+    root, patcher = build()
+    _offload(patcher, cpu, route)
+    assert not torch.equal(output(root), expected)
+
+
+@pytest.mark.parametrize("out_features, in_features", [(64, 512), (16, 256)], ids=["32 KiB", "4 KiB"])
+@pytest.mark.parametrize("route", ["partial load", "partial unload"])
+def test_a_quantized_layer_on_a_full_precision_matmul_left_off_the_device_matches_the_full_load(
+        comfy_cpu, route, out_features, in_features):
+    """An INT8 ConvRot Linear whose layer config asks for a full-precision matmul.
+
+    ``cast_time_weight`` declines it at any size, so a full load bakes it with
+    ComfyUI's classic quantized setter and the forward dequantizes that weight.
+    Left off the device, the swapped patch runs the same bake when the layer
+    casts; ComfyUI's own patch hands the forward the dequantized weight plus
+    the LoRA, which was never through the setter's rounding.
+    """
+    import comfy.model_patcher
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+
+    cpu = torch.device("cpu")
+    x = torch.randn(3, in_features, generator=torch.Generator().manual_seed(2)).to(torch.bfloat16)
+
+    def build():
+        root, patches = comfy_cpu.tiny_cast_time_model(out_features=out_features, in_features=in_features)
+        root.diffusion_model.q._full_precision_mm = True
+        patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+        patcher.add_patches(patches, 0.8)
+        return root, patcher
+
+    def output(root):
+        with torch.no_grad():
+            return root.diffusion_model.q(x)
+
+    assert lora_cast_time.install() is True
+    try:
+        full_root, full = build()
+        full.load(cpu, full_load=True)
+        expected = output(full_root)
+        root, patcher = build()
+        _offload(patcher, cpu, route)
+        assert getattr(root.diffusion_model.q.weight_function[0], "_dgxm_full_load_weight", False)
+        assert torch.equal(output(root), expected)
+    finally:
+        assert lora_cast_time.uninstall() is True
+    root, patcher = build()
+    _offload(patcher, cpu, route)
+    assert not torch.equal(output(root), expected)
