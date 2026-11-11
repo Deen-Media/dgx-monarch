@@ -188,20 +188,16 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "the only SP topology. Refiners local; cfg2 stays an explicit preset, since 2026-09-05 "
              "on the per-cond dispatch rather than on a batch the num_tokens constant blocks"),
     # --- anima (cosmos MiniTrainDIT ~2B image DiT, H-axis shard) -----------
-    AutoRule(47, "anima", (), 0.0, 1.2, 2, {"cfg": 2}, False,
-             "cfg2 below 1.2 MP on BF16 for a prompt pair whose text rows differ: Campaign "
-             "K (2026-10-14, dgx-monarch 65d14333, ComfyUI e8665ca8, head capped at 2100 "
-             "MHz) read the shipped pair, on the per-cond dispatch path, bit-identical to "
-             "one GPU and 1.27x faster than uly2 at 1024 square; on 2026-11-07 a pair of "
-             "equal rows read one-step NRMS 0.015 to 0.042 against one GPU, so it takes "
-             "row 48"),
+    # Row 47, cfg2 below 1.2 MP on BF16, was withdrawn on 2026-11-10 with the
+    # text branch fix (TROUBLESHOOTING #151): its record was measured against a
+    # Worker's one GPU that ran the shipped pair as two batch-1 calls, and stock
+    # folds that pair into one batch-2 call, which cfg2 cannot reproduce.
     AutoRule(48, "anima", (), 0.0, _INF, 2, {"ulysses": 2}, False,
-             "about 2B cosmos-MiniTrainDIT, uly2 default (16 heads d128); row 47 takes "
-             "cfg2 below 1.2 MP on BF16 for a pair whose text rows differ; "
-             "cfg_cond_padding none: comfy's 512 pad lands "
-             "inside the forward, after the batching decision, so an unequal prompt pair "
-             "splits the model call at any length and cfg2 takes the per-cond dispatch "
-             "(2026-09-02)"),
+             "about 2B cosmos-MiniTrainDIT, uly2 default (16 heads d128); "
+             "cfg_cond_padding none: comfy's 512-row text pad runs in extra_conds, "
+             "before the batching decision, so one GPU folds a prompt pair of at most "
+             "512 T5 ids into one batch-2 call, which cfg2's two batch-1 calls do not "
+             "reproduce, and cfg2 stays an explicit preset (2026-11-10)"),
     # --- hunyuan (flux double/single DiT: image 2.1 + video 1.5/SR, one family)
     AutoRule(46, "hunyuan", (), 0.0, _INF, 2, {"ulysses": 2}, False,
              "USP default for both the image (2.1) and video (1.5/SR) checkpoints "

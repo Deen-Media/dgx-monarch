@@ -43,8 +43,8 @@ An `auto` cell resolves its topology through the runtime's own
 CFG and batch size. Like the runtime, it counts a CFG++ sampler as keeping the
 unconditional pass only on the DGX Monarch sampler nodes that tag the latent
 (`UNCOND_TAGGING_SAMPLERS` in `matrix.py`). An auto cell of a family with a
-cfg row (Krea2, Chroma, LongCat, Qwen-Image, Boogu and Anima, and checkpoints
-that share their families) can therefore resolve to cfg2. It then carries
+cfg row (Krea2, Chroma, LongCat, Qwen-Image and Boogu, and checkpoints that
+share their families) can therefore resolve to cfg2. It then carries
 the label and `cfg_path` the cfg2 preset would carry, and its warm leg meets
 the "cfg2 did not split" check in section 5.
 

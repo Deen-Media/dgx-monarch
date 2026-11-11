@@ -472,6 +472,26 @@
 - The render record's pin line says "kept" where it said "ran": the record
   reads the pins from the load and the topology and does not count attention
   calls. The field names are unchanged.
+- Fix: the Workers prepare Anima's text as stock ComfyUI does, so a Worker's
+  one-GPU Anima render is expected to equal stock's. Stock runs a prompt in
+  inference mode, where Anima's `extra_conds` runs the text adapter and pads
+  the text to 512 rows once per conditioning. A Worker samples outside it, so
+  it took the branch ComfyUI keeps for training: it ran the adapter on every
+  model call and split a prompt pair whose rows differ into two batch-1 calls
+  where stock makes one batch-2 call. On 2026-11-10 the shipped graph's
+  one-GPU Worker render read one-step NRMS 0.028 against stock, which this
+  difference is expected to explain. The adapter now runs stock's method in
+  inference mode on every load, as FLUX.3's and MOSS-Image's do, and on the
+  CPU the Worker's model calls now equal stock's; a canary seam lists every
+  inference-mode branch in ComfyUI's source. The hardware comparison against
+  stock has not run yet
+  ([TROUBLESHOOTING #151](docs/TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+- Change: Anima under `auto` renders on uly2 at every size, where it took cfg2
+  below 1.2 MP on BF16. With the fix one GPU folds the prompt and the negative
+  into one batch-2 call, as stock does, and cfg2's two batch-1 calls are not
+  that call, so `auto` table row 47 is withdrawn; explicit cfg2 still renders
+  and is not the same math. The shipped Anima template sets `auto`, so it
+  now renders on uly2. The speed cost against cfg2 is NOT RUN on hardware.
 - uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1 fill each
   fused-norm call of their sharded blocks to the rows one GPU normalizes, as
   FLUX.3 and MOSS-Image already did. comfy-kitchen's fused AdaLN picks its
@@ -494,9 +514,10 @@
   contiguous, as stock's do, so its bias is added in the same fused call. A ComfyUI whose LTX blocks no
   longer read the globals this binds refuses a sharded render at load, class P,
   and canary seam 51 names the change ([VALIDATION](docs/VALIDATION.md#evidence-ltx-2-3-t2v)).
-- `auto` takes cfg2 on Anima BF16 and Boogu FP8 below 1.2 MP and on Chroma
-  below 1.64 MP only when the prompt and the negative encode to different text
-  rows, as on the shipped graphs, and Ulysses for an equal pair. One GPU folds
+- `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP
+  only when the prompt and the negative encode to different text rows, as on
+  the shipped graphs, and Ulysses for an equal pair; Anima's row had the same
+  scope until its withdrawal (the Anima entry above). One GPU folds
   an equal pair into one batch-2 call, which cfg2's two calls do not
   reproduce: on 2026-11-07 such pairs read one-step NRMS 0.014 to 0.042
   against one GPU on Anima and Boogu, and no full schedule matched, while the
