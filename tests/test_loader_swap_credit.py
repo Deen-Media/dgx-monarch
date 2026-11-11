@@ -489,6 +489,29 @@ def test_a_dual_swap_whose_other_load_cannot_be_read_or_priced_gets_no_credit(mo
     assert relief.asked is not None and relief.asked is not loader_relief.UNASKED
 
 
+@pytest.mark.parametrize(("preset", "credited", "why"), [
+    ("auto", True, "the render's topology is not known: the rank's answer stands"),
+    ("cfg2", True, "dm-cfg2 holds one model a rank"),
+    ("uly2", False, "every rank loads both: a rank that last ran dm-cfg2 has not answered for one"),
+    ("uly2+fsdp", False, "the same"),
+    ("cfg2+fsdp", False, "cfg2 with shards is not dm-cfg2"),
+])
+def test_a_rank_that_sends_no_row_for_the_other_slot_is_believed_only_where_it_may_hold_one_model(
+        monkeypatch, preset, credited, why):
+    """The Worker answers from the topology it last held. A fleet last on dm-cfg2 sends the head's
+    cond row only; under an explicit preset that loads both slots on every rank that is no answer."""
+    shape = _shape("ltx", avail=67.51, file=21.86, stack=29.94, load_stack=29.94)
+    asked = _answers_by_slot(monkeypatch, cond=_held(FLUX1, 22.17))
+    mesh = types.SimpleNamespace(handle=_LiveHandle(), topology_preset=preset, worker_args={})
+    relief = loader_relief.relieve(shape, _stock_windows, mesh=mesh, unet_name=LTX23,
+                                   options={}, slot="cond", prompt=_GRAPH)
+    assert bool(relief.credit) is credited and relief.fits is credited, why
+    assert len(asked) == 2
+    assert swap_credit.growth([_answer(0, _held(FLUX1, 22.17))], "uncond", every_rank=True) is None
+    both = [_answer(0, _held(FLUX1, 22.17), _other(30.0, held_gib=22.0))]
+    assert swap_credit.growth(both, "uncond", every_rank=True) == 8 * _GIB
+
+
 def test_a_graph_with_one_dit_asks_once(monkeypatch):
     shape = _shape("ltx", avail=67.51, file=21.86, stack=29.94, load_stack=29.94)
     relief, asked = _dual(monkeypatch, shape, _other(30.0, held_gib=22.0), graph={

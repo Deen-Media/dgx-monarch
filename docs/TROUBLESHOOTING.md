@@ -2240,7 +2240,9 @@ priced slab-resident and a model in the other slot are priced as still held.
 So is a stock model ComfyUI holds only partly (its journal line read "loaded
 partially"): its drop copies the weights on the GPU to the host before it
 frees them, so the box dips first, and the card's clear is the safe way to
-replace it. A check that reads the new model as already loaded charges no load
+replace it. A model held in the other slot does the same to a drop beside it:
+the drop unloads it to the host first. So nothing is counted where the drop
+copies anything to the host before it frees the old model. A check that reads the new model as already loaded charges no load
 and counts no drop. Under `auto` the graph's own driver models load before the
 old model is dropped, so they must fit beside it. In a graph with two
 diffusion models each check prices one of them, so the count for one slot

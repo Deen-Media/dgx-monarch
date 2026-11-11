@@ -340,6 +340,24 @@ def test_the_workers_own_quote_gives_a_partly_loaded_resident_no_credit(quote, l
     assert (head.measured.get("dropped") == other) is credited
 
 
+@pytest.mark.parametrize(("other_held", "credited"), [(True, False), (False, True)])
+def test_a_swap_beside_a_held_other_slot_is_not_credited(quote, other_held, credited):
+    """The drop runs ComfyUI's global unload with only the dropped slot pinned, so a model held
+    in the other slot is copied to the host before anything is freed."""
+    import copy
+
+    other = "flux-2-klein.safetensors"
+    store = _b3_store(stack=(), base__backup={}, stored__base_key=(other, ()),
+                      stored__request_key=(other, (), (), "bf16"))
+    if other_held:
+        store.uncond = copy.copy(store.current)     # the dual-model graph's second DiT, still held
+    head = quote(store, [], available=int(100 * _GIB))
+    assert head.would_load == "swap"
+    assert (head.holds_resident.get("uncond") is not None) is other_held
+    assert (head.measured.get("credit_bytes", 0) > 0) is credited
+    assert ("dropped" in head.measured) is credited
+
+
 def test_one_question_with_both_loads_gives_each_rank_the_rows_of_the_slots_it_holds(quote):
     """What the driver's dual-model credit leans on (``swap_credit.growth``): the real quote
     answers a two-spec question with a row a slot, each with its load and its file's size, and

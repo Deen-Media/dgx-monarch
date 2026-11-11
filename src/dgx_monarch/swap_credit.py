@@ -128,7 +128,7 @@ def from_answers(answers: Sequence[Any], slot: str, *, box: str = "") -> SwapCre
     return SwapCredit(size, name, box)
 
 
-def growth(answers: Sequence[Any], slot: str) -> int | None:
+def growth(answers: Sequence[Any], slot: str, *, every_rank: bool = False) -> int | None:
     """What a pending load into ``slot`` adds to the driver host, or None when a rank does not say.
 
     A dual-model graph loads a second DiT into the other slot, and each price
@@ -139,13 +139,20 @@ def growth(answers: Sequence[Any], slot: str) -> int | None:
     credits for the model it drops, the largest any rank on the host reports.
     A reuse adds nothing. The answers must come from one question that carries
     both loads, as the sample-time agreement asks it: a rank that holds one
-    slot only then sends no row for the other, and adds nothing here.
+    slot only then sends no row for the other, and adds nothing here. A rank
+    answers from the topology it holds when asked, which may be the last
+    render's. So where this render's topology is known to put both slots on
+    every rank, the caller passes ``every_rank`` and a rank with no row for the
+    slot means no answer.
     """
     if not answers:
         return None
     worst = 0
     for answer in answers:
-        for row in getattr(answer, "quotes", ()) or ():
+        rows = getattr(answer, "quotes", ()) or ()
+        if every_rank and not any(getattr(row, "slot", None) == slot for row in rows):
+            return None
+        for row in rows:
             would = getattr(row, "would_load", None)
             if getattr(row, "slot", None) != slot or would == "reuse":
                 continue

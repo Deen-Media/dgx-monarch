@@ -134,9 +134,12 @@ def _less_the_other_slot(credit: swap_credit.SwapCredit, mesh: Any, own: dict[st
     asked = None if others is None else old_model_clear.driver_host_answers(
         mesh, own["unet_name"], own["options"], own["slot"], loras=own["loras"], beside=others)
     if asked is not None:
+        # Only cfg2 can run one model a rank (dm-cfg2). Under any other explicit
+        # preset every rank loads both, whatever topology the fleet last held.
+        every = str(getattr(mesh, "topology_preset", "auto") or "auto") not in ("auto", "cfg2")
         left = swap_credit.from_answers(asked.mine, own["slot"], box=credit.box)
         for slot in sorted({spec["slot"] for spec in others or ()}):
-            left = swap_credit.less(left, swap_credit.growth(asked.mine, slot))
+            left = swap_credit.less(left, swap_credit.growth(asked.mine, slot, every_rank=every))
     if not left:
         log.info("the drop of %s is not counted for %s, because this graph also loads a model "
                  "into the other slot and that load %s", credit.dropped or "the old model",

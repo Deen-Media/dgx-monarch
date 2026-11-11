@@ -13,9 +13,10 @@
   The loader's check and the render-site checks for a pending load now count
   the copy the load's own slot drops, as the cross-rank agreement already did:
   a stock model only, that slot only, at the size the Worker reports. A model
-  ComfyUI holds only partly is not counted, because its drop copies its
-  weights to the host before it frees them. In a graph with two diffusion
-  models the count leaves the room the other slot's load takes. Nothing to
+  ComfyUI holds only partly is not counted, and neither is a drop beside a
+  model held in the other slot, because such a drop copies weights to the host
+  before it frees anything. In a graph with two diffusion models the count
+  leaves the room the other slot's load takes. Nothing to
   set, and nothing is cleared that was not dropped before. If that does not
   make room, the loader also unloads the models ComfyUI holds on the driver
   host, which ComfyUI reloads on demand, and prices the load again, as the

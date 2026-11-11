@@ -2256,8 +2256,12 @@ The Worker's price gives no such credit for a stock resident ComfyUI holds
 only partly (`model_lowvram`): the store pins only a whole load to its device
 before it drops it, so ComfyUI's detach copies a partly loaded model's device
 weights to the host before it frees them, and the box dips by that copy
-before anything comes back. That resident is priced as held, at the agreement
-and here, and the card's clear replaces it.
+before anything comes back. The same holds for a model in the other slot: the
+drop runs ComfyUI's global unload with only the dropped slot pinned, so a model
+the other slot holds is copied to the host first. The rule is one sentence: no
+credit where the drop copies anything to the host before it frees the old
+model. Such a resident is priced as held, at the agreement and here, and the
+card's clear replaces it.
 It counts only the slot the load goes into, and only onto a price that charges
 the DiT's own load: one that reads the weights as resident (the loader's memo;
 an explicit preset at the render-site footprint and H3 prices) has no drop to
@@ -2267,7 +2271,10 @@ is taken less what the other slot's load adds to the host: that load's file
 less what its own Worker's price credits for the model it drops, read from one
 more quote that carries both loads as the sample-time agreement asks them
 (`swap_credit.growth`). Where that leaves nothing, or the other load cannot be
-read from the graph or priced, nothing is credited. A load that fits
+read from the graph or priced, nothing is credited. A rank answers from the
+topology it last held, so under an explicit preset other than cfg2, where
+every rank loads both models, a rank that sends no row for the other slot
+counts as no answer. A load that fits
 asks no Worker. A deferred load must also leave
 room for the graph's driver models beside the old model, which load before the
 first render drops it. The credit is tried before any card and before the

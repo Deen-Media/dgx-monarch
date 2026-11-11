@@ -1704,6 +1704,7 @@
       "test_a_reorder_is_credited_the_backup": "de8daa564aa89194",
       "test_a_stack_of_the_held_files_is_credited_the_backup": "b50f18bde0f88cea",
       "test_a_stack_whose_files_cannot_be_sized_gets_no_backup_credit": "f705c9a0bbfd8792",
+      "test_a_swap_beside_a_held_other_slot_is_not_credited": "db7ac3b0cf063c06",
       "test_b3_strength_change_is_admitted_with_the_backup_credited": "d85326495285f4ea",
       "test_one_question_with_both_loads_gives_each_rank_the_rows_of_the_slots_it_holds": "8878065991b76970",
       "test_the_backup_credit_docs_agree_with_section_5_9": "7d0e33484f42e387",
