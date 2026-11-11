@@ -4,6 +4,16 @@
 
 ### Everyday use
 
+- Every image, clip and music track a shipped template's input nodes name now
+  comes with the pack, in `example_workflows/input`. At start the pack copies
+  each one ComfyUI's input folder lacks, and never replaces a file, link or
+  folder already there, so a template such as the Qwen Image 2.1 masked edit
+  no longer opens on a fresh install with a missing `qwen21_source.png`. They
+  are drawn shapes, a stick figure and a synthetic music loop that show the
+  graph runs; load your own for real work. A demo file you delete comes back
+  at the next start unless `DGXM_DEMO_INPUTS=off` is set, which skips the
+  copy ([INSTALL.md](docs/INSTALL.md#install-from-source)), and
+  `tools/gen_demo_inputs.py` draws the files again.
 - Studio is a supported interface from this release, beside the CLI, the TUI
   and the ComfyUI panel. Its docs and the capability contract in Settings no
   longer call it a draft. The
@@ -734,6 +744,14 @@
 
 ### Operations
 
+- A Worker logs one line when it accepts an identity gate grant, naming the model
+  slots the grant covers, for example `identity gate grant accepted on rank 1: the
+  gate PASS covers both model slots, [cond] ideogram4_fp8_scaled.safetensors with 1
+  LoRA and [uncond] ideogram4_unconditional_fp8_scaled.safetensors with no LoRA`.
+  A dual-model render's grant over both slots can now be checked from a Worker
+  journal. The line names checkpoints as the model store's lines do and counts
+  LoRAs without naming them; a single-model grant logs the same line with its one
+  slot.
 - `dgxm doctor` adds an `INT8 GEMM` row for this box and one per configured
   host: the configured kernel and whether the Python headers, Triton and a
   validated comfy-kitchen are there. The rows warn and never fail
@@ -832,6 +850,20 @@
 
 ### Development
 
+- `scripts/test_cpu.sh` runs the gate checks CI runs beside the suite before
+  it: the protected test inventory first, then the refusal ledger, the TRUST
+  citations, the leak check, ruff, mypy, compileall, the generator and artifact
+  checks, CI's source archive census on a copy of the tracked files, and the
+  shell and browser-asset checks. A local green run now covers every CI gate
+  except the CI-only steps `tests/test_cpu_gates.py` names, where before the
+  gates surfaced only after a push; CI's tools can still be other versions
+  than yours. A gate is skipped and named when CairoSVG, the build module, a
+  Git checkout, shellcheck or node is missing, `DGXM_SKIP_GATES=1` skips them
+  all, and `tests/test_cpu_gates.py` holds every CI step to a local gate or a
+  named CI-only reason. No gate writes a tracked file: the refusal ledger tool
+  gains a check mode, `python tests/test_refusal_classes.py --check`, which
+  compares in memory and prints any difference, and CI's step runs the same
+  command where it used to rewrite the ledger and put it back.
 - The sweep runner ends the session when a waived retry's queue will not
   clear, as it already did after every other leg, and when the cache reset
   before a waived, resident or probe leg leaves the queue busy or gets no

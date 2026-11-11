@@ -1,6 +1,10 @@
 """Worker artifact and residency checks, separate from group lifecycle."""
 from __future__ import annotations
 
+from ..log import get_logger
+
+log = get_logger(__name__)
+
 
 def verify_sample_artifact_authorization(
     worker, request: dict, identity_fn
@@ -38,7 +42,7 @@ def verify_sample_artifact_authorization(
     if request.get("_dgxm_normal_residency_grant") is not None:
         from ..mesh_safety import assert_normal_render_residency_grant
 
-        assert_normal_render_residency_grant(
+        granted = assert_normal_render_residency_grant(
             request,
             local_artifacts,
             effective_worker_args=dict(getattr(worker, "_active_worker_args", {})),
@@ -47,6 +51,8 @@ def verify_sample_artifact_authorization(
             worker_topology=dict(getattr(worker, "topology", {}) or {}),
             local_runtime=local_runtime,
         )
+    else:
+        granted = False
     expected = request.get("_dgxm_artifact_sets")
     if expected is None or local_artifacts != expected:
         raise RuntimeError(
@@ -54,7 +60,45 @@ def verify_sample_artifact_authorization(
             f"preflight on rank {worker.rank}: expected={expected!r}, "
             f"local={local_artifacts!r}"
         )
+    if granted:  # logged once every authorization check on this rank has passed
+        log_gate_grant(worker, request)
     return expected
+
+
+def gate_grant_line(rank: object, request: dict) -> str | None:
+    """The journal line for an identity gate grant this rank accepted, or None.
+
+    It names the model slots the grant covers, so a hardware leg can read from
+    a Worker journal that a dual-model render (Ideogram 4) ran on a grant over
+    both slots. It names the checkpoints as the model store's lines do and
+    counts the LoRAs without naming them. A capacity-rescue consent rides the
+    same request field and logs nothing here.
+    """
+    from ..mesh_residency import NORMAL_RENDER_RESIDENCY_CAPABILITY
+
+    grant = request.get("_dgxm_normal_residency_grant")
+    if not isinstance(grant, dict) or grant.get("capability") != NORMAL_RENDER_RESIDENCY_CAPABILITY:
+        return None
+    slots = [("cond", request["model"])]
+    if request.get("uncond_model"):
+        slots.append(("uncond", request["uncond_model"]))
+
+    def named(slot: str, spec: dict) -> str:
+        count = len(spec.get("loras") or [])
+        loras = "no LoRA" if count == 0 else f"{count} LoRA" + ("s" if count > 1 else "")
+        return f"[{slot}] {spec.get('unet_name')} with {loras}"
+
+    cover = ("both model slots" if len(slots) == 2 else "its one model slot")
+    return (f"identity gate grant accepted on rank {rank}: the gate PASS covers {cover}, "
+            + " and ".join(named(slot, spec) for slot, spec in slots)
+            + "; this render keeps the residency the gate proved")
+
+
+def log_gate_grant(worker, request: dict) -> None:
+    """Log gate_grant_line for this rank, when the grant is an identity gate grant."""
+    line = gate_grant_line(getattr(worker, "rank", None), request)
+    if line is not None:
+        log.info(line)
 
 
 def sample_rescue_consent(request: dict) -> dict | None:
