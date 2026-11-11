@@ -187,8 +187,8 @@ The seams, in run order:
                               reference time constant and the modality tags
  53. minimax h3 image layout   [text | references | target] with the target
                               last and no audio, extra_conds rounding the latent
-                              to even, no mask cond for one stream, and a mask
-                              the stock forward ignores
+                              to even, no mask cond from _denoise_mask_conds for
+                              one stream, and a mask the stock forward ignores
  54. minimax h3 image head     the head depth read off video_out, and stock's
                               head failing exactly where the grid check refuses
  55. minimax h3 image build    the model built from pdd_sigmas and pdd_steps with
@@ -6162,8 +6162,11 @@ def _assert_minimax_h3_image_layout_seam() -> None:
         "minimax h3 image layout seam: extra_conds no longer rounds the latent to even")
     assert "denoise_mask" not in inspect.signature(h3.MiniMaxH3ImageModel._forward).parameters
     mask = torch.zeros(1, 1, 1, 8, 8)
+    # A bare instance: these methods read no state when there is one stream or none.
+    image = object.__new__(comfy.model_base.MiniMaxH3Image)
     for shapes in (None, [(1, 24, 1, 8, 8)]):
-        assert comfy.model_base.MiniMaxH3._denoise_mask_values(None, mask, shapes) == {}, (
+        # What extra_conds merges into its output for a mask on one stream.
+        assert image._denoise_mask_conds(mask, shapes) == {}, (
             "minimax h3 image layout seam: one image stream now gets a mask cond")
     model = _h3_image_tiny(h3)
     plain = _h3_image_run(h3, model, (4, 4), [])
@@ -6273,7 +6276,8 @@ def _assert_minimax_h3_image_conditioning_seam() -> None:
     names = [item.id for item in MiniMaxH3ImageConditioning.define_schema().inputs]
     assert {"clip", "vae", "prompt", "width", "height", "images"} <= set(names), (
         f"minimax h3 image conditioning seam: the node takes {names}")
-    assert '"minimax_refs"' in inspect.getsource(MiniMaxH3ImageConditioning.execute)
+    assert '"minimax_refs"' in inspect.getsource(MiniMaxH3ImageConditioning.execute), (
+        "minimax h3 image conditioning seam: the edit node no longer sets minimax_refs")
     source = inspect.getsource(comfy.model_base.MiniMaxH3.extra_conds)
     for token in ('payload["text_token_tags"]', 'payload["refs"]', 'payload["seed"]',
                   "self._cond_latents(keyframes, refs)"):

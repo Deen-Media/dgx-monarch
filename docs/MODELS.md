@@ -104,7 +104,7 @@ that match the tested configurations in its model details. See
 | MOSS-Image Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with the same layer-22 skip. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule; its FSDP reading comes from the scoped sweep. Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-moss-image-base) · [Workflow](../example_workflows/dgx-monarch-moss-image-base-t2i.json) |
 | Kromoss | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | MOSS-Image Base fine-tune; no header field tells it from Base or SFT. CFG 3, 50 steps, euler on the `normal` scheduler, with the layer-22 skip, or 8 Euler steps on `simple` at CFG 1 with a DMD LoRA, where cfg2 has nothing to split and refuses. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule. The DMD LoRAs render the same on uly2 and one GPU; with the classic bake of earlier releases they read one-step NRMS 0.0365 to 0.0635 against stock at strengths 0.8 and 1.0, because stock applies them at cast time, and this release bakes the weight that cast computes, not yet measured on this file ([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)). Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-kromoss) · [Workflow](../example_workflows/dgx-monarch-kromoss-t2i.json) |
 | p-h3-image | 🔒 | ✗ | ★ | 🔒 | 🔒 | **HW** | A MiniMax H3 DiT with one video latent frame, on the H3 adapter: batch one, cfg2 and dp2 refuse, padded ring needs a waiver, and the W4A8 file refuses FSDP. Needs ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0; without any H3 shift the image latent refuses class P ([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)). BF16, INT8 ConvRot and W4A8 on one rank are pixel-identical to stock and uly2 to one rank; the LoRA route on the pruned INT8 H3 file is pixel-identical to stock; BF16 on `uly2+fsdp` runs after the first-use gate's clean-reload proof on that preset. On one Spark the BF16 DiT beside the BF16 prompt upsampler refuses at the loader, before any load, and the refusal names the INT8 ConvRot and W4A8 files ([TROUBLESHOOTING #52](TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)). [Details](#model-p-h3-image) · [Workflow](../example_workflows/dgx-monarch-p-h3-image.json) |
-| MiniMax-H3-Image | 🔒 | ✗ | ★ | 🔒 | n/a | impl | Its own adapter, on ComfyUI 0.45.0 or newer: batch one, cfg2 and dp2 refuse, a padded ring refuses, and `single` keeps the header attention pins. No hardware comparison yet; no template yet. [Details](#model-minimax-h3-image) |
+| MiniMax-H3-Image | 🔒 | ✗ | ★ | 🔒 | n/a | impl | Its own adapter, on ComfyUI 0.45.0 or newer: batch one, cfg2 and dp2 refuse, a padded ring refuses, and a world of one GPU renders stock's forward with the header attention pins. No hardware comparison yet; no template yet. [Details](#model-minimax-h3-image) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
 | HunyuanImage 2.1 (+refiner) | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Extended-text cfg2 needs equal Qwen lengths; refiner FSDP measured at FP8 only; SR FSDP unmeasured. [Details](#model-hunyuanimage-2-1-refiner) · [Workflow](../example_workflows/dgx-monarch-hunyuan-image.json) |
 | Qwen-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP. Edit reference-method limits differ from base; sharded Edit can refuse. [Details](#model-qwen-image) · [Workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json) |
@@ -1080,8 +1080,9 @@ grid, which every published DiT file carries in its metadata. This project
 reads the family as `minimax_h3_image` and runs it on its own adapter
 (`adapters/minimax_h3_image.py`), not on H3's.
 
-**Topologies.** `single` runs stock ComfyUI's forward, and the checkpoint's
-header attention pins are kept. On uly2 every rank packs the stream with
+**Topologies.** A world of one GPU runs stock ComfyUI's forward with the
+checkpoint's header attention pins; on a pair, `single` derives dp and refuses.
+On uly2 every rank packs the stream with
 stock's own code, the blocks run on sequence shards with the divisibility pad
 rows excluded exactly, and the gathered stream reaches the head at stock's
 rows with the checkpoint's grid; the record says the pins are dropped. cfg2
@@ -1090,12 +1091,16 @@ layout, so ComfyUI never batches cond and uncond, and the DiT takes batch 1. A
 padded ring refuses. `uly2+fsdp` keeps H3's replicated text projection and
 refiner; its hardware row is NOT RUN.
 
-**Sampling.** KSampler at 6 steps, CFG 1, `euler` and `simple` lands on the
-head's grid (canary seam 56); Sampler Custom with the grid as Manual Sigmas
-walks it exactly. ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family,
-because its flow shifts are unused here, and so does MiniMax H3 Context
-Windows (DGX Monarch). A checkpoint whose head depth and grid length disagree
-refuses at load, where stock fails inside the head.
+**Sampling.** KSampler at 6 steps, CFG 1, `euler` and `simple` lands within a
+thousandth of the head's grid (canary seam 56), close enough for the head to
+pick its blocks as on the grid; Sampler Custom with the grid as Manual Sigmas
+walks it exactly. ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family: it
+would replace the sampling with MiniMax H3's paired video and audio schedule,
+off the grid the head was distilled on, and the image forward reads neither
+shift. MiniMax H3 Context Windows (DGX Monarch) refuses it too. Under sequence
+parallelism a checkpoint whose head depth and grid length disagree refuses
+when the Workers load it; stock ComfyUI, and so a world of one GPU, fails
+inside the head on the same file.
 
 **Decode.** The image VAE decodes on the driver: a Worker-assisted decode
 declines it, since it decodes one frame and has nothing to split.

@@ -41,7 +41,7 @@ def head_blocks(final_layer: Any) -> int:
     return int(final_layer.video_out.weight.shape[0]) // int(final_layer.video_dim)
 
 
-def head_form(final_layer: Any) -> str:
+def head_form(final_layer: Any, family: str = "minimax_h3", model: str = "MiniMax H3") -> str:
     """The installed head's form, read once at inject, or a class P refusal.
 
     ``grids`` is the head of ComfyUI 0.45.0 or newer. ``shifts`` is the older
@@ -79,7 +79,7 @@ def head_form(final_layer: Any) -> str:
     # ComfyUI that is not a git checkout reports "unknown" there and is not held.
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
-        f"minimax_h3: {what}. This build drives MiniMax H3 "
+        f"{family}: {what}. This build drives {model} "
         f"on ComfyUI {H3_COMFY_FLOOR} or newer, where the head takes one sigma grid "
         "per stream. Update ComfyUI on every host to "
         f"{H3_COMFY_FLOOR} or newer, then reset the Attached mesh; or take a true "
@@ -143,8 +143,11 @@ def h3_image_modulation_plan(
         raise UnsupportedModelError(refusal(
             RefusalClass.PHYSICS,
             f"minimax_h3_image: the packed layout carries segment kind(s) {unknown}, which "
-            "this adapter has not vetted for sharding. Report the workflow, or take a true "
-            "single-GPU reference (mode=local, gpus_per_host=1) (docs/MODELS.md).",
+            "this adapter has not vetted. MiniMax-H3-Image packs text, reference pictures and "
+            "the target only, and stock ComfyUI's image forward has no timestep for any other "
+            "kind, so it fails on this conditioning too and no topology renders it. Use "
+            "MiniMax H3 Image Conditioning to build the references, or report the workflow "
+            "(docs/MODELS.md).",
         ))
     unique_t = sorted({seg_time[kind] for kind in present})
     t_row = {value: index for index, value in enumerate(unique_t)}
@@ -176,8 +179,9 @@ def assert_image_grid(final_layer: Any, pdd_sigmas: Any) -> None:
         f"minimax_h3_image: this checkpoint's output head has {blocks} blocks and its "
         f"pdd_sigmas grid has {points} points. ComfyUI pairs each head block with one "
         "interval of that grid, so the grid must hold one point more than the head has "
-        "blocks. Report the checkpoint, or take a true single-GPU reference (mode=local, "
-        "gpus_per_host=1) (docs/MODELS.md).",
+        "blocks. Stock ComfyUI fails inside the head on this file too, so no topology "
+        "renders it. Use the file as Comfy-Org/MiniMax-H3-Image publishes it, or report the "
+        "checkpoint (docs/MODELS.md).",
     ))
 
 

@@ -32,6 +32,7 @@ from dgx_monarch.adapters import (
     krea2,
     ltx,
     minimax_h3,
+    minimax_h3_image,
     omnigen2,
     stock_attention,
     wan_animate2,
@@ -792,6 +793,24 @@ def test_minimax_h3_token_refiner_drops_the_pin(stubs):
         return torch.cat([model.refine(text), model.refine(text, {})], dim=1), pins
 
     assert_pins_dropped(stubs, run, minimax_h3)
+
+
+class _FakeH3Image(_FakeH3):
+    """MiniMax-H3-Image: H3's token refiner and head, with the checkpoint's grid."""
+
+    pdd_sigmas = [1.0, 0.0]
+
+
+def test_minimax_h3_image_token_refiner_drops_the_pin(stubs):
+    text = _seeded(1, 5, DIM, seed=29)
+
+    def run(pinned):
+        pins = []
+        model = _FakeH3Image(pins, pinned)
+        minimax_h3_image.MiniMaxH3ImageAdapter().inject_usp(model, _ctx())
+        return torch.cat([model.refine(text), model.refine(text, {})], dim=1), pins
+
+    assert_pins_dropped(stubs, run, minimax_h3_image)
 
 
 # --- Krea2 and Kroma -----------------------------------------------------------------------

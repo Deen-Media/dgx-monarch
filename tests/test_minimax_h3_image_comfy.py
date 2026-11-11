@@ -11,7 +11,9 @@ seven-point grid, the adaLN curve table) and ask the adapter for stock's bits:
   and off the head grid;
 - at world 2 through the threaded two-rank harness the MOSS-Image and FLUX.3
   canaries use, where every block hands the kernel stock's operands, pad rows
-  excluded, and both ranks return stock's output;
+  excluded, and both ranks return stock's output: by bits on aarch64, within
+  2e-5 on the canary's x86 runner, and on GB10 a hardware leg;
+- no attention pin running on a rank, and the block loop's prefetch calls;
 - stock's ``block_index`` per block, the image model's ignored denoise mask,
   the grid check at inject, the registry order, the FSDP outside-forward row
   and the Worker VAE decode decline.
@@ -120,23 +122,35 @@ def world_one(monkeypatch):
     monkeypatch.setattr(adapter_module, "usp_options", lambda options, _attn, drop_rows=None: dict(options))
 
 
-def _refs(count, lat, seed=11):
+def _refs_sized(sizes, seed=11):
     generator = torch.Generator().manual_seed(seed)
-    return [{"kind": "image", "latent_h": lat[0], "latent_w": lat[1],
-             "latent": torch.randn(1, 24, 1, lat[0], lat[1], generator=generator)}
-            for _ in range(count)]
+    return [{"kind": "image", "latent_h": h, "latent_w": w,
+             "latent": torch.randn(1, 24, 1, h, w, generator=generator)}
+            for h, w in sizes]
 
 
-def _payload(comfy, text_len, lat, refs, tags=None):
-    """What stock MiniMaxH3Image.extra_conds publishes for this conditioning."""
+def _refs(count, lat, seed=11):
+    return _refs_sized([lat] * count, seed)
+
+
+def _payload(comfy, text_len, lat, refs, tags=None, layout=True, aug=None):
+    """What stock MiniMaxH3Image.extra_conds publishes for this conditioning.
+
+    ``layout=False`` leaves the layout out, so the forward builds its own from
+    the references; ``aug`` sets the payload's visual noise augmentation.
+    """
     payload = {"seed": 7, "audio_scale": 1.0}
     if tags is not None:
         payload["text_token_tags"] = tags
     if refs:
         payload["refs"] = refs
+    if aug is not None:
+        payload["visual_cond_noise_aug"] = aug
     payload.update(comfy.model_base.MiniMaxH3._cond_latents(None, refs))
-    payload["layout"] = comfy.h3.PackedLayout(
-        text_len, 1, (lat[0] + 1) // 2 * 2, (lat[1] + 1) // 2 * 2, 0, refs=payload.get("refs"))
+    if layout:
+        payload["layout"] = comfy.h3.PackedLayout(
+            text_len, 1, (lat[0] + 1) // 2 * 2, (lat[1] + 1) // 2 * 2, 0,
+            refs=payload.get("refs"))
     return payload
 
 
@@ -152,10 +166,11 @@ def _inputs(lat, text=9, seed=3):
     return x, context
 
 
-def _run(comfy, network, x, context, sigma, table, refs, lat, tags=None, **kwargs):
+def _run(comfy, network, x, context, sigma, table, refs, lat, tags=None, *, layout=True,
+         aug=None, **kwargs):
     timestep = torch.tensor([sigma * 1000.0])
     options = {"sample_sigmas": table, "sigmas": timestep / 1000.0}
-    payload = _payload(comfy, context.shape[1], lat, refs, tags)
+    payload = _payload(comfy, context.shape[1], lat, refs, tags, layout=layout, aug=aug)
     with torch.inference_mode():
         out = network.forward(x.clone(), timestep, context.clone(), options,
                               minimax_payload=payload, **kwargs)
@@ -180,7 +195,8 @@ def _tags(text):
 
 @pytest.mark.parametrize("table", [ON_GRID, OFF_GRID], ids=["on-grid", "off-grid"])
 @pytest.mark.parametrize("lat, ref_count, tags", CASES)
-@pytest.mark.parametrize("sigma", [1.0, 0.75, 0.81, 0.1])
+# Sigma 0 holds the forward to stock's unclamped sigma (H3's video forward clamps at 1e-6).
+@pytest.mark.parametrize("sigma", [1.0, 0.75, 0.81, 0.1, 0.0])
 def test_the_bound_forward_equals_stock_at_world_one(comfy, world_one, lat, ref_count, tags, sigma, table):
     model = _tiny(comfy)
     bound = _bound(model)
@@ -283,6 +299,12 @@ def test_the_registry_hands_the_image_model_to_this_adapter(comfy):
     with pytest.raises(UnsupportedModelError, match="has not vetted"):
         get_adapter(object.__new__(Unvetted))
 
+    class UnvettedImage(comfy.model_base.MiniMaxH3Image):
+        pass
+
+    with pytest.raises(UnsupportedModelError, match="minimax_h3_image variant UnvettedImage"):
+        get_adapter(object.__new__(UnvettedImage))
+
 
 def test_fsdp_replicates_h3s_outside_forward_modules_for_the_image_model(comfy):
     from dgx_monarch.adapters.fsdp_islands import outside_forward_module_attrs
@@ -306,7 +328,7 @@ def test_the_worker_vae_decode_declines_the_image_vae(comfy):
 WORLD = 2
 
 
-def _stock_calls(comfy, monkeypatch, model, x, context, sigma, refs, lat):
+def _stock_calls(comfy, monkeypatch, model, x, context, **run):
     kernel = comfy.h3.optimized_attention
     calls: list = []
 
@@ -322,13 +344,13 @@ def _stock_calls(comfy, monkeypatch, model, x, context, sigma, refs, lat):
 
     monkeypatch.setattr(comfy.h3, "optimized_attention", recording)
     try:
-        out, _ = _run(comfy, model, x, context, sigma, ON_GRID, refs, lat)
+        out, _ = _run(comfy, model, x, context, **run)
     finally:
         monkeypatch.setattr(comfy.h3, "optimized_attention", kernel)
     return out, calls, kernel
 
 
-def _sharded(monkeypatch, comfy, model, kernel, x, context, sigma, refs, lat, *, ring_world=1):
+def _sharded(monkeypatch, comfy, model, kernel, x, context, *, ring_world=1, **run):
     harness = _StockKernelHarness(WORLD, kernel)
     _install_stubs(monkeypatch, harness)
     # The stubs set base's rank accessors; the adapter imported sp_world by name.
@@ -344,7 +366,7 @@ def _sharded(monkeypatch, comfy, model, kernel, x, context, sigma, refs, lat, *,
     def body(rank):
         try:
             _LOCAL.rank = rank
-            outputs[rank], _ = _run(comfy, models[rank], x, context, sigma, ON_GRID, refs, lat)
+            outputs[rank], _ = _run(comfy, models[rank], x, context, **run)
         except BaseException as exc:  # re-raised in the test body
             errors[rank] = exc
             harness.fabric.barrier.abort()
@@ -363,25 +385,37 @@ def _sharded(monkeypatch, comfy, model, kernel, x, context, sigma, refs, lat, *,
     return outputs, harness
 
 
-# (latent, refs, text rows) and the packed total: 9 text + 9 target = 18 (even);
-# 7 text + 6 reference + 6 target = 19 (one pad row at world 2); 8 text + 3 x 4
-# reference + 4 target = 24 (three references, even).
+TABLES = {"on": ON_GRID, "off": OFF_GRID}
+
+# name: (latent, reference sizes, text rows, video-tag span in the text or None,
+# table, payload carries its layout). Packed totals: even 9 + 9 = 18; odd-one-pad
+# 7 + 6 + 6 = 19 (one pad row at world 2); three references 8 + 12 + 4 = 24; a
+# reference larger than the target 7 + 16 + 4 = 27; text across the shard line
+# 33 + 4 + 4 = 41, with a tag run over the line; the off-grid table; and a payload
+# without its layout, which the forward rebuilds with the references.
 WORLD_TWO_CASES = {
-    "even": ((6, 6), 0, 9),
-    "odd-one-pad": ((4, 6), 1, 7),
-    "three-references": ((4, 4), 3, 8),
+    "even": ((6, 6), [], 9, None, "on", True),
+    "odd-one-pad": ((4, 6), [(4, 6)], 7, None, "on", True),
+    "three-references": ((4, 4), [(4, 4)] * 3, 8, None, "on", True),
+    "reference-larger-than-target": ((4, 4), [(8, 8)], 7, None, "on", True),
+    "text-across-the-shard-line-with-tags": ((4, 4), [(4, 4)], 33, (19, 24), "on", True),
+    "off-grid-table": ((4, 6), [(4, 6)], 7, None, "off", True),
+    "no-layout-in-the-payload": ((4, 6), [(4, 6)], 7, None, "on", False),
 }
 
 
-@pytest.mark.parametrize("case", sorted(WORLD_TWO_CASES))
-@pytest.mark.parametrize("sigma", [1.0, 0.5])
-def test_two_ranks_hand_every_block_stocks_operands_and_return_stocks_bits(comfy, monkeypatch, case, sigma):
-    lat, ref_count, text = WORLD_TWO_CASES[case]
-    model = _tiny(comfy)
-    x, context = _inputs(lat, text=text)
-    refs = _refs(ref_count, lat)
-    stock, calls, kernel = _stock_calls(comfy, monkeypatch, model, x, context, sigma, refs, lat)
-    outputs, harness = _sharded(monkeypatch, comfy, model, kernel, x, context, sigma, refs, lat)
+def _case(name, sigma):
+    lat, sizes, text, span, table, layout = WORLD_TWO_CASES[name]
+    tags = None
+    if span is not None:
+        tags = torch.ones(1, text, dtype=torch.long)
+        tags[0, span[0]:span[1]] = 0
+    run = {"sigma": sigma, "table": TABLES[table], "refs": _refs_sized(sizes), "lat": lat,
+           "tags": tags, "layout": layout}
+    return lat, text, run
+
+
+def _assert_stock_operands_and_output(calls, harness, outputs, stock):
     stock_blocks = calls[-LAYERS:]
     for rank, seen in harness.seen.items():
         assert len(seen) == LAYERS, (rank, len(seen))
@@ -392,13 +426,112 @@ def test_two_ranks_hand_every_block_stocks_operands_and_return_stocks_bits(comfy
     assert outputs[0].shape == stock.shape and _same(outputs[0], stock)
 
 
-def test_a_padded_ring_refuses_class_p_before_any_block(comfy, monkeypatch):
-    lat, ref_count, text = WORLD_TWO_CASES["odd-one-pad"]
+@pytest.mark.parametrize("case", sorted(WORLD_TWO_CASES))
+@pytest.mark.parametrize("sigma", [1.0, 0.5])
+def test_two_ranks_hand_every_block_stocks_operands_and_return_stocks_output(
+        comfy, monkeypatch, case, sigma):
+    """Two ranks through the threaded harness against stock on one.
+
+    `_same` compares by bits on aarch64 and within 2e-5 elsewhere
+    (tests/test_flux3_comfy_exactness.py), so the comfy canary's x86 runner checks
+    this within that tolerance, not by bits. Bit identity is shown on aarch64 on
+    CPU (this file on the Sparks) and is a hardware leg on GB10 (docs/VALIDATION.md).
+    """
+    lat, text, run = _case(case, sigma)
     model = _tiny(comfy)
     x, context = _inputs(lat, text=text)
-    refs = _refs(ref_count, lat)
-    _, _, kernel = _stock_calls(comfy, monkeypatch, model, x, context, 0.5, refs, lat)
+    stock, calls, kernel = _stock_calls(comfy, monkeypatch, model, x, context, **run)
+    outputs, harness = _sharded(monkeypatch, comfy, model, kernel, x, context, **run)
+    _assert_stock_operands_and_output(calls, harness, outputs, stock)
+
+
+def test_two_ranks_on_a_refined_context(comfy, monkeypatch):
+    """A context extra_conds already refined to the hidden width skips the refiner, as stock."""
+    lat, text, run = _case("odd-one-pad", 0.5)
+    model = _tiny(comfy)
+    x, raw = _inputs(lat, text=text)
+    with torch.inference_mode():
+        context = model.preprocess_text_embeds(raw)
+    stock, calls, kernel = _stock_calls(comfy, monkeypatch, model, x, context, **run)
+    outputs, harness = _sharded(monkeypatch, comfy, model, kernel, x, context, **run)
+    _assert_stock_operands_and_output(calls, harness, outputs, stock)
+
+
+class _PinRan(Exception):
+    pass
+
+
+def _pin_every_attention(comfy, model):
+    from comfy.ldm.modules.attention import ComfyAttention
+
+    def pinned_kernel(*_args, **_kwargs):
+        raise _PinRan("a pinned kernel ran")
+
+    count = 0
+    for module in model.modules():
+        if isinstance(module, ComfyAttention):
+            module.function = pinned_kernel
+            count += 1
+    return count
+
+
+def test_no_pin_runs_on_a_rank(comfy, monkeypatch):
+    """Every ComfyAttention pinned with a recorder: stock calls it, the two ranks and
+    extra_conds' refiner path on the bound model never do, and the output is stock's."""
+    lat, text, run = _case("odd-one-pad", 0.5)
+    model = _tiny(comfy)
+    x, context = _inputs(lat, text=text)
+    stock, calls, kernel = _stock_calls(comfy, monkeypatch, model, x, context, **run)
+    pinned = copy.deepcopy(model)
+    assert _pin_every_attention(comfy, pinned) == LAYERS + 1  # the blocks and the refiner
+    with pytest.raises(_PinRan):
+        _run(comfy, pinned, x, context, **run)  # the control: stock runs the pin
+    outputs, harness = _sharded(monkeypatch, comfy, pinned, kernel, x, context, **run)
+    _assert_stock_operands_and_output(calls, harness, outputs, stock)
+    bound = _bound(pinned)
+    with torch.inference_mode():
+        refined = bound.preprocess_text_embeds(context)
+    assert torch.isfinite(refined).all()
+
+
+def test_the_block_loop_pops_as_stock_does(comfy, world_one, monkeypatch):
+    """One queue over the blocks, every pop with the block scope, and the closing pop."""
+    import comfy.model_prefetch as prefetch
+
+    events: list = []
+    real_queue, real_pop = prefetch.make_prefetch_queue, prefetch.prefetch_queue_pop
+
+    def make_prefetch_queue(queue, device, options):
+        events.append(("queue", [type(module).__name__ for module in queue]))
+        return real_queue(queue, device, options)
+
+    def prefetch_queue_pop(queue, device, module, *args, **kwargs):
+        events.append(("pop", type(module).__name__ if module is not None else None,
+                       args, tuple(sorted(kwargs.items()))))
+        return real_pop(queue, device, module, *args, **kwargs)
+
+    monkeypatch.setattr(prefetch, "make_prefetch_queue", make_prefetch_queue)
+    monkeypatch.setattr(prefetch, "prefetch_queue_pop", prefetch_queue_pop)
+    model = _tiny(comfy)
+    bound = _bound(model)
+    x, context = _inputs((4, 4))
+    _run(comfy, model, x, context, 0.75, ON_GRID, [], (4, 4))
+    stock = list(events)
+    events.clear()
+    _run(comfy, bound, x, context, 0.75, ON_GRID, [], (4, 4))
+    assert events == stock
+    assert stock[0] == ("queue", ["DiTBlock"] * LAYERS)
+    assert [event for event in stock if event[0] == "pop"] == (
+        [("pop", "DiTBlock", (), (("malloc_scope", "block"),))] * LAYERS
+        + [("pop", None, (), (("malloc_scope", "block"),))])
+
+
+def test_a_padded_ring_refuses_class_p_before_any_block(comfy, monkeypatch):
+    lat, text, run = _case("odd-one-pad", 0.5)
+    model = _tiny(comfy)
+    x, context = _inputs(lat, text=text)
+    _, _, kernel = _stock_calls(comfy, monkeypatch, model, x, context, **run)
     with pytest.raises(UnsupportedModelError) as caught:
-        _sharded(monkeypatch, comfy, model, kernel, x, context, 0.5, refs, lat, ring_world=2)
+        _sharded(monkeypatch, comfy, model, kernel, x, context, ring_world=2, **run)
     assert parse_leading_refusal_tag(str(caught.value)).refusal_class is RefusalClass.PHYSICS
     assert "Ulysses-only" in str(caught.value)

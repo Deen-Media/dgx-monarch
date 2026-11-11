@@ -17,7 +17,9 @@ the rank's real rows bit for bit with the same rows of the full call:
 The canary seam "minimax h3 image row calls" holds that these are the calls a
 block makes. ``--checkpoint`` loads a real file through ComfyUI's own loader
 (run it on the hardware it is to vouch for); ``--tiny`` builds a small random
-model for a CPU smoke run. The record is JSON: one row per call and rank with
+model and always runs on CPU. ``--self-check`` adds a negative control, a call
+whose rows depend on every row it sees, which the comparison must report
+unequal; the tool exits 2 if it does not. The record is JSON: one row per call and rank with
 ``equal`` and ``max_abs_diff``, plus the shape and device it ran on.
 
 Usage:
@@ -90,7 +92,8 @@ def _local(x, start: int, stop: int, local: int):
     return torch.cat([part, pad])
 
 
-def run(h3, model, dtype, latent: tuple[int, int], text_rows: int, world: int) -> dict:
+def run(h3, model, dtype, latent: tuple[int, int], text_rows: int, world: int,
+        self_check: bool = False) -> dict:
     import comfy.quant_ops
     import torch
 
@@ -112,9 +115,10 @@ def run(h3, model, dtype, latent: tuple[int, int], text_rows: int, world: int) -
     def rms_rope(hidden, part_angles):
         table = h3.rope_rotation_table(part_angles, dtype)
         s = hidden.shape[0]
+        # As stock: in place on the strided views of the qkv buffer.
         q, k, _v = attn.qkv_proj(hidden).split(inner, dim=-1)
-        q = q.contiguous().view(1, s, attn.heads, attn.head_dim)
-        k = k.contiguous().view(1, s, attn.heads, attn.head_dim)
+        q = q.view(1, s, attn.heads, attn.head_dim)
+        k = k.view(1, s, attn.heads, attn.head_dim)
         comfy.quant_ops.ck.rms_rope_split_half_(q, k, table, qw, kw, epsilon=attn.q_norm.eps,
                                                 rot_dim=table.shape[-3] * 2)
         return torch.cat([q[0].reshape(s, -1), k[0].reshape(s, -1)], dim=-1)
@@ -125,6 +129,10 @@ def run(h3, model, dtype, latent: tuple[int, int], text_rows: int, world: int) -
         "out_proj": (attended, lambda t, _a: attn.out_proj(t)),
         "mlp": (x, lambda t, _a: block.mlp(t)),
     }
+    if self_check:
+        # A negative control: a call whose rows depend on every row it sees, so the
+        # comparison must report it unequal on some rank.
+        calls["self_check_row_dependent"] = (x, lambda t, _a: t / t.abs().amax())
     record = {"rows": rows, "world": world, "local_rows": local, "latent": list(latent),
               "text_rows": text_rows, "device": str(device), "dtype": str(dtype), "calls": []}
     with torch.inference_mode():
@@ -138,7 +146,11 @@ def run(h3, model, dtype, latent: tuple[int, int], text_rows: int, world: int) -
                 record["calls"].append({"call": name, "rank": rank, "real_rows": real,
                                         "equal": bool(torch.equal(ours, stock)),
                                         "max_abs_diff": diff})
-    record["all_equal"] = all(row["equal"] for row in record["calls"])
+    record["all_equal"] = all(row["equal"] for row in record["calls"]
+                              if row["call"] != "self_check_row_dependent")
+    if self_check:
+        record["self_check_seen"] = not all(
+            row["equal"] for row in record["calls"] if row["call"] == "self_check_row_dependent")
     return record
 
 
@@ -152,22 +164,29 @@ def main(argv: list[str] | None = None) -> int:
                         help="the latent size, even (1024 square is 64 64)")
     parser.add_argument("--text-rows", type=int, default=300)
     parser.add_argument("--world", type=int, default=2)
+    parser.add_argument("--self-check", action="store_true",
+                        help="add a row-dependent call the comparison must report unequal")
     parser.add_argument("--out", required=True, help="the JSON record to write")
     args = parser.parse_args(argv)
+    if args.tiny:
+        # The smoke runs on CPU even on a GPU host.
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
     h3 = _comfy(os.path.abspath(args.comfy))
     import torch
 
     if args.tiny:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model, dtype = _tiny_block(h3, device)
+        model, dtype = _tiny_block(h3, torch.device("cpu"))
     else:
         model, dtype = _checkpoint_block(args.checkpoint, None)
     with torch.inference_mode():
         record = run(h3, model.requires_grad_(False), dtype, tuple(args.latent),
-                     args.text_rows, args.world)
+                     args.text_rows, args.world, self_check=args.self_check)
     record["source"] = "tiny" if args.tiny else Path(args.checkpoint).name
     Path(args.out).write_text(json.dumps(record, indent=2) + "\n")
     print(f"{'all calls equal' if record['all_equal'] else 'a call differs'}: {args.out}")
+    if args.self_check and not record["self_check_seen"]:
+        print("the negative control compared equal: the comparison is broken")
+        return 2
     return 0 if record["all_equal"] else 1
 
 

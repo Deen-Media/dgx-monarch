@@ -81,19 +81,20 @@ def _reject_unsupported_image_features(x: Any, transformer_options: dict[str, An
         if kwargs.get(name) is not None:
             raise UnsupportedModelError(refusal(
                 RefusalClass.PHYSICS,
-                f"minimax_h3_image: this render carries a '{name}', but the model's attention "
-                "is maskless and fully bidirectional, so the sharded kernel cannot apply one. "
-                "Clear the mask, or take a true single-GPU reference (mode=local, "
-                "gpus_per_host=1) (docs/MODELS.md).",
+                f"minimax_h3_image: this render carries a '{name}'. Stock ComfyUI's "
+                "MiniMax-H3-Image forward takes no attention mask and would drop this one; this "
+                "build refuses rather than drop it unseen. Clear the mask, or take a true "
+                "single-GPU reference (mode=local, gpus_per_host=1) (docs/MODELS.md).",
             ))
     if transformer_options.get("patches_replace", {}).get("dit", {}):
         raise UnsupportedModelError(refusal(
             RefusalClass.PHYSICS,
-            "minimax_h3_image: a 'dit' block replacement receives the token stream, the "
-            "rotation table and the modulation segment table, all three of which are "
-            "rank-local under sequence parallelism, so the patch would see a partial sequence "
-            "and rank-local coordinates. Remove the patch, or take a true single-GPU "
-            "reference (mode=local, gpus_per_host=1) (docs/MODELS.md).",
+            "minimax_h3_image: a 'dit' block replacement (Model Sparse Attention sets one on "
+            "every block of this model) receives the token stream, the rotation table and the "
+            "modulation segment table, all three of which are rank-local under sequence "
+            "parallelism, so the patch would see a partial sequence and rank-local "
+            "coordinates. Remove the patch, or take a true single-GPU reference (mode=local, "
+            "gpus_per_host=1) (docs/MODELS.md).",
         ))
 
 
@@ -107,8 +108,9 @@ def _reject_padded_ring(n_pad_rows: int) -> None:
             f"minimax_h3_image: this packed sequence needs {n_pad_rows} divisibility pad "
             "row(s), and the exact pad exclusion is Ulysses-only. The model's attention is "
             "maskless and fully bidirectional, so ring or hybrid attention would attend the "
-            "synthetic rows. Run this workflow on a uly* topology, or take a true single-GPU "
-            "reference (mode=local, gpus_per_host=1) (docs/MODELS.md).",
+            "synthetic rows. Run this workflow on a uly* topology, or pick a canvas and prompt "
+            "whose packed token total divides the sequence-parallel degree, or take a true "
+            "single-GPU reference (mode=local, gpus_per_host=1) (docs/MODELS.md).",
         ))
 
 
@@ -136,7 +138,7 @@ class MiniMaxH3ImageAdapter(Adapter):
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         attn = ctx.usp_attention
         # Both read once, before any bind: the head's form and its grid.
-        form = head_form(diffusion_model.final_layer)
+        form = head_form(diffusion_model.final_layer, FAMILY, "MiniMax-H3-Image")
         assert_image_grid(diffusion_model.final_layer, diffusion_model.pdd_sigmas)
 
         def usp_forward(self, x, timestep, context, transformer_options={},

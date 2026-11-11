@@ -3361,12 +3361,18 @@ touchpoint manifest. No hardware run has used ComfyUI 0.45.0 yet.
 The adapter (`adapters/minimax_h3_image.py`) has its CPU proof against
 ComfyUI 0.45.0: `tests/test_minimax_h3_image_comfy.py` gives stock's bits at
 world 1 on text to image, an odd latent, and edits with one and three
-reference pictures, on and off the head grid, and hands every block stock's
-attention operands at world 2 through the threaded two-rank harness, pad rows
-excluded; canary seams 52 to 59 hold the forward, the layout, the head, the
-build, the sampling grid, the VAE, the edit node's payload and the row-keyed
-calls. On `single` the record says the header pins are kept; on uly2 it says
-they are dropped. No hardware run has used this family yet.
+reference pictures, on and off the head grid and down to sigma 0, and hands
+every block stock's attention operands at world 2 through the threaded
+two-rank harness, pad rows excluded, on references larger than the target,
+text across the shard line with presentation tags, the off-grid table, a
+payload without its layout and a refined context, with no attention pin
+running on a rank. At world 2 it compares by bits on aarch64 (the Sparks, on
+CPU) and within 2e-5 on the comfy canary's x86 runner; bit identity on GB10
+is a hardware leg (the identity rows below). Canary seams 52 to 59 hold the
+forward, the layout, the head, the build, the sampling grid, the VAE, the edit
+node's payload and the row-keyed calls. In a world of one GPU the record says
+the header pins are kept; on uly2 it says they are dropped. No hardware run has
+used this family yet.
 
 | behaviour | what a run must show | status |
 |---|---|---|

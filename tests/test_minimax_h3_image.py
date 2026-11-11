@@ -91,6 +91,9 @@ def test_any_other_segment_kind_refuses_class_p(kind):
         h3_image_modulation_plan(layout, {}, 0.5, VISUAL)
     assert parse_leading_refusal_tag(str(caught.value)).refusal_class is RefusalClass.PHYSICS
     assert "has not vetted" in str(caught.value)
+    # Stock fails on the same conditioning, so the refusal offers no single-GPU reference.
+    assert "no topology renders it" in str(caught.value)
+    assert "single-GPU reference" not in str(caught.value)
     assert {"text", "ref_img", "video"} == H3_IMAGE_SEGMENT_KINDS
 
 
@@ -110,6 +113,8 @@ def test_the_grid_check_refuses_only_where_stock_fails(blocks, points, refuses):
         assert_image_grid(_head(blocks), grid)
     assert parse_leading_refusal_tag(str(caught.value)).refusal_class is RefusalClass.PHYSICS
     assert f"{blocks} blocks" in str(caught.value) and f"{points} points" in str(caught.value)
+    assert "no topology renders it" in str(caught.value)
+    assert "single-GPU reference" not in str(caught.value)
 
 
 def test_a_batch_above_one_refuses_class_p():
@@ -158,7 +163,7 @@ def test_the_h3_sampling_node_refuses_this_family_naming_the_grid():
     from dgx_monarch import h3_sigma_shift
 
     reason = h3_sigma_shift.family_refusal_reason(FAMILY)
-    assert reason is not None and "pdd_sigmas grid" in reason and "does not read" in reason
+    assert reason is not None and "pdd_sigmas grid" in reason and "reads neither shift" in reason
     assert h3_sigma_shift.family_refusal_reason("minimax_h3") is None
 
 
@@ -178,3 +183,20 @@ def test_the_worker_sampling_guard_refuses_class_p_on_this_family():
         model_sampling_render.assert_supported(request, FAMILY)
     assert parse_leading_refusal_tag(str(caught.value)).refusal_class is RefusalClass.PHYSICS
     assert "pdd_sigmas grid" in str(caught.value)
+
+
+def test_the_head_form_refusal_names_the_family_that_called_it():
+    from dgx_monarch.adapters.minimax_h3_packing import head_form
+
+    class OldStackedHead:
+        video_dim = 4
+        video_out = SimpleNamespace(weight=SimpleNamespace(shape=(8, 2)))
+
+        def forward(self, x, t_emb, video_seg, audio_seg, sigma, sample_sigmas, shifts):
+            raise AssertionError("never runs")
+
+    with pytest.raises(UnsupportedModelError) as caught:
+        head_form(OldStackedHead(), FAMILY, "MiniMax-H3-Image")
+    text = str(caught.value)
+    assert "minimax_h3_image: this checkpoint's output head stacks 2 PDD blocks" in text
+    assert "This build drives MiniMax-H3-Image on ComfyUI 0.45.0 or newer" in text
