@@ -32,6 +32,7 @@ if _ADDED_SRC:
     sys.path.insert(0, _SRC)
 try:
     from dgx_monarch.nodes import NODE_CLASS_MAPPINGS
+    from dgx_monarch.nodes.expander_prompt import TROUBLESHOOTING as EXPANDER_ENTRY
     from dgx_monarch.stock_widget_drift import NEWER as NAMED_STOCK
 finally:
     if _ADDED_SRC:
@@ -114,6 +115,13 @@ STOCK = {
     # layout graph keeps its JSON here and wires it to CLIP Text Encode, whose
     # own text box the browser would rewrite on Queue (_moss_template says why).
     "PrimitiveStringMultiline": ["value"],
+    # The MiniMax-H3-Image expander chain, as ComfyUI's templates wire it:
+    # Replace Text stores ["", "{input text}", ""] with string and replace
+    # wired, and Extract Text from JSON stores ["", "expanded_caption"] with
+    # json_string wired. Neither marks an input for the browser's dynamic
+    # prompt pass, so the marker's braces stay as typed.
+    "StringReplace": ["string", "find", "replace"],
+    "JsonExtractString": ["json_string", "key"],
     # The p-h3-image graph's V3 nodes. Their autogrow image sockets start
     # empty, as BerniniConditioning's do, so none is declared below.
     "PH3ImageConditioning": ["prompt", "width", "height"],
@@ -249,6 +257,8 @@ STOCK_OUTPUTS = {
     "CLIPLoader": [("CLIP", "CLIP")],
     "CLIPTextEncode": [("CONDITIONING", "CONDITIONING")],
     "PrimitiveStringMultiline": [("STRING", "STRING")],
+    "StringReplace": [("STRING", "STRING")],
+    "JsonExtractString": [("STRING", "STRING")],
     "PH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
     "MiniMaxH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
     "TextGenerateV2": [("generated_text", "STRING"), ("thinking", "STRING")],
@@ -736,6 +746,9 @@ def build(spec: dict) -> dict:
         if ntype == "Note":
             title = spec["title"].removeprefix("DGX Monarch ")
             node_out["title"] = f"DGX Monarch | {title}"
+        elif "title" in n:
+            # A node the reader must tell from its twins carries its own title.
+            node_out["title"] = n["title"]
         if ntype in NODE_CLASS_MAPPINGS or ntype in NAMED_STOCK:
             # This is the name-to-value map web/js/dgx_monarch_widgets.js saves,
             # so a widget added after release never sends a shipped template
@@ -5897,18 +5910,21 @@ TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
 # templates (Comfy-Org/workflow_templates 0.11.105, image_minimax_h3_image_t2i
 # and image_minimax_h3_image_edit): the INT8 ConvRot DiT and text encoder, the
 # FP16 VAE, KSampler at 6 steps, CFG 1, euler and simple, a zeroed negative,
-# and the W4A8 prompt expander on Generate Text behind an If/Else switch, off
-# in text to image and on in the edit. The edit's canvas nodes are upstream's
-# too: two Resize Image/Mask nodes, to 4 MP and then to a multiple of 32, and
-# Get Image Size. Two things differ, each on purpose. The text to image canvas
+# the edit's two Resize Image/Mask nodes and Get Image Size, and the prompt
+# expander chain as ComfyUI wires it: Replace Text puts the request into a
+# task prompt, Generate Text runs the W4A8 expander with ComfyUI's decoding
+# numbers, Extract Text from JSON reads the caption out, and an If/Else switch
+# picks the caption or the request. Four things differ, each on purpose.
+# The task prompt and system prompt boxes are EMPTY: the text ComfyUI's
+# templates carry there is MiniMax's own, and this repository ships none of
+# it (tests/test_minimax_h3_image_templates.py holds the boxes empty). So the
+# switch is off in every graph, the edit included, where ComfyUI's edit
+# template ships it on; a graph that turns the expander on with an empty
+# task prompt refuses (nodes/expander_prompt.py). The text to image canvas
 # sits on the conditioning node as two numbers, where upstream wires a
 # Resolution Selector: the loader's price, the sweep and App Mode read
-# numbers, and a wired side reads as none. And the expander's instruction is
-# this project's own short text on Generate Text's system prompt, decoded
-# greedily like p-h3-image's upsampler. Upstream's graphs carry MiniMax's own
-# task prompts, about 16 thousand characters each, spliced through Replace
-# Text and read back through Extract Text from JSON, and sample the answer;
-# that text is MiniMax's and is not copied here.
+# numbers, and a wired side reads as none. And Preview as Text sits beside
+# the text path, not on it, as in the p-h3-image graph.
 H3I_DIT = "minimax_h3_image_pruned_int8_convrot.safetensors"
 H3I_ENCODER = "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
 H3I_VAE = "minimax_h3_image_vae_fp16.safetensors"
@@ -5919,67 +5935,42 @@ H3I_EXPANDER = "qwen3.5_9b_w4a8_gptq.safetensors"
 # the header fixture.
 H3I_GRID = ("1.0, 0.9675236940383911, 0.8875485062599182, 0.75, "
             "0.5327739119529724, 0.23200887441635132, 0.0")
-# With the switch off the request is the prompt, so it is a full caption.
-H3I_REQUEST = (
-    "A wide photograph of a small mountain weather station at first light, taken "
-    "from a low ridge with a 35mm lens. A white instrument hut with slatted sides "
-    "stands on four steel legs in the left third of the frame, with a cup "
-    "anemometer and a wind vane on a mast above it and a row of three rain gauges "
-    "on a concrete pad beside it. Frost covers the short grass and the roof of the "
-    "hut. Behind the station a valley fills with low cloud, and a line of "
-    "snow-covered peaks catches warm orange light under a pale blue sky. A "
-    "hand-painted wooden sign by the path reads \"STATION 7\" in black capitals. "
-    "Sharp detail, natural color, long soft shadows.")
-# Written for the demo picture the pack draws under reference.png
+# The demo requests are this project's own short sentences. The edit's is
+# written for the demo picture the pack draws under reference.png
 # (tools/gen_demo_inputs.py: a clay vase with a cream band on a studio
-# backdrop). The conditioning node presents pictures as Picture 1, Picture 2.
+# backdrop); the conditioning node presents pictures as Picture 1, Picture 2.
+H3I_REQUEST = ("A small mountain weather station at first light, frost on the grass "
+               "and snow-covered peaks behind it, photographed with a 35mm lens.")
 H3I_EDIT_REQUEST = (
     "Turn the clay vase in <Picture 1> into a glossy cobalt blue ceramic vase with "
     "a thin gold band, and keep its shape, the plain studio backdrop and the "
     "framing as they are.")
-H3I_INSTRUCTION = (
-    "You write the caption an image model renders. Rewrite the user's request as "
-    "one detailed English caption of a single still image. Keep every fact, name, "
-    "number and quoted text of the request, and keep its style and medium. Say "
-    "what a viewer sees: the main subject and where it sits in the frame, the "
-    "setting, the light, the colors and materials, and the camera or the art "
-    "medium. Put any text to render in double quotes and say where it sits. "
-    "Describe what is there, never what is absent. Answer with the caption alone: "
-    "no title, no list and no notes.")
-H3I_EDIT_INSTRUCTION = (
-    "You write the caption an image model renders for an edit. The user sends "
-    "pictures, numbered in order from Picture 1, and Picture 1 is the picture to "
-    "edit. Rewrite the user's instruction as one detailed English description of "
-    "the finished picture: say what changes, and say what stays as it is in "
-    "Picture 1, the framing and the light included. Refer to a picture as "
-    "<Picture 1>, <Picture 2> and so on, as the instruction does. Keep every "
-    "fact, name, number and quoted text of the instruction. Answer with the "
-    "description alone: no title, no list and no notes.")
-H3I_SIZES = ("ComfyUI's template notes say the model works from about 4 MP to 20 MP "
-             "and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or "
-             "6272x2688, sides swapped for portrait.")
-# How ComfyUI's own two templates decode: Generate Text's sampling_mode on with
-# these seven child widgets, in the option's order. With mtp auto on this
-# expander file that text can change from run to run at a fixed seed: the
+# The marker Replace Text fills with the request, as ComfyUI's templates
+# write it. It sits in Replace Text's own find box, which ComfyUI does not
+# mark for the browser's dynamic prompt pass.
+H3I_MARKER = "{input text}"
+# Where MiniMax publishes the text ComfyUI's templates carry in the two boxes.
+H3I_PROMPT_REPO = "MiniMaxAI/MiniMax-H3-Image-PE"
+H3I_TASK_FILE = {False: "prompt/t2i/task_prompt.txt", True: "prompt/edit/task_prompt.txt"}
+H3I_SYSTEM_FILE = "prompt/t2i/system_prompt.txt"
+# How ComfyUI's own templates end the task prompt, which is where the marker
+# goes in a pasted one.
+H3I_TASK_ENDING = {False: "input_text: {input text}",
+                   True: "User input: {input text}"}
+# How Generate Text decodes, in one place: ComfyUI's own numbers, sampling_mode
+# on with these seven child widgets in the option's order. With mtp auto on
+# this expander file the text can change from run to run at a fixed seed: the
 # file carries MTP weights, ComfyUI re-fits the draft tree from measured step
 # time, and every step draws one token a tree row from the seeded generator
 # (comfy/text_encoders/qwen35.py at 0.45.0, _generate_mtp).
-H3I_UPSTREAM_DECODING = {
+H3I_DECODING = {
     "sampling_mode": "on", "sampling_mode.temperature": 1.0, "sampling_mode.top_k": 20,
     "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,
     "sampling_mode.repetition_penalty": 1.0, "sampling_mode.presence_penalty": 0.0,
     "sampling_mode.seed": 0}
-# How these graphs decode, in one place. Greedy with thinking on, as the
-# p-h3-image graph runs its upsampler: every step takes the main model's top
-# token whatever the draft tree, and no random draw is made. Set this to
-# H3I_UPSTREAM_DECODING and regenerate to sample as upstream does; H3I_GREEDY
-# is then no longer true and the Notes must say so.
-H3I_DECODING = {"sampling_mode": "off"}
-H3I_GREEDY = ("It decodes greedily, taking the model's top token at every step and "
-              "drawing no random number, where ComfyUI's template samples; sampled "
-              "text from this expander file can change from run to run even at a "
-              "fixed seed. Greedy text has not been compared across runs on hardware "
-              "yet.")
+H3I_SIZES = ("ComfyUI's template notes say the model works from about 4 MP to 20 MP "
+             "and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or "
+             "6272x2688, sides swapped for portrait.")
 
 
 def _minimax_h3_image_note(*, edit: bool) -> str:
@@ -5995,35 +5986,50 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
             "the VAE, hands it to the DiT as a reference; call it <Picture 1> in the "
             "request. For more pictures, add a Load Image and the two resize nodes "
             "for each and wire them to image_2, image_3 and so on, and to the next "
-            "image input of Generate Text while the expander is on; image_1 stays "
+            "image input of Generate Text if you turn the expander on; image_1 stays "
             "the picture to edit. " + H3I_SIZES + " A reference of this size adds "
             "about as many rows as the target, so an edit needs more Worker memory "
             "than text to image at the same size. ")
-        expander = (
-            "The If/Else switch is true as shipped, as in ComfyUI's template: "
-            "Generate Text reads the request and the picture on the driver and "
-            "writes the description of the finished picture that the model gets, "
-            "and Preview as Text shows it. " + H3I_GREEDY + " Compare two renders "
-            "of this graph only when both ran the expander on one driver, and for "
-            "an identity check set the switch to false, which sends the request as "
-            "written. ")
+        differs = ("This is where this graph's defaults differ from ComfyUI's edit "
+                   "template, which ships the switch true and both boxes filled. ")
+        paste = (
+            "paste " + H3I_TASK_FILE[True] + " into the task prompt box and end it "
+            "with the lines " + H3I_TASK_ENDING[True] + " and output_text:, as "
+            "ComfyUI's template does, paste " + H3I_SYSTEM_FILE + " into the system "
+            "prompt box, and set the switch to true. ")
     else:
         head = (
             "MiniMax-H3-Image text to image at 2048x2048 (4 MP) in 6 steps, on the "
             "INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's "
             "own template loads. Set width and height on MiniMax H3 Image "
             "Conditioning in multiples of 32. " + H3I_SIZES + " ")
-        expander = (
-            "The If/Else switch is false as shipped, as in ComfyUI's template, so "
-            "the request box goes to the model as written: write a full caption "
-            "there. Set the switch to true and Generate Text rewrites a short "
-            "request into a full caption on the driver, and Preview as Text shows "
-            "it. " + H3I_GREEDY + " ")
+        differs = ("ComfyUI's template ships the switch false too, with both boxes "
+                   "filled. ")
+        paste = (
+            "paste " + H3I_TASK_FILE[False] + " into the task prompt box and make "
+            "its last lines read " + H3I_TASK_ENDING[False] + " and output_text:, as "
+            "in ComfyUI's template, paste " + H3I_SYSTEM_FILE + " into the system "
+            "prompt box, and set the switch to true. ")
     return (
-        head + expander +
-        "The instruction box holds this project's own short instruction for the "
-        "expander, not the long task prompt of ComfyUI's template, so its captions "
-        "differ from that template's. "
+        head +
+        "The request box goes to the model as written. The prompt expander of "
+        "ComfyUI's template is wired but off: Replace Text puts the request into a "
+        "task prompt where it says " + H3I_MARKER + ", Generate Text runs the "
+        "expander model on the driver with ComfyUI's decoding settings, Extract "
+        "Text from JSON reads the caption out of its answer, and the If/Else switch "
+        "picks that caption or the request. Here the switch is false and the task "
+        "prompt and system prompt boxes are empty. " + differs +
+        "The text those boxes were built for is MiniMax's: MiniMax publishes it in "
+        "its Hugging Face repository " + H3I_PROMPT_REPO + ", under MiniMax's own "
+        "licence, and this project does not ship it. To run the expander as "
+        "ComfyUI's template does, " + paste +
+        "With the task prompt box empty the switch must stay false: a DGX Monarch "
+        "loader or sampler refuses a graph whose expander is on with an empty task "
+        "prompt, or with one that lacks the marker (docs/TROUBLESHOOTING.md #"
+        + str(EXPANDER_ENTRY) + "). With the switch true the prompt is text a "
+        "language model wrote, which Preview as Text shows, and with this expander "
+        "file it can change from run to run even at a fixed seed, so compare "
+        "renders and check identity with the switch false. "
         "Sampling is KSampler at CFG 1 with euler and the simple scheduler, as in "
         "ComfyUI's template. At 6 steps that schedule lands within a thousandth of "
         "the sigma grid the checkpoint carries, and the output head picks its "
@@ -6054,7 +6060,8 @@ def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dic
     """One MiniMax-H3-Image graph: text to image, the edit, or the grid test.
 
     ``grid`` swaps KSampler for Sampler Custom on the checkpoint's own sigma
-    grid, with the expander off; its note is set where it is registered.
+    grid; its note is set where it is registered. The expander chain is wired
+    and off in all three, and its two prompt boxes are empty.
     """
     nodes = [
         {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
@@ -6070,13 +6077,21 @@ def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dic
          "widgets": {"clip_name": H3I_EXPANDER, "type": "minimax", "device": "default"}},
         {"key": "vae", "type": "VAELoader", "pos": (0, 4),
          "widgets": {"vae_name": H3I_VAE}},
+        # The three text boxes carry ComfyUI's titles for them, so a reader can
+        # tell the two empty ones apart.
         {"key": "request", "type": "PrimitiveStringMultiline", "pos": (1, 2),
+         "title": "Text (user_prompt)",
          "widgets": {"value": H3I_EDIT_REQUEST if edit else H3I_REQUEST}},
-        {"key": "instruction", "type": "PrimitiveStringMultiline", "pos": (1, 3),
-         "widgets": {"value": H3I_EDIT_INSTRUCTION if edit else H3I_INSTRUCTION}},
+        {"key": "task", "type": "PrimitiveStringMultiline", "pos": (1, 3),
+         "title": "Text (task_prompt)", "widgets": {"value": ""}},
+        {"key": "system", "type": "PrimitiveStringMultiline", "pos": (1, 4),
+         "title": "Text (system_prompt)", "widgets": {"value": ""}},
+        {"key": "splice", "type": "StringReplace", "pos": (2, 3),
+         "widgets": {"string": "", "find": H3I_MARKER, "replace": ""},
+         "wire": {"string": ("task", 0), "replace": ("request", 0)}},
     ]
-    expand_wire = {"clip": ("expclip", 0), "system_prompt": ("instruction", 0),
-                   "prompt": ("request", 0)}
+    expand_wire = {"clip": ("expclip", 0), "system_prompt": ("system", 0),
+                   "prompt": ("splice", 0)}
     cond_wire = {"clip": ("clip", 0), "vae": ("vae", 0), "prompt": ("switch", 0)}
     cond_widgets = {"prompt": "", "width": 2048, "height": 2048}
     if edit:
@@ -6104,36 +6119,42 @@ def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dic
                      "images.image_1": ("multiple", 0), "prompt": ("switch", 0),
                      "width": ("size", 0), "height": ("size", 1)}
         expand_wire = {"clip": ("expclip", 0), "images.image1": ("multiple", 0),
-                       "system_prompt": ("instruction", 0), "prompt": ("request", 0)}
+                       "system_prompt": ("system", 0), "prompt": ("splice", 0)}
     nodes.extend([
         # thinking on and max_length as upstream stores them, 8192 in its text
-        # to image graph and 8196 in its edit graph; H3I_DECODING says how the
-        # expander decodes.
-        {"key": "expand", "type": "TextGenerateV2", "pos": (2, 3),
+        # to image graph and 8196 in its edit graph; H3I_DECODING holds
+        # upstream's decoding numbers.
+        {"key": "expand", "type": "TextGenerateV2", "pos": (3, 3),
          "widgets": {"prompt": "", "max_length": 8196 if edit else 8192, **H3I_DECODING,
                      "thinking": True, "use_default_template": True, "mtp": "auto"},
          "wire": expand_wire},
+        {"key": "extract", "type": "JsonExtractString", "pos": (4, 3),
+         "widgets": {"json_string": "", "key": "expanded_caption"},
+         "wire": {"json_string": ("expand", 0)}},
+        # Off in every graph: the expander's two prompt boxes ship empty.
         {"key": "switch", "type": "ComfySwitchNode", "pos": (2, 2),
-         "widgets": {"switch": edit and not grid},
-         "wire": {"on_false": ("request", 0), "on_true": ("expand", 0)}},
+         "widgets": {"switch": False},
+         "wire": {"on_false": ("request", 0), "on_true": ("extract", 0)}},
         # Beside the text path, never on it: an any-typed socket would hide
         # the text from Studio's prompt role (the p-h3-image graph says so too).
-        {"key": "preview", "type": "PreviewAny", "pos": (3, 3),
+        # Preview as Text hands a string on unchanged, so the model gets the
+        # same text either way.
+        {"key": "preview", "type": "PreviewAny", "pos": (3, 2),
          "wire": {"source": ("switch", 0)}},
-        {"key": "cond", "type": "MiniMaxH3ImageConditioning", "pos": (3, 2),
+        {"key": "cond", "type": "MiniMaxH3ImageConditioning", "pos": (4, 2),
          "widgets": cond_widgets, "wire": cond_wire},
     ])
     if grid:
         nodes.extend([
-            {"key": "guider", "type": "DGXMonarchBasicGuider", "pos": (4, 0),
+            {"key": "guider", "type": "DGXMonarchBasicGuider", "pos": (5, 0),
              "wire": {"model": ("unet", 0), "conditioning": ("cond", 0)}},
-            {"key": "sampler", "type": "KSamplerSelect", "pos": (4, 2),
+            {"key": "sampler", "type": "KSamplerSelect", "pos": (5, 2),
              "widgets": {"sampler_name": "euler"}},
-            {"key": "noise", "type": "RandomNoise", "pos": (4, 3),
+            {"key": "noise", "type": "RandomNoise", "pos": (5, 3),
              "widgets": {"noise_seed": 42}},
-            {"key": "sigmas", "type": "ManualSigmas", "pos": (4, 4),
+            {"key": "sigmas", "type": "ManualSigmas", "pos": (5, 4),
              "widgets": {"sigmas": H3I_GRID}},
-            {"key": "sc", "type": "DGXMonarchSamplerCustom", "pos": (5, 1),
+            {"key": "sc", "type": "DGXMonarchSamplerCustom", "pos": (6, 1),
              "wire": {"noise": ("noise", 0), "guider": ("guider", 0),
                       "sampler": ("sampler", 0), "sigmas": ("sigmas", 0),
                       "latent_image": ("cond", 1)}},
@@ -6142,9 +6163,9 @@ def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dic
     else:
         nodes.extend([
             # Zero Out on the positive, as upstream; CFG 1 never evaluates it.
-            {"key": "neg", "type": "ConditioningZeroOut", "pos": (4, 2),
+            {"key": "neg", "type": "ConditioningZeroOut", "pos": (5, 2),
              "wire": {"conditioning": ("cond", 0)}},
-            {"key": "ks", "type": "DGXMonarchKSampler", "pos": (4, 1),
+            {"key": "ks", "type": "DGXMonarchKSampler", "pos": (5, 1),
              "widgets": {"seed": 42, "steps": 6, "cfg": 1.0, "sampler_name": "euler",
                          "scheduler": "simple", "denoise": 1.0},
              "wire": {"model": ("unet", 0), "positive": ("cond", 0),
@@ -6153,9 +6174,9 @@ def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dic
         sampled = "ks"
     prefix = "dgx_monarch_minimax_h3_image" + ("_edit" if edit else "")
     nodes.extend([
-        {"key": "dec", "type": "VAEDecode", "pos": (6, 1),
+        {"key": "dec", "type": "VAEDecode", "pos": (7, 1),
          "wire": {"samples": (sampled, 0), "vae": ("vae", 0)}},
-        {"key": "save", "type": "SaveImage", "pos": (7, 1),
+        {"key": "save", "type": "SaveImage", "pos": (8, 1),
          "widgets": {"filename_prefix": prefix},
          "wire": {"images": ("dec", 0)}},
     ])

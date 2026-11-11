@@ -4,15 +4,19 @@ ComfyUI's own templates for this family (Comfy-Org/workflow_templates 0.11.105,
 image_minimax_h3_image_t2i and image_minimax_h3_image_edit) load the INT8
 ConvRot DiT and text encoder, the FP16 VAE and the W4A8 prompt expander, and
 sample with KSampler at 6 steps, CFG 1, euler and simple on a zeroed negative,
-with the expander behind an If/Else switch that is off in text to image and on
-in the edit. The shipped graphs must keep each of those, with the DGX Monarch
-loader and sampler in place of the stock ones. The testing graph walks the
-checkpoint's own sigma grid through Sampler Custom with the expander off.
-The edit graph keeps upstream's canvas nodes, two Resize Image/Mask nodes and
-Get Image Size. What the graphs change on purpose is pinned too: literal
-canvas numbers in text to image, and this project's own short instruction,
-decoded greedily, where upstream carries MiniMax's task prompts and samples.
-CPU only: the graphs are read as JSON and no ComfyUI is imported.
+with the expander behind an If/Else switch. The shipped graphs must keep each
+of those, with the DGX Monarch loader and sampler in place of the stock ones,
+and the expander chain as ComfyUI wires it: Replace Text on `{input text}`,
+Generate Text with ComfyUI's decoding numbers, Extract Text from JSON on
+`expanded_caption`. The testing graph walks the checkpoint's own sigma grid
+through Sampler Custom. The edit graph keeps upstream's canvas nodes, two
+Resize Image/Mask nodes and Get Image Size.
+
+What the graphs change on purpose is pinned too. The task prompt and system
+prompt boxes are empty and the switch is off in all three graphs: the text
+ComfyUI's templates carry there is MiniMax's own, and no file of this
+repository holds it. Text to image keeps literal canvas numbers. CPU only: the
+graphs are read as JSON and no ComfyUI is imported.
 """
 from __future__ import annotations
 
@@ -29,7 +33,7 @@ import minimax_h3_image_headers as h3i
 from dgx_monarch import driver_footprint, h3_rows
 from dgx_monarch.adapters.minimax_h3 import minimax_h3_topology_would_reject
 from dgx_monarch.adapters.minimax_h3_image import FAMILY
-from dgx_monarch.nodes import gate_proof_request, loader_graph
+from dgx_monarch.nodes import expander_prompt, gate_proof_request, loader_graph
 from dgx_monarch.topology import choose_auto_topology, topology_from_preset
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -147,62 +151,101 @@ def test_the_edit_scales_its_picture_to_4_mp_and_sizes_the_render_from_it():
     del cond_id
 
 
-@pytest.mark.parametrize(("name", "switched_on"), [(T2I, False), (EDIT, True), (GRID, False)])
-def test_the_expander_sits_behind_the_switch_with_upstreams_default(name, switched_on):
-    graph = _graph(name)
+def _chain(graph: dict) -> dict:
+    """The expander chain's nodes by role, read back from the conditioning node's prompt."""
     _, cond = _one(graph, "MiniMaxH3ImageConditioning")
-    _, preview = _one(graph, "PreviewAny")
     switch_id, switch = _one(graph, "ComfySwitchNode")
+    extract_id, extract = _one(graph, "JsonExtractString")
     expand_id, expand = _one(graph, "TextGenerateV2")
+    splice_id, splice = _one(graph, "StringReplace")
+    assert cond["prompt"] == [switch_id, 0]
+    assert switch["on_true"] == [extract_id, 0]
+    assert extract["json_string"] == [expand_id, 0]
+    assert expand["prompt"] == [splice_id, 0]
+    request_id, task_id, system_id = (
+        splice["replace"][0], splice["string"][0], expand["system_prompt"][0])
+    assert switch["on_false"] == [request_id, 0]
     texts = {key: node["inputs"]["value"] for key, node in graph.items()
              if node["class_type"] == "PrimitiveStringMultiline"}
-    assert switch["switch"] is switched_on
-    assert cond["prompt"] == [switch_id, 0] and preview["source"] == [switch_id, 0]
-    assert switch["on_true"] == [expand_id, 0]
-    request_id = switch["on_false"][0]
-    assert expand["prompt"] == [request_id, 0]
-    instruction_id = expand["system_prompt"][0]
-    assert {request_id, instruction_id} == set(texts)
+    assert set(texts) == {request_id, task_id, system_id} and len(texts) == 3
+    return {"cond": cond, "switch": switch, "extract": extract, "expand": expand,
+            "splice": splice, "request": texts[request_id], "task": texts[task_id],
+            "system": texts[system_id], "switch_id": switch_id, "task_id": task_id,
+            "system_id": system_id, "request_id": request_id}
+
+
+@pytest.mark.parametrize("name", [T2I, EDIT, GRID])
+def test_the_expander_chain_is_wired_as_comfyui_wires_it(name):
+    graph = _graph(name)
+    chain = _chain(graph)
+    edit = name == EDIT
+    # Replace Text puts the request where the task prompt says {input text};
+    # ComfyUI's templates store ["", "{input text}", ""] with both ends wired.
+    assert chain["splice"]["find"] == gen_templates.H3I_MARKER == "{input text}"
+    assert chain["extract"]["key"] == "expanded_caption"
+    expand = chain["expand"]
     assert graph[expand["clip"][0]]["inputs"] == {"clip_name": EXPANDER, "type": "minimax",
                                                   "device": "default"}
-    edit = name == EDIT
     # thinking and max_length as upstream stores them: 8192 in its text to
-    # image graph, 8196 in its edit graph. Decoding is greedy, in one constant.
+    # image graph, 8196 in its edit graph.
     assert (expand["max_length"], expand["thinking"], expand["use_default_template"],
             expand["mtp"]) == (8196 if edit else 8192, True, True, "auto")
-    assert gen_templates.H3I_DECODING == {"sampling_mode": "off"}
     assert {key: value for key, value in expand.items()
             if key.startswith("sampling_mode")} == gen_templates.H3I_DECODING
-    assert texts[request_id] == (gen_templates.H3I_EDIT_REQUEST if edit
-                                 else gen_templates.H3I_REQUEST)
-    assert texts[instruction_id] == (gen_templates.H3I_EDIT_INSTRUCTION if edit
-                                     else gen_templates.H3I_INSTRUCTION)
     assert ("images.image1" in expand) is edit
+    # Preview as Text shows the switch's choice from beside the path.
+    _, preview = _one(graph, "PreviewAny")
+    assert preview["source"] == [chain["switch_id"], 0]
+    assert chain["request"] == (gen_templates.H3I_EDIT_REQUEST if edit
+                                else gen_templates.H3I_REQUEST)
 
 
-def test_upstreams_decoding_is_one_constant_away():
-    """ComfyUI's own two templates sample: sampling_mode on and these seven values."""
-    assert gen_templates.H3I_UPSTREAM_DECODING == {
+def test_generate_text_holds_comfyuis_decoding_numbers():
+    """ComfyUI's own two templates store these thirteen values, max_length apart."""
+    assert gen_templates.H3I_DECODING == {
         "sampling_mode": "on", "sampling_mode.temperature": 1.0, "sampling_mode.top_k": 20,
         "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,
         "sampling_mode.repetition_penalty": 1.0, "sampling_mode.presence_penalty": 0.0,
         "sampling_mode.seed": 0}
     children = gen_templates.DYNAMIC_WIDGETS["TextGenerateV2"]["sampling_mode"]
     assert [f"sampling_mode.{child}" for child in children["on"]] == [
-        key for key in gen_templates.H3I_UPSTREAM_DECODING if key != "sampling_mode"]
-    assert children["off"] == []
+        key for key in gen_templates.H3I_DECODING if key != "sampling_mode"]
+    stored = {name: [node["widgets_values"] for node in _doc(name)["nodes"]
+                     if node["type"] == "TextGenerateV2"] for name in PATHS}
+    assert stored[T2I] == stored[GRID] == [
+        ["", 8192, "on", 1, 20, 0.95, 0, 1, 0, 0, True, True, "auto"]]
+    assert stored[EDIT] == [["", 8196, "on", 1, 20, 0.95, 0, 1, 0, 0, True, True, "auto"]]
 
 
-def test_the_texts_are_this_projects_own_and_safe_in_every_box():
-    for text in (gen_templates.H3I_REQUEST, gen_templates.H3I_EDIT_REQUEST,
-                 gen_templates.H3I_INSTRUCTION, gen_templates.H3I_EDIT_INSTRUCTION):
-        assert text.isascii()
-        # Nothing the browser's dynamic prompt pass would rewrite, wherever the text lands.
+@pytest.mark.parametrize("name", [T2I, EDIT, GRID])
+def test_the_two_prompt_boxes_are_empty_and_the_switch_is_off(name):
+    """No file of this repository holds MiniMax's task prompt or system prompt."""
+    chain = _chain(_graph(name))
+    assert chain["task"] == "" and chain["system"] == ""
+    assert chain["switch"]["switch"] is False
+    # The boxes carry ComfyUI's titles, so a reader can tell the empty two apart.
+    titled = {node["title"]: node["widgets_values"] for node in _doc(name)["nodes"]
+              if node["type"] == "PrimitiveStringMultiline"}
+    assert titled["Text (task_prompt)"] == [""] and titled["Text (system_prompt)"] == [""]
+    assert titled["Text (user_prompt)"] == [chain["request"]]
+
+
+def test_no_text_in_any_generated_graph_is_long_enough_to_be_the_vendors_prompt():
+    """ComfyUI's text to image task prompt runs to 15,823 characters, its edit one
+    is long too, and its demo caption runs to 3,308. Outside the Note, no widget
+    here comes near."""
+    for name in PATHS:
+        for node in _doc(name)["nodes"]:
+            if node["type"] == "Note":
+                continue
+            for value in node.get("widgets_values") or []:
+                assert not isinstance(value, str) or len(value) < 400, (name, node["type"])
+    for text in (gen_templates.H3I_REQUEST, gen_templates.H3I_EDIT_REQUEST):
+        assert text.isascii() and len(text) < 400
+        # Nothing the browser's dynamic prompt pass would rewrite.
         assert not set("{}|") & set(text) and "//" not in text and "/*" not in text
-        assert len(text) < 1000, "a short text of our own, not the vendor's task prompt"
     # The conditioning node presents pictures as Picture 1, Picture 2 (picture_label).
     assert "<Picture 1>" in gen_templates.H3I_EDIT_REQUEST
-    assert "<Picture 1>" in gen_templates.H3I_EDIT_INSTRUCTION
 
 
 # ---- The generator's autogrow rule ----------------------------------------------
@@ -282,16 +325,37 @@ def test_the_note_names_the_files_the_topologies_the_gate_and_the_record(name):
     assert "docs/VALIDATION.md, under MiniMax-H3-Image" in note and "NOT RUN" in note
     assert "ComfyUI 0.45.0 or newer" in note
     assert "ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family" in note
-    assert "this project's own short instruction" in note
-    # How the expander decodes, and what that means for a comparison.
-    assert gen_templates.H3I_GREEDY in note
-    assert "can change from run to run even at a fixed seed" in note
-    if name == EDIT:
-        assert "Compare two renders of this graph only when both ran the expander on one driver" in note
-        assert "for an identity check set the switch to false" in note
     # Nothing here has rendered on hardware, so no Note may claim a result.
     for claim in ("bit-identical", "pixel-identical", "passed", "NRMS"):
         assert claim not in note
+
+
+@pytest.mark.parametrize("name", [T2I, EDIT])
+def test_the_note_says_the_expander_is_wired_but_off_and_where_its_text_lives(name):
+    note = _note(name)
+    edit = name == EDIT
+    assert "The prompt expander of ComfyUI's template is wired but off" in note
+    assert "the switch is false and the task prompt and system prompt boxes are empty" in note
+    # MiniMax's repository and the two files, by path, and that none of it ships here.
+    assert gen_templates.H3I_PROMPT_REPO == "MiniMaxAI/MiniMax-H3-Image-PE"
+    assert f"its Hugging Face repository {gen_templates.H3I_PROMPT_REPO}" in note
+    task = "prompt/edit/task_prompt.txt" if edit else "prompt/t2i/task_prompt.txt"
+    assert f"paste {task} into the task prompt box" in note
+    assert "paste prompt/t2i/system_prompt.txt into the system prompt box" in note
+    assert "this project does not ship it" in note
+    assert "and set the switch to true" in note
+    # Where the marker goes in a pasted task prompt, as ComfyUI's own copy has it.
+    assert ("User input: {input text}" if edit else "input_text: {input text}") in note
+    # With the boxes empty the switch stays off, and what happens if it does not.
+    assert "With the task prompt box empty the switch must stay false" in note
+    assert f"(docs/TROUBLESHOOTING.md #{expander_prompt.TROUBLESHOOTING})" in note
+    # What an expander-on render is worth as a comparison.
+    assert "it can change from run to run even at a fixed seed" in note
+    assert "compare renders and check identity with the switch false" in note
+    # The edit graph differs from ComfyUI's here, and says so; text to image does not.
+    assert ("where this graph's defaults differ from ComfyUI's edit template, which ships "
+            "the switch true and both boxes filled" in note) is edit
+    assert ("ComfyUI's template ships the switch false too" in note) is not edit
 
 
 def test_the_notes_topology_sentences_match_the_auto_table_and_the_driver():
@@ -421,21 +485,24 @@ def staged(monkeypatch, tmp_path):
     return rows
 
 
-def test_the_driver_charges_the_expander_only_where_the_switch_is_on(staged):
-    """The If/Else switch is lazy, so text to image never loads the expander; the edit does."""
+@pytest.mark.parametrize("name", [T2I, EDIT, GRID])
+def test_the_driver_charges_the_expander_only_when_the_switch_is_on(staged, name):
+    """The If/Else switch is lazy: as shipped no graph loads the expander, and
+    the same graph with the switch on is charged for it."""
     ratio = loader_graph.TE_RESIDENT_RATIO
     encoder = staged[("text_encoders", ENCODER)]
     expander = staged[("text_encoders", EXPANDER)]
-    off = loader_graph.driver_stack_terms(_graph(T2I), family=FAMILY, sp_degree=2)
+    graph = _graph(name)
+    off = loader_graph.driver_stack_terms(graph, family=FAMILY, sp_degree=2)
     assert off.te_artifacts == (ENCODER,)
     assert off.te_bytes == int(encoder * ratio)
-    on = loader_graph.driver_stack_terms(_graph(EDIT), family=FAMILY, sp_degree=2)
+    switch_id, _ = _one(graph, "ComfySwitchNode")
+    graph[switch_id]["inputs"]["switch"] = True
+    on = loader_graph.driver_stack_terms(graph, family=FAMILY, sp_degree=2)
     assert set(on.te_artifacts) == {ENCODER, EXPANDER}
-    # The edit charges the expander on top, at the same resident ratio.
+    # The expander comes on top, at the same resident ratio.
     assert on.te_bytes - off.te_bytes == pytest.approx(expander * ratio, abs=2)
     assert off.vae_artifacts == on.vae_artifacts == (VAE,)
-    grid = loader_graph.driver_stack_terms(_graph(GRID), family=FAMILY, sp_degree=2)
-    assert grid.te_artifacts == (ENCODER,)
 
 
 def test_the_loader_prices_a_4_mp_target_for_both_shipped_graphs():

@@ -85,10 +85,12 @@ _KNOWN_NODE_TYPES = frozenset({
     "TextGenerateV2",
     "ComfySwitchNode",
     "PreviewAny",
-    # MiniMax-H3-Image: its conditioning node and the edit graph's resize
-    # node; the expander chain is the one above.
+    # MiniMax-H3-Image: its conditioning node, the edit graph's resize node,
+    # and the two string nodes ComfyUI's expander chain adds to the one above.
     "MiniMaxH3ImageConditioning",
     "ResizeImageMaskNode",
+    "StringReplace",
+    "JsonExtractString",
     "TextEncodeMageFlowEdit",
     "TextEncodeQwenImage21",
     "QwenImage21Cache",

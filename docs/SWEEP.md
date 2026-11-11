@@ -300,19 +300,23 @@ a top-level input of its node stays with that input, which keeps Save Video's
 `tests/test_sweep_convert_dynamic.py` holds every node that reveals no child
 to the reading it had before.
 
-**A graph whose prompt a language model writes.** The MiniMax-H3-Image edit
-template ships with its prompt expander on, so the text its DiT renders is
-written at queue time by a language model on the driver. A cell of that graph
-compares its two arms only when both ran the expander on one driver with the
-same decoding, and its number then also carries whatever the expander did.
-Score identity on a graph that sends the request as written: the text to
-image template and `dgx-monarch-test-minimax-h3-image-grid` ship with the
-switch off. The shipped expander decodes greedily, with no random draw.
-ComfyUI's own template samples instead, and sampled text from this expander
-file can change from run to run at a fixed seed: its draft head re-fits the
-draft tree from measured step time, and every step draws one token a tree
-row from the seeded generator. A graph switched to sampled decoding stays out
-of every identity row.
+**A graph whose prompt a language model writes.** The three MiniMax-H3-Image
+graphs wire a prompt expander behind an If/Else switch and ship the switch
+off, so each sends the request as written and its cells are identity rows
+like any other. A cell whose graph has the switch on is not an identity row.
+The text its DiT renders is then written at queue time by a language model on
+the driver, with ComfyUI's sampled decoding, and sampled text from this
+expander file can change from run to run at a fixed seed: its draft head
+re-fits the draft tree from measured step time, and every step draws one
+token a tree row from the seeded generator. Such a cell's number carries
+whatever the expander wrote on each arm, so record its caption and score
+identity on the graph as shipped. The expander also needs its task prompt and
+system prompt boxes filled, which the shipped graphs leave empty; with the
+switch on and the task prompt empty, the loader refuses class P before the
+DiT loads
+([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)),
+and the matrix, which labels a cell from its family, file and preset, does
+not predict that refusal.
 
 ## 4. Running a scoped sweep
 

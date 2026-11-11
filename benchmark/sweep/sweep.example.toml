@@ -176,11 +176,10 @@ auto_gate = ["uly2+fsdp"]
 # MiniMax-H3-Image needs none: minimax_h3_image_pruned_{bf16,int8_convrot,w4a8}
 # share the stem minimaxh3imagepruned, so each of its three graphs meets all
 # three DiT files. The text encoder, the VAE and the prompt expander stay as
-# the graph names them. The edit graph ships with the expander on, so its
-# cells render text a language model wrote on the driver; its two arms
-# compare only when both ran the expander on one driver. Score identity on
-# the text to image graph or on the grid graph, which send the request as
-# written (docs/SWEEP.md section 3).
+# the graph names them. All three graphs ship with the expander off and send
+# the request as written. A cell whose graph has the If/Else switch on
+# renders text a language model wrote on the driver and is not an identity
+# row (docs/SWEEP.md section 3).
 [artifact_groups."dgx-monarch-ideogram4-t2i"]
 "ideogram4_fp8_scaled.safetensors" = []
 "ideogram4_unconditional_fp8_scaled.safetensors" = []

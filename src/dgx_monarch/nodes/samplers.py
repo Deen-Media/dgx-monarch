@@ -13,7 +13,7 @@ from ..constants import GUIDER_TYPE, MODEL_TYPE, NODE_CATEGORY
 from ..mesh import ensure_live
 from ..sampling_contract import custom_schedule_steps
 from ..topology import topology_from_preset
-from . import requeue_price
+from . import expander_prompt, requeue_price
 from .common import (
     ModelSpec,
     RenderPipeline,
@@ -94,6 +94,7 @@ class DGXMonarchKSampler:
     @lead_with_refusal
     def sample(self, model: ModelSpec, seed, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, denoise=1.0, unique_id=None, prompt=None):
+        expander_prompt.refuse_dead_expander(prompt)
         requeue_price.price_cached_loader(model, prompt)
         request = {
             "kind": "ksampler",
@@ -181,6 +182,7 @@ class DGXMonarchKSamplerPipeline:
     @lead_with_refusal
     def sample(self, model: ModelSpec, seeds, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, denoise=1.0, unique_id=None, prompt=None):
+        expander_prompt.refuse_dead_expander(prompt)
         requeue_price.price_cached_loader(model, prompt)
         validate_inherited_stamps(latent_image)
         # Tag once: the first-use check, the first render and every pushed
@@ -299,6 +301,7 @@ class DGXMonarchKSamplerAdvanced:
     def sample(self, model: ModelSpec, add_noise, noise_seed, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, start_at_step, end_at_step,
                return_with_leftover_noise, unique_id=None, prompt=None):
+        expander_prompt.refuse_dead_expander(prompt)
         requeue_price.price_cached_loader(model, prompt)
         request = {
             "kind": "ksampler_advanced",
@@ -412,6 +415,7 @@ class DGXMonarchSamplerCustom:
     @lead_with_refusal
     def sample(self, noise, guider, sampler, sigmas, latent_image, unique_id=None, prompt=None):
         model: ModelSpec = guider["model"]
+        expander_prompt.refuse_dead_expander(prompt)
         requeue_price.price_cached_loader(model, prompt, guider.get("uncond_model"))
         # A SAMPLER object carries no name, so the cfg++ tag stays off and auto
         # keeps the CFG-1 skip; the pair and views tags come from the guider's own pair.

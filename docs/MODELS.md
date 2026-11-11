@@ -1092,8 +1092,12 @@ adapter (`adapters/minimax_h3_image.py`), not on H3's.
 and [edit](../example_workflows/dgx-monarch-minimax-h3-image-edit.json) follow
 ComfyUI's own two templates for the family: the INT8 ConvRot DiT and text
 encoder, the FP16 VAE, KSampler at 6 steps, CFG 1, `euler` and `simple` on a
-zeroed negative, and the W4A8 prompt expander on Generate Text behind an
-If/Else switch, off in text to image and on in the edit. Text to image renders
+zeroed negative, and ComfyUI's prompt expander chain behind an If/Else switch:
+Replace Text puts the request into a task prompt where it says `{input text}`,
+Generate Text runs the W4A8 expander on it with ComfyUI's decoding numbers, and
+Extract Text from JSON reads `expanded_caption` out of the answer. Both
+templates ship the switch false and the expander's two prompt boxes empty, so
+each renders from the request as written. Text to image renders
 2048 square, the 4 MP default of ComfyUI's template, whose notes say the model
 works from about 4 MP to 20 MP and best near 16 MP (4096 square, 4736x3552,
 5024x3360, 5472x3072 or 6272x2688). The edit scales its picture to about 4 MP
@@ -1103,31 +1107,47 @@ through the VAE. More pictures wire to `image_2`, `image_3` and so on, and the
 request cites them as `<Picture 1>`, `<Picture 2>`.
 
 The edit's canvas nodes are ComfyUI's own: two Resize Image/Mask nodes, to
-4 MP by area and then to a multiple of 32, and Get Image Size. Two things
-differ from ComfyUI's graphs, each on purpose:
+4 MP by area and then to a multiple of 32, and Get Image Size. The graphs
+leave out ComfyUI's subgraph wrapper, its Markdown notes and its Image Compare
+node, and set the switch on the If/Else node itself. Four more things differ
+from ComfyUI's graphs, each on purpose:
 
+- The expander's task prompt and system prompt boxes are empty. ComfyUI's
+  templates carry MiniMax's text there, and this project does not ship it.
+- The edit ships the switch false, where ComfyUI's edit template ships it
+  true. Text to image ships it false in both.
 - The text to image canvas is two numbers on the conditioning node, where
   ComfyUI wires a Resolution Selector, because the loader's price and the
   sweep read numbers.
-- The expander's instruction is this project's own short text on Generate
-  Text's system prompt, decoded greedily. ComfyUI's templates carry MiniMax's
-  own task prompts, about 16 thousand characters each, and sample the answer.
-  This repository does not copy that text, so the two expanders write
-  different captions. With the switch false the request reaches the model as
-  written on both.
+- Preview as Text shows the switch's choice from beside the text path, where
+  ComfyUI puts it on the path. It hands a string on unchanged, so the model
+  gets the same text either way.
 
-**The expander and repeatability.** Greedy decoding takes the model's top
-token at every step and draws no random number. ComfyUI's sampled decoding
-can change its text from run to run at a fixed seed with this expander file:
+**Running the expander.** MiniMax publishes the text the two boxes were built
+for in its Hugging Face repository
+[MiniMaxAI/MiniMax-H3-Image-PE](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image-PE):
+`prompt/t2i/task_prompt.txt` for text to image, `prompt/edit/task_prompt.txt`
+for the edit, and `prompt/t2i/system_prompt.txt` for the system prompt box of
+both. Paste the task prompt and the system prompt into their boxes, make sure
+the task prompt holds `{input text}` where the request belongs, and set the
+switch to true. ComfyUI's text to image template ends its task prompt with the
+lines `input_text: {input text}` and `output_text:`, and its edit template
+with `User input: {input text}` and `output_text:`; each template's Note says
+the same. With the task prompt box empty the switch must stay false. A graph
+whose expander is on with an empty task prompt, or with one that lacks the
+marker, would render from an empty or unrelated prompt with no error from
+ComfyUI, so a DGX Monarch loader, sampler or Identity Gate refuses it, class P
+([#151](TROUBLESHOOTING.md#151-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
+
+**The expander and repeatability.** With the switch true the prompt is text a
+language model wrote, and Preview as Text shows it. ComfyUI's sampled decoding
+can change that text from run to run at a fixed seed with this expander file:
 the file carries a multi-token-prediction draft head, Generate Text's `mtp`
 `auto` re-fits the draft tree from measured step time, and every step draws
 one token a tree row from the seeded generator (ComfyUI 0.45.0,
-`comfy/text_encoders/qwen35.py`). So a
-render with the switch true depends on text a language model wrote on that
-driver. Compare two such renders only when both ran the expander on one
-driver, and use a graph with the switch false for any identity check; the
-text to image template and the testing graph ship that way. Greedy text has
-not been compared across runs on hardware.
+`comfy/text_encoders/qwen35.py`). So compare renders and check identity with
+the switch false, as both templates and the testing graph ship. The expander
+has not run on hardware under this project.
 
 The testing graph `dgx-monarch-test-minimax-h3-image-grid` samples through
 Sampler Custom (DGX Monarch) on the checkpoint's own grid, with the expander
@@ -1149,13 +1169,18 @@ image graph the other two DiTs, since the three share one name stem.
 
 [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image)
 holds all but the BF16 text encoder, which is in
-[Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3). Read the
-terms on each model card before use; this page states none. The byte counts
-are the Hugging Face listing's
+[Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3). The byte
+counts are the Hugging Face listing's
 at commits `892de7cb` and `54472221`, and on 2026-11-10 each file on both
 Sparks matched that listing by size and SHA-256. The
 [artifact manifest](../example_workflows/artifacts.toml) carries the address,
 size and SHA-256 of the four files the templates load.
+
+**Licence.** The weights, the prompt expander and MiniMax's prompt files are
+published under the MiniMax-H3-Image Community License Agreement, which the
+[model card](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image) links. The
+agreement sets where and how they may be used. Read it before you download a
+file or render with it.
 
 The BF16 DiT reads `bf16`, its 51 F16 adaLN linears counting as
 islands, and the INT8 ConvRot and W4A8 DiTs read `int8` and `w4a8`. Every one
@@ -1197,9 +1222,9 @@ inside the head on the same file.
 declines it, since it decodes one frame and has nothing to split.
 
 **Memory.** The driver holds the text encoder and the VAE, and the prompt
-expander only while the If/Else switch is true: the switch is lazy, so text to
-image as shipped never loads it, and the loader preflight charges it only
-where the switch is on. Each Worker holds the DiT. Under `auto` the DiT loads
+expander only while the If/Else switch is true: the switch is lazy, so neither
+template as shipped loads it, and the loader preflight charges it only when
+the switch is on. Each Worker holds the DiT. Under `auto` the DiT loads
 at the first render, after the driver's models. A reference picture of the
 edit's size adds about as many rows as the target, so an edit needs more
 Worker memory than text to image at the same size. No memory figure of this
@@ -1211,8 +1236,9 @@ a NOT RUN row.
 every identity, speed and memory row is NOT RUN
 ([VALIDATION](VALIDATION.md#minimax-h3-image)). A pair under `auto` drops the
 checkpoint's INT8 attention pins and a world of one GPU keeps them, so the two
-renders are not identical, and the size of that difference is not measured. The expander's instruction is this project's own and has not run
-on hardware. The W4A8 DiT refuses FSDP. Studio's CPU compile tests skip both
+renders are not identical, and the size of that difference is not measured.
+The prompt expander ships off with its two prompt boxes empty, and no render
+with it on has run on hardware. The W4A8 DiT refuses FSDP. Studio's CPU compile tests skip both
 graphs until a driver schema is recorded on ComfyUI 0.45.0.
 
 <a id="model-longcat-image"></a>

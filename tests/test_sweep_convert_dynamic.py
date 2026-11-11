@@ -7,9 +7,9 @@ MiniMax-H3-Image's edit graph, every committed template held a key that
 revealed nothing, and the converter read a dynamic combo as one slot. These
 tests hold three things: the new graphs convert to what ComfyUI's own
 templates store; ComfyUI's own thirteen Generate Text values, with sampling
-on, convert too, though no committed graph ships them; and every node of
-every committed template that reveals no child reads exactly as the flat
-reader read it. CPU only: no ComfyUI import.
+on, convert too, and the three MiniMax-H3-Image graphs ship them; and every
+node of every committed template that reveals no child reads exactly as the
+flat reader read it. CPU only: no ComfyUI import.
 """
 from __future__ import annotations
 
@@ -198,7 +198,7 @@ def test_the_generator_lists_generate_texts_children_in_upstreams_order():
     # The generator writes the same thirteen values for upstream's decoding.
     spec = {"title": "probe", "nodes": [
         {"key": "expand", "type": "TextGenerateV2", "pos": (0, 0),
-         "widgets": {"prompt": "", "max_length": 8192, **gen_templates.H3I_UPSTREAM_DECODING,
+         "widgets": {"prompt": "", "max_length": 8192, **gen_templates.H3I_DECODING,
                      "thinking": True, "use_default_template": True, "mtp": "auto"}}]}
     (node,) = gen_templates.build(spec)["nodes"]
     assert node["widgets_values"] == UPSTREAM_GENERATE_TEXT
@@ -251,7 +251,9 @@ def inputs_links(inputs: dict) -> set[str]:
 
 def test_every_committed_node_that_reveals_no_child_reads_as_the_flat_reader_read_it():
     """The reader every graph had: one slot a name. Only a node whose dynamic combo
-    reveals children may read otherwise, and the committed set holds exactly two."""
+    reveals children may read otherwise, and the committed set holds exactly five:
+    the edit graph's two resize nodes, and Generate Text with ComfyUI's decoding
+    numbers in the three MiniMax-H3-Image graphs."""
     names = convert.repo_widget_names(ROOT)
     assert len(TEMPLATES) > 100
     revealing = []
@@ -272,4 +274,7 @@ def test_every_committed_node_that_reveals_no_child_reads_as_the_flat_reader_rea
                 assert flat != read, (path.stem, node["id"])
                 continue
             assert flat == read, f"{path.stem}: node {node['id']} ({node['type']}) reads differently"
-    assert revealing == [(EDIT, "ResizeImageMaskNode"), (EDIT, "ResizeImageMaskNode")]
+    assert sorted(revealing) == [
+        (EDIT, "ResizeImageMaskNode"), (EDIT, "ResizeImageMaskNode"), (EDIT, "TextGenerateV2"),
+        ("dgx-monarch-minimax-h3-image-t2i", "TextGenerateV2"),
+        ("dgx-monarch-test-minimax-h3-image-grid", "TextGenerateV2")]
