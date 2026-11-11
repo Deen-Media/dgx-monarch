@@ -16,6 +16,7 @@ from .. import (
     residency_mode,
 )
 from ..adapters.detect import CheckpointSniffError, sniff_checkpoint
+from ..adapters.flux_views import VIEWS_METADATA_KEY
 from ..refusal import RefusalClass, refusal
 from ..sampling_contract import latent_size_tags
 from .latent_outputs import is_direct_nested_tensor
@@ -29,6 +30,9 @@ CFG_KEEPS_UNCOND_METADATA_KEY = "_dgxm_cfg_keeps_uncond"
 # Set beside it when the prompt pair's text rows differ (cfg_pair); a guider
 # carries the same key for Sampler Custom, which sees no conditioning.
 CFG_PAIR_DIFFERS_METADATA_KEY = "_dgxm_cfg_pair_rows_differ"
+# Each latent tag and the resolve_topology argument it sets; the third marks UltraTex views.
+TOPOLOGY_TAGS = ((CFG_KEEPS_UNCOND_METADATA_KEY, "keeps_uncond"), (CFG_PAIR_DIFFERS_METADATA_KEY, "pair_differs"),
+                 (VIEWS_METADATA_KEY, "views"))
 RESIDENT_ADOPTION_EVIDENCE_KEY = "_dgxm_adoption_evidence"
 
 
@@ -40,25 +44,26 @@ def validate_latent_downscale(value: object) -> int:
     return value
 
 
-def sampler_latent(latent: dict, sampler_name: object, pair_differs: bool = False) -> dict:
+def sampler_latent(latent: dict, sampler_name: object, pair_differs: bool = False,
+                   views: bool = False) -> dict:
     """A copy of a sampler node's input latent, tagged for its sampler and pair.
 
     One tag marks a sampler that keeps the uncond pass at CFG 1.0
-    (topology.sampler_keeps_uncond_at_cfg1), the other a prompt pair whose
-    text rows differ (cfg_pair.text_rows_differ). Every site that resolves this
-    render's topology reads them off the latent, so the Gate token and the
-    render agree; inherited tags are dropped first, so a plain sampler never
-    keeps one. latent_without_topology_metadata strips both before the wire.
+    (topology.sampler_keeps_uncond_at_cfg1), one a prompt pair whose text rows
+    differ (cfg_pair.text_rows_differ), and one a pair that carries UltraTex
+    view inputs (adapters/flux_views). Every site that resolves this render's
+    topology reads them off the latent, so the Gate token and the render
+    agree; inherited tags are dropped first, so a plain sampler never keeps
+    one. latent_without_topology_metadata strips them before the wire.
     """
     from ..topology import sampler_keeps_uncond_at_cfg1
 
     tagged = dict(latent)
-    tagged.pop(CFG_KEEPS_UNCOND_METADATA_KEY, None)
-    tagged.pop(CFG_PAIR_DIFFERS_METADATA_KEY, None)
-    if sampler_keeps_uncond_at_cfg1(sampler_name):
-        tagged[CFG_KEEPS_UNCOND_METADATA_KEY] = True
-    if pair_differs:
-        tagged[CFG_PAIR_DIFFERS_METADATA_KEY] = True
+    for (key, _name), on in zip(TOPOLOGY_TAGS, (
+            sampler_keeps_uncond_at_cfg1(sampler_name), pair_differs, views), strict=True):
+        tagged.pop(key, None)
+        if on:
+            tagged[key] = True
     return tagged
 
 
@@ -71,8 +76,8 @@ def latent_without_topology_metadata(latent: dict) -> dict:
     """
     clean = dict(latent)
     clean.pop(LATENT_DOWNSCALE_METADATA_KEY, None)
-    clean.pop(CFG_KEEPS_UNCOND_METADATA_KEY, None)
-    clean.pop(CFG_PAIR_DIFFERS_METADATA_KEY, None)
+    for key, _name in TOPOLOGY_TAGS:
+        clean.pop(key, None)
     clean.pop(RESIDENT_ADOPTION_EVIDENCE_KEY, None)
     clean.pop(accuracy_waiver.STAMPED_RESULT_KEY, None)
     return clean

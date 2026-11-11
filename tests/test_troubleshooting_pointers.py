@@ -50,8 +50,10 @@ TEXT_BIAS = "A MOSS-Image edit with an image strength other than 1.0 refuses und
 
 
 def _headings() -> dict[int, str]:
-    return {int(number): title for number, title in
-            re.findall(r"^## (\d+)\. (.+)$", TROUBLESHOOTING.read_text(), re.MULTILINE)}
+    found = re.findall(r"^## (\d+)\. (.+)$", TROUBLESHOOTING.read_text(), re.MULTILINE)
+    numbers = [int(number) for number, _title in found]
+    assert len(numbers) == len(set(numbers)), "TROUBLESHOOTING numbers repeat"
+    return {int(number): title for number, title in found}
 
 
 def _slug(number: int, title: str) -> str:
