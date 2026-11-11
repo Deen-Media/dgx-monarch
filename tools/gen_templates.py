@@ -31,6 +31,7 @@ _ADDED_SRC = _SRC not in sys.path
 if _ADDED_SRC:
     sys.path.insert(0, _SRC)
 try:
+    from dgx_monarch.demo_inputs import shipped as shipped_demo_inputs
     from dgx_monarch.nodes import NODE_CLASS_MAPPINGS
     from dgx_monarch.nodes.expander_prompt import TROUBLESHOOTING as EXPANDER_ENTRY
     from dgx_monarch.stock_widget_drift import NEWER as NAMED_STOCK
@@ -688,6 +689,12 @@ def build(spec: dict) -> dict:
     nodes_out, links = [], []
     key_to_id = {n["key"]: i + 1 for i, n in enumerate(spec["nodes"])}
     key_to_type = {n["key"]: n["type"] for n in spec["nodes"]}
+    # A public graph that loads a demo input the pack ships says so in its
+    # note. A testing-only graph is hidden from the browser and says nothing.
+    demo_names = {path.name for path in shipped_demo_inputs()}
+    loads_demo = not spec.get("testing") and any(
+        value in demo_names for n in spec["nodes"]
+        for value in (n.get("widgets") or {}).values() if isinstance(value, str))
     sockets = {n["key"]: _sockets(n, key_to_type) for n in spec["nodes"]}
     link_id = 0
     node_links: dict = {}
@@ -709,7 +716,7 @@ def build(spec: dict) -> dict:
         widgets = n.get("widgets", {})
         names = [] if ntype == "Note" else _node_widget_names(ntype, widgets)
         if ntype == "Note":
-            wv = [n.get("note", "")]
+            wv = [n.get("note", "") + (f" {DEMO_INPUTS}" if loads_demo else "")]
         else:
             wv = []
             for wname in names:
@@ -859,6 +866,11 @@ DERIVED = ("This graph is derived from the family adapter and stock node definit
            "your artifacts before running it.")
 FRAMES = ("VAE Decode returns an image batch; Save Image writes numbered frames. "
           "For a video file, use the stock Create Video and Save Video nodes.")
+# build() ends the note of every graph that loads a shipped demo input with
+# this (src/dgx_monarch/demo_inputs.py; tests/test_demo_inputs.py holds it).
+DEMO_INPUTS = ("The pack places a demo file drawn from code under each name this graph "
+               "loads that ComfyUI's input folder lacks; one you delete comes back at the "
+               "next start unless DGXM_DEMO_INPUTS=off is set. Load your own for real work.")
 
 # The Kandinsky 5 text encode node takes the prompt once per encoder, so each
 # demo prompt is named once here: two written copies could drift apart.
@@ -1961,8 +1973,9 @@ TEMPLATES = {
              "and returns a mask of that object for each frame, here at 832x480 "
              "over 17 frames, one euler step on the simple schedule at cfg 1.0, "
              "starting from the VAE encode of the source frames with no added "
-             "noise. ComfyUI ships no example clip, so the shipped Load Video "
-             "filename is a placeholder: upload your own clip, point the widget at "
+             "noise. ComfyUI ships no example clip, and the one the pack places "
+             "under the Load Video filename is a drawn stand-in of 33 frames. For "
+             "your own clip, upload it, point the widget at "
              "it, give it at least 17 frames, and keep any frame count you change on "
              "the 4k+1 grid the Wan VAE needs (17, 33, 81; the official example "
              "uses 81). The prompt is a referring expression, so keep it short and "
@@ -2290,8 +2303,8 @@ TEMPLATES = {
              "simple schedule, an SD3 sampling shift of 5.0 and the DPO LoRA at "
              "strength 1.0. That is the official Comfy base recipe with turbo off, "
              "and it is the contract docs/VALIDATION.md records. It takes four media "
-             "inputs, all yours: no ComfyUI install ships any of them, so all four "
-             "shipped filenames are placeholders. One Load Video takes the driving "
+             "inputs. No ComfyUI install ships any of them, and the four the pack "
+             "places are drawn stand-ins. One Load Video takes the driving "
              "clip and the other takes its colored per-identity mask; one Load Image "
              "takes the reference character and the other takes that character's "
              "mask. Both modes require the masks. This graph ships Replacement Mode, "
@@ -2432,8 +2445,10 @@ TEMPLATES = {
              "checkpoint refines the first five seconds at 30 fps, 25 steps then 24 "
              "steps, both at cfg 5.0. Point Load Image at one reference dancer and "
              "Load Audio at a music track of about 25 seconds, the length the "
-             "official graph trims to; the shipped names are the official demo files "
-             "blue_dancer.png and wan_dancer_reference_audio.mp3. Both stages need "
+             "official graph trims to. The graph keeps the official demo names, "
+             "blue_dancer.png and wan_dancer_reference_audio.mp3, but the files under "
+             "them are the pack's own, a drawn figure and a synthetic 25-second loop, "
+             "which show the graph runs, not what the model can do. Both stages need "
              "the reference image: without start_image and CLIP vision every "
              "topology returns non-finite latents, which stock ComfyUI writes out as "
              "black frames. Track length sets the rest: the global pass reads its "
@@ -5395,8 +5410,9 @@ def _flux3_template(*, base: bool, edit: bool) -> dict:
         "GB is outside dgx-monarch's driver memory estimate. The stock Flux3 "
         "Layout Prompt node turns bounding boxes into prompt text. Either can "
         "feed CLIP Text Encode with no change to this graph. "
-        "The INT8 ConvRot files pin an approximate attention kernel: single, "
-        "cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. "
+        "The INT8 ConvRot files pin an approximate attention kernel: a world "
+        "of one GPU renders with it as stock ComfyUI does and asks nothing, cfg2 and dp2 "
+        "ask for the Sol-Attn waiver, and uly2 drops the pin. "
         "This graph uses the BF16 files, which ask nothing. Auto picks Ulysses "
         "on a configured pair. " + FLUX3_HW_TESTS[edit]
         + f"Expects {artifact} in models/diffusion_models, "
@@ -5682,8 +5698,9 @@ def _moss_note(*, checkpoint: str, turbo: bool, layout: bool) -> str:
     else:
         note += (
             "The INT8 ConvRot DiT files pin an approximate attention kernel on "
-            "all 42 blocks: single, cfg2 and dp2 ask for the Sol-Attn waiver, and "
-            "uly2 drops the pin. On uly2 they exactly match one GPU running the "
+            "all 42 blocks: a world of one GPU renders with it as stock ComfyUI does and asks "
+            "nothing, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the "
+            "pin. On uly2 they exactly match one GPU running the "
             "same file without its pins: the 2026-10-21 tests measured 0.027 to "
             "0.036 one-step NRMS before that day's INT8 fix and an exact match "
             "after it. With any LoRA they refuse on every topology "
@@ -6852,7 +6869,7 @@ def _testing_spec(base: str, title: str, purpose: str, *,
                       "widgets": {"lora_name": TEST_LORA_NAME,
                                   "strength_model": lora_strength},
                       "wire": {"model": (unet, 0)}})
-    return {"title": title, "nodes": nodes}
+    return {"title": title, "nodes": nodes, "testing": True}
 
 
 def _minimax_h3_image_grid_spec() -> dict:
@@ -7138,8 +7155,9 @@ TESTING_TEMPLATES = {
         "dgx-monarch-flux3-klein-t2i", "FLUX.3 Klein INT8 ConvRot",
         "The vendor's file recipe without the prompt upsampler: the "
         "step-distilled INT8 ConvRot DiT and the INT8 ConvRot text encoder. The "
-        "DiT pins comfy-kitchen's INT8 attention on 33 blocks, so single, cfg2 "
-        "and dp2 ask for the Sol-Attn waiver and uly2 drops the pins. The text "
+        "DiT pins comfy-kitchen's INT8 attention on 33 blocks, so a world of one GPU renders "
+        "with it as stock ComfyUI does and asks nothing, cfg2 and dp2 ask for the "
+        "Sol-Attn waiver, and uly2 drops the pins. The text "
         "encoder stores INT8 weights and ComfyUI runs its matmuls at full "
         "precision.",
         widgets={"unet": {"unet_name": "flux3_image_klein_sd_int8_convrot.safetensors"},
@@ -7201,8 +7219,9 @@ TESTING_TEMPLATES = {
     "dgx-monarch-test-moss-image-int8": _testing_spec(
         "dgx-monarch-moss-image-t2i", "MOSS-Image INT8 ConvRot",
         "The vendor's INT8 ConvRot DiT and INT8 ConvRot text encoder. The DiT "
-        "pins comfy-kitchen's INT8 attention on all 42 blocks, so single and dp2 "
-        "ask for the Sol-Attn waiver, cfg2 refuses first because the skip is on, "
+        "pins comfy-kitchen's INT8 attention on all 42 blocks, so a world of one GPU renders "
+        "with it as stock ComfyUI does and asks nothing, dp2 asks for the "
+        "Sol-Attn waiver, cfg2 refuses first because the skip is on, "
         "and uly2 drops the pins. ComfyUI runs these files through "
         "comfy-kitchen's fused SiTU input activation, which needs comfy-kitchen "
         "0.2.39 or newer." + MOSS_TEST_SIMPLE_NOTE,

@@ -95,6 +95,11 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         "comfy.ldm.anima.model", "Anima._forward", ("anima",), ("usp",),
         "self x timesteps context fps padding_mask", 4, variadic_keyword="kwargs",
     ),
+    # Anima's text bind wraps this one as FLUX.3's wraps Flux3.extra_conds.
+    _rebound(
+        "comfy.model_base", "Anima.extra_conds", ("anima",), ("conds",),
+        "self", 1, variadic_keyword="kwargs",
+    ),
     _rebound(
         "comfy.ldm.boogu.model", "BooguTransformer2DModel.forward", ("boogu",),
         ("usp", "cfg-pad"),

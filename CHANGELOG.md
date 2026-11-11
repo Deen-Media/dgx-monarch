@@ -34,7 +34,7 @@
   loader, the samplers and Identity Gate, before the DiT loads or a picture
   renders. ComfyUI raises no error there, and the render would follow an empty
   or unrelated prompt
-  ([TROUBLESHOOTING #151](docs/TROUBLESHOOTING.md#151-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
+  ([TROUBLESHOOTING #153](docs/TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
 - The sweep converter, which the template release test shares, reads the
   child widgets a ComfyUI dynamic combo reveals, under their dotted names,
   from a driver's schema or from the template generator's table. Every
@@ -42,6 +42,16 @@
   widget, the first to do so: the new edit graph's two resize nodes and
   Generate Text in the three MiniMax-H3-Image graphs
   ([SWEEP](docs/SWEEP.md#3-adding-a-template)).
+- Every image, clip and music track a shipped template's input nodes name now
+  comes with the pack, in `example_workflows/input`. At start the pack copies
+  each one ComfyUI's input folder lacks, and never replaces a file, link or
+  folder already there, so a template such as the Qwen Image 2.1 masked edit
+  no longer opens on a fresh install with a missing `qwen21_source.png`. They
+  are drawn shapes, a stick figure and a synthetic music loop that show the
+  graph runs; load your own for real work. A demo file you delete comes back
+  at the next start unless `DGXM_DEMO_INPUTS=off` is set, which skips the
+  copy ([INSTALL.md](docs/INSTALL.md#install-from-source)), and
+  `tools/gen_demo_inputs.py` draws the files again.
 - Studio is a supported interface from this release, beside the CLI, the TUI
   and the ComfyUI panel. Its docs and the capability contract in Settings no
   longer call it a draft. The
@@ -452,6 +462,24 @@
 
 ### Rendering
 
+- A damaged safetensors header no longer turns the loader's header refusals
+  off. Before, a header the strict reader refused (a tensor entry or metadata
+  key written twice, an empty tensor name, tensors sharing bytes, metadata
+  that is not all strings) got no verdict, so a Z-Image L2P file, a file whose
+  weight scales ComfyUI drops or a MiniMax-H3-Image file loaded as if the gate
+  were not there, while stock ComfyUI still read it. The gate now reads such a
+  header again as ComfyUI's own reader does, and the driver and every Worker
+  refuse it with the class and sentence its intact header gets. A
+  MiniMax-H3-Image `config` nested past the JSON parser's limit, which also
+  got no verdict, now counts as no sigma grid, and a `_quantization_metadata`
+  of JSON `null`, which ComfyUI reads as a table that names no layer, no
+  longer turns the dropped-scale refusal off. A file no stock reader can read
+  keeps ComfyUI's own load error, and a header read that ends with no verdict
+  on the file refuses class P
+  ([TROUBLESHOOTING #152](docs/TROUBLESHOOTING.md#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
+  A forced `family_adapter=minimax_h3` no longer binds the MiniMax H3 video
+  adapter to a MiniMax-H3-Image model
+  ([MODELS](docs/MODELS.md#running-finetunes)).
 - UltraTex, the FLUX.2 Klein 9B LoRAs that ComfyUI 0.45.0 paints a mesh
   texture with, runs on one GPU, uly2 and uly2+fsdp. Its conditioning tiles a
   sample's views into one image and drops background tokens inside stock's
@@ -482,6 +510,44 @@
   build then clears those pins: the Init widget's kernel runs, no card asks,
   and the record says dropped, as ADAPTERS describes. No listed bf16 or fp16
   file pins except MiniMax-H3-Image's, which the loader refuses first.
+- A change in behaviour in a world of one GPU (one Spark by itself, or
+  `mode=local` with one GPU): a checkpoint's own attention pins now run as
+  stock ComfyUI runs them, with no Sol-Attn waiver card, no stamp and no
+  ledger row, and the first-use ceremony runs every leg with them, slab
+  residency included. The FLUX.3 Klein and MOSS-Image INT8 ConvRot files (the
+  SFT, Base and Kromoss checkpoints) render there with their publisher's INT8
+  attention as stock does; on uly2 they render with exact attention, which
+  stock cannot do with those files. The two differ a little, and the render
+  record says which ran. A pin a LoRA sets, restates or changes still asks in
+  a world of one GPU, as does a live attention module that differs from the
+  checkpoint's. A `single` preset on a two-rank mesh resolves to dp2 on the
+  Worker and keeps the card. cfg2, dp2 and their `+fsdp` forms still ask for
+  the waiver wherever the pins run; a bf16 or fp16 file under `+fsdp` renders
+  with its pins dropped and recorded, with no card ([TROUBLESHOOTING
+  #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+- The render record's pin line says "kept" where it said "ran": the record
+  reads the pins from the load and the topology and does not count attention
+  calls. The field names are unchanged.
+- Fix: the Workers prepare Anima's text as stock ComfyUI does, so a Worker's
+  one-GPU Anima render is expected to equal stock's. Stock runs a prompt in
+  inference mode, where Anima's `extra_conds` runs the text adapter and pads
+  the text to 512 rows once per conditioning. A Worker samples outside it, so
+  it took the branch ComfyUI keeps for training: it ran the adapter on every
+  model call and split a prompt pair whose rows differ into two batch-1 calls
+  where stock makes one batch-2 call. On 2026-11-10 the shipped graph's
+  one-GPU Worker render read one-step NRMS 0.028 against stock, which this
+  difference is expected to explain. The adapter now runs stock's method in
+  inference mode on every load, as FLUX.3's and MOSS-Image's do, and on the
+  CPU the Worker's model calls now equal stock's; a canary seam lists every
+  inference-mode branch in ComfyUI's source. The hardware comparison against
+  stock has not run yet
+  ([TROUBLESHOOTING #151](docs/TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+- Change: Anima under `auto` renders on uly2 at every size, where it took cfg2
+  below 1.2 MP on BF16. With the fix one GPU folds the prompt and the negative
+  into one batch-2 call, as stock does, and cfg2's two batch-1 calls are not
+  that call, so `auto` table row 47 is withdrawn; explicit cfg2 still renders
+  and is not the same math. The shipped Anima template sets `auto`, so it
+  now renders on uly2. The speed cost against cfg2 is NOT RUN on hardware.
 - uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1 fill each
   fused-norm call of their sharded blocks to the rows one GPU normalizes, as
   FLUX.3 and MOSS-Image already did. comfy-kitchen's fused AdaLN picks its
@@ -504,9 +570,10 @@
   contiguous, as stock's do, so its bias is added in the same fused call. A ComfyUI whose LTX blocks no
   longer read the globals this binds refuses a sharded render at load, class P,
   and canary seam 51 names the change ([VALIDATION](docs/VALIDATION.md#evidence-ltx-2-3-t2v)).
-- `auto` takes cfg2 on Anima BF16 and Boogu FP8 below 1.2 MP and on Chroma
-  below 1.64 MP only when the prompt and the negative encode to different text
-  rows, as on the shipped graphs, and Ulysses for an equal pair. One GPU folds
+- `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP
+  only when the prompt and the negative encode to different text rows, as on
+  the shipped graphs, and Ulysses for an equal pair; Anima's row had the same
+  scope until its withdrawal (the Anima entry above). One GPU folds
   an equal pair into one batch-2 call, which cfg2's two calls do not
   reproduce: on 2026-11-07 such pairs read one-step NRMS 0.014 to 0.042
   against one GPU on Anima and Boogu, and no full schedule matched, while the
@@ -733,6 +800,14 @@
 
 ### Operations
 
+- A Worker logs one line when it accepts an identity gate grant, naming the model
+  slots the grant covers, for example `identity gate grant accepted on rank 1: the
+  gate PASS covers both model slots, [cond] ideogram4_fp8_scaled.safetensors with 1
+  LoRA and [uncond] ideogram4_unconditional_fp8_scaled.safetensors with no LoRA`.
+  A dual-model render's grant over both slots can now be checked from a Worker
+  journal. The line names checkpoints as the model store's lines do and counts
+  LoRAs without naming them; a single-model grant logs the same line with its one
+  slot.
 - `dgxm doctor` adds an `INT8 GEMM` row for this box and one per configured
   host: the configured kernel and whether the Python headers, Triton and a
   validated comfy-kitchen are there. The rows warn and never fail
@@ -831,6 +906,20 @@
 
 ### Development
 
+- `scripts/test_cpu.sh` runs the gate checks CI runs beside the suite before
+  it: the protected test inventory first, then the refusal ledger, the TRUST
+  citations, the leak check, ruff, mypy, compileall, the generator and artifact
+  checks, CI's source archive census on a copy of the tracked files, and the
+  shell and browser-asset checks. A local green run now covers every CI gate
+  except the CI-only steps `tests/test_cpu_gates.py` names, where before the
+  gates surfaced only after a push; CI's tools can still be other versions
+  than yours. A gate is skipped and named when CairoSVG, the build module, a
+  Git checkout, shellcheck or node is missing, `DGXM_SKIP_GATES=1` skips them
+  all, and `tests/test_cpu_gates.py` holds every CI step to a local gate or a
+  named CI-only reason. No gate writes a tracked file: the refusal ledger tool
+  gains a check mode, `python tests/test_refusal_classes.py --check`, which
+  compares in memory and prints any difference, and CI's step runs the same
+  command where it used to rewrite the ledger and put it back.
 - The sweep runner ends the session when a waived retry's queue will not
   clear, as it already did after every other leg, and when the cache reset
   before a waived, resident or probe leg leaves the queue busy or gets no

@@ -131,8 +131,9 @@ def test_the_loader_site_charges_the_image_canvas():
 
 
 def test_each_family_reads_only_its_own_canvas_nodes():
+    # The H3 canvas is the larger one, so a filter that let it in would win the maximum.
     h3_canvas = {"3": {"class_type": "EmptyMiniMaxH3LatentAV",
-                       "inputs": {"width": 1280, "height": 704, "length": 121}}}
+                       "inputs": {"width": 4096, "height": 4096, "length": 121}}}
     mixed = _image_graph(extra=h3_canvas)
     image_rows = h3_rows.rows_from_prompt_graph(mixed, image=True)
     video_rows = h3_rows.rows_from_prompt_graph(mixed)

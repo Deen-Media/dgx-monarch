@@ -1,10 +1,13 @@
-"""The prompt-pair tag that rows 47 (Anima) and 79 (Boogu) need for cfg2 (issue #52).
+"""The prompt-pair tag that Boogu's row 79 and Chroma's rows 20 and 19 need for cfg2 (#52).
 
-On 2026-11-07 both rows read bit-identical to one GPU on the templates' pairs,
-whose text rows differ, and off one GPU on two pairs of equal rows, which one
-GPU folds into one batch-2 call. The sampler nodes tag a pair whose rows differ
-on the latent; every resolving site reads the tag, and anything the driver
-cannot read stays untagged, which keeps the Ulysses row.
+On 2026-11-07 Boogu's row and Anima's row 47 read bit-identical to one GPU on
+the templates' pairs, whose text rows differ, and off one GPU on two pairs of
+equal rows, which one GPU folds into one batch-2 call. Row 47 was withdrawn on
+2026-11-10: a Worker now pads Anima's text to 512 rows as stock does, so one
+GPU folds every Anima pair and its Qwen3 rows decide nothing. The sampler
+nodes tag a pair whose rows differ on the latent; every resolving site reads
+the tag, and anything the driver cannot read stays untagged, which keeps the
+Ulysses row.
 
 No comfy, no GPU, no mesh: the render and resolution seams are stubbed.
 """
@@ -174,7 +177,7 @@ def test_the_resolver_forwards_the_pair_tag_only_when_set(monkeypatch):
 
 def test_run_matrix_labels_its_auto_cell_with_the_pair_tag_the_ksampler_node_sets():
     """benchmark/run_matrix.py records the auto topology before the render; it
-    must read the pair as the KSampler node does, or an Anima, Boogu or Chroma
+    must read the pair as the KSampler node does, or a Boogu or Chroma
     auto cell would record uly2 while the render resolves cfg2."""
     import ast
     from pathlib import Path

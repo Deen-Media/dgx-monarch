@@ -160,6 +160,8 @@ REFUSALS = {
     "f4_without_metadata": (F4, None, (QM,)),
     "mixed_one_uncovered": (MIXED, None, ("single_blocks.1.mlp_in",)),
     "metadata_names_another_layer": (NVFP4, _layers("single_blocks.9.q_proj"), (QM,)),
+    # JSON null: ComfyUI reads it as a table that names no layer, and loads on.
+    "metadata_is_json_null": (NVFP4, {"_quantization_metadata": "null"}, (QM,)),
     "int8_without_record": (INT8_NO_RECORD, None, ("single_blocks.0.qkv",)),
     "scaled_fp8_with_a_weight_scale": (SCALED_FP8_WEIGHT_SCALE, None, ("blocks.0.attn.k",)),
     # _quantization_metadata turns the legacy conversion off, so scale_weight stays.

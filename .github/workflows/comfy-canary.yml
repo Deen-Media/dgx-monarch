@@ -37,6 +37,7 @@ on:
       - "tests/test_chroma_cfg_pad_forward.py"
       - "tests/test_chroma_text_projections.py"
       - "tests/test_dropped_scale_gate.py"
+      - "tests/test_upstream_gate_damaged_header.py"
       - "tests/test_fsdp_lora_replicated.py"
       - "tests/test_ideogram4_stock_equivalence.py"
 
@@ -47,6 +48,7 @@ on:
       - "tests/test_flux3_comfy_exactness.py"
       - "tests/test_flux3_cond_branch.py"
       - "tests/test_flux_views_comfy_exactness.py"
+      - "tests/test_anima_cond_branch.py"
       - "tests/test_moss_image_comfy_exactness.py"
       - "tests/test_moss_image_parity.py"
       - "tests/test_moss_image_support.py"
@@ -74,6 +76,7 @@ on:
       - "tests/test_int8_gemm_kitchen_version.py"
       - "tests/test_vae_decode_split_comfy.py"
       - "tests/test_minimax_h3_image_comfy_detection.py"
+      - "tests/test_attention_pin_slab_comfy.py"
       - "tests/test_cond_batch_agreement.py"
       - "tests/test_fp8_paths_tool.py"
       # No step runs these files, but the files the steps run import them. The
@@ -241,11 +244,13 @@ jobs:
       # The dropped-scale gate replays ComfyUI's diffusion-model load on key
       # names; this checks the replay against ComfyUI's own load, key for key,
       # and that ComfyUI still drops an unrecorded fp8, int8 or packed scale.
+      # The second file holds the gate's reading of a damaged header against
+      # ComfyUI's own two readers: what they still load, and what neither reads.
       - name: Dropped-scale header gate vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
           COMFYUI_DIR: ../ComfyUI
-        run: pytest -q tests/test_dropped_scale_gate.py
+        run: pytest -q tests/test_dropped_scale_gate.py tests/test_upstream_gate_damaged_header.py
       # A LoRA key on a parameter the FSDP wrap replicates bakes to ComfyUI's
       # own patch_weight_to_device bits on a one-rank gloo group.
       - name: FSDP LoRA replicated-parameter bake vs comfy master (CPU)
@@ -312,6 +317,13 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_flux_views_comfy_exactness.py
+      # Anima's text branch: the Worker's bind of stock's extra_conds under
+      # inference mode, stock's model calls on the Worker's KSampler path, and
+      # the persistence canary with LoRA units on the llm_adapter.
+      - name: Anima text branch and persistence canary vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_anima_cond_branch.py
       # These two steps bind comfy's native Qwen Image 2.1 and Wan Animate 2
       # model classes from master and compare the injected sequence-parallel
       # forwards with stock on CPU. The ordinary CI job has no ComfyUI. The
@@ -421,6 +433,16 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_minimax_h3_image_comfy_detection.py
+      # In a world of one GPU a checkpoint's own attention pins run, so slab
+      # residency with pins runs: a slab load must hand ComfyAttention the pin a
+      # stock load hands it, bound to the same kernel and tau. The one-GPU rule
+      # also trusts ComfyUI's load path to put the checkpoint's pin back after a
+      # LoRA clone before the next forward; the same file drives a real patcher
+      # through it.
+      - name: Attention pins through slab residency and ComfyUI's restore vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_attention_pin_slab_comfy.py
       # Each rank picks its cond batch from its own box's free memory in
       # ComfyUI's calc_cond_batch; two Gloo ranks with the agreement must take
       # the leanest rank's batch. The regular CI job has no ComfyUI, so it skips.
@@ -477,6 +499,7 @@ jobs:
           tests/test_auto_latent_downscale.py
           tests/test_chroma_text_projections.py
           tests/test_dropped_scale_gate.py
+          tests/test_upstream_gate_damaged_header.py
           tests/test_fsdp_lora_replicated.py
           tests/test_ideogram4_stock_equivalence.py
           tests/test_qwen_text_projections.py
@@ -508,3 +531,4 @@ jobs:
           tests/test_moss_image_skip_end_to_end.py
           tests/test_vae_decode_split_comfy.py
           tests/test_minimax_h3_image_comfy_detection.py
+          tests/test_attention_pin_slab_comfy.py

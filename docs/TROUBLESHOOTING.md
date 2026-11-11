@@ -1982,8 +1982,10 @@ clean-reload proof before it samples.
 It never names a file this graph would then refuse: a DiT file is named only
 when a graph here names it (the artifact manifest lists it) and none of the
 refusals the driver can read from its header applies, so no INT8 MOSS-Image
-file beside a LoRA (#129), no W4A8 file on a `*+fsdp` preset, and no file that
-pins an attention kernel off Ulysses and ring (#117). The pair is not offered
+file beside a LoRA (#129), no W4A8 file on a `*+fsdp` preset, and no file whose
+pins would ask for the Sol-Attn waiver: one that pins an attention kernel on a
+pair without Ulysses or ring, or in a world of one GPU beside a LoRA that pins
+(#117). The pair is not offered
 beside a LoRA. For H3,
 try a smaller text encoder, a pruned/quantized DiT, fewer or smaller references,
 a smaller canvas/clip, or more free host memory. Pruned int8/fp8 reference-video
@@ -4353,11 +4355,10 @@ refiners and encoders every rank runs whole) uses ComfyUI's default exact
 backend ([ADAPTERS.md](ADAPTERS.md) lists each site). Under sequence
 parallelism the card appears only when the widget selects Sol. A topology
 without sequence parallelism keeps every stock attention call, so a pin runs
-there as it does in stock ComfyUI, and the render refuses with this same card
-until the operator grants it
-([#117](#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel),
-which also covers the FSDP launch check a bf16 or fp16 checkpoint that pins
-meets first).
+there as it does in stock ComfyUI. In a world of one GPU a checkpoint's own pin
+asks nothing; elsewhere, and for a LoRA's pin, the render refuses with this
+same card until the operator grants it
+([#117](#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
 
 **The kernel is optional and is not a dependency of this project.** The opt-in
 installer plans every configured Worker interpreter. First stop ComfyUI and
@@ -4818,6 +4819,9 @@ matched key paths, so a record can confirm which spelling the gate read.
 
 The same gate refuses a checkpoint whose weight scales ComfyUI would drop; see
 [#120](#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales).
+A damaged header does not turn this refusal off: the gate reads a header its
+strict reader refuses as ComfyUI's own reader does
+([#152](#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 
 ## 92. A render refuses with `FsdpGateProofError`, and the retry says the same thing
 
@@ -6077,35 +6081,51 @@ LoRA with `.comfy_attention.config` keys, pin an attention kernel on each
 attention module. It ships two such kernels, `comfy_kitchen_sol` (sparse
 attention, with a tau) and `comfy_kitchen_int8` (q, k, v and the attention
 weights rounded to 8 bits), and both are approximate by construction. On a
-topology without sequence parallelism (on a two-rank pair: single, cfg2, dp2,
-cfg2+fsdp and dp2+fsdp) ComfyUI runs the pinned kernel as it does on one GPU,
-so dgx-monarch refuses before any sampling unless the operator has granted the
-waiver. The message names the kernels, the number of attention modules and
-the topology; [ADAPTERS.md](ADAPTERS.md) has the contract. On cfg2+fsdp and
-dp2+fsdp an fp8 or int8 checkpoint keeps its pins, and they ask too. A bf16 or
-fp16 checkpoint whose own header pins asks nothing there: the FSDP launch check
-does not count its uint8 config tensors, and the shard build reloads the
-weights without them, so its pins do not run. The Init widget's kernel runs
+topology without sequence parallelism ComfyUI runs the pinned kernel as it
+does on one GPU. In a world of one GPU (one rank: `mode=local` with one GPU,
+or one Spark by itself) the checkpoint's own pins run as stock ComfyUI runs
+them, so nothing refuses and nothing is stamped. On cfg2 and dp2, on a
+`single` preset on a two-rank mesh, which resolves to dp2 on the Worker, on
+cfg2+fsdp and dp2+fsdp for an fp8 or int8 checkpoint, which keeps its pins,
+and in a world of one GPU when a LoRA in the stack sets, restates or changes a
+pin, dgx-monarch refuses before any sampling unless the operator has granted
+the waiver. The message names the kernels, the number of attention
+modules and the topology; [ADAPTERS.md](ADAPTERS.md) has the contract. cfg2
+and dp2 keep the card for a checkpoint's own pins because a cfg2 render
+measured a small gap against the pinned one-GPU render on a short prompt
+(docs/VALIDATION.md, FLUX.3 Klein), whose cause is not established. On
+cfg2+fsdp and dp2+fsdp an fp8 or int8 checkpoint keeps its pins, and they ask
+too. A bf16 or fp16 checkpoint whose own header pins asks nothing there: the
+FSDP launch check does not count its uint8 config tensors, and the shard build
+reloads the weights without them, so its pins do not run. The Init widget's kernel runs
 instead, so the render differs from stock's pinned render on one GPU by
 construction, as on uly2, and the record says dropped (FSDP shard build).
 
 The FLUX.3 Image Klein INT8 ConvRot files are the first shipped checkpoints
 that pin a kernel: comfy-kitchen's INT8 attention on 33 attention modules, the
-five image blocks and the 28 single blocks. Their testing graphs ask for the
-waiver on single, cfg2 and dp2 and render without it on uly2, which drops the
-pins and runs exact attention, so a uly2 render differs from stock INT8 on one
-GPU by construction. The BF16 and NVFP4 files pin nothing, and the shipped
-FLUX.3 templates use BF16.
+five image blocks and the 28 single blocks. Their testing graphs render on
+one GPU with the pins and no card, ask for the waiver on cfg2 and dp2, and
+render without it on uly2, which drops the pins and runs exact attention, so a
+uly2 render differs from stock INT8 on one GPU by construction. The BF16 and
+NVFP4 files pin nothing, and the shipped FLUX.3 templates use BF16.
 
 The MOSS-Image INT8 ConvRot files, the SFT, Base and Kromoss checkpoints, pin
 comfy-kitchen's INT8 attention on all 42 blocks and on neither text-embedder
-block. Their testing graphs ask for the waiver on single, cfg2 and dp2 and
-render without it on uly2, which drops the pins and runs exact attention, so
-a uly2 render differs from stock INT8 on one GPU by construction. The BF16
-files pin nothing, and the shipped MOSS-Image templates use BF16.
+block. Their testing graphs render on one GPU with the pins and no card, ask
+for the waiver on cfg2 and dp2, and render without it on uly2, which drops the
+pins and runs exact attention, so a uly2 render differs from stock INT8 on one
+GPU by construction. The BF16 files pin nothing, and the shipped MOSS-Image
+templates use BF16.
 
-**What to do:** either accept the card and queue the render again, or pick a
-sequence-parallel topology such as uly2, where dgx-monarch drops every pin and
+**Which to pick.** On one GPU a pinned file renders with its publisher's INT8
+attention, as stock ComfyUI does. On uly2 it renders with exact attention,
+which stock ComfyUI cannot do with that file. The two differ a little, and the
+render record says which one ran: "kept" for the pins, "dropped (sequence
+parallelism)" for exact attention.
+
+**What to do:** either accept the card and queue the render again, render on
+one GPU without the LoRA that sets the pin, or pick a sequence-parallel
+topology such as uly2, where dgx-monarch drops every pin and
 the Init widget's kernel runs (exact under TORCH_FLASH; the Sol card appears
 there only if the widget selects Sol). The card grants the Sol-Attn waiver
 for this checkpoint, topology and world; headless, set
@@ -6134,8 +6154,10 @@ default `slab_weights=auto` makes it risky, so a checkpoint that pins pays
 for it even with no LoRA. After the ceremony the combination renders
 under stock residency, and that answer stands for the rest of the ComfyUI
 session: the grant does not run the ceremony again, and each new session
-runs it once more. To keep the slab and low-RSS levers, grant the card and
-set `auto_gate=off` for that graph
+runs it once more. On one GPU a checkpoint's own pins meet no guard, so the
+ceremony there runs every leg with the pins, slab residency included, and
+keeps the levers. To keep the slab and low-RSS levers on cfg2, grant the card
+and set `auto_gate=off` for that graph
 ([#66](#66-the-gate-says-inconclusive-on-a-graph-with-no-lora),
 [#67](#67-what-auto_gateoff-costs-and-what-it-does-not)).
 
@@ -6144,16 +6166,18 @@ set `auto_gate=off` for that graph
 modules per kernel), `attention_pins_ran` and `attention_pins_dropped`
 (modules per reason). The sidebar's last-render line, the run_matrix console
 and the driver log print one line, for example "render pinned:
-comfy_kitchen_sol tau=0.7 x 40 modules, ran". Under dual-model cfg2 each cfg
+comfy_kitchen_sol tau=0.7 x 40 modules, kept". Under dual-model cfg2 each cfg
 rank renders its own checkpoint, so the three fields add the two models'
 modules. When both models pin, `attention_pins_models` carries each model's
 own fields under `cond` and `uncond`, and the line gives one clause per
 model, for example "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20
-modules, ran; uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped
+modules, kept; uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped
 (kernel unavailable on this host)". The count is per attention
 module, so a block whose self- and cross-attention are both pinned counts
-twice. "ran" means ComfyUI dispatched each pinned module to its pinned kernel,
-as on one GPU; the kernel itself still runs exact attention on a masked call
+twice. "kept" means dgx-monarch left each pinned module's kernel in place: the
+record reads the pins from the load and the topology, and it does not count
+attention calls. A kept pin is dispatched by ComfyUI to its pinned kernel, as
+on one GPU; the kernel itself still runs exact attention on a masked call
 (Sol) or on a float32 call with `low_precision_attention` off (int8). A pin
 does not run for one of three reasons: `sequence parallelism`; `FSDP shard
 build`, for a pin the shard build of a bf16 or fp16 checkpoint cleared on any
@@ -6191,7 +6215,8 @@ text's length, not the image's. `--blocks N` pins only the first N modules.
 Load the file with a LoRA loader at strength 1.0, since strength 0 stages no
 pin. On cfg2 under `auto_gate=first_use` the first queue runs the first-use
 ceremony above, then shows the card; after the grant expect a stamped render
-on stock residency whose record reads "ran". On uly2 expect no card and a
+on stock residency whose record reads "kept". On one GPU the probe LoRA's pin
+is a LoRA's, so it shows the card there too. On uly2 expect no card and a
 record that reads "dropped (sequence parallelism)"; on cfg2+fsdp or dp2+fsdp
 under `auto_gate=first_use` expect the refusal above even after the grant. The file
 patches no weight, and slab residency prices it as no bake.
@@ -6464,7 +6489,9 @@ scales and names its format only in header fields ComfyUI does not read, and
 and no record, so stock ComfyUI fails at the first step.
 The gate reads the header alone, on the driver before capacity or mesh work
 and again at every Worker's load entry point, and replays ComfyUI's load
-steps on the key names.
+steps on the key names. A header its strict reader refuses is read again as
+ComfyUI's own reader reads it, so a damaged header gets this refusal too
+([#152](#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 
 **Fix:** use an export of the same model in ComfyUI's quantized layout, whose
 quantized layers carry `comfy_quant` keys or a `_quantization_metadata` table,
@@ -8080,6 +8107,9 @@ model is built; a config that is not JSON, or that holds no list of numbers
 there, fails earlier or later with another error. The header gate reads the same metadata
 (`adapters/minimax_h3_image_header.py`) and stops the file first. It answers
 before every other refusal this family meets, since it is a fault of the file.
+A config the JSON parser cannot read, one nested past its limit included,
+counts as no grid, and a damaged header is read as ComfyUI's own reader reads it
+([#152](#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 
 **Fix:** use the file as Comfy-Org/MiniMax-H3-Image publishes it; every one of
 its DiT files carries the grid. For a file you exported yourself, write the
@@ -8107,7 +8137,87 @@ first.
 `_quantization_metadata` of the export it came from. No consent or waiver
 applies.
 
-## 151. A render refuses because the prompt expander is on with an empty task prompt
+## 151. An Anima render on the Workers differs from stock ComfyUI
+
+**Symptom:** on a release before this fix, an Anima render on the Workers
+does not match stock ComfyUI with the same files, prompts, seed and sampler,
+on any topology, `single` with `mode=local` and `gpus_per_host=1` included,
+while the Workers' own topologies match each other. On 2026-11-10 the shipped
+Anima graph at one step, seed 42, read largest difference 0.4086 and NRMS
+0.028 against stock on one GPU, with 204483 of 262144 latent values apart,
+while the Worker's `single`, row 0 of its dp2 render and `run_matrix`'s
+single reference were bit-identical.
+
+**Cause:** stock ComfyUI runs a prompt inside `torch.inference_mode()`, and a
+Worker samples on its own thread, outside it. ComfyUI's `Anima.extra_conds`
+branches on that mode. Inside it, it runs the text through the model's
+`llm_adapter` once per conditioning and pads it to 512 rows. Outside it, the
+branch ComfyUI keeps for training, it hands the forward the raw Qwen3 rows
+with the T5 ids, and the forward runs the adapter and the pad on every model
+call. Each conditioning gets the same math, but the batching differs: ComfyUI
+joins the prompt and the negative into one model call only when their text
+tensors have the same shape. In stock both have 512 rows, so each step makes
+one batch-2 call; on a Worker the raw rows of the shipped pair differ in
+length, so each step made two batch-1 calls, and GB10's matrix kernels change
+with the row count. That is the expected cause of the 0.028; as of 2026-11-10
+no hardware run on the fixed Workers has confirmed it. A CPU test against
+ComfyUI v0.45.0 and 8a98ecf58 shows the two call patterns, and that inference
+mode alone picks between them; on the CPU the latents still match, because its
+kernels do not change with the batch.
+
+**Fix:** update. On every load the Anima adapter runs stock's `extra_conds`
+under inference mode, as the FLUX.3 and MOSS-Image adapters do, so every
+topology prepares the text once per conditioning and batches the pair as stock
+does. Each Worker logs `anima text branch: preprocessed once (extra_conds)` at
+the first render after a load. Because one GPU now folds the pair into one
+batch-2 call, cfg2's two batch-1 calls, one per rank, are not the same math
+for Anima: `auto` table row 47 (cfg2 below 1.2 MP on BF16) is withdrawn and
+every Anima render under `auto` takes uly2 (row 48). Explicit cfg2 still
+renders. The comfy canary's `inference mode branches` seam lists every place
+ComfyUI's source reads or sets inference mode, reads a tensor's inference
+flag, or reads grad mode, so a new branch of this kind fails the canary before
+it reaches a render. As of 2026-11-10 no hardware run has
+compared the fixed Workers with stock
+([VALIDATION](VALIDATION.md#anima-text-branch-fix)).
+
+## 152. A render refuses because the header gate could not read the checkpoint's header
+
+**Symptom:** the DGX Monarch loader refuses class P with "the upstream gate
+could not read this checkpoint's safetensors header", before anything loads. A
+Worker that gets the same file refuses with the same sentence. It names no
+guard and offers no card and no waiver. The log carries one WARNING line,
+opening `upstream gate:`, that names the error the read ended with.
+
+**Cause:** the header gate decides four refusals from a file's safetensors
+header alone
+([#91](#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down),
+[#120](#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales),
+[#149](#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)
+and [#150](#150-a-minimax-h3-image-file-refuses-because-its-quantization-metadata-cannot-be-read)).
+It reads the header with a strict reader first. That reader refuses
+headers stock ComfyUI still loads: a tensor entry, a metadata key or a
+descriptor field written twice, an empty tensor name, tensors that share
+bytes, metadata that is not all strings. So when the strict read fails, the
+gate reads the header again as ComfyUI's own reader does (the 8-byte length,
+then plain JSON, where the last copy of a key written twice wins) and the same
+four refusals answer on what ComfyUI would load. A damaged header therefore
+gets every refusal its intact header gets, with the same sentence, and the log
+carries an INFO line, opening `upstream gate:`, that says why the strict read
+failed. A file that neither safetensors nor ComfyUI can read (no length field,
+a length past the end of the file, a header that is not UTF-8 JSON, JSON that
+is not an object) gets no verdict from the gate; ComfyUI's own load error
+stands. This entry is what is left: the read failed in a way that is no
+verdict on the file, such as a header or quantization metadata nested past the
+JSON parser's limit, or a read error after the file opened. The gate cannot
+show that ComfyUI would fail on that file too, and a load that skipped the
+gate could render wrong with no error, so it refuses.
+
+**Fix:** restore the file from the export or download it came from; no writer
+of safetensors files produces such a header. To render the file as it is, use
+stock ComfyUI on one GPU through ComfyUI's own Load Diffusion Model node
+rather than the DGX Monarch loader. There is no waiver and no env var.
+
+## 153. A render refuses because the prompt expander is on with an empty task prompt
 
 **Symptom:** a DGX Monarch UNET loader, sampler or Identity Gate refuses class P
 with "The prompt expander is on and its task prompt is empty", or with "The

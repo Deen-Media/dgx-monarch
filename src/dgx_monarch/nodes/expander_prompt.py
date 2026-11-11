@@ -47,7 +47,7 @@ TEXT_CLASSES = ("PrimitiveStringMultiline", "PrimitiveString")
 # ComfyUI's lazy node that graph_live does not read (comfy_extras/nodes_logic.py,
 # BranchNode at 0.45.0): which branch it runs is not decided here.
 UNREAD_LAZY_CLASSES = ("BranchNode",)
-TROUBLESHOOTING = 151
+TROUBLESHOOTING = 153
 
 EMPTY_TASK_PROMPT = (
     "The prompt expander is on and its task prompt is empty. Replace Text (node {replace}) "

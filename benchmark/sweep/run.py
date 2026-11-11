@@ -652,16 +652,16 @@ def _fidelity(record: dict, cell: dict, output_dir: Path, floor: float,
             why = (f"{cell.get('attention') or 'this kernel'} is an approximation "
                    "the class K waiver admits")
         elif SOL_ATTN_PIN_GUARD in (cell.get("waiver_guards") or []):
-            # A cell without sequence parallelism runs the pins too, under its
-            # own grant, against a reference that runs them under its own.
-            why = ("this cell and its reference both render the checkpoint's pinned "
-                   f"approximate attention kernel under the {SOL_ATTN_PIN_GUARD} waiver")
+            # A cell without sequence parallelism runs the pins under its own
+            # grant; its one-GPU reference runs them as stock does, unasked.
+            why = ("this cell renders the checkpoint's pinned approximate attention kernel "
+                   f"under the {SOL_ATTN_PIN_GUARD} waiver, and its one-GPU reference renders "
+                   "it as stock ComfyUI does")
         else:
-            # The matrix's other reading (matrix.known_wrong_reference): the
-            # reference renders the checkpoint's pinned kernel under the
-            # waiver, whatever this cell runs.
+            # matrix.known_wrong_reference: the reference renders the checkpoint's
+            # pinned kernel, on one GPU as stock does or elsewhere under the waiver.
             why = ("the reference renders the checkpoint's pinned approximate attention "
-                   f"kernel under the {SOL_ATTN_PIN_GUARD} waiver")
+                   "kernel, whatever this cell runs")
         record["waived_render"] = line = (
             f"{WAIVED_BAR} {fidelity.get('nrms')} against "
             f"{fidelity.get('reference_file', 'the reference')}: {why}, so the "

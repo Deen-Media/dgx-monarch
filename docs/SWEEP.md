@@ -43,17 +43,23 @@ An `auto` cell resolves its topology through the runtime's own
 CFG and batch size. Like the runtime, it counts a CFG++ sampler as keeping the
 unconditional pass only on the DGX Monarch sampler nodes that tag the latent
 (`UNCOND_TAGGING_SAMPLERS` in `matrix.py`). An auto cell of a family with a
-cfg row (Krea2, Chroma, LongCat, Qwen-Image, Boogu and Anima, and checkpoints
-that share their families) can therefore resolve to cfg2. It then carries
+cfg row (Krea2, Chroma, LongCat, Qwen-Image and Boogu, and checkpoints that
+share their families) can therefore resolve to cfg2. It then carries
 the label and `cfg_path` the cfg2 preset would carry, and its warm leg meets
 the "cfg2 did not split" check in section 5.
 
 A checkpoint the loader's header gate refuses reads `refuse:P`, basis
-`guard`, ahead of every topology rule. The gate refuses two shapes: the
+`guard`, ahead of every topology rule. The gate refuses the
 Z-Image L2P layout
-([TROUBLESHOOTING #91](TROUBLESHOOTING.md#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down))
-and a checkpoint whose weight scales ComfyUI would drop
-([#120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
+([TROUBLESHOOTING #91](TROUBLESHOOTING.md#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down)),
+a checkpoint whose weight scales ComfyUI would drop
+([#120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)),
+a MiniMax-H3-Image file without its sigma grid or with quantization metadata
+ComfyUI cannot parse
+([#149](TROUBLESHOOTING.md#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)
+and [#150](TROUBLESHOOTING.md#150-a-minimax-h3-image-file-refuses-because-its-quantization-metadata-cannot-be-read))
+and a header it could not read
+([#152](TROUBLESHOOTING.md#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 The matrix calls the gate itself (`upstream_gate.refusal_for`), so the label
 and the runtime read the same header rule.
 
@@ -97,13 +103,14 @@ from the header of every checkpoint the graph loads and hands them to the
 runtime's own pin guard (`attention_pins.py`), so these labels read basis
 `header`:
 
-- **A pinned checkpoint refuses class K wherever its pins run.** Without
-  sequence parallelism ComfyUI runs each pinned kernel as it does on one GPU,
-  and both kernels it binds are approximate. On single, cfg2, dp2, cfg2+fsdp
-  and dp2+fsdp the cell reads `refuse:K` under the guard
-  `sol_attn:checkpoint_pin`. The single cell is included because a render on
-  one GPU checks whether the host can run the kernel, and the pair's GPUs run
-  both.
+- **A pinned checkpoint refuses class K wherever its pins run off one GPU.**
+  Without sequence parallelism ComfyUI runs each pinned kernel as it does on
+  one GPU, and both kernels it binds are approximate. On cfg2 and dp2, and on
+  cfg2+fsdp and dp2+fsdp for an fp8 or int8 file, the cell reads `refuse:K`
+  under the guard `sol_attn:checkpoint_pin`. The one-GPU single cell renders:
+  in a world of one GPU the checkpoint's own pins run as stock runs them and
+  ask nothing. The matrix reads checkpoint pins only and drops a LoRA arm that
+  pins, so no single cell meets a LoRA's pin.
 - **The label is waivable only where a grant lets the cell render.** A grant
   clears this guard and no other, so the cell carries the waiver only where
   the same cell without the pins renders. Three cases carry none. On an FSDP
@@ -127,11 +134,12 @@ runtime's own pin guard (`attention_pins.py`), so these labels read basis
   worker configures it, before any load.
 - **A pinned checkpoint under sequence parallelism is measured, not
   scored.** uly2 and ring2 drop the pins and run the Init widget's kernel,
-  while their single-GPU reference refuses, or under the waiver runs the
-  pinned kernel. Every cell scored against that reference is scored at the
-  `waived-nrms` bar: the difference is recorded and no floor applies. On
-  uly2 and ring2 that is an exact cell against an approximate reference; on
-  cfg2 and dp2 both sides run the pinned kernel under the waiver. An auto
+  while their single-GPU reference runs the pinned kernel, as stock does, with
+  no card (`known_wrong_reference`). Every cell scored against that reference
+  is scored at the `waived-nrms` bar: the difference is recorded and no floor
+  applies. On uly2 and ring2 that is an exact cell against an approximate
+  reference; cfg2 and dp2 run the pinned kernel under the waiver, the
+  reference without one. An auto
   cell takes the label and bar of the preset it resolves to. uly2+fsdp and
   ring2+fsdp drop the pins too and keep the `bit-identical` bar against
   their resident twin. Exactness on uly2 and ring2 needs a reference rendered
@@ -314,7 +322,7 @@ identity on the graph as shipped. The expander also needs its task prompt and
 system prompt boxes filled, which the shipped graphs leave empty; with the
 switch on and the task prompt empty, the loader refuses class P before the
 DiT loads
-([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)),
+([TROUBLESHOOTING #153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)),
 and the matrix, which labels a cell from its family, file and preset, does
 not predict that refusal.
 

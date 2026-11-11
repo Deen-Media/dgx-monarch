@@ -137,11 +137,11 @@ trained at boot, because sysfs reads it the same as an uncabled port;
 `dgxm doctor` reports that rail. When the panel is idle, the last render's
 line also names the topology it ran, its auto table row, its last seconds per
 step, and any attention kernel the model pinned per attention module, with
-whether it ran
+whether it was kept
 ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
 When both models of a dual-model cfg2 render pin, that part gives one clause
 per model, such as
-`pinned: cond model: ..., ran; uncond model: ..., dropped (...)`.
+`pinned: cond model: ..., kept; uncond model: ..., dropped (...)`.
 Each render times a step against its own previous step, so the
 second leader of a dp>1 render, or another render in the same Fleet wave,
 cannot shrink that number to the gap between two messages. `dgxm top` draws
@@ -158,7 +158,7 @@ neither holds load or gate time. The auto facts are `auto_row`, `family`,
 negative pass at CFG 1, as the cfg++ samplers do), `evidence_row` (the record
 that admitted cfg2), `skipped_cfg_row` (a cfg row auto passed over for want of
 evidence), `batch` and `pair_differs` (whether the prompt and the negative
-encode to different text rows, which the Anima, Boogu and Chroma cfg2 rows
+encode to different text rows, which the Boogu and Chroma cfg2 rows
 need). A preset leaves them null, and a one-GPU render has no
 `auto_row`. When the render re-attached after a Worker restart, `reattach`
 reads `restart_reattach` and `reattach_s` gives the re-attach seconds; both

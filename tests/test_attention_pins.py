@@ -167,9 +167,10 @@ def _refusal(make, topology):
     return summary, str(caught.value)
 
 
+# No `single` case: production never builds it off one GPU. A world of one GPU is
+# alone, and a `single` preset on a two-rank mesh resolves to dp2.
 @pytest.mark.parametrize("topology,label", [({"cfg": 2}, "cfg2"), ({"dp": 2}, "dp2"),
-                                            ({}, "single"), ({"cfg": 2, "fsdp": True},
-                                                             "cfg2+fsdp")])
+                                            ({"cfg": 2, "fsdp": True}, "cfg2+fsdp")])
 @pytest.mark.parametrize("kernel", ["sol", "int8"])
 def test_without_sequence_parallelism_an_approximate_pin_runs_and_refuses_class_k(
         topology, label, kernel):
@@ -306,7 +307,7 @@ def test_ranks_merge_into_the_record_and_describe_reads_it():
     assert record == {"attention_pins": {"comfy_kitchen_sol tau=0.7": 40},
                       "attention_pins_ran": True, "attention_pins_dropped": None}
     assert attention_pins.describe(record) == \
-        "pinned: comfy_kitchen_sol tau=0.7 x 40 modules, ran"
+        "pinned: comfy_kitchen_sol tau=0.7 x 40 modules, kept"
     dropped = {"attention_pins": {"attention_pins": {"comfy_kitchen_int8": 30},
                                   "attention_pins_ran": False,
                                   "attention_pins_dropped": {"sequence parallelism": 30}}}
@@ -316,7 +317,7 @@ def test_ranks_merge_into_the_record_and_describe_reads_it():
                                   "attention_pins_ran": False,
                                   "attention_pins_dropped": {"FSDP shard build": 20}}}
     assert attention_pins.describe(attention_pins.merge([partial])) == \
-        "pinned: comfy_kitchen_int8 x 30 modules, ran on 10, dropped on 20 (FSDP shard build)"
+        "pinned: comfy_kitchen_int8 x 30 modules, kept on 10, dropped on 20 (FSDP shard build)"
     # Dual-model cfg2: one rank holds a checkpoint with no pins.
     assert attention_pins.merge([ran, {"rank": 1}]) == record
     assert attention_pins.merge([{"rank": 0}, {"attention_pins": "junk"}]) is None
@@ -348,7 +349,7 @@ def test_dual_model_ranks_keep_each_models_counts_together():
             "uncond": {"attention_pins": {sol_label: 10}, "attention_pins_ran": False,
                        "attention_pins_dropped": {"kernel unavailable on this host": 10}}}}
     assert attention_pins.describe(record) == (
-        "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; "
+        "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, kept; "
         "uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped "
         "(kernel unavailable on this host)")
     assert attention_pins.merge([uncond, cond]) == record
@@ -359,8 +360,8 @@ def test_dual_model_ranks_keep_each_models_counts_together():
     assert both["attention_pins"] == {sol_label: 24, "comfy_kitchen_int8": 10}
     assert both["attention_pins_ran"] is True and both["attention_pins_dropped"] is None
     assert attention_pins.describe(both) == (
-        "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; uncond model: "
-        "comfy_kitchen_int8 x 10 modules, comfy_kitchen_sol tau=0.7 x 4 modules, ran")
+        "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, kept; uncond model: "
+        "comfy_kitchen_int8 x 10 modules, comfy_kitchen_sol tau=0.7 x 4 modules, kept")
     # Only one model pins: the plain line, its own counts.
     assert attention_pins.describe(attention_pins.merge([{"rank": 0}, uncond])) == (
         "pinned: comfy_kitchen_sol tau=0.7 x 10 modules, dropped "
@@ -375,7 +376,7 @@ def test_ranks_of_one_model_still_write_one_line():
                                   "attention_pins_ran": False,
                                   "attention_pins_dropped": {"kernel unavailable on this host": 20}}}
     assert attention_pins.describe(attention_pins.merge([ran, ran])) == \
-        "pinned: comfy_kitchen_sol tau=0.7 x 20 modules, ran"
+        "pinned: comfy_kitchen_sol tau=0.7 x 20 modules, kept"
     # One host could not bind the kernel: the model's 20 modules, never 40,
     # and ran stays false because a rank did not run them.
     record = attention_pins.merge([ran, unbound])
@@ -508,7 +509,6 @@ def test_a_flux3_int8_layout_reads_its_block_level_pins():
 
 
 @pytest.mark.parametrize("topology,label", [({"cfg": 2}, "cfg2"), ({"dp": 2}, "dp2"),
-                                            ({}, "single"),
                                             ({"cfg": 2, "fsdp": True}, "cfg2+fsdp"),
                                             ({"dp": 2, "fsdp": True}, "dp2+fsdp")])
 def test_a_flux3_int8_layout_off_sequence_parallelism_refuses_class_k(topology, label):
@@ -529,3 +529,118 @@ def test_a_flux3_int8_layout_under_ulysses_drops_its_pins_and_asks_nothing():
     assert summary.public()["attention_pins_dropped"] == {
         attention_pins.DROPPED_SEQUENCE_PARALLEL: 3}
     attention_pins.assert_waived(summary, _worker(ulysses=2).topology, family="flux3")
+
+
+# --- One rank: the checkpoint's own pins run as stock runs them (DESIGN class K) ---
+
+PATH = "diffusion_model.blocks.0.self_attn.comfy_attention"
+
+
+def _loaded(*modules):
+    patcher = make_patcher([Block(module) for module in modules])
+    attention_pins.scan_loaded(patcher)
+    return patcher
+
+
+def _alone(patcher):
+    summary = attention_pins.render_summary(_worker(), [patcher])
+    assert summary is not None
+    return summary
+
+
+def test_on_one_rank_the_checkpoints_own_pins_ask_nothing_and_stamp_nothing():
+    accuracy_waiver.activate(None)
+    accuracy_waiver._scope().grants[SOL_KIND] = {
+        "id": "e" * 32, "kind": SOL_KIND, "consent_source": "panel"}
+    patcher = _loaded(int8(), sol())
+    summary = _alone(patcher)
+    assert summary.checkpoint_only and summary.ran
+    attention_pins.assert_waived(summary, {}, alone=True)  # no raise
+    assert accuracy_waiver.stamps() == []  # the grant was never read
+    assert attention_pins.describe(attention_pins.merge([{attention_pins.RESULT_KEY: summary.public()}])) == (
+        "pinned: comfy_kitchen_int8 x 1 module, comfy_kitchen_sol tau=0.7 x 1 module, kept")
+    # The same summary off one rank still asks.
+    accuracy_waiver._scope().grants.pop(SOL_KIND)
+    with pytest.raises(UnsupportedModelError):
+        attention_pins.assert_waived(summary, {"cfg": 2})
+
+
+@pytest.mark.parametrize("staged", [int8(), sol(), Attention({"attention": "not_a_kernel"})],
+                         ids=["restates", "changes", "removes"])
+def test_any_lora_patch_on_a_pin_path_ends_the_checkpoints_claim(staged):
+    """A removal leaves the other header pin running, so the render still asks."""
+    patcher = _loaded(int8(), int8())
+    patcher.object_patches[PATH] = staged
+    summary = _alone(patcher)
+    assert not summary.checkpoint_only
+    with pytest.raises(UnsupportedModelError, match="this stack's LoRA changes the checkpoint's pins"):
+        attention_pins.assert_waived(summary, {}, alone=True)
+
+
+def test_a_stale_lora_module_left_live_counts_as_a_lora_pin():
+    """The load scan cached int8; a LoRA's sol module is still in place with no
+    backup to restore it from, so the forward would run sol."""
+    patcher = _loaded(int8())
+    patcher.model.diffusion_model.blocks[0].self_attn.comfy_attention = sol()
+    summary = _alone(patcher)
+    assert summary.kernels == {"comfy_kitchen_int8": 1}  # what the record would claim
+    assert not summary.checkpoint_only
+    with pytest.raises(UnsupportedModelError):
+        attention_pins.assert_waived(summary, {}, alone=True)
+
+
+def test_a_live_module_comfyui_restores_before_the_forward_reads_as_the_backup():
+    """ComfyUI's unpatch_model puts the shared backup back before this clone's
+    forward, so a LoRA module still live from an earlier clone is not what runs."""
+    patcher = _loaded(int8())
+    original = patcher.model.diffusion_model.blocks[0].self_attn.comfy_attention
+    patcher.model.diffusion_model.blocks[0].self_attn.comfy_attention = sol()
+    patcher.object_patches_backup = {PATH: original}
+    assert _alone(patcher).checkpoint_only
+    patcher.object_patches_backup = {PATH: sol()}  # a backup that differs is a LoRA pin too
+    assert not _alone(patcher).checkpoint_only
+
+
+def test_a_live_pin_the_scan_never_saw_counts_as_a_lora_pin():
+    patcher = _loaded(int8(), Attention())
+    stray = "diffusion_model.blocks.1.self_attn.comfy_attention"
+    patcher.object_patches_backup = {stray: sol()}
+    assert not _alone(patcher).checkpoint_only
+
+
+def test_a_pinned_path_that_no_longer_resolves_fails_closed():
+    patcher = _loaded(int8())
+    del patcher.model.diffusion_model.blocks[0].self_attn.comfy_attention
+    summary = attention_pins.summarize([patcher], sequence_parallel=False)
+    assert summary is not None and not summary.checkpoint_only
+
+
+def test_the_one_rank_reading_costs_no_module_walk():
+    patcher = _loaded(int8())
+    for _ in range(5):
+        assert _alone(patcher).checkpoint_only
+    assert patcher.model.diffusion_model.walks == 1
+
+
+def test_in_a_world_of_one_gpu_two_models_ask_when_either_carries_a_lora_pin():
+    """A dual-model render on one rank: the checkpoints' claim needs every patcher."""
+    own, lora = _loaded(int8()), _loaded(int8())
+    lora.object_patches[PATH] = int8()
+    summary = attention_pins.render_summary(_worker(), [own, lora])
+    assert summary is not None and not summary.checkpoint_only
+    with pytest.raises(UnsupportedModelError):
+        attention_pins.assert_waived(summary, {}, alone=True)
+    assert attention_pins.render_summary(_worker(), [own, _loaded(sol())]).checkpoint_only
+
+
+def test_a_stale_sol_module_whose_tau_differs_counts_as_a_lora_pin():
+    patcher = _loaded(sol(tau=0.7))
+    patcher.model.diffusion_model.blocks[0].self_attn.comfy_attention = sol(tau=0.5)
+    assert not _alone(patcher).checkpoint_only
+
+
+def test_a_header_pin_the_forward_would_not_run_counts_as_a_lora_pin():
+    """The backup ComfyUI restores before the forward pins nothing where the scan saw int8."""
+    patcher = _loaded(int8())
+    patcher.object_patches_backup = {PATH: Attention()}
+    assert not _alone(patcher).checkpoint_only

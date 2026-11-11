@@ -1861,11 +1861,56 @@ resident output with 118 auxiliary `llm_adapter` parameters replicated.
 Explicit BF16 cfg2 at 1024, with 102/36-token prompts, matched
 one-GPU probes on Flash, cuDNN and SAGE_AUTO: 12.0 seconds warm versus 20.0
 single. Three cfg2+FSDP and twelve Ulysses+FSDP records matched their
-resident legs. Since 2026-10-14 auto takes cfg2 for BF16 below 1.2 MP
-(row 47, [Campaign K](#campaign-k-cfg2)) and Ulysses elsewhere. Since
-2026-11-07 row 47 takes only a pair whose text rows differ: a pair of equal
+resident legs. From 2026-10-14 auto took cfg2 for BF16 below 1.2 MP
+(row 47, [Campaign K](#campaign-k-cfg2)) and Ulysses elsewhere. From
+2026-11-07 row 47 took only a pair whose text rows differ: a pair of equal
 rows read one-step NRMS 0.015 to 0.042 on cfg2 against one GPU, and no full
-schedule matched ([equal pairs](#campaign-k-equal-pairs)).
+schedule matched ([equal pairs](#campaign-k-equal-pairs)). Every reference
+above was the Worker's earlier one GPU, which ran the shipped pair unfolded,
+and on 2026-11-10 that reference differed from stock ComfyUI. These records
+are superseded, and row 47 was withdrawn the same day (below).
+
+<a id="anima-text-branch-fix"></a>
+
+**The text branch fix, 2026-11-10.** In the review round's cfg pair row
+(sessions FR3 and FR3L, 2026-11-10, ComfyUI `8a98ecf58`, head capped at 2100
+MHz, plateau 2093 MHz), the shipped Anima graph at one step and seed 42 read
+largest difference 0.4086 and NRMS 0.0284 against stock ComfyUI on one GPU
+for the Worker's `single` (`mode=local`, `gpus_per_host=1`), with 204483 of
+262144 latent values apart, while the Worker's `single`, row 0 of its dp2
+render and `run_matrix`'s single reference were bit-identical. The expected
+cause is ComfyUI's `Anima.extra_conds`, which prepares the text once per conditioning
+at 512 rows only in inference mode, which a Worker's sampling thread is not
+in ([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+On the CPU, against ComfyUI v0.45.0 and `8a98ecf58`, with a tiny Anima that
+ComfyUI's own loader detects, the Worker's KSampler path made two batch-1
+model calls a step on a pair of 14 and 9 Qwen3 rows where stock made one
+batch-2 call at 512 rows, and ran the text adapter on every call where stock
+ran it twice a render; inference mode alone switched the two. After the fix
+the Worker's calls equal stock's, input for input
+(`tests/test_anima_cond_branch.py`). The CPU latents matched before and after
+the fix, because CPU kernels give one batch's bits at either batch size, so
+only hardware can show the fix closes the 0.028. With the fix one GPU folds
+every Anima pair of at most 512 T5 tokens, as stock does, and cfg2's two
+batch-1 calls are not that call, so `auto` table row 47 is withdrawn and
+every Anima render under `auto` takes uly2 (row 48). The hardware legs:
+
+| Leg | Compared with | Bar | Result |
+|---|---|---|---|
+| The Worker's `single`, shipped graph, one step and the full 30 steps | stock ComfyUI on one GPU, same seed | bit-identical | NOT RUN |
+| dp2 batch 2, row 0, one step and full schedule | stock ComfyUI on one GPU | bit-identical | NOT RUN |
+| `auto` (uly2, row 48) on the shipped pair, one step and full schedule | stock ComfyUI on one GPU | bit-identical | NOT RUN |
+| `auto` (uly2) on the equal pair (`eqsame`), one step and full schedule | stock ComfyUI on one GPU | bit-identical | NOT RUN |
+| Explicit cfg2 on the shipped pair and on the equal pair, one step and full schedule | stock ComfyUI on one GPU | measured: NRMS and largest difference recorded | NOT RUN |
+| `uly2+fsdp` on the shipped pair, one step | resident uly2 | bit-identical | NOT RUN |
+| `cfg2+fsdp` on the shipped pair, one step | resident cfg2 | bit-identical | NOT RUN |
+| The shipped graph with a LoRA that has `llm_adapter` and DiT units, `single` and uly2, one step; then a strength change and the LoRA's removal on the same load | stock ComfyUI on one GPU with the same LoRA; after removal, the render without it | bit-identical; no error | NOT RUN |
+| The shipped template as shipped (`auto_gate` first_use, default slab), one render on a fresh fleet | the gate's own legs | the gate PASSes | NOT RUN |
+| Explicit cfg2 on a pair where one side passes 512 T5 tokens, one step | stock ComfyUI on one GPU | bit-identical: stock does not fold that pair | NOT RUN |
+| Warm sampler walls for one GPU, uly2 and cfg2 on the shipped pair at 1024 square | each other, head cap noted | recorded | NOT RUN |
+
+Every leg's Worker log shows `anima text branch: preprocessed once
+(extra_conds)` on every rank.
 
 <a id="evidence-boogu"></a>
 
@@ -2602,9 +2647,10 @@ lists every cell's walls, speedups and fidelity.
   1152, 1216, 1280 and 1536, Turbo BF16 at 1536, Krea2 Turbo FP8-scaled at
   1152, 1216, 1280, 1408 and 1536 (CFG 1 under `euler_cfg_pp`) and at 1536
   under CFG 4.5 Euler, Chroma1-HD BF16, FP8-mixed and INT8 ConvRot at 1152 to
-  1280, Qwen-Image 2512 FP8 at 1152 to 1328, and Kandinsky5 Lite image, Boogu
-  FP8 and Anima BF16 at 1024. uly2 on Torch Flash was bit-identical in every
-  cell.
+  1280, Qwen-Image 2512 FP8 at 1152 to 1328, and Kandinsky5 Lite image and
+  Boogu FP8 at 1024, and Anima BF16 at 1024 against the Worker's earlier one
+  GPU (superseded on 2026-11-10, [Anima](#anima-text-branch-fix)). uly2 on
+  Torch Flash was bit-identical in every cell.
 - **Krea2 RAW INT8.** cfg2 was exact at every size but no faster than uly2
   below 1536: 0.97x at 1152, 0.98x at 1216, 1.03x at 1280 and 1.08x at 1536.
   Exact is not enough for a row, so row 15 grants FP8 and BF16 only and INT8
@@ -2624,6 +2670,9 @@ lists every cell's walls, speedups and fidelity.
   1.2 to 1.77 MP, and 79 for Boogu FP8 and 47 for Anima BF16 below 1.2 MP.
   Since 2026-11-07, rows 79 and 47, and Chroma's rows 20 and 19, grant only a
   prompt pair whose text rows differ ([equal pairs](#campaign-k-equal-pairs)).
+  Row 47 was withdrawn on 2026-11-10: its record was measured against the
+  Worker's earlier unfolded one GPU and is superseded
+  ([Anima](#anima-text-branch-fix)).
   Each record grants only the precisions that read bit-identical and beat
   uly2 at every measured size in its band. Kandinsky5 Lite image met that bar
   at 1024, but its image and video checkpoints share one family, so it has no
@@ -2680,12 +2729,15 @@ readings stay under the 0.10 floor, so these are measured results, not
 refusals, but they miss the
 [cfg2 row bar](DESIGN.md#54-topology--auto-mode), which needs cfg2
 bit-identical to one GPU. The template pairs stayed bit-identical on this
-build. Rows 47 and 79 therefore grant only a pair whose text rows differ:
+build. (The Anima rows were measured against the Worker's earlier unfolded
+one GPU, which on 2026-11-10 differed from stock; they are superseded and row
+47 was withdrawn: [Anima](#anima-text-branch-fix).) Rows 47 and 79
+therefore granted only a pair whose text rows differ:
 the sampler node tags the latent when the positive's and the negative's text
 tensors differ in rows, and an equal or unread pair takes rows 48 and 78
 (uly2). Chroma's rows 20 and 19 take the same scope on its earlier equal-pair
 reading (BF16 NRMS 0.034, [Chroma](#evidence-chroma)): its text is a
-`CONDRegular`, as Anima's and Boogu's are, so rows that differ never fold on
+`CONDRegular`, as Boogu's is, so rows that differ never fold on
 one GPU, and an equal pair takes the uly2 fallback below 1.2 MP and rows 21
 and 22 above it. Explicit `cfg2` on an equal pair still renders. The records are
 `out/review_round_2026-11-07/c10_cfg2/` in the validation tree: one cell file
@@ -3368,11 +3420,11 @@ text across the shard line with presentation tags, the off-grid table, a
 payload without its layout and a refined context, with no attention pin
 running on a rank. At world 2 it compares by bits on aarch64 (the Sparks, on
 CPU) and within 2e-5 on the comfy canary's x86 runner; bit identity on GB10
-is a hardware leg (the identity rows below). Canary seams 52 to 58 hold the
+is a hardware leg (the identity rows below). Canary seams 53 to 59 hold the
 forward, the layout, the head, the build, the sampling grid, the edit node's
 payload and the row-keyed calls. In a world of one GPU the record says
-the header pins are kept; on uly2 it says they are dropped. No hardware run has
-used this family yet.
+the header pins are kept; on uly2 it says they are dropped. No hardware render
+of this family has been taken: every hardware row below is NOT RUN.
 
 | behaviour | what a run must show | status |
 |---|---|---|
@@ -3411,7 +3463,7 @@ schema, and passes against ComfyUI 0.45.0.
 
 A graph whose expander is on with an empty task prompt, or with one that
 lacks the `{input text}` marker, refuses class P
-([#151](TROUBLESHOOTING.md#151-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
+([#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
 `tests/test_expander_prompt.py` holds the sentence, holds it to the UNET
 loader, the four samplers and Identity Gate ahead of each node's own price,
 load and render, holds that a switch whose choice the graph does not state
@@ -3432,7 +3484,7 @@ the two boxes by whoever runs it; this repository holds neither.
 | The text to image template | `dgx-monarch-minimax-h3-image-t2i.json` as shipped, the switch false, 6 steps at 2048 square, on the pair under `auto` and in a world of one GPU | NOT RUN |
 | The edit template | `dgx-monarch-minimax-h3-image-edit.json` as shipped, the switch false, one picture, on the pair under `auto` and in a world of one GPU | NOT RUN |
 | The expander on | each template with MiniMax's task prompt and system prompt pasted into the two boxes by whoever runs it and the switch true: the caption recorded beside the picture, and the same graph queued twice on one driver to see whether the caption repeats | NOT RUN |
-| The empty expander refuses | each template with the switch true and the two boxes as shipped: the class P refusal of [#151](TROUBLESHOOTING.md#151-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt) at the loader before the DiT loads, and at the sampler on a re-queue of a graph that first rendered with the switch false, after the expander has run and before the render | NOT RUN |
+| The empty expander refuses | each template with the switch true and the two boxes as shipped: the class P refusal of [#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt) at the loader before the DiT loads, and at the sampler on a re-queue of a graph that first rendered with the switch false, after the expander has run and before the render | NOT RUN |
 | The edit template in the browser | opened from Browse Templates on ComfyUI 0.45.0: the picture sockets `images.image_1` and `images.image1` keep their wires, each Resize Image/Mask node shows its child widget with the stored value, and Queue sends the API prompt the converter writes | NOT RUN |
 | The release-test rows | both templates in the [template release test](#release-test-2026-11-04): one step, seed 1031, uly2 | NOT RUN |
 | The gate's two proof paths | the first-use gate on the text to image template, a two-step KSampler proof, and on `dgx-monarch-test-minimax-h3-image-grid`, the Sampler Custom proof on the grid's first two steps; each on uly2 and in a world of one GPU | NOT RUN |
