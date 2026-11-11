@@ -154,11 +154,21 @@ separate reviewed prerequisite plan.
 `bash scripts/test_cpu.sh` first runs the gate checks CI's lint-and-unit job
 runs beside the suite: the protected test inventory, the refusal ledger, the
 TRUST citations, the leak check, ruff, mypy, compileall, the template,
-brand-asset, card and artifact checks, shell syntax and shellcheck, and the
-browser assets. A gate whose tool is absent here (CairoSVG, shellcheck, node)
-is skipped and named; every gate runs even after one fails, and one line
-counts them. `tests/test_cpu_gates.py` names the CI steps that cannot run
-here and why. The gates take under two minutes; `DGXM_SKIP_GATES=1` skips
+brand-asset, card and artifact checks, the source archive census, shell
+syntax and shellcheck, and the browser assets. Every gate runs even after one
+fails, and one line counts them. A gate is skipped and named when CairoSVG,
+the build module, a Git checkout, shellcheck or node is missing here; any
+other missing tool fails its gate. The census builds the source archive from
+a copy of the tracked files and holds it to that list, as CI does, so run
+`git add` on a new file first. The refusal ledger gate rewrites the tracked
+ledger to compare it and puts it back, on Ctrl-C too. The gates keep their
+scratch files and compileall's caches in one temporary folder outside the
+checkout and remove it at exit.
+
+A green run covers those gates and the suite. It does not promise a green CI
+run: `tests/test_cpu_gates.py` names the CI steps that cannot run here and
+why, and CI's tools can be other versions than yours. The gates take under
+two minutes; `DGXM_SKIP_GATES=1` skips
 them, and CI skips them because it runs each as its own step. The wrapper then
 runs `pytest tests/ -q --durations=25` from the
 checkout root with this checkout's `src` first on `PYTHONPATH`,

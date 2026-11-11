@@ -60,7 +60,7 @@ def verify_sample_artifact_authorization(
             f"preflight on rank {worker.rank}: expected={expected!r}, "
             f"local={local_artifacts!r}"
         )
-    if granted:  # logged once every check on this rank has passed
+    if granted:  # logged once every authorization check on this rank has passed
         log_gate_grant(worker, request)
     return expected
 

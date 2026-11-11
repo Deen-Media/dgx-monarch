@@ -121,6 +121,15 @@ work. Stop ComfyUI and any services using that environment only within the
 approved maintenance window. Keep model files, credentials,
 other custom nodes and unrelated work intact.
 
+At each start the pack copies the demo images, clips and music its templates
+name into ComfyUI's input folder, from `example_workflows/input`, when a name
+is missing there. It never replaces a file, link or folder already there, so a
+file of your own under one of those names stays, and it never creates the
+folder. A demo file you delete comes back at the next start unless you set
+`DGXM_DEMO_INPUTS=off` in the environment that starts ComfyUI; with it set,
+the pack writes nothing there. The guided setup's clean-checkout check ignores
+these files, since ComfyUI's own `.gitignore` covers `input/`.
+
 Set these paths explicitly, and run this block and every block up to the
 `DGXM` export in one shell, since later blocks read these exports and
 `$XFUSER_WHEELS`. `COMFY_PYTHON` must be the interpreter that starts

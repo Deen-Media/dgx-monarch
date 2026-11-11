@@ -6,11 +6,13 @@
 
 - Every image, clip and music track a shipped template's input nodes name now
   comes with the pack, in `example_workflows/input`. At start the pack copies
-  each one ComfyUI's input folder lacks, and never replaces a file or link
-  already there, so a template such as the Qwen Image 2.1 masked edit no longer
-  opens on a fresh install with a missing `qwen21_source.png`. They are drawn
-  shapes, a stick figure and a synthetic music loop that show the graph runs;
-  load your own for real work. `DGXM_DEMO_INPUTS=off` skips the copy, and
+  each one ComfyUI's input folder lacks, and never replaces a file, link or
+  folder already there, so a template such as the Qwen Image 2.1 masked edit
+  no longer opens on a fresh install with a missing `qwen21_source.png`. They
+  are drawn shapes, a stick figure and a synthetic music loop that show the
+  graph runs; load your own for real work. A demo file you delete comes back
+  at the next start unless `DGXM_DEMO_INPUTS=off` is set, which skips the
+  copy ([INSTALL.md](docs/INSTALL.md#install-from-source)), and
   `tools/gen_demo_inputs.py` draws the files again.
 - Studio is a supported interface from this release, beside the CLI, the TUI
   and the ComfyUI panel. Its docs and the capability contract in Settings no
@@ -765,12 +767,15 @@
 
 - `scripts/test_cpu.sh` runs the gate checks CI runs beside the suite before
   it: the protected test inventory first, then the refusal ledger, the TRUST
-  citations, the leak check, ruff, mypy, compileall and the generator, artifact,
-  shell and browser-asset checks. A local green run now means CI's gates are
-  green, where before they surfaced only after a push. A gate whose tool is
-  missing is skipped and named, `DGXM_SKIP_GATES=1` skips them all, and
-  `tests/test_cpu_gates.py` holds every CI step to a local gate or a named
-  CI-only reason.
+  citations, the leak check, ruff, mypy, compileall, the generator and artifact
+  checks, CI's source archive census on a copy of the tracked files, and the
+  shell and browser-asset checks. A local green run now covers every CI gate
+  except the CI-only steps `tests/test_cpu_gates.py` names, where before the
+  gates surfaced only after a push; CI's tools can still be other versions
+  than yours. A gate is skipped and named when CairoSVG, the build module, a
+  Git checkout, shellcheck or node is missing, `DGXM_SKIP_GATES=1` skips them
+  all, and `tests/test_cpu_gates.py` holds every CI step to a local gate or a
+  named CI-only reason.
 - The sweep runner ends the session when a waived retry's queue will not
   clear, as it already did after every other leg, and when the cache reset
   before a waived, resident or probe leg leaves the queue busy or gets no

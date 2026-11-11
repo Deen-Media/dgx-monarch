@@ -63,8 +63,9 @@ def _assert_entrypoint(prompt_server) -> None:
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     # The entrypoint copies the templates' demo inputs into ComfyUI's input
-    # folder; a canary checks a tree and writes nothing into it.
-    os.environ.setdefault("DGXM_DEMO_INPUTS", "off")
+    # folder; a canary checks a tree and writes nothing into it, whatever value
+    # of the switch the shell exports.
+    os.environ["DGXM_DEMO_INPUTS"] = "off"
     spec.loader.exec_module(module)
 
     assert module.NODE_CLASS_MAPPINGS, "custom-node entrypoint exported no nodes"

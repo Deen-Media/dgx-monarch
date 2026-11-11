@@ -196,6 +196,19 @@ def _source_only_imports_end_with_the_test():
 
 
 @pytest.fixture(autouse=True)
+def _the_battery_places_no_demo_inputs(monkeypatch):
+    """No test, and no process a test starts, copies demo inputs into ComfyUI.
+
+    The pack entrypoint copies the templates' demo inputs into ComfyUI's input
+    folder at import (``demo_inputs.py``), and a shell may export any value of
+    its switch. Assigning it here covers a test that runs the entrypoint in
+    this process or in a child. ``tests/test_demo_inputs.py`` clears it to
+    point the copy at scratch folders.
+    """
+    monkeypatch.setenv("DGXM_DEMO_INPUTS", "off")
+
+
+@pytest.fixture(autouse=True)
 def _monarch_policy_starts_unadmitted(monkeypatch):
     """Process policy persists in production, but separate tests own separate runtimes."""
     from dgx_monarch import monarch_policy

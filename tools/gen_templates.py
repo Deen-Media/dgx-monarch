@@ -31,6 +31,7 @@ _ADDED_SRC = _SRC not in sys.path
 if _ADDED_SRC:
     sys.path.insert(0, _SRC)
 try:
+    from dgx_monarch.demo_inputs import shipped as shipped_demo_inputs
     from dgx_monarch.nodes import NODE_CLASS_MAPPINGS
     from dgx_monarch.stock_widget_drift import NEWER as NAMED_STOCK
 finally:
@@ -605,6 +606,12 @@ def build(spec: dict) -> dict:
     nodes_out, links = [], []
     key_to_id = {n["key"]: i + 1 for i, n in enumerate(spec["nodes"])}
     key_to_type = {n["key"]: n["type"] for n in spec["nodes"]}
+    # A public graph that loads a demo input the pack ships says so in its
+    # note. A testing-only graph is hidden from the browser and says nothing.
+    demo_names = {path.name for path in shipped_demo_inputs()}
+    loads_demo = not spec.get("testing") and any(
+        value in demo_names for n in spec["nodes"]
+        for value in (n.get("widgets") or {}).values() if isinstance(value, str))
     sockets = {n["key"]: _sockets(n, key_to_type) for n in spec["nodes"]}
     link_id = 0
     node_links: dict = {}
@@ -625,7 +632,7 @@ def build(spec: dict) -> dict:
         col, row = n["pos"]
         widgets = n.get("widgets", {})
         if ntype == "Note":
-            wv = [n.get("note", "")]
+            wv = [n.get("note", "") + (f" {DEMO_INPUTS}" if loads_demo else "")]
         else:
             wv = []
             for wname in _widget_names(ntype):
@@ -768,6 +775,11 @@ DERIVED = ("This graph is derived from the family adapter and stock node definit
            "your artifacts before running it.")
 FRAMES = ("VAE Decode returns an image batch; Save Image writes numbered frames. "
           "For a video file, use the stock Create Video and Save Video nodes.")
+# build() ends the note of every graph that loads a shipped demo input with
+# this (src/dgx_monarch/demo_inputs.py; tests/test_demo_inputs.py holds it).
+DEMO_INPUTS = ("The pack places a demo file drawn from code under each name this graph "
+               "loads that ComfyUI's input folder lacks; one you delete comes back at the "
+               "next start unless DGXM_DEMO_INPUTS=off is set. Load your own for real work.")
 
 # The Kandinsky 5 text encode node takes the prompt once per encoder, so each
 # demo prompt is named once here: two written copies could drift apart.
@@ -1870,8 +1882,9 @@ TEMPLATES = {
              "and returns a mask of that object for each frame, here at 832x480 "
              "over 17 frames, one euler step on the simple schedule at cfg 1.0, "
              "starting from the VAE encode of the source frames with no added "
-             "noise. ComfyUI ships no example clip, so the shipped Load Video "
-             "filename is a placeholder: upload your own clip, point the widget at "
+             "noise. ComfyUI ships no example clip, and the one the pack places "
+             "under the Load Video filename is a drawn stand-in of 33 frames. For "
+             "your own clip, upload it, point the widget at "
              "it, give it at least 17 frames, and keep any frame count you change on "
              "the 4k+1 grid the Wan VAE needs (17, 33, 81; the official example "
              "uses 81). The prompt is a referring expression, so keep it short and "
@@ -2199,8 +2212,8 @@ TEMPLATES = {
              "simple schedule, an SD3 sampling shift of 5.0 and the DPO LoRA at "
              "strength 1.0. That is the official Comfy base recipe with turbo off, "
              "and it is the contract docs/VALIDATION.md records. It takes four media "
-             "inputs, all yours: no ComfyUI install ships any of them, so all four "
-             "shipped filenames are placeholders. One Load Video takes the driving "
+             "inputs. No ComfyUI install ships any of them, and the four the pack "
+             "places are drawn stand-ins. One Load Video takes the driving "
              "clip and the other takes its colored per-identity mask; one Load Image "
              "takes the reference character and the other takes that character's "
              "mask. Both modes require the masks. This graph ships Replacement Mode, "
@@ -2342,9 +2355,9 @@ TEMPLATES = {
              "steps, both at cfg 5.0. Point Load Image at one reference dancer and "
              "Load Audio at a music track of about 25 seconds, the length the "
              "official graph trims to. The graph keeps the official demo names, "
-             "blue_dancer.png and wan_dancer_reference_audio.mp3; the pack places a "
-             "drawn figure and a synthetic 25-second loop under them, which show the "
-             "graph runs, not what the model can do. Both stages need "
+             "blue_dancer.png and wan_dancer_reference_audio.mp3, but the files under "
+             "them are the pack's own, a drawn figure and a synthetic 25-second loop, "
+             "which show the graph runs, not what the model can do. Both stages need "
              "the reference image: without start_image and CLIP vision every "
              "topology returns non-finite latents, which stock ComfyUI writes out as "
              "black frames. Track length sets the rest: the global pass reads its "
@@ -6472,7 +6485,7 @@ def _testing_spec(base: str, title: str, purpose: str, *,
                       "widgets": {"lora_name": TEST_LORA_NAME,
                                   "strength_model": lora_strength},
                       "wire": {"model": (unet, 0)}})
-    return {"title": title, "nodes": nodes}
+    return {"title": title, "nodes": nodes, "testing": True}
 
 
 TESTING_TEMPLATES = {

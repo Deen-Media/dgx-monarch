@@ -2,14 +2,17 @@
 # Run the gate checks CI runs beside the suite, then the CPU-only pytest
 # checks, and report total time and slowest tests.
 #
-# Locally, a green run means CI's gates are green too, except the checks
-# listed in tests/test_cpu_gates.py as CI-only (install pins, wheel and sdist
-# builds, dgxm smoke). Every gate runs, even after one fails, and the suite
-# runs after them; the exit status is non-zero if either failed. CI runs each
-# gate as its own step, so this skips them under GitHub Actions, and
-# DGXM_SKIP_GATES=1 skips them here.
-# The gate helper calls the check functions below by name.
-# shellcheck disable=SC2329
+# The gates are the CI lint-and-unit steps that can run on a developer's box.
+# A green run here does not promise a green CI run: tests/test_cpu_gates.py
+# names the steps only CI runs (its pinned install, the wheel build, the smoke
+# environments, dgxm smoke), CI's tools can be other versions than the ones
+# here, and a gate whose tool is absent here is skipped and named. Every gate
+# runs, even after one fails, and the suite runs after them; the exit status
+# is non-zero if either failed. CI runs each gate as its own step, so this
+# skips them under GitHub Actions, and DGXM_SKIP_GATES=1 skips them here.
+# The gate helper calls the check functions below by name. ShellCheck 0.9.0,
+# which CI's runner carries, reports that as SC2317; 0.11 reports it as SC2329.
+# shellcheck disable=SC2317,SC2329
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -22,6 +25,7 @@ export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
 gates_ok=0
 gates_failed=()
 gates_skipped=()
+gate_tmp=""  # the gates' one scratch folder, outside the checkout; removed at exit
 
 gate() {  # gate <name> <command...>: run one check, report it, never stop the run
   local name=$1
@@ -42,18 +46,67 @@ skip() {  # skip <name> <reason>
 }
 
 refusal_ledger_is_current() {
-  local ledger=tests/refusal_class_ledger.json saved status
-  saved=$(mktemp)
-  cp "$ledger" "$saved"
-  PYTHONPATH=src "$test_python" tests/test_refusal_classes.py --write > /dev/null
-  cmp --silent "$saved" "$ledger"
-  status=$?
-  if [ "$status" -ne 0 ]; then
+  local ledger=tests/refusal_class_ledger.json saved=$gate_tmp/refusal_class_ledger.json status=0
+  cp "$ledger" "$saved" || return 1
+  # The writer rewrites a tracked file: put it back on Ctrl-C too, as CI's EXIT trap does.
+  trap 'cp "$saved" "$ledger"; exit 130' INT TERM
+  if ! PYTHONPATH=src "$test_python" tests/test_refusal_classes.py --write > /dev/null; then
+    status=1  # a writer that failed proves nothing about the ledger
+  elif ! cmp --silent "$saved" "$ledger"; then
     diff -u "$saved" "$ledger" || true
+    status=1
   fi
   cp "$saved" "$ledger"
-  rm -f "$saved"
+  trap - INT TERM
   return "$status"
+}
+
+sources_compile() {  # compileall writes its caches under the scratch folder, not the tree
+  PYTHONPYCACHEPREFIX="$gate_tmp/pycache" \
+    "$test_python" -m compileall -q __init__.py src benchmark tests tools studio/tests
+}
+
+source_archive_is_complete() {  # CI's sdist census, built from a copy so the checkout is untouched
+  local scratch=$gate_tmp/sdist
+  mkdir -p "$scratch/tree" || return 1
+  git ls-files -z > "$scratch/tracked" || return 1
+  # A tracked file deleted here and not yet staged draws a warning, and the census leaves it out.
+  tar --null -T "$scratch/tracked" --ignore-failed-read -cf - | tar -xf - -C "$scratch/tree" || return 1
+  if ! "$test_python" -m build --sdist --no-isolation --outdir "$scratch/dist" "$scratch/tree" \
+    > "$scratch/build.log" 2>&1; then
+    tail -20 "$scratch/build.log"
+    return 1
+  fi
+  "$test_python" - "$scratch/tree" "$scratch/tracked" "$scratch"/dist/*.tar.gz << 'PY'
+import os
+import sys
+import tarfile
+from pathlib import Path, PurePosixPath
+
+tree = Path(sys.argv[1])
+tracked = {name for name in Path(sys.argv[2]).read_text().split("\0")
+           if name and os.path.lexists(tree / name)}
+generated = {
+    "PKG-INFO",
+    "setup.cfg",
+    "src/dgx_monarch.egg-info/PKG-INFO",
+    "src/dgx_monarch.egg-info/SOURCES.txt",
+    "src/dgx_monarch.egg-info/dependency_links.txt",
+    "src/dgx_monarch.egg-info/entry_points.txt",
+    "src/dgx_monarch.egg-info/requires.txt",
+    "src/dgx_monarch.egg-info/top_level.txt",
+}
+with tarfile.open(sys.argv[3]) as archive:
+    members = {PurePosixPath(*PurePosixPath(member.name).parts[1:]).as_posix()
+               for member in archive.getmembers()
+               if member.isfile() and len(PurePosixPath(member.name).parts) > 1}
+expected = tracked | generated
+if members != expected:
+    print(f"sdist_missing: {sorted(expected - members)}")
+    print(f"sdist_extra: {sorted(members - expected)}")
+    print("MANIFEST.in decides what the source archive holds; CI runs this census on every push.")
+    sys.exit(1)
+PY
 }
 
 shell_scripts_parse() {
@@ -72,6 +125,8 @@ browser_assets_parse() {
 }
 
 run_gates() {
+  gate_tmp=$(mktemp -d)
+  trap 'rm -rf "$gate_tmp"' EXIT
   set +e
   gate "protected test inventory" "$test_python" tools/check_protected_tests.py --check
   gate "refusal ledger" refusal_ledger_is_current
@@ -79,7 +134,7 @@ run_gates() {
   gate "leak check" "$test_python" tools/leak_check.py
   gate "ruff" "$test_python" -m ruff check __init__.py src tests benchmark tools studio/tests
   gate "mypy" "$test_python" -m mypy -p dgx_monarch
-  gate "compileall" "$test_python" -m compileall -q __init__.py src benchmark tests tools studio/tests
+  gate "compileall" sources_compile
   gate "templates" "$test_python" tools/gen_templates.py --check
   if "$test_python" -c 'import cairosvg' 2> /dev/null; then
     gate "brand assets" "$test_python" tools/gen_brand_assets.py --check
@@ -89,6 +144,13 @@ run_gates() {
     skip "template cards" "CairoSVG is not installed (CI runs it)"
   fi
   gate "artifact manifest" "$test_python" tools/check_artifacts.py --strict
+  if ! "$test_python" -c 'import build' 2> /dev/null; then
+    skip "source archive" "the build module is not installed (CI runs it)"
+  elif ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+    skip "source archive" "this is not a Git checkout (CI runs it)"
+  else
+    gate "source archive" source_archive_is_complete
+  fi
   gate "shell syntax" shell_scripts_parse
   if command -v shellcheck > /dev/null; then
     gate "shellcheck" shellcheck scripts/*.sh
