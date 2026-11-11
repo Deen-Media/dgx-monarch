@@ -288,6 +288,32 @@ A staged graph takes the probe count in every stage, so a two-stage probe is
 two sampler steps. The step-nrms floor is a one-step number. Re-run the null
 A/B (section 4) on a staged template before reading a staged probe against it.
 
+**Dynamic combos.** A ComfyUI dynamic combo reveals child widgets by the key
+it holds, and the frontend stores them right after the combo. The converter
+reads them under their dotted names, `resize_type.megapixels` for one, from
+the driver's `/object_info` or, offline, from `DYNAMIC_WIDGETS` in
+`tools/gen_templates.py`. That table lists only the keys committed graphs
+hold, so a graph that picks another key stops the offline conversion and
+names the key: add its children to the table. A child that shares a name with
+a top-level input of its node stays with that input, which keeps Save Video's
+`codec` where every committed MP4 graph has always had it.
+`tests/test_sweep_convert_dynamic.py` holds every node that reveals no child
+to the reading it had before.
+
+**A graph whose prompt a language model writes.** The MiniMax-H3-Image edit
+template ships with its prompt expander on, so the text its DiT renders is
+written at queue time by a language model on the driver. A cell of that graph
+compares its two arms only when both ran the expander on one driver with the
+same decoding, and its number then also carries whatever the expander did.
+Score identity on a graph that sends the request as written: the text to
+image template and `dgx-monarch-test-minimax-h3-image-grid` ship with the
+switch off. The shipped expander decodes greedily, with no random draw.
+ComfyUI's own template samples instead, and sampled text from this expander
+file can change from run to run at a fixed seed: its draft head re-fits the
+draft tree from measured step time, and every step draws one token a tree
+row from the seeded generator. A graph switched to sampled decoding stays out
+of every identity row.
+
 ## 4. Running a scoped sweep
 
 **The config.** Copy `benchmark/sweep/sweep.example.toml` somewhere rig-local

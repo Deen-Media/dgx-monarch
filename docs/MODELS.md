@@ -1102,20 +1102,32 @@ which the conditioning node shows to the text encoder and hands to the DiT
 through the VAE. More pictures wire to `image_2`, `image_3` and so on, and the
 request cites them as `<Picture 1>`, `<Picture 2>`.
 
-Three things differ from ComfyUI's graphs, each on purpose:
+The edit's canvas nodes are ComfyUI's own: two Resize Image/Mask nodes, to
+4 MP by area and then to a multiple of 32, and Get Image Size. Two things
+differ from ComfyUI's graphs, each on purpose:
 
-- The canvas is two numbers on the conditioning node, where ComfyUI wires a
-  Resolution Selector, because the loader's price and the sweep read numbers.
-- The edit scales with Scale Image to Total Pixels, where ComfyUI chains two
-  Resize Image/Mask nodes. A 1024 square picture comes out 2048 square either
-  way; another shape can differ by one rounding step of 32, since ComfyUI's
-  chain crops to the multiple and this node rounds to it.
-- The expander's instruction is this project's own short text, decoded
-  greedily, so one request always gives one caption. ComfyUI's template drives
-  the expander with the vendor's task prompt of about 16 thousand characters
-  and sampled decoding. This repository does not copy that text, so the two
-  expanders write different captions. With the switch false the request
-  reaches the model as written on both.
+- The text to image canvas is two numbers on the conditioning node, where
+  ComfyUI wires a Resolution Selector, because the loader's price and the
+  sweep read numbers.
+- The expander's instruction is this project's own short text on Generate
+  Text's system prompt, decoded greedily. ComfyUI's templates carry MiniMax's
+  own task prompts, about 16 thousand characters each, and sample the answer.
+  This repository does not copy that text, so the two expanders write
+  different captions. With the switch false the request reaches the model as
+  written on both.
+
+**The expander and repeatability.** Greedy decoding takes the model's top
+token at every step and draws no random number. ComfyUI's sampled decoding
+can change its text from run to run at a fixed seed with this expander file:
+the file carries a multi-token-prediction draft head, Generate Text's `mtp`
+`auto` re-fits the draft tree from measured step time, and every step draws
+one token a tree row from the seeded generator (ComfyUI 0.45.0,
+`comfy/text_encoders/qwen35.py`). So a
+render with the switch true depends on text a language model wrote on that
+driver. Compare two such renders only when both ran the expander on one
+driver, and use a graph with the switch false for any identity check; the
+text to image template and the testing graph ship that way. Greedy text has
+not been compared across runs on hardware.
 
 The testing graph `dgx-monarch-test-minimax-h3-image-grid` samples through
 Sampler Custom (DGX Monarch) on the checkpoint's own grid, with the expander

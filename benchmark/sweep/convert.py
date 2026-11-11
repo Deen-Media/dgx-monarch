@@ -2,7 +2,9 @@
 
 Widget order comes from the live driver's ``/object_info`` or, offline, from
 ``tools/gen_templates.py``. CI compares the generator map with the frontend
-schema. Multi-type inputs require ``widgetType``; see ``_draws_a_widget``.
+schema. Multi-type inputs require ``widgetType``; see ``_draws_a_widget``. A
+dynamic combo's child widgets follow it in ``widgets_values``; see
+``DynamicName``.
 
 ``STEP_WIDGETS`` defines which schedules a probe can shorten and which widget
 each rewrite changes.
@@ -25,9 +27,48 @@ SEED_NAMES = ("seed", "noise_seed")
 WIDGET_KINDS = frozenset({"INT", "FLOAT", "STRING", "BOOLEAN"})
 # Comfy io types that draw a widget under a name of their own. A dynamic combo
 # (COMFY_DYNAMICCOMBO_V3, comfy_api/latest/_io.py) draws a combo whose chosen
-# key can reveal further inputs; every committed template picks a key that
-# reveals none, so it holds one slot like a plain combo.
-WIDGET_IO_TYPES = frozenset({"COMBO", "COMFY_DYNAMICCOMBO_V3"})
+# key can reveal further inputs. The frontend stores those child widgets right
+# after the combo, and the API prompt names each "<combo>.<child>"
+# (DynamicName below carries them).
+DYNAMIC_COMBO = "COMFY_DYNAMICCOMBO_V3"
+WIDGET_IO_TYPES = frozenset({"COMBO", DYNAMIC_COMBO})
+
+
+class DynamicName(str):
+    """A dynamic combo's widget name, with the child widgets each key reveals.
+
+    ``children`` maps an option key to the widget names that key reveals, in
+    slot order and already spelled as the API prompt spells them
+    (``sampling_mode.temperature``); a child that is a dynamic combo itself is
+    another DynamicName. The object compares, hashes and prints as its plain
+    name, so every reader of a widget list that ignores children sees the list
+    it always saw. ``closed`` says the map is the whole truth: the generator's
+    table lists only the keys its templates use, so a key it does not list
+    stops the conversion there, where a driver's schema, which lists every
+    key, reads an unknown key as revealing nothing, as ComfyUI does.
+    """
+
+    children: dict
+    closed: bool
+
+    def __new__(cls, name: str, children: dict, *, closed: bool = False) -> DynamicName:
+        self = super().__new__(cls, name)
+        self.children = children
+        self.closed = closed
+        return self
+
+    def revealed(self, value) -> list[str]:
+        """The child widgets the chosen ``value`` reveals, in slot order."""
+        try:
+            return list(self.children[value])
+        except TypeError:   # an unhashable value names no key
+            return []
+        except KeyError:
+            if self.closed:
+                raise ValueError(
+                    f"{self} is a dynamic combo and tools/gen_templates.py DYNAMIC_WIDGETS "
+                    f"does not list the key {value!r}; declare its child widgets there") from None
+            return []
 
 # The widget each node type keeps its step count in. A KSampler-style node
 # names it `steps`. A scheduler of a family's own carries the count instead of
@@ -92,13 +133,44 @@ def _is_widget_kind(kind) -> bool:
     return isinstance(kind, list) or kind in WIDGET_IO_TYPES or kind in WIDGET_KINDS
 
 
+def _schema_name(name: str, spec, taken: frozenset[str]) -> str:
+    """``name``, or a DynamicName when ``spec`` is a dynamic combo that reveals widgets.
+
+    ``taken`` holds the node's own top-level input names. An option's child
+    that shares a name with one of them is left to it: SaveVideo declares
+    ``codec`` both under each ``format`` option and as a hidden top-level
+    input, the slot graphs saved before the option revealed it still fill, and
+    every committed MP4 template's third value has always been read as that
+    top-level ``codec``. Reading it as ``format.codec`` instead would rename an
+    input of every such graph; SaveVideo's own execute takes either.
+    """
+    kind = spec[0] if isinstance(spec, (list, tuple)) else spec
+    options = spec[1] if isinstance(spec, (list, tuple)) and len(spec) > 1 else None
+    if kind != DYNAMIC_COMBO or not isinstance(options, dict):
+        return name
+    children: dict = {}
+    for row in options.get("options") or ():
+        key = row.get("key") if isinstance(row, dict) else None
+        if isinstance(key, (list, dict)) or not isinstance(row, dict) or "key" not in row:
+            continue
+        revealed = row.get("inputs") if isinstance(row.get("inputs"), dict) else {}
+        children[key] = [_schema_name(f"{name}.{child}", child_spec, taken)
+                         for section in ("required", "optional")
+                         for child, child_spec in (revealed.get(section) or {}).items()
+                         if child not in taken and _draws_a_widget(child_spec)]
+    return DynamicName(name, children) if any(children.values()) else name
+
+
 def object_info_widget_names(inputs: dict) -> list[str]:
     """Non-connection inputs in declaration order, required then optional.
 
     ``inputs`` is one node's ``/object_info`` ``input`` block, which is that
-    node's ``INPUT_TYPES()``.
+    node's ``INPUT_TYPES()``. A dynamic combo whose options reveal widgets
+    comes back as a DynamicName carrying them.
     """
-    return [name for section in ("required", "optional")
+    taken = frozenset(name for section in ("required", "optional")
+                      for name in (inputs.get(section) or {}))
+    return [_schema_name(name, spec, taken) for section in ("required", "optional")
             for name, spec in (inputs.get(section) or {}).items()
             if _draws_a_widget(spec)]
 
@@ -136,7 +208,11 @@ def repo_widget_names(repo: Path = REPO) -> WidgetNames:
 
     def names(node_class: str) -> list[str]:
         declared = gen_templates._widget_names(node_class)
-        return [name for name in declared if name != gen_templates.CONTROL_WIDGET]
+        dynamic = gen_templates.DYNAMIC_WIDGETS.get(node_class, {})
+        return [DynamicName(name, {key: [f"{name}.{child}" for child in children]
+                                   for key, children in dynamic[name].items()}, closed=True)
+                if name in dynamic else name
+                for name in declared if name != gen_templates.CONTROL_WIDGET]
 
     return names
 
@@ -181,9 +257,17 @@ def convert(ui: dict, names: WidgetNames) -> dict:
 
 
 def _read_widgets(order: list[str], values: list, inputs: dict) -> int:
-    """Set ``inputs`` from ``values`` in widget order; return the slots read."""
+    """Set ``inputs`` from ``values`` in widget order; return the slots read.
+
+    A dynamic combo's chosen key puts the child widgets it reveals next in
+    line, under their dotted names, before the widget that follows the combo:
+    that is where the frontend stores them. A linked combo selects no option,
+    as in ComfyUI, so nothing follows it.
+    """
     index = 0
-    for name in order:
+    pending = list(order)
+    while pending:
+        name = pending.pop(0)
         if name in inputs:
             # A linked V3 widget still owns its positional serialization
             # slot.  Keep the link as the API value, but consume that slot
@@ -198,11 +282,13 @@ def _read_widgets(order: list[str], values: list, inputs: dict) -> int:
             continue
         if index >= len(values):
             break
-        inputs[name] = values[index]
+        value = inputs[str(name)] = values[index]
         index += 1
         follower = values[index] if index < len(values) else None
         if name in SEED_NAMES and isinstance(follower, str) and follower in CONTROL:
             index += 1
+        if isinstance(name, DynamicName):
+            pending[:0] = name.revealed(value)
     return index
 
 

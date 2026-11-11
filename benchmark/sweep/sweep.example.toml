@@ -177,8 +177,10 @@ auto_gate = ["uly2+fsdp"]
 # share the stem minimaxh3imagepruned, so each of its three graphs meets all
 # three DiT files. The text encoder, the VAE and the prompt expander stay as
 # the graph names them. The edit graph ships with the expander on, so its
-# cells render text a language model wrote; score identity on the text to
-# image graph or on the grid graph, which send the request as written.
+# cells render text a language model wrote on the driver; its two arms
+# compare only when both ran the expander on one driver. Score identity on
+# the text to image graph or on the grid graph, which send the request as
+# written (docs/SWEEP.md section 3).
 [artifact_groups."dgx-monarch-ideogram4-t2i"]
 "ideogram4_fp8_scaled.safetensors" = []
 "ideogram4_unconditional_fp8_scaled.safetensors" = []

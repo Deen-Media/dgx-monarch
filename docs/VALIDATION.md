@@ -3398,10 +3398,27 @@ DiT files, which share one name stem, and labels cfg2, dp2 and `cfg2+fsdp`
 offline plan takes both shipped templates on uly2 at one step and skips
 neither. None of this renders a picture.
 
+The edit graph's two Resize Image/Mask nodes are the first committed nodes
+whose dynamic combo reveals a child widget, so the sweep converter, which the
+release test shares, learned to read them. `tests/test_sweep_convert_dynamic.py`
+holds every node of every committed graph that reveals no child to the flat
+reading it had before, and pins the nodes that do reveal one to the edit
+graph's two. The widget canary holds the generator's child lists to ComfyUI's
+schema, and passes against ComfyUI 0.45.0.
+
+With the If/Else switch true, a render of either template depends on text a
+language model wrote on the driver. The shipped expander decodes greedily;
+ComfyUI's own template samples, and with this expander file sampled text can
+change from run to run at a fixed seed
+([MODELS](MODELS.md#model-minimax-h3-image)). So every identity row here uses
+a graph with the switch false, and a row with the expander on records its
+caption beside the picture.
+
 | template behaviour | what a run must show | status |
 |---|---|---|
 | The text to image template | `dgx-monarch-minimax-h3-image-t2i.json` as shipped, 6 steps at 2048 square, on the pair under `auto` and in a world of one GPU; once more with the If/Else switch true, the expander's caption recorded | NOT RUN |
-| The edit template | `dgx-monarch-minimax-h3-image-edit.json` as shipped, the expander on, one picture, on the pair under `auto` and in a world of one GPU; once more with the switch false | NOT RUN |
+| The edit template | `dgx-monarch-minimax-h3-image-edit.json` as shipped, the expander on, one picture, on the pair under `auto` and in a world of one GPU, the caption recorded each time; once more with the switch false, the leg an identity comparison uses; and the shipped graph queued twice on one driver, to see whether the greedy caption repeats | NOT RUN |
+| The edit template in the browser | opened from Browse Templates on ComfyUI 0.45.0: the picture sockets `images.image_1` and `images.image1` keep their wires, each Resize Image/Mask node shows its child widget with the stored value, and Queue sends the API prompt the converter writes | NOT RUN |
 | The release-test rows | both templates in the [template release test](#release-test-2026-11-04): one step, seed 1031, uly2 | NOT RUN |
 | The gate's two proof paths | the first-use gate on the text to image template, a two-step KSampler proof, and on `dgx-monarch-test-minimax-h3-image-grid`, the Sampler Custom proof on the grid's first two steps; each on uly2 and in a world of one GPU | NOT RUN |
 | The published file on uly2 | uly2 on a published, pinned DiT against stock with the pins on one GPU: the difference recorded, not scored | NOT RUN |

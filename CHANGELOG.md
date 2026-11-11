@@ -18,14 +18,21 @@
   ComfyUI's own templates load: the INT8 ConvRot DiT and text encoder, the
   FP16 VAE and the W4A8 prompt expander behind an If/Else switch, off in text
   to image and on in the edit, with KSampler at 6 steps, CFG 1, `euler` and
-  `simple`. The expander's instruction is this project's own short text,
-  decoded greedily, where ComfyUI's template carries the vendor's long task
-  prompt, so the two write different captions. A testing graph samples the
-  checkpoint's own sigma grid through Sampler Custom (DGX Monarch). The sweep
-  labels the family's cfg2 and dp2 cells from the driver's own preflight.
-  [MODELS](docs/MODELS.md#model-minimax-h3-image) lists the eight published
-  files with their sizes. No render of this family has run on hardware yet
-  ([VALIDATION](docs/VALIDATION.md#minimax-h3-image)).
+  `simple`. The edit scales its picture with ComfyUI's two Resize Image/Mask
+  nodes. The expander's instruction is this project's own short text,
+  decoded greedily, where ComfyUI's template carries MiniMax's long task
+  prompt and samples, so the two write different captions. A testing graph
+  samples the checkpoint's own sigma grid through Sampler Custom (DGX
+  Monarch). The sweep labels the family's cfg2 and dp2 cells from the driver's
+  own preflight. [MODELS](docs/MODELS.md#model-minimax-h3-image) lists the
+  eight published files with their sizes. No render of this family has run on
+  hardware yet ([VALIDATION](docs/VALIDATION.md#minimax-h3-image)).
+- The sweep converter, which the template release test shares, reads the
+  child widgets a ComfyUI dynamic combo reveals, under their dotted names,
+  from a driver's schema or from the template generator's table. Every
+  committed graph converts as it did, except the new edit graph's two resize
+  nodes, the first to hold such a widget
+  ([SWEEP](docs/SWEEP.md#3-adding-a-template)).
 - Studio is a supported interface from this release, beside the CLI, the TUI
   and the ComfyUI panel. Its docs and the capability contract in Settings no
   longer call it a draft. The

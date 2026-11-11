@@ -8,8 +8,10 @@ with the expander behind an If/Else switch that is off in text to image and on
 in the edit. The shipped graphs must keep each of those, with the DGX Monarch
 loader and sampler in place of the stock ones. The testing graph walks the
 checkpoint's own sigma grid through Sampler Custom with the expander off.
-What the graphs change on purpose is pinned too: literal canvas numbers, one
-stock scale node, and this project's own short instruction decoded greedily.
+The edit graph keeps upstream's canvas nodes, two Resize Image/Mask nodes and
+Get Image Size. What the graphs change on purpose is pinned too: literal
+canvas numbers in text to image, and this project's own short instruction,
+decoded greedily, where upstream carries MiniMax's task prompts and samples.
 CPU only: the graphs are read as JSON and no ComfyUI is imported.
 """
 from __future__ import annotations
@@ -121,19 +123,27 @@ def test_the_edit_scales_its_picture_to_4_mp_and_sizes_the_render_from_it():
     graph = _graph(EDIT)
     cond_id, cond = _one(graph, "MiniMaxH3ImageConditioning")
     image_id, image = _one(graph, "LoadImage")
-    scale_id, scale = _one(graph, "ImageScaleToTotalPixels")
     size_id, size = _one(graph, "GetImageSize")
     _, expand = _one(graph, "TextGenerateV2")
     assert image["image"] == "reference.png"
-    assert scale == {"image": [image_id, 0], "upscale_method": "area", "megapixels": 4.0,
-                     "resolution_steps": 32}
-    assert size["image"] == [scale_id, 0]
-    # image_1 is the picture to edit; both sides come from the scaled picture.
-    assert cond["images.image_1"] == [scale_id, 0]
+    # Upstream's two Resize Image/Mask nodes, in its order and with its values:
+    # to 4 MP by area, then to a multiple of 32.
+    resized = {key: node["inputs"] for key, node in graph.items()
+               if node["class_type"] == "ResizeImageMaskNode"}
+    (scale_id,) = [key for key, inputs in resized.items() if inputs["input"] == [image_id, 0]]
+    (multiple_id,) = [key for key in resized if key != scale_id]
+    assert resized[scale_id] == {"input": [image_id, 0], "resize_type": "scale total pixels",
+                                 "resize_type.megapixels": 4.0, "scale_method": "area"}
+    assert resized[multiple_id] == {"input": [scale_id, 0], "resize_type": "scale to multiple",
+                                    "resize_type.multiple": 32, "scale_method": "area"}
+    assert not [node for node in graph.values() if node["class_type"] == "ImageScaleToTotalPixels"]
+    assert size["image"] == [multiple_id, 0]
+    # image_1 is the picture to edit; both sides come from the resized picture.
+    assert cond["images.image_1"] == [multiple_id, 0]
     assert (cond["width"], cond["height"]) == ([size_id, 0], [size_id, 1])
     assert [key for key in cond if key.startswith("images.")] == ["images.image_1"]
     # The expander reads the same picture, under Generate Text's own slot name.
-    assert expand["images.image1"] == [scale_id, 0]
+    assert expand["images.image1"] == [multiple_id, 0]
     del cond_id
 
 
@@ -155,15 +165,32 @@ def test_the_expander_sits_behind_the_switch_with_upstreams_default(name, switch
     assert {request_id, instruction_id} == set(texts)
     assert graph[expand["clip"][0]]["inputs"] == {"clip_name": EXPANDER, "type": "minimax",
                                                   "device": "default"}
-    # Greedy decoding with thinking on: a dynamic combo key that reveals no child widget.
-    assert (expand["max_length"], expand["sampling_mode"], expand["thinking"],
-            expand["use_default_template"], expand["mtp"]) == (8192, "off", True, True, "auto")
     edit = name == EDIT
+    # thinking and max_length as upstream stores them: 8192 in its text to
+    # image graph, 8196 in its edit graph. Decoding is greedy, in one constant.
+    assert (expand["max_length"], expand["thinking"], expand["use_default_template"],
+            expand["mtp"]) == (8196 if edit else 8192, True, True, "auto")
+    assert gen_templates.H3I_DECODING == {"sampling_mode": "off"}
+    assert {key: value for key, value in expand.items()
+            if key.startswith("sampling_mode")} == gen_templates.H3I_DECODING
     assert texts[request_id] == (gen_templates.H3I_EDIT_REQUEST if edit
                                  else gen_templates.H3I_REQUEST)
     assert texts[instruction_id] == (gen_templates.H3I_EDIT_INSTRUCTION if edit
                                      else gen_templates.H3I_INSTRUCTION)
     assert ("images.image1" in expand) is edit
+
+
+def test_upstreams_decoding_is_one_constant_away():
+    """ComfyUI's own two templates sample: sampling_mode on and these seven values."""
+    assert gen_templates.H3I_UPSTREAM_DECODING == {
+        "sampling_mode": "on", "sampling_mode.temperature": 1.0, "sampling_mode.top_k": 20,
+        "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,
+        "sampling_mode.repetition_penalty": 1.0, "sampling_mode.presence_penalty": 0.0,
+        "sampling_mode.seed": 0}
+    children = gen_templates.DYNAMIC_WIDGETS["TextGenerateV2"]["sampling_mode"]
+    assert [f"sampling_mode.{child}" for child in children["on"]] == [
+        key for key in gen_templates.H3I_UPSTREAM_DECODING if key != "sampling_mode"]
+    assert children["off"] == []
 
 
 def test_the_texts_are_this_projects_own_and_safe_in_every_box():
@@ -256,6 +283,12 @@ def test_the_note_names_the_files_the_topologies_the_gate_and_the_record(name):
     assert "ComfyUI 0.45.0 or newer" in note
     assert "ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family" in note
     assert "this project's own short instruction" in note
+    # How the expander decodes, and what that means for a comparison.
+    assert gen_templates.H3I_GREEDY in note
+    assert "can change from run to run even at a fixed seed" in note
+    if name == EDIT:
+        assert "Compare two renders of this graph only when both ran the expander on one driver" in note
+        assert "for an identity check set the switch to false" in note
     # Nothing here has rendered on hardware, so no Note may claim a result.
     for claim in ("bit-identical", "pixel-identical", "passed", "NRMS"):
         assert claim not in note

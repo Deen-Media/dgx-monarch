@@ -85,8 +85,10 @@ _KNOWN_NODE_TYPES = frozenset({
     "TextGenerateV2",
     "ComfySwitchNode",
     "PreviewAny",
-    # MiniMax-H3-Image: its conditioning node; the expander chain is the one above.
+    # MiniMax-H3-Image: its conditioning node and the edit graph's resize
+    # node; the expander chain is the one above.
     "MiniMaxH3ImageConditioning",
+    "ResizeImageMaskNode",
     "TextEncodeMageFlowEdit",
     "TextEncodeQwenImage21",
     "QwenImage21Cache",

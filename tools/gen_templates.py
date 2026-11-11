@@ -213,6 +213,11 @@ STOCK = {
     # stock nodes; _flux3_template says why. resolution_steps is an advanced
     # widget the frontend still serializes.
     "ImageScaleToTotalPixels": ["upscale_method", "megapixels", "resolution_steps"],
+    # Resize Image/Mask, a V3 node: resize_type is a dynamic combo whose chosen
+    # key reveals the widgets that follow it (DYNAMIC_WIDGETS below), then
+    # scale_method. ComfyUI's MiniMax-H3-Image edit template stores
+    # ["scale total pixels", 4, "area"] and ["scale to multiple", 32, "area"].
+    "ResizeImageMaskNode": ["resize_type", "scale_method"],
     "ReferenceLatent": [],
     "LatentMultiply": ["multiplier"],
     "LTXVScheduler": ["steps", "max_shift", "base_shift", "stretch", "terminal"],
@@ -331,6 +336,8 @@ STOCK_OUTPUTS = {
     "LatentCutToBatch": [("LATENT", "LATENT")],
     "VAEEncode": [("LATENT", "LATENT")],
     "ImageScaleToTotalPixels": [("IMAGE", "IMAGE")],
+    # A match-type output takes its input's type; these graphs resize images.
+    "ResizeImageMaskNode": [("resized", "IMAGE")],
     "ReferenceLatent": [("CONDITIONING", "CONDITIONING")],
     "LatentMultiply": [("LATENT", "LATENT")],
     "LTXVScheduler": [("SIGMAS", "SIGMAS")],
@@ -398,6 +405,42 @@ def _widget_names(node_type: str) -> list[str]:
     return names
 
 
+# A dynamic combo (COMFY_DYNAMICCOMBO_V3) reveals child widgets by the key it
+# holds. The frontend stores them right after the combo, in the option's own
+# order, and the API prompt names each "<combo>.<child>". Each row lists the
+# keys a committed graph may hold and the children each reveals; a key that is
+# not listed stops the build. The widget canary holds every row to ComfyUI's
+# schema. Generate Text's seed is a child here, named sampling_mode.seed, and
+# takes no control widget: ComfyUI's own template stores thirteen values for
+# that node with sampling on, ["", 8192, "on", 1, 20, 0.95, 0, 1, 0, 0, true,
+# true, "auto"].
+DYNAMIC_WIDGETS = {
+    "TextGenerateV2": {"sampling_mode": {
+        "on": ["temperature", "top_k", "top_p", "min_p", "repetition_penalty",
+               "presence_penalty", "seed"],
+        "off": []}},
+    "ResizeImageMaskNode": {"resize_type": {
+        "scale total pixels": ["megapixels"],
+        "scale to multiple": ["multiple"]}},
+}
+
+
+def _node_widget_names(node_type: str, widgets: dict) -> list[str]:
+    """One spec node's widget slots: _widget_names, plus each dynamic combo's
+    revealed children after it, for the key this node's ``widgets`` hold."""
+    dynamic = DYNAMIC_WIDGETS.get(node_type, {})
+    names = []
+    for name in _widget_names(node_type):
+        names.append(name)
+        if name in dynamic:
+            key = widgets.get(name)
+            if key not in dynamic[name]:
+                raise KeyError(f"{node_type}.{name} holds {key!r}; DYNAMIC_WIDGETS lists "
+                               f"{sorted(dynamic[name])}")
+            names.extend(f"{name}.{child}" for child in dynamic[name][key])
+    return names
+
+
 @_with_comfy_stubs
 def _connection_inputs(node_type: str) -> list[tuple[str, str]]:
     if node_type in STOCK:
@@ -442,6 +485,7 @@ def _connection_inputs(node_type: str) -> list[tuple[str, str]]:
                 "LatentCutToBatch": [("samples", "LATENT")],
                 "VAEEncode": [("pixels", "IMAGE"), ("vae", "VAE")],
                 "ImageScaleToTotalPixels": [("image", "IMAGE")],
+                "ResizeImageMaskNode": [("input", "IMAGE")],
                 # latent is optional and keeps its slot.
                 "ReferenceLatent": [("conditioning", "CONDITIONING"),
                                     ("latent", "LATENT")],
@@ -612,7 +656,7 @@ def _sockets(node: dict, types: dict[str, str]) -> list[tuple[str, str, bool]]:
     for inp, (src_key, out_idx) in (node.get("wire") or {}).items():
         if inp in declared:
             continue
-        if inp not in _widget_names(ntype):
+        if inp not in _node_widget_names(ntype, node.get("widgets") or {}):
             raise KeyError(f"{ntype} has no input or widget named {inp!r}")
         sockets.append((inp, _outputs(types[src_key])[out_idx][1], True))
     return sockets
@@ -653,11 +697,12 @@ def build(spec: dict) -> dict:
         ntype = n["type"]
         col, row = n["pos"]
         widgets = n.get("widgets", {})
+        names = [] if ntype == "Note" else _node_widget_names(ntype, widgets)
         if ntype == "Note":
             wv = [n.get("note", "")]
         else:
             wv = []
-            for wname in _widget_names(ntype):
+            for wname in names:
                 if wname == CONTROL_WIDGET:
                     # Ship every seed advancing. The seed value still holds,
                     # so the first render of a fresh template is the one the
@@ -665,6 +710,10 @@ def build(spec: dict) -> dict:
                     wv.append(CONTROL_VALUE)
                 elif wname in widgets:
                     wv.append(widgets[wname])
+                elif wname.partition(".")[0] in DYNAMIC_WIDGETS.get(ntype, {}):
+                    # A revealed child has no stock default here: a silent ""
+                    # would shift nothing and still ship a wrong value.
+                    raise KeyError(f"{ntype} reveals {wname!r}; the spec must set it")
                 else:
                     wv.append(_default_for(ntype, wname))
         inputs = [{"name": name, "type": kind, "widget": {"name": name},
@@ -693,7 +742,7 @@ def build(spec: dict) -> dict:
             # through the positional heal meant for legacy saves. A stock node
             # in NAMED_STOCK carries one too, so a ComfyUI without one of its
             # newer widgets restores the rest by name.
-            node_out["dgxm_widgets"] = dict(zip(_widget_names(ntype), wv, strict=True))
+            node_out["dgxm_widgets"] = dict(zip(names, wv, strict=True))
         nodes_out.append(node_out)
     # A testing-only spec carries no layout, so its graph keeps an empty extra.
     extra = (_app_mode_extra(spec["app_mode"], spec["nodes"], key_to_id)
@@ -5849,16 +5898,17 @@ TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
 # and image_minimax_h3_image_edit): the INT8 ConvRot DiT and text encoder, the
 # FP16 VAE, KSampler at 6 steps, CFG 1, euler and simple, a zeroed negative,
 # and the W4A8 prompt expander on Generate Text behind an If/Else switch, off
-# in text to image and on in the edit. Three things differ, each on purpose.
-# The canvas sits on the conditioning node as two numbers, where upstream wires
-# a Resolution Selector: the loader's price, the sweep and App Mode read
-# numbers, and a wired side reads as none. The edit scales its picture with
-# Scale Image to Total Pixels, where upstream chains two Resize Image/Mask
-# nodes: each of their options reveals a child widget, and
-# benchmark/sweep/convert.py reads a dynamic combo as one slot. And the
-# expander's instruction is this project's own short text on Generate Text's
-# system prompt, decoded greedily like p-h3-image's upsampler: upstream's task
-# prompt is the vendor's, about 16 thousand characters, and is not copied here.
+# in text to image and on in the edit. The edit's canvas nodes are upstream's
+# too: two Resize Image/Mask nodes, to 4 MP and then to a multiple of 32, and
+# Get Image Size. Two things differ, each on purpose. The text to image canvas
+# sits on the conditioning node as two numbers, where upstream wires a
+# Resolution Selector: the loader's price, the sweep and App Mode read
+# numbers, and a wired side reads as none. And the expander's instruction is
+# this project's own short text on Generate Text's system prompt, decoded
+# greedily like p-h3-image's upsampler. Upstream's graphs carry MiniMax's own
+# task prompts, about 16 thousand characters each, spliced through Replace
+# Text and read back through Extract Text from JSON, and sample the answer;
+# that text is MiniMax's and is not copied here.
 H3I_DIT = "minimax_h3_image_pruned_int8_convrot.safetensors"
 H3I_ENCODER = "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
 H3I_VAE = "minimax_h3_image_vae_fp16.safetensors"
@@ -5908,6 +5958,28 @@ H3I_EDIT_INSTRUCTION = (
 H3I_SIZES = ("ComfyUI's template notes say the model works from about 4 MP to 20 MP "
              "and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or "
              "6272x2688, sides swapped for portrait.")
+# How ComfyUI's own two templates decode: Generate Text's sampling_mode on with
+# these seven child widgets, in the option's order. With mtp auto on this
+# expander file that text can change from run to run at a fixed seed: the
+# file carries MTP weights, ComfyUI re-fits the draft tree from measured step
+# time, and every step draws one token a tree row from the seeded generator
+# (comfy/text_encoders/qwen35.py at 0.45.0, _generate_mtp).
+H3I_UPSTREAM_DECODING = {
+    "sampling_mode": "on", "sampling_mode.temperature": 1.0, "sampling_mode.top_k": 20,
+    "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,
+    "sampling_mode.repetition_penalty": 1.0, "sampling_mode.presence_penalty": 0.0,
+    "sampling_mode.seed": 0}
+# How these graphs decode, in one place. Greedy with thinking on, as the
+# p-h3-image graph runs its upsampler: every step takes the main model's top
+# token whatever the draft tree, and no random draw is made. Set this to
+# H3I_UPSTREAM_DECODING and regenerate to sample as upstream does; H3I_GREEDY
+# is then no longer true and the Notes must say so.
+H3I_DECODING = {"sampling_mode": "off"}
+H3I_GREEDY = ("It decodes greedily, taking the model's top token at every step and "
+              "drawing no random number, where ComfyUI's template samples; sampled "
+              "text from this expander file can change from run to run even at a "
+              "fixed seed. Greedy text has not been compared across runs on hardware "
+              "yet.")
 
 
 def _minimax_h3_image_note(*, edit: bool) -> str:
@@ -5915,24 +5987,26 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
         head = (
             "MiniMax-H3-Image edit of one picture, at about 4 MP in 6 steps, on the "
             "INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's "
-            "own template loads. Load your picture in Load Image. Scale Image to "
-            "Total Pixels brings it to about 4 MP on a multiple of 32, and Get Image "
-            "Size hands that size to MiniMax H3 Image Conditioning, so the render "
-            "keeps the picture's shape. The conditioning node shows the picture to "
-            "the text encoder and, through the VAE, hands it to the DiT as a "
-            "reference; call it <Picture 1> in the request. For more pictures, add a "
-            "Load Image and a scale node for each and wire them to image_2, image_3 "
-            "and so on, and to the next image input of Generate Text while the "
-            "expander is on; image_1 stays the picture to edit. " + H3I_SIZES + " A "
-            "reference of this size adds about as many rows as the target, so an "
-            "edit needs more Worker memory than text to image at the same size. ")
+            "own template loads. Load your picture in Load Image. The two Resize "
+            "Image/Mask nodes bring it to 4 MP and then to a multiple of 32, as in "
+            "ComfyUI's template, and Get Image Size hands that size to MiniMax H3 "
+            "Image Conditioning, so the render keeps the picture's shape. The "
+            "conditioning node shows the picture to the text encoder and, through "
+            "the VAE, hands it to the DiT as a reference; call it <Picture 1> in the "
+            "request. For more pictures, add a Load Image and the two resize nodes "
+            "for each and wire them to image_2, image_3 and so on, and to the next "
+            "image input of Generate Text while the expander is on; image_1 stays "
+            "the picture to edit. " + H3I_SIZES + " A reference of this size adds "
+            "about as many rows as the target, so an edit needs more Worker memory "
+            "than text to image at the same size. ")
         expander = (
             "The If/Else switch is true as shipped, as in ComfyUI's template: "
             "Generate Text reads the request and the picture on the driver and "
             "writes the description of the finished picture that the model gets, "
-            "and Preview as Text shows it. It decodes greedily, so one request and "
-            "one picture always give the same description. Set the switch to false "
-            "to send the request as written. ")
+            "and Preview as Text shows it. " + H3I_GREEDY + " Compare two renders "
+            "of this graph only when both ran the expander on one driver, and for "
+            "an identity check set the switch to false, which sends the request as "
+            "written. ")
     else:
         head = (
             "MiniMax-H3-Image text to image at 2048x2048 (4 MP) in 6 steps, on the "
@@ -5944,7 +6018,7 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
             "the request box goes to the model as written: write a full caption "
             "there. Set the switch to true and Generate Text rewrites a short "
             "request into a full caption on the driver, and Preview as Text shows "
-            "it. It decodes greedily, so one request always gives the same caption. ")
+            "it. " + H3I_GREEDY + " ")
     return (
         head + expander +
         "The instruction box holds this project's own short instruction for the "
@@ -6009,30 +6083,34 @@ def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dic
         nodes.extend([
             {"key": "image", "type": "LoadImage", "pos": (0, 5),
              "widgets": {"image": "reference.png", "upload": "image"}},
-            # Area scaling to 4 MP, each side rounded to a multiple of 32: a
-            # 1024 square picture comes out 2048 square, as upstream's two
-            # resize nodes leave it.
-            {"key": "scale", "type": "ImageScaleToTotalPixels", "pos": (1, 5),
-             "widgets": {"upscale_method": "area", "megapixels": 4.0,
-                         "resolution_steps": 32},
-             "wire": {"image": ("image", 0)}},
-            {"key": "size", "type": "GetImageSize", "pos": (2, 5),
-             "wire": {"image": ("scale", 0)}},
+            # Upstream's two nodes, in upstream's order and with its values:
+            # area scaling to 4 MP, then to a multiple of 32. Each resize_type
+            # reveals one child widget (DYNAMIC_WIDGETS).
+            {"key": "scale", "type": "ResizeImageMaskNode", "pos": (1, 5),
+             "widgets": {"resize_type": "scale total pixels",
+                         "resize_type.megapixels": 4.0, "scale_method": "area"},
+             "wire": {"input": ("image", 0)}},
+            {"key": "multiple", "type": "ResizeImageMaskNode", "pos": (2, 5),
+             "widgets": {"resize_type": "scale to multiple",
+                         "resize_type.multiple": 32, "scale_method": "area"},
+             "wire": {"input": ("scale", 0)}},
+            {"key": "size", "type": "GetImageSize", "pos": (3, 5),
+             "wire": {"image": ("multiple", 0)}},
         ])
         # The wired sides hold 0, the node's own default, which ComfyUI never
         # reads behind a link.
         cond_widgets = {"prompt": "", "width": 0, "height": 0}
         cond_wire = {"clip": ("clip", 0), "vae": ("vae", 0),
-                     "images.image_1": ("scale", 0), "prompt": ("switch", 0),
+                     "images.image_1": ("multiple", 0), "prompt": ("switch", 0),
                      "width": ("size", 0), "height": ("size", 1)}
-        expand_wire = {"clip": ("expclip", 0), "images.image1": ("scale", 0),
+        expand_wire = {"clip": ("expclip", 0), "images.image1": ("multiple", 0),
                        "system_prompt": ("instruction", 0), "prompt": ("request", 0)}
     nodes.extend([
-        # Greedy decoding with thinking on, as the p-h3-image graph runs its
-        # upsampler, so one request always gives the same caption. max_length
-        # is upstream's.
+        # thinking on and max_length as upstream stores them, 8192 in its text
+        # to image graph and 8196 in its edit graph; H3I_DECODING says how the
+        # expander decodes.
         {"key": "expand", "type": "TextGenerateV2", "pos": (2, 3),
-         "widgets": {"prompt": "", "max_length": 8192, "sampling_mode": "off",
+         "widgets": {"prompt": "", "max_length": 8196 if edit else 8192, **H3I_DECODING,
                      "thinking": True, "use_default_template": True, "mtp": "auto"},
          "wire": expand_wire},
         {"key": "switch", "type": "ComfySwitchNode", "pos": (2, 2),
@@ -6336,7 +6414,8 @@ def _app_mode_extra(layout: dict, nodes: list[dict], key_to_id: dict[str, int]) 
             raise KeyError(f"App Mode input {entry!r} names no node")
         if node["type"] in APP_MODE_LEFT_OUT:
             raise ValueError(f"App Mode input {entry!r}: {node['type']} stays under All inputs")
-        if widget == CONTROL_WIDGET or widget not in _widget_names(node["type"]):
+        if widget == CONTROL_WIDGET or widget not in _node_widget_names(
+                node["type"], node.get("widgets") or {}):
             raise KeyError(f"App Mode input {entry!r}: {node['type']} has no widget {widget!r}")
         if widget in (node.get("wire") or {}):
             raise ValueError(f"App Mode input {entry!r} is wired, so it holds no value")
