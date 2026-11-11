@@ -3379,11 +3379,35 @@ used this family yet.
 | The row-keyed calls at a rank's rows | `tools/h3_image_row_check.py` on each DiT file at 1024, 2048 and 4096 square, every call equal on every rank | NOT RUN |
 | Identity on uly2 | uly2 against stock on one GPU on the pin-stripped copy, text to image at 1024, 2048 and 4096 square for the BF16, INT8 ConvRot and W4A8 DiTs, latents compared | NOT RUN |
 | Edits on uly2 | one and three reference pictures at 2048, against stock on one GPU on the pin-stripped copy | NOT RUN |
-| `single` with the pins | each DiT file against stock with the pins, latents identical | NOT RUN |
-| The first-use gate | on `single` and on uly2 | NOT RUN |
+| A world of one GPU with the pins | each DiT file against stock with the pins, latents identical | NOT RUN |
+| The first-use gate | in a world of one GPU and on uly2 | NOT RUN |
 | `uly2+fsdp` | BF16 and INT8 ConvRot against uly2 | NOT RUN |
 | Speed and memory | 2048 and 4096 square; activation calibration; the driver's memory with each text encoder and with the prompt expander loaded | NOT RUN |
 | A public LoRA with a head-bank key | loads and renders on uly2 against one GPU | NOT RUN |
+
+The two shipped templates and the testing graph have CPU checks only.
+`tests/test_minimax_h3_image_templates.py` holds each graph to ComfyUI's
+recipe (the four files, 6 steps, CFG 1, `euler`, `simple`, the switch off in
+text to image and on in the edit), holds the testing graph's Manual Sigmas to
+the published header's grid, and holds each Note to the auto table, the
+driver's cfg and dp preflight, the gate's proof request and the manifest's
+byte counts. The template widget canary passes against ComfyUI 0.45.0 with
+the three graphs. The sweep derives cells for the three graphs over the three
+DiT files, which share one name stem, and labels cfg2, dp2 and `cfg2+fsdp`
+`refuse:P` from the driver's own preflight. The template release test's
+offline plan takes both shipped templates on uly2 at one step and skips
+neither. None of this renders a picture.
+
+| template behaviour | what a run must show | status |
+|---|---|---|
+| The text to image template | `dgx-monarch-minimax-h3-image-t2i.json` as shipped, 6 steps at 2048 square, on the pair under `auto` and in a world of one GPU; once more with the If/Else switch true, the expander's caption recorded | NOT RUN |
+| The edit template | `dgx-monarch-minimax-h3-image-edit.json` as shipped, the expander on, one picture, on the pair under `auto` and in a world of one GPU; once more with the switch false | NOT RUN |
+| The release-test rows | both templates in the [template release test](#release-test-2026-11-04): one step, seed 1031, uly2 | NOT RUN |
+| The gate's two proof paths | the first-use gate on the text to image template, a two-step KSampler proof, and on `dgx-monarch-test-minimax-h3-image-grid`, the Sampler Custom proof on the grid's first two steps; each on uly2 and in a world of one GPU | NOT RUN |
+| The published file on uly2 | uly2 on a published, pinned DiT against stock with the pins on one GPU: the difference recorded, not scored | NOT RUN |
+| cfg2 and dp2 | each refuses class P at the driver before any load, on each DiT file | NOT RUN |
+| The other text encoders | the NVFP4 AWQ and BF16 encoders in the text to image graph, a render each, with the driver's memory | NOT RUN |
+| The sweep cells | the scoped sweep of the three graphs over the BF16, INT8 ConvRot and W4A8 DiTs; identity scored on the text to image and grid graphs, which send the request as written | NOT RUN |
 
 <a id="torch-2-15"></a>
 

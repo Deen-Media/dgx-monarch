@@ -117,6 +117,10 @@ STOCK = {
     # The p-h3-image graph's V3 nodes. Their autogrow image sockets start
     # empty, as BerniniConditioning's do, so none is declared below.
     "PH3ImageConditioning": ["prompt", "width", "height"],
+    # MiniMax-H3-Image's V3 node (ComfyUI 0.45.0). Its pictures are an autogrow
+    # input: a graph that wires none carries no socket for them, and a wired
+    # one is named in AUTOGROW_SOCKETS below.
+    "MiniMaxH3ImageConditioning": ["prompt", "width", "height"],
     "TextGenerateV2": ["prompt", "max_length", "sampling_mode", "thinking",
                        "use_default_template", "mtp"],
     "ComfySwitchNode": ["switch"],
@@ -241,6 +245,7 @@ STOCK_OUTPUTS = {
     "CLIPTextEncode": [("CONDITIONING", "CONDITIONING")],
     "PrimitiveStringMultiline": [("STRING", "STRING")],
     "PH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
+    "MiniMaxH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
     "TextGenerateV2": [("generated_text", "STRING"), ("thinking", "STRING")],
     # A match-type output takes its input's type; this graph switches strings.
     "ComfySwitchNode": [("output", "STRING")],
@@ -400,6 +405,7 @@ def _connection_inputs(node_type: str) -> list[tuple[str, str]]:
         # so leaving them out would renumber every wire after them.
         return {"CLIPTextEncode": [("clip", "CLIP")],
                 "PH3ImageConditioning": [("clip", "CLIP"), ("vae", "VAE")],
+                "MiniMaxH3ImageConditioning": [("clip", "CLIP"), ("vae", "VAE")],
                 # system_prompt is a forced input; the autogrow media sockets start empty.
                 "TextGenerateV2": [("clip", "CLIP"), ("system_prompt", "STRING")],
                 "ComfySwitchNode": [("on_false", "STRING"), ("on_true", "STRING")],
@@ -567,18 +573,41 @@ def _outputs(node_type: str) -> list[tuple[str, str]]:
     return list(zip(names, cls.RETURN_TYPES, strict=False))
 
 
+# A wired autogrow input. The frontend grows one socket per wire and names it
+# "<input>.<slot>"; a node that wires none carries no such socket
+# (BerniniConditioning's comment in _connection_inputs says why). Each row
+# gives the socket type and the declared input the grown sockets sit before,
+# or None for after every declared input, which is where ComfyUI's schema
+# order puts them. MiniMax H3 Image Conditioning names its pictures image_1,
+# image_2 and so on; Generate Text names its own image1, image2.
+AUTOGROW_SOCKETS = {
+    "MiniMaxH3ImageConditioning": {"images": ("IMAGE", None)},
+    "TextGenerateV2": {"images": ("IMAGE", "system_prompt")},
+}
+
+
 def _sockets(node: dict, types: dict[str, str]) -> list[tuple[str, str, bool]]:
     """Every input socket of one spec node: (name, type, is a wired widget).
 
     The node's connection inputs come first, in slot order. A ``wire`` entry
+    that names a slot of an autogrow input (AUTOGROW_SOCKETS) adds that socket
+    among them. A ``wire`` entry
     that names one of the node's widgets instead becomes a widget socket after
     them, in wire order, typed by the output that feeds it; the frontend
     serializes such an input with a ``widget`` key and keeps the widget's slot
-    in ``widgets_values``. A node that wires no widget keeps exactly its
+    in ``widgets_values``. A node that wires neither keeps exactly its
     connection inputs, so every graph without one is unchanged.
     """
     ntype = node["type"]
     sockets = [(name, kind, False) for name, kind in _connection_inputs(ntype)]
+    grown = AUTOGROW_SOCKETS.get(ntype, {})
+    for inp in node.get("wire") or {}:
+        group, dot, _slot = inp.partition(".")
+        if dot and group in grown:
+            kind, before = grown[group]
+            index = next((i for i, (name, _kind, _widget) in enumerate(sockets)
+                          if name == before), len(sockets))
+            sockets.insert(index, (inp, kind, False))
     declared = {name for name, _kind, _widget in sockets}
     for inp, (src_key, out_idx) in (node.get("wire") or {}).items():
         if inp in declared:
@@ -5814,6 +5843,252 @@ def _p_h3_image_template() -> dict:
 TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
 
 
+# MiniMax-H3-Image (MiniMax's own image model on the H3 DiT; ComfyUI 0.45.0,
+# family minimax_h3_image, its own adapter). Both graphs follow ComfyUI's own
+# templates (Comfy-Org/workflow_templates 0.11.105, image_minimax_h3_image_t2i
+# and image_minimax_h3_image_edit): the INT8 ConvRot DiT and text encoder, the
+# FP16 VAE, KSampler at 6 steps, CFG 1, euler and simple, a zeroed negative,
+# and the W4A8 prompt expander on Generate Text behind an If/Else switch, off
+# in text to image and on in the edit. Three things differ, each on purpose.
+# The canvas sits on the conditioning node as two numbers, where upstream wires
+# a Resolution Selector: the loader's price, the sweep and App Mode read
+# numbers, and a wired side reads as none. The edit scales its picture with
+# Scale Image to Total Pixels, where upstream chains two Resize Image/Mask
+# nodes: each of their options reveals a child widget, and
+# benchmark/sweep/convert.py reads a dynamic combo as one slot. And the
+# expander's instruction is this project's own short text on Generate Text's
+# system prompt, decoded greedily like p-h3-image's upsampler: upstream's task
+# prompt is the vendor's, about 16 thousand characters, and is not copied here.
+H3I_DIT = "minimax_h3_image_pruned_int8_convrot.safetensors"
+H3I_ENCODER = "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
+H3I_VAE = "minimax_h3_image_vae_fp16.safetensors"
+H3I_EXPANDER = "qwen3.5_9b_w4a8_gptq.safetensors"
+# The sigma grid every published DiT carries in its config metadata
+# (transformer.pdd_sigmas), written out in full so Manual Sigmas parses the
+# same float32 values; tests/test_minimax_h3_image_templates.py holds it to
+# the header fixture.
+H3I_GRID = ("1.0, 0.9675236940383911, 0.8875485062599182, 0.75, "
+            "0.5327739119529724, 0.23200887441635132, 0.0")
+# With the switch off the request is the prompt, so it is a full caption.
+H3I_REQUEST = (
+    "A wide photograph of a small mountain weather station at first light, taken "
+    "from a low ridge with a 35mm lens. A white instrument hut with slatted sides "
+    "stands on four steel legs in the left third of the frame, with a cup "
+    "anemometer and a wind vane on a mast above it and a row of three rain gauges "
+    "on a concrete pad beside it. Frost covers the short grass and the roof of the "
+    "hut. Behind the station a valley fills with low cloud, and a line of "
+    "snow-covered peaks catches warm orange light under a pale blue sky. A "
+    "hand-painted wooden sign by the path reads \"STATION 7\" in black capitals. "
+    "Sharp detail, natural color, long soft shadows.")
+# Written for the demo picture the pack draws under reference.png
+# (tools/gen_demo_inputs.py: a clay vase with a cream band on a studio
+# backdrop). The conditioning node presents pictures as Picture 1, Picture 2.
+H3I_EDIT_REQUEST = (
+    "Turn the clay vase in <Picture 1> into a glossy cobalt blue ceramic vase with "
+    "a thin gold band, and keep its shape, the plain studio backdrop and the "
+    "framing as they are.")
+H3I_INSTRUCTION = (
+    "You write the caption an image model renders. Rewrite the user's request as "
+    "one detailed English caption of a single still image. Keep every fact, name, "
+    "number and quoted text of the request, and keep its style and medium. Say "
+    "what a viewer sees: the main subject and where it sits in the frame, the "
+    "setting, the light, the colors and materials, and the camera or the art "
+    "medium. Put any text to render in double quotes and say where it sits. "
+    "Describe what is there, never what is absent. Answer with the caption alone: "
+    "no title, no list and no notes.")
+H3I_EDIT_INSTRUCTION = (
+    "You write the caption an image model renders for an edit. The user sends "
+    "pictures, numbered in order from Picture 1, and Picture 1 is the picture to "
+    "edit. Rewrite the user's instruction as one detailed English description of "
+    "the finished picture: say what changes, and say what stays as it is in "
+    "Picture 1, the framing and the light included. Refer to a picture as "
+    "<Picture 1>, <Picture 2> and so on, as the instruction does. Keep every "
+    "fact, name, number and quoted text of the instruction. Answer with the "
+    "description alone: no title, no list and no notes.")
+H3I_SIZES = ("ComfyUI's template notes say the model works from about 4 MP to 20 MP "
+             "and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or "
+             "6272x2688, sides swapped for portrait.")
+
+
+def _minimax_h3_image_note(*, edit: bool) -> str:
+    if edit:
+        head = (
+            "MiniMax-H3-Image edit of one picture, at about 4 MP in 6 steps, on the "
+            "INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's "
+            "own template loads. Load your picture in Load Image. Scale Image to "
+            "Total Pixels brings it to about 4 MP on a multiple of 32, and Get Image "
+            "Size hands that size to MiniMax H3 Image Conditioning, so the render "
+            "keeps the picture's shape. The conditioning node shows the picture to "
+            "the text encoder and, through the VAE, hands it to the DiT as a "
+            "reference; call it <Picture 1> in the request. For more pictures, add a "
+            "Load Image and a scale node for each and wire them to image_2, image_3 "
+            "and so on, and to the next image input of Generate Text while the "
+            "expander is on; image_1 stays the picture to edit. " + H3I_SIZES + " A "
+            "reference of this size adds about as many rows as the target, so an "
+            "edit needs more Worker memory than text to image at the same size. ")
+        expander = (
+            "The If/Else switch is true as shipped, as in ComfyUI's template: "
+            "Generate Text reads the request and the picture on the driver and "
+            "writes the description of the finished picture that the model gets, "
+            "and Preview as Text shows it. It decodes greedily, so one request and "
+            "one picture always give the same description. Set the switch to false "
+            "to send the request as written. ")
+    else:
+        head = (
+            "MiniMax-H3-Image text to image at 2048x2048 (4 MP) in 6 steps, on the "
+            "INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's "
+            "own template loads. Set width and height on MiniMax H3 Image "
+            "Conditioning in multiples of 32. " + H3I_SIZES + " ")
+        expander = (
+            "The If/Else switch is false as shipped, as in ComfyUI's template, so "
+            "the request box goes to the model as written: write a full caption "
+            "there. Set the switch to true and Generate Text rewrites a short "
+            "request into a full caption on the driver, and Preview as Text shows "
+            "it. It decodes greedily, so one request always gives the same caption. ")
+    return (
+        head + expander +
+        "The instruction box holds this project's own short instruction for the "
+        "expander, not the long task prompt of ComfyUI's template, so its captions "
+        "differ from that template's. "
+        "Sampling is KSampler at CFG 1 with euler and the simple scheduler, as in "
+        "ComfyUI's template. At 6 steps that schedule lands within a thousandth of "
+        "the sigma grid the checkpoint carries, and the output head picks its "
+        "blocks by the nearest grid point, so keep 6 steps, euler and simple. Add "
+        "no shift node: ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family. "
+        "auto asks for sequence-parallel (uly2) on a configured pair, and a world "
+        "of one GPU runs stock ComfyUI's forward. Every published DiT of this "
+        "family pins comfy-kitchen's INT8 attention on all 50 blocks: a world of "
+        "one GPU keeps the pins, as stock does, uly2 drops them and runs exact "
+        "attention, and the render record says which. The two kernels differ, so a "
+        "render on the pair is not bit for bit the render on one GPU. cfg2 and dp2 "
+        "refuse, because the DiT takes one sample a call, and a padded ring "
+        "refuses. The driver holds the 27.1 GB text encoder and the 1.2 GB VAE, "
+        "and the 7.3 GB expander only while the switch is true; each Worker holds "
+        "the 21.0 GB DiT. " + GATE + " This graph samples with KSampler (DGX "
+        "Monarch), so each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 "
+        "on this schedule; they span head blocks the 6-step render takes one at a "
+        "time, and every proof leg spans them alike. No render of this family has "
+        "run on hardware yet: docs/VALIDATION.md, under MiniMax-H3-Image, lists "
+        "each hardware leg as NOT RUN beside the adapter's CPU proof against stock "
+        "ComfyUI. Needs ComfyUI 0.45.0 or newer on the driver and every Worker. "
+        "Expects " + H3I_DIT + " in models/diffusion_models, " + H3I_ENCODER +
+        " and " + H3I_EXPANDER + " in models/text_encoders (CLIP type minimax), "
+        "and " + H3I_VAE + " in models/vae. " + DERIVED)
+
+
+def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dict:
+    """One MiniMax-H3-Image graph: text to image, the edit, or the grid test.
+
+    ``grid`` swaps KSampler for Sampler Custom on the checkpoint's own sigma
+    grid, with the expander off; its note is set where it is registered.
+    """
+    nodes = [
+        {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
+         "widgets": {"topology": "auto", "mode": "auto", "auto_gate": "first_use"}},
+        {"key": "note", "type": "Note", "pos": (0, 1),
+         "note": _minimax_h3_image_note(edit=edit)},
+        {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
+         "widgets": {"unet_name": H3I_DIT, "weight_dtype": "default"},
+         "wire": {"mesh": ("init", 0)}},
+        {"key": "clip", "type": "CLIPLoader", "pos": (0, 2),
+         "widgets": {"clip_name": H3I_ENCODER, "type": "minimax", "device": "default"}},
+        {"key": "expclip", "type": "CLIPLoader", "pos": (0, 3),
+         "widgets": {"clip_name": H3I_EXPANDER, "type": "minimax", "device": "default"}},
+        {"key": "vae", "type": "VAELoader", "pos": (0, 4),
+         "widgets": {"vae_name": H3I_VAE}},
+        {"key": "request", "type": "PrimitiveStringMultiline", "pos": (1, 2),
+         "widgets": {"value": H3I_EDIT_REQUEST if edit else H3I_REQUEST}},
+        {"key": "instruction", "type": "PrimitiveStringMultiline", "pos": (1, 3),
+         "widgets": {"value": H3I_EDIT_INSTRUCTION if edit else H3I_INSTRUCTION}},
+    ]
+    expand_wire = {"clip": ("expclip", 0), "system_prompt": ("instruction", 0),
+                   "prompt": ("request", 0)}
+    cond_wire = {"clip": ("clip", 0), "vae": ("vae", 0), "prompt": ("switch", 0)}
+    cond_widgets = {"prompt": "", "width": 2048, "height": 2048}
+    if edit:
+        nodes.extend([
+            {"key": "image", "type": "LoadImage", "pos": (0, 5),
+             "widgets": {"image": "reference.png", "upload": "image"}},
+            # Area scaling to 4 MP, each side rounded to a multiple of 32: a
+            # 1024 square picture comes out 2048 square, as upstream's two
+            # resize nodes leave it.
+            {"key": "scale", "type": "ImageScaleToTotalPixels", "pos": (1, 5),
+             "widgets": {"upscale_method": "area", "megapixels": 4.0,
+                         "resolution_steps": 32},
+             "wire": {"image": ("image", 0)}},
+            {"key": "size", "type": "GetImageSize", "pos": (2, 5),
+             "wire": {"image": ("scale", 0)}},
+        ])
+        # The wired sides hold 0, the node's own default, which ComfyUI never
+        # reads behind a link.
+        cond_widgets = {"prompt": "", "width": 0, "height": 0}
+        cond_wire = {"clip": ("clip", 0), "vae": ("vae", 0),
+                     "images.image_1": ("scale", 0), "prompt": ("switch", 0),
+                     "width": ("size", 0), "height": ("size", 1)}
+        expand_wire = {"clip": ("expclip", 0), "images.image1": ("scale", 0),
+                       "system_prompt": ("instruction", 0), "prompt": ("request", 0)}
+    nodes.extend([
+        # Greedy decoding with thinking on, as the p-h3-image graph runs its
+        # upsampler, so one request always gives the same caption. max_length
+        # is upstream's.
+        {"key": "expand", "type": "TextGenerateV2", "pos": (2, 3),
+         "widgets": {"prompt": "", "max_length": 8192, "sampling_mode": "off",
+                     "thinking": True, "use_default_template": True, "mtp": "auto"},
+         "wire": expand_wire},
+        {"key": "switch", "type": "ComfySwitchNode", "pos": (2, 2),
+         "widgets": {"switch": edit and not grid},
+         "wire": {"on_false": ("request", 0), "on_true": ("expand", 0)}},
+        # Beside the text path, never on it: an any-typed socket would hide
+        # the text from Studio's prompt role (the p-h3-image graph says so too).
+        {"key": "preview", "type": "PreviewAny", "pos": (3, 3),
+         "wire": {"source": ("switch", 0)}},
+        {"key": "cond", "type": "MiniMaxH3ImageConditioning", "pos": (3, 2),
+         "widgets": cond_widgets, "wire": cond_wire},
+    ])
+    if grid:
+        nodes.extend([
+            {"key": "guider", "type": "DGXMonarchBasicGuider", "pos": (4, 0),
+             "wire": {"model": ("unet", 0), "conditioning": ("cond", 0)}},
+            {"key": "sampler", "type": "KSamplerSelect", "pos": (4, 2),
+             "widgets": {"sampler_name": "euler"}},
+            {"key": "noise", "type": "RandomNoise", "pos": (4, 3),
+             "widgets": {"noise_seed": 42}},
+            {"key": "sigmas", "type": "ManualSigmas", "pos": (4, 4),
+             "widgets": {"sigmas": H3I_GRID}},
+            {"key": "sc", "type": "DGXMonarchSamplerCustom", "pos": (5, 1),
+             "wire": {"noise": ("noise", 0), "guider": ("guider", 0),
+                      "sampler": ("sampler", 0), "sigmas": ("sigmas", 0),
+                      "latent_image": ("cond", 1)}},
+        ])
+        sampled = "sc"
+    else:
+        nodes.extend([
+            # Zero Out on the positive, as upstream; CFG 1 never evaluates it.
+            {"key": "neg", "type": "ConditioningZeroOut", "pos": (4, 2),
+             "wire": {"conditioning": ("cond", 0)}},
+            {"key": "ks", "type": "DGXMonarchKSampler", "pos": (4, 1),
+             "widgets": {"seed": 42, "steps": 6, "cfg": 1.0, "sampler_name": "euler",
+                         "scheduler": "simple", "denoise": 1.0},
+             "wire": {"model": ("unet", 0), "positive": ("cond", 0),
+                      "negative": ("neg", 0), "latent_image": ("cond", 1)}},
+        ])
+        sampled = "ks"
+    prefix = "dgx_monarch_minimax_h3_image" + ("_edit" if edit else "")
+    nodes.extend([
+        {"key": "dec", "type": "VAEDecode", "pos": (6, 1),
+         "wire": {"samples": (sampled, 0), "vae": ("vae", 0)}},
+        {"key": "save", "type": "SaveImage", "pos": (7, 1),
+         "widgets": {"filename_prefix": prefix},
+         "wire": {"images": ("dec", 0)}},
+    ])
+    title = "MiniMax-H3-Image " + ("image editing" if edit else "text to image")
+    return {"title": title, "nodes": nodes}
+
+
+TEMPLATES["dgx-monarch-minimax-h3-image-t2i"] = _minimax_h3_image_template()
+TEMPLATES["dgx-monarch-minimax-h3-image-edit"] = _minimax_h3_image_template(edit=True)
+
+
 # dual-spark-split shares FLUX_STACK, whose latent is 1024. Override it here to
 # 1536 so the split has enough tokens to be worth splitting.
 TEMPLATES["dgx-monarch-dual-spark-split"]["nodes"] = [
@@ -6291,6 +6566,13 @@ APP_MODE = {
         {"prompt": ("request.value",), "seed": ("noise.noise_seed",),
          "size": ("cond.width", "cond.height"), "sampler": ("sampler.sampler_name",)},
         _UNET),
+    # The request box is the prompt, whether the expander rewrites it or not;
+    # the size sits on the conditioning node, which also makes the latent.
+    "dgx-monarch-minimax-h3-image-t2i": _layout(
+        {"prompt": ("request.value",), "size": ("cond.width", "cond.height")}, _KS, _UNET),
+    # An edit takes its size from the picture, so it lists none.
+    "dgx-monarch-minimax-h3-image-edit": _layout(
+        {"prompt": ("request.value",)}, _KS, _IMAGE, _UNET),
     "dgx-monarch-kromoss-t2i-turbo": _layout(*_T2I_ZERO, _LORA),
 }
 if set(APP_MODE) != set(TEMPLATES):
@@ -6471,6 +6753,27 @@ def _testing_spec(base: str, title: str, purpose: str, *,
                                   "strength_model": lora_strength},
                       "wire": {"model": (unet, 0)}})
     return {"title": title, "nodes": nodes}
+
+
+def _minimax_h3_image_grid_spec() -> dict:
+    """MiniMax-H3-Image through Sampler Custom on the checkpoint's own grid.
+
+    _testing_spec edits a shipped spec in place and cannot swap its sampler,
+    so this graph comes from the family's helper and takes a testing note.
+    """
+    base = "dgx-monarch-minimax-h3-image-t2i"
+    spec = _minimax_h3_image_template(grid=True)
+    purpose = (
+        "Sampler Custom (DGX Monarch) walks the checkpoint's own sigma grid, typed "
+        "into Manual Sigmas, where the shipped graph's KSampler lands within a "
+        "thousandth of it; euler through Basic Guider (DGX Monarch) at CFG 1. The "
+        "first-use gate proves this graph with its own first two steps, 1.0 to "
+        "0.9675 to 0.8875, each on one head block as in the render, where the "
+        "shipped graph's two-step KSampler proof spans three blocks a step. The "
+        "expander is off, so the request reaches the model as written.")
+    nodes = [({**node, "note": _testing_note(base, purpose)}
+              if node["type"] == "Note" else node) for node in spec["nodes"]]
+    return {"title": "MiniMax-H3-Image on its sigma grid", "nodes": nodes}
 
 
 TESTING_TEMPLATES = {
@@ -6726,6 +7029,9 @@ TESTING_TEMPLATES = {
                  "vae": {"vae_name": P_H3_VAE["int8"]},
                  "switch": {"switch": False}},
         lora_after=("unet",), lora_strength=1.0),
+    # MiniMax-H3-Image: the custom-sampler route on the exact grid. The sweep
+    # hands the shipped text to image graph the BF16 and W4A8 DiTs by stem.
+    "dgx-monarch-test-minimax-h3-image-grid": _minimax_h3_image_grid_spec(),
     # FLUX.3 Klein: the vendor's quantized files, an odd grid, and a
     # two-reference edit whose streams pad in both phases.
     "dgx-monarch-test-flux3-klein-int8": _testing_spec(

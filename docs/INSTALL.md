@@ -471,6 +471,17 @@ at its root; save them in `models/loras` under the manifest's names,
 same names as training continues; the manifest pins one revision, and
 `--hash` reports a file from another.
 
+MiniMax-H3-Image needs ComfyUI 0.45.0 or newer on the driver and on every
+Worker, as the whole release does. Its two templates load four files, all
+from Comfy-Org/MiniMax-H3-Image: the INT8 ConvRot DiT, the INT8 ConvRot text
+encoder, the FP16 VAE and `qwen3.5_9b_w4a8_gptq.safetensors`, the prompt
+expander. Stage all four for either graph: ComfyUI checks every loader's file
+name when a graph is queued. The expander takes memory only while a graph's
+If/Else switch is true, which the edit template ships and the text to image
+template does not. The BF16 and W4A8 DiTs and the
+other two text encoders have no manifest row, because no template names them
+([MODELS](MODELS.md#model-minimax-h3-image) lists all eight files).
+
 A row with a blank `url` or `sha256`, or a `size` of 0, is pending. The check
 reports pending rows and passes; `--pending` names them, and `--strict` fails
 on them. Every committed row is filled or a placeholder, and CI runs the check

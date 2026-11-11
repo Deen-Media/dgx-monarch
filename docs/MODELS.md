@@ -104,7 +104,7 @@ that match the tested configurations in its model details. See
 | MOSS-Image Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with the same layer-22 skip. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule; its FSDP reading comes from the scoped sweep. Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-moss-image-base) · [Workflow](../example_workflows/dgx-monarch-moss-image-base-t2i.json) |
 | Kromoss | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | MOSS-Image Base fine-tune; no header field tells it from Base or SFT. CFG 3, 50 steps, euler on the `normal` scheduler, with the layer-22 skip, or 8 Euler steps on `simple` at CFG 1 with a DMD LoRA, where cfg2 has nothing to split and refuses. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule. The DMD LoRAs render the same on uly2 and one GPU; with the classic bake of earlier releases they read one-step NRMS 0.0365 to 0.0635 against stock at strengths 0.8 and 1.0, because stock applies them at cast time, and this release bakes the weight that cast computes, not yet measured on this file ([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)). Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-kromoss) · [Workflow](../example_workflows/dgx-monarch-kromoss-t2i.json) |
 | p-h3-image | 🔒 | ✗ | ★ | 🔒 | 🔒 | **HW** | A MiniMax H3 DiT with one video latent frame, on the H3 adapter: batch one, cfg2 and dp2 refuse, padded ring needs a waiver, and the W4A8 file refuses FSDP. Needs ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0; without any H3 shift the image latent refuses class P ([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)). BF16, INT8 ConvRot and W4A8 on one rank are pixel-identical to stock and uly2 to one rank; the LoRA route on the pruned INT8 H3 file is pixel-identical to stock; BF16 on `uly2+fsdp` runs after the first-use gate's clean-reload proof on that preset. On one Spark the BF16 DiT beside the BF16 prompt upsampler refuses at the loader, before any load, and the refusal names the INT8 ConvRot and W4A8 files ([TROUBLESHOOTING #52](TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)). [Details](#model-p-h3-image) · [Workflow](../example_workflows/dgx-monarch-p-h3-image.json) |
-| MiniMax-H3-Image | 🔒 | ✗ | ★ | 🔒 | n/a | impl | Its own adapter, on ComfyUI 0.45.0 or newer: batch one, cfg2 and dp2 refuse, a padded ring refuses, and a world of one GPU renders stock's forward with the header attention pins. No hardware comparison yet; no template yet. [Details](#model-minimax-h3-image) |
+| MiniMax-H3-Image | 🔒 | ✗ | ★ | 🔒 | n/a | impl | Its own adapter, on ComfyUI 0.45.0 or newer: batch one, cfg2 and dp2 refuse, a padded ring refuses, and a world of one GPU renders stock's forward with the header attention pins. Text to image and edit templates ship; no hardware comparison yet. [Details](#model-minimax-h3-image) · [Workflow](../example_workflows/dgx-monarch-minimax-h3-image-t2i.json) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
 | HunyuanImage 2.1 (+refiner) | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Extended-text cfg2 needs equal Qwen lengths; refiner FSDP measured at FP8 only; SR FSDP unmeasured. [Details](#model-hunyuanimage-2-1-refiner) · [Workflow](../example_workflows/dgx-monarch-hunyuan-image.json) |
 | Qwen-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP. Edit reference-method limits differ from base; sharded Edit can refuse. [Details](#model-qwen-image) · [Workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json) |
@@ -1088,7 +1088,64 @@ grid, which every published DiT file carries in its metadata. This project
 reads the family as `minimax_h3_image` from the header and runs it on its own
 adapter (`adapters/minimax_h3_image.py`), not on H3's.
 
-**Files.** The BF16 DiT reads `bf16`, its 51 F16 adaLN linears counting as
+**Workflows.** [Text to image](../example_workflows/dgx-monarch-minimax-h3-image-t2i.json)
+and [edit](../example_workflows/dgx-monarch-minimax-h3-image-edit.json) follow
+ComfyUI's own two templates for the family: the INT8 ConvRot DiT and text
+encoder, the FP16 VAE, KSampler at 6 steps, CFG 1, `euler` and `simple` on a
+zeroed negative, and the W4A8 prompt expander on Generate Text behind an
+If/Else switch, off in text to image and on in the edit. Text to image renders
+2048 square, the 4 MP default of ComfyUI's template, whose notes say the model
+works from about 4 MP to 20 MP and best near 16 MP (4096 square, 4736x3552,
+5024x3360, 5472x3072 or 6272x2688). The edit scales its picture to about 4 MP
+on a multiple of 32, sizes the render from it, and wires it to `image_1`,
+which the conditioning node shows to the text encoder and hands to the DiT
+through the VAE. More pictures wire to `image_2`, `image_3` and so on, and the
+request cites them as `<Picture 1>`, `<Picture 2>`.
+
+Three things differ from ComfyUI's graphs, each on purpose:
+
+- The canvas is two numbers on the conditioning node, where ComfyUI wires a
+  Resolution Selector, because the loader's price and the sweep read numbers.
+- The edit scales with Scale Image to Total Pixels, where ComfyUI chains two
+  Resize Image/Mask nodes. A 1024 square picture comes out 2048 square either
+  way; another shape can differ by one rounding step of 32, since ComfyUI's
+  chain crops to the multiple and this node rounds to it.
+- The expander's instruction is this project's own short text, decoded
+  greedily, so one request always gives one caption. ComfyUI's template drives
+  the expander with the vendor's task prompt of about 16 thousand characters
+  and sampled decoding. This repository does not copy that text, so the two
+  expanders write different captions. With the switch false the request
+  reaches the model as written on both.
+
+The testing graph `dgx-monarch-test-minimax-h3-image-grid` samples through
+Sampler Custom (DGX Monarch) on the checkpoint's own grid, with the expander
+off.
+
+**Files.** The templates load the first four rows; the sweep hands the text to
+image graph the other two DiTs, since the three share one name stem.
+
+| File | Folder under `models/` | Bytes | Loaded by |
+|---|---|---:|---|
+| `minimax_h3_image_pruned_int8_convrot.safetensors` | `diffusion_models` | 20,979,314,802 | both templates |
+| `qwen3vl_32b_minimax_h3_int8_convrot.safetensors` | `text_encoders` | 27,141,342,152 | both templates |
+| `qwen3.5_9b_w4a8_gptq.safetensors` | `text_encoders` | 7,343,591,088 | both templates, as the prompt expander |
+| `minimax_h3_image_vae_fp16.safetensors` | `vae` | 1,168,505,312 | both templates |
+| `minimax_h3_image_pruned_bf16.safetensors` | `diffusion_models` | 40,234,657,162 | no template |
+| `minimax_h3_image_pruned_w4a8.safetensors` | `diffusion_models` | 12,549,794,530 | no template |
+| `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | `text_encoders` | 15,687,142,551 | no template of this family |
+| `qwen3vl_32b_minimax_h3_bf16.safetensors` | `text_encoders` | 51,506,295,256 | no template |
+
+[Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image)
+holds all but the BF16 text encoder, which is in
+[Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3). Read the
+terms on each model card before use; this page states none. The byte counts
+are the Hugging Face listing's
+at commits `892de7cb` and `54472221`, and on 2026-11-10 each file on both
+Sparks matched that listing by size and SHA-256. The
+[artifact manifest](../example_workflows/artifacts.toml) carries the address,
+size and SHA-256 of the four files the templates load.
+
+The BF16 DiT reads `bf16`, its 51 F16 adaLN linears counting as
 islands, and the INT8 ConvRot and W4A8 DiTs read `int8` and `w4a8`. Every one
 of them, BF16 included, pins comfy-kitchen's INT8 attention on all 50 blocks.
 A file without its sigma grid refuses at the loader
@@ -1126,6 +1183,25 @@ inside the head on the same file.
 
 **Decode.** The image VAE decodes on the driver: a Worker-assisted decode
 declines it, since it decodes one frame and has nothing to split.
+
+**Memory.** The driver holds the text encoder and the VAE, and the prompt
+expander only while the If/Else switch is true: the switch is lazy, so text to
+image as shipped never loads it, and the loader preflight charges it only
+where the switch is on. Each Worker holds the DiT. Under `auto` the DiT loads
+at the first render, after the driver's models. A reference picture of the
+edit's size adds about as many rows as the target, so an edit needs more
+Worker memory than text to image at the same size. No memory figure of this
+family has been measured: the activation price uses MiniMax H3's calibration,
+and the driver's memory with each text encoder and with the expander loaded is
+a NOT RUN row.
+
+**Known limitations.** Nothing of this family has rendered on hardware, so
+every identity, speed and memory row is NOT RUN
+([VALIDATION](VALIDATION.md#minimax-h3-image)). A pair under `auto` drops the
+checkpoint's INT8 attention pins and a world of one GPU keeps them, so the two
+renders are not identical, and the size of that difference is not measured. The expander's instruction is this project's own and has not run
+on hardware. The W4A8 DiT refuses FSDP. Studio's CPU compile tests skip both
+graphs until a driver schema is recorded on ComfyUI 0.45.0.
 
 <a id="model-longcat-image"></a>
 

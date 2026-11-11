@@ -44,6 +44,7 @@ from dgx_monarch.adapters import (  # noqa: E402
     DUAL_MODEL_CFG_FAMILIES,
     attention_capability,
     minimax_h3,
+    minimax_h3_image,
     omnigen2,
     pixeldit,
     quant_activation_scale,
@@ -167,6 +168,12 @@ BLOCK_SCALED = {"nvfp4_mixed": "refuse:P", "nvfp4": "refuse:P", "mxfp8": "refuse
 # own p-h3-image template, which loads it at 1.0.
 LORA_CELL_STRENGTH = 0.8
 GRAPH_LORA_STRENGTH_TEMPLATES = frozenset({"dgx-monarch-test-p-h3-image-lora"})
+# The families whose DiT takes one sample a call, each with the sentence the
+# driver refuses cfg and dp topologies with before dispatch.
+H3_BATCH_CAPPED = {
+    "minimax_h3": minimax_h3.MINIMAX_H3_BATCH_CAPPED_MESSAGE,
+    minimax_h3_image.FAMILY: minimax_h3_image.MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE,
+}
 # Words that name neither the model nor its precision; a stem keeping one
 # lands in its own base and never meets its sibling quants.
 RESIDUE_TOKENS = ("transformer_only", "defaultloader", "hybrid_large",
@@ -1038,9 +1045,14 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
                             adapter.attention_head_dim)):
         return found, "guard", False, guards
     # Sample time from here: nothing below is read until the sampler runs.
-    if family == "minimax_h3" and minimax_h3.minimax_h3_topology_would_reject(topo.cfg, topo.dp):
-        return _label_from(RuntimeError(minimax_h3.MINIMAX_H3_BATCH_CAPPED_MESSAGE)), \
-            "guard", False, guards
+    # The driver's cfg and dp preflight answers first, for MiniMax H3 and for
+    # MiniMax-H3-Image alike: one predicate, each family's own sentence
+    # (nodes/render_preflight.py preflight_minimax_h3_topology). It runs before
+    # any Worker call, so it answers ahead of the pin guard below, which every
+    # MiniMax-H3-Image file would otherwise meet on cfg2.
+    capped = H3_BATCH_CAPPED.get(family)
+    if capped and minimax_h3.minimax_h3_topology_would_reject(topo.cfg, topo.dp):
+        return _label_from(RuntimeError(capped)), "guard", False, guards
     # The driver's Skip Layer Guidance preflight runs at the render submit right
     # after the MiniMax one, once the topology resolves and before any Worker
     # call (nodes/model_patch_preflight.py), so it answers ahead of every rule

@@ -30632,6 +30632,1995 @@
       }
     },
     {
+      "digest": "95eb18a50f8cffb5d884f9e41501002675e075e949be85cac1f94035300db3d7",
+      "id": "workflow.dgx-monarch-minimax-h3-image-edit",
+      "name": "dgx-monarch-minimax-h3-image-edit",
+      "source": "example_workflows/dgx-monarch-minimax-h3-image-edit.json",
+      "title": "MiniMax-H3-Image image editing",
+      "workflow": {
+        "config": {},
+        "extra": {
+          "linearData": {
+            "inputs": [
+              [
+                7,
+                "value"
+              ],
+              [
+                17,
+                "seed"
+              ],
+              [
+                17,
+                "steps"
+              ],
+              [
+                17,
+                "cfg"
+              ],
+              [
+                17,
+                "sampler_name"
+              ],
+              [
+                17,
+                "scheduler"
+              ],
+              [
+                9,
+                "image"
+              ],
+              [
+                3,
+                "unet_name"
+              ]
+            ],
+            "outputs": [
+              19
+            ]
+          }
+        },
+        "groups": [],
+        "id": "minimax-h3-image-image-editing",
+        "last_link_id": 24,
+        "last_node_id": 19,
+        "links": [
+          [
+            1,
+            1,
+            0,
+            3,
+            0,
+            "DGXM_MESH"
+          ],
+          [
+            2,
+            9,
+            0,
+            10,
+            0,
+            "IMAGE"
+          ],
+          [
+            3,
+            10,
+            0,
+            11,
+            0,
+            "IMAGE"
+          ],
+          [
+            4,
+            5,
+            0,
+            12,
+            0,
+            "CLIP"
+          ],
+          [
+            5,
+            10,
+            0,
+            12,
+            1,
+            "IMAGE"
+          ],
+          [
+            6,
+            8,
+            0,
+            12,
+            2,
+            "STRING"
+          ],
+          [
+            7,
+            7,
+            0,
+            12,
+            3,
+            "STRING"
+          ],
+          [
+            8,
+            7,
+            0,
+            13,
+            0,
+            "STRING"
+          ],
+          [
+            9,
+            12,
+            0,
+            13,
+            1,
+            "STRING"
+          ],
+          [
+            10,
+            13,
+            0,
+            14,
+            0,
+            "*"
+          ],
+          [
+            11,
+            4,
+            0,
+            15,
+            0,
+            "CLIP"
+          ],
+          [
+            12,
+            6,
+            0,
+            15,
+            1,
+            "VAE"
+          ],
+          [
+            13,
+            10,
+            0,
+            15,
+            2,
+            "IMAGE"
+          ],
+          [
+            14,
+            13,
+            0,
+            15,
+            3,
+            "STRING"
+          ],
+          [
+            15,
+            11,
+            0,
+            15,
+            4,
+            "INT"
+          ],
+          [
+            16,
+            11,
+            1,
+            15,
+            5,
+            "INT"
+          ],
+          [
+            17,
+            15,
+            0,
+            16,
+            0,
+            "CONDITIONING"
+          ],
+          [
+            18,
+            3,
+            0,
+            17,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            19,
+            15,
+            0,
+            17,
+            1,
+            "CONDITIONING"
+          ],
+          [
+            20,
+            16,
+            0,
+            17,
+            2,
+            "CONDITIONING"
+          ],
+          [
+            21,
+            15,
+            1,
+            17,
+            3,
+            "LATENT"
+          ],
+          [
+            22,
+            17,
+            0,
+            18,
+            0,
+            "LATENT"
+          ],
+          [
+            23,
+            6,
+            0,
+            18,
+            1,
+            "VAE"
+          ],
+          [
+            24,
+            18,
+            0,
+            19,
+            0,
+            "IMAGE"
+          ]
+        ],
+        "nodes": [
+          {
+            "dgxm_widgets": {
+              "attention": "TORCH_FLASH",
+              "auto_gate": "first_use",
+              "comfy_managed": "off",
+              "compile_dit": false,
+              "config_path": "",
+              "family_adapter": "auto",
+              "gpus_per_host": 0,
+              "load_profile": false,
+              "lora_low_rss": "auto",
+              "mmap_fallback": false,
+              "mode": "auto",
+              "pipeline_depth": 1,
+              "reserve_vram_gb": 0.0,
+              "slab_weights": "auto",
+              "swap_verify": 2,
+              "sync_ulysses": true,
+              "topology": "auto",
+              "uma_reserve_gb": 0.0
+            },
+            "flags": {},
+            "id": 1,
+            "inputs": [],
+            "mode": 0,
+            "order": 0,
+            "outputs": [
+              {
+                "links": [
+                  1
+                ],
+                "name": "mesh",
+                "slot_index": 0,
+                "type": "DGXM_MESH"
+              }
+            ],
+            "pos": [
+              80,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchInit"
+            },
+            "size": [
+              315,
+              448
+            ],
+            "type": "DGXMonarchInit",
+            "widgets_values": [
+              "auto",
+              "auto",
+              "TORCH_FLASH",
+              "",
+              0,
+              0.0,
+              true,
+              false,
+              1,
+              false,
+              "auto",
+              "auto",
+              "first_use",
+              false,
+              2,
+              0.0,
+              "off",
+              "auto"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 2,
+            "inputs": [],
+            "mode": 0,
+            "order": 1,
+            "outputs": [],
+            "pos": [
+              80,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "Note"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "title": "DGX Monarch | MiniMax-H3-Image image editing",
+            "type": "Note",
+            "widgets_values": [
+              "MiniMax-H3-Image edit of one picture, at about 4 MP in 6 steps, on the INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's own template loads. Load your picture in Load Image. Scale Image to Total Pixels brings it to about 4 MP on a multiple of 32, and Get Image Size hands that size to MiniMax H3 Image Conditioning, so the render keeps the picture's shape. The conditioning node shows the picture to the text encoder and, through the VAE, hands it to the DiT as a reference; call it <Picture 1> in the request. For more pictures, add a Load Image and a scale node for each and wire them to image_2, image_3 and so on, and to the next image input of Generate Text while the expander is on; image_1 stays the picture to edit. ComfyUI's template notes say the model works from about 4 MP to 20 MP and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or 6272x2688, sides swapped for portrait. A reference of this size adds about as many rows as the target, so an edit needs more Worker memory than text to image at the same size. The If/Else switch is true as shipped, as in ComfyUI's template: Generate Text reads the request and the picture on the driver and writes the description of the finished picture that the model gets, and Preview as Text shows it. It decodes greedily, so one request and one picture always give the same description. Set the switch to false to send the request as written. The instruction box holds this project's own short instruction for the expander, not the long task prompt of ComfyUI's template, so its captions differ from that template's. Sampling is KSampler at CFG 1 with euler and the simple scheduler, as in ComfyUI's template. At 6 steps that schedule lands within a thousandth of the sigma grid the checkpoint carries, and the output head picks its blocks by the nearest grid point, so keep 6 steps, euler and simple. Add no shift node: ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family. auto asks for sequence-parallel (uly2) on a configured pair, and a world of one GPU runs stock ComfyUI's forward. Every published DiT of this family pins comfy-kitchen's INT8 attention on all 50 blocks: a world of one GPU keeps the pins, as stock does, uly2 drops them and runs exact attention, and the render record says which. The two kernels differ, so a render on the pair is not bit for bit the render on one GPU. cfg2 and dp2 refuse, because the DiT takes one sample a call, and a padded ring refuses. The driver holds the 27.1 GB text encoder and the 1.2 GB VAE, and the 7.3 GB expander only while the switch is true; each Worker holds the 21.0 GB DiT. The first render of a new model, LoRA and residency combination runs the identity gate before any pixels, on this graph's mesh and topology: proof renders of at most two steps, from a fresh load before and after the swap or reload under test, must match bit for bit, and with slab residency on, one more render with slab off must match too. Allow a few minutes for these two to four proof renders. Later renders of the same combination skip the gate. This graph samples with KSampler (DGX Monarch), so each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 on this schedule; they span head blocks the 6-step render takes one at a time, and every proof leg spans them alike. No render of this family has run on hardware yet: docs/VALIDATION.md, under MiniMax-H3-Image, lists each hardware leg as NOT RUN beside the adapter's CPU proof against stock ComfyUI. Needs ComfyUI 0.45.0 or newer on the driver and every Worker. Expects minimax_h3_image_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_int8_convrot.safetensors and qwen3.5_9b_w4a8_gptq.safetensors in models/text_encoders (CLIP type minimax), and minimax_h3_image_vae_fp16.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "unet_name": "minimax_h3_image_pruned_int8_convrot.safetensors",
+              "weight_dtype": "default"
+            },
+            "flags": {},
+            "id": 3,
+            "inputs": [
+              {
+                "link": 1,
+                "name": "mesh",
+                "type": "DGXM_MESH"
+              }
+            ],
+            "mode": 0,
+            "order": 2,
+            "outputs": [
+              {
+                "links": [
+                  18
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              420,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchUNETLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "DGXMonarchUNETLoader",
+            "widgets_values": [
+              "minimax_h3_image_pruned_int8_convrot.safetensors",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 4,
+            "inputs": [],
+            "mode": 0,
+            "order": 3,
+            "outputs": [
+              {
+                "links": [
+                  11
+                ],
+                "name": "CLIP",
+                "slot_index": 0,
+                "type": "CLIP"
+              }
+            ],
+            "pos": [
+              80,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "CLIPLoader",
+            "widgets_values": [
+              "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+              "minimax",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 5,
+            "inputs": [],
+            "mode": 0,
+            "order": 4,
+            "outputs": [
+              {
+                "links": [
+                  4
+                ],
+                "name": "CLIP",
+                "slot_index": 0,
+                "type": "CLIP"
+              }
+            ],
+            "pos": [
+              80,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "CLIPLoader",
+            "widgets_values": [
+              "qwen3.5_9b_w4a8_gptq.safetensors",
+              "minimax",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 6,
+            "inputs": [],
+            "mode": 0,
+            "order": 5,
+            "outputs": [
+              {
+                "links": [
+                  12,
+                  23
+                ],
+                "name": "VAE",
+                "slot_index": 0,
+                "type": "VAE"
+              }
+            ],
+            "pos": [
+              80,
+              840
+            ],
+            "properties": {
+              "Node name for S&R": "VAELoader"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "VAELoader",
+            "widgets_values": [
+              "minimax_h3_image_vae_fp16.safetensors"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 7,
+            "inputs": [],
+            "mode": 0,
+            "order": 6,
+            "outputs": [
+              {
+                "links": [
+                  7,
+                  8
+                ],
+                "name": "STRING",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              420,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "PrimitiveStringMultiline"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "PrimitiveStringMultiline",
+            "widgets_values": [
+              "Turn the clay vase in <Picture 1> into a glossy cobalt blue ceramic vase with a thin gold band, and keep its shape, the plain studio backdrop and the framing as they are."
+            ]
+          },
+          {
+            "flags": {},
+            "id": 8,
+            "inputs": [],
+            "mode": 0,
+            "order": 7,
+            "outputs": [
+              {
+                "links": [
+                  6
+                ],
+                "name": "STRING",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              420,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "PrimitiveStringMultiline"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "PrimitiveStringMultiline",
+            "widgets_values": [
+              "You write the caption an image model renders for an edit. The user sends pictures, numbered in order from Picture 1, and Picture 1 is the picture to edit. Rewrite the user's instruction as one detailed English description of the finished picture: say what changes, and say what stays as it is in Picture 1, the framing and the light included. Refer to a picture as <Picture 1>, <Picture 2> and so on, as the instruction does. Keep every fact, name, number and quoted text of the instruction. Answer with the description alone: no title, no list and no notes."
+            ]
+          },
+          {
+            "flags": {},
+            "id": 9,
+            "inputs": [],
+            "mode": 0,
+            "order": 8,
+            "outputs": [
+              {
+                "links": [
+                  2
+                ],
+                "name": "IMAGE",
+                "slot_index": 0,
+                "type": "IMAGE"
+              },
+              {
+                "links": [],
+                "name": "MASK",
+                "slot_index": 1,
+                "type": "MASK"
+              }
+            ],
+            "pos": [
+              80,
+              1030
+            ],
+            "properties": {
+              "Node name for S&R": "LoadImage"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "LoadImage",
+            "widgets_values": [
+              "reference.png",
+              "image"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 10,
+            "inputs": [
+              {
+                "link": 2,
+                "name": "image",
+                "type": "IMAGE"
+              }
+            ],
+            "mode": 0,
+            "order": 9,
+            "outputs": [
+              {
+                "links": [
+                  3,
+                  5,
+                  13
+                ],
+                "name": "IMAGE",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              420,
+              1030
+            ],
+            "properties": {
+              "Node name for S&R": "ImageScaleToTotalPixels"
+            },
+            "size": [
+              315,
+              140
+            ],
+            "type": "ImageScaleToTotalPixels",
+            "widgets_values": [
+              "area",
+              4.0,
+              32
+            ]
+          },
+          {
+            "flags": {},
+            "id": 11,
+            "inputs": [
+              {
+                "link": 3,
+                "name": "image",
+                "type": "IMAGE"
+              }
+            ],
+            "mode": 0,
+            "order": 10,
+            "outputs": [
+              {
+                "links": [
+                  15
+                ],
+                "name": "width",
+                "slot_index": 0,
+                "type": "INT"
+              },
+              {
+                "links": [
+                  16
+                ],
+                "name": "height",
+                "slot_index": 1,
+                "type": "INT"
+              },
+              {
+                "links": [],
+                "name": "batch_size",
+                "slot_index": 2,
+                "type": "INT"
+              }
+            ],
+            "pos": [
+              760,
+              1030
+            ],
+            "properties": {
+              "Node name for S&R": "GetImageSize"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "GetImageSize",
+            "widgets_values": []
+          },
+          {
+            "flags": {},
+            "id": 12,
+            "inputs": [
+              {
+                "link": 4,
+                "name": "clip",
+                "type": "CLIP"
+              },
+              {
+                "link": 5,
+                "name": "images.image1",
+                "type": "IMAGE"
+              },
+              {
+                "link": 6,
+                "name": "system_prompt",
+                "type": "STRING"
+              },
+              {
+                "link": 7,
+                "name": "prompt",
+                "type": "STRING",
+                "widget": {
+                  "name": "prompt"
+                }
+              }
+            ],
+            "mode": 0,
+            "order": 11,
+            "outputs": [
+              {
+                "links": [
+                  9
+                ],
+                "name": "generated_text",
+                "slot_index": 0,
+                "type": "STRING"
+              },
+              {
+                "links": [],
+                "name": "thinking",
+                "slot_index": 1,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              760,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "TextGenerateV2"
+            },
+            "size": [
+              315,
+              294
+            ],
+            "type": "TextGenerateV2",
+            "widgets_values": [
+              "",
+              8192,
+              "off",
+              true,
+              true,
+              "auto"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 13,
+            "inputs": [
+              {
+                "link": 8,
+                "name": "on_false",
+                "type": "STRING"
+              },
+              {
+                "link": 9,
+                "name": "on_true",
+                "type": "STRING"
+              }
+            ],
+            "mode": 0,
+            "order": 12,
+            "outputs": [
+              {
+                "links": [
+                  10,
+                  14
+                ],
+                "name": "output",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              760,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "ComfySwitchNode"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "ComfySwitchNode",
+            "widgets_values": [
+              true
+            ]
+          },
+          {
+            "flags": {},
+            "id": 14,
+            "inputs": [
+              {
+                "link": 10,
+                "name": "source",
+                "type": "*"
+              }
+            ],
+            "mode": 0,
+            "order": 13,
+            "outputs": [
+              {
+                "links": [],
+                "name": "STRING",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              1100,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "PreviewAny"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "PreviewAny",
+            "widgets_values": []
+          },
+          {
+            "flags": {},
+            "id": 15,
+            "inputs": [
+              {
+                "link": 11,
+                "name": "clip",
+                "type": "CLIP"
+              },
+              {
+                "link": 12,
+                "name": "vae",
+                "type": "VAE"
+              },
+              {
+                "link": 13,
+                "name": "images.image_1",
+                "type": "IMAGE"
+              },
+              {
+                "link": 14,
+                "name": "prompt",
+                "type": "STRING",
+                "widget": {
+                  "name": "prompt"
+                }
+              },
+              {
+                "link": 15,
+                "name": "width",
+                "type": "INT",
+                "widget": {
+                  "name": "width"
+                }
+              },
+              {
+                "link": 16,
+                "name": "height",
+                "type": "INT",
+                "widget": {
+                  "name": "height"
+                }
+              }
+            ],
+            "mode": 0,
+            "order": 14,
+            "outputs": [
+              {
+                "links": [
+                  17,
+                  19
+                ],
+                "name": "positive",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              },
+              {
+                "links": [
+                  21
+                ],
+                "name": "LATENT",
+                "slot_index": 1,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              1100,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "MiniMaxH3ImageConditioning"
+            },
+            "size": [
+              315,
+              272
+            ],
+            "type": "MiniMaxH3ImageConditioning",
+            "widgets_values": [
+              "",
+              0,
+              0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 16,
+            "inputs": [
+              {
+                "link": 17,
+                "name": "conditioning",
+                "type": "CONDITIONING"
+              }
+            ],
+            "mode": 0,
+            "order": 15,
+            "outputs": [
+              {
+                "links": [
+                  20
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              1440,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "ConditioningZeroOut"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "ConditioningZeroOut",
+            "widgets_values": []
+          },
+          {
+            "dgxm_widgets": {
+              "cfg": 1.0,
+              "control_after_generate": "randomize",
+              "denoise": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "seed": 42,
+              "steps": 6
+            },
+            "flags": {},
+            "id": 17,
+            "inputs": [
+              {
+                "link": 18,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              },
+              {
+                "link": 19,
+                "name": "positive",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 20,
+                "name": "negative",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 21,
+                "name": "latent_image",
+                "type": "LATENT"
+              }
+            ],
+            "mode": 0,
+            "order": 16,
+            "outputs": [
+              {
+                "links": [
+                  22
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              1440,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchKSampler"
+            },
+            "size": [
+              315,
+              294
+            ],
+            "type": "DGXMonarchKSampler",
+            "widgets_values": [
+              42,
+              "randomize",
+              6,
+              1.0,
+              "euler",
+              "simple",
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 18,
+            "inputs": [
+              {
+                "link": 22,
+                "name": "samples",
+                "type": "LATENT"
+              },
+              {
+                "link": 23,
+                "name": "vae",
+                "type": "VAE"
+              }
+            ],
+            "mode": 0,
+            "order": 17,
+            "outputs": [
+              {
+                "links": [
+                  24
+                ],
+                "name": "IMAGE",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              2120,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "VAEDecode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "VAEDecode",
+            "widgets_values": []
+          },
+          {
+            "flags": {},
+            "id": 19,
+            "inputs": [
+              {
+                "link": 24,
+                "name": "images",
+                "type": "IMAGE"
+              }
+            ],
+            "mode": 0,
+            "order": 18,
+            "outputs": [
+              {
+                "links": [],
+                "name": "images",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              2460,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "SaveImage"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "SaveImage",
+            "widgets_values": [
+              "dgx_monarch_minimax_h3_image_edit"
+            ]
+          }
+        ],
+        "revision": 0,
+        "version": 0.4
+      }
+    },
+    {
+      "digest": "f12339d239326fac2a1ed62642eef1aeb99b8098df5da340ad0f39325d1f2e72",
+      "id": "workflow.dgx-monarch-minimax-h3-image-t2i",
+      "name": "dgx-monarch-minimax-h3-image-t2i",
+      "source": "example_workflows/dgx-monarch-minimax-h3-image-t2i.json",
+      "title": "MiniMax-H3-Image text to image",
+      "workflow": {
+        "config": {},
+        "extra": {
+          "linearData": {
+            "inputs": [
+              [
+                7,
+                "value"
+              ],
+              [
+                14,
+                "seed"
+              ],
+              [
+                12,
+                "width"
+              ],
+              [
+                12,
+                "height"
+              ],
+              [
+                14,
+                "steps"
+              ],
+              [
+                14,
+                "cfg"
+              ],
+              [
+                14,
+                "sampler_name"
+              ],
+              [
+                14,
+                "scheduler"
+              ],
+              [
+                3,
+                "unet_name"
+              ]
+            ],
+            "outputs": [
+              16
+            ]
+          }
+        },
+        "groups": [],
+        "id": "minimax-h3-image-text-to-image",
+        "last_link_id": 18,
+        "last_node_id": 16,
+        "links": [
+          [
+            1,
+            1,
+            0,
+            3,
+            0,
+            "DGXM_MESH"
+          ],
+          [
+            2,
+            5,
+            0,
+            9,
+            0,
+            "CLIP"
+          ],
+          [
+            3,
+            8,
+            0,
+            9,
+            1,
+            "STRING"
+          ],
+          [
+            4,
+            7,
+            0,
+            9,
+            2,
+            "STRING"
+          ],
+          [
+            5,
+            7,
+            0,
+            10,
+            0,
+            "STRING"
+          ],
+          [
+            6,
+            9,
+            0,
+            10,
+            1,
+            "STRING"
+          ],
+          [
+            7,
+            10,
+            0,
+            11,
+            0,
+            "*"
+          ],
+          [
+            8,
+            4,
+            0,
+            12,
+            0,
+            "CLIP"
+          ],
+          [
+            9,
+            6,
+            0,
+            12,
+            1,
+            "VAE"
+          ],
+          [
+            10,
+            10,
+            0,
+            12,
+            2,
+            "STRING"
+          ],
+          [
+            11,
+            12,
+            0,
+            13,
+            0,
+            "CONDITIONING"
+          ],
+          [
+            12,
+            3,
+            0,
+            14,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            13,
+            12,
+            0,
+            14,
+            1,
+            "CONDITIONING"
+          ],
+          [
+            14,
+            13,
+            0,
+            14,
+            2,
+            "CONDITIONING"
+          ],
+          [
+            15,
+            12,
+            1,
+            14,
+            3,
+            "LATENT"
+          ],
+          [
+            16,
+            14,
+            0,
+            15,
+            0,
+            "LATENT"
+          ],
+          [
+            17,
+            6,
+            0,
+            15,
+            1,
+            "VAE"
+          ],
+          [
+            18,
+            15,
+            0,
+            16,
+            0,
+            "IMAGE"
+          ]
+        ],
+        "nodes": [
+          {
+            "dgxm_widgets": {
+              "attention": "TORCH_FLASH",
+              "auto_gate": "first_use",
+              "comfy_managed": "off",
+              "compile_dit": false,
+              "config_path": "",
+              "family_adapter": "auto",
+              "gpus_per_host": 0,
+              "load_profile": false,
+              "lora_low_rss": "auto",
+              "mmap_fallback": false,
+              "mode": "auto",
+              "pipeline_depth": 1,
+              "reserve_vram_gb": 0.0,
+              "slab_weights": "auto",
+              "swap_verify": 2,
+              "sync_ulysses": true,
+              "topology": "auto",
+              "uma_reserve_gb": 0.0
+            },
+            "flags": {},
+            "id": 1,
+            "inputs": [],
+            "mode": 0,
+            "order": 0,
+            "outputs": [
+              {
+                "links": [
+                  1
+                ],
+                "name": "mesh",
+                "slot_index": 0,
+                "type": "DGXM_MESH"
+              }
+            ],
+            "pos": [
+              80,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchInit"
+            },
+            "size": [
+              315,
+              448
+            ],
+            "type": "DGXMonarchInit",
+            "widgets_values": [
+              "auto",
+              "auto",
+              "TORCH_FLASH",
+              "",
+              0,
+              0.0,
+              true,
+              false,
+              1,
+              false,
+              "auto",
+              "auto",
+              "first_use",
+              false,
+              2,
+              0.0,
+              "off",
+              "auto"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 2,
+            "inputs": [],
+            "mode": 0,
+            "order": 1,
+            "outputs": [],
+            "pos": [
+              80,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "Note"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "title": "DGX Monarch | MiniMax-H3-Image text to image",
+            "type": "Note",
+            "widgets_values": [
+              "MiniMax-H3-Image text to image at 2048x2048 (4 MP) in 6 steps, on the INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's own template loads. Set width and height on MiniMax H3 Image Conditioning in multiples of 32. ComfyUI's template notes say the model works from about 4 MP to 20 MP and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or 6272x2688, sides swapped for portrait. The If/Else switch is false as shipped, as in ComfyUI's template, so the request box goes to the model as written: write a full caption there. Set the switch to true and Generate Text rewrites a short request into a full caption on the driver, and Preview as Text shows it. It decodes greedily, so one request always gives the same caption. The instruction box holds this project's own short instruction for the expander, not the long task prompt of ComfyUI's template, so its captions differ from that template's. Sampling is KSampler at CFG 1 with euler and the simple scheduler, as in ComfyUI's template. At 6 steps that schedule lands within a thousandth of the sigma grid the checkpoint carries, and the output head picks its blocks by the nearest grid point, so keep 6 steps, euler and simple. Add no shift node: ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family. auto asks for sequence-parallel (uly2) on a configured pair, and a world of one GPU runs stock ComfyUI's forward. Every published DiT of this family pins comfy-kitchen's INT8 attention on all 50 blocks: a world of one GPU keeps the pins, as stock does, uly2 drops them and runs exact attention, and the render record says which. The two kernels differ, so a render on the pair is not bit for bit the render on one GPU. cfg2 and dp2 refuse, because the DiT takes one sample a call, and a padded ring refuses. The driver holds the 27.1 GB text encoder and the 1.2 GB VAE, and the 7.3 GB expander only while the switch is true; each Worker holds the 21.0 GB DiT. The first render of a new model, LoRA and residency combination runs the identity gate before any pixels, on this graph's mesh and topology: proof renders of at most two steps, from a fresh load before and after the swap or reload under test, must match bit for bit, and with slab residency on, one more render with slab off must match too. Allow a few minutes for these two to four proof renders. Later renders of the same combination skip the gate. This graph samples with KSampler (DGX Monarch), so each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 on this schedule; they span head blocks the 6-step render takes one at a time, and every proof leg spans them alike. No render of this family has run on hardware yet: docs/VALIDATION.md, under MiniMax-H3-Image, lists each hardware leg as NOT RUN beside the adapter's CPU proof against stock ComfyUI. Needs ComfyUI 0.45.0 or newer on the driver and every Worker. Expects minimax_h3_image_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_int8_convrot.safetensors and qwen3.5_9b_w4a8_gptq.safetensors in models/text_encoders (CLIP type minimax), and minimax_h3_image_vae_fp16.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "unet_name": "minimax_h3_image_pruned_int8_convrot.safetensors",
+              "weight_dtype": "default"
+            },
+            "flags": {},
+            "id": 3,
+            "inputs": [
+              {
+                "link": 1,
+                "name": "mesh",
+                "type": "DGXM_MESH"
+              }
+            ],
+            "mode": 0,
+            "order": 2,
+            "outputs": [
+              {
+                "links": [
+                  12
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              420,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchUNETLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "DGXMonarchUNETLoader",
+            "widgets_values": [
+              "minimax_h3_image_pruned_int8_convrot.safetensors",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 4,
+            "inputs": [],
+            "mode": 0,
+            "order": 3,
+            "outputs": [
+              {
+                "links": [
+                  8
+                ],
+                "name": "CLIP",
+                "slot_index": 0,
+                "type": "CLIP"
+              }
+            ],
+            "pos": [
+              80,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "CLIPLoader",
+            "widgets_values": [
+              "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+              "minimax",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 5,
+            "inputs": [],
+            "mode": 0,
+            "order": 4,
+            "outputs": [
+              {
+                "links": [
+                  2
+                ],
+                "name": "CLIP",
+                "slot_index": 0,
+                "type": "CLIP"
+              }
+            ],
+            "pos": [
+              80,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "CLIPLoader",
+            "widgets_values": [
+              "qwen3.5_9b_w4a8_gptq.safetensors",
+              "minimax",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 6,
+            "inputs": [],
+            "mode": 0,
+            "order": 5,
+            "outputs": [
+              {
+                "links": [
+                  9,
+                  17
+                ],
+                "name": "VAE",
+                "slot_index": 0,
+                "type": "VAE"
+              }
+            ],
+            "pos": [
+              80,
+              840
+            ],
+            "properties": {
+              "Node name for S&R": "VAELoader"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "VAELoader",
+            "widgets_values": [
+              "minimax_h3_image_vae_fp16.safetensors"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 7,
+            "inputs": [],
+            "mode": 0,
+            "order": 6,
+            "outputs": [
+              {
+                "links": [
+                  4,
+                  5
+                ],
+                "name": "STRING",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              420,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "PrimitiveStringMultiline"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "PrimitiveStringMultiline",
+            "widgets_values": [
+              "A wide photograph of a small mountain weather station at first light, taken from a low ridge with a 35mm lens. A white instrument hut with slatted sides stands on four steel legs in the left third of the frame, with a cup anemometer and a wind vane on a mast above it and a row of three rain gauges on a concrete pad beside it. Frost covers the short grass and the roof of the hut. Behind the station a valley fills with low cloud, and a line of snow-covered peaks catches warm orange light under a pale blue sky. A hand-painted wooden sign by the path reads \"STATION 7\" in black capitals. Sharp detail, natural color, long soft shadows."
+            ]
+          },
+          {
+            "flags": {},
+            "id": 8,
+            "inputs": [],
+            "mode": 0,
+            "order": 7,
+            "outputs": [
+              {
+                "links": [
+                  3
+                ],
+                "name": "STRING",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              420,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "PrimitiveStringMultiline"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "PrimitiveStringMultiline",
+            "widgets_values": [
+              "You write the caption an image model renders. Rewrite the user's request as one detailed English caption of a single still image. Keep every fact, name, number and quoted text of the request, and keep its style and medium. Say what a viewer sees: the main subject and where it sits in the frame, the setting, the light, the colors and materials, and the camera or the art medium. Put any text to render in double quotes and say where it sits. Describe what is there, never what is absent. Answer with the caption alone: no title, no list and no notes."
+            ]
+          },
+          {
+            "flags": {},
+            "id": 9,
+            "inputs": [
+              {
+                "link": 2,
+                "name": "clip",
+                "type": "CLIP"
+              },
+              {
+                "link": 3,
+                "name": "system_prompt",
+                "type": "STRING"
+              },
+              {
+                "link": 4,
+                "name": "prompt",
+                "type": "STRING",
+                "widget": {
+                  "name": "prompt"
+                }
+              }
+            ],
+            "mode": 0,
+            "order": 8,
+            "outputs": [
+              {
+                "links": [
+                  6
+                ],
+                "name": "generated_text",
+                "slot_index": 0,
+                "type": "STRING"
+              },
+              {
+                "links": [],
+                "name": "thinking",
+                "slot_index": 1,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              760,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "TextGenerateV2"
+            },
+            "size": [
+              315,
+              272
+            ],
+            "type": "TextGenerateV2",
+            "widgets_values": [
+              "",
+              8192,
+              "off",
+              true,
+              true,
+              "auto"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 10,
+            "inputs": [
+              {
+                "link": 5,
+                "name": "on_false",
+                "type": "STRING"
+              },
+              {
+                "link": 6,
+                "name": "on_true",
+                "type": "STRING"
+              }
+            ],
+            "mode": 0,
+            "order": 9,
+            "outputs": [
+              {
+                "links": [
+                  7,
+                  10
+                ],
+                "name": "output",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              760,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "ComfySwitchNode"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "ComfySwitchNode",
+            "widgets_values": [
+              false
+            ]
+          },
+          {
+            "flags": {},
+            "id": 11,
+            "inputs": [
+              {
+                "link": 7,
+                "name": "source",
+                "type": "*"
+              }
+            ],
+            "mode": 0,
+            "order": 10,
+            "outputs": [
+              {
+                "links": [],
+                "name": "STRING",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              1100,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "PreviewAny"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "PreviewAny",
+            "widgets_values": []
+          },
+          {
+            "flags": {},
+            "id": 12,
+            "inputs": [
+              {
+                "link": 8,
+                "name": "clip",
+                "type": "CLIP"
+              },
+              {
+                "link": 9,
+                "name": "vae",
+                "type": "VAE"
+              },
+              {
+                "link": 10,
+                "name": "prompt",
+                "type": "STRING",
+                "widget": {
+                  "name": "prompt"
+                }
+              }
+            ],
+            "mode": 0,
+            "order": 11,
+            "outputs": [
+              {
+                "links": [
+                  11,
+                  13
+                ],
+                "name": "positive",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              },
+              {
+                "links": [
+                  15
+                ],
+                "name": "LATENT",
+                "slot_index": 1,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              1100,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "MiniMaxH3ImageConditioning"
+            },
+            "size": [
+              315,
+              206
+            ],
+            "type": "MiniMaxH3ImageConditioning",
+            "widgets_values": [
+              "",
+              2048,
+              2048
+            ]
+          },
+          {
+            "flags": {},
+            "id": 13,
+            "inputs": [
+              {
+                "link": 11,
+                "name": "conditioning",
+                "type": "CONDITIONING"
+              }
+            ],
+            "mode": 0,
+            "order": 12,
+            "outputs": [
+              {
+                "links": [
+                  14
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              1440,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "ConditioningZeroOut"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "ConditioningZeroOut",
+            "widgets_values": []
+          },
+          {
+            "dgxm_widgets": {
+              "cfg": 1.0,
+              "control_after_generate": "randomize",
+              "denoise": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "seed": 42,
+              "steps": 6
+            },
+            "flags": {},
+            "id": 14,
+            "inputs": [
+              {
+                "link": 12,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              },
+              {
+                "link": 13,
+                "name": "positive",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 14,
+                "name": "negative",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 15,
+                "name": "latent_image",
+                "type": "LATENT"
+              }
+            ],
+            "mode": 0,
+            "order": 13,
+            "outputs": [
+              {
+                "links": [
+                  16
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              1440,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchKSampler"
+            },
+            "size": [
+              315,
+              294
+            ],
+            "type": "DGXMonarchKSampler",
+            "widgets_values": [
+              42,
+              "randomize",
+              6,
+              1.0,
+              "euler",
+              "simple",
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 15,
+            "inputs": [
+              {
+                "link": 16,
+                "name": "samples",
+                "type": "LATENT"
+              },
+              {
+                "link": 17,
+                "name": "vae",
+                "type": "VAE"
+              }
+            ],
+            "mode": 0,
+            "order": 14,
+            "outputs": [
+              {
+                "links": [
+                  18
+                ],
+                "name": "IMAGE",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              2120,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "VAEDecode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "VAEDecode",
+            "widgets_values": []
+          },
+          {
+            "flags": {},
+            "id": 16,
+            "inputs": [
+              {
+                "link": 18,
+                "name": "images",
+                "type": "IMAGE"
+              }
+            ],
+            "mode": 0,
+            "order": 15,
+            "outputs": [
+              {
+                "links": [],
+                "name": "images",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              2460,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "SaveImage"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "SaveImage",
+            "widgets_values": [
+              "dgx_monarch_minimax_h3_image"
+            ]
+          }
+        ],
+        "revision": 0,
+        "version": 0.4
+      }
+    },
+    {
       "digest": "176463dd790f4996b12f483245be378ba4228ce5e397413b5998c107fb58382a",
       "id": "workflow.dgx-monarch-minimax-h3-mp4",
       "name": "dgx-monarch-minimax-h3-mp4",

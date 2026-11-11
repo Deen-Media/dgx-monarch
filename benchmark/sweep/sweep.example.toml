@@ -172,6 +172,13 @@ auto_gate = ["uly2+fsdp"]
 # ph3image, so the graph meets all three of the vendor's DiT files. Its text
 # encoder and VAE stay as the graph names them; the int8 and w4a8 testing
 # graphs carry the matching sets.
+#
+# MiniMax-H3-Image needs none: minimax_h3_image_pruned_{bf16,int8_convrot,w4a8}
+# share the stem minimaxh3imagepruned, so each of its three graphs meets all
+# three DiT files. The text encoder, the VAE and the prompt expander stay as
+# the graph names them. The edit graph ships with the expander on, so its
+# cells render text a language model wrote; score identity on the text to
+# image graph or on the grid graph, which send the request as written.
 [artifact_groups."dgx-monarch-ideogram4-t2i"]
 "ideogram4_fp8_scaled.safetensors" = []
 "ideogram4_unconditional_fp8_scaled.safetensors" = []

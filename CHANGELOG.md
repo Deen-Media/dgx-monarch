@@ -14,6 +14,18 @@
   family, so auto takes uly2 for it and the driver prices its packed rows and
   its text encoder before dispatch. A row-check tool records the three
   row-keyed calls at a rank's rows for the hardware run.
+- MiniMax-H3-Image ships two templates, text to image and edit, on the files
+  ComfyUI's own templates load: the INT8 ConvRot DiT and text encoder, the
+  FP16 VAE and the W4A8 prompt expander behind an If/Else switch, off in text
+  to image and on in the edit, with KSampler at 6 steps, CFG 1, `euler` and
+  `simple`. The expander's instruction is this project's own short text,
+  decoded greedily, where ComfyUI's template carries the vendor's long task
+  prompt, so the two write different captions. A testing graph samples the
+  checkpoint's own sigma grid through Sampler Custom (DGX Monarch). The sweep
+  labels the family's cfg2 and dp2 cells from the driver's own preflight.
+  [MODELS](docs/MODELS.md#model-minimax-h3-image) lists the eight published
+  files with their sizes. No render of this family has run on hardware yet
+  ([VALIDATION](docs/VALIDATION.md#minimax-h3-image)).
 - Studio is a supported interface from this release, beside the CLI, the TUI
   and the ComfyUI panel. Its docs and the capability contract in Settings no
   longer call it a draft. The
