@@ -1,7 +1,9 @@
 # Model files required by the public workflows and generated test fixtures.
 #
 # Model files only. A template also names a demo image, video or audio clip
-# for its input nodes; those are not model files and take no row here.
+# for its input nodes; those are not model files and take no row here. The
+# pack ships them in example_workflows/input and copies the ones ComfyUI's
+# input folder lacks at import (src/dgx_monarch/demo_inputs.py).
 #
 # One [[artifact]] row per distinct file. `dest` is the models subfolder the
 # loader resolves the name against, `url` the vendor or repack address the
