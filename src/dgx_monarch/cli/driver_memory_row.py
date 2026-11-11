@@ -95,8 +95,9 @@ def verdict(answers: list[tuple[str, Mapping[str, Any]]],
             machine_total: float | None = None) -> tuple[str, str, str]:
     """The row for every driver that answered; the worst one leads."""
     if not answers:
-        return OK, NAME, ("no local ComfyUI answered; on a GPU that shares the host's memory a driver "
-                          f"corrects the reading at node import unless {DISABLE_ENV}=1")
+        return OK, NAME, ("no ComfyUI driver with this pack answered on this box, so there is no reading "
+                          "to check; start the driver and run doctor again. On a GPU that shares the "
+                          f"host's memory it corrects the reading at node import unless {DISABLE_ENV}=1")
     verdicts = [(candidate, *classify(payload, machine_total)) for candidate, payload in answers]
     worst = next((item for item in verdicts if item[1] == WARN), verdicts[0])
     others = [f"{candidate}: {status}" for candidate, status, _detail in verdicts if candidate != worst[0]]

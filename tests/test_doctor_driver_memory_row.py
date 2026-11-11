@@ -7,6 +7,8 @@ pool). No case needs a driver, CUDA or the network.
 """
 from __future__ import annotations
 
+import types
+
 import pytest
 
 from dgx_monarch import driver_uma_memory
@@ -70,7 +72,8 @@ def test_an_answer_without_the_figures_is_unobserved_not_a_guess(payload):
 def test_no_driver_answering_says_what_a_driver_would_do():
     status, name, detail = driver_memory_row.verdict([])
     assert (status, name) == (OK, "driver memory reading")
-    assert "no local ComfyUI answered" in detail and driver_uma_memory.DISABLE_ENV in detail
+    assert detail.startswith("no ComfyUI driver with this pack answered on this box, so there is no reading to check")
+    assert "run doctor again" in detail and driver_uma_memory.DISABLE_ENV in detail
 
 
 def test_the_worst_driver_leads_the_row():
@@ -147,6 +150,12 @@ def test_doctor_returns_the_row_in_every_mode(monkeypatch, capsys, mode):
     floor = driver_uma_memory.floor_bytes(SPARK)
     answer = [("127.0.0.1:8188", _stats(device_free=66 * GIB - floor, available=66 * GIB))]
     monkeypatch.setattr(driver_memory_row, "fetch", lambda: answer)
+    # The row judges one pool against this box's memory, which it reads through psutil. The answer above
+    # is a Spark's, so the box is made a Spark too: on a 16 GiB runner the row would rightly say the
+    # GPU has memory of its own.
+    import psutil
+
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: types.SimpleNamespace(total=SPARK, available=66 * GIB))
     config = {"local, no cluster.toml": None, "local, a config with no hosts": ClusterConfig(),
               "cluster": _cluster()}[mode]
     rows = doctor._doctor_rows(config)
@@ -157,6 +166,13 @@ def test_doctor_returns_the_row_in_every_mode(monkeypatch, capsys, mode):
     # It is a driver check: it comes before the checks that need a mesh or a cluster.
     names = [row["name"] for row in rows]
     assert names.index("driver memory reading") == names.index("memory headroom") + 1
+    # The same answer read on a box that is not a Spark (a 16 GiB machine): the device's 122 GiB cannot
+    # be this box's memory, so the row says the GPU has its own. Doctor and the driver share one box.
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: types.SimpleNamespace(total=16 * GIB, available=8 * GIB))
+    rows = doctor._doctor_rows(config)
+    capsys.readouterr()
+    (mine,) = [row for row in rows if row["name"] == "driver memory reading"]
+    assert "the GPU has memory of its own (122 GiB beside 16 GiB of host memory)" in mine["detail"]
 
 
 def test_a_comfyui_that_does_not_serve_this_pack_is_not_judged(monkeypatch):
