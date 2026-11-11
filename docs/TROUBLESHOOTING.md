@@ -8027,3 +8027,40 @@ differ, and every collective render checks them again before it dispatches), the
 reset the Attached mesh so no actor keeps the old ComfyUI imported. With
 1.4.0 on ComfyUI 0.45.0, update dgx-monarch too. A true single-GPU reference
 (`mode=local`, `gpus_per_host=1`) runs stock's own forward and needs neither.
+
+## 148. A render with UltraTex conditioning refuses on cfg2, dp2, ring or a wider mesh
+
+**Symptom:** a Flux, Flux 2 or LongCat render whose conditioning comes from
+ComfyUI's UltraTex Conditioning node refuses class P before dispatch, or on
+every Worker before sampling, with a message that opens "flux2: this render's
+conditioning carries UltraTex view inputs" and names the topology it
+resolved. Under `auto` on a mesh of more than two GPUs the message opens
+"auto: this flux2 render's conditioning carries UltraTex view inputs".
+
+**Cause:** UltraTex came with ComfyUI 0.45.0 (commit 61e524b of 2026-11-10):
+LoRAs for FLUX.2 Klein 9B that texture a mesh. Its node puts `view_grid`, `token_masks` and
+`reference_views` on the conditioning. Stock's Flux forward reads the batch
+as the views of each sample, consecutive rows, tiles them into one image,
+keeps only the foreground tokens and places the view references over their
+tiles. cfg-parallel and data parallelism give each rank part of the batch:
+for a one-sample render that is part of its views, and stock's forward
+stops with `view_grid: the latent batch (3) must hold all 6 views of each
+sample.`; for more samples each rank renders whole samples in calls no test
+has compared with one GPU's. Ring attention is not stock's math, and no
+Ulysses degree above 2 has been checked. On CPU against ComfyUI 0.45.0, uly2
+returns stock's bits with these inputs in the Flux 1, Flux 2 and LongCat
+layouts, and uly2+fsdp runs the token-mask
+step on the wrapped model with nothing to gather
+([MODELS](MODELS.md#model-ultratex)). The driver reads the inputs from the
+prompts and the family from the checkpoint header, so the refusal costs no
+Worker call; if it cannot read the header, every Worker reads the same
+request against its loaded model and refuses alike, after the readiness
+exchange and before sampling starts.
+
+**Fix:** on a two-GPU mesh pick topology `uly2`, or `uly2+fsdp` where the
+model does not fit resident, or leave `auto`, which picks uly2 for Flux 2
+and skips LongCat's cfg2 row for such a render. Or run the workflow on one
+GPU: `mode=local` with `gpus_per_host=1` and topology `single`, which runs
+ComfyUI's own forward. Fleet KSampler runs each job on one GPU, so it is not
+refused. A graph without the UltraTex Conditioning node is not affected, and
+neither is Chroma, whose forward reads none of these inputs.

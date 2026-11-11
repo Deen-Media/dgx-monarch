@@ -317,6 +317,13 @@
   file has a one-block head and renders as before. The sharded block loop also
   pops the prefetch queue with stock's block scope, so ComfyUI's malloc graph
   under comfy-managed residency plans each block as stock's forward does ([TROUBLESHOOTING #147](docs/TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+- The comfy canary's outside forward modules seam passes on ComfyUI 0.45.0
+  again. UltraTex made Flux's `extra_conds` call `preprocess_token_masks`, and
+  the seam now holds a table of such calls that touch no module and no
+  parameter: it runs the call on a tiny real Flux with every parameter watched,
+  so the canary fails the day upstream makes it reach one. The conditioning
+  wire seam also holds UltraTex's view grid, masks and view list
+  ([ADAPTERS](docs/ADAPTERS.md#flux-family-view-conditioning-ultratex)).
 - docs/CAMPAIGN_COLUMNS.md types `legs.probe.message` and
   `legs.resident.message` as text: their values open with a plain `[dgxm:...]`
   tag and are not JSON arrays. A column now types as JSON only when every value
@@ -407,6 +414,19 @@
 
 ### Rendering
 
+- UltraTex, the FLUX.2 Klein 9B LoRAs that ComfyUI 0.45.0 paints a mesh
+  texture with, runs on one GPU, uly2 and uly2+fsdp. Its conditioning tiles a
+  sample's views into one image and drops background tokens inside stock's
+  Flux forward, and on CPU against ComfyUI 0.45.0 the uly2 forward returns
+  stock's bits in the Flux 1, Flux 2 and LongCat layouts: with the view grid
+  alone, the token masks alone, a view reference on a tile away from the front
+  and all three together, batch 1 and 2. The FSDP wrap runs the token-mask step
+  with nothing to gather. cfg2, dp2, ring
+  and any degree above uly2 split a sample's views or are not stock's math, so
+  a Flux, Flux 2 or LongCat render with UltraTex conditioning refuses there
+  before dispatch, and auto skips the cfg rows for it. No hardware render has
+  run yet ([MODELS](docs/MODELS.md#model-ultratex),
+  [TROUBLESHOOTING #148](docs/TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
 - uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1 fill each
   fused-norm call of their sharded blocks to the rows one GPU normalizes, as
   FLUX.3 and MOSS-Image already did. comfy-kitchen's fused AdaLN picks its

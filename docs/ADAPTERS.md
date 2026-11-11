@@ -297,6 +297,36 @@ than stacks on a repeat call.
    takes other parameters than the bound one repeats, is left unbound and
    logged, and `tests/test_adaln_parity_blocks.py` names the change against an
    installed ComfyUI.
+
+   <a id="flux-family-view-conditioning-ultratex"></a>
+   **Flux-family view conditioning (UltraTex).** ComfyUI 0.45.0 gave the Flux
+   forward three conditioning inputs for the UltraTex LoRAs: `view_grid`,
+   which tiles each run of n consecutive batch rows (one sample's views) into
+   one image; `token_keep`, which `model_base.Flux.extra_conds` computes once
+   through the diffusion model's `preprocess_token_masks` and which keeps only
+   foreground tokens of the target and the references; and `reference_views`,
+   which places a reference over its view's tile. Stock `Flux._forward`
+   applies all three around `forward_orig`, and the Flux, Flux2 and LongCat
+   adapters rebind `forward_orig` alone, so stock's own code tiles, drops and
+   places on every topology, and the sharded forward shards the stream stock's
+   `forward_orig` takes. The kept count is usually odd, which the vouched pad
+   exclusion covers, and the fused-norm counts above are that stream's, so
+   they stay stock's. `tests/test_flux_views_comfy_exactness.py` holds uly2
+   to stock's bits on a real ComfyUI on CPU: in FLUX.2's layout with the view
+   grid alone, the token masks alone, a view reference on a tile away from the
+   front (where `reference_views` moves stock's positions; on the front tile it
+   changes nothing) and all three together, batch 1 and 2, odd and even
+   streams, every fused-norm launch at stock's rows, and the FSDP2 wrap running
+   `preprocess_token_masks` and the forward; and in Flux 1's and LongCat's
+   layouts with all three together and with the moved view reference.
+   `preprocess_token_masks` touches no module and no parameter, so FSDP
+   replicates nothing for it; the `outside forward modules` seam holds that
+   with the module-free table below. cfg-parallel and data parallelism split
+   the batch, whose rows are the views, ring is not stock's math, and no
+   Ulysses degree above 2 is proven, so `adapters/flux_views.py` refuses a
+   render whose prompts carry any of the three on those topologies, on the
+   driver and on every Worker rank, and auto skips the cfg rows for it
+   (TROUBLESHOOTING #148).
 2. **USP attention routing** for every attention over the sharded sequence:
    * blocks that are pure self-attention: thread
      `usp_options(transformer_options, ctx.usp_attention)` into the block loop;
@@ -1504,6 +1534,17 @@ The worker applies two capacity and performance transforms in
   where replication is still correct but not needed. The same seam reads the
   class-scoped rows with a reader that follows subscripted attributes and
   checks them against forward hooks on a tiny real model.
+
+  Two more tables name methods `extra_conds` reaches that replicate nothing.
+  The refused-call table names one whose input every topology but one GPU
+  refuses first (MOSS-Image's `preprocess_refs`). The module-free table names
+  one that touches no module and no parameter: Flux's
+  `preprocess_token_masks` (ComfyUI 0.45.0, UltraTex), which pads, tiles and
+  builds position ids. The seam runs that call on a tiny real Flux with a
+  forward hook on every module that owns a parameter and a torch function
+  mode that records every call handed one, so the canary fails the day the
+  method reaches either. Both tables are inert on a ComfyUI whose model lacks
+  the method.
 
 ## Registration
 
