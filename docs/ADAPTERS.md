@@ -1338,8 +1338,9 @@ than stacks on a repeat call.
    Anima. The `llm_adapter` stays replicated under FSDP, because
    `extra_conds` reaches it (`OUTSIDE_FORWARD_MODULE_ATTRS`). The
    `inference mode branches` seam in `tests/canary/comfy_seam_contracts.py`
-   holds every place ComfyUI's source reads or sets inference mode, or reads
-   grad mode, by file and function, and checks that each `model_base`
+   holds every place ComfyUI's source reads or sets inference mode, reads a
+   tensor's inference flag, or reads grad mode, by file and function, alias
+   and string forms included, and checks that each `model_base`
    branch has its adapter bind: on ComfyUI v0.45.0 and 8a98ecf58 those are
    `Flux3.extra_conds`, `Anima.extra_conds` and `MOSSImage.extra_conds`,
    and no other site changes a Worker's numbers.

@@ -1903,7 +1903,14 @@ every Anima render under `auto` takes uly2 (row 48). The hardware legs:
 | `auto` (uly2) on the equal pair (`eqsame`), one step and full schedule | stock ComfyUI on one GPU | bit-identical | NOT RUN |
 | Explicit cfg2 on the shipped pair and on the equal pair, one step and full schedule | stock ComfyUI on one GPU | measured: NRMS and largest difference recorded | NOT RUN |
 | `uly2+fsdp` on the shipped pair, one step | resident uly2 | bit-identical | NOT RUN |
+| `cfg2+fsdp` on the shipped pair, one step | resident cfg2 | bit-identical | NOT RUN |
+| The shipped graph with a LoRA that has `llm_adapter` and DiT units, `single` and uly2, one step; then a strength change and the LoRA's removal on the same load | stock ComfyUI on one GPU with the same LoRA; after removal, the render without it | bit-identical; no error | NOT RUN |
+| The shipped template as shipped (`auto_gate` first_use, default slab), one render on a fresh fleet | the gate's own legs | the gate PASSes | NOT RUN |
+| Explicit cfg2 on a pair where one side passes 512 T5 tokens, one step | stock ComfyUI on one GPU | bit-identical: stock does not fold that pair | NOT RUN |
 | Warm sampler walls for one GPU, uly2 and cfg2 on the shipped pair at 1024 square | each other, head cap noted | recorded | NOT RUN |
+
+Every leg's Worker log shows `anima text branch: preprocessed once
+(extra_conds)` on every rank.
 
 <a id="evidence-boogu"></a>
 
@@ -2640,9 +2647,10 @@ lists every cell's walls, speedups and fidelity.
   1152, 1216, 1280 and 1536, Turbo BF16 at 1536, Krea2 Turbo FP8-scaled at
   1152, 1216, 1280, 1408 and 1536 (CFG 1 under `euler_cfg_pp`) and at 1536
   under CFG 4.5 Euler, Chroma1-HD BF16, FP8-mixed and INT8 ConvRot at 1152 to
-  1280, Qwen-Image 2512 FP8 at 1152 to 1328, and Kandinsky5 Lite image, Boogu
-  FP8 and Anima BF16 at 1024. uly2 on Torch Flash was bit-identical in every
-  cell.
+  1280, Qwen-Image 2512 FP8 at 1152 to 1328, and Kandinsky5 Lite image and
+  Boogu FP8 at 1024, and Anima BF16 at 1024 against the Worker's earlier one
+  GPU (superseded on 2026-11-10, [Anima](#anima-text-branch-fix)). uly2 on
+  Torch Flash was bit-identical in every cell.
 - **Krea2 RAW INT8.** cfg2 was exact at every size but no faster than uly2
   below 1536: 0.97x at 1152, 0.98x at 1216, 1.03x at 1280 and 1.08x at 1536.
   Exact is not enough for a row, so row 15 grants FP8 and BF16 only and INT8

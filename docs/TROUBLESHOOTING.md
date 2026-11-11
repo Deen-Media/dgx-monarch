@@ -8045,16 +8045,16 @@ branches on that mode. Inside it, it runs the text through the model's
 `llm_adapter` once per conditioning and pads it to 512 rows. Outside it, the
 branch ComfyUI keeps for training, it hands the forward the raw Qwen3 rows
 with the T5 ids, and the forward runs the adapter and the pad on every model
-call. Each conditioning gets the same math, but the batching differs:
-ComfyUI joins the prompt and the negative into one model call only when their
-text tensors have the same shape. In stock both have 512 rows, so each step
-makes one batch-2 call; on a Worker the raw rows of the shipped pair differ in
+call. Each conditioning gets the same math, but the batching differs: ComfyUI
+joins the prompt and the negative into one model call only when their text
+tensors have the same shape. In stock both have 512 rows, so each step makes
+one batch-2 call; on a Worker the raw rows of the shipped pair differ in
 length, so each step made two batch-1 calls, and GB10's matrix kernels change
 with the row count. That is the expected cause of the 0.028; as of 2026-11-10
-no hardware run on the fixed Workers has confirmed it. A CPU test against ComfyUI v0.45.0 and 8a98ecf58 shows the
-two call patterns, and that inference mode alone picks between them; on the
-CPU the latents still match, because its kernels do not change with the
-batch.
+no hardware run on the fixed Workers has confirmed it. A CPU test against
+ComfyUI v0.45.0 and 8a98ecf58 shows the two call patterns, and that inference
+mode alone picks between them; on the CPU the latents still match, because its
+kernels do not change with the batch.
 
 **Fix:** update. On every load the Anima adapter runs stock's `extra_conds`
 under inference mode, as the FLUX.3 and MOSS-Image adapters do, so every
@@ -8065,7 +8065,8 @@ batch-2 call, cfg2's two batch-1 calls, one per rank, are not the same math
 for Anima: `auto` table row 47 (cfg2 below 1.2 MP on BF16) is withdrawn and
 every Anima render under `auto` takes uly2 (row 48). Explicit cfg2 still
 renders. The comfy canary's `inference mode branches` seam lists every place
-ComfyUI's source reads or sets the mode, so a new branch of this kind fails
-the canary before it reaches a render. As of 2026-11-10 no hardware run has
+ComfyUI's source reads or sets inference mode, reads a tensor's inference
+flag, or reads grad mode, so a new branch of this kind fails the canary before
+it reaches a render. As of 2026-11-10 no hardware run has
 compared the fixed Workers with stock
 ([VALIDATION](VALIDATION.md#anima-text-branch-fix)).

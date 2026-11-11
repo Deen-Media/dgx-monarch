@@ -1,12 +1,13 @@
-"""The prompt-pair tag that row 79 (Boogu) and Chroma's rows 20 and 19 need for cfg2 (issue #52).
+"""The prompt-pair tag that Boogu's row 79 and Chroma's rows 20 and 19 need for cfg2 (#52).
 
 On 2026-11-07 Boogu's row and Anima's row 47 read bit-identical to one GPU on
 the templates' pairs, whose text rows differ, and off one GPU on two pairs of
 equal rows, which one GPU folds into one batch-2 call. Row 47 was withdrawn on
 2026-11-10: a Worker now pads Anima's text to 512 rows as stock does, so one
-GPU folds every Anima pair and its Qwen3 rows decide nothing. The sampler nodes tag a pair whose rows differ
-on the latent; every resolving site reads the tag, and anything the driver
-cannot read stays untagged, which keeps the Ulysses row.
+GPU folds every Anima pair and its Qwen3 rows decide nothing. The sampler
+nodes tag a pair whose rows differ on the latent; every resolving site reads
+the tag, and anything the driver cannot read stays untagged, which keeps the
+Ulysses row.
 
 No comfy, no GPU, no mesh: the render and resolution seams are stubbed.
 """

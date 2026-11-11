@@ -623,8 +623,9 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   sampler node tagged. Anima row 47 had the same scope until 2026-11-10, when
   the Workers began to prepare Anima's text as stock does: stock pads it to
   512 rows before the batching decision, so one GPU folds every Anima pair,
-  and the row was withdrawn (TROUBLESHOOTING #148). Chroma rows 20 and 19 take the same
-  scope: their pair was the shipped one, whose rows differ, and a BF16 pair of
+  and the row was withdrawn (TROUBLESHOOTING #148). Chroma rows 20 and 19
+  take the same scope: their pair was the shipped one, whose rows differ, and
+  a BF16 pair of
   equal rows read NRMS 0.034 on cfg2. The tag (`cfg_pair.text_rows_differ`)
   needs one plain conditioning entry a side whose text tensors differ in rows.
   It rides on the latent beside the cfg++ tag, so every site that resolves

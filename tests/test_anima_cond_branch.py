@@ -26,8 +26,9 @@ differ, runs the adapter on every call, and cfg's fold test answers no where
 one GPU folds. The bind is idempotent and survives patcher and LoRA clones,
 and the persistence canary takes it through the store's whole LoRA life
 cycle with LoRA units on the adapter, which now runs in the inference-mode
-window. The comfy-canary job runs this file against ComfyUI master and the
-newest release.
+window. Under a real one-rank FSDP2 wrap the adapter runs before the first
+root forward, in inference mode, on parameters the wrap left whole. The
+comfy-canary job runs this file against ComfyUI master and the newest release.
 """
 from __future__ import annotations
 
@@ -381,6 +382,63 @@ def test_the_bind_is_idempotent_and_survives_a_patcher_clone_and_a_lora_clone(co
     for other in (patcher, clone, lora_clone):
         assert other.model is patcher.model
         assert set(_off_mode(lambda m=other.model: m.extra_conds(**kwargs))) == {"c_crossattn"}
+
+
+# --- Under a real FSDP2 wrap ---------------------------------------------------------
+
+
+def test_the_bound_adapter_runs_before_the_first_fsdp_forward_on_plain_parameters(
+        monkeypatch, comfy, tmp_path):
+    """The bind moves the llm_adapter out of the root forward and in front of
+    it, where no FSDP pre-forward hook has gathered anything. One gloo rank on
+    the CPU, the wrap adapters/fsdp.py makes (blocks, then the root, the
+    auxiliary census ignored): the adapter's parameters stay plain tensors,
+    it runs twice a render in inference mode before the first root forward,
+    and every model call and the latent equal stock's unwrapped run."""
+    import torch.distributed.fsdp
+    from torch.distributed.device_mesh import init_device_mesh
+
+    from dgx_monarch.adapters.fsdp_islands import auxiliary_module_parameters
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    positive, negative = _pair()
+    stock = _load(comfy)
+    stock_probe = _Probe(comfy, stock)
+    expected = _stock_sample(comfy, stock, positive, negative)
+    stock_probe.close()
+
+    torch.distributed.init_process_group(
+        backend="gloo", init_method=f"file://{tmp_path / 'pg'}", rank=0, world_size=1)
+    try:
+        patcher = _load(comfy)
+        model, dm = patcher.model, patcher.model.diffusion_model
+        for parameter in dm.parameters():
+            parameter.requires_grad = False
+        ignored = auxiliary_module_parameters(dm, model)
+        assert set(dm.llm_adapter.parameters()) <= ignored
+        mesh = init_device_mesh("cpu", (1,))
+        for block in dm.blocks:
+            torch.distributed.fsdp.fully_shard(block, mesh=mesh, ignored_params=ignored)
+        torch.distributed.fsdp.fully_shard(dm, mesh=mesh, reshard_after_forward=True,
+                                           ignored_params=ignored)
+        assert any(type(p).__name__ == "DTensor" for p in dm.blocks[0].parameters())
+        events: list = []
+        dm.register_forward_pre_hook(lambda *_a, **_k: events.append("forward"), with_kwargs=True)
+        dm.llm_adapter.register_forward_pre_hook(lambda *_a: events.append((
+            "adapter", torch.is_inference_mode_enabled(),
+            all(type(p.data) is torch.Tensor for p in dm.llm_adapter.parameters()))))
+        _inject(monkeypatch, patcher)
+        probe = _Probe(comfy, patcher)
+        samples = _worker_sample(monkeypatch, patcher, positive, negative)
+        probe.close()
+    finally:
+        torch.distributed.destroy_process_group()
+    first = events.index("forward")
+    assert events[:first] == [("adapter", True, True)] * 2
+    assert not any(isinstance(event, tuple) for event in events[first:])
+    assert probe.same_calls_as(stock_probe)
+    assert torch.equal(samples, expected)
 
 
 # --- The persistence canary ---------------------------------------------------------

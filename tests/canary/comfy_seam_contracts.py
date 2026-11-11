@@ -182,12 +182,13 @@ The seams, in run order:
                               stock-row route, and the paired rope helper the
                               self-attention calls
  52. inference mode branches  every place ComfyUI's source reads or sets
-                              inference mode, or reads grad mode, by file and
-                              function; the adapter bind each model_base
-                              branch needs, and each bind's branch; and on a
-                              tiny real Anima, the 512-row text branch only
-                              inference mode takes and the bind that takes it
-                              off inference mode
+                              inference mode, reads a tensor's inference flag,
+                              or reads grad mode, by file and function, alias
+                              and string forms included; the adapter bind each
+                              model_base branch needs, and each bind's branch;
+                              and on a tiny real Anima, the 512-row text branch
+                              only inference mode takes and the bind that
+                              takes it off inference mode
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -6012,9 +6013,9 @@ def _one_block_model(block):
     return types.SimpleNamespace(transformer_blocks=[block])
 
 
-# Every place ComfyUI reads or sets torch's inference mode, and every place it
-# reads grad mode, which inference mode turns off and a Worker's sampling
-# thread has on, by file, enclosing function and name. The value says what a
+# Every place ComfyUI reads or sets torch's inference mode, reads a tensor's
+# inference flag, or reads grad mode, which inference mode turns off and a
+# Worker's sampling thread has on, by file, enclosing function and name. The value says what a
 # Worker meets there; the inference mode branches seam holds the installed
 # tree to this table.
 _INFERENCE_MODE_SITES: dict[tuple[str, str, str], str] = {
@@ -6028,6 +6029,10 @@ _INFERENCE_MODE_SITES: dict[tuple[str, str, str], str] = {
         "clones an inference parameter outside inference mode: the same values",
     ("comfy/utils.py", "set_attr_param", "is_inference_mode_enabled"):
         "clones an inference tensor outside inference mode: the same values",
+    ("comfy/ops.py", "_quantized_apply", "is_inference"):
+        "the tensor test of that same clone",
+    ("comfy/utils.py", "set_attr_param", "is_inference"):
+        "the tensor test of that same clone",
     ("comfy/utils.py", "tiled_scale_multidim", "inference_mode"):
         "enters inference mode itself",
     ("comfy/k_diffusion/deis.py", "cal_intergrand", "inference_mode"):
@@ -6043,41 +6048,62 @@ _INFERENCE_MODE_SITES: dict[tuple[str, str, str], str] = {
     ("comfy/ldm/depth_anything_3/transform.py", "_sqrt_positive_part", "is_grad_enabled"):
         "Depth Anything 3 nodes, which no Worker runs",
 }
-_MODE_NAMES = frozenset({"is_inference_mode_enabled", "inference_mode", "is_grad_enabled"})
-_MODE_SCAN_ROOTS = ("comfy", "comfy_extras", "comfy_api", "comfy_execution", "nodes.py",
-                    "execution.py")
+_MODE_NAMES = frozenset({"is_inference_mode_enabled", "inference_mode", "is_grad_enabled",
+                         "is_inference"})
+# Directories under the ComfyUI root the scan skips: tests, installed custom
+# node packs, and the data folders, which hold models and media, not code.
+_MODE_SCAN_SKIP = frozenset({"tests", "tests-unit", "custom_nodes", "models", "input", "output",
+                             "user", "temp"})
 
 
 def _inference_mode_sites(root: Path) -> dict[tuple[str, str, str], int]:
     """Every use of a ``_MODE_NAMES`` name under ``root``, by file and enclosing function.
 
-    Any attribute of that name counts, whatever it hangs off (``torch.``, an
-    alias of torch, anything else), and so does the bare name a
-    ``from torch import`` leaves, so an aliased or re-exported read is a site
-    too. A read routed through a helper in another package is not seen.
+    Every Python file under the root counts but those in ``_MODE_SCAN_SKIP`` and
+    hidden directories. Any attribute of that name counts, whatever it hangs
+    off (``torch.``, an alias of torch, a tensor), and so does a bare name, the
+    import that brings one in, renamed or not, and a string of that name, as
+    ``getattr(torch, ...)`` takes it, so an aliased or re-exported read is a
+    site too. A read routed through a helper in another package, or through a
+    name built at run time, is not seen.
     """
     import ast
     from collections import Counter
 
     found: Counter = Counter()
-    paths = []
-    for entry in _MODE_SCAN_ROOTS:
-        path = root / entry
-        paths.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path] if path.is_file() else [])
+
     def visit(node, scope: str, relative: str) -> None:
         for child in ast.iter_child_nodes(node):
             inner = scope
             if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 inner = f"{scope}.{child.name}" if scope else child.name
-            if isinstance(child, ast.Attribute) and child.attr in _MODE_NAMES:
-                found[(relative, scope or "<module>", child.attr)] += 1
-            elif isinstance(child, ast.Name) and child.id in _MODE_NAMES:
-                found[(relative, scope or "<module>", child.id)] += 1
+            name = None
+            if isinstance(child, ast.Attribute):
+                name = child.attr
+            elif isinstance(child, ast.Name):
+                name = child.id
+            elif isinstance(child, ast.alias):
+                # A renamed import leaves only its new name at each read, so
+                # the import itself is the site.
+                name = child.name
+            elif isinstance(child, ast.Constant) and isinstance(child.value, str):
+                name = child.value
+            if name in _MODE_NAMES:
+                found[(relative, scope or "<module>", name)] += 1
             visit(child, inner, relative)
 
-    for path in paths:
-        relative = path.relative_to(root).as_posix()
-        visit(ast.parse(path.read_text(encoding="utf-8-sig"), filename=relative), "", relative)
+    for directory, subdirectories, files in os.walk(root):
+        subdirectories[:] = sorted(
+            name for name in subdirectories
+            if not name.startswith(".")
+            and not (Path(directory) == root and name in _MODE_SCAN_SKIP)
+            and name not in ("tests", "tests-unit"))
+        for file in sorted(files):
+            if file.endswith(".py"):
+                path = Path(directory) / file
+                relative = path.relative_to(root).as_posix()
+                visit(ast.parse(path.read_text(encoding="utf-8-sig"), filename=relative), "",
+                      relative)
     return dict(found)
 
 
@@ -6106,15 +6132,17 @@ def _tiny_anima_base():
 
 
 def _assert_inference_mode_branches_seam() -> None:
-    """Every inference-mode and grad-mode site in ComfyUI, and the bind each branch needs.
+    """Every inference-mode, inference-flag and grad-mode site in ComfyUI, and each bind.
 
     ComfyUI runs a prompt inside ``torch.inference_mode()``
     (``PromptExecutor.execute_async``); a Worker samples on a thread outside
     it, with grad mode on. A model method that branches on the mode takes the
     other branch on a Worker, as ``Anima.extra_conds`` did until 2026-11-10:
     the raw text and the T5 inputs went to the forward, a pair whose rows
-    differ ran as two batch-1 calls where stock folds it into one, and the
-    one-GPU render read one-step NRMS 0.028 against stock. Pinned here: (a)
+    differ ran as two batch-1 calls where stock folds it into one, the
+    expected cause of the one-step NRMS 0.028 its one-GPU render read against
+    stock. A branch on a tensor's ``is_inference()`` flag is the same kind:
+    stock's conds are inference tensors and a Worker's are not. Pinned here: (a)
     the installed tree's sites, walked from source by file, enclosing function
     and name, equal ``_INFERENCE_MODE_SITES``, so a new or moved branch turns
     this red before it reaches a render; (b) every ``model_base`` branch sits

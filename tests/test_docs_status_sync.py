@@ -934,7 +934,7 @@ def _auto_selected_modes(family: str, cfg_value: float,
     """Every parallel mode `auto` can land on for this family at this CFG.
 
     Both prompt pairs count: a row scoped to pairs of different text rows
-    (Anima 47, Boogu 79, Chroma 20 and 19) is one auto takes on the shipped graphs.
+    (Boogu 79, Chroma 20 and 19) is one auto takes on the shipped graphs.
     """
     from itertools import product
 

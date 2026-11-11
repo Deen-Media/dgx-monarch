@@ -415,11 +415,11 @@
   model call and split a prompt pair whose rows differ into two batch-1 calls
   where stock makes one batch-2 call. On 2026-11-10 the shipped graph's
   one-GPU Worker render read one-step NRMS 0.028 against stock, which this
-  difference is expected to explain. The adapter now runs stock's method in inference mode
-  on every load, as FLUX.3's and MOSS-Image's do, and on the CPU the Worker's
-  model calls now equal stock's; a canary seam lists every inference-mode
-  branch in ComfyUI's source. The hardware comparison against stock has not
-  run yet
+  difference is expected to explain. The adapter now runs stock's method in
+  inference mode on every load, as FLUX.3's and MOSS-Image's do, and on the
+  CPU the Worker's model calls now equal stock's; a canary seam lists every
+  inference-mode branch in ComfyUI's source. The hardware comparison against
+  stock has not run yet
   ([TROUBLESHOOTING #148](docs/TROUBLESHOOTING.md#148-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
 - Change: Anima under `auto` renders on uly2 at every size, where it took cfg2
   below 1.2 MP on BF16. With the fix one GPU folds the prompt and the negative
