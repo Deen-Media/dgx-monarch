@@ -22,8 +22,9 @@ Three more facts come from the header, none needing the model:
   ``config`` metadata (``transformer.pdd_sigmas``) and has no default for it, so
   stock ComfyUI fails to build a file without it. The upstream gate refuses such
   a file first (``upstream_gate.py``).
-* The family itself, which this release carries no model forward for: the
-  upstream gate refuses every file of the family before any load.
+* The family itself, which runs on its own adapter (``minimax_h3_image.py``);
+  the upstream gate refuses a file of it whose quantization metadata cannot be
+  read, before any load, as stock ComfyUI cannot load that file either.
 
 Its own imports are standard library only, as ``upstream_gate.py``'s are; importing
 it still loads the ``dgx_monarch.adapters`` package, whose registry imports torch.

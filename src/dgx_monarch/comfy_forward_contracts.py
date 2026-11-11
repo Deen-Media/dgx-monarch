@@ -156,6 +156,14 @@ REBOUND_CALLER_TOUCHPOINTS: tuple[Touchpoint, ...] = (
         "minimax_payload",
         positional=("self", "x", "timestep", "context", "transformer_options"),
     ),
+    # MiniMax-H3-Image (ComfyUI 0.45.0): the bound forward keeps stock's outer
+    # forward. The build from pdd_sigmas and pdd_steps is a canary seam.
+    _call(
+        "comfy.ldm.minimax.model",
+        "MiniMaxH3ImageModel.forward",
+        "minimax_payload",
+        positional=("self", "x", "timestep", "context", "transformer_options"),
+    ),
 )
 
 
@@ -204,6 +212,19 @@ REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS: tuple[Touchpoint, ...] = (
         "TokenRefiner.forward",
         "transformer_options",
         positional=("self", "x"),
+    ),
+    # The MiniMax-H3-Image forward runs stock's own packing and timestep rows
+    # on every rank before the shard.
+    _call(
+        "comfy.ldm.minimax.model",
+        "MiniMaxH3Model._embed_and_pack",
+        positional=("self", "video_x", "audio_x", "context", "layout", "payload",
+                    "transformer_options"),
+    ),
+    _call(
+        "comfy.ldm.minimax.model",
+        "MiniMaxH3Model._time_embedding",
+        positional=("self", "unique_t", "device", "dtype"),
     ),
     # FLUX.3's sharded forward calls stock's own methods for its prelude and
     # runs stock's Block code on each rank's rows and clipped spans, with each

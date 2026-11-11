@@ -191,6 +191,24 @@ The seams, in run order:
                               and on a tiny real Anima, the 512-row text branch
                               only inference mode takes and the bind that
                               takes it off inference mode
+ 53. minimax h3 image forward  the bound MiniMax-H3-Image forward gives stock's
+                              bits at world 1 on text to image and an edit, the
+                              reference time constant and the modality tags
+ 54. minimax h3 image layout   [text | references | target] with the target
+                              last and no audio, extra_conds rounding the latent
+                              to even, no mask cond from _denoise_mask_conds for
+                              one stream, and a mask the stock forward ignores
+ 55. minimax h3 image head     the head depth read off video_out, and stock's
+                              head failing exactly where the grid check refuses
+ 56. minimax h3 image build    the model built from pdd_sigmas and pdd_steps with
+                              no audio stream, under MiniMaxH3Image
+ 57. minimax h3 image sampling  the grid the sampling reads, and KSampler simple at
+                              pdd_steps steps landing on it
+ 58. minimax h3 image conditioning  the edit node's inputs and the payload keys
+                              extra_conds publishes from it
+ 59. minimax h3 image row calls  the three row-keyed calls a block makes, where
+                              the row-check tool reads them
+before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -6233,6 +6251,252 @@ def _one_block_model(block):
     return types.SimpleNamespace(transformer_blocks=[block])
 
 
+# --- MiniMax-H3-Image (ComfyUI 0.45.0) -------------------------------------------
+
+_H3I_GRID = [1.0, 0.9675236940383911, 0.8875485062599182, 0.75, 0.5327739119529724,
+             0.23200887441635132, 0.0]
+
+
+def _h3_image_or_none(seam: str):
+    import comfy.ldm.minimax.model as h3
+
+    if not hasattr(h3, "MiniMaxH3ImageModel"):
+        print(f"seam note: {seam}: this ComfyUI predates MiniMax-H3-Image (0.45.0 added it)")
+        return None
+    return h3
+
+
+def _h3_image_tiny(h3, *, grid=_H3I_GRID, pdd_steps=6, layers=2):
+    import comfy.ops
+    import torch
+
+    torch.manual_seed(0)
+    model = h3.MiniMaxH3ImageModel(
+        pdd_sigmas=grid, pdd_steps=pdd_steps, hidden_size=48, num_layers=layers,
+        token_refiner_num_layers=1, num_attention_heads=2, attention_head_dim=24,
+        ffn_hidden_size=64, text_dim=40, time_embed_dim=8, rope_inv_freq_len=4,
+        adaln_curve_grid=1025, dtype=torch.float32, operations=comfy.ops.disable_weight_init)
+    with torch.no_grad():
+        for name, tensor in list(model.named_parameters()) + list(model.named_buffers()):
+            if name.endswith("inv_freq"):
+                tensor.copy_(1.0 / (10000 ** (torch.arange(tensor.numel()) / tensor.numel())))
+            elif "norm" in name and name.endswith("weight"):
+                tensor.copy_(1.0 + 0.1 * torch.randn_like(tensor))
+            else:
+                tensor.copy_(0.2 * torch.randn_like(tensor))
+    return model.requires_grad_(False)
+
+
+def _h3_image_run(h3, model, lat, refs, sigma=0.75, **kwargs):
+    import comfy.model_base
+    import torch
+
+    generator = torch.Generator().manual_seed(3)
+    x = torch.randn(1, 24, 1, *lat, generator=generator)
+    context = torch.randn(1, 9, 40, generator=generator)
+    timestep = torch.tensor([sigma * 1000.0])
+    payload = {"seed": 7, "audio_scale": 1.0}
+    if refs:
+        payload["refs"] = refs
+    payload.update(comfy.model_base.MiniMaxH3._cond_latents(None, refs))
+    payload["layout"] = h3.PackedLayout(9, 1, (lat[0] + 1) // 2 * 2, (lat[1] + 1) // 2 * 2, 0,
+                                        refs=payload.get("refs"))
+    options = {"sample_sigmas": torch.tensor(_H3I_GRID), "sigmas": timestep / 1000.0}
+    with torch.inference_mode():
+        return model.forward(x, timestep, context, options, minimax_payload=payload, **kwargs)
+
+
+def _h3_image_refs(count, lat):
+    import torch
+
+    generator = torch.Generator().manual_seed(11)
+    return [{"kind": "image", "latent_h": lat[0], "latent_w": lat[1],
+             "latent": torch.randn(1, 24, 1, lat[0], lat[1], generator=generator)}
+            for _ in range(count)]
+
+
+def _assert_minimax_h3_image_forward_seam() -> None:
+    """The bound MiniMax-H3-Image forward against stock at world 1 (identity shard and gather).
+
+    The adapter runs stock's own packing and timestep rows and numbers the
+    modulation rows itself (adapters/minimax_h3_packing.py), with the reference
+    time a constant and the modality tags H3's; a change to any of these moves
+    the bits this compares.
+    """
+    h3 = _h3_image_or_none("minimax h3 image forward")
+    if h3 is None:
+        return
+    import copy
+
+    import torch
+
+    from dgx_monarch.adapters import minimax_h3_image as adapter
+    from dgx_monarch.adapters.base import InjectionContext
+    from dgx_monarch.adapters.minimax_h3_packing import H3_IMAGE_SEGMENT_KINDS, H3_SEG_MODALITY
+
+    assert h3.VISUAL_COND_TIMESTEP == 0.999, "minimax h3 image forward seam: reference time moved"
+    for kind in H3_IMAGE_SEGMENT_KINDS:
+        assert h3.SEG_TAG[kind] == H3_SEG_MODALITY[kind], f"minimax h3 image forward seam: tag {kind}"
+    source = inspect.getsource(h3.MiniMaxH3ImageModel._forward)
+    for token in ('"ref_img": max(t, VISUAL_COND_TIMESTEP)', "/ 1000.0",
+                  "self._embed_and_pack(x, None,", "(self.pdd_sigmas,)"):
+        assert token in source, f"minimax h3 image forward seam: stock no longer has {token!r}"
+    saved = {name: getattr(adapter, name) for name in
+             ("sp_world", "shard_seq", "sp_gather", "padded_row_indices", "usp_options")}
+    adapter.sp_world = lambda: 1
+    adapter.shard_seq = lambda tensor, dim=1: (tensor, tensor.shape[dim])
+    adapter.sp_gather = lambda tensor, _orig, dim=1: tensor
+    adapter.padded_row_indices = lambda _segments: []
+    adapter.usp_options = lambda options, _attn, drop_rows=None: dict(options)
+    try:
+        # An odd latent pads to the patch; references arrive at even sizes.
+        for lat, count in (((6, 6), 0), ((5, 7), 0), ((6, 4), 1), ((4, 4), 3)):
+            model = _h3_image_tiny(h3)
+            bound = copy.deepcopy(model)
+            adapter.MiniMaxH3ImageAdapter().inject_usp(
+                bound, InjectionContext(topology_sp=1, usp_attention=object()))
+            refs = _h3_image_refs(count, lat)
+            for sigma in (1.0, 0.81, 0.1):
+                stock = _h3_image_run(h3, model, lat, refs, sigma)
+                ours = _h3_image_run(h3, bound, lat, refs, sigma)
+                assert torch.equal(stock, ours), (
+                    f"minimax h3 image forward seam: {lat} with {count} reference(s) at sigma "
+                    f"{sigma} differs from stock")
+    finally:
+        for name, value in saved.items():
+            setattr(adapter, name, value)
+
+
+def _assert_minimax_h3_image_layout_seam() -> None:
+    """The packed order the sharded forward reads, and the mask the image forward never sees."""
+    h3 = _h3_image_or_none("minimax h3 image layout")
+    if h3 is None:
+        return
+    import comfy.model_base
+    import torch
+
+    layout = h3.PackedLayout(9, 1, 4, 6, 0, refs=_h3_image_refs(2, (4, 4)))
+    kinds = [kind for _a, _b, kind in layout.segments]
+    assert kinds == ["text", "ref_img", "ref_img", "video"], f"minimax h3 image layout seam: {kinds}"
+    assert layout.segments[-1][1] == layout.seq_len and layout.audio_pos.numel() == 0
+    source = inspect.getsource(comfy.model_base.MiniMaxH3Image.extra_conds)
+    assert "(shape[3] + 1) // 2 * 2" in source and "(shape[4] + 1) // 2 * 2" in source, (
+        "minimax h3 image layout seam: extra_conds no longer rounds the latent to even")
+    assert "denoise_mask" not in inspect.signature(h3.MiniMaxH3ImageModel._forward).parameters
+    mask = torch.zeros(1, 1, 1, 8, 8)
+    # A bare instance: these methods read no state when there is one stream or none.
+    image = object.__new__(comfy.model_base.MiniMaxH3Image)
+    for shapes in (None, [(1, 24, 1, 8, 8)]):
+        # What extra_conds merges into its output for a mask on one stream.
+        assert image._denoise_mask_conds(mask, shapes) == {}, (
+            "minimax h3 image layout seam: one image stream now gets a mask cond")
+    model = _h3_image_tiny(h3)
+    plain = _h3_image_run(h3, model, (4, 4), [])
+    masked = _h3_image_run(h3, model, (4, 4), [], denoise_mask=torch.zeros(1, 1, 1, 2, 2))
+    assert torch.equal(plain, masked), "minimax h3 image layout seam: the forward now reads a mask"
+
+
+def _assert_minimax_h3_image_head_seam() -> None:
+    """The head depth the grid check reads, and where stock's head fails on a mismatched grid."""
+    h3 = _h3_image_or_none("minimax h3 image head")
+    if h3 is None:
+        return
+    from dgx_monarch.adapters.base import UnsupportedModelError
+    from dgx_monarch.adapters.minimax_h3_packing import assert_image_grid, head_blocks
+
+    for steps, points in ((6, 7), (6, 5), (6, 8), (1, 3)):
+        grid = [1.0 - k / (points - 1) for k in range(points)]
+        model = _h3_image_tiny(h3, grid=grid, pdd_steps=steps, layers=1)
+        assert model.final_layer.pdd_steps == head_blocks(model.final_layer) == steps
+        assert len(model.pdd_sigmas) == points
+        try:
+            assert_image_grid(model.final_layer, model.pdd_sigmas)
+            refused = False
+        except UnsupportedModelError:
+            refused = True
+        try:
+            _h3_image_run(h3, model, (4, 4), [])
+            failed = False
+        except (IndexError, RuntimeError):
+            failed = True
+        assert refused == failed, (
+            f"minimax h3 image head seam: {steps} blocks on {points} points: stock "
+            f"{'fails' if failed else 'renders'}, the grid check {'refuses' if refused else 'passes'}")
+
+
+def _assert_minimax_h3_image_build_seam() -> None:
+    """The model the adapter binds: built from the grid and head depth, with no audio stream."""
+    h3 = _h3_image_or_none("minimax h3 image build")
+    if h3 is None:
+        return
+    import comfy.ldm.minimax.sampling
+    import comfy.model_base
+
+    parameters = inspect.signature(h3.MiniMaxH3ImageModel.__init__).parameters
+    assert list(parameters)[1:3] == ["pdd_sigmas", "pdd_steps"], (
+        f"minimax h3 image build seam: the model takes {list(parameters)}")
+    model = _h3_image_tiny(h3, layers=1)
+    assert model.pdd_sigmas == [float(s) for s in _H3I_GRID]
+    assert not hasattr(model, "audio_patch_proj") and model.final_layer.audio_out is None
+    source = inspect.getsource(comfy.model_base.MiniMaxH3Image.__init__)
+    assert "MiniMaxH3ImageModel" in source and "MiniMaxH3ImageModelSampling" in source
+    assert issubclass(comfy.model_base.MiniMaxH3Image, comfy.model_base.MiniMaxH3)
+
+
+def _assert_minimax_h3_image_sampling_seam() -> None:
+    """KSampler simple at the head's depth lands on the grid (the shipped templates' premise)."""
+    h3 = _h3_image_or_none("minimax h3 image sampling")
+    if h3 is None:
+        return
+    from types import SimpleNamespace
+
+    import comfy.ldm.minimax.sampling
+    import comfy.samplers
+
+    config = SimpleNamespace(unet_config={"pdd_sigmas": _H3I_GRID}, sampling_settings={})
+    sampling = comfy.ldm.minimax.sampling.MiniMaxH3ImageModelSampling(config)
+    sigmas = comfy.samplers.calculate_sigmas(sampling, "simple", 6).tolist()
+    assert len(sigmas) == len(_H3I_GRID), f"minimax h3 image sampling seam: {sigmas}"
+    assert sigmas[0] == 1.0 and sigmas[-1] == 0.0, f"minimax h3 image sampling seam: {sigmas}"
+    worst = max(abs(a - b) for a, b in zip(sigmas, _H3I_GRID, strict=True))
+    assert worst < 1e-3, f"minimax h3 image sampling seam: simple at 6 steps is {worst} off the grid"
+
+
+def _assert_minimax_h3_image_conditioning_seam() -> None:
+    """The edit node's inputs and the payload keys extra_conds publishes from its references."""
+    h3 = _h3_image_or_none("minimax h3 image conditioning")
+    if h3 is None:
+        return
+    import comfy.model_base
+    import torch
+    from comfy_extras.nodes_minimax_h3 import MiniMaxH3ImageConditioning
+
+    names = [item.id for item in MiniMaxH3ImageConditioning.define_schema().inputs]
+    assert {"clip", "vae", "prompt", "width", "height", "images"} <= set(names), (
+        f"minimax h3 image conditioning seam: the node takes {names}")
+    assert '"minimax_refs"' in inspect.getsource(MiniMaxH3ImageConditioning.execute), (
+        "minimax h3 image conditioning seam: the edit node no longer sets minimax_refs")
+    source = inspect.getsource(comfy.model_base.MiniMaxH3.extra_conds)
+    for token in ('payload["text_token_tags"]', 'payload["refs"]', 'payload["seed"]',
+                  "self._cond_latents(keyframes, refs)"):
+        assert token in source, f"minimax h3 image conditioning seam: {token!r}"
+    refs = _h3_image_refs(2, (4, 4))
+    latents = comfy.model_base.MiniMaxH3._cond_latents(None, refs)["cond_video_latents"]
+    assert len(latents) == 2 and all(torch.equal(a, r["latent"]) for a, r in zip(latents, refs, strict=True))
+
+
+def _assert_minimax_h3_image_row_calls_seam() -> None:
+    """The row-keyed calls tools/h3_image_row_check.py runs at a rank's rows and at stock's."""
+    h3 = _h3_image_or_none("minimax h3 image row calls")
+    if h3 is None:
+        return
+    attention = inspect.getsource(h3.Attention.forward)
+    assert "comfy.quant_ops.ck.rms_rope_split_half" in attention, (
+        "minimax h3 image row calls seam: the fused q/k norm and rope moved")
+    assert 'comfy.ops.linear_input_act(self.fc2, self.fc1(x), "swiglu")' in inspect.getsource(
+        h3.MLP.forward), "minimax h3 image row calls seam: the swiglu MLP call moved"
+    assert "operations.Linear" in inspect.getsource(h3.Attention.__init__), (
+        "minimax h3 image row calls seam: the attention projections are no longer comfy Linears")
 # Every place ComfyUI reads or sets torch's inference mode, reads a tensor's
 # inference flag, or reads grad mode, which inference mode turns off and a
 # Worker's sampling thread has on, by file, enclosing function and name. The value says what a
@@ -6493,6 +6757,13 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("pair-scoped text conds", _assert_pair_scoped_text_conds_seam),
     ("ltx stock-row parity", _assert_ltx_stock_row_parity_seam),
     ("inference mode branches", _assert_inference_mode_branches_seam),
+    ("minimax h3 image forward", _assert_minimax_h3_image_forward_seam),
+    ("minimax h3 image layout", _assert_minimax_h3_image_layout_seam),
+    ("minimax h3 image head", _assert_minimax_h3_image_head_seam),
+    ("minimax h3 image build", _assert_minimax_h3_image_build_seam),
+    ("minimax h3 image sampling", _assert_minimax_h3_image_sampling_seam),
+    ("minimax h3 image conditioning", _assert_minimax_h3_image_conditioning_seam),
+    ("minimax h3 image row calls", _assert_minimax_h3_image_row_calls_seam),
 )
 
 

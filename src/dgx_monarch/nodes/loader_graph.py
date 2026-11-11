@@ -29,6 +29,8 @@ _GIB = 2 ** 30
 _ACTIVATION_FAMILIES = {
     h3_activation.H3_FAMILY: (h3_activation.graph_activation_bytes,
                               h3_activation.sp_degree_for_mesh),
+    h3_activation.H3_IMAGE_FAMILY: (h3_activation.graph_activation_bytes,
+                                    h3_activation.sp_degree_for_mesh),
     ltx25_activation.LTX_FAMILY: (ltx25_activation.graph_activation_bytes,
                                   ltx25_activation.sp_degree_for_mesh),
 }

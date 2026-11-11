@@ -5,8 +5,9 @@ key and takes the first signature row that matches. ComfyUI tests exact keys
 after one prefix strip for the whole file. So one extra tensor could rename
 the family for the detector while ComfyUI still built the model the gate must
 refuse: an L2P file with ``aux.dec_net.x.weight`` loaded as latent Z-Image,
-and a MiniMax-H3-Image file with ``aux.audio_patch_proj.weight`` passed the
-gate. The gate's two family tests now read ComfyUI's exact keys first
+and a MiniMax-H3-Image file with ``aux.audio_patch_proj.weight`` lost the
+family's header refusals (no sigma grid, #149; a quantization table ComfyUI
+cannot parse, #150). The gate's two family tests now read ComfyUI's exact keys first
 (``adapters/gate_keys.py``), and the detector's reading can only add.
 
 Every file is hand-made: a header and a few zero bytes. The last tests hold the
@@ -30,9 +31,11 @@ from test_upstream_gate_damaged_header import DEEP, _assert_on_both_paths
 from test_upstream_gate_damaged_header import models as models  # both funnels' fixture
 
 L2P_NUMBER, GRID_NUMBER = upstream_gate.TROUBLESHOOTING, upstream_gate.H3_IMAGE_GRID_TROUBLESHOOTING
-# What a MiniMax-H3-Image file with its grid gets; None once the family's adapter lands
-# (tests/test_upstream_gate_damaged_header.py holds the same line).
-H3_IMAGE_WITH_GRID: int | None = upstream_gate.H3_IMAGE_FAMILY_TROUBLESHOOTING
+# What a MiniMax-H3-Image file with its grid gets: None, since the family runs on its own
+# adapter and the file passes the gate (tests/test_upstream_gate_damaged_header.py holds the
+# same line). The family's other header refusal, a quantization table ComfyUI cannot parse:
+H3_IMAGE_WITH_GRID: int | None = None
+QUANT_NUMBER = upstream_gate.H3_IMAGE_QUANT_METADATA_TROUBLESHOOTING
 CONFIG = {"config": json.dumps({"transformer": {"pdd_steps": 4, "pdd_sigmas": [1.0, 0.5, 0.0]}})}
 # Names with the shapes ComfyUI's detection reads its dimensions from. The gate reads names.
 ZIMAGE = {
@@ -57,6 +60,7 @@ BASES: dict[str, tuple[dict[str, list[int]], dict[str, str] | None, int | None]]
     "l2p": (L2P, None, L2P_NUMBER),
     "h3-image": (H3_IMAGE, CONFIG, H3_IMAGE_WITH_GRID),
     "h3-image-no-grid": (H3_IMAGE, None, GRID_NUMBER),
+    "h3-image-bad-table": (H3_IMAGE, {**CONFIG, "_quantization_metadata": "{not json"}, QUANT_NUMBER),
 }
 
 
@@ -125,7 +129,8 @@ def test_the_absence_keys_under_a_prefix_follow_what_comfy_would_load(models, pr
     and the refusal stands."""
     comfy_keeps_the_extra_key_alone = prefix.startswith("model.")
     for base, key in (("l2p", "dec_net.cond_embed.weight"), ("h3-image", "audio_patch_proj.weight"),
-                      ("h3-image-no-grid", "audio_patch_proj.weight")):
+                      ("h3-image-no-grid", "audio_patch_proj.weight"),
+                      ("h3-image-bad-table", "audio_patch_proj.weight")):
         names, metadata, number = BASES[base]
         name = _write(models, f"{base}.safetensors", {**names, prefix + key: [1]}, metadata)
         _assert_on_both_paths(models, name, None if comfy_keeps_the_extra_key_alone else number)

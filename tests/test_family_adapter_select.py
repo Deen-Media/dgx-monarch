@@ -454,6 +454,37 @@ def test_a_forced_minimax_h3_does_not_bind_the_image_model(monkeypatch):
     assert adapter_for(model_base.MiniMaxH3(), "minimax_h3") is video
     finetune = type("MiniMaxH3Finetune", (model_base.MiniMaxH3,), {})
     assert adapter_for(finetune(), "minimax_h3") is video
+    # The image model's own adapter registers ahead of H3's: the owner check answers,
+    # naming it, and a forced minimax_h3_image binds it.
+    assert "which the minimax_h3_image adapter owns" in message
+    image = next(adapter for adapter in ADAPTERS if adapter.family == "minimax_h3_image")
+    assert adapter_for(model_base.MiniMaxH3Image(), "minimax_h3_image") is image
+
+
+def test_a_forced_minimax_h3_image_binds_its_class_and_refuses_a_comfy_subclass(monkeypatch):
+    """The image adapter names its own model class. A forced ``minimax_h3_image``
+    binds that class and a class a custom node derives from it. A subclass
+    ComfyUI itself defines is another model: `auto` refuses it, and so does the
+    force (docs/TROUBLESHOOTING.md #153). Neither family takes the other's model."""
+    from dgx_monarch.adapters import UnsupportedModelError, adapter_for, get_adapter
+    from fake_model_base_helpers import install_fake_model_base
+
+    mb = install_fake_model_base(monkeypatch, {
+        "MiniMaxH3": None, "MiniMaxH3Image": "MiniMaxH3",
+        "MiniMaxH3ImageVariant": "MiniMaxH3Image"})
+    image = mb.MiniMaxH3Image()
+    assert _bound(image, "minimax_h3_image") == "MiniMaxH3ImageAdapter"
+    assert type(get_adapter(image)).__name__ == "MiniMaxH3ImageAdapter"
+    finetune = type("H3ImageFinetune", (mb.MiniMaxH3Image,), {})()
+    assert _bound(finetune, "minimax_h3_image") == "MiniMaxH3ImageAdapter"
+    message = _forced_refusal(mb.MiniMaxH3ImageVariant(), "minimax_h3_image")
+    assert "ComfyUI built a MiniMaxH3ImageVariant, and" in message
+    assert "minimax_h3_image variant MiniMaxH3ImageVariant is a MiniMaxH3Image subclass" in message
+    derived = type("VariantFinetune", (mb.MiniMaxH3ImageVariant,), {})()
+    assert "a VariantFinetune, a derivative of MiniMaxH3ImageVariant" in _forced_refusal(
+        derived, "minimax_h3_image")
+    with pytest.raises(UnsupportedModelError, match="family_adapter='minimax_h3_image'"):
+        adapter_for(mb.MiniMaxH3(), "minimax_h3_image")
 
 
 # ComfyUI 0.45.0's class tree for the three families whose forced bind was wider than

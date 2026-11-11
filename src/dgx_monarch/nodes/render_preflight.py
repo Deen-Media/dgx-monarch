@@ -208,17 +208,16 @@ def preflight_krea2_reference_latents(
 
 
 def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
-    """Refuse H3 cfg/dp topology before mesh setup or worker RPC.
+    """Refuse H3 and MiniMax-H3-Image cfg/dp topology before mesh setup or worker RPC.
 
     H3 conditionings remain separate batch-1 calls, so cfg parallel has no
     batch to split. Packed data parallel is refused earlier; this predicate is
     its backstop. Sniff failures leave the earlier and worker-side guards in
     place. ``sniff_checkpoint`` is memoized by path metadata.
     """
-    from ..adapters.minimax_h3 import (
-        MINIMAX_H3_BATCH_CAPPED_MESSAGE,
-        minimax_h3_topology_would_reject,
-    )
+    from ..adapters.minimax_h3 import MINIMAX_H3_BATCH_CAPPED_MESSAGE, minimax_h3_topology_would_reject
+    from ..adapters.minimax_h3_image import FAMILY as H3_IMAGE
+    from ..adapters.minimax_h3_image import MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE
 
     if not minimax_h3_topology_would_reject(
             int(getattr(topo, "cfg", 1)), int(getattr(topo, "dp", 1))):
@@ -235,11 +234,12 @@ def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
             sniff_checkpoint(path)[0], family_select.override_for_model(model))
     except Exception:
         return  # fail open: the packed-DP guard and the stock batch cap remain
-    if family != "minimax_h3":
-        return
     from ..adapters.base import UnsupportedModelError
 
-    raise UnsupportedModelError(MINIMAX_H3_BATCH_CAPPED_MESSAGE)
+    if family == H3_IMAGE:
+        raise UnsupportedModelError(MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE)
+    if family == "minimax_h3":
+        raise UnsupportedModelError(MINIMAX_H3_BATCH_CAPPED_MESSAGE)
 
 
 def _driver_footprint_preflight_for_request(

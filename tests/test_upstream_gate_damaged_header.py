@@ -45,11 +45,10 @@ from test_dropped_scale_gate import real_comfy as real_comfy  # the real-ComfyUI
 
 L2P, SCALES = upstream_gate.TROUBLESHOOTING, upstream_gate.DROPPED_SCALE_TROUBLESHOOTING
 GRID, UNREAD = upstream_gate.H3_IMAGE_GRID_TROUBLESHOOTING, upstream_gate.UNREAD_HEADER_TROUBLESHOOTING
-# What an intact MiniMax-H3-Image file with its sigma grid gets: today the family
-# refusal (#150). The one line to change when that refusal retires with the family's
-# adapter: set it to None (the file then passes the gate), and every test below
-# holds a damaged copy to the same answer, a pass included.
-H3_IMAGE_WITH_GRID: int | None = upstream_gate.H3_IMAGE_FAMILY_TROUBLESHOOTING
+# What an intact MiniMax-H3-Image file with its sigma grid gets: None, since the
+# family refusal retired with the family's adapter (the file passes the gate), and
+# every test below holds a damaged copy to the same answer, a pass included.
+H3_IMAGE_WITH_GRID: int | None = None
 TROUBLESHOOTING = Path(__file__).resolve().parents[1] / "docs" / "TROUBLESHOOTING.md"
 WIDTHS = {"BF16": 2, "F32": 4, "I8": 1, "U8": 1, "F6_E2M3": 1}
 DEEP = "[" * 200_000 + "]" * 200_000  # past every Python's JSON nesting limit
@@ -66,6 +65,11 @@ BASES: dict[str, tuple[list[tuple[str, str, list[int]]], dict[str, str] | None, 
                 ("single_blocks.0.norm.query_norm.scale", "BF16", [2])], None, SCALES),
     "grid": ([(key, "BF16", [1]) for key in _H3_IMAGE], None, GRID),
     "family": ([(key, "BF16", [1]) for key in _H3_IMAGE], {"config": CONFIG}, H3_IMAGE_WITH_GRID),
+    # The family's file with its grid and quantization metadata ComfyUI cannot parse:
+    # the gate answers #150 before any load, damaged header or not.
+    "quant-metadata": ([(key, "BF16", [1]) for key in _H3_IMAGE],
+                       {"config": CONFIG, "_quantization_metadata": "{not json"},
+                       upstream_gate.H3_IMAGE_QUANT_METADATA_TROUBLESHOOTING),
 }
 
 

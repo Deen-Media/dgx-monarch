@@ -5,8 +5,8 @@ boundary, strips a prefix per key, and takes the first row that matches. That
 suits choosing a topology. For a refusal it was a hole: one extra tensor
 (``aux.dec_net.x.weight``, ``aux.audio_patch_proj.weight``, or a needle of any
 earlier row) moved the detector's answer, while ComfyUI, which tests exact keys
-after one prefix strip for the whole file, still built the model the gate
-must refuse.
+after one prefix strip for the whole file, still built the same model, so a file
+the gate must refuse passed it.
 
 So each test here takes ComfyUI's own reading first. Where ComfyUI's keys name
 a model of the family, its exact test decides. Where they do not, ComfyUI

@@ -30,8 +30,13 @@ from dgx_monarch.actor import worker_compile
 
 # The families whose DiT has a top-level `blocks` list on ComfyUI 0.43.0.
 COMPILED_FAMILIES = frozenset({
-    "anima", "cogvideo", "krea2", "minimax_h3", "wan", "wan_animate2", "wan_dancer", "wan_scail",
+    "anima", "cogvideo", "krea2", "minimax_h3", "minimax_h3_image", "wan", "wan_animate2",
+    "wan_dancer", "wan_scail",
 })
+
+# Families whose DiT class a supported older ComfyUI tree lacks, and the release
+# that added it; on such a tree the source check skips rather than fails.
+_NEWER_THAN_SOME_TREES = {"minimax_h3_image": "ComfyUI 0.45.0 added it"}
 
 # Each family's DiT classes, as comfy.model_base builds them: the file under
 # comfy/ldm, the class, and the block lists it or a base assigns.
@@ -40,6 +45,7 @@ _REFINERS = ("noise_refiner", "context_refiner", "layers")
 DIT_CLASSES: dict[str, tuple[tuple[str, str, tuple[str, ...]], ...]] = {
     "krea2": (("krea2/model.py", "SingleStreamDiT", ("blocks",)),),
     "minimax_h3": (("minimax/model.py", "MiniMaxH3Model", ("blocks",)),),
+    "minimax_h3_image": (("minimax/model.py", "MiniMaxH3ImageModel", ("blocks",)),),
     "wan": (("wan/model.py", "WanModel", ("blocks",)),),
     "wan_scail": (("wan/model.py", "SCAILWanModel", ("blocks",)),
                   ("wan/model.py", "SCAIL2WanModel", ("blocks",))),
@@ -344,6 +350,8 @@ def test_each_familys_comfy_dit_has_blocks_exactly_on_the_compiled_side(comfy_cl
     for relative, name, lists in DIT_CLASSES[family]:
         path = ldm / relative
         cls = classes.get((path, name))
+        if cls is None and family in _NEWER_THAN_SOME_TREES:
+            pytest.skip(f"{family}: this ComfyUI predates {name} ({_NEWER_THAN_SOME_TREES[family]})")
         assert cls is not None, f"{family}: ComfyUI has no class {name} in comfy/ldm/{relative}"
         assert (relative, name) in model_base_targets, (
             f"{family}: comfy.model_base no longer builds {name} from comfy/ldm/{relative}; "

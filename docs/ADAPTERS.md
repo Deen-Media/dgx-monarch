@@ -567,9 +567,8 @@ than stacks on a repeat call.
    build), on every `+fsdp` preset and for every family. The Init widget's
    kernel runs instead, so the render differs from stock's pinned
    render on one GPU by construction, as on uly2. The one such shipped file,
-   MiniMax-H3-Image's BF16 DiT, meets the family's loader refusal first until
-   its adapter lands
-   ([TROUBLESHOOTING #150](TROUBLESHOOTING.md#150-a-minimax-h3-image-render-refuses-at-the-loader)).
+   MiniMax-H3-Image's BF16 DiT, renders this way on `uly2+fsdp`, its pins
+   dropped and recorded.
    A checkpoint ComfyUI loads as quantized tensors (the fp8 and int8 files
    listed here) takes the direct wrap, which reloads nothing, so its pins
    stay, run and ask for the waiver as on a resident topology. A
@@ -1490,6 +1489,21 @@ than stacks on a repeat call.
    as v1.4.0 rendered it. `tests/test_h3_head_form_comfy.py` holds the head,
    the grid and the pops to stock on the installed ComfyUI, and canary seam 25
    reads the three values the head is handed.
+
+   **MiniMax-H3-Image.** `adapters/minimax_h3_image.py` registers ahead of
+   H3's adapter, whose `matches()` raises on any `MiniMaxH3` subclass, and
+   binds exactly `MiniMaxH3Image`. It rebinds `_forward` only. Every rank runs
+   stock's `_embed_and_pack` and `_time_embedding`, so the stream and the
+   timestep rows are stock's before the shard; the adapter numbers the
+   modulation rows itself as stock does (`h3_image_modulation_plan`: a
+   reference picture at ComfyUI's constant 0.999, never the payload's noise
+   augmentation, and no audio time). The stream, the position ids and the rows
+   shard alike, Ulysses drops the pad rows exactly, and the head takes the
+   checkpoint's grid through `head_schedule(..., grid=pdd_sigmas)`. Both H3
+   adapters set stock's `block_index` on the options each block takes.
+   `tests/test_minimax_h3_image_comfy.py` holds the forward to stock at world 1
+   and through the threaded two-rank harness, and canary seams 53 to 59 read
+   what it relies on.
 
    Comfy model-option attention hooks are a separate contract. Stock patch
    nodes such as NAG consume `MODEL`, while DGX loaders publish `DGXM_MODEL`,

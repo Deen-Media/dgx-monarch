@@ -4,6 +4,16 @@
 
 ### Everyday use
 
+- MiniMax-H3-Image (ComfyUI 0.45.0) runs on its own sharded adapter: stock's
+  own packing on every rank, sequence shards with exact pad exclusion on
+  Ulysses, and the stacked output head on the checkpoint's grid at stock's
+  rows. cfg2, dp2, a padded ring, a batch above one and a head whose depth the
+  grid does not match refuse with a plain sentence, as do the MiniMax H3
+  sampling-shift and context-window nodes on this family. Both H3 adapters now
+  set stock's `block_index` on each block's options. The header names the
+  family, so auto takes uly2 for it and the driver prices its packed rows and
+  its text encoder before dispatch. A row-check tool records the three
+  row-keyed calls at a rank's rows for the hardware run.
 - Every image, clip and music track a shipped template's input nodes name now
   comes with the pack, in `example_workflows/input`. At start the pack copies
   each one ComfyUI's input folder lacks, and never replaces a file, link or
@@ -439,10 +449,10 @@
 - An extra tensor in a checkpoint no longer moves the loader's header
   refusals. Before, one tensor named like another family's key
   (`aux.dec_net.x.weight` in a Z-Image L2P file, `aux.audio_patch_proj.weight`
-  in a MiniMax-H3-Image file, or a key of any earlier row of the detector's
-  table) made the header detector read another family, and the file passed the
-  gate while ComfyUI still built the refused model. The gate now names both
-  families by the exact keys ComfyUI's own detection tests
+  in a MiniMax-H3-Image file with no sigma grid, or a key of any earlier row of
+  the detector's table) made the header detector read another family, and the
+  file passed the gate while ComfyUI still built the same model from it. The
+  gate now names both families by the exact keys ComfyUI's own detection tests
   ([TROUBLESHOOTING #91](docs/TROUBLESHOOTING.md#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down)).
 - A damaged safetensors header no longer turns the loader's header refusals
   off. Before, a header the strict reader refused (a tensor entry or metadata
@@ -476,10 +486,10 @@
   run yet ([MODELS](docs/MODELS.md#model-ultratex),
   [TROUBLESHOOTING #148](docs/TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
 - MiniMax-H3-Image, which ComfyUI 0.45.0 added, is detected from its header
-  as `minimax_h3_image` and refused class P at the loader, before any load, on
-  every topology and in every format, until its adapter lands. Render it with
-  stock ComfyUI 0.45.0 or newer on one GPU meanwhile
-  ([TROUBLESHOOTING #150](docs/TROUBLESHOOTING.md#150-a-minimax-h3-image-render-refuses-at-the-loader)).
+  as `minimax_h3_image` and runs on its own sharded adapter. A file
+  of the family whose quantization metadata cannot be read refuses class P at
+  the loader, before any load
+  ([TROUBLESHOOTING #150](docs/TROUBLESHOOTING.md#150-a-minimax-h3-image-file-refuses-because-its-quantization-metadata-cannot-be-read)).
   A file of the family whose config metadata has no sigma grid
   (`transformer.pdd_sigmas`), which stock ComfyUI fails to build, refuses
   first ([TROUBLESHOOTING #149](docs/TROUBLESHOOTING.md#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)).

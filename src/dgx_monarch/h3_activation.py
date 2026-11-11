@@ -36,6 +36,10 @@ log = get_logger(__name__)
 _GIB = 2 ** 30
 
 H3_FAMILY = "minimax_h3"
+# MiniMax-H3-Image runs H3's blocks on its packed rows (text, references and one
+# target frame, no audio), so it is priced with H3's calibration until its own
+# activation leg runs (docs/VALIDATION.md).
+H3_IMAGE_FAMILY = "minimax_h3_image"
 
 # The generic activation guard's id. H3 counts its rows in h3_rows and prices them here.
 _GUARD = "activation_footprint_preflight"
@@ -267,7 +271,7 @@ def preflight_h3_activation_for_request(
     ``latent_shape`` is the grid the workers will sample.
     """
     try:
-        if family != H3_FAMILY:
+        if family not in (H3_FAMILY, H3_IMAGE_FAMILY):
             return                       # no-op for every other family
         if preflight_disabled() or not mesh_safety.gpu_is_integrated():
             return
@@ -277,7 +281,8 @@ def preflight_h3_activation_for_request(
         avail = mesh_safety.mem_available_bytes()
         if avail is None:
             return  # off Linux: host MemAvailable bounds nothing here
-        rows = h3_rows.rows_from_request(request, latent, video_shape=latent_shape)
+        rows = h3_rows.rows_from_request(request, latent, video_shape=latent_shape,
+                                         image=family == H3_IMAGE_FAMILY)
         if not rows.resolved:
             return
         # Explicit presets load weights before this reading.
@@ -406,7 +411,7 @@ def graph_activation_bytes(prompt: Any, sp_degree: int, *,
     would discard the complete loader-site footprint refusal.
     """
     try:
-        if family != H3_FAMILY:
+        if family not in (H3_FAMILY, H3_IMAGE_FAMILY):
             return 0, "not a packed-sequence family"
         if preflight_disabled():
             return 0, f"{mesh_safety.ACTIVATION_PREFLIGHT_DISABLE_ENV} is set"
@@ -415,13 +420,15 @@ def graph_activation_bytes(prompt: Any, sp_degree: int, *,
         degree = int(sp_degree)
         if degree < 1:
             return 0, "no sequence-parallel degree resolved"
-        rows = h3_rows.rows_from_prompt_graph(prompt)
+        image = family == H3_IMAGE_FAMILY
+        rows = h3_rows.rows_from_prompt_graph(prompt, image=image)
         if not rows.resolved:
             return 0, "no MiniMax H3 canvas node in this graph"
+        seen = ("the target frame only, text and reference rows are not visible in the graph"
+                if image else "video and audio rows only, keyframe and reference rows are "
+                "not visible in the graph")
         return (activation_bytes_for(rows, degree),
                 f"{rows.total} declared rows over {degree} rank(s) plus the "
-                f"{_gib(H3_ACTIVATION_FLOOR_BYTES)} GiB fixed activation floor; "
-                "video and audio rows only, keyframe and reference rows are "
-                "not visible in the graph")
+                f"{_gib(H3_ACTIVATION_FLOOR_BYTES)} GiB fixed activation floor; {seen}")
     except Exception:
         return 0, "row extraction failed; activations not charged"

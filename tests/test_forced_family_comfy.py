@@ -3,8 +3,9 @@
 A forced ``family_adapter`` once bound by class ancestry alone, so it took
 ComfyUI model classes its adapter refuses under ``auto``: Wan variants built on
 another diffusion model, the HunyuanVideo back-catalogue, Lumina 2.0 and
-Ming-Image under ``zimage``, MiniMax-H3-Image under ``minimax_h3``. Several of
-those forced renders were silently wrong (docs/TROUBLESHOOTING.md #153). The
+Ming-Image under ``zimage``. Several of those forced renders were silently
+wrong (docs/TROUBLESHOOTING.md #153). MiniMax-H3-Image, which bound under
+``minimax_h3`` the same way, now has its own adapter registered ahead. The
 rule now asks the adapter's own ``matches()`` about the model's nearest ComfyUI
 class, so the two paths can differ only for a derivative of a vetted class.
 
@@ -37,7 +38,6 @@ REFUSED = {
             "WAN22_RelayVSR", "WAN22_S2V"),
     "hunyuan": ("HunyuanVideo", "HunyuanVideoI2V", "HunyuanVideoSkyreelsI2V"),
     "zimage": ("Lumina2", "MingImage"),
-    "minimax_h3": ("MiniMaxH3Image",),
 }
 
 
@@ -83,6 +83,24 @@ def test_forcing_the_owning_family_binds_what_auto_binds_for_every_comfy_class(m
     # Lumina2 is here only as a bare instance: with Z-Image's pad tokens it binds (below).
     assert len(bound) >= 30 and len(refused) >= 10, (sorted(bound), sorted(refused))
     assert bound["WAN21"] == bound["WAN22"] == "wan" and bound["Chroma"] == "chroma"
+
+
+def test_the_image_adapter_binds_its_own_class_under_a_force_and_h3s_does_not(model_base):
+    """MiniMax-H3-Image has an adapter that names its class and registers ahead of
+    H3's. A forced ``minimax_h3_image`` binds that class and a derivative of it; a forced
+    ``minimax_h3`` refuses it (the image adapter owns it); and neither forced family
+    takes the other's model."""
+    if not hasattr(model_base, "MiniMaxH3Image"):
+        pytest.skip("this ComfyUI predates MiniMax-H3-Image (ComfyUI 0.45.0 added it)")
+    image, video = object.__new__(model_base.MiniMaxH3Image), object.__new__(model_base.MiniMaxH3)
+    assert type(adapter_for(image, "minimax_h3_image")).__name__ == "MiniMaxH3ImageAdapter"
+    assert _auto(image) is adapter_for(image, "minimax_h3_image")
+    finetune = object.__new__(type("H3ImageFinetune", (model_base.MiniMaxH3Image,), {}))
+    assert type(adapter_for(finetune, "minimax_h3_image")).__name__ == "MiniMaxH3ImageAdapter"
+    assert type(adapter_for(video, "minimax_h3")).__name__ == "MiniMaxH3Adapter"
+    for model, family in ((image, "minimax_h3"), (finetune, "minimax_h3"),
+                          (video, "minimax_h3_image")):
+        assert _forced(model, family) is None, (type(model).__name__, family)
 
 
 def test_a_derivative_binds_through_the_vetted_class_on_a_real_model_class(model_base):
