@@ -22,6 +22,8 @@ from __future__ import annotations
 from typing import Any, Final
 
 FAMILY: Final = "minimax_h3"
+# MiniMax-H3-Image samples its checkpoint's own grid, so the node refuses it.
+IMAGE_FAMILY: Final = "minimax_h3_image"
 STOCK_NODE: Final = "MiniMaxH3SigmaShift"
 STOCK_DISPLAY: Final = "ModelSamplingMiniMaxH3"
 NODE_NAME: Final = "ModelSamplingMiniMaxH3 (DGX Monarch)"
@@ -50,6 +52,11 @@ def family_refusal_reason(family: str | None) -> str | None:
     """
     if family is None or family in (FAMILY, "unknown"):
         return None
+    if family == IMAGE_FAMILY:
+        return (f"{NODE_NAME} replaces the model's sampling with MiniMax H3's paired video "
+                "and audio schedule, which takes the sampler off the pdd_sigmas grid "
+                "MiniMax-H3-Image's output head was distilled on, and the image forward reads "
+                "neither shift; this checkpoint reads as MiniMax-H3-Image.")
     return (f"{NODE_NAME} applies ComfyUI's {STOCK_DISPLAY} node, which replaces the model's "
             "sampling with MiniMax H3's paired video and audio schedule, and this checkpoint "
             f"reads as {family}.")

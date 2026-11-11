@@ -770,11 +770,12 @@ def test_the_activation_term_is_family_scoped(artifacts):
 
 
 def test_the_h3_charge_still_routes_through_the_shared_dispatcher():
-    """One call site, two families: the LTX row must not displace H3's."""
+    """One call site, three families: the LTX row must not displace H3's or MiniMax-H3-Image's."""
     from dgx_monarch import h3_activation
 
     registered = loader_graph._ACTIVATION_FAMILIES
-    if set(registered) != {h3_activation.H3_FAMILY, ltx25_activation.LTX_FAMILY}:
+    if set(registered) != {h3_activation.H3_FAMILY, h3_activation.H3_IMAGE_FAMILY,
+                           ltx25_activation.LTX_FAMILY}:
         pytest.fail(f"unexpected activation registry: {sorted(registered)}")
 
 

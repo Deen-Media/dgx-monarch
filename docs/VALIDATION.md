@@ -3406,6 +3406,37 @@ touchpoint manifest. No hardware run has used ComfyUI 0.45.0 yet.
 | The block-scope pops under the malloc graph | the scope stock passes on both trees | an H3 render on uly2 with comfy-managed residency on the Workers (the one Worker mode that turns ComfyUI's malloc graph on), once with exact attention and once with Sol-Attn; the Worker log's `Comfy model compiler graph breaks: N, rogues: M` line and peak memory against the same render before this change | NOT RUN |
 | The release-test rows on 0.45.0 | the floor | the three templates above in the template release test | NOT RUN |
 
+<a id="minimax-h3-image"></a>
+
+## MiniMax-H3-Image
+
+The adapter (`adapters/minimax_h3_image.py`) has its CPU proof against
+ComfyUI 0.45.0: `tests/test_minimax_h3_image_comfy.py` gives stock's bits at
+world 1 on text to image, an odd latent, and edits with one and three
+reference pictures, on and off the head grid and down to sigma 0, and hands
+every block stock's attention operands at world 2 through the threaded
+two-rank harness, pad rows excluded, on references larger than the target,
+text across the shard line with presentation tags, the off-grid table, a
+payload without its layout and a refined context, with no attention pin
+running on a rank. At world 2 it compares by bits on aarch64 (the Sparks, on
+CPU) and within 2e-5 on the comfy canary's x86 runner; bit identity on GB10
+is a hardware leg (the identity rows below). Canary seams 53 to 59 hold the
+forward, the layout, the head, the build, the sampling grid, the edit node's
+payload and the row-keyed calls. In a world of one GPU the record says
+the header pins are kept; on uly2 it says they are dropped. No hardware render
+of this family has been taken: every hardware row below is NOT RUN.
+
+| behaviour | what a run must show | status |
+|---|---|---|
+| The row-keyed calls at a rank's rows | `tools/h3_image_row_check.py` on each DiT file at 1024, 2048 and 4096 square, every call equal on every rank | NOT RUN |
+| Identity on uly2 | uly2 against stock on one GPU on the pin-stripped copy, text to image at 1024, 2048 and 4096 square for the BF16, INT8 ConvRot and W4A8 DiTs, latents compared | NOT RUN |
+| Edits on uly2 | one and three reference pictures at 2048, against stock on one GPU on the pin-stripped copy | NOT RUN |
+| `single` with the pins | each DiT file against stock with the pins, latents identical | NOT RUN |
+| The first-use gate | on `single` and on uly2 | NOT RUN |
+| `uly2+fsdp` | BF16 and INT8 ConvRot against uly2 | NOT RUN |
+| Speed and memory | 2048 and 4096 square; activation calibration; the driver's memory with each text encoder and with the prompt expander loaded | NOT RUN |
+| A public LoRA with a head-bank key | loads and renders on uly2 against one GPU | NOT RUN |
+
 <a id="torch-2-15"></a>
 
 ## torch 2.15

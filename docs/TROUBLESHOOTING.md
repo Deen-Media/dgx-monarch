@@ -8116,31 +8116,26 @@ its DiT files carries the grid. For a file you exported yourself, write the
 `config` metadata back from the export it came from. No consent or waiver
 applies: the model cannot be built without the grid.
 
-## 150. A MiniMax-H3-Image render refuses at the loader
+## 150. A MiniMax-H3-Image file refuses because its quantization metadata cannot be read
 
-**Symptom:** the DGX Monarch loader refuses class P with "this checkpoint is
-MiniMax-H3-Image, which ComfyUI 0.45.0 names minimax_h3_image", before
-anything loads, on every topology and in every format: BF16, INT8 ConvRot,
-W4A8 or any other safetensors export of the same DiT. A Worker that gets the file refuses
-with the same sentence, so a forced `family_adapter` (MiniMax H3 included)
-cannot walk past it.
+**Symptom:** the DGX Monarch loader refuses class P with "this MiniMax-H3-Image
+checkpoint's _quantization_metadata cannot be read", before anything loads, on
+every topology. A Worker that gets the file refuses with the same sentence.
 
-**Cause:** ComfyUI 0.45.0 or newer supports MiniMax-H3-Image, the MiniMax H3 layout without
-its audio stream, with a bank of six output heads on the file's own sigma
-grid. ComfyUI tells it from MiniMax H3 video by its key paths, and the header
-detector does the same (`minimax_h3_image`), but this release carries no
-model forward for it, and dgx-monarch renders no family it has not proven. On
-ComfyUI 0.44.0 stock ComfyUI cannot load the file at all ("Could not detect
-model type"); on 0.45.0 the MiniMax H3 adapter would refuse it as an unvetted
-subclass only after the whole file had loaded. The header gate refuses first,
-with nothing loaded and nothing quarantined. ModelSamplingMiniMaxH3 (DGX
-Monarch) and the MiniMax H3 context-window node refuse this family too, since
-they key on MiniMax H3 video.
+**Cause:** the file reads as MiniMax-H3-Image from its key paths and carries its
+sigma grid, but its `_quantization_metadata` is not JSON or holds no layers map.
+ComfyUI reads that metadata to load the quantized weights and fails to parse
+this one too (`comfy.utils.convert_old_quants`), so stock ComfyUI cannot load the
+file either, and dgx-monarch cannot tell which weight scales the load would
+keep. For other families the header gate gives no verdict on such metadata and
+ComfyUI's own load fails; for this family the gate answers first, before any
+load, as it did while the family was refused outright. A file without its sigma
+grid meets [#149](#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)
+first.
 
-**Fix:** render the file with stock ComfyUI 0.45.0 or newer on one GPU,
-through ComfyUI's own Load Diffusion Model node rather than the DGX Monarch
-loader. No consent or waiver applies. This refusal retires when the
-MiniMax-H3-Image adapter lands.
+**Fix:** use the file as Comfy-Org/MiniMax-H3-Image publishes it, or restore the
+`_quantization_metadata` of the export it came from. No consent or waiver
+applies.
 
 ## 151. An Anima render on the Workers differs from stock ComfyUI
 
@@ -8198,7 +8193,8 @@ header alone
 ([#91](#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down),
 [#120](#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales),
 [#149](#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)
-and #150). It reads the header with a strict reader first. That reader refuses
+and [#150](#150-a-minimax-h3-image-file-refuses-because-its-quantization-metadata-cannot-be-read)).
+It reads the header with a strict reader first. That reader refuses
 headers stock ComfyUI still loads: a tensor entry, a metadata key or a
 descriptor field written twice, an empty tensor name, tensors that share
 bytes, metadata that is not all strings. So when the strict read fails, the

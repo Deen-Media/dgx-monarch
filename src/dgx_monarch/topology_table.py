@@ -182,6 +182,13 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "the packed total needs no divisibility pad: pad-row exclusion is "
              "ulysses-only, so the odd-world fallback and the world-4 fold "
              "refuse a padded sequence instead of rendering it"),
+    # --- minimax_h3_image (H3's DiT, no audio, one latent frame) ----------
+    AutoRule(55, "minimax_h3_image", (), 0.0, _INF, 2, {"ulysses": 2}, False,
+             "packed text, reference pictures and target in one sequence: USP always "
+             "(56 heads tile uly2). No cfg2 row: each conditioning publishes its own "
+             "packed layout and the DiT caps batch at 1, so cfg2 and dp typed-refuse "
+             "on the driver before dispatch. Pad-row exclusion is ulysses-only, so a "
+             "padded ring refuses"),
     # --- omnigen2 (Lumina2-style single-stack; 21 q / 7 kv heads) ----------
     AutoRule(80, "omnigen2", (), 0.0, _INF, 2, {"ring": 2}, False,
              "21 q and 7 kv heads do not divide by 2, so ulysses cannot split them; ring is "

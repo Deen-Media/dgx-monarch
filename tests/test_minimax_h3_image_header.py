@@ -1,9 +1,9 @@
-"""MiniMax-H3-Image from its header: the family, its formats, the grid gate and the refusal.
+"""MiniMax-H3-Image from its header: the family, its formats and the two file gates.
 
-ComfyUI 0.45.0 added the model (upstream pull request 17655); this release carries
-no forward for it, so the upstream gate refuses every file of the family before
-any load (TROUBLESHOOTING #150), and a file whose config metadata lacks the sigma
-grid first (#149). The headers come from ``minimax_h3_image_headers``: the
+ComfyUI 0.45.0 added the model (upstream pull request 17655), and it runs on its own
+adapter (adapters/minimax_h3_image.py). Before any load the upstream gate refuses a
+file whose config metadata lacks the sigma grid (TROUBLESHOOTING #149), and one whose
+quantization metadata cannot be read (#150); every published format passes. The headers come from ``minimax_h3_image_headers``: the
 published files' names, dtypes, shapes and metadata, with no weights.
 ``tests/test_minimax_h3_image_comfy_detection.py`` holds the family's needles
 against ComfyUI's own detection.
@@ -30,7 +30,7 @@ from dgx_monarch.nodes import loader_preflight
 from dgx_monarch.nodes.loaders import DGXMonarchUNETLoader
 from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
 
-GRID, FAMILY = upstream_gate.H3_IMAGE_GRID_TROUBLESHOOTING, upstream_gate.H3_IMAGE_FAMILY_TROUBLESHOOTING
+GRID, METADATA = upstream_gate.H3_IMAGE_GRID_TROUBLESHOOTING, upstream_gate.H3_IMAGE_QUANT_METADATA_TROUBLESHOOTING
 TROUBLESHOOTING = Path(__file__).resolve().parents[1] / "docs" / "TROUBLESHOOTING.md"
 
 
@@ -152,18 +152,23 @@ def test_a_file_without_its_sigma_grid_refuses_first(tmp_path, metadata):
     assert "a file without the grid raises a TypeError" in body
 
 
-def test_with_its_grid_the_family_refuses_and_names_the_stock_path(files):
+def test_with_its_grid_every_published_format_passes_the_gate(files):
+    """The family refusal retired with the adapter: each published DiT reaches the load."""
     for kind in h3i.KINDS:
-        body, number = upstream_gate.refusal_for(str(files / f"{kind}.safetensors"))
-        assert number == FAMILY == 150
-        assert body == upstream_gate.H3_IMAGE_FAMILY_REFUSAL
-    assert _heading(FAMILY).startswith("A MiniMax-H3-Image render refuses")
-    for token in ("minimax_h3_image", "ComfyUI 0.45.0", "Load Diffusion Model",
-                  "Nothing was loaded and nothing was quarantined", "no waiver"):
-        assert token in upstream_gate.H3_IMAGE_FAMILY_REFUSAL
+        assert upstream_gate.refusal_for(str(files / f"{kind}.safetensors")) is None
+        upstream_gate.raise_refusal(str(files / f"{kind}.safetensors"))
 
 
-def test_the_grid_answers_before_dropped_scales_and_dropped_scales_before_the_family(tmp_path):
+def test_the_metadata_refusal_names_the_fault_and_the_way_out():
+    assert METADATA == 150
+    assert _heading(METADATA).startswith("A MiniMax-H3-Image file refuses because its quantization")
+    for token in ("_quantization_metadata cannot be read", "comfy.utils.convert_old_quants",
+                  "Nothing was loaded and nothing was quarantined", "no waiver",
+                  "Comfy-Org/MiniMax-H3-Image"):
+        assert token in upstream_gate.H3_IMAGE_QUANT_METADATA_REFUSAL
+
+
+def test_the_grid_answers_before_dropped_scales(tmp_path):
     no_marker = ("blocks.0.attn.qkv_proj.comfy_quant",)
     both = h3i.write(tmp_path / "both.safetensors", "int8_convrot", blocks=2, metadata=None,
                      drop=no_marker)
@@ -176,14 +181,15 @@ def test_a_format_with_no_row_takes_the_path_any_unvalidated_format_takes(tmp_pa
     """A community 4-bit export in ComfyUI's nvfp4 layout: no published file, no row.
 
     Its kind comes from the generic rules, the same reading the layout gets under
-    H3's keys, and the one family refusal answers it: no format of this family has
-    a path of its own before the adapter."""
+    H3's keys, and it passes the file gates as an H3 file of that layout does: it
+    meets the rules any unvalidated format meets after the loader, not a family
+    refusal."""
     path = h3i.write(tmp_path / "w4a4.safetensors", "nvfp4", blocks=2)
     twin = h3i.write(tmp_path / "w4a4_h3.safetensors", "nvfp4", blocks=2, audio=True)
     family, quant = detect.sniff_checkpoint(str(path))
     assert family == h3_image.FAMILY
     assert quant == detect.sniff_checkpoint(str(twin))[1] == "fp8"
-    assert upstream_gate.refusal_for(str(path))[1] == FAMILY
+    assert upstream_gate.refusal_for(str(path)) == upstream_gate.refusal_for(str(twin)) is None
 
 
 def _mesh(**overrides):
@@ -208,7 +214,8 @@ def _worker(**overrides):
 
 
 @pytest.mark.parametrize("preset", ["single", "uly2"])
-def test_the_driver_and_the_worker_refuse_class_p_with_one_sentence(files, monkeypatch, preset):
+def test_the_driver_and_the_worker_refuse_damaged_metadata_class_p_with_one_sentence(
+        files, monkeypatch, preset):
     def explode(*_args, **_kwargs):
         raise AssertionError("an answer below the gate ran")
 
@@ -217,15 +224,17 @@ def test_the_driver_and_the_worker_refuse_class_p_with_one_sentence(files, monke
     from dgx_monarch.nodes import loaders
 
     monkeypatch.setattr(loaders, "ensure_live", explode)
+    damaged = h3i.write(files / f"damaged_{preset}.safetensors", "int8_convrot", blocks=2,
+                        metadata={**h3i.METADATA, "_quantization_metadata": "{not json"})
     with pytest.raises(UnsupportedModelError) as driver:
-        DGXMonarchUNETLoader().load(_mesh(topology_preset=preset), "int8_convrot.safetensors")
+        DGXMonarchUNETLoader().load(_mesh(topology_preset=preset), damaged.name)
     tag = parse_leading_refusal_tag(str(driver.value))
     assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
     assert tag.guard is None and tag.waivable is False
     assert "docs/TROUBLESHOOTING.md #150" in str(driver.value)
     worker = _worker()
     with pytest.raises(UnsupportedModelError) as funnel:
-        store_fsdp.ensure(worker, "int8_convrot.safetensors", {}, [])
+        store_fsdp.ensure(worker, damaged.name, {}, [])
     assert str(funnel.value) == str(driver.value)
     assert worker.store.calls == [], "the store was entered on a refused artifact"
 
@@ -236,10 +245,12 @@ _DAMAGED_QUANT_METADATA = {"not-json": "{not json", "no-layers": json.dumps({"fo
 
 @pytest.mark.parametrize("damage", sorted(_DAMAGED_QUANT_METADATA))
 @pytest.mark.parametrize("grid", [True, False], ids=["grid", "no-grid"])
-def test_damaged_quantization_metadata_cannot_cancel_the_familys_refusal(files, monkeypatch, damage, grid):
-    """The grid and the family are read before any quantization metadata is parsed,
-    and the family's refusal stands when the scale check cannot finish: the driver
-    and the Worker refuse with the class and sentence the intact header gets."""
+def test_damaged_quantization_metadata_fails_closed_before_any_load(files, monkeypatch, damage, grid):
+    """With the family refusal retired, a damaged ``_quantization_metadata`` still fails
+    closed before any load: without the grid the grid refusal (#149) answers, as for the
+    intact file; with it the metadata refusal (#150) answers, where an intact file passes.
+    The driver and the Worker refuse with one class P sentence and the store is never
+    entered."""
     def explode(*_args, **_kwargs):
         raise AssertionError("an answer below the gate ran")
 
@@ -253,21 +264,35 @@ def test_damaged_quantization_metadata_cannot_cancel_the_familys_refusal(files, 
                        metadata=dict(config))
     damaged = h3i.write(files / f"damaged_{damage}_{grid}.safetensors", "int8_convrot", blocks=2,
                         metadata={**config, "_quantization_metadata": _DAMAGED_QUANT_METADATA[damage]})
-    expected = upstream_gate.refusal_for(str(intact))
-    assert expected is not None and expected[1] == (FAMILY if grid else GRID)
-    assert upstream_gate.refusal_for(str(damaged)) == expected
+    if grid:
+        assert upstream_gate.refusal_for(str(intact)) is None
+        assert upstream_gate.refusal_for(str(damaged)) == (
+            upstream_gate.H3_IMAGE_QUANT_METADATA_REFUSAL, METADATA)
+    else:
+        assert upstream_gate.refusal_for(str(intact))[1] == GRID
+        assert upstream_gate.refusal_for(str(damaged)) == upstream_gate.refusal_for(str(intact))
     with pytest.raises(UnsupportedModelError) as driver:
         DGXMonarchUNETLoader().load(_mesh(), damaged.name)
-    with pytest.raises(UnsupportedModelError) as reference:
-        DGXMonarchUNETLoader().load(_mesh(), intact.name)
-    assert str(driver.value) == str(reference.value)
     tag = parse_leading_refusal_tag(str(driver.value))
     assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+    assert f"docs/TROUBLESHOOTING.md #{METADATA if grid else GRID}" in str(driver.value)
     worker = _worker()
     with pytest.raises(UnsupportedModelError) as funnel:
         store_fsdp.ensure(worker, damaged.name, {}, [])
-    assert str(funnel.value) == str(reference.value)
+    assert str(funnel.value) == str(driver.value)
     assert worker.store.calls == []
+
+
+def test_a_literal_null_quantization_metadata_reads_as_none_as_stock_reads_it(tmp_path):
+    """Stock's convert_old_quants treats a parsed None as no metadata and loads the file, so
+    the metadata refusal (#150) must not fire on it: the file answers as one without the key."""
+    absent = h3i.write(tmp_path / "absent.safetensors", "int8_convrot", blocks=2,
+                       metadata=dict(h3i.METADATA))
+    null = h3i.write(tmp_path / "null.safetensors", "int8_convrot", blocks=2,
+                     metadata={**h3i.METADATA, "_quantization_metadata": "null"})
+    assert upstream_gate.refusal_for(str(null)) == upstream_gate.refusal_for(str(absent))
+    verdict = upstream_gate.refusal_for(str(null))
+    assert verdict is None or verdict[1] != METADATA
 
 
 def test_damaged_quantization_metadata_on_another_family_gives_no_verdict(tmp_path):
@@ -278,20 +303,12 @@ def test_damaged_quantization_metadata_on_another_family_gives_no_verdict(tmp_pa
     assert upstream_gate.refusal_for(str(path)) is None
 
 
-def test_forcing_the_h3_video_adapter_cannot_walk_past_the_gate(files):
-    worker = _worker(family_override="minimax_h3")
-    with pytest.raises(UnsupportedModelError) as raised:
-        store_fsdp.ensure(worker, "bf16.safetensors", {"family_adapter": "minimax_h3"}, [])
-    assert "minimax_h3_image" in str(raised.value)
-    assert worker.store.calls == []
-
-
 def test_the_h3_nodes_refuse_the_family_once_detection_names_it(tmp_path):
     """ModelSamplingMiniMaxH3 and the H3 context windows key on minimax_h3 by equality,
     and pass `unknown`, so they refuse this family only because the header names it."""
     family = detect.sniff_checkpoint(str(h3i.write(tmp_path / "f.safetensors", blocks=2)))[0]
     reason = h3_sigma_shift.family_refusal_reason(family)
-    assert reason is not None and "reads as minimax_h3_image" in reason
+    assert reason is not None and "reads as MiniMax-H3-Image" in reason
     assert h3_context_windows.family_refusal_reason(family) is not None
 
 

@@ -25,6 +25,7 @@ from .lens import LensAdapter
 from .ltx import LTXAdapter
 from .mage_flow import MageFlowAdapter
 from .minimax_h3 import MiniMaxH3Adapter
+from .minimax_h3_image import MiniMaxH3ImageAdapter
 from .moss_image import MOSSImageAdapter
 from .omnigen2 import Omnigen2Adapter
 from .pixeldit import Ideogram4Adapter
@@ -61,7 +62,8 @@ ADAPTERS: tuple[Adapter, ...] = (
     ZImageAdapter(),
     LTXAdapter(),
     # MiniMaxH3's matches() raises on any MiniMaxH3 subclass, so an adapter for
-    # one must be registered before this entry.
+    # one must be registered before this entry: MiniMaxH3Image is one.
+    MiniMaxH3ImageAdapter(),
     MiniMaxH3Adapter(),
     # Boogu subclasses Omnigen2, whose exact-type matches() raises on a Boogu
     # instance. The Wan variants subclass WAN21 and precede WanAdapter; SCAIL2
@@ -105,7 +107,7 @@ def get_adapter(base_model) -> Adapter:
         f"model class {type(base_model).__name__} has no dgx-monarch adapter. "
         f"Supported families: krea2, mage_flow, qwen_image21, qwen_image, lens, chroma, flux, "
         f"flux2, longcat, hunyuan, zimage, ideogram4, pixeldit_comfy, ltx, flux3, moss_image, "
-        f"minimax_h3, "
+        f"minimax_h3, minimax_h3_image, "
         f"boogu, omnigen2, wan_scail, wan_animate2, wan_dancer, wan, ernie, cogvideo, "
         f"kandinsky5, anima "
         "(docs/MODELS.md)."
@@ -138,10 +140,11 @@ def _ancestry_owner(base_model) -> Adapter | None:
 # ComfyUI model classes a forced family must not bind, by family. Each subclasses
 # a class that family's adapter owns but is another model with a forward of its
 # own, and no adapter of its own is registered ahead to take it, so ancestry
-# alone would hand it to the parent. MiniMaxH3Image has no audio stream and its
-# own output heads. An entry is dead once its class has an adapter registered
-# ahead of the parent's: the owner check below then refuses first.
-_FORCE_REFUSED: dict[str, tuple[str, ...]] = {"minimax_h3": ("MiniMaxH3Image",)}
+# alone would hand it to the parent. An entry is dead once its class has an
+# adapter registered ahead of the parent's: the owner check below then refuses
+# first. MiniMaxH3Image was the first entry; its own adapter now registers ahead
+# of H3's, so a forced minimax_h3 on it meets the owner check, and the table is empty.
+_FORCE_REFUSED: dict[str, tuple[str, ...]] = {}
 
 
 def _forced_adapter(base_model, family: str) -> Adapter:

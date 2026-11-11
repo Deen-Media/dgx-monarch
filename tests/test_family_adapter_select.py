@@ -404,6 +404,11 @@ def test_a_forced_minimax_h3_does_not_bind_the_image_model(monkeypatch):
     assert adapter_for(model_base.MiniMaxH3(), "minimax_h3") is video
     finetune = type("MiniMaxH3Finetune", (model_base.MiniMaxH3,), {})
     assert adapter_for(finetune(), "minimax_h3") is video
+    # The image model's own adapter registers ahead of H3's: the owner check answers,
+    # naming it, and a forced minimax_h3_image binds it.
+    assert "which the minimax_h3_image adapter owns" in message
+    image = next(adapter for adapter in ADAPTERS if adapter.family == "minimax_h3_image")
+    assert adapter_for(model_base.MiniMaxH3Image(), "minimax_h3_image") is image
 
 
 def _write_safetensors(path, metadata):

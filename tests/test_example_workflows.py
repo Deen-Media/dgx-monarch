@@ -465,6 +465,8 @@ TEMPLATE_FOR_ROW: dict[str, str | None] = {
     "Kandinsky5-Video Lite": "dgx-monarch-kandinsky5-video-lite.json",
     "Kandinsky5-Video Pro": "dgx-monarch-kandinsky5-video-pro.json",
     "MiniMax H3 (t2va/fl2va/ref2va AV)": "dgx-monarch-minimax-h3-t2va.json",
+    # The templates ship in their own pull request, after the family facts.
+    "MiniMax-H3-Image": None,
 }
 
 # Every row without a template must explicitly state that gap.

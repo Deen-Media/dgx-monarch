@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 # The block compiler (actor/worker_compile.py) compiles only a top-level `blocks`
-# list. On ComfyUI 0.43.0 eight families build a DiT that has one: krea2,
-# minimax_h3, wan, wan_scail, wan_animate2, wan_dancer, cogvideo and anima. Every
+# list. Nine families build a DiT that has one: krea2, minimax_h3,
+# minimax_h3_image (ComfyUI 0.45.0), wan, wan_scail, wan_animate2, wan_dancer,
+# cogvideo and anima. Every
 # family below names its block lists otherwise, so compile does nothing for it
 # and its requested slab residency stays available:
 #   transformer_blocks: qwen_image, qwen_image21, mage_flow, lens, ltx
