@@ -637,9 +637,15 @@ shared). The fix is automatic too: at node import the pack makes the driver's
 ComfyUI read MemAvailable less a 7.6 GiB floor on an integrated CUDA device.
 Confirm the driver log line `unified memory: ComfyUI in this process now reads
 free memory as MemAvailable`. `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` on the driver
-turns it off. A batch priced at most of the box still splits by what the
-session has available ([DESIGN](DESIGN.md), "ComfyUI in the driver reads the
-box as it is").
+turns it off. `dgxm doctor` shows which reading the running driver has in its
+`driver memory reading` row: `reads the box as it is` with the two figures, or
+a warning that it reads the device figure. A batch priced at most of the box
+still splits by what the session has available ([DESIGN](DESIGN.md), "ComfyUI
+in the driver reads the box as it is"). For conditioning that is the same
+bits at every size, `DGXM_VAE_ITEM_BATCHES=1` on the driver encodes and
+decodes image batches one image at a time; it is off by default, and with it
+on a batch of images does not match the same batch on a stock ComfyUI that had
+room to encode it whole.
 
 ## 13. uly2+fsdp / ring2+fsdp render deadlocks (hangs, no error)
 

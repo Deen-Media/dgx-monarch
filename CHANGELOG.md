@@ -478,9 +478,12 @@
   misses. Weights were never affected (comfy-aimdo already reads MemAvailable
   on an integrated GPU). The reading is installed at node import on an
   integrated CUDA device only; `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` turns it
-  off. A stock render recorded with little MemFree can change once, since its
-  batches no longer split. A batch priced at most of the box (six 2048 views)
-  still splits by what the session has available
+  off, and `dgxm doctor` has a `driver memory reading` row that says which
+  reading the running driver has. A stock render recorded with little MemFree
+  can change once, since its batches no longer split. A batch priced at most
+  of the box (six 2048 views) still splits by what the session has available;
+  `DGXM_VAE_ITEM_BATCHES=1` on the driver tries the rule that never reads
+  memory, one image a VAE batch, which is off by default
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by

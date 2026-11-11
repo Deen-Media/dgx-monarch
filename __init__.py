@@ -10,7 +10,7 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from dgx_monarch import demo_inputs, driver_uma_memory, fp8_compute  # noqa: E402
+from dgx_monarch import demo_inputs, driver_uma_memory, fp8_compute, vae_item_batches  # noqa: E402
 from dgx_monarch.kernels import int8_gemm  # noqa: E402
 from dgx_monarch.mesh import install_fault_hook  # noqa: E402
 from dgx_monarch.nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS  # noqa: E402
@@ -32,6 +32,11 @@ fp8_compute.install_driver()
 # (src/dgx_monarch/driver_uma_memory.py). A discrete GPU is left alone, it
 # never raises, and DGXM_DISABLE_DRIVER_UMA_MEMORY=1 turns it off.
 driver_uma_memory.install_driver()
+
+# One image a VAE batch, so an encode or decode of several images does not
+# depend on free memory (src/dgx_monarch/vae_item_batches.py). Off by default:
+# DGXM_VAE_ITEM_BATCHES=1 turns it on for a trial. It never raises.
+vae_item_batches.install_driver()
 
 # Copy the templates' demo images, clips and music into ComfyUI's input folder
 # where it lacks them, never replacing a file (src/dgx_monarch/demo_inputs.py).

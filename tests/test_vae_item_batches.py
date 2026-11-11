@@ -46,6 +46,35 @@ def test_each_item_goes_through_the_original_alone_and_in_order():
     assert wrapped(video, pixels).shape[0] == 6 and seen == [(6, 4, 4, 3)]  # left whole
 
 
+def test_off_by_default_with_a_trial_switch_and_an_off_switch_that_wins(monkeypatch):
+    assert vae_item_batches.ON_BY_DEFAULT is False  # hardware decides; see the module's first lines
+    assert vae_item_batches.wanted({}) is False
+    assert vae_item_batches.wanted({vae_item_batches.ENABLE_ENV: "1"}) is True
+    assert vae_item_batches.wanted({vae_item_batches.ENABLE_ENV: "0"}) is False
+    assert vae_item_batches.wanted({vae_item_batches.ENABLE_ENV: "1", vae_item_batches.DISABLE_ENV: "1"}) is False
+    monkeypatch.setattr(vae_item_batches, "ON_BY_DEFAULT", True)
+    assert vae_item_batches.wanted({}) is True
+    assert vae_item_batches.wanted({vae_item_batches.DISABLE_ENV: "1"}) is False
+
+
+def test_the_driver_hook_installs_nothing_by_default_and_never_raises(monkeypatch, caplog):
+    calls = []
+    monkeypatch.setattr(vae_item_batches, "install", lambda: calls.append("install"))
+    monkeypatch.delenv(vae_item_batches.ENABLE_ENV, raising=False)
+    monkeypatch.delenv(vae_item_batches.DISABLE_ENV, raising=False)
+    assert vae_item_batches.install_driver() == "off" and calls == []
+    monkeypatch.setenv(vae_item_batches.ENABLE_ENV, "1")
+    with caplog.at_level("INFO"):
+        assert vae_item_batches.install_driver() == "installed" and calls == ["install"]
+    assert "one image a batch" in caplog.text and vae_item_batches.DISABLE_ENV in caplog.text
+
+    def broken():
+        raise ImportError("No module named 'comfy'")
+
+    monkeypatch.setattr(vae_item_batches, "install", broken)
+    assert vae_item_batches.install_driver() == "no_comfy"
+
+
 @pytest.fixture(scope="module")
 def comfy_sd():
     """Real ComfyUI's comfy.sd with --cpu, restored afterwards."""
@@ -129,6 +158,11 @@ def test_stocks_encode_follows_the_reading_and_the_rules_does_not(comfy_sd):
     for batch in (2, 3, 6):
         assert torch.equal(ruled[1], ruled[batch]), batch
     assert torch.equal(ruled[1], stock[1])
+    # It adds nothing of its own: image i's latent is stock's encode of image i alone.
+    alone = torch.cat([vae.encode(pixels[index:index + 1]).float().cpu() for index in range(6)], dim=0)
+    assert torch.equal(ruled[1], alone)
+    # And it is not what a stock box with room for the whole batch gives: that is said in the docs.
+    assert not torch.equal(ruled[1], stock[6])
 
 
 def test_the_rules_decode_is_one_tensor_whatever_memory_reads(comfy_sd):

@@ -13,6 +13,7 @@ from . import (
     doctor_nccl,
     doctor_permissions,
     doctor_probes,
+    driver_memory_row,
     fp8_matmul_row,
     int8_gemm_row,
     json_report,
@@ -349,7 +350,7 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
         if avail_gib < total_gib * 0.35 and cached_gib > total_gib * 0.3:
             rows.append(_row(_WARN, "memory headroom",
                              f"{avail_gib:.0f}/{total_gib:.0f} GiB available; page cache holds {cached_gib:.0f} GiB. "
-                             "On unified memory ComfyUI plans loads against free memory, so drop the "
+                             "On unified memory the page cache competes with GPU allocations, so drop the "
                              "page cache before a large load: `sync && echo 3 | sudo tee /proc/sys/vm/drop_caches`"))
         else:
             rows.append(_row(_OK, "memory headroom", f"{avail_gib:.0f}/{total_gib:.0f} GiB available"))
@@ -415,7 +416,8 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
 
     # Driver-side failure state can block the next render even when all
     # Worker service checks pass.
-    rows.extend((_mesh_health_row(), _row(*vae_decode_row.doctor_row(config))))
+    rows.extend((_mesh_health_row(), _row(*vae_decode_row.doctor_row(config)),
+                 _row(*driver_memory_row.doctor_row())))
 
     driver_torch = ""
     try:
