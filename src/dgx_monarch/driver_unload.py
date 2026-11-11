@@ -368,15 +368,16 @@ def check_with_unload(steps: Sequence[Callable[[], object]], *, handle: Any = No
     counted = (f"the Worker on {credit.box or 'this host'} drops "
                f"{credit.dropped or 'the old model'} before this load, which frees at least "
                f"{credit.gib} GiB")
-    with swap_credit.applying(credit):
+    with swap_credit.applying(credit) as applied:
         again = _first_refusal(steps, first[0], is_refusal)
         if again is None:
-            log.info("render preflight: %s fits once %s", subject, counted)
+            if applied.used:  # a price that charges a load took the credit
+                log.info("render preflight: %s fits once %s", subject, counted)
             return
         try:
             _after_refusal(steps, *again, handle, subject, is_refusal)
         except Exception as exc:
-            if not is_refusal(exc):
+            if not is_refusal(exc) or not applied.used:
                 raise
             _raise_amended(exc, f"The figures above already count that {counted}.")
 

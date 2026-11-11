@@ -7,8 +7,9 @@ is raised:
 
 1. **The swap credit.** The Workers on the driver host answer the agreement's
    own quote, and where the load replaces a stock resident in its own slot the
-   store drops that model first, so its copy counts as available
-   (``swap_credit.py`` holds the rule). A deferred load must also leave room
+   store drops that model first, so its copy counts as available: only what
+   the Worker's own price credited, and only where this price charges the
+   DiT's load (``swap_credit.py`` holds the rule). A deferred load must also leave room
    for the graph's driver models beside the old model, because they load on
    the driver before the first render drops it.
 2. **ComfyUI's own models on this host.** If the credit does not make room,
@@ -124,10 +125,14 @@ def relieve(shape: Any, windows: Callable[[Any], tuple[Any, ...]], *, mesh: Any,
     """
     relief = NONE
     try:
-        asked = old_model_clear.driver_host_answers(mesh, unet_name, options, slot) if slot else UNASKED
+        # A price that reads the weights as resident (the loader's memo, or a
+        # first Worker on another box) charges no load, so it has no drop to count.
+        pending = slot and any(window.weight_bytes for window in windows(shape))
+        asked = (old_model_clear.driver_host_answers(mesh, unet_name, options, slot)
+                 if pending else UNASKED)
         box = graph_load_price.driver_box(mesh)
-        credit = (swap_credit.from_answers(asked.mine, slot, unet_name, box=box)
-                  if slot and asked is not None else swap_credit.NONE)
+        credit = (swap_credit.from_answers(asked.mine, slot, box=box)
+                  if pending and asked is not None else swap_credit.NONE)
         relief = Relief(asked=asked, box=box)
         if credit:
             priced = windows(replace(shape, mem_available=shape.mem_available + credit.bytes))
@@ -186,8 +191,7 @@ def render_credit(model: Any, request: Any) -> swap_credit.SwapCredit:
             mesh, name, spec.get("options"), "cond", loras=spec.get("loras"))
         if asked is None:
             return swap_credit.NONE
-        return swap_credit.from_answers(asked.mine, "cond", name,
-                                        box=graph_load_price.driver_box(mesh))
+        return swap_credit.from_answers(asked.mine, "cond", box=graph_load_price.driver_box(mesh))
     except Exception as exc:
         log.info("render preflight could not count what the driver host gets back before "
                  "this load (%r); its own price stands", exc)

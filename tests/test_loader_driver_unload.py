@@ -27,6 +27,7 @@ from dgx_monarch.log import get_logger
 from dgx_monarch.nodes import loader_graph, loader_preflight
 from test_capacity_old_model import NEW, _answer, _loader_rig, _stock
 from test_driver_unload import TE_BYTES, VAE_BYTES, H3TextEncoder, H3VideoVAE, _comfy
+from test_loader_swap_credit import _held
 
 # The old-model rig (stub folder_paths, clean cards) and the unload rig (fresh
 # progress tracker, no settle wait, no kill switch, the box's reading).
@@ -55,7 +56,7 @@ def journal():
 def _rigged(monkeypatch, tmp_path, box, *, held_gib: float | None, avail_gib: float = 40.0):
     """The loader rig (a 20 GiB file: 47 GiB at the load window) on a box whose reading moves."""
     mesh = _loader_rig(monkeypatch, tmp_path, held_gib=held_gib or 1.0)
-    row = (_stock("fits", size_gib=1.0, avail_gib=200.0, resident=OLD, resident_gib=held_gib)
+    row = (_held(OLD, held_gib)
            if held_gib else _stock("fits", size_gib=1.0, avail_gib=200.0, resident=None))
     asked: list = []
     monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k:

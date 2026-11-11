@@ -16,7 +16,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from . import driver_footprint, h3_rows, mesh_safety
+from . import driver_footprint, h3_rows, mesh_safety, swap_credit
 from .h3_calibration import (
     H3_ACTIVATION_FLOOR_BYTES,
     H3_GUIDE_CLIP_ENCODE_BYTES,
@@ -278,7 +278,7 @@ def preflight_h3_activation_for_request(
         mesh = getattr(model, "mesh", None)
         if not _co_resident_enough(mesh):
             return
-        avail = mesh_safety.pending_load_available_bytes()
+        avail = mesh_safety.mem_available_bytes()
         if avail is None:
             return  # off Linux: host MemAvailable bounds nothing here
         rows = h3_rows.rows_from_request(request, latent, video_shape=latent_shape,
@@ -304,7 +304,8 @@ def preflight_h3_activation_for_request(
         estimate = estimate_h3_activation(
             rows=rows, sp_degree=sp_degree_for_mesh(mesh),
             weight_bytes=weight_bytes, weights_resident=resident,
-            mem_available=avail, reserve=driver_footprint.reserve_bytes(args),
+            mem_available=avail if resident else swap_credit.credited(avail),
+            reserve=driver_footprint.reserve_bytes(args),
             weights_note=note)
         h3_activation_preflight(estimate, unet_name=unet_name)
     except mesh_safety.StockLoadCapacityError:

@@ -2231,9 +2231,12 @@ that then fits goes ahead with no card, and the driver log says why: "fits on
 the head once the Worker there drops flux1-dev, which frees at least 22.2
 GiB". A refusal that still stands says what it counted: "The Worker on the
 head drops flux1-dev before this load, which frees at least 22.2 GiB, and
-<model> is still N GiB short after that." Only the model in the slot the load
-goes into counts, and only a stock one: a slab or comfy-managed resident, an
-FSDP shard and a model in the other slot are priced as still held. Under
+<model> is still N GiB short after that." The driver counts only what the
+Worker's own price counted, so only the model in the slot the load goes into,
+and only a stock one: a slab or comfy-managed resident, an FSDP shard, a load
+priced slab-resident and a model in the other slot are priced as still held.
+A check that reads the new model as already loaded charges no load and counts
+no drop. Under
 `auto` the graph's own driver models load before the old model is dropped, so
 they must fit beside it. Before 2026-11-11 this check priced the new model
 beside the old one: flux1-dev and then LTX 2.3 was 13.3 GiB short with 22.2

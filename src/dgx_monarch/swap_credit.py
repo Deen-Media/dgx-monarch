@@ -17,27 +17,28 @@ available, 22.2 GiB of flux1-dev about to be dropped) and the MiniMax-H3-Image
 INT8 load of 2026-11-11 (46.0 GiB needed, 34.1 available, the 37.5 GiB BF16
 DiT in the same slot) are that fault.
 
-This module reads the credit from the answers the Workers on the driver host
-give to the agreement's own quote, by ``credit_stock_swap``'s rule:
+This module takes the credit from the answers the Workers on the driver host
+give to the agreement's own quote, and it takes only what a Worker's own price
+credited, so the driver never admits on a drop the agreement would not count:
 
-- the Worker's row for this slot says the load is a swap;
-- the slot holds a stock resident, whose drop was measured to return its copy.
-  A slab or comfy-managed resident, an FSDP shard and a slot whose load or
-  cleanup is in flight give nothing;
-- the size is the one the Worker reports for that copy: the figure its own
-  price credited where its row carries one, else its snapshot's figure, which
-  for a cast is a lower bound;
+- the Worker's row for this slot says the load is a swap, and its stock price
+  names the model it drops and the bytes it credited for it (``dropped`` and
+  ``credit_bytes`` in the row's measured block, written by
+  ``credit_stock_swap``). That rule covers a stock resident only, at the
+  file's size or the lower bound of a cast's copy. A slab or comfy-managed
+  resident, an FSDP shard, a slot whose load or cleanup is in flight, a reuse,
+  and a LoRA change that keeps its base carry no such pair and give nothing;
+- a row priced on a slab rung gives nothing: the agreement prices that load
+  with the old model held;
 - only the slot the load goes into. A model in another slot stays, and a load
   whose slot is not known gets no credit;
-- another file. A swap onto the file the slot already holds is a LoRA or cast
-  change, where the store may keep the base, so only a drop the Worker's own
-  price named counts there;
 - one Worker's worth. The driver's prices charge one Worker's weights however
   many ranks share the box, so the credit is the smallest any of them reports,
   and nothing when one of them reports none.
 
-A reuse gets no credit and needs none here: the loader's quote names no LoRA
-stack, so it cannot tell a reuse from a stack change.
+And the credit goes only onto a price that charges the DiT's own load. A price
+that reads the weights as already resident charges nothing for them, so it has
+no drop to count: the callers apply the credit only beside a weight charge.
 
 Pure: no ComfyUI, no mesh call and no file read. ``nodes/loader_relief.py``
 asks the Workers and applies the credit at the loader; ``applying`` carries it
@@ -49,10 +50,9 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, overload
 
 _GIB = 2 ** 30
-CREDITED_RESIDENCY = "stock"
 _SWAP = "swap"
 
 
@@ -76,28 +76,20 @@ class SwapCredit:
 NONE = SwapCredit()
 
 
-def _row_credit(quote: Any, slot: str, unet_name: str) -> tuple[int, str]:
-    """One Worker's credit for a load of ``unet_name`` into ``slot``, and the model it drops."""
-    if getattr(quote, "slot", None) != slot or getattr(quote, "would_load", None) != _SWAP:
+def _row_credit(quote: Any, slot: str) -> tuple[int, str]:
+    """What one Worker's own price credited for a load into ``slot``, and the model it drops."""
+    if (getattr(quote, "slot", None) != slot or getattr(quote, "would_load", None) != _SWAP
+            or getattr(quote, "use_slab", False)):
         return 0, ""
-    if (getattr(quote, "holds_resident", None) or {}).get(slot) != CREDITED_RESIDENCY:
-        return 0, ""
-    name = str((getattr(quote, "resident_names", None) or {}).get(slot) or "")
-    held = (getattr(quote, "resident_bytes", None) or {}).get(slot)
     block = getattr(quote, "measured", None) or {}
-    # The Worker's own swap credit, where its stock price applied one and named the drop.
-    own = block.get("credit_bytes") if block.get("dropped") and not getattr(quote, "use_slab", False) else None
-    # A swap onto the file the slot already holds is a stack or cast change. The
-    # store may keep the base and re-apply the stack, so only a drop the Worker's
-    # own price named is credited there, never the snapshot's figure.
-    for figure in (own,) if not name or name == unet_name else (own, held):
-        if isinstance(figure, int) and not isinstance(figure, bool) and figure > 0:
-            return figure, name
-    return 0, ""
+    credit, dropped = block.get("credit_bytes"), block.get("dropped")
+    if not dropped or not isinstance(credit, int) or isinstance(credit, bool) or credit <= 0:
+        return 0, ""
+    return credit, str(dropped)
 
 
-def from_answers(answers: Sequence[Any], slot: str, unet_name: str, *, box: str = "") -> SwapCredit:
-    """The credit for a load of ``unet_name`` into ``slot``, or ``NONE``.
+def from_answers(answers: Sequence[Any], slot: str, *, box: str = "") -> SwapCredit:
+    """The credit for a load into ``slot``, or ``NONE``.
 
     ``answers`` are the agreement's answers from the ranks that share the
     driver host, each with its price rows for this request.
@@ -107,7 +99,7 @@ def from_answers(answers: Sequence[Any], slot: str, unet_name: str, *, box: str 
     credits: list[tuple[int, str]] = []
     for answer in answers:
         rows = [row for row in getattr(answer, "quotes", ()) or () if getattr(row, "slot", None) == slot]
-        credit = _row_credit(rows[0], slot, unet_name) if rows else (0, "")
+        credit = _row_credit(rows[0], slot) if rows else (0, "")
         if credit[0] <= 0:
             return NONE
         credits.append(credit)
@@ -115,22 +107,41 @@ def from_answers(answers: Sequence[Any], slot: str, unet_name: str, *, box: str 
     return SwapCredit(size, name, box)
 
 
-# Render lifetime: the credit the render-site rescue found, read by the prices
-# that charge a pending load on the driver host, through
-# ``mesh_safety.pending_load_available_bytes``. Zero outside ``applying``.
-_PENDING: ContextVar[int] = ContextVar("dgxm_swap_credit", default=0)
+# Render lifetime: the credit the render-site rescue found, read through
+# ``credited`` by the prices that charge a pending load on the driver host, and
+# by each only on the branch where it charges that load (nodes/render_preflight,
+# h3_activation, mesh_safety's reference and pose price). None outside ``applying``.
+@dataclass(slots=True)
+class Applied:
+    """A credit in force, and whether any price that charges a load took it."""
+
+    bytes: int
+    used: bool = False
+
+
+_PENDING: ContextVar[Applied | None] = ContextVar("dgxm_swap_credit", default=None)
 
 
 @contextmanager
-def applying(credit: SwapCredit) -> Iterator[SwapCredit]:
+def applying(credit: SwapCredit) -> Iterator[Applied]:
     """Count ``credit`` as available in the pending-load prices inside the block."""
-    token = _PENDING.set(max(int(credit.bytes), 0))
+    applied = Applied(max(int(credit.bytes), 0))
+    token = _PENDING.set(applied)
     try:
-        yield credit
+        yield applied
     finally:
         _PENDING.reset(token)
 
 
+@overload
+def credited(mem_available: int) -> int: ...
+@overload
+def credited(mem_available: None) -> None: ...
 def credited(mem_available: int | None) -> int | None:
-    """MemAvailable for a pending load: the reading plus what the drop returns first."""
-    return None if mem_available is None else mem_available + _PENDING.get()
+    """A reading for a pending load: plus what the drop returns first, and the
+    credit in force is marked as taken, so its rescue says only what it counted."""
+    applied = _PENDING.get()
+    if mem_available is None or applied is None or not applied.bytes:
+        return mem_available
+    applied.used = True
+    return mem_available + applied.bytes

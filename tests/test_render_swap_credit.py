@@ -23,8 +23,9 @@ import pytest
 import test_driver_unload as rig
 from dgx_monarch import capacity_agreement, driver_unload, mesh_safety, swap_credit
 from dgx_monarch.nodes import loader_relief, render_preflight
-from test_capacity_old_model import _answer, _stock
+from test_capacity_old_model import _answer
 from test_driver_unload import DIT_BYTES, UNET, _comfy, _h3_latent, _h3_need, _h3_request, _h3_rig
+from test_loader_swap_credit import _held
 
 # The driver-unload rig: a fresh progress tracker, a UMA box, the box's reading and the journal.
 _isolated, box, journal = rig._isolated, rig.box, rig.journal
@@ -37,7 +38,7 @@ CREDIT = swap_credit.SwapCredit(22 * _GIB, OLD, "the head")
 def _pending(box, need: int, seen: list | None = None):
     """A check that charges a pending load: it reads the credited figure."""
     def check():
-        available = mesh_safety.pending_load_available_bytes()
+        available = swap_credit.credited(box.mem)
         if seen is not None:
             seen.append(available)
         if available < need:
@@ -169,7 +170,7 @@ def test_an_h3_render_whose_load_replaces_an_old_model_proceeds(monkeypatch, tmp
     _live(rig_)
     box.mem = _h3_need(weights=DIT_BYTES) - 15 * _GIB
     calls = _comfy(monkeypatch, box)
-    held = _stock("fits", size_gib=19.5, avail_gib=200.0, resident=OLD, resident_gib=22.2)
+    held = _held(OLD, 22.2)
     requests: list = []
     monkeypatch.setattr(capacity_agreement, "collect", lambda handle, request, world, *, deadline_s:
                         requests.append(request) or [_answer(0, held, box="this box")])
@@ -186,16 +187,29 @@ def test_an_h3_render_with_nothing_to_drop_is_priced_as_before(monkeypatch, tmp_
     _live(rig_)
     box.mem = _h3_need(weights=DIT_BYTES) - 15 * _GIB
     _comfy(monkeypatch, box, models=())
-    word = change.get("word", "stock")
-    held = _stock("fits", size_gib=19.5, avail_gib=200.0, resident=OLD, resident_gib=22.2, word=word)
-    if "would_load" in change:
-        from dataclasses import replace
-
-        held = replace(held, would_load=change["would_load"])
+    held = _held(OLD, 22.2, **change)
     monkeypatch.setattr(capacity_agreement, "collect",
                         lambda *_a, **_k: [_answer(0, held, box="this box")])
     with pytest.raises(mesh_safety.StockLoadCapacityError) as raised:
         render_preflight.activation_footprint_preflight_for_request(rig_.model, _request(), _h3_latent())
+    assert "already count" not in str(raised.value)
+
+
+def test_a_price_that_charges_no_load_takes_no_credit_at_the_render_site(monkeypatch, tmp_path, box):
+    """An explicit preset: the loader placed the DiT, so the H3 price charges activations only.
+    If the Worker still answers "swap" (a load the gate deferred, say), the drop it names is
+    not room for activations: the box 2.3 GiB short refuses as it did before the credit."""
+    rig_ = _h3_rig(monkeypatch, tmp_path, preset="uly2")
+    _live(rig_)
+    box.mem = _h3_need(weights=0) - int(2.3 * _GIB)
+    _comfy(monkeypatch, box, models=())
+    held = _held(OLD, 22.2)
+    monkeypatch.setattr(capacity_agreement, "collect",
+                        lambda *_a, **_k: [_answer(0, held, box="this box")])
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as raised:
+        render_preflight.activation_footprint_preflight_for_request(rig_.model, _request(), _h3_latent())
+    assert f"{box.mem / _GIB:.1f} GiB" in str(raised.value), "the figure is the box's own reading"
+    # The rescue found a credit, and no price that charges a load took it: nothing says it did.
     assert "already count" not in str(raised.value)
 
 
@@ -204,7 +218,7 @@ def test_a_true_shortage_at_the_render_site_still_refuses(monkeypatch, tmp_path,
     _live(rig_)
     box.mem = _h3_need(weights=DIT_BYTES) - 40 * _GIB
     _comfy(monkeypatch, box, models=())
-    held = _stock("fits", size_gib=19.5, avail_gib=200.0, resident=OLD, resident_gib=22.2)
+    held = _held(OLD, 22.2)
     monkeypatch.setattr(capacity_agreement, "collect",
                         lambda *_a, **_k: [_answer(0, held, box="this box")])
     with pytest.raises(mesh_safety.StockLoadCapacityError) as raised:

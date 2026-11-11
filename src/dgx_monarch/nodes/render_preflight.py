@@ -14,6 +14,7 @@ from .. import (
     latent_scale,
     mesh_safety,
     residency_mode,
+    swap_credit,
 )
 from ..adapters.detect import CheckpointSniffError, sniff_checkpoint
 from ..adapters.flux_views import VIEWS_METADATA_KEY
@@ -260,7 +261,7 @@ def _driver_footprint_preflight_for_request(
                 or driver_footprint.dtype_cast_requested(
                     getattr(model, "options", None))):
             return
-        avail = mesh_safety.pending_load_available_bytes()
+        avail = mesh_safety.mem_available_bytes()
         if avail is None:
             return  # off Linux: host MemAvailable bounds nothing here
         unet_name = getattr(model, "unet_name", "") or family
@@ -282,7 +283,7 @@ def _driver_footprint_preflight_for_request(
             request, profile)
         estimate = driver_footprint.estimate_driver_footprint(
             profile=profile,
-            mem_available=avail,
+            mem_available=avail if weights_resident else swap_credit.credited(avail),
             weight_bytes=driver_footprint.file_size_bytes(path),
             weights_resident=weights_resident,
             co_resident=driver_footprint.rank0_co_resident(mesh),

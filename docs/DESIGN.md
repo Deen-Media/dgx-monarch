@@ -2248,10 +2248,14 @@ available with 22.2 GiB about to be dropped, and MiniMax-H3-Image INT8 after
 BF16 needed 46.0 GiB against 34.1 with the 37.5 GiB BF16 DiT in the same slot.
 Now a price that does not fit asks the Workers on the driver host the
 agreement's own quote and counts the copy the load's own slot drops first
-(`swap_credit.py`, `nodes/loader_relief.py`): a swap only, a stock resident
-only, the slot the load goes into only, at the figure the Worker reports, and
-for a change on the file the slot already holds only a drop the Worker's own
-price named. A load that fits asks no Worker. A deferred load must also leave
+(`swap_credit.py`, `nodes/loader_relief.py`). It counts only what the
+Worker's own price credited, the row that names the drop and its bytes, so the
+driver never admits on a drop the agreement would not count: a stock resident
+only, never a slab-priced row, a reuse or a LoRA change that keeps its base.
+It counts only the slot the load goes into, and only onto a price that charges
+the DiT's own load: one that reads the weights as resident (the loader's memo,
+an explicit preset at the render site) has no drop to count. A load that fits
+asks no Worker. A deferred load must also leave
 room for the graph's driver models beside the old model, which load before the
 first render drops it. The credit is tried before any card and before the
 driver unloads ComfyUI's models, a refusal that still stands says what was
