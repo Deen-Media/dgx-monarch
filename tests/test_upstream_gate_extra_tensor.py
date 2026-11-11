@@ -182,6 +182,16 @@ def test_a_sound_file_keeps_no_verdict(models, case):
     _assert_on_both_paths(models, _write(models, "sound.safetensors", names, metadata), None)
 
 
+@pytest.mark.parametrize("missing", gate_keys._H3_KEYS)
+def test_one_h3_key_alone_draws_no_image_refusal(models, missing):
+    """ComfyUI builds MiniMax H3 from both keys together. A file with one of them, no
+    audio path and no sigma grid is no image model to ComfyUI or to the detector, so the
+    family's header refusals stay out."""
+    names = {key: shape for key, shape in H3_IMAGE.items() if key != missing}
+    assert not gate_keys.reads_minimax_h3_image(list(names), frozenset(names))
+    _assert_on_both_paths(models, _write(models, "one-key.safetensors", names, None), None)
+
+
 # Real ComfyUI, CPU only. Keep these last in the file (the conftest comfy guard).
 def _comfy_builds(comfy, names: dict[str, list[int]], metadata) -> str | None:
     """ComfyUI's ``image_model`` for these names, through its own prefix strip, or None."""

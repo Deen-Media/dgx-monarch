@@ -58,6 +58,8 @@ def comfy_detection_keys(dtypes: dict[str, str], metadata: dict[str, str]) -> fr
     try:
         return frozenset(upstream_gate.comfy_load_keys(dtypes, metadata))
     except Exception:
+        # Stock's own load fails on this table, so these names only pick the
+        # sentence of a refusal; with or without the strip the verdict is the same.
         prefix = upstream_gate._unet_prefix(dtypes)
         stripped = frozenset(key[len(prefix):] for key in dtypes if key.startswith(prefix))
         return stripped or frozenset(dtypes)
