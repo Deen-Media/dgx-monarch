@@ -356,6 +356,9 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
             rows.append(_row(_OK, "memory headroom", f"{avail_gib:.0f}/{total_gib:.0f} GiB available"))
     except Exception as exc:
         rows.append(_row(_WARN, "memory headroom", repr(exc)))
+    # Which free-memory reading the ComfyUI running on this box has. A driver exists in local
+    # mode too, so this stays above the early return below.
+    rows.append(_row(*driver_memory_row.doctor_row()))
 
     ib_dir = "/sys/class/infiniband"
     if os.path.isdir(ib_dir):
@@ -416,8 +419,7 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
 
     # Driver-side failure state can block the next render even when all
     # Worker service checks pass.
-    rows.extend((_mesh_health_row(), _row(*vae_decode_row.doctor_row(config)),
-                 _row(*driver_memory_row.doctor_row())))
+    rows.extend((_mesh_health_row(), _row(*vae_decode_row.doctor_row(config))))
 
     driver_torch = ""
     try:

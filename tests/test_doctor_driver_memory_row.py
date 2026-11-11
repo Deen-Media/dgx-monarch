@@ -97,10 +97,66 @@ def test_fetch_skips_a_candidate_that_does_not_answer():
     assert driver_memory_row.fetch(("127.0.0.1:9",)) == []
 
 
-def test_doctor_lists_the_row():
-    import inspect
+def _stub_the_other_probes(monkeypatch):
+    """Stand in for every probe of ``_doctor_rows`` but this row: no torch, no socket off this box, no ssh."""
+    import importlib.metadata
+    import shutil
+    import sys
+    import types
 
-    assert "driver_memory_row.doctor_row()" in inspect.getsource(doctor._doctor_rows)
+    from dgx_monarch import TORCHMONARCH_PIN
+
+    torch = types.ModuleType("torch")
+    torch.__version__ = "2.test"
+    torch.cuda = types.SimpleNamespace(is_available=lambda: True, device_count=lambda: 1)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: TORCHMONARCH_PIN)
+    monkeypatch.setattr(doctor, "_frontend_skew_row", lambda: {"status": OK, "name": "frontend", "detail": "stub"})
+    monkeypatch.setattr(doctor, "_spark_health_rows", lambda _config: [])
+    monkeypatch.setattr(doctor, "_mesh_health_row", lambda: {"status": OK, "name": "mesh health", "detail": "stub"})
+    monkeypatch.setattr(doctor.socket, "gethostname", lambda: "driver")
+    monkeypatch.setattr(doctor.socket, "gethostbyname", lambda _name: "10.0.0.1")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/rsync")
+    monkeypatch.setattr(doctor, "_tcp_probe", lambda *_a, **_kw: False)
+    monkeypatch.setattr(doctor, "passive_worker_health",
+                        lambda *_a, **_kw: {"running": True, "listening": True, "healthy": True})
+
+    def no_route(*_args, **_kwargs):
+        raise OSError("no route")
+
+    monkeypatch.setattr(doctor, "run_on_host", no_route)
+
+
+def _cluster():
+    from dgx_monarch.config import ClusterConfig, HostConfig
+
+    return ClusterConfig(hosts=(HostConfig(name="h1", address="tcp://10.0.0.1:26600"),),
+                         client_bind="tcp://10.0.0.1:0", transport_security="trusted_fabric")
+
+
+@pytest.mark.parametrize("mode", ["local, no cluster.toml", "local, a config with no hosts", "cluster"])
+def test_doctor_returns_the_row_in_every_mode(monkeypatch, capsys, mode):
+    """A single Spark with no cluster.toml has a driver too: the row must come back there.
+
+    Doctor returns early in local mode, before its cluster checks; the row sat
+    behind that return and never ran without configured hosts.
+    """
+    from dgx_monarch.config import ClusterConfig
+
+    _stub_the_other_probes(monkeypatch)
+    floor = driver_uma_memory.floor_bytes(SPARK)
+    answer = [("127.0.0.1:8188", _stats(device_free=66 * GIB - floor, available=66 * GIB))]
+    monkeypatch.setattr(driver_memory_row, "fetch", lambda: answer)
+    config = {"local, no cluster.toml": None, "local, a config with no hosts": ClusterConfig(),
+              "cluster": _cluster()}[mode]
+    rows = doctor._doctor_rows(config)
+    capsys.readouterr()
+    mine = [row for row in rows if row["name"] == "driver memory reading"]
+    assert len(mine) == 1, [row["name"] for row in rows]
+    assert mine[0]["status"] == OK and mine[0]["detail"].startswith("127.0.0.1:8188: reads the box as it is")
+    # It is a driver check: it comes before the checks that need a mesh or a cluster.
+    names = [row["name"] for row in rows]
+    assert names.index("driver memory reading") == names.index("memory headroom") + 1
 
 
 def test_a_comfyui_that_does_not_serve_this_pack_is_not_judged(monkeypatch):
