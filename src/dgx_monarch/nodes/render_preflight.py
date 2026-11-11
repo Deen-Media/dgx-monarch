@@ -215,10 +215,9 @@ def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
     its backstop. Sniff failures leave the earlier and worker-side guards in
     place. ``sniff_checkpoint`` is memoized by path metadata.
     """
-    from ..adapters.minimax_h3 import (
-        MINIMAX_H3_BATCH_CAPPED_MESSAGE,
-        minimax_h3_topology_would_reject,
-    )
+    from ..adapters.minimax_h3 import MINIMAX_H3_BATCH_CAPPED_MESSAGE, minimax_h3_topology_would_reject
+    from ..adapters.minimax_h3_image import FAMILY as H3_IMAGE
+    from ..adapters.minimax_h3_image import MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE
 
     if not minimax_h3_topology_would_reject(
             int(getattr(topo, "cfg", 1)), int(getattr(topo, "dp", 1))):
@@ -235,15 +234,12 @@ def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
             sniff_checkpoint(path)[0], family_select.override_for_model(model))
     except Exception:
         return  # fail open: the packed-DP guard and the stock batch cap remain
-    if family not in ("minimax_h3", "minimax_h3_image"):
-        return
     from ..adapters.base import UnsupportedModelError
 
-    if family == "minimax_h3_image":
-        from ..adapters.minimax_h3_image import MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE
-
+    if family == H3_IMAGE:
         raise UnsupportedModelError(MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE)
-    raise UnsupportedModelError(MINIMAX_H3_BATCH_CAPPED_MESSAGE)
+    if family == "minimax_h3":
+        raise UnsupportedModelError(MINIMAX_H3_BATCH_CAPPED_MESSAGE)
 
 
 def _driver_footprint_preflight_for_request(

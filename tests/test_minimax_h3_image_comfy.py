@@ -535,3 +535,34 @@ def test_a_padded_ring_refuses_class_p_before_any_block(comfy, monkeypatch):
         _sharded(monkeypatch, comfy, model, kernel, x, context, ring_world=2, **run)
     assert parse_leading_refusal_tag(str(caught.value)).refusal_class is RefusalClass.PHYSICS
     assert "Ulysses-only" in str(caught.value)
+
+
+def test_the_detected_family_reaches_this_adapter_and_a_forced_h3_refuses(comfy):
+    """Detection names the family from the model ComfyUI built; forcing H3's adapter on it
+    refuses class P at the bind, naming the adapter that owns the model."""
+    from dgx_monarch.adapters import adapter_for, detect_family
+
+    image = object.__new__(comfy.model_base.MiniMaxH3Image)
+    assert detect_family(image) == adapter_module.FAMILY
+    assert isinstance(adapter_for(image, adapter_module.FAMILY), MiniMaxH3ImageAdapter)
+    with pytest.raises(UnsupportedModelError) as caught:
+        adapter_for(image, "minimax_h3")
+    assert "which the minimax_h3_image adapter owns" in str(caught.value)
+    assert parse_leading_refusal_tag(str(caught.value)).refusal_class is RefusalClass.PHYSICS
+
+
+def test_the_adaln_projections_build_fp32_so_the_fsdp_wrap_replicates_them(comfy):
+    """The header counts the BF16 file's F16 adaLN linears as islands; ComfyUI builds
+    them in fp32 on the curve basis, so the FSDP wrap's fp32 rule replicates them."""
+    from dgx_monarch.adapters.fsdp_islands import island_parameters
+
+    model = comfy.h3.MiniMaxH3ImageModel(  # a bf16 core, as the BF16 file builds
+        pdd_sigmas=GRID, pdd_steps=PDD_STEPS, hidden_size=48, num_layers=LAYERS,
+        token_refiner_num_layers=1, num_attention_heads=2, attention_head_dim=24,
+        ffn_hidden_size=64, text_dim=TEXT_DIM, time_embed_dim=CURVE_DIM, rope_inv_freq_len=4,
+        adaln_curve_grid=CURVE_GRID, dtype=torch.bfloat16, operations=comfy.ops.disable_weight_init)
+    adaln = [p for name, p in model.named_parameters() if ".adaln_proj." in name]
+    assert len(adaln) >= LAYERS + 1 and all(p.dtype == torch.float32 for p in adaln)
+    assert model.blocks[0].attn.qkv_proj.weight.dtype == torch.bfloat16  # the core
+    islands = island_parameters(model)
+    assert all(any(p is q for q in islands) for p in adaln)

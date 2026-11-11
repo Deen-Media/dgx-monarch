@@ -18,7 +18,7 @@ from pathlib import Path
 TROUBLESHOOTING = 91
 DROPPED_SCALE_TROUBLESHOOTING = 120
 H3_IMAGE_GRID_TROUBLESHOOTING = 149
-H3_IMAGE_FAMILY_TROUBLESHOOTING = 150
+H3_IMAGE_QUANT_METADATA_TROUBLESHOOTING = 150
 
 
 # The body only: the class tag is built at the raise, never here. An
@@ -55,8 +55,9 @@ DROPPED_SCALE_REFUSAL = (
     "_quantization_metadata), or its bf16 file."
 )
 
-# MiniMax-H3-Image (adapters/minimax_h3_image_header.py). The grid answers before
-# the family: it is a fault of the file that stays after the adapter lands.
+# MiniMax-H3-Image (adapters/minimax_h3_image_header.py). Two faults of the file,
+# each decided before any load: no sigma grid, then quantization metadata that
+# cannot be read.
 H3_IMAGE_GRID_REFUSAL = (
     "this MiniMax-H3-Image checkpoint's header has no usable transformer.pdd_sigmas (a "
     "list of numbers) in its config metadata. ComfyUI builds this model from that sigma "
@@ -68,15 +69,15 @@ H3_IMAGE_GRID_REFUSAL = (
     "carries the grid, or restore the config metadata of the export it came from."
 )
 
-H3_IMAGE_FAMILY_REFUSAL = (
-    "this checkpoint is MiniMax-H3-Image, which ComfyUI 0.45.0 names minimax_h3_image: "
-    "the MiniMax H3 layout without the audio stream, with its own output heads. This "
-    "release of dgx-monarch carries no model forward for it and renders no family it has "
-    "not proven. Nothing was loaded and nothing was quarantined. No consent can supply a "
-    "missing forward, so no card will appear and there is no waiver for this refusal. "
-    "Use stock ComfyUI 0.45.0 or newer on one GPU instead, through ComfyUI's own "
-    "Load Diffusion Model node rather than the DGX Monarch loader. This refusal retires "
-    "when the MiniMax-H3-Image adapter lands."
+H3_IMAGE_QUANT_METADATA_REFUSAL = (
+    "this MiniMax-H3-Image checkpoint's _quantization_metadata cannot be read: it is not "
+    "JSON, or it holds no layers map. ComfyUI reads that metadata to load the quantized "
+    "weights and fails to parse this one too (comfy.utils.convert_old_quants), so stock "
+    "ComfyUI cannot load this file either, and dgx-monarch cannot tell which weight "
+    "scales it would keep. Nothing was loaded and nothing was quarantined. No consent "
+    "can repair the metadata, so no card will appear and there is no waiver for this "
+    "refusal. Use the file as Comfy-Org/MiniMax-H3-Image publishes it, or restore the "
+    "metadata of the export it came from."
 )
 
 # Weight dtypes whose scale sidecar ComfyUI must be told about. F8 (every
@@ -214,12 +215,12 @@ def _read_by_identity(
     path: str, _mtime_ns: int, _ctime_ns: int, _size: int
 ) -> tuple[bool, tuple[str, ...], int | None]:
     """One header read per file identity: (L2P key layout, uncovered layers,
-    the MiniMax-H3-Image refusal number or None).
+    a MiniMax-H3-Image refusal number or None).
 
     An L2P layout returns before the metadata is parsed, so a malformed
     ``_quantization_metadata`` cannot turn the #91 refusal off.
     """
-    from .adapters import minimax_h3_image_header as h3_image
+    from .adapters import minimax_h3_image_header as h3_image_header
     from .adapters.detect import detect_family_from_keys, is_zimage_l2p_from_keys
     from .safetensors_header import read_safetensors_header
 
@@ -228,19 +229,22 @@ def _read_by_identity(
         return True, (), None
     # Decided from keys and the config metadata alone, before any quantization
     # metadata is parsed, so a damaged ``_quantization_metadata`` cannot cancel it.
-    h3_image_number = None
-    if detect_family_from_keys(list(header.tensors)) == h3_image.FAMILY:
-        h3_image_number = (H3_IMAGE_GRID_TROUBLESHOOTING if h3_image.grid_missing(header.metadata)
-                           else H3_IMAGE_FAMILY_TROUBLESHOOTING)
+    h3_image = detect_family_from_keys(list(header.tensors)) == h3_image_header.FAMILY
+    h3_image_number = (H3_IMAGE_GRID_TROUBLESHOOTING
+                       if h3_image and h3_image_header.grid_missing(header.metadata) else None)
     try:
         uncovered = _dropped_scale_layers(comfy_load_keys(
             {key: info.dtype for key, info in header.tensors.items()}, header.metadata))
     except Exception:
-        if h3_image_number is None:
+        if not h3_image:
             # No verdict. Stock ComfyUI fails to parse the same metadata at load
             # (comfy.utils.convert_old_quants), so no scale is silently dropped.
             raise
-        uncovered = ()  # the family's refusal stands when the scale check cannot finish
+        # This family fails closed before any load: the grid refusal stands, or
+        # the metadata refusal answers when the scale check cannot finish.
+        uncovered = ()
+        if h3_image_number is None:
+            h3_image_number = H3_IMAGE_QUANT_METADATA_TROUBLESHOOTING
     if uncovered:
         from .log import get_logger
 
@@ -258,8 +262,9 @@ def _verdict(path: str | None) -> tuple[int, tuple[str, ...]] | None:
     failed read degrades to a normal load rather than to a refusal. One header
     read answers every question; only an L2P layout reads again, through
     ``detect.sniff_zimage_l2p``, which logs the matched key paths. A
-    MiniMax-H3-Image file without its grid answers before dropped scales, and
-    one with its grid after them, since the family refusal retires with the adapter.
+    MiniMax-H3-Image file without its grid answers before dropped scales; one whose
+    quantization metadata cannot be read answers in their place, since the scale
+    check could not finish.
     """
     try:
         if not path or not str(path).lower().endswith((".safetensors", ".sft")):
@@ -298,8 +303,8 @@ def refusal_for(path: str | None) -> tuple[str, int] | None:
         return ZIMAGE_L2P_REFUSAL, number
     if number == H3_IMAGE_GRID_TROUBLESHOOTING:
         return H3_IMAGE_GRID_REFUSAL, number
-    if number == H3_IMAGE_FAMILY_TROUBLESHOOTING:
-        return H3_IMAGE_FAMILY_REFUSAL, number
+    if number == H3_IMAGE_QUANT_METADATA_TROUBLESHOOTING:
+        return H3_IMAGE_QUANT_METADATA_REFUSAL, number
     return DROPPED_SCALE_REFUSAL.format(**_scale_fields(layers)), number
 
 
@@ -323,9 +328,9 @@ def raise_refusal(path: str | None) -> None:
     if number == H3_IMAGE_GRID_TROUBLESHOOTING:
         raise UnsupportedModelError(refusal(
             RefusalClass.PHYSICS, H3_IMAGE_GRID_REFUSAL, troubleshooting=number))
-    if number == H3_IMAGE_FAMILY_TROUBLESHOOTING:
+    if number == H3_IMAGE_QUANT_METADATA_TROUBLESHOOTING:
         raise UnsupportedModelError(refusal(
-            RefusalClass.PHYSICS, H3_IMAGE_FAMILY_REFUSAL, troubleshooting=number))
+            RefusalClass.PHYSICS, H3_IMAGE_QUANT_METADATA_REFUSAL, troubleshooting=number))
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS, DROPPED_SCALE_REFUSAL.format(**_scale_fields(layers)),
         troubleshooting=DROPPED_SCALE_TROUBLESHOOTING))

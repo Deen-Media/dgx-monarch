@@ -1106,7 +1106,10 @@ rows with the checkpoint's grid; the record says the pins are dropped. cfg2
 and dp2 refuse on the driver: each conditioning publishes its own packed
 layout, so ComfyUI never batches cond and uncond, and the DiT takes batch 1. A
 padded ring refuses. `uly2+fsdp` keeps H3's replicated text projection and
-refiner; its hardware row is NOT RUN.
+refiner; its hardware row is NOT RUN. Before dispatch the driver prices the
+packed rows (text, reference pictures and one target frame) with H3's activation
+calibration until this family's own leg runs, and its text encoder and
+reference pictures as a driver stack.
 
 **Sampling.** KSampler at 6 steps, CFG 1, `euler` and `simple` lands within a
 thousandth of the head's grid (canary seam 56), close enough for the head to

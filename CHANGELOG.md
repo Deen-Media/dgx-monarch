@@ -10,8 +10,10 @@
   rows. cfg2, dp2, a padded ring, a batch above one and a head whose depth the
   grid does not match refuse with a plain sentence, as do the MiniMax H3
   sampling-shift and context-window nodes on this family. Both H3 adapters now
-  set stock's `block_index` on each block's options. A row-check tool records
-  the three row-keyed calls at a rank's rows for the hardware run.
+  set stock's `block_index` on each block's options. The header names the
+  family, so auto takes uly2 for it and the driver prices its packed rows and
+  its text encoder before dispatch. A row-check tool records the three
+  row-keyed calls at a rank's rows for the hardware run.
 - Studio is a supported interface from this release, beside the CLI, the TUI
   and the ComfyUI panel. Its docs and the capability contract in Settings no
   longer call it a draft. The
@@ -436,10 +438,10 @@
   run yet ([MODELS](docs/MODELS.md#model-ultratex),
   [TROUBLESHOOTING #148](docs/TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
 - MiniMax-H3-Image, which ComfyUI 0.45.0 added, is detected from its header
-  as `minimax_h3_image` and refused class P at the loader, before any load, on
-  every topology and in every format, until its adapter lands. Render it with
-  stock ComfyUI 0.45.0 or newer on one GPU meanwhile
-  ([TROUBLESHOOTING #150](docs/TROUBLESHOOTING.md#150-a-minimax-h3-image-render-refuses-at-the-loader)).
+  as `minimax_h3_image` and runs on its own sharded adapter. A file
+  of the family whose quantization metadata cannot be read refuses class P at
+  the loader, before any load
+  ([TROUBLESHOOTING #150](docs/TROUBLESHOOTING.md#150-a-minimax-h3-image-file-refuses-because-its-quantization-metadata-cannot-be-read)).
   A file of the family whose config metadata has no sigma grid
   (`transformer.pdd_sigmas`), which stock ComfyUI fails to build, refuses
   first ([TROUBLESHOOTING #149](docs/TROUBLESHOOTING.md#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)).

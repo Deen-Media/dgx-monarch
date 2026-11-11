@@ -183,11 +183,12 @@ def _positive_entries(request: Any) -> tuple[Any, ...]:
 
 
 def rows_from_request(request: Any, latent: Any, *,
-                      video_shape: Any = None) -> H3Rows:
+                      video_shape: Any = None, image: bool = False) -> H3Rows:
     """Return the dispatch's packed total from duck-typed runtime inputs.
 
     ``video_shape``, when given, is the grid the workers will sample (size
-    tags applied) and stands in for the latent's own shape.
+    tags applied) and stands in for the latent's own shape. ``image`` counts
+    MiniMax-H3-Image's stream: one plain latent frame and no audio rows.
     """
     if not isinstance(latent, Mapping):
         return H3Rows()
@@ -198,7 +199,7 @@ def rows_from_request(request: Any, latent: Any, *,
         return H3Rows()
     latent_t, lat_h, lat_w = dims[2], dims[3], dims[4]
     rows_per_frame = frame_rows(lat_h, lat_w)
-    audio_t = _audio_t_from_samples(samples, latent_t)
+    audio_t = 0 if image else _audio_t_from_samples(samples, latent_t)
     text = cond = ref = 0
     # Extras are copied to every positive entry, not appended. Each entry is a
     # separate model call, as are cond and mirrored uncond, so peak memory is

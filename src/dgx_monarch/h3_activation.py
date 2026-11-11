@@ -36,6 +36,10 @@ log = get_logger(__name__)
 _GIB = 2 ** 30
 
 H3_FAMILY = "minimax_h3"
+# MiniMax-H3-Image runs H3's blocks on its packed rows (text, references and one
+# target frame, no audio), so it is priced with H3's calibration until its own
+# activation leg runs (docs/VALIDATION.md).
+H3_IMAGE_FAMILY = "minimax_h3_image"
 
 # The generic activation guard's id. H3 counts its rows in h3_rows and prices them here.
 _GUARD = "activation_footprint_preflight"
@@ -267,7 +271,7 @@ def preflight_h3_activation_for_request(
     ``latent_shape`` is the grid the workers will sample.
     """
     try:
-        if family != H3_FAMILY:
+        if family not in (H3_FAMILY, H3_IMAGE_FAMILY):
             return                       # no-op for every other family
         if preflight_disabled() or not mesh_safety.gpu_is_integrated():
             return
@@ -277,7 +281,8 @@ def preflight_h3_activation_for_request(
         avail = mesh_safety.mem_available_bytes()
         if avail is None:
             return  # off Linux: host MemAvailable bounds nothing here
-        rows = h3_rows.rows_from_request(request, latent, video_shape=latent_shape)
+        rows = h3_rows.rows_from_request(request, latent, video_shape=latent_shape,
+                                         image=family == H3_IMAGE_FAMILY)
         if not rows.resolved:
             return
         # Explicit presets load weights before this reading.
