@@ -261,7 +261,8 @@ def _holds_this_checkpoint(entry: Any, request_key: str) -> bool:
     A caller that states no key gets the charged reading.
     """
     key = entry.get("request_key") if isinstance(entry, dict) else None
-    return bool(request_key) and isinstance(key, str) and key == request_key
+    # ``files_moved``: a LoRA of the stack changed on disk since the load (in_place_fallback.quote_snapshot).
+    return bool(request_key) and isinstance(key, str) and key == request_key and not entry.get("files_moved")
 
 
 def _slot_context(snapshot: dict, slot: str, request_key: str) -> dict[str, Any]:

@@ -317,9 +317,42 @@ def test_an_unchanged_request_is_not_quoted_a_reuse_once_a_file_it_names_changed
         # The store reloads: base and stack fresh, with the classic bake (this fixture's headers map nothing).
         assert row["would_load"] == cq.WOULD_LOAD_SWAP and row["measured"]["bake"] == "classic"
         assert row["measured"]["required_bytes"] > UNREAD_TERM
-    # A changed request on the same slot keeps the price it had: only a would-be reuse is un-reused.
+        assert "backup_bytes" not in row["measured"]  # a backup that no longer covers the stack is not credited
+    # The moved checkpoint sets the slot aside for a changed request too: a fresh load, no credit for the backup.
+    store.current.artifact_identity = loaded("another file's fingerprint", lora)
+    aside = _rows(store, monkeypatch, [dict(spec, loras=COVERED)], 120 * GIB)[0]["measured"]
+    assert aside["bake"] == "classic" and "backup_bytes" not in aside
+    # A changed request on a slot whose files are as loaded keeps the price it had.
     store.current.artifact_identity = loaded(checkpoint, lora)
-    assert "bake" not in _rows(store, monkeypatch, [dict(spec, loras=COVERED)], 120 * GIB)[0]["measured"]
+    strength = _rows(store, monkeypatch, [dict(spec, loras=COVERED)], 120 * GIB)[0]
+    assert "bake" not in strength["measured"] and strength["measured"]["backup_bytes"] > 0
+    # A LoRA rewritten to patch what the backup still covers is the stack change the store makes of it:
+    # the hot swap in place, at a strength change's own price, the backup's credit included.
+    store.current.artifact_identity = loaded(checkpoint, "another file's fingerprint")
+    monkeypatch.setattr(fallback, "backup_covers", lambda *_args, **_kwargs: True)
+    rewritten = _rows(store, monkeypatch, [spec], 120 * GIB)[0]
+    assert rewritten["would_load"] == cq.WOULD_LOAD_SWAP and "bake" not in rewritten["measured"]
+    assert rewritten["measured"]["required_bytes"] == strength["measured"]["required_bytes"]
+
+
+def test_a_rewritten_lora_is_priced_as_a_stack_change_on_the_default_too(quote, monkeypatch):
+    """With ``lora_low_rss`` on the store un-bakes and re-bakes in place: a swap's price, never a reuse's."""
+    from dgx_monarch.gate_ledger import artifact_signature
+
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    store = _b3_store(store__lora_low_rss=True, stored__unbake=object(), stored__base_baked=True,
+                      stored__baked_in_place=True)
+    spec = {"unet_name": BASE, "options": {}, "loras": [{"name": LORA, "strength": 1.0}], "slot": "cond"}
+    recorded = {"artifacts": [
+        {"kind": "diffusion_models", "name": BASE, "signature": artifact_signature(ms.resolve_model_path("", BASE))},
+        {"kind": "loras", "name": LORA, "signature": artifact_signature(cq.default_resolve_lora_path(LORA))}]}
+    store.current.artifact_identity = recorded
+    assert _rows(store, monkeypatch, [spec], 120 * GIB)[0]["would_load"] == cq.WOULD_LOAD_REUSE
+    strength = _rows(store, monkeypatch, [dict(spec, loras=COVERED)], 120 * GIB)[0]
+    recorded["artifacts"][1]["signature"] = "another file's fingerprint"
+    rewritten = _rows(store, monkeypatch, [spec], 120 * GIB)[0]
+    assert rewritten["would_load"] == cq.WOULD_LOAD_SWAP and "bake" not in rewritten["measured"]
+    assert rewritten["measured"]["required_bytes"] == strength["measured"]["required_bytes"]
 
 
 def test_a_pairs_second_model_reads_the_first_slot_as_held_as_the_store_will_find_it(quote, monkeypatch):

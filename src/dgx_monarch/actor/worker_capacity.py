@@ -378,10 +378,10 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         stored, path, spec.get("loras"), capacity_quote.default_resolve_lora_path)
     # A slot ``ensure`` sets aside is never offered the in-place bake, whatever permission came.
     bake_allowed = in_place_bake_proven and (in_place_fallback.SET_ASIDE if set_aside else True)
-    # ``ensure`` reuses only on the files the slot loaded: a checkpoint or a LoRA of this stack
-    # that changed on disk since makes the same request a reload, not a reuse.
-    moved = set_aside or (held and in_place_fallback.stack_files_moved(
-        stored, spec.get("loras"), capacity_quote.default_resolve_lora_path))
+    # ``ensure`` reuses only on the files the slot loaded: a LoRA of this stack that changed on
+    # disk since makes the same request a stack change on the held base, not a reuse.
+    stack_moved = held and in_place_fallback.stack_files_moved(
+        stored, spec.get("loras"), capacity_quote.default_resolve_lora_path)
     # The store decides this slot's hot swap when its load runs: by then an earlier slot of the
     # same request (the conditional model of a pair) holds its model, whatever it holds now.
     other_held = other is not None or other_loads_first
@@ -410,7 +410,7 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         # A slot ``ensure`` will not reuse for this request (baked in place with no permission, or
         # a file changed on disk) is priced as a load.
         store_snapshot=in_place_fallback.quote_snapshot(
-            store, stored, snapshot, slot, in_place_bake_proven, request_key, moved),
+            store, stored, snapshot, slot, in_place_bake_proven, set_aside, stack_moved, covered),
         budget_bytes_already_charged=charged,
         request_key=request_key,
     )

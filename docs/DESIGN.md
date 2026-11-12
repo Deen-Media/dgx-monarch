@@ -2427,7 +2427,9 @@ is not yet read, and the price does not depend on it. Three rules follow.
   quote prices that. A request whose key is the slot's own is quoted a reuse
   only while the checkpoint and the stack's LoRA files still carry the
   fingerprints the slot recorded, which is the store's own rule for a reuse.
-  For the second model of a dual-model render the bake is chosen against the
+  A LoRA file rewritten under its own name makes the same request a stack
+  change on the held base, priced as any other, with ComfyUI's backup
+  credited only where it still covers the stack. For the second model of a dual-model render the bake is chosen against the
   reading less the first model's charge, as the store chooses it beside the
   loaded first model, and the first slot is counted as held, as the store
   finds it. Three places still work out a second time what the store

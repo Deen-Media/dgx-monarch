@@ -254,24 +254,33 @@ def stack_files_moved(stored: Any, lora_stack: list | None, resolve_lora_path: C
 
 
 def quote_snapshot(store: Any, stored: Any, snapshot: dict, slot: str, allowed: bool,
-                   request_key: str = "", moved: bool = False) -> dict:
+                   set_aside: bool = False, stack_moved: bool = False, covered: bool = True) -> dict:
     """The snapshot the quote prices against: a slot ``ensure`` will not reuse is not read as a reuse.
 
-    Two cases. A slot baked in place that this request may not reuse
-    (``must_reload``). And a request whose key is the slot's own while a file
-    it names has changed on disk since the slot loaded it (``moved``: the
-    checkpoint, or a LoRA of the stack): ``ensure`` reuses only when the
-    recorded fingerprints match too, so it reloads, with the classic bake
-    where the stack loads fresh. Read as a reuse, that request was quoted
-    nothing.
+    ``ensure`` reuses only when the key matches and the fingerprints the slot
+    recorded match too, the checkpoint's and every LoRA file's. Read by the
+    key alone, a request on a slot whose file had changed on disk was quoted
+    nothing. Three cases:
+
+    - a slot baked in place that this request may not reuse (``must_reload``),
+      and a slot whose checkpoint changed on disk (``set_aside``, whatever
+      the request's stack): the store loads base and stack fresh, so the
+      entry keeps no key, no in-place swap and no credit for a backup;
+    - a LoRA file of the request's stack changed on disk (``stack_moved``)
+      while the checkpoint did not: to the store that is a stack change on
+      the held base, whatever the key says. The entry is marked so it is
+      priced as one, by the same swap or fresh load as any other, and
+      ComfyUI's backup is credited only where it still covers the stack
+      (``covered``, from ``backup_covers``, which maps the file as it is now).
     """
     entry = snapshot.get(slot)
     if stored is None or not isinstance(entry, dict):
         return snapshot
-    stale = moved and bool(request_key) and entry.get("request_key") == request_key
-    if not stale and not must_reload(store, stored, allowed):
-        return snapshot
-    return {**snapshot, slot: {**entry, "request_key": None, "swaps_in_place": False}}
+    if set_aside or must_reload(store, stored, allowed):
+        return {**snapshot, slot: {**entry, "request_key": None, "swaps_in_place": False}}
+    if stack_moved:
+        return {**snapshot, slot: {**entry, "files_moved": True, **({} if covered else {"backup_bytes": 0})}}
+    return snapshot
 
 
 def fresh_load_probe(store: Any, slot: str, lora_stack: list | None) -> Callable[[str, dict], Any] | None:
