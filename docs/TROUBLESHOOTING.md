@@ -710,6 +710,39 @@ models it freed from, and what MemAvailable read on each side. What to know:
   ([DESIGN](DESIGN.md), "Before a decode priced above free memory, the driver
   frees what the decode needs").
 
+**A LoRA stack with `lora_low_rss` off is refused, or baked in place.** With
+the switch off a Worker bakes a stack ComfyUI's classic way, and that bake
+takes memory beside the weights that the price used to leave out: on
+2026-11-12, with the Spark under its clock cap (max 2100 MHz), 12.3 GiB for a
+7.1 GiB stack that patches 1660 weights of an LTX 2.3 scaled FP8 file, and 5.0
+GiB for a 0.3 GiB stack that patches 480 of them. The stock price now carries
+it (`N GiB for the LoRA stack's classic bake` in a refusal's brackets). What
+you may see:
+
+- **A refusal where the load used to start.** The old price admitted some
+  loads that then took the box under its floor. The refusal names the classic
+  bake's share, and, after it, what baking in place would need and why that
+  was not done.
+- **`LoRA bake: the classic bake of this stack needs ... so the Worker baked
+  it in place on the loaded model`.** The classic bake did not fit, baking in
+  place did, and the identity gate has passed this model and LoRA combination's
+  in-place bake. The render is the same weights. The model then holds no
+  weight backup, so the next LoRA change on it reloads it from disk.
+- **`no identity-gate PASS for this combination's in-place bake came with
+  this load`.** The Worker bakes in place only for a combination the gate has
+  passed, and a graph with `lora_low_rss` off runs no gate. Render the
+  combination once with `lora_low_rss` on (the default on a DGX Spark): the
+  first-use gate records its PASS, and the same graph with the switch off is
+  then baked in place when the classic bake does not fit. Or free memory, or
+  leave the switch on.
+- **A BF16 or FP16 file is priced high.** No measurement of the classic bake
+  on a full-precision file exists yet, so its patched weights are charged
+  0.75 of their bytes. Leaving `lora_low_rss` on avoids the classic bake
+  altogether.
+
+The default, `lora_low_rss` on, is not affected ([DESIGN](DESIGN.md), "A LoRA
+stack's classic bake has a price").
+
 ## 13. uly2+fsdp / ring2+fsdp render deadlocks (hangs, no error)
 
 **Symptom:** an FSDP topology combined with sequence parallelism (uly2+fsdp;
