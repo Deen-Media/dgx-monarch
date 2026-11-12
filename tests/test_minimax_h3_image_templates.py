@@ -458,7 +458,7 @@ def test_the_pattern_holds_against_the_table_of_answers(name):
     assert canary.parse_chain_errors(settings, _stand_in) == []
     counts = {read: sum(1 for row in canary.PARSE_CASES if row[3] == read)
               for read in ("read", "request")}
-    assert counts == {"read": 34, "request": 9} and len(canary.PARSE_CASES) == 43
+    assert counts == {"read": 37, "request": 10} and len(canary.PARSE_CASES) == 47
     # The table has teeth. A pattern that stops at the first closing quote loses the
     # captions with a quote inside them, one that runs to the last quote and brace
     # takes a second key into the caption, and a read without the decode pass leaves

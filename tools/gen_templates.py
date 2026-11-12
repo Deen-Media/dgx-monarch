@@ -6033,6 +6033,10 @@ H3I_SKIP_TITLE = "If/Else Switch (empty request: skip the expander)"
 # fallback sends the request. The widget canary holds a table of answers and
 # runs it through ComfyUI's own nodes; tests/test_minimax_h3_image_templates.py
 # runs the same table through stand-ins.
+# The pattern backtracks. An ordinary answer takes under a millisecond. The
+# slowest shape found, starts of the key chained by commas with no closing
+# brace, takes about half a second at 6,000 characters, which is longer than
+# any answer 1024 tokens have given.
 H3I_CAPTION_PATTERN = (
     r'"expanded_caption\\?"\s*:\s*(\\)?"(.*?)(?(1)\\"\s*"?|")\s*'
     r'(?:,\s*"\w+"\s*:\s*(?:"(?:[^"\\]|\\.)*"|-?[0-9][0-9.]*|true|false|null)\s*)*'

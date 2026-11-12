@@ -1315,7 +1315,8 @@ object or a note that quotes the format, is read into the caption. A second
 key whose value is a list or an object joins the caption or loses it. A `\u`
 escape, and an escaped line break or tab, stay in the caption as typed. And a
 backslash the request wants drawn before a double quote, a backslash or a
-slash is read as an escape.
+slash is read as an escape when the expander writes it unescaped; escaped, it
+comes through.
 The W4A8 DiT refuses FSDP. Studio's CPU compile tests skip both
 graphs until a driver schema is recorded on ComfyUI 0.45.0.
 

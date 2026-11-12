@@ -156,7 +156,7 @@ def test_parse_chain_errors_name_the_answer_whose_caption_drifted():
     # Nodes that read nothing fail every row that expects a caption, by name.
     errors = canary.parse_chain_errors(settings, nodes(""))
     expecting = [what for what, _answer, _caption, read in canary.PARSE_CASES if read != "request"]
-    assert len(errors) == len(expecting) == 34
+    assert len(errors) == len(expecting) == 37
     assert errors[0].startswith("caption read: a valid object: expected ('A photograph of a boat.', 'read')")
 
 

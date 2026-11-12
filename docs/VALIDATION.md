@@ -3488,17 +3488,17 @@ The two shipped templates carry this project's own expander texts and its
 settings for Generate Text: reasoning off, `max_length` 1024, `mtp` off,
 temperature 0.7 and top_p 0.8. `tests/test_minimax_h3_image_templates.py`
 holds those five values in both shipped graphs. It holds the caption read to
-a table of forty-three answers, kept in the widget canary. Thirty-four give
+a table of forty-seven answers, kept in the widget canary. Thirty-seven give
 the image stage a caption: a valid object, a code fence, text around the
 object, escaped double quotes, an escaped backslash and an escaped slash;
 inner double quotes, an inner JSON object, an inner object that holds the
 answer's own key, a raw double quote before a closing brace or a comma, and
 raw and escaped quotes in one caption; more keys before or after the
-caption; a raw path, which stays as typed; and seven rows that pin the
-read's limits. Nine fall back to the request: a cut answer, an empty value,
-a blank value, an object or `null` as the value, plain prose, another key,
-an empty answer, and the one limit that loses a caption (a second key with
-a list as its value).
+caption; a raw path, which stays as typed, and a raw line break, which is
+kept; and nine rows that pin the read's limits. Ten fall back to the
+request: a cut answer, an empty value, a blank value, an object or `null` as
+the value, a trailing comma, plain prose, another key, an empty answer, and
+the one limit that loses a caption (a second key with a list as its value).
 The test runs the table through stand-ins for the four stock nodes, written
 from ComfyUI 0.45.0's code, and holds that a strict JSON read is wrong in
 the shapes the texts invite. The widget canary runs the table through
