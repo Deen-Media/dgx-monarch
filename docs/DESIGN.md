@@ -2159,7 +2159,9 @@ after a reset a graph still carries the mesh the reset stopped, whose handle
 keeps the reset's own teardown mark. A mesh with a confirmed stop has no
 process left and holds no work, so it is not read; the fleet attached in its
 place is, and the actor trim goes to that fleet. A mesh whose stop was not
-confirmed is still read, since its Workers may be alive. The loader windows take the first
+confirmed is still read, since its Workers may be alive. With two live meshes
+on one config the check reads the one `recycle_drain.attached_fleet` finds
+first, as the swap credit's question does. The loader windows take the first
 step only, after the swap credit (below): before a loader refuses it unloads
 ComfyUI's models, which ComfyUI reloads on demand for the text encoder and
 VAEs the graph still needs, or, where ComfyUI holds no model, releases the

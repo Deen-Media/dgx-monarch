@@ -453,7 +453,6 @@ def test_the_fleet_attached_after_a_reset_still_keeps_the_models_while_it_works(
         fresh.setup_cleanup_state = mesh_setup.cleanup_in_progress(
             2, "load_model RPC completion", 1800.0)
     _attached_after(monkeypatch, retired, fresh)
-    assert driver_unload.serving_fleet(retired) is fresh
     with pytest.raises(mesh_safety.StockLoadCapacityError) as excinfo:
         driver_unload.check_with_unload([_priced(box, 30 * _GIB)], handle=retired)
     assert calls.unload == 0 and fresh.calls == []

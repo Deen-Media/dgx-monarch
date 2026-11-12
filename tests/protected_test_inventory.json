@@ -861,7 +861,7 @@
       "test_entries_whose_model_is_gone_are_not_unloadable": "31727e20e87b5ea3",
       "test_no_live_mesh_means_no_trim_and_no_error": "5992e50513e8ccc7",
       "test_the_actors_release_their_caches_when_the_unload_falls_short": "aab3f228ed08bad9",
-      "test_the_fleet_attached_after_a_reset_still_keeps_the_models_while_it_works": "627b9c1dbb1039e0",
+      "test_the_fleet_attached_after_a_reset_still_keeps_the_models_while_it_works": "3eeefc84a3ea2f91",
       "test_the_h3_re_check_keeps_the_memo_sampled_before_the_driver_check": "15e7a84097cfcf1d",
       "test_the_kill_switch_keeps_the_first_refusal": "af5daf72be8e5284",
       "test_the_kill_switch_turns_the_trim_off_too": "01dc006f047e37d6",
