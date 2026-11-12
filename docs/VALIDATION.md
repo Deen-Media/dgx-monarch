@@ -771,7 +771,11 @@ dimension 256 exceeds the other supported kernels. `sync_ulysses=off` was
 the faster measured setting, 24 versus 26 seconds, with unchanged output.
 Those two times are one 2-second polling interval apart, and the setting
 has no effect on the pinned xfuser 0.7.0, whose Ulysses all-to-all never
-receives it (see [Adapters](ADAPTERS.md#what-an-adapter-provides)).
+receives it (see [Adapters](ADAPTERS.md#what-an-adapter-provides)). The
+shipped workflow carried the setting off until 1.5.0 and leaves it on now, so
+that its setup matches the other shipped workflows'
+([Models](MODELS.md#model-ideogram4)). Every record in this section was taken
+with it off; no hardware run of this graph with it on is recorded yet.
 
 <a id="evidence-flux-1-dev"></a>
 

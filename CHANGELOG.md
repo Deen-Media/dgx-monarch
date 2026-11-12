@@ -17,7 +17,10 @@
   only the model it drops, whole or partly loaded, where ComfyUI's global
   unload copied a partly loaded model's weights, and a model held in the other
   slot, to the host first. A model in the other slot stays loaded, so its next
-  render moves no weight. Where a drop could still copy (a partly loaded or
+  render moves no weight. That holds within one setup: a graph that changes
+  the topology, the attention kernel or `sync_ulysses` rebuilds the setup
+  first, which unloads every model on every Worker
+  ([TROUBLESHOOTING #33](docs/TROUBLESHOOTING.md#33-a-live-topology-or-residency-policy-change-times-out-while-retiring-a-large-resident)). Where a drop could still copy (a partly loaded or
   comfy-managed model in the other slot, or `DGXM_DISABLE_COPY_FREE_DROP=1`
   on the Worker) it is not counted. In a graph with two diffusion models the
   count leaves the room the other slot's load takes. Nothing to
@@ -185,6 +188,18 @@
 - The Init node's tooltip and description say `sync_ulysses` has no effect on
   the pinned xfuser 0.7.0; changing it still reruns setup and the identity gate
   ([Adapters](docs/ADAPTERS.md#what-an-adapter-provides)).
+- The Ideogram 4 template now leaves `sync_ulysses` on, as every other shipped
+  template does. It was the one template with the setting off, and the setting
+  is part of a setup's identity. So each move between Ideogram 4 and another
+  template on the same topology rebuilt the setup, unloaded every model on
+  every Worker, and loaded both Ideogram 4 models from disk on the way back:
+  about 5 s of a 15 s render on the pair on 2026-11-12, read from 1 s journal
+  stamps. The first Ideogram 4
+  render after this update runs its identity gate once more, because a gate
+  verdict covers one setting. A workflow saved from the older template keeps
+  the old setting; turn `sync_ulysses` on in its Init node to match. Not yet
+  run on hardware with the setting on
+  ([MODELS](docs/MODELS.md#model-ideogram4)).
 - Studio's Operation select lists only the operations the loaded workflow
   supports, read from its input, upscale and save nodes, so a text to image
   workflow no longer offers Edit. A draft that holds an unsupported operation
