@@ -569,10 +569,25 @@
   integrated CUDA device only; `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` turns it
   off, and `dgxm doctor` has a `driver memory reading` row that says which
   reading the running driver has. A stock render recorded with little MemFree
-  can change once, since its batches no longer split. A batch priced at most
-  of the box (six 2048 views) still splits by what the session has available;
-  `DGXM_VAE_ITEM_BATCHES=1` on the driver tries the rule that never reads
-  memory, one image a VAE batch, which is off by default
+  can change once, since its batches no longer split
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- On the same GPUs the driver's ComfyUI now encodes a batch of images one
+  image a call, so a graph's conditioning is the same bits at every size and
+  in every memory state. The reading alone left a batch priced at most of the
+  box (six 2048 UltraTex views, 82.8 GiB) to split by what the session had.
+  Each image's latent is ComfyUI's own encode of that image alone. Measured
+  on a Spark with FLUX.2's VAE, it took 0.86 to 1.0 of the whole batch's time
+  and peaked at 2.28 GiB where six 2048 views in one batch took 12.41 GiB.
+  Decode, video VAEs and tiled encodes are not changed. What changes for you:
+  every conditioning of several images changes once against an earlier build,
+  and it does not match the same batch encoded at once by a stock ComfyUI on
+  a box with room, which gets other bits (a single image matches). A stock
+  render and a DGX Monarch render in the same driver share its conditioning
+  and compare as before. `DGXM_DISABLE_VAE_ENCODE_ITEM=1` on the driver turns
+  it off, it steps aside with one WARNING if ComfyUI's encode call changes,
+  and `dgxm doctor`'s `driver memory reading` row says whether it is on. The
+  trial switch `DGXM_VAE_ITEM_BATCHES` of an earlier build of this release,
+  which also wrapped decode, is gone
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by

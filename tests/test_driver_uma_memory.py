@@ -114,7 +114,7 @@ def _fake_comfy(monkeypatch, *, integrated=True, kind="cuda", probe_error=None, 
 
     mm = SimpleNamespace(get_free_memory=stock, get_torch_device=lambda: device)
     torch = SimpleNamespace(cuda=SimpleNamespace(get_device_properties=properties))
-    monkeypatch.setattr(uma, "_comfy", lambda: (mm, torch))
+    monkeypatch.setattr(uma, "comfy_modules",lambda: (mm, torch))
     monkeypatch.setattr(uma, "host_available_bytes", lambda: 66 * GIB)
     monkeypatch.setattr(uma.sys, "platform", platform)
     monkeypatch.delenv(uma.DISABLE_ENV, raising=False)
@@ -150,7 +150,7 @@ def test_install_leaves_comfyuis_reading_alone(monkeypatch, case, expected):
     if case == "no comfy":
         def missing():
             raise ImportError("No module named 'comfy'")
-        monkeypatch.setattr(uma, "_comfy", missing)
+        monkeypatch.setattr(uma, "comfy_modules",missing)
     assert uma.install_driver() == expected
     assert mm.get_free_memory is stock
 
@@ -207,6 +207,17 @@ def test_an_argument_or_answer_the_wrapper_does_not_know_goes_to_comfyuis_own_re
     assert reading(INTEGRATED) == 8 * GIB  # and upstream's reading from then on
 
 
+def test_a_keyword_the_wrapper_does_not_know_goes_to_comfyuis_own_reading():
+    """The answer here depends on the keyword, so a wrapper that drops it is caught."""
+    def newer(dev=None, torch_free_too=False, for_dynamic=False):
+        free = 1 * GIB if for_dynamic else 8 * GIB
+        return (free, 3 * GIB) if torch_free_too else free
+
+    reading = uma.corrected_reading(newer, _total_of, lambda: INTEGRATED, lambda: 66 * GIB)
+    assert reading(INTEGRATED, for_dynamic=True) == 1 * GIB  # upstream's answer to its own argument
+    assert reading(INTEGRATED) == 66 * GIB - uma.floor_bytes(SPARK_TOTAL) + 3 * GIB  # the correction stays on
+
+
 def test_a_failed_correction_stays_failed():
     """The WARNING says ComfyUI's reading answers from here on; a transient failure must not flip back."""
     calls = []
@@ -232,7 +243,7 @@ def test_the_entry_point_installs_both_driver_hooks():
                        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
                        and isinstance(stmt.value.func, ast.Attribute)
                        and isinstance(stmt.value.func.value, ast.Name)}
-    assert {"driver_uma_memory.install_driver", "vae_item_batches.install_driver"} <= top_level_calls
+    assert {"driver_uma_memory.install_driver", "vae_encode_item.install_driver"} <= top_level_calls
 
 
 @pytest.mark.parametrize("broken", ["available", "total_of", "default_device"])
@@ -284,7 +295,7 @@ def test_an_actors_patch_replaces_the_drivers_reading(monkeypatch):
     assert actor_reading(device) == 66 * GIB // 2 + 3 * GIB  # over two actors, no floor
     assert actor_reading(device, True) == (66 * GIB // 2 + 3 * GIB, 3 * GIB)
     # And the other order: a driver install that meets an actor's reading leaves it.
-    monkeypatch.setattr(uma, "_comfy", lambda: (mm, torch))
+    monkeypatch.setattr(uma, "comfy_modules",lambda: (mm, torch))
     monkeypatch.setattr(uma.sys, "platform", "linux")
     monkeypatch.delenv(uma.DISABLE_ENV, raising=False)
     assert uma.install_driver() == "already" and mm.get_free_memory is actor_reading

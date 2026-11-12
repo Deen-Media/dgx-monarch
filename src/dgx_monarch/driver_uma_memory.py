@@ -144,12 +144,13 @@ def corrected_reading(original: Reading, total_of: Callable[[Any], int | None],
     return free_memory
 
 
-def _comfy() -> tuple[Any, Any]:
+def comfy_modules() -> tuple[Any, Any]:
     """ComfyUI's model management and torch, only if this process already imported them.
 
     It imports nothing itself: importing ComfyUI's model management here would
     pick its device and read its flags before the process that owns them does.
     The ComfyUI process has imported both long before it loads a node pack.
+    The encode rule (``vae_encode_item``) probes the same gate through this.
     """
     model_management = sys.modules.get("comfy.model_management")
     torch = sys.modules.get("torch")
@@ -171,7 +172,7 @@ def install_driver() -> str:
     if not sys.platform.startswith("linux"):
         return "not_linux"
     try:
-        mm, torch = _comfy()
+        mm, torch = comfy_modules()
     except Exception:
         return "no_comfy"
     try:
@@ -194,5 +195,5 @@ def install_driver() -> str:
     return "installed"
 
 
-__all__ = ["ACTOR_MARK", "DISABLE_ENV", "DRIVER_MARK", "corrected_reading", "device_free_bytes",
+__all__ = ["ACTOR_MARK", "DISABLE_ENV", "DRIVER_MARK", "comfy_modules", "corrected_reading", "device_free_bytes",
            "floor_bytes", "host_available_bytes", "install_driver", "integrated_total_bytes"]

@@ -78,6 +78,7 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.sd", "load_lora_for_models", positional=("model", "clip", "lora", "strength_model", "strength_clip")),
     _call("comfy.sd", "CLIP.tokenize", positional=("self", "text")),
     _call("comfy.sd", "CLIP.encode_from_tokens_scheduled", positional=("self", "tokens")),
+    _call("comfy.sd", "VAE.encode", positional=("self", "pixel_samples")),  # vae_encode_item wraps it in the driver
     _call("comfy.model_patcher", "ModelPatcher", positional=("model", "load_device", "offload_device")),
     _call("comfy.model_patcher", "ModelPatcher.clone", positional=("self",)),
     _call("comfy.model_patcher", "ModelPatcher.add_object_patch", positional=("self", "name", "obj")),

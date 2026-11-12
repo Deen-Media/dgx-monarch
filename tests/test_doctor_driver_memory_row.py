@@ -20,19 +20,103 @@ MIB = 2 ** 20
 SPARK = 124543 * MIB
 
 
-def _stats(*, device_free, available, cached=0, total=SPARK, host_total=SPARK, kind="cuda"):
-    return {"system": {"ram_total": host_total, "ram_free": available},
-            "devices": [{"name": "cuda:0 NVIDIA GB10", "type": kind, "index": 0, "vram_total": total,
-                         "vram_free": device_free + cached, "torch_vram_total": cached, "torch_vram_free": cached}]}
+_UNSAID = object()
+
+
+def _stats(*, device_free, available, cached=0, total=SPARK, host_total=SPARK, kind="cuda", encode=_UNSAID):
+    """A driver's answer as ``fetch`` returns it; ``encode`` is the state the driver published, if it did."""
+    answer = {"system": {"ram_total": host_total, "ram_free": available},
+              "devices": [{"name": "cuda:0 NVIDIA GB10", "type": kind, "index": 0, "vram_total": total,
+                           "vram_free": device_free + cached, "torch_vram_total": cached,
+                           "torch_vram_free": cached}]}
+    if encode is not _UNSAID:
+        answer[driver_memory_row.RULES_KEY] = {"vae_encode_item": encode}
+    return answer
+
+
+def _corrected(**kwargs):
+    floor = driver_uma_memory.floor_bytes(SPARK)
+    return _stats(device_free=66 * GIB - floor, available=66 * GIB, **kwargs)
 
 
 def test_a_corrected_driver_reads_the_box_as_it_is():
     floor = driver_uma_memory.floor_bytes(SPARK)
     status, detail = driver_memory_row.classify(
-        _stats(device_free=66 * GIB - floor, available=66 * GIB, cached=3 * GIB))
+        _stats(device_free=66 * GIB - floor, available=66 * GIB, cached=3 * GIB, encode="installed"))
     assert status == OK
     assert detail == ("reads the box as it is: 58.4 GiB free on the device, which is the 66.0 GiB "
-                      "available less a 7.6 GiB floor")
+                      "available less a 7.6 GiB floor; a VAE encode of several images runs one image a call")
+
+
+@pytest.mark.parametrize("state, said", [
+    ("off", "because the driver runs with DGXM_DISABLE_VAE_ENCODE_ITEM=1"),
+    ("stepped_aside", "stepped aside in this driver (one WARNING in its log says why)"),
+    ("no_comfy", "is not installed in this driver (no_comfy)"),
+    ("probe_failed", "is not installed in this driver (probe_failed)"),
+])
+def test_a_driver_whose_encode_rule_is_not_on_is_a_warning_that_says_why(state, said):
+    """The state is the driver's own word, from its telemetry: doctor's environment is not the driver's."""
+    status, detail = driver_memory_row.classify(_corrected(encode=state))
+    assert status == WARN
+    assert detail.startswith("reads the box as it is") and said in detail
+    assert "can encode to other bits as memory moves" in detail
+
+
+@pytest.mark.parametrize("published", [_UNSAID, None, 7, "a state this version does not know", {"nested": 1}],
+                         ids=["no block", "null", "a number", "an unknown word", "a mapping"])
+def test_an_encode_rule_the_driver_did_not_publish_is_unobserved_and_changes_no_verdict(published):
+    answer = _corrected(encode=published)
+    status, detail = driver_memory_row.classify(answer)
+    assert status == OK and detail.startswith("reads the box as it is")
+    assert "was not observed" in detail and "one image a call" in detail
+    assert driver_memory_row.encode_clause(answer)[0] is None
+    # A block that is not a mapping at all is unobserved too.
+    answer[driver_memory_row.RULES_KEY] = "installed"
+    assert driver_memory_row.encode_clause(answer)[0] is None
+    # And an uncorrected reading stays a warning whatever the rule is.
+    uncorrected = _stats(device_free=5 * GIB, available=66 * GIB, encode="installed")
+    status, detail = driver_memory_row.classify(uncorrected)
+    assert status == WARN and "follows MemFree" in detail and detail.endswith("runs one image a call")
+
+
+def test_a_gpu_with_memory_of_its_own_gets_no_encode_clause():
+    discrete = _stats(device_free=20 * GIB, available=40 * GIB, total=24 * GIB, host_total=64 * GIB,
+                      encode="not_integrated")
+    status, detail = driver_memory_row.classify(discrete)
+    assert status == OK and detail.endswith("nothing to correct") and "encode" not in detail
+
+
+def test_fetch_puts_what_the_driver_published_beside_its_figures(monkeypatch):
+    import io
+    import json
+
+    stats = _corrected()
+    answers = {"/system_stats": stats, "/dgxm/telemetry": {"workers": [], "driver_rules": {"vae_encode_item": "off"}}}
+    asked = []
+
+    def urlopen(url, timeout=None):
+        asked.append(url)
+        return io.BytesIO(json.dumps(answers["/" + url.split("/", 3)[3]]).encode())
+
+    monkeypatch.setattr(driver_memory_row.comfy_ports, "_confirmed_driver", lambda _candidate: True)
+    monkeypatch.setattr(driver_memory_row.urllib.request, "urlopen", urlopen)
+    ((_candidate, answer),) = driver_memory_row.fetch(("127.0.0.1:8188",))
+    assert asked == ["http://127.0.0.1:8188/system_stats", "http://127.0.0.1:8188/dgxm/telemetry"]
+    assert answer[driver_memory_row.RULES_KEY] == {"vae_encode_item": "off"}
+    assert driver_memory_row.classify(answer)[0] == WARN
+    # A telemetry route that fails, or answers without the block (a 503's body), leaves the rule unobserved.
+    answers["/dgxm/telemetry"] = {"t": 0, "workers": [], "telemetry_error": "TimeoutError"}
+    ((_candidate, answer),) = driver_memory_row.fetch(("127.0.0.1:8188",))
+    assert answer[driver_memory_row.RULES_KEY] is None and driver_memory_row.classify(answer)[0] == OK
+
+    def telemetry_down(url, timeout=None):
+        if url.endswith("/dgxm/telemetry"):
+            raise OSError("503")
+        return urlopen(url, timeout)
+
+    monkeypatch.setattr(driver_memory_row.urllib.request, "urlopen", telemetry_down)
+    ((_candidate, answer),) = driver_memory_row.fetch(("127.0.0.1:8188",))
+    assert answer[driver_memory_row.RULES_KEY] is None and "was not observed" in driver_memory_row.classify(answer)[1]
 
 
 def test_a_driver_that_follows_memfree_is_named_with_both_figures():
@@ -73,7 +157,10 @@ def test_no_driver_answering_says_what_a_driver_would_do():
     status, name, detail = driver_memory_row.verdict([])
     assert (status, name) == (OK, "driver memory reading")
     assert detail.startswith("no ComfyUI driver with this pack answered on this box, so there is no reading to check")
-    assert "run doctor again" in detail and driver_uma_memory.DISABLE_ENV in detail
+    # The sibling never runs a driver: the row must not tell every box to start one.
+    assert "if this box runs the driver, start it and run doctor again" in detail
+    assert driver_uma_memory.DISABLE_ENV in detail
+    assert "encodes a batch of images one image a call unless DGXM_DISABLE_VAE_ENCODE_ITEM=1" in detail
 
 
 def test_the_worst_driver_leads_the_row():
