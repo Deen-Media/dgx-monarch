@@ -651,7 +651,9 @@
   model's load with no stack (5.0 GiB for a 0.3 GiB stack on the same file,
   1.2 GiB on an INT8 file, 0.8 GiB on a plain FP8 file). The price now adds
   a charge sized by format from what each measured load took: for scaled FP8,
-  2 GiB plus 7.5 MiB for each weight the stack patches; for INT8 ConvRot
+  2 GiB plus 7.5 MiB for each weight the stack patches, and never less than
+  the stack's files plus 4.7 GiB (several LoRAs on the same weights hold
+  more than the count shows); for INT8 ConvRot
   (the shipped Wan-Animate 2 template's file) and plain FP8, 2 GiB and the
   stack's files, whatever the number of patched weights; for BF16 and FP16,
   2 GiB plus 7.5 MiB a patched weight and the stack's files. Plain FP8 rests

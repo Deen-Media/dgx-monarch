@@ -30,6 +30,12 @@ and ``tests/test_classic_bake_records.py`` holds each record against it:
   (1.5 over); the line alone charges 14.16 and 5.52, which leaves 4.5 and 4.0
   GiB above take plus floor. The files added on top priced the larger stack
   at 72.1 GiB against a need of 60.6, and refused states that had rendered.
+  Both records are one LoRA file each. The line counts distinct patched keys,
+  and the store reads every file of a stack into host memory and holds them
+  through the bake, so several LoRAs on the same keys could hold more than
+  the line charges. Such a stack is charged no less than its files and
+  ``BEYOND_THE_FILES_BYTES`` (4.7 GiB: what the larger record took beyond its
+  files, and the 2 GiB of spare). No stack of overlapping files is on record.
 - **INT8 ConvRot and plain FP8** carry no per-weight share
   (``NO_PER_WEIGHT_SHARE``): the fixed 2 GiB and the stack's files. An INT8
   Wan-Animate 2 load with 1261 patched keys took 0.5 GiB beside the stock
@@ -118,6 +124,14 @@ SMALL_KEY_BYTES = MIB
 # what LTX's two stacks took plus the floor; with the 7.1 GiB of files added, the larger
 # stack was priced 11.5 GiB over its need and refused states that had rendered.
 FILES_IN_THE_LINE: tuple[str, ...] = (FP8_QUANTIZED,)
+# The least such a stack is charged beyond its own files. The line counts distinct patched
+# keys, so a stack of several LoRAs on the same keys can hold more on the host than the line
+# charges. LTX's own stack took 9.7 GiB over the stock price with 7.08 GiB of files: 2.62
+# beyond them, 2.7 rounded up. With the 2 GiB the line had to keep above take plus floor on
+# both recorded stacks, that is 4.7 GiB. Both records stay on the line (11.8 and 5.0 GiB by
+# this bound against 14.16 and 5.52). 2 GiB alone would leave a stack whose files pass the
+# line 0.6 GiB under the larger record's own take plus floor.
+BEYOND_THE_FILES_BYTES = int(4.7 * GIB)
 # The formats whose patched bytes are guarded by ``CLASSIC_BAKE_GUARD_RATIO`` when a weight
 # is larger than the row below. Empty: no record needs the guard (both LTX stacks' largest
 # patched weight is 64.0 MiB, and BF16's two cells sit under the line). Naming a format here
@@ -283,15 +297,22 @@ def charge_from_weights(weights: Iterable[tuple[str, int]], stack_files: int) ->
     """What a classic price adds for a stack: the term, and the stack's files where the line does not hold them.
 
     A stack whose patched bytes are mostly weights of a ``FILES_IN_THE_LINE``
-    class (scaled FP8) is charged the line alone. Every other stack is charged
-    its term and its files: the fixed part and the files for INT8 ConvRot and
-    plain FP8, the line and the files for full precision and for a stack that
-    could not be classed. ``tests/test_classic_bake_records.py`` holds this
-    against what each recorded load took.
+    class (scaled FP8) is charged the line, which holds the files of the
+    stacks it was fitted on, and never less than its files and
+    ``BEYOND_THE_FILES_BYTES``: the line counts distinct patched keys, so
+    several LoRAs on the same keys add nothing to it, while the store reads
+    every file of the stack into host memory and holds them all through the
+    bake (``ModelStore._build_active``). Every other stack is charged its term
+    and its files, each file once: the fixed part and the files for INT8
+    ConvRot and plain FP8, the line and the files for full precision and for a
+    stack that could not be classed. ``tests/test_classic_bake_records.py``
+    holds this against what each recorded load took.
     """
     listed = list(weights)
-    in_the_line = _most_bytes_are(((kind, (nbytes,)) for kind, nbytes in listed), FILES_IN_THE_LINE)
-    return term_from_weights(listed) + (0 if in_the_line else max(int(stack_files), 0))
+    term, files = term_from_weights(listed), max(int(stack_files), 0)
+    if _most_bytes_are(((kind, (nbytes,)) for kind, nbytes in listed), FILES_IN_THE_LINE):
+        return max(term, files + BEYOND_THE_FILES_BYTES)
+    return term + files
 
 
 def classic_charge(checkpoint_path: str, lora_stack: list | None,
@@ -390,7 +411,7 @@ def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, h
     return fit_probe
 
 
-__all__ = ["CLASSIC_BAKE_BYTES_PER_WEIGHT", "CLASSIC_BAKE_FIXED_BYTES", "CLASSIC_BAKE_GUARD_RATIO",
+__all__ = ["BEYOND_THE_FILES_BYTES", "CLASSIC_BAKE_BYTES_PER_WEIGHT", "CLASSIC_BAKE_FIXED_BYTES", "CLASSIC_BAKE_GUARD_RATIO",
            "FILES_IN_THE_LINE", "FP8_QUANTIZED", "FULL_PRECISION", "GATE_HAS_NOT_PASSED", "GUARDED_BY_BYTES",
            "INT8_QUANTIZED", "IN_PLACE_BAKE_FIXED_BYTES", "IN_PLACE_BAKE_PROVEN", "MEASURED_LARGEST_WEIGHT_BYTES",
            "NO_PER_WEIGHT_SHARE", "OTHER", "PLAIN_FP8", "SMALL_KEY_BYTES", "UNREADABLE_STACK_WEIGHTS",

@@ -739,7 +739,8 @@ you may see:
 - **What the price adds depends on the checkpoint's format**, sized from
   what loads took on hardware on 2026-11-12:
   - scaled FP8 (LTX 2.3's file): 2 GiB plus 7.5 MiB for each weight the
-    stack patches;
+    stack patches, or the stack's files plus 4.7 GiB where that is more (a
+    stack of several LoRAs on the same weights);
   - INT8 ConvRot (the shipped Wan-Animate 2 template's file) and plain FP8:
     2 GiB and the stack's own files, whatever the number of patched weights.
     Plain FP8 rests on one measured stack;

@@ -136,6 +136,30 @@ def test_the_same_header_as_scaled_fp8_keeps_the_line_and_is_not_charged_its_fil
     assert max(quantized) > price.MEASURED_LARGEST_WEIGHT_BYTES[price.FP8_QUANTIZED]
 
 
+def test_overlapping_loras_on_a_scaled_fp8_base_are_charged_for_the_files_they_hold(tmp_path):
+    """Three entries of one LoRA patch the same 1261 keys; the store reads the file for each entry."""
+    checkpoint, stack = _files(tmp_path, quantized_dtype="F8_E4M3")
+    # Make the LoRA file large without another patched key: a tensor no LoRA suffix names.
+    tensors = {key: (value.dtype, list(value.shape))
+               for key, value in price.read_safetensors_header(stack).tensors.items()}
+    tensors["padding.blob"] = ("F32", [1024, 1024, 768])  # 3 GiB
+    _write_safetensors(stack, tensors)
+    resolve = _resolver({"a.safetensors": stack})
+    one = os.path.getsize(stack)
+    assert one > 3 * GIB
+    read = price.read_safetensors_header(checkpoint).tensors
+    thrice = STACK * 3
+    assert len(price.patched_weights(read, thrice, resolve)) == PATCHED  # the count does not move
+    assert price.stack_bytes(thrice, resolve) == 3 * one
+    assert price.classic_charge(checkpoint, STACK, resolve) == LINE  # one file: the line holds it
+    charged = price.classic_charge(checkpoint, thrice, resolve)
+    assert charged == 3 * one + price.BEYOND_THE_FILES_BYTES > LINE
+    # The same three entries on the INT8 header: the fixed part, the five large weights, every file.
+    int8_checkpoint, _ = _files(tmp_path)
+    _write_safetensors(stack, tensors)  # _files rewrote the LoRA without its padding
+    assert price.classic_charge(int8_checkpoint, thrice, resolve) == INT8_TERM + 3 * one
+
+
 def test_the_same_header_as_plain_fp8_is_charged_as_int8_is(tmp_path):
     """FP8 weights with no quantization marker beside them: the fixed part and the files."""
     tensors: dict = {}

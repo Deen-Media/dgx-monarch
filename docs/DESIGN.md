@@ -2417,7 +2417,14 @@ rules follow.
     beside it): the line, and the stack's files are not added to it. The
     line alone leaves 4.5 and 4.0 GiB above what LTX's two stacks took plus
     the floor. With the 7.1 GiB of files on top, the larger stack was priced
-    at 72.1 GiB against a need of 60.6.
+    at 72.1 GiB against a need of 60.6. Both records are one LoRA file each.
+    The line counts distinct patched keys, and the store reads every file of
+    a stack into host memory and holds them through the bake, so several
+    LoRAs on the same keys can hold more than the line charges. Such a stack
+    is charged no less than its files and 4.7 GiB: the 2.62 GiB the larger
+    record took beyond its files, rounded up, and the 2 GiB of spare. Both
+    records stay on the line (the bound gives 11.8 and 5.0 GiB). No stack of
+    overlapping files has been measured.
   - **INT8 ConvRot and plain FP8**: no per-weight share; the fixed 2 GiB and
     the stack's files. Both INT8 rows and the plain FP8 row are covered with
     room (the table's last two columns). Plain FP8 rests on one weight
@@ -2449,7 +2456,8 @@ rules follow.
     larger ones is past the records and unmeasured.
 
   Three constants hold those choices, one word each to change:
-  `NO_PER_WEIGHT_SHARE`, `FILES_IN_THE_LINE` and `GUARDED_BY_BYTES`.
+  `NO_PER_WEIGHT_SHARE`, `FILES_IN_THE_LINE` and `GUARDED_BY_BYTES`; a
+  fourth, `BEYOND_THE_FILES_BYTES`, is the scaled FP8 bound above.
   `StockFit` carries the term, so the Worker's two walls and the quote the
   driver reads charge one figure by one function, and every refusal prints
   it. The partial-load route's room rule charges the line for the layers

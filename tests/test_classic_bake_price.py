@@ -113,6 +113,32 @@ def test_the_stacks_files_are_charged_beside_the_term_except_where_the_line_hold
     assert price.charge_from_weights([], files) == files  # a stack that patches no weight still reads its files
 
 
+def test_a_scaled_fp8_stack_is_never_charged_less_than_its_files_and_what_the_bake_takes_beyond_them():
+    """Several LoRAs on the same keys do not move the count, and the store holds every file on the host."""
+    fixed, per_weight = price.CLASSIC_BAKE_FIXED_BYTES, price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+    beyond = price.BEYOND_THE_FILES_BYTES
+    weights = _weights(1660, price.FP8_QUANTIZED, 11 * MIB)
+    line = fixed + 1660 * per_weight
+    # The two recorded stacks, one file each: the line is the larger, so their prices do not move.
+    assert price.charge_from_weights(weights, LTX_OWN_STACK) == line > LTX_OWN_STACK + beyond
+    small = _weights(480, price.FP8_QUANTIZED, 25 * MIB)
+    assert price.charge_from_weights(small, int(0.305 * GIB)) == fixed + 480 * per_weight
+    # The same keys under three such files: the line alone would charge 14.2 GiB for 21.2 GiB on the host.
+    three = 3 * LTX_OWN_STACK
+    assert three > line
+    assert price.charge_from_weights(weights, three) == three + beyond
+    # The bound is what the larger record took beyond its files (2.62 GiB) and 2 GiB of spare.
+    assert beyond >= int((9.7 - 7.08 + 2.0) * GIB)
+    # At the crossover the price moves without a step.
+    at = line - beyond
+    assert price.charge_from_weights(weights, at) == line == price.charge_from_weights(weights, at - 1)
+    assert price.charge_from_weights(weights, at + 1) == line + 1
+    # The other classes already charge every file beside their term.
+    assert price.charge_from_weights(_weights(480, price.INT8_QUANTIZED), three) == fixed + three
+    assert price.charge_from_weights(_weights(720, price.PLAIN_FP8), three) == fixed + three
+    assert price.charge_from_weights(_weights(148, price.FULL_PRECISION), three) == fixed + 148 * per_weight + three
+
+
 def test_one_stray_key_of_another_format_does_not_change_how_a_stack_is_charged():
     """A stack is read by the format that holds most of its patched bytes."""
     files = int(0.7 * GIB)

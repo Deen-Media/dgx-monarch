@@ -121,6 +121,27 @@ def test_the_figures_the_workers_printed_for_the_formats_left_as_they_were():
     assert by_name["bf16 klein, 121 patched keys"].price_bytes / GIB == pytest.approx(45.7, abs=0.08)
 
 
+def test_what_each_recorded_stack_is_charged():
+    """The seven charges, pinned: a change to a constant or a rule that moves one shows here first."""
+    charged = {record.name: round(price.charge_from_weights(record.weights, _gib(record.files_gib)) / GIB, 2)
+               for record in RECORDS}
+    assert charged == {
+        "int8 wan-animate 2, 1261 patched keys": 2.74,
+        "int8 minimax h3, 208 patched keys": 3.88,
+        "plain fp8 qwen image, 720 patched keys": 2.79,
+        "scaled fp8 ltx 2.3, 1660 patched keys": 14.16,
+        "scaled fp8 ltx 2.3, 480 patched keys": 5.52,
+        "bf16 wan-animate 2, 1261 patched keys": 11.93,
+        "bf16 klein, 121 patched keys": 5.16,
+    }
+    # Both scaled FP8 records are one file each and stay on the line: the files' lower bound is under it.
+    for name, count in (("scaled fp8 ltx 2.3, 1660 patched keys", 1660), ("scaled fp8 ltx 2.3, 480 patched keys", 480)):
+        record = next(r for r in RECORDS if r.name == name)
+        line = price.CLASSIC_BAKE_FIXED_BYTES + count * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+        assert price.charge_from_weights(record.weights, _gib(record.files_gib)) == line
+        assert _gib(record.files_gib) + price.BEYOND_THE_FILES_BYTES < line
+
+
 def test_the_first_term_refused_four_of_these_states():
     """What this table would have caught: the line and the files for every format."""
     def first_price(record):
