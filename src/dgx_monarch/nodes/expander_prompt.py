@@ -28,16 +28,21 @@ Preview as Text beside the path, with the switch off, refuses nothing.
 Generate Text must be fed by a Replace Text node whose text is typed or comes
 from a text box.
 
-A switch counts by what it states: a typed boolean, or a Boolean box wired to
-it, as ComfyUI's own edit template has. Behind a switch that states no
-choice, neither branch is sure to run, so an expander there refuses nothing,
-and the same holds behind a Branch node. What feeds such a switch's own
-``switch`` input is sure to run, though: ComfyUI needs that value to choose.
-The shipped graphs use this. Their empty-caption fallback is a second If/Else
-whose ``switch`` reads Compare Text over the expander's caption, so with the
-outer switch true the expander runs whichever way the fallback goes, and the
-refusal still answers. Any graph this cannot read refuses nothing. A lazy node
-of another pack is not known here and reads as running all its inputs.
+A switch counts by what it states: a typed boolean, a Boolean box wired to
+it, as ComfyUI's own edit template has, or Compare Text over texts the graph
+itself states. Behind a switch that states no choice, neither branch is sure
+to run, so an expander there refuses nothing, and the same holds behind a
+Branch node. What feeds such a switch's own ``switch`` input is sure to run,
+though: ComfyUI needs that value to choose. The shipped graphs use all of
+this. An empty request skips the expander through an If/Else whose
+``switch`` is Compare Text over the trimmed request box: the graph states
+that text, so the walk knows which way it goes, and an empty request, which
+runs no expander, refuses nothing. The loose caption read and the
+empty-caption fallback are If/Else nodes whose ``switch`` reads Compare Text
+over the expander's own answer: no graph states that, but the expander must
+run to decide them, so with the outer switch true and a request to expand
+the refusal still answers. Any graph this cannot read refuses nothing. A lazy
+node of another pack is not known here and reads as running all its inputs.
 
 Pure: no ComfyUI import and no file read.
 """
@@ -83,6 +88,26 @@ MISSING_MARKER = (
     "send the request to the model without the expander instead: in the DGX Monarch "
     "templates, set the switch titled If/Else Switch (expander on or off) to false.")
 
+TRIM_CLASS = "StringTrim"
+COMPARE_CLASS = "StringCompare"
+
+
+def _trimmed(text: str, mode: object) -> str | None:
+    """Trim Text, as ComfyUI 0.45.0 runs it (comfy_extras/nodes_string.py)."""
+    if mode == "Both":
+        return text.strip()
+    if mode == "Left":
+        return text.lstrip()
+    return text.rstrip() if mode == "Right" else None
+
+
+def _compared(left: str, right: str, mode: object) -> bool | None:
+    """Compare Text's three modes, from the same file."""
+    if mode == "Equal":
+        return left == right
+    if mode == "Starts With":
+        return left.startswith(right)
+    return left.endswith(right) if mode == "Ends With" else None
 
 def _node(prompt: Mapping, key: object) -> Mapping | None:
     node = None if key is None else prompt.get(str(key))
@@ -101,30 +126,66 @@ def _source(value: object) -> str | None:
     return None
 
 
-def _text(prompt: Mapping, value: object) -> str | None:
-    """The text an input holds: a literal, or the widget of the text box it is wired to."""
+def _text(prompt: Mapping, value: object, depth: int = 4) -> str | None:
+    """The text the graph states for an input, or None when it does not state one.
+
+    A typed text, the widget of a text box wired to it, or a Trim Text over
+    either: nothing a model or a file decides.
+    """
     if isinstance(value, str):
         return value
     source = _node(prompt, _source(value))
-    if source is None or source.get("class_type") not in TEXT_CLASSES:
+    if source is None or depth <= 0:
         return None
-    held = _inputs(source).get("value")
-    return held if isinstance(held, str) else None
+    kind, inputs = source.get("class_type"), _inputs(source)
+    if kind in TEXT_CLASSES:
+        held = inputs.get("value")
+        return held if isinstance(held, str) else None
+    if kind == TRIM_CLASS:
+        held = _text(prompt, inputs.get("string"), depth - 1)
+        return None if held is None else _trimmed(held, inputs.get("mode"))
+    return None
+
+
+def _choice(prompt: Mapping, value: object) -> bool | None:
+    """The choice the graph states for a switch, or None when it states none.
+
+    A typed boolean, a Boolean box, or Compare Text over two texts the graph
+    states: the shipped graphs skip the expander for an empty request this
+    way, and the request sits in a text box, so the graph says which way that
+    switch goes.
+    """
+    if isinstance(value, bool):
+        return value
+    source = _node(prompt, _source(value))
+    if source is None:
+        return None
+    kind, inputs = source.get("class_type"), _inputs(source)
+    if kind == BOOLEAN_CLASS:
+        held = inputs.get("value")
+        return held if isinstance(held, bool) else None
+    if kind != COMPARE_CLASS:
+        return None
+    left, right = _text(prompt, inputs.get("string_a")), _text(prompt, inputs.get("string_b"))
+    sensitive = inputs.get("case_sensitive")
+    if left is None or right is None or not isinstance(sensitive, bool):
+        return None
+    if not sensitive:
+        left, right = left.lower(), right.lower()
+    return _compared(left, right, inputs.get("mode"))
 
 
 def _stated(nodes: Mapping[str, Mapping]) -> dict[str, Mapping]:
-    """The graph with each switch a Boolean box drives set to that box's value."""
+    """The graph with each switch whose choice it states set to that choice."""
     stated = dict(nodes)
     for key, node in nodes.items():
         if node.get("class_type") not in graph_live.SWITCH_CLASSES:
             continue
         inputs = _inputs(node)
-        box = _node(nodes, _source(inputs.get("switch")))
-        if box is None or box.get("class_type") != BOOLEAN_CLASS:
-            continue
-        value = _inputs(box).get("value")
-        if isinstance(value, bool):
-            stated[key] = {**node, "inputs": {**inputs, "switch": value}}
+        if graph_live.is_link(inputs.get("switch")):
+            value = _choice(nodes, inputs.get("switch"))
+            if value is not None:
+                stated[key] = {**node, "inputs": {**inputs, "switch": value}}
     return stated
 
 

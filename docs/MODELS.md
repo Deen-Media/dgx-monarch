@@ -1115,7 +1115,7 @@ request cites them as `<Picture 1>`, `<Picture 2>`.
 The edit's canvas nodes are ComfyUI's own: two Resize Image/Mask nodes, to
 4 MP by area and then to a multiple of 32, and Get Image Size. The graphs
 leave out ComfyUI's subgraph wrapper, its Markdown notes and its Image Compare
-node, and set the switch on the If/Else node itself. Six more things differ
+node, and set the switch on the If/Else node itself. Seven more things differ
 from ComfyUI's graphs, each on purpose:
 
 - The expander's task prompt and system prompt boxes hold this project's own
@@ -1130,11 +1130,19 @@ from ComfyUI's graphs, each on purpose:
   `auto`, temperature 1.0 and top_p 0.95. The node gives reasoning no budget
   of its own, so a run that reasons up to `max_length` returns no caption;
   the texts here ask for the answer at once.
-- An answer with no caption falls back to the request. Extract Text from JSON
-  returns an empty text for an answer that does not parse or lacks the key,
-  and ComfyUI's graphs would then render from an empty prompt. Here Trim Text
-  and Compare Text test the caption against the empty text, and a second
-  If/Else sends the request as written when it is empty.
+- A caption that cannot be read falls back to the request. Extract Text from
+  JSON reads a valid answer. An answer that is not valid JSON, most often a
+  caption with a double quote inside it, returns nothing there, so Extract
+  Text reads it a second time by pattern: everything between the opening
+  quote of `expanded_caption` and the last quote a closing brace follows.
+  When neither read holds a caption (an answer cut short, plain prose, an
+  empty value), ComfyUI's graphs would render from an empty prompt. Here
+  Trim Text and Compare Text test the caption against the empty text, and an
+  If/Else sends the request as written.
+- An empty request skips the expander. The same Trim Text, Compare Text and
+  If/Else pattern, keyed on the request, sends an empty request straight to
+  the model, as with the switch false. The If/Else is lazy, so Generate Text
+  never runs for it: no language-model time, and nothing invented.
 - The text to image canvas is two numbers on the conditioning node, where
   ComfyUI wires a Resolution Selector, because the loader's price and the
   sweep read numbers.
@@ -1158,11 +1166,8 @@ files. The testing graph keeps both boxes empty.
 7.3 GB expander beside the text encoder, and Generate Text writes its answer,
 at most 1024 new tokens with reasoning off, before the render starts; the
 edit also hands it the picture. Neither the wait nor the memory has a
-hardware record with these settings yet. An empty request is answered two
-ways. The text to image text answers it with an empty caption, which falls
-back to the request, so the model gets what it gets with the switch false.
-The edit text answers it with a caption that says the picture stays as it
-is. You may
+hardware record with these settings yet. An empty request skips the expander
+and goes to the model as written. You may
 replace either text with your own: keep `{input text}` in the task prompt
 where the request belongs, and have the answer hold the caption under the key
 `expanded_caption`. A graph whose expander is on with an empty task prompt, or
@@ -1171,9 +1176,10 @@ request, or spend the expander's run and fall back to the request,
 with no error from ComfyUI, so a DGX Monarch loader, sampler or
 Identity Gate refuses it, class P
 ([#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
-The empty-caption fallback does not quiet that refusal: ComfyUI must run the
-expander to decide the fallback, so with the switch true the refusal still
-answers.
+Neither the second read of the caption nor the empty-caption fallback quiets
+that refusal: ComfyUI must run the
+expander to decide them, so with the switch true and a request to expand the
+refusal still answers. An empty request runs no expander and refuses nothing.
 
 **The expander and repeatability.** With the switch true the prompt is text a
 language model sampled, and Preview as Text shows it. Generate Text has its

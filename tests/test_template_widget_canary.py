@@ -126,3 +126,47 @@ def test_dynamic_widget_errors_hold_the_generators_rows_to_the_schema():
     (error,) = canary.dynamic_widget_errors(
         "Node", generated(rows), convert.object_info_widget_names(bare), bare)
     assert "but comfy master reveals []" in error
+
+
+def test_parse_chain_errors_name_the_answer_whose_caption_drifted():
+    """The caption read's table, through nodes that behave and through ones that do not."""
+    settings = {"key": "expanded_caption", "regex_pattern": r'"expanded_caption"\s*:\s*"(.*)"\s*\}',
+                "mode": "First Group", "case_insensitive": False, "multiline": False,
+                "dotall": True, "group_index": 1}
+    calls = []
+
+    def nodes(strict, loose):
+        def run(kind, *args):
+            calls.append(kind)
+            if kind == "JsonExtractString":
+                return strict
+            if kind == "RegexExtract":
+                assert args[1:] == (settings["regex_pattern"], "First Group", False, False, True, 1)
+                return loose
+            if kind == "StringTrim":
+                return args[0].strip()
+            return args[0] == args[1]
+        return run
+
+    # The strict read wins, and the loose read is not asked.
+    assert canary.caption_from("answer", settings, nodes("A boat.", "other")) == ("A boat.", "strict")
+    assert "RegexExtract" not in calls
+    # An empty or blank strict read hands over to the loose one, and then to the request.
+    assert canary.caption_from("answer", settings, nodes("  ", "A boat.")) == ("A boat.", "loose")
+    assert canary.caption_from("answer", settings, nodes("", " \n")) == ("", "request")
+    # Nodes that read nothing fail every row that expects a caption, by name.
+    errors = canary.parse_chain_errors(settings, nodes("", ""))
+    expecting = [what for what, _answer, _caption, read in canary.PARSE_CASES if read != "request"]
+    assert len(errors) == len(expecting) == 16
+    assert errors[0].startswith("caption read: a valid object: expected ('A photograph of a boat.', 'strict')")
+
+
+def test_parse_settings_reads_the_graphs_own_widget_values():
+    api = {"1": {"class_type": "JsonExtractString", "inputs": {"json_string": ["9", 0], "key": "k"}},
+           "2": {"class_type": "RegexExtract",
+                 "inputs": {"string": ["9", 0], "regex_pattern": "p", "mode": "First Group",
+                            "case_insensitive": False, "multiline": False, "dotall": True,
+                            "group_index": 1}}}
+    assert canary.parse_settings(api) == {
+        "key": "k", "regex_pattern": "p", "mode": "First Group", "case_insensitive": False,
+        "multiline": False, "dotall": True, "group_index": 1}

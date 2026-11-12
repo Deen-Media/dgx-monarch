@@ -128,6 +128,10 @@ STOCK = {
     # dynamic prompt pass.
     "StringTrim": ["string", "mode"],
     "StringCompare": ["string_a", "string_b", "mode", "case_sensitive"],
+    # Extract Text, the regex node of the tolerant caption read. Its three
+    # flag widgets and group_index are advanced and still hold their slots.
+    "RegexExtract": ["string", "regex_pattern", "mode", "case_insensitive", "multiline",
+                     "dotall", "group_index"],
     # The p-h3-image graph's V3 nodes. Their autogrow image sockets start
     # empty, as BerniniConditioning's do, so none is declared below.
     "PH3ImageConditioning": ["prompt", "width", "height"],
@@ -267,6 +271,7 @@ STOCK_OUTPUTS = {
     "JsonExtractString": [("STRING", "STRING")],
     "StringTrim": [("STRING", "STRING")],
     "StringCompare": [("BOOLEAN", "BOOLEAN")],
+    "RegexExtract": [("STRING", "STRING")],
     "PH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
     "MiniMaxH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
     "TextGenerateV2": [("generated_text", "STRING"), ("thinking", "STRING")],
@@ -5938,7 +5943,7 @@ TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
 # expander chain as ComfyUI wires it: Replace Text puts the request into a
 # task prompt, Generate Text runs the W4A8 expander,
 # Extract Text from JSON reads the caption out, and an If/Else switch
-# picks the caption or the request. Six things differ, each on purpose.
+# picks the caption or the request. Eight things differ, each on purpose.
 # Generate Text runs with this project's settings (H3I_DECODING, H3I_GENERATE),
 # where ComfyUI's templates reason at up to 8192 or 8196 tokens.
 # The task prompt and system prompt boxes of the two shipped graphs hold this
@@ -5949,10 +5954,14 @@ TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
 # language model. The switch is off as shipped (H3I_EXPANDER_ON), where
 # ComfyUI's two templates ship it on (text to image through its subgraph's
 # enable_PE input, whose value wins over the inner node's stored false, the
-# edit through a Boolean box). An answer with no caption falls back to the
-# request: Trim Text and Compare Text test the caption against the empty
-# text, and a second If/Else picks the request when it is empty, where
-# ComfyUI's graph would render from nothing. A graph that turns the expander
+# edit through a Boolean box). The caption is read twice: by Extract Text
+# from JSON, and when that returns nothing, by pattern, so a raw double quote
+# inside the caption does not lose it. An answer with no caption in either
+# read falls back to the request: Trim Text and Compare Text test the caption
+# against the empty text, and an If/Else picks the request when it is empty,
+# where ComfyUI's graph would render from nothing. An empty request skips the
+# expander by the same pattern, keyed on the request, so it starts no
+# language-model run. A graph that turns the expander
 # on with an empty task prompt refuses (nodes/expander_prompt.py). The text
 # to image canvas
 # sits on the conditioning node as two numbers, where upstream wires a
@@ -6007,6 +6016,20 @@ H3I_EXPANDER_ON = False
 # The titles that tell the two If/Else switches apart for a reader.
 H3I_SWITCH_TITLE = "If/Else Switch (expander on or off)"
 H3I_FALLBACK_TITLE = "If/Else Switch (empty caption: send the request)"
+H3I_LOOSE_TITLE = "If/Else Switch (caption did not parse: read it by pattern)"
+H3I_SKIP_TITLE = "If/Else Switch (empty request: skip the expander)"
+# The pattern Extract Text reads the caption by when the answer is not valid
+# JSON, with dotall on and the first group taken. The group is everything
+# between the opening quote of the expanded_caption value and the LAST quote
+# that a closing brace follows, so a raw double quote inside the caption, or a
+# JSON object copied into it, cannot end it early. A backslash before the
+# quotes around the key and the value is allowed and stays out of the group:
+# some answers escape those quotes. An empty value or an answer cut short
+# gives no match, and the empty-caption fallback sends the request.
+# tests/test_minimax_h3_image_templates.py holds a table of cases, and the
+# widget canary runs the same table through ComfyUI's own nodes.
+H3I_LOOSE_PATTERN = (r'"expanded_caption\\?"\s*:\s*\\?"(.*?)(?:(?:\\")*"|(?:\\")+)\s*\}'
+                     r'(?!.*"\s*\})')
 # Where MiniMax publishes its own prompts, which this project does not ship.
 H3I_PROMPT_REPO = "MiniMaxAI/MiniMax-H3-Image-PE"
 # How Generate Text runs, in one place. These are this project's settings for
@@ -6094,9 +6117,12 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
         + H3I_PROMPT_REPO + " under its own licence; nothing of those is in this "
         "graph. You may replace either text with your own: keep " + H3I_MARKER +
         " in the task prompt where the request belongs, and have the answer hold "
-        "the caption under the key expanded_caption. If the answer holds no "
-        "caption, the switch titled " + H3I_FALLBACK_TITLE + " sends the request "
-        "as written instead, and Preview as Text shows the text that is rendered "
+        "the caption under the key expanded_caption. An answer that is not valid "
+        "JSON, such as a caption with a double quote inside it, is read a second "
+        "time by pattern. If neither read holds a caption, the switch titled "
+        + H3I_FALLBACK_TITLE + " sends the request as written instead. An empty "
+        "request skips the expander: no language model runs for it. Preview as "
+        "Text shows the text that is rendered "
         "either way. A DGX Monarch loader or sampler refuses a graph whose "
         "expander is on with an empty task prompt, or with one that lacks the "
         "marker (docs/TROUBLESHOOTING.md #" + str(EXPANDER_ENTRY) + "). With the "
@@ -6206,30 +6232,72 @@ def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dic
         {"key": "extract", "type": "JsonExtractString", "pos": (4, 3),
          "widgets": {"json_string": "", "key": "expanded_caption"},
          "wire": {"json_string": ("expand", 0)}},
-        # The empty-caption fallback. Extract Text from JSON returns "" for an
-        # answer that does not parse or lacks the key, and ComfyUI's own graph
-        # would then render from nothing. Compare Text tests the trimmed
-        # caption against the empty text and drives a second If/Else, which
-        # hands on the request when the caption is empty and the caption as
-        # extracted otherwise. Its switch input is not lazy, so ComfyUI runs
-        # the expander for it whichever way it goes; with the outer switch
-        # false, the lazy outer switch never asks for this node at all.
-        {"key": "trim", "type": "StringTrim", "pos": (2, 4),
+        # Reading the caption, in two steps. Extract Text from JSON is strict:
+        # it handles escapes, a code fence and text around the object, and it
+        # returns "" when the answer is not valid JSON. A caption that holds a
+        # raw double quote is that case: the model copied a quoted word or a
+        # JSON object from the request as typed. So when the strict read is
+        # empty, Extract Text reads the answer by pattern (H3I_LOOSE_PATTERN),
+        # and an If/Else picks whichever read holds a caption. The loose read
+        # runs only then: the If/Else is lazy.
+        {"key": "strict_trim", "type": "StringTrim", "pos": (1, 6),
          "widgets": {"string": "", "mode": "Both"},
          "wire": {"string": ("extract", 0)}},
+        {"key": "strict_empty", "type": "StringCompare", "pos": (2, 6),
+         "widgets": {"string_a": "", "string_b": "", "mode": "Equal",
+                     "case_sensitive": True},
+         "wire": {"string_a": ("strict_trim", 0)}},
+        {"key": "loose", "type": "RegexExtract", "pos": (3, 6),
+         "widgets": {"string": "", "regex_pattern": H3I_LOOSE_PATTERN, "mode": "First Group",
+                     "case_insensitive": False, "multiline": False, "dotall": True,
+                     "group_index": 1},
+         "wire": {"string": ("expand", 0)}},
+        {"key": "caption", "type": "ComfySwitchNode", "pos": (4, 6),
+         "title": H3I_LOOSE_TITLE, "widgets": {"switch": False},
+         "wire": {"switch": ("strict_empty", 0), "on_false": ("extract", 0),
+                  "on_true": ("loose", 0)}},
+        # The empty-caption fallback. When neither read holds a caption (an
+        # answer cut short, plain prose, an empty value), ComfyUI's own graph
+        # would render from nothing. Compare Text tests the trimmed caption
+        # against the empty text and drives another If/Else, which hands on
+        # the request when the caption is empty and the caption as read
+        # otherwise. Its switch input is not lazy, so ComfyUI runs the
+        # expander for it whichever way it goes.
+        {"key": "trim", "type": "StringTrim", "pos": (2, 4),
+         "widgets": {"string": "", "mode": "Both"},
+         "wire": {"string": ("caption", 0)}},
         {"key": "compare", "type": "StringCompare", "pos": (3, 4),
          "widgets": {"string_a": "", "string_b": "", "mode": "Equal",
                      "case_sensitive": True},
          "wire": {"string_a": ("trim", 0)}},
         {"key": "fallback", "type": "ComfySwitchNode", "pos": (4, 4),
          "title": H3I_FALLBACK_TITLE, "widgets": {"switch": False},
-         "wire": {"switch": ("compare", 0), "on_false": ("extract", 0),
+         "wire": {"switch": ("compare", 0), "on_false": ("caption", 0),
+                  "on_true": ("request", 0)}},
+        # An empty request skips the expander. Compare Text tests the trimmed
+        # request against the empty text and drives an If/Else whose on_true
+        # is the request and whose on_false is everything above. The If/Else
+        # is lazy (comfy_extras/nodes_logic.py: both branches are lazy inputs
+        # and check_lazy_status asks for one), so with an empty request
+        # ComfyUI never asks for Generate Text: no language-model run, and
+        # nothing invented from an empty request.
+        {"key": "req_trim", "type": "StringTrim", "pos": (1, 7),
+         "widgets": {"string": "", "mode": "Both"},
+         "wire": {"string": ("request", 0)}},
+        {"key": "req_empty", "type": "StringCompare", "pos": (2, 7),
+         "widgets": {"string_a": "", "string_b": "", "mode": "Equal",
+                     "case_sensitive": True},
+         "wire": {"string_a": ("req_trim", 0)}},
+        {"key": "skip", "type": "ComfySwitchNode", "pos": (3, 7),
+         "title": H3I_SKIP_TITLE, "widgets": {"switch": False},
+         "wire": {"switch": ("req_empty", 0), "on_false": ("fallback", 0),
                   "on_true": ("request", 0)}},
         # The switch a reader sets. The grid graph stays off whatever ships.
+        # With it false, the lazy switch asks for none of the nodes above.
         {"key": "switch", "type": "ComfySwitchNode", "pos": (2, 2),
          "title": H3I_SWITCH_TITLE,
          "widgets": {"switch": H3I_EXPANDER_ON and not grid},
-         "wire": {"on_false": ("request", 0), "on_true": ("fallback", 0)}},
+         "wire": {"on_false": ("request", 0), "on_true": ("skip", 0)}},
         # Beside the text path, never on it: an any-typed socket would hide
         # the text from Studio's prompt role (the p-h3-image graph says so too).
         # Preview as Text hands a string on unchanged, so the model gets the

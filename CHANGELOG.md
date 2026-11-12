@@ -67,16 +67,16 @@
   unrelated to the request, or spend the expander's run and fall back to the
   request
   ([TROUBLESHOOTING #153](docs/TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
-- The MiniMax-H3-Image templates' prompt expander now answers at once.
-  Generate Text runs with reasoning off, at most 1024 new tokens and `mtp`
-  off, at temperature 0.7 and top_p 0.8, and the expander's three texts are
-  rewritten for it: they ask for the caption straight away, give every quote
-  mark and backslash one rule, and no longer hand the request back as a
-  caption. Reasoning had no budget of its own in the node, so a run that
-  reasoned up to `max_length` returned no caption and the graph fell back to
-  the request. An empty request now gets an empty caption in text to image,
-  which falls back to the request, and a caption that keeps the picture in
-  the edit. The switch still ships false in both templates. Not yet run on
+- The MiniMax-H3-Image templates' prompt expander now answers at once, and
+  its answer is read with more care. Generate Text runs with reasoning off,
+  at most 1024 new tokens and `mtp` off, at temperature 0.7 and top_p 0.8,
+  and the expander's three texts are rewritten for it. Reasoning had no
+  budget of its own in the node, so a run that reasoned up to `max_length`
+  returned no caption. A caption that is not valid JSON, most often one with
+  a double quote inside it, is read a second time by pattern, and a caption
+  that still cannot be read falls back to the request as written. An empty
+  request skips the expander: no language model runs for it. The switch still
+  ships false in both templates. Not yet run on
   hardware ([MODELS](docs/MODELS.md#model-minimax-h3-image)).
 - The sweep converter, which the template release test shares, reads the
   child widgets a ComfyUI dynamic combo reveals, under their dotted names,

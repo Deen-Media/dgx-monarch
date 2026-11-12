@@ -1998,13 +1998,19 @@ runs only for a Preview as Text beside the path refuses nothing), fed by a
 Replace Text node whose text is typed or comes from a Text box. The live walk
 keeps both branches of a switch it cannot decide, the safe side for a price;
 here that side would refuse a render whose expander is off. So the sure walk
-follows a switch's branch only when the switch states its choice, typed or
-through a Boolean box, and follows no input of a Branch node. It still follows
+follows a switch's branch only when the switch states its choice, typed,
+through a Boolean box or through Compare Text over texts the graph states, and
+follows no input of a Branch node. It still follows
 what feeds a switch's own `switch` input, which ComfyUI must run to choose.
-That is what keeps the refusal standing in the shipped graphs: an answer with
-no caption falls back to the request through a second If/Else whose `switch`
-reads Compare Text over the caption, and with the outer switch on the
-expander runs whichever way that fallback goes. A graph wired another way and
+That is what keeps the refusal standing in the shipped graphs. An answer that
+is not valid JSON is read a second time by pattern, and an answer with no
+caption in either read falls back to the request; both go through If/Else
+nodes whose `switch` reads Compare Text over the expander's answer, so with
+the outer switch on and a request to expand, the expander runs whichever way
+they go. An empty request skips the expander through one more If/Else whose
+`switch` is Compare Text over the trimmed request box. The graph states that
+text, so the walk reads the choice as it reads a typed one: an empty request
+runs no expander and refuses nothing. A graph wired another way and
 one the read fails on refuse nothing (`nodes/expander_prompt.py`).
 
 **A declared shard build is priced as a shard.** Both windows charge the whole

@@ -23,7 +23,9 @@ numbers. CPU only: the graphs are read as JSON and no ComfyUI is imported.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
+import re
 import sys
 import tomllib
 import types
@@ -51,6 +53,13 @@ try:
     import gen_templates
 finally:
     sys.path.remove(str(ROOT / "tools"))
+
+# The widget canary holds the table of expander answers and the caption each must give.
+_SPEC = importlib.util.spec_from_file_location(
+    "dgxm_template_widget_canary_h3i", ROOT / "tests" / "canary" / "template_widget_canary.py")
+assert _SPEC and _SPEC.loader
+canary = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(canary)
 
 T2I = "dgx-monarch-minimax-h3-image-t2i"
 EDIT = "dgx-monarch-minimax-h3-image-edit"
@@ -160,17 +169,22 @@ def _chain(graph: dict) -> dict:
     extract_id, extract = _one(graph, "JsonExtractString")
     expand_id, expand = _one(graph, "TextGenerateV2")
     splice_id, splice = _one(graph, "StringReplace")
-    # Two If/Else switches: the one a reader sets feeds the conditioning node,
-    # and the empty-caption fallback feeds that one's on_true.
+    # Four If/Else switches, read back from the conditioning node's prompt: the one
+    # a reader sets, the empty-request skip, the empty-caption fallback and the
+    # choice between the strict and the loose read of the caption.
     switches = {key: node["inputs"] for key, node in graph.items()
                 if node["class_type"] == "ComfySwitchNode"}
-    assert len(switches) == 2
+    assert len(switches) == 4
     switch_id = cond["prompt"][0]
     switch = switches[switch_id]
-    (fallback_id,) = [key for key in switches if key != switch_id]
+    skip_id = switch["on_true"][0]
+    skip = switches[skip_id]
+    fallback_id = skip["on_false"][0]
     fallback = switches[fallback_id]
-    assert cond["prompt"] == [switch_id, 0]
-    assert switch["on_true"] == [fallback_id, 0]
+    caption_id = fallback["on_false"][0]
+    caption = switches[caption_id]
+    assert {switch_id, skip_id, fallback_id, caption_id} == set(switches)
+    assert caption["on_false"] == [extract_id, 0]
     assert extract["json_string"] == [expand_id, 0]
     assert expand["prompt"] == [splice_id, 0]
     request_id, task_id, system_id = (
@@ -183,7 +197,8 @@ def _chain(graph: dict) -> dict:
             "splice": splice, "request": texts[request_id], "task": texts[task_id],
             "system": texts[system_id], "switch_id": switch_id, "task_id": task_id,
             "system_id": system_id, "request_id": request_id, "fallback": fallback,
-            "fallback_id": fallback_id, "extract_id": extract_id}
+            "fallback_id": fallback_id, "extract_id": extract_id, "expand_id": expand_id,
+            "skip": skip, "skip_id": skip_id, "caption": caption, "caption_id": caption_id}
 
 
 @pytest.mark.parametrize("name", [T2I, EDIT, GRID])
@@ -250,9 +265,9 @@ def test_generate_texts_children_follow_the_options_order():
 PROMPTS = ROOT / "tools" / "expander_prompts" / "minimax_h3_image"
 # The texts as the prompt author's last round left them, by SHA-256.
 PROMPT_SHA256 = {
-    "system_prompt.txt": "2fd3538979706f75a6df22812553f3464bda277cdb1f756fc1f3beebf2b1333d",
-    "t2i_task_prompt.txt": "c92e20cd034b2624798dc72c9fb738f24b53428d7c582d2bd177b5d417d38c81",
-    "edit_task_prompt.txt": "b7134a940c00c01f2cf0238cb950b611b0535619f16a8c6deb159624dc040e72",
+    "system_prompt.txt": "03c7a8f5b49324f57bae53601b2084a31c695469ad3106bad7fb6f67f6c14c25",
+    "t2i_task_prompt.txt": "e3f9cc2cb7b472bbd4c74ed8fdfeea92cbe031799c55a869aa7187d3551448e9",
+    "edit_task_prompt.txt": "02e3bbd5bb8c0039d4eb31933ddc300707bb4665b594e22b615778b1804538f2",
 }
 
 
@@ -314,7 +329,8 @@ def test_the_shipped_switch_follows_the_generators_one_value(name):
     chain = _chain(_graph(name))
     assert chain["switch"]["switch"] is gen_templates.H3I_EXPANDER_ON
     titles = {node["title"] for node in _doc(name)["nodes"] if node["type"] == "ComfySwitchNode"}
-    assert titles == {gen_templates.H3I_SWITCH_TITLE, gen_templates.H3I_FALLBACK_TITLE}
+    assert titles == {gen_templates.H3I_SWITCH_TITLE, gen_templates.H3I_FALLBACK_TITLE,
+                      gen_templates.H3I_LOOSE_TITLE, gen_templates.H3I_SKIP_TITLE}
     # The refusal names the switch to set by the title it carries here.
     for sentence in (expander_prompt.EMPTY_TASK_PROMPT, expander_prompt.MISSING_MARKER):
         assert f"set the switch titled {gen_templates.H3I_SWITCH_TITLE} to false" in sentence
@@ -345,44 +361,135 @@ def test_the_source_archive_carries_the_three_texts():
 
 
 @pytest.mark.parametrize("name", [T2I, EDIT, GRID])
-def test_an_empty_caption_falls_back_to_the_request(name):
-    """Extract Text from JSON returns "" for an answer with no caption. Compare Text
-    tests the trimmed caption against the empty text and drives the second If/Else,
-    which hands on the request when it is empty and the caption as extracted otherwise."""
+def test_the_caption_is_read_strictly_then_by_pattern_then_the_request_is_sent(name):
+    """Extract Text from JSON reads a valid answer. When it returns nothing, Extract
+    Text reads the caption by pattern, so a raw double quote inside the caption does
+    not lose it. When neither read holds a caption, the request goes on as written."""
     graph = _graph(name)
     chain = _chain(graph)
-    trim_id, trim = _one(graph, "StringTrim")
-    compare_id, compare = _one(graph, "StringCompare")
-    assert trim == {"string": [chain["extract_id"], 0], "mode": "Both"}
-    assert compare == {"string_a": [trim_id, 0], "string_b": "", "mode": "Equal",
-                       "case_sensitive": True}
-    assert chain["fallback"] == {"switch": [compare_id, 0],
-                                 "on_true": [chain["request_id"], 0],
-                                 "on_false": [chain["extract_id"], 0]}
+    trims = {key: node["inputs"] for key, node in graph.items() if node["class_type"] == "StringTrim"}
+    compares = {key: node["inputs"] for key, node in graph.items()
+                if node["class_type"] == "StringCompare"}
+    assert len(trims) == len(compares) == 3
+    for inputs in trims.values():
+        assert inputs["mode"] == "Both"
+    for inputs in compares.values():
+        assert (inputs["string_b"], inputs["mode"], inputs["case_sensitive"]) == ("", "Equal", True)
+
+    def empty_test(switch: dict) -> list:
+        """The node a switch's choice tests for emptiness, through Compare Text and Trim Text."""
+        compare = compares[switch["switch"][0]]
+        return trims[compare["string_a"][0]]["string"]
+
+    # The strict read first; the loose read only when the strict one is empty.
+    loose_id, loose = _one(graph, "RegexExtract")
+    assert loose == {"string": [chain["expand_id"], 0],
+                     "regex_pattern": gen_templates.H3I_LOOSE_PATTERN, "mode": "First Group",
+                     "case_insensitive": False, "multiline": False, "dotall": True,
+                     "group_index": 1}
+    assert empty_test(chain["caption"]) == [chain["extract_id"], 0]
+    assert chain["caption"]["on_true"] == [loose_id, 0]
+    assert chain["caption"]["on_false"] == [chain["extract_id"], 0]
+    # Then the fallback: the request when the caption read is empty.
+    assert empty_test(chain["fallback"]) == [chain["caption_id"], 0]
+    assert chain["fallback"]["on_true"] == [chain["request_id"], 0]
+    assert chain["fallback"]["on_false"] == [chain["caption_id"], 0]
+    # An empty request skips all of it.
+    assert empty_test(chain["skip"]) == [chain["request_id"], 0]
+    assert chain["skip"]["on_true"] == [chain["request_id"], 0]
+    assert chain["skip"]["on_false"] == [chain["fallback_id"], 0]
+    assert chain["switch"]["on_true"] == [chain["skip_id"], 0]
     # Preview as Text reads the outer switch, so it shows the text that is rendered:
-    # the request with the switch false or after a fallback, the caption otherwise.
+    # the request with the switch false, for an empty request or after a fallback,
+    # the caption otherwise.
     _, preview = _one(graph, "PreviewAny")
     assert preview["source"] == chain["cond"]["prompt"] == [chain["switch_id"], 0]
 
 
-def _rendered(name: str, request: str, answer: str) -> str:
-    """The text the conditioning node receives with the outer switch true, when the
-    expander's answer is ``answer``.
+def _json_extract(text: str, key: str) -> str:
+    """Extract Text from JSON as ComfyUI 0.45.0 runs it (comfy_extras/nodes_string.py):
+    the key of the first object that parses, as a string, or "" for none."""
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", text):
+        try:
+            data, _ = decoder.raw_decode(text, match.start())
+        except json.JSONDecodeError:
+            continue
+        value = data.get(key)
+        return "" if value is None else str(value)
+    return ""
 
-    A CPU stand-in for five stock nodes, each as ComfyUI 0.45.0's code reads
-    (comfy_extras/nodes_string.py, nodes_logic.py): Replace Text is str.replace;
-    Extract Text from JSON returns the key of the first object that parses, as a
-    string, or "" when none parses or the key is absent; Trim Text strips; Compare
-    Text in Equal mode compares; If/Else hands on on_true when its switch is true.
-    Generate Text is the one node not run: its output is the answer given.
+
+def _regex_extract(text: str, pattern: str, mode: str, case_insensitive: bool,
+                   multiline: bool, dotall: bool, group_index: int) -> str:
+    """Extract Text in First Group mode, from the same file."""
+    assert mode == "First Group"
+    flags = ((re.IGNORECASE if case_insensitive else 0) | (re.MULTILINE if multiline else 0)
+             | (re.DOTALL if dotall else 0))
+    match = re.search(pattern, text, flags)
+    return match.group(group_index) if match and len(match.groups()) >= group_index else ""
+
+
+def _trim(text: str, mode: str) -> str:
+    assert mode == "Both"
+    return text.strip()
+
+
+def _compare(left: str, right: str, mode: str, case_sensitive: bool) -> bool:
+    assert mode == "Equal" and case_sensitive is True
+    return left == right
+
+
+STAND_INS = {"JsonExtractString": _json_extract, "RegexExtract": _regex_extract,
+             "StringTrim": _trim, "StringCompare": _compare}
+
+
+def _stand_in(kind: str, *args):
+    return STAND_INS[kind](*args)
+
+
+@pytest.mark.parametrize("name", [T2I, EDIT, GRID])
+def test_the_pattern_holds_against_the_table_of_answers(name):
+    """Each answer in the canary's table gives the caption the table states, with the
+    widget values this graph holds. The four nodes are stand-ins written from
+    ComfyUI's code; the widget canary runs the same table through ComfyUI's own."""
+    settings = canary.parse_settings(_graph(name))
+    assert settings == {"key": "expanded_caption",
+                        "regex_pattern": gen_templates.H3I_LOOSE_PATTERN, "mode": "First Group",
+                        "case_insensitive": False, "multiline": False, "dotall": True,
+                        "group_index": 1}
+    assert canary.parse_chain_errors(settings, _stand_in) == []
+    reads = {read for _what, _answer, _caption, read in canary.PARSE_CASES}
+    assert reads == {"strict", "loose", "request"} and len(canary.PARSE_CASES) == 22
+    # The table has teeth: a pattern that stops at the first closing quote loses the
+    # captions with a quote inside them.
+    naive = {**settings, "regex_pattern": r'"expanded_caption"\s*:\s*"([^"]*)"'}
+    assert len(canary.parse_chain_errors(naive, _stand_in)) >= 6
+
+
+def _rendered(name: str, request: str, answer: str) -> tuple[str, int]:
+    """The text the conditioning node receives with the outer switch true, when the
+    expander's answer is ``answer``, and how many times Generate Text ran.
+
+    A CPU walk of the text path with stand-ins for the stock nodes, each as ComfyUI
+    0.45.0's code reads (comfy_extras/nodes_string.py, nodes_logic.py). If/Else is
+    lazy there: it asks only for the branch its switch selects, so the walk
+    evaluates only that branch. Generate Text is the one node not run: its output is
+    the answer given, and each visit is counted.
     """
     graph = _graph(name)
     chain = _chain(graph)
     graph[chain["request_id"]]["inputs"]["value"] = request
     chain["switch"]["switch"] = True
+    runs: list[str] = []
+    done: dict[str, object] = {}
 
     def value(ref):
-        return run(ref[0]) if isinstance(ref, list) else ref
+        if not isinstance(ref, list):
+            return ref
+        if ref[0] not in done:  # ComfyUI runs a node once a queue and keeps its output
+            done[ref[0]] = run(ref[0])
+        return done[ref[0]]
 
     def run(key: str):
         kind, inputs = graph[key]["class_type"], graph[key]["inputs"]
@@ -391,70 +498,58 @@ def _rendered(name: str, request: str, answer: str) -> str:
         if kind == "StringReplace":
             return value(inputs["string"]).replace(inputs["find"], value(inputs["replace"]))
         if kind == "TextGenerateV2":
-            assert value(inputs["prompt"]), "the expander was handed an empty prompt"
+            assert value(inputs["prompt"]).strip(), "the expander was handed an empty prompt"
+            runs.append(key)
             return answer
         if kind == "JsonExtractString":
-            text, decoder = value(inputs["json_string"]), json.JSONDecoder()
-            for start in (i for i, char in enumerate(text) if char == "{"):
-                try:
-                    data, _ = decoder.raw_decode(text, start)
-                except json.JSONDecodeError:
-                    continue
-                found = data.get(inputs["key"])
-                return "" if found is None else str(found)
-            return ""
+            return _json_extract(value(inputs["json_string"]), inputs["key"])
+        if kind == "RegexExtract":
+            return _regex_extract(value(inputs["string"]), inputs["regex_pattern"], inputs["mode"],
+                                  inputs["case_insensitive"], inputs["multiline"],
+                                  inputs["dotall"], inputs["group_index"])
         if kind == "StringTrim":
-            assert inputs["mode"] == "Both"
-            return value(inputs["string"]).strip()
+            return _trim(value(inputs["string"]), inputs["mode"])
         if kind == "StringCompare":
-            assert inputs["mode"] == "Equal" and inputs["case_sensitive"] is True
-            return value(inputs["string_a"]) == value(inputs["string_b"])
+            return _compare(value(inputs["string_a"]), value(inputs["string_b"]),
+                            inputs["mode"], inputs["case_sensitive"])
         if kind == "ComfySwitchNode":
             return value(inputs["on_true"] if value(inputs["switch"]) else inputs["on_false"])
         raise AssertionError(f"{kind} is not on the text path")
 
-    return value(chain["cond"]["prompt"])
+    return value(chain["cond"]["prompt"]), len(runs)
 
 
 CAPTION = "A photograph of a small weather station at first light, frost on the grass."
 
 
-def test_the_fallback_agrees_with_what_the_round_3_texts_answer():
-    """The text to image text answers an empty request with an empty caption; the edit
-    text never answers with one. The guard handles both, and an answer that holds no
-    caption at all."""
-    t2i, edit = _prompt_file("t2i_task_prompt.txt"), _prompt_file("edit_task_prompt.txt")
-    assert 'answer with an empty caption: {"expanded_caption": ""}' in t2i
-    assert '{"expanded_caption": ""}' not in edit
-    assert "still write a caption: say that <Picture 1> stays exactly as it is" in edit
-    assert "never answer with the request alone" in edit
-    # No text tells the model to hand the request back as the caption any more: the
-    # graph's own fallback is what covers an empty caption.
-    for text in (t2i, edit, _prompt_file("system_prompt.txt")):
-        assert "use the request itself as the caption" not in text
-    # Text to image, an empty request: the stated empty caption falls back to the
-    # request, which is empty, exactly what the model gets with the expander off.
-    assert _rendered(T2I, "", '{"expanded_caption": ""}') == ""
-    # The edit, an empty request: the text asks for a caption that keeps the picture,
-    # and a caption that is not empty goes to the model as extracted.
-    kept = "<Picture 1> stays exactly as it is."
-    assert _rendered(EDIT, "", json.dumps({"expanded_caption": kept})) == kept
-    for name, request in ((T2I, gen_templates.H3I_REQUEST), (EDIT, gen_templates.H3I_EDIT_REQUEST)):
-        # A caption goes through untouched, untrimmed.
-        assert _rendered(name, request, json.dumps({"expanded_caption": CAPTION})) == CAPTION
-        assert _rendered(name, request, json.dumps({"expanded_caption": f" {CAPTION} "})) == f" {CAPTION} "
-        # No caption falls back to the request: an answer cut short at max_length, plain
-        # prose, another key, an empty or blank caption.
-        for answer in ('{"expanded_caption": "A photograph of a small weather sta', CAPTION, "",
-                       '{"caption": "x"}', '{"expanded_caption": ""}',
-                       '{"expanded_caption": " \\n "}'):
-            assert _rendered(name, request, answer) == request, (name, answer)
+@pytest.mark.parametrize("name", [T2I, EDIT, GRID])
+def test_an_empty_request_never_starts_a_language_model_run(name):
+    """An empty request, or one of spaces and line breaks, goes past Generate Text:
+    the model gets the request as written, as with the expander off, and the
+    expander is never asked for an answer."""
+    for request in ("", "  ", " \n\t "):
+        assert _rendered(name, request, json.dumps({"expanded_caption": CAPTION})) == (request, 0)
+    if name != GRID:  # the testing graph holds no task prompt to expand a request with
+        assert _rendered(name, "a boat", json.dumps({"expanded_caption": CAPTION})) == (CAPTION, 1)
+
+
+@pytest.mark.parametrize(("name", "asked"), [(T2I, "a boat on a beach"),
+                                               (EDIT, "make <Picture 1> snowy")])
+def test_the_whole_text_path_gives_the_model_a_caption_or_the_request(name, asked):
+    """Every answer in the table, through the graph's own wiring: a caption either
+    read finds goes to the model as read, and with none the request does."""
+    for what, answer, caption, read in canary.PARSE_CASES:
+        expected = asked if read == "request" else caption
+        assert _rendered(name, asked, answer) == (expected, 1), what
+    # A caption goes through untouched, untrimmed.
+    padded = json.dumps({"expanded_caption": f" {CAPTION} "})
+    assert _rendered(name, asked, padded) == (f" {CAPTION} ", 1)
 
 
 def test_no_text_outside_the_note_and_the_two_prompt_boxes_is_long():
     """ComfyUI's text to image task prompt runs to 15,823 characters, its edit one
     is long too, and its demo caption runs to 3,308. This project's own texts run to
-    1,047, 3,235 and 3,672 bytes, and no other widget comes near."""
+    947, 3,164 and 3,701 bytes, and no other widget comes near."""
     ours = {_prompt_file(name) for name in PROMPT_SHA256}
     assert max(len(text) for text in ours) < 4000
     for name in PATHS:
@@ -581,9 +676,11 @@ def test_the_note_says_whose_the_texts_are_and_what_the_expander_costs(name):
             "prompt where the request belongs, and have the answer hold the caption under "
             "the key expanded_caption") in note
     # The fallback, and that the preview shows what is rendered.
-    assert (f"If the answer holds no caption, the switch titled "
-            f"{gen_templates.H3I_FALLBACK_TITLE} sends the request as written instead, and "
-            "Preview as Text shows the text that is rendered either way") in note
+    assert ("An answer that is not valid JSON, such as a caption with a double quote "
+            "inside it, is read a second time by pattern. If neither read holds a caption, "
+            f"the switch titled {gen_templates.H3I_FALLBACK_TITLE} sends the request as "
+            "written instead. An empty request skips the expander: no language model runs "
+            "for it. Preview as Text shows the text that is rendered either way") in note
     # The refusal, and what an expander-on render is worth as a comparison.
     assert ("refuses a graph whose expander is on with an empty task prompt, or with one "
             "that lacks the marker "

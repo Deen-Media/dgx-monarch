@@ -888,11 +888,14 @@
       "test_a_graph_it_cannot_read_refuses_nothing": "6d8f31bc1d640fe9",
       "test_a_graph_with_no_dgx_monarch_render_refuses_nothing": "52b14a49596599dd",
       "test_a_read_that_fails_refuses_nothing": "860c3febbd16d741",
+      "test_a_request_from_a_node_this_cannot_read_leaves_the_skip_undecided": "90b2497250999d47",
       "test_a_sampler_reaches_its_price_when_the_graph_is_as_shipped": "3f83fff51435b812",
       "test_a_switch_driven_by_a_boolean_box_is_read_as_that_box": "5d00a2a575828d7f",
+      "test_a_switch_whose_choice_compare_text_states_is_read_as_that_choice": "759ac2b904201bd2",
       "test_a_task_prompt_of_spaces_and_line_breaks_is_empty_too": "b4aa54096f7e7fd2",
       "test_a_task_prompt_without_the_marker_refuses_and_names_the_marker": "999ab2c1625a13a6",
       "test_a_typed_task_prompt_on_replace_text_is_read_as_a_wired_one_is": "034cbe5bbd6d3f0b",
+      "test_an_empty_request_runs_no_expander_and_refuses_nothing": "674e747323c0700c",
       "test_an_expander_behind_a_switch_that_states_no_choice_refuses_nothing": "d81a94e853c3c03d",
       "test_an_expander_that_runs_only_for_a_preview_refuses_nothing": "d55a282a6aef6ee4",
       "test_an_undecided_node_beside_the_render_path_does_not_turn_the_check_off": "527d776f328c8da7",
@@ -902,7 +905,7 @@
       "test_identity_gate_refuses_before_its_price_and_its_ceremony": "f5442e506ff6a42f",
       "test_no_other_committed_template_meets_the_refusal_as_shipped_or_switched_on": "5396897058e25de7",
       "test_only_what_the_graph_states_is_read": "e68a168bfc7e2781",
-      "test_the_empty_caption_fallback_does_not_quiet_the_refusal": "856802f478c175c8",
+      "test_the_caption_reads_and_the_fallback_do_not_quiet_the_refusal": "d4329a3f3bf05fdd",
       "test_the_loader_refuses_before_any_price_heal_or_load": "c59b4bc3850c328f",
       "test_the_refusal_and_every_link_name_the_expander_entry": "eeac6e245931e4fb",
       "test_the_render_classes_are_the_nodes_that_call_the_refusal": "1d2bf70cd60913a2",
@@ -911,7 +914,7 @@
       "test_the_sure_walk_follows_only_what_a_switch_is_certain_to_run": "e653a125b3fea16c",
       "test_the_switch_on_over_the_empty_task_prompt_refuses_class_p": "84d1d2989cc79301",
       "test_the_testing_graph_with_the_switch_on_refuses": "2425513f969ce844",
-      "test_with_the_outer_switch_false_nothing_of_the_expander_runs": "294e4949dee259ea"
+      "test_with_the_outer_switch_false_nothing_of_the_expander_runs": "c355bd8f104aed2d"
     },
     "tests/test_family_adapter_select.py": {
       "test_a_child_model_still_binds_its_own_family": "a66d8c06e4f69116",

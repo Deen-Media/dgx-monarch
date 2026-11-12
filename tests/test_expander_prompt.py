@@ -131,24 +131,36 @@ def test_the_testing_graph_with_the_switch_on_refuses():
     assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
 
 
+def _switches(graph: dict) -> dict:
+    """The four If/Else switches of a family graph by role, from the outer one in."""
+    outer_id, outer = _outer(graph)
+    skip_id = outer["on_true"][0]
+    fallback_id = graph[skip_id]["inputs"]["on_false"][0]
+    caption_id = graph[fallback_id]["inputs"]["on_false"][0]
+    ids = {"outer": outer_id, "skip": skip_id, "fallback": fallback_id, "caption": caption_id}
+    assert all(graph[key]["class_type"] == "ComfySwitchNode" for key in ids.values())
+    assert len(set(ids.values())) == 4
+    return ids
+
+
 @pytest.mark.parametrize("name", FAMILY_GRAPHS)
 @pytest.mark.parametrize("task", ["", UNMARKED])
-def test_the_empty_caption_fallback_does_not_quiet_the_refusal(name, task):
-    """The fallback is a second If/Else whose choice comes from Compare Text, a switch
-    that states no choice. Neither of its branches is sure to run, but its `switch`
-    input is: ComfyUI must run Compare Text, and so the expander, to choose. With the
-    outer switch true the refusal therefore still decides."""
+def test_the_caption_reads_and_the_fallback_do_not_quiet_the_refusal(name, task):
+    """Two If/Else nodes take their choice from Compare Text over the expander's own
+    answer: the one that picks the strict or the loose read, and the empty-caption
+    fallback. No graph states that choice, so neither of their branches is sure to
+    run, but their `switch` inputs are: ComfyUI must run the expander to choose. With
+    the outer switch true and a request to expand, the refusal therefore still decides."""
     graph = _switched_on(name, task)
-    outer_id, outer = _outer(graph)
-    fallback_id = outer["on_true"][0]
-    fallback = graph[fallback_id]["inputs"]
-    compare_id, _ = _one(graph, "StringCompare")
+    ids = _switches(graph)
     expand_id, _ = _one(graph, "TextGenerateV2")
-    assert graph[fallback_id]["class_type"] == "ComfySwitchNode" and fallback_id != outer_id
-    assert fallback["switch"] == [compare_id, 0]
-    assert graph_live.skipped_branch(graph[fallback_id]) is None
+    for role in ("fallback", "caption"):
+        assert graph_live.is_link(graph[ids[role]]["inputs"]["switch"])
+        assert graph_live.skipped_branch(graph[ids[role]]) is None
     sure = graph_live.live_nodes(graph, sure=True)
-    assert {fallback_id, compare_id, expand_id} <= sure
+    # The skip switch is read through, since its choice is not stated on the node:
+    # only the walk in expander_prompt knows the request box decides it.
+    assert expand_id not in sure
     sentence = expander_prompt.dead_expander(graph)
     assert sentence is not None and sentence.startswith("The prompt expander is on and ")
     assert ("its task prompt is empty" in sentence) is (task == "")
@@ -157,19 +169,80 @@ def test_the_empty_caption_fallback_does_not_quiet_the_refusal(name, task):
 
 
 @pytest.mark.parametrize("name", FAMILY_GRAPHS)
+@pytest.mark.parametrize("asked", ["", "   ", " \n\t "])
+def test_an_empty_request_runs_no_expander_and_refuses_nothing(name, asked):
+    """An empty request goes past Generate Text: the If/Else that skips the expander
+    takes its choice from Compare Text over the trimmed request box, which the graph
+    states. So the walk knows the expander does not run, and an empty task prompt,
+    which would refuse with a request to expand, has nothing to refuse here."""
+    graph = _switched_on(name, "")
+    _, splice = _one(graph, "StringReplace")
+    request_id = splice["replace"][0]
+    assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
+    graph[request_id]["inputs"]["value"] = asked
+    assert expander_prompt.dead_expander(graph) is None
+    assert expander_prompt.refuse_dead_expander(graph) is None
+    graph[request_id]["inputs"]["value"] = "a boat"
+    assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
+
+
+def test_a_request_from_a_node_this_cannot_read_leaves_the_skip_undecided():
+    """The skip of an empty request is decided from the request box. When the request
+    comes from a node this cannot read, the graph no longer states whether the
+    expander runs, so the check steps aside, as for any switch that states no choice."""
+    graph = _switched_on(T2I, "")
+    _, splice = _one(graph, "StringReplace")
+    assert expander_prompt.dead_expander(graph) == _empty_sentence(graph)
+    graph[splice["replace"][0]]["class_type"] = "SomeTextFileLoader"
+    assert expander_prompt.dead_expander(graph) is None
+    assert expander_prompt.refuse_dead_expander(graph) is None
+
+
+def test_a_switch_whose_choice_compare_text_states_is_read_as_that_choice():
+    """Compare Text over texts the graph states, through Trim Text, in each mode."""
+    def graph(left: str, right: str, mode: str, sensitive: bool = True, trim: str = "Both"):
+        return {"1": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": left}},
+                "2": {"class_type": "StringTrim", "inputs": {"string": ["1", 0], "mode": trim}},
+                "3": {"class_type": "StringCompare",
+                      "inputs": {"string_a": ["2", 0], "string_b": right, "mode": mode,
+                                 "case_sensitive": sensitive}}}
+
+    choice = expander_prompt._choice
+    assert choice(graph("  ", "", "Equal"), ["3", 0]) is True
+    assert choice(graph(" a ", "", "Equal"), ["3", 0]) is False
+    assert choice(graph(" a", "a", "Equal", trim="Left"), ["3", 0]) is True
+    assert choice(graph(" a", "a", "Equal", trim="Right"), ["3", 0]) is False
+    assert choice(graph("Boat", "bo", "Starts With"), ["3", 0]) is False
+    assert choice(graph("Boat", "bo", "Starts With", sensitive=False), ["3", 0]) is True
+    assert choice(graph("Boat", "at", "Ends With"), ["3", 0]) is True
+    # What the graph does not state is not guessed.
+    assert choice(graph("a", "", "Some New Mode"), ["3", 0]) is None
+    assert choice(graph("a", "", "Equal", trim="Middle"), ["3", 0]) is None
+    unknown = graph("a", "", "Equal")
+    unknown["1"]["class_type"] = "SomeTextFileLoader"
+    assert choice(unknown, ["3", 0]) is None
+    wired = graph("a", "", "Equal")
+    wired["3"]["inputs"]["string_b"] = ["9", 0]
+    assert choice(wired, ["3", 0]) is None
+    assert choice({}, ["3", 0]) is None and choice({}, "true") is None
+
+
+@pytest.mark.parametrize("name", FAMILY_GRAPHS)
 def test_with_the_outer_switch_false_nothing_of_the_expander_runs(name):
-    """The outer switch is lazy and states false, so ComfyUI never asks for the
-    fallback, Compare Text, Extract Text from JSON, Generate Text or the expander's
-    loader: the walk the loader prices with drops them all, and so does the sure one."""
+    """The outer switch is lazy and states false, so ComfyUI never asks for the skip,
+    the fallback, either read of the caption, Generate Text or the expander's loader:
+    the walk the loader prices with drops them all, and so does the sure one."""
     graph = _with_task(name, None, False)
-    _, outer = _outer(graph)
+    ids = _switches(graph)
     expand_id, expand = _one(graph, "TextGenerateV2")
-    chain = {outer["on_true"][0], expand_id, expand["clip"][0],
-             *(_one(graph, kind)[0] for kind in
-               ("StringCompare", "StringTrim", "JsonExtractString", "StringReplace"))}
+    chain = {ids["skip"], ids["fallback"], ids["caption"], expand_id, expand["clip"][0],
+             *(key for key, node in graph.items() if node["class_type"] in (
+                 "StringCompare", "StringTrim", "JsonExtractString", "RegexExtract",
+                 "StringReplace"))}
+    assert len(chain) == 14
     assert not chain & graph_live.live_nodes(graph)
     assert not chain & graph_live.live_nodes(graph, sure=True)
-    outer["switch"] = True
+    graph[ids["outer"]]["inputs"]["switch"] = True
     assert chain <= graph_live.live_nodes(graph)
 
 

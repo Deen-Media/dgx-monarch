@@ -18,6 +18,9 @@ ComfyUI's nodes.NODE_CLASS_MAPPINGS and this pack's nodes, this canary checks:
    rewrite on Queue (dynamic_prompt_errors). The API path keeps that text, so
    such a graph would render one prompt from the browser and another from the
    API, the sweep and Studio.
+7. The MiniMax-H3-Image caption read gives the caption its table states for
+   each answer, through ComfyUI's own Extract Text from JSON, Trim Text,
+   Compare Text and Extract Text nodes (parse_chain_errors).
 
 Conversion uses benchmark.sweep.convert.convert and object_info_widget_names,
 the same functions used by the live sweep.
@@ -256,6 +259,132 @@ def dynamic_widget_errors(node_class: str, generated: list, declared_names: list
     return errors
 
 
+# ---- The MiniMax-H3-Image caption read ------------------------------------------
+#
+# The shipped MiniMax-H3-Image graphs read the expander's answer twice: Extract
+# Text from JSON first, and Extract Text by pattern when that returns nothing,
+# with Trim Text and Compare Text deciding which read holds a caption. The
+# table below is the contract: each answer, the caption the image model gets,
+# and the read that gave it ("request" when neither did and the graph sends
+# the request as written). tests/test_minimax_h3_image_templates.py runs it
+# through a stand-in for the four nodes; main() runs it through ComfyUI's own.
+PARSE_TEMPLATE = "dgx-monarch-minimax-h3-image-t2i.json"
+PARSE_NODES = ("JsonExtractString", "StringTrim", "StringCompare", "RegexExtract")
+PARSE_CASES = (
+    ("a valid object",
+     '{"expanded_caption": "A photograph of a boat."}',
+     "A photograph of a boat.", "strict"),
+    ("escaped quotes and a backslash, which the strict read decodes",
+     '{"expanded_caption": "A sign that reads \\"OPEN\\" beside the path C:\\\\tmp."}',
+     'A sign that reads "OPEN" beside the path C:\\tmp.', "strict"),
+    ("a code fence",
+     '```json\n{"expanded_caption": "A photograph of a boat."}\n```',
+     "A photograph of a boat.", "strict"),
+    ("text before and after the object",
+     'Here is the caption: {"expanded_caption": "A photograph of a boat."} I hope it helps.',
+     "A photograph of a boat.", "strict"),
+    ("two objects: the first that parses wins",
+     '{"expanded_caption": "The first."} {"expanded_caption": "The second."}',
+     "The first.", "strict"),
+    ("inner double quotes",
+     '{"expanded_caption": "A card that says "status ok" in black letters."}',
+     'A card that says "status ok" in black letters.', "loose"),
+    ("an inner JSON object copied as typed",
+     '{"expanded_caption": "A card with the text {"status": "ok"} in black. Brackets float beside it."}',
+     'A card with the text {"status": "ok"} in black. Brackets float beside it.', "loose"),
+    ("an inner object at the very end of the caption",
+     '{"expanded_caption": "A card with the text {"status": "ok"}"}',
+     'A card with the text {"status": "ok"}', "loose"),
+    ("a raw double quote at the very end of the caption",
+     '{"expanded_caption": "The sign says "OK""}',
+     'The sign says "OK"', "loose"),
+    ("inner double quotes inside a code fence, with text after",
+     '```json\n{"expanded_caption": "A "big" dog."}\n```\nDone.',
+     'A "big" dog.', "loose"),
+    ("backslash-escaped quotes around the value",
+     '{\n"expanded_caption": \\"A yellow circle on a wall.\\"}"',
+     "A yellow circle on a wall.", "loose"),
+    ("an escaped and a plain closing quote",
+     '{\n"expanded_caption": \\"A black bicycle.\\""\n}',
+     "A black bicycle.", "loose"),
+    ("escaped inner quotes stay as typed in the loose read",
+     '{"expanded_caption": "A \\"big\\" dog beside a sign that says "OPEN"."}',
+     'A \\"big\\" dog beside a sign that says "OPEN".', "loose"),
+    ("two objects, the first not valid JSON: the strict read takes the second",
+     '{"expanded_caption": "A "red" boat."} {"expanded_caption": "The second."}',
+     "The second.", "strict"),
+    # Two limits of reading strictly first, kept here so a change to either is seen.
+    ("an inner object that holds the answer key: the strict read takes its value",
+     '{"expanded_caption": "A chalk board that shows {"expanded_caption": "hello"} in white."}',
+     "hello", "strict"),
+    ("a raw backslash that is a JSON escape: the strict read decodes it",
+     '{"expanded_caption": "A label that reads C:\\new\\temp."}',
+     "A label that reads C:\new\temp.", "strict"),
+    ("an answer cut short", '{"expanded_caption": "A photograph of a small weather sta', "", "request"),
+    ("an empty value", '{"expanded_caption": ""}', "", "request"),
+    ("a blank value", '{"expanded_caption": "   "}', "", "request"),
+    ("plain prose", "A photograph of a boat on a beach.", "", "request"),
+    ("another key", '{"caption": "A photograph of a boat."}', "", "request"),
+    ("an empty answer", "", "", "request"),
+)
+
+
+def parse_settings(api: dict) -> dict:
+    """The caption read's widget values, from a converted MiniMax-H3-Image graph."""
+    def only(kind: str) -> dict:
+        (inputs,) = [node["inputs"] for node in api.values() if node["class_type"] == kind]
+        return inputs
+
+    regex = only("RegexExtract")
+    return {"key": only("JsonExtractString")["key"],
+            **{name: regex[name] for name in ("regex_pattern", "mode", "case_insensitive",
+                                              "multiline", "dotall", "group_index")}}
+
+
+def caption_from(answer: str, settings: dict, run: Callable) -> tuple[str, str]:
+    """The caption the graph's read gives for one answer, and which read gave it.
+
+    ``run(node_class, *args)`` executes one node and returns its first output.
+    """
+    def empty(text: str) -> bool:
+        return run("StringCompare", run("StringTrim", text, "Both"), "", "Equal", True)
+
+    strict = run("JsonExtractString", answer, settings["key"])
+    if not empty(strict):
+        return strict, "strict"
+    loose = run("RegexExtract", answer, settings["regex_pattern"], settings["mode"],
+                settings["case_insensitive"], settings["multiline"], settings["dotall"],
+                settings["group_index"])
+    return (loose, "loose") if not empty(loose) else ("", "request")
+
+
+def parse_chain_errors(settings: dict, run: Callable) -> list[str]:
+    errors = []
+    for what, answer, caption, read in PARSE_CASES:
+        got = caption_from(answer, settings, run)
+        if got != (caption, read):
+            errors.append(f"caption read: {what}: expected {(caption, read)!r}, got {got!r}")
+    return errors
+
+
+def _parse_chain_failures(node_classes: dict, names: Callable) -> list[str]:
+    """The table through ComfyUI's own nodes, with the shipped graph's widget values."""
+    if any(kind not in node_classes for kind in PARSE_NODES):
+        return []  # an older ComfyUI: the template's own check says what it lacks
+    from benchmark.sweep import convert as sweep_convert
+
+    try:
+        api = sweep_convert.convert(
+            json.loads((TEMPLATE_DIRS[0] / PARSE_TEMPLATE).read_text(encoding="utf-8")), names)
+    except (KeyError, ValueError):
+        return []
+
+    def run(kind: str, *args):
+        return node_classes[kind].execute(*args).result[0]
+
+    return parse_chain_errors(parse_settings(api), run)
+
+
 def main() -> None:
     node_classes = _comfy_and_pack_nodes()
     from comfy_api.internal import _ComfyNodeInternal
@@ -325,6 +454,9 @@ def main() -> None:
             )
         failures.extend(dynamic_widget_errors(node_class, generated, comfy_names[node_class],
                                               declared))
+
+    # The MiniMax-H3-Image caption read, through ComfyUI's own four nodes.
+    failures.extend(_parse_chain_failures(node_classes, names))
 
     if failures:
         for line in failures:
