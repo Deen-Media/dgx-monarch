@@ -2547,7 +2547,12 @@ moves no weight. The slot that stays is left loaded, and it is pinned to its
 device as slab and shard bases already are, so the unload ComfyUI runs at the
 next load that does not use it moves nothing either (with smart memory off, as
 on a Worker, `load_models_gpu` unloads every other model). Its next render
-therefore moves no weight. After a single-model render in between, ComfyUI
+therefore moves no weight. This holds within one setup. A request whose
+topology, attention kernel or `sync_ulysses` differs from the live setup's
+rebuilds the process groups first, and that teardown unloads every model in
+both slots on every rank
+([TROUBLESHOOTING #33](TROUBLESHOOTING.md#33-a-live-topology-or-residency-policy-change-times-out-while-retiring-a-large-resident)), so
+the drop then meets an empty store. After a single-model render in between, ComfyUI
 loads the pinned model again in place; a LoRA stack in hot-swap mode is
 applied again then, and its backup sits on the device from there on. ComfyUI prices the next load of an unloaded model at its whole size
 whether its weights went to the host or stayed pinned, and reads free memory

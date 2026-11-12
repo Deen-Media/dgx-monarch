@@ -3788,7 +3788,7 @@ TEMPLATES = {
         "nodes": [
             {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
              "widgets": {"topology": "uly2", "mode": "auto",
-                         "auto_gate": "first_use", "sync_ulysses": False}},
+                         "auto_gate": "first_use"}},
             {"key": "note", "type": "Note", "pos": (0, 1), "note":
              "Ideogram 4 text to image at 1024x1024, 20 steps at cfg 7.0. Two things "
              "set this family apart. First, the unconditional pass is a separate "
@@ -3815,12 +3815,7 @@ TEMPLATES = {
              "the DGX Monarch guider cannot express, so this template runs the "
              "vendor's constant-guidance mode at cfg 7.0. Sigmas come from the stock "
              "Ideogram 4 Scheduler, so keep its width and height equal to the "
-             "latent's. sync_ulysses is off in this graph, which changes nothing on "
-             "the pinned xfuser 0.7.0: its Ulysses all-to-all never receives the "
-             "setting, so output and speed are the same either way. The 24.0 s "
-             "against 26.0 s measured with it on (2026-08-25) is one 2-second "
-             "polling interval, and both settings read 1-step NRMS 0.069 against "
-             "DP2. " + GATE + " " + GATE_DUAL_PLACEMENTS +
+             "latent's. " + GATE + " " + GATE_DUAL_PLACEMENTS +
              " Expects ideogram4_fp8_scaled.safetensors plus "
              "ideogram4_unconditional_fp8_scaled.safetensors in "
              "models/diffusion_models, qwen3vl_8b_fp8_scaled.safetensors in "

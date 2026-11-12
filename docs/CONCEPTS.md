@@ -238,8 +238,11 @@ the sidebar says **Reset attached mesh** to distinguish it from restarting a
 Worker service. A reset reclaims the retained arena; slab mode normally avoids
 it. When you move from one large model to another on the same attached mesh,
 the Worker drops the last one before it loads the next, and the price counts
-that, but the retained arena and any model in the other slot stay. So a
-refusal may still say "the old model (<name>) is still loaded" and offer
+that, but the retained arena and any model in the other slot stay, within one
+setup: a graph with another topology, attention kernel or `sync_ulysses`
+rebuilds the setup first, which unloads every model on every Worker
+([TROUBLESHOOTING #33](TROUBLESHOOTING.md#33-a-live-topology-or-residency-policy-change-times-out-while-retiring-a-large-resident)).
+So a refusal may still say "the old model (<name>) is still loaded" and offer
 **Clear and retry**, which runs this reset; **Always clear and retry** lets
 the driver run it for you. A new LoRA on a large model held with another one
 can meet the same card when the host copy that LoRA keeps holds the memory:

@@ -347,8 +347,12 @@ than stacks on a repeat call.
    reaches `xFuserLongContextAttention.__init__` as `use_sync`, but the
    pinned xfuser 0.7.0 overrides `forward` and never passes `use_sync` to
    `SeqAllToAll4D.apply`, so the widget has no effect on the Ulysses
-   all-to-all. The widget stays, because removing a node key needs a major
-   release.
+   all-to-all. It is still part of a setup's identity, so a graph that
+   differs in it from the live setup rebuilds the setup, which unloads every
+   model on every Worker
+   ([TROUBLESHOOTING #33](TROUBLESHOOTING.md#33-a-live-topology-or-residency-policy-change-times-out-while-retiring-a-large-resident));
+   every shipped workflow leaves it on. The widget stays, because removing a
+   node key needs a major release.
 
    Qwen Image 2.1 is an exception: its block-causal prefix path gathers
    target K/V and calls native Comfy attention, so its Ulysses forward

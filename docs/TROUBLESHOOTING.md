@@ -1389,7 +1389,11 @@ that fleet are refused until it is recycled.
 
 **Cause:** injected models and attention dispatchers belong to one process-group
 generation, so a topology change must unload them before destroying and
-rebuilding the groups. A policy-only change must also unload models built under
+rebuilding the groups. A change of the Init node's attention kernel or of its
+`sync_ulysses` input is such a change too, on the same topology: both are
+part of the setup's identity. So is a move between two graphs that differ in
+either, and every model in both slots on every rank loads from disk again
+after it. A policy-only change must also unload models built under
 the prior residency knobs. Older releases put either retirement behind an
 opaque 120-second wait. Large residents could take longer to unload than that timeout. The driver
 could time out before group destruction began while the worker operation
@@ -2326,7 +2330,11 @@ frees the old model, since the box would dip first. On unified memory a
 Worker's drop of a stock model copies nothing: it detaches only that model, whole or partly loaded
 (journal line "loaded partially"), and leaves a model in the other slot loaded
 and pinned to the GPU. So a drop beside a held other slot is counted, and
-that slot's next render moves no weight. The exceptions are a partly loaded or
+that slot's next render moves no weight. This holds within one setup: a graph
+that changes the topology, the attention kernel or `sync_ulysses` rebuilds the
+setup first, and that unloads every model on every rank
+([#33](#33-a-live-topology-or-residency-policy-change-times-out-while-retiring-a-large-resident)).
+The exceptions are a partly loaded or
 comfy-managed model in the other slot, which ComfyUI may still move to the
 host, and a Worker started with `DGXM_DISABLE_COPY_FREE_DROP=1`, which drops
 through ComfyUI's global unload as before; there the card's clear is the safe
