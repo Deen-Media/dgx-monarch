@@ -686,8 +686,11 @@ its free memory`. When it acts it logs one line that starts `decode relief:`
 with ComfyUI's price, what it unloaded and what MemAvailable read on each
 side. What to know:
 
-- No output changes: the decode is ComfyUI's own call with the same
-  arguments, and unloading changes no weight.
+- The decode is ComfyUI's own call with the same arguments, and unloading
+  changes no weight. A video or a single image decodes to the same bits as
+  before. A decode of several images takes as many a batch as ComfyUI's free
+  memory allows, as it always did; the relief raises that figure on a tight
+  box, so such a decode batches as it would on a roomy one.
 - What it costs when it acts: the text encoder loads again when you next
   change the prompt's text (an unchanged prompt pays nothing), and the next
   render's first step re-grows the Workers' cache if they were asked.

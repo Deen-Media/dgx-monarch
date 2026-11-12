@@ -2288,7 +2288,13 @@ Then ComfyUI's decode runs. Six things bound it:
   text next changes (an unchanged prompt's conditioning is cached), a stock
   diffusion model the driver held loads again at its next render, the VAE in
   hand is staged again by the decode itself, and the next render's first step
-  re-grows the Workers' cache if they were asked. ComfyUI's prices run above
+  re-grows the Workers' cache if they were asked (a Worker that held a VAE for
+  Worker-assisted decode drops it with its cache and loads it again at its
+  next unit). With only the VAE in hand held, nothing is unloaded. Measured
+  on this release's own unload at the render-site checks (2026-11-11 and
+  2026-11-12, the first Spark under its clock cap, max 2100 MHz): unloading
+  the LTX text encoder and two VAEs returned 30.6 GiB, and one Worker's
+  released cache returned 10.2 and 11.9 GiB. ComfyUI's prices run above
   the use (16.1 GiB priced for the decode that used 9.3), so some reliefs are
   not needed; each costs that and nothing more.
 - **It steps aside, it does not break a decode.** If a call it makes raises,

@@ -242,7 +242,7 @@ def test_with_nothing_idle_the_decode_runs_as_comfyui_runs_it_and_one_line_says_
         assert wrapped(_Vae(price=4 * GIB), torch.zeros(1, 4, 2, 8, 8)) is answer
     assert "unload" not in ran and "trim_actors" not in ran and ran.count("decode") == 2
     assert caplog.text.count("decode relief:") == 1
-    assert "ComfyUI held no model here to unload and no idle mesh to ask" in caplog.text
+    assert "ComfyUI held no idle model here to unload and no idle mesh to ask" in caplog.text
 
 
 def test_a_trim_that_fails_is_a_skip_and_not_a_fault(monkeypatch, caplog):
@@ -454,20 +454,50 @@ def test_the_entry_point_installs_the_relief_after_the_reading_and_the_encode_ru
             < calls.index("vae_decode_relief.install_driver"))
 
 
-def test_a_synchronous_render_names_its_mesh_once_its_result_is_in():
+def test_a_render_names_its_mesh_once_its_result_is_in_and_its_lease_is_retired():
     """The relief asks the Workers of the mesh the last render used, so the render must say which.
 
-    Held by source: ``run_render`` notes the mesh after ``pending.result()``
-    has returned, which is after the result's own cleanup has retired its
-    lease and finished the driver's progress tracker.
+    Held by source: ``PendingRender.result`` notes the mesh after its own
+    ``_close`` has retired the sample lease and finished the driver's progress
+    tracker (``tests/test_mesh_sample_lease.py`` holds that the lease is gone
+    when ``result`` returns), and before it returns. Every sampler node
+    collects through it, the pipelined ones too, so a decode that follows a
+    render always knows the mesh, and ``busy_reason`` still keeps everything
+    while another render is in flight.
     """
     import pathlib
 
     source = (pathlib.Path(__file__).resolve().parents[1] / "src" / "dgx_monarch" / "nodes"
-              / "common.py").read_text()
-    result = source.index("result = pending.result()")
-    note = source.index("vae_decode_relief.note_mesh(")
-    assert result < note < source.index("return result", result)
+              / "pending.py").read_text()
+    result = source.index("    def result(self, timeout_s")
+    closed = source.index("self._close(abandoned=False)", result)
+    note = source.index("vae_decode_relief.note_mesh(self._handle)", result)
+    assert closed < note < source.index("return finished", result)
+    assert source.count("vae_decode_relief.note_mesh(") == 1
+
+
+def test_the_models_the_relief_may_unload_exclude_the_vae_in_hand(monkeypatch, caplog):
+    """On a box that stays tight, a decode must not unload and re-stage its own VAE for nothing."""
+    vae = _Vae(price=4 * GIB)
+    vae.patcher = object()
+    own = SimpleNamespace(model=vae.patcher)
+    ran = _driver(monkeypatch, trimmable=False)
+    monkeypatch.setattr(driver_unload, "held_models", lambda _mm: ran.append("held_models") or [(own, "ThisVae")])
+    wrapped, _calls, answer = _wrapped(monkeypatch, _model_management([GIB]), ran)
+    with caplog.at_level("INFO"):
+        assert wrapped(vae, torch.zeros(1, 4, 2, 8, 8)) is answer
+        assert wrapped(vae, torch.zeros(1, 4, 2, 8, 8)) is answer
+    assert "unload" not in ran and ran.count("decode") == 2
+    assert caplog.text.count("decode relief:") == 1
+    assert "ComfyUI held no idle model here to unload" in caplog.text
+    # With another model held beside it, the unload runs and names what ComfyUI held.
+    ran.clear()
+    other = SimpleNamespace(model=object())
+    monkeypatch.setattr(driver_unload, "held_models",
+                        lambda _mm: ran.append("held_models") or [(own, "ThisVae"), (other, "TextEncoder")])
+    wrapped, _calls, answer = _wrapped(monkeypatch, _model_management([GIB, 30 * GIB]), ran)
+    assert wrapped(vae, torch.zeros(1, 4, 2, 8, 8)) is answer
+    assert ran == ["busy_reason", "held_models", "unload", "decode"]
 
 
 def test_the_surface_canary_holds_the_calls_the_relief_makes():
@@ -558,6 +588,10 @@ def test_on_real_comfyui_a_decode_is_the_same_tensor_with_the_relief_acting(comf
         monkeypatch.setattr(mm, "unload_all_models", lambda: unloads.append("unload") or real_unload())
         roomy = vae.decode(latent).float().cpu().clone()
         assert unloads == [] and torch.equal(roomy, plain)
+        # A second model ComfyUI holds idle: another VAE that has decoded once.
+        idle = _toy_vae(comfy_sd)
+        idle.decode(latent)
+        assert unloads == []
         # Read as short of the decode's price: the relief unloads what ComfyUI holds, the VAE in
         # hand among it, and ComfyUI's own decode loads it again and gives the same tensor.
         reading = mm.get_free_memory
@@ -572,7 +606,8 @@ def test_on_real_comfyui_a_decode_is_the_same_tensor_with_the_relief_acting(comf
         vae_decode_relief.uninstall()
     assert comfy_sd.VAE.decode is stock_decode
     assert vae_decode_relief.state() == vae_decode_relief.UNSET  # it did not step aside on real ComfyUI
-    assert held_before >= 1 and unloads and "decode relief:" in caplog.text
+    assert held_before >= 2 and unloads and "decode relief:" in caplog.text
+    assert "unloaded the" in caplog.text and idle is not None
     assert "stepped aside" not in caplog.text
     assert torch.equal(relieved, plain) and torch.equal(by_name, plain)
 

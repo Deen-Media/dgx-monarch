@@ -178,7 +178,10 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
             log.info("decode relief: %s; the driver kept what it holds because %s", priced, why)
         return False
     held = driver_unload.held_models(mm)
-    unloaded = driver_unload.unload(mm, held) if held else None
+    # The VAE in hand is not idle. With nothing else held, unloading would only re-stage it.
+    own = getattr(vae, "patcher", None)
+    idle = [pair for pair in held if own is None or getattr(pair[0], "model", None) is not own]
+    unloaded = driver_unload.unload(mm, held) if idle else None
     after = int(mm.get_free_memory(device))
     trimmed = None
     trim_failed = ""
@@ -193,7 +196,7 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
         nothing = "nothing idle" if not trim_failed else f"trim failed: {trim_failed}"
         if nothing not in told:
             told.add(nothing)
-            log.info("decode relief: %s; ComfyUI held no model here to unload%s, so the decode runs as "
+            log.info("decode relief: %s; ComfyUI held no idle model here to unload%s, so the decode runs as "
                      "ComfyUI runs it", priced,
                      f" and the Workers' cached memory was not released ({trim_failed})"
                      if trim_failed else " and no idle mesh to ask")

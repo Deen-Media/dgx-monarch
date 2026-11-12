@@ -612,8 +612,12 @@
   encoders no later node needed. The driver now unloads the models ComfyUI
   holds in it, through ComfyUI's own unload, and if the decode is still priced
   above its free memory and no render is in flight it asks the Workers to
-  release their cached memory. Nothing to set, and no output changes: the
-  decode is ComfyUI's own call with the same arguments. What it costs when it
+  release their cached memory. Nothing to set. The decode is ComfyUI's own
+  call with the same arguments, and a video or a single image decodes to the
+  same bits as before. A decode of several images takes as many a batch as
+  ComfyUI's free memory allows, as it always did; the relief raises that
+  figure on a tight box, so such a decode batches as it would on a roomy one.
+  What it costs when it
   acts: the text encoder loads again when a prompt's text next changes, and
   the next render's first step re-grows the Workers' cache if they were asked.
   It adds room and does not bound a decode: with nothing idle the decode runs
