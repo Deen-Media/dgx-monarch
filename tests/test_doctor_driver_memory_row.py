@@ -157,7 +157,9 @@ def test_no_driver_answering_says_what_a_driver_would_do():
     status, name, detail = driver_memory_row.verdict([])
     assert (status, name) == (OK, "driver memory reading")
     assert detail.startswith("no ComfyUI driver with this pack answered on this box, so there is no reading to check")
-    assert "run doctor again" in detail and driver_uma_memory.DISABLE_ENV in detail
+    # The sibling never runs a driver: the row must not tell every box to start one.
+    assert "if this box runs the driver, start it and run doctor again" in detail
+    assert driver_uma_memory.DISABLE_ENV in detail
     assert "encodes a batch of images one image a call unless DGXM_DISABLE_VAE_ENCODE_ITEM=1" in detail
 
 

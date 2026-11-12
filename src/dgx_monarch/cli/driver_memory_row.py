@@ -157,8 +157,9 @@ def verdict(answers: list[tuple[str, Mapping[str, Any]]],
     """The row for every driver that answered; the worst one leads."""
     if not answers:
         return OK, NAME, ("no ComfyUI driver with this pack answered on this box, so there is no reading "
-                          "to check; start the driver and run doctor again. On a GPU that shares the "
-                          f"host's memory it corrects the reading at node import unless {DISABLE_ENV}=1, "
+                          "to check; if this box runs the driver, start it and run doctor again. On a GPU "
+                          "that shares the host's memory the driver corrects the reading at node import "
+                          f"unless {DISABLE_ENV}=1, "
                           "and encodes a batch of images one image a call unless "
                           f"{vae_encode_item.DISABLE_ENV}=1")
     verdicts = [(candidate, *classify(payload, machine_total)) for candidate, payload in answers]

@@ -118,7 +118,8 @@ def _two_rows_an_image(self, pixel_samples):
 
 
 @pytest.mark.parametrize("case", ["an unknown argument", "an unknown keyword", "results that are not tensors",
-                                  "a result that is not one row an image", "a batch that cannot be sliced"])
+                                  "a result that is not one row an image", "results of two dtypes",
+                                  "a batch that cannot be sliced"])
 def test_it_steps_aside_once_when_comfyui_does_not_behave_as_expected(case, caplog):
     """Drift in ComfyUI's call must not break a render: stock's whole batch answers, with one warning."""
     calls = []
@@ -131,6 +132,9 @@ def test_it_steps_aside_once_when_comfyui_does_not_behave_as_expected(case, capl
             return _two_rows_an_image(self, pixel_samples)
         if case == "a batch that cannot be sliced":
             return "stock's answer"
+        if case == "results of two dtypes" and len(calls) == 1:
+            # torch.cat would widen the batch to float32 without a word.
+            return pixel_samples.sum(dim=(1, 2, 3), keepdim=True).to(torch.float16)
         return pixel_samples.sum(dim=(1, 2, 3), keepdim=True)
 
     wrapped = vae_encode_item.by_item(original)
@@ -157,7 +161,7 @@ def test_it_steps_aside_once_when_comfyui_does_not_behave_as_expected(case, capl
 def _comfy_stand_in(monkeypatch, *, total):
     """Stand-ins for what the gate reads: ComfyUI's modules in this process and the integrated probe."""
     model_management = SimpleNamespace(get_torch_device=lambda: "cuda:0")
-    monkeypatch.setattr(driver_uma_memory, "_comfy", lambda: (model_management, object()))
+    monkeypatch.setattr(driver_uma_memory, "comfy_modules", lambda: (model_management, object()))
 
     def probe(_torch, device):
         assert device == "cuda:0"

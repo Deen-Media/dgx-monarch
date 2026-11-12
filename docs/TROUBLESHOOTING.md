@@ -649,8 +649,8 @@ same bits at every size and in every memory state. Confirm the driver log
 line `unified memory: a VAE encode of several images runs one image a call`.
 What to know:
 
-- Decode is not changed (its result does not depend on the batch), and
-  neither is a video VAE or a tiled encode.
+- Decode is not changed (measured with FLUX.2's VAE on a Spark, its result
+  did not depend on the batch), and neither is a video VAE or a tiled encode.
 - Each image's latent is what stock ComfyUI gives for that image alone. A
   stock ComfyUI on a box with room encodes a batch of several images at once
   and gets other bits for the same images, so a multi-image conditioning made

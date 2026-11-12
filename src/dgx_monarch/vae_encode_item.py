@@ -29,9 +29,10 @@ they are compared on the same bits.
 Scope. On by default at node import where the reading is: Linux, with the
 driver's CUDA device integrated (it shares the host's memory).
 ``DGXM_DISABLE_VAE_ENCODE_ITEM=1`` on the driver turns it off; the reading's
-own switch does not. Encode only: ``VAE.decode`` is not wrapped, since a
-decode gives the same result in any batch. ``VAE.encode_tiled`` is not
-wrapped either. A video VAE is left whole (its frames are one item along
+own switch does not. Encode only: ``VAE.decode`` is not wrapped. With the VAE
+measured above a decode gave the same result in any batch, and one image a
+call read up to 10 percent slower; no other VAE's decode was measured.
+``VAE.encode_tiled`` is not wrapped either. A video VAE is left whole (its frames are one item along
 time), and so is anything that is not an image VAE.
 
 The image test is stock's own. ``VAE.encode`` treats the first dimension as
@@ -107,12 +108,13 @@ def takes_items(vae: Any, tensor: Any) -> bool:
     return latent_dim == 3 and getattr(vae, "not_video", None) is True
 
 
-def _join(parts: list[Any], count: int) -> Any:
-    """The per-image results as one batch, or an error if they are not what one image's encode returns."""
+def _join(parts: list[Any]) -> Any:
+    """The per-image results as one batch, or an error if they are not what one image's encode returns.
+
+    ``torch.cat`` widens mixed dtypes without a word, so results that differ in dtype are an error here.
+    """
     import torch
 
-    if len(parts) != count:
-        raise ValueError(f"{len(parts)} results for {count} images")
     first = parts[0]
     for part in parts:
         if not isinstance(part, torch.Tensor):
@@ -154,7 +156,7 @@ def by_item(original: Callable[..., Any]) -> Callable[..., Any]:
         # Stock's own call on one image. What it raises is stock's error and is passed on.
         parts = [original(self, item) for item in items]
         try:
-            return _join(parts, count)
+            return _join(parts)
         except Exception as exc:
             step_aside(f"the per-image results could not be joined: {type(exc).__name__}: {exc}")
             return original(self, *args, **kwargs)
@@ -178,7 +180,7 @@ def install_driver() -> str:
     if not sys.platform.startswith("linux"):
         return _set(NOT_LINUX)
     try:
-        model_management, torch = driver_uma_memory._comfy()
+        model_management, torch = driver_uma_memory.comfy_modules()
     except Exception:
         return _set(NO_COMFY)
     try:

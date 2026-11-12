@@ -2202,8 +2202,11 @@ batch count is 1 whatever memory reads, so a graph's conditioning is one
 fixed tensor at every size and in every memory state, and image i's latent is
 what stock gives for image i alone. Three things bound it:
 
-- **Encode only.** A decode gives the same result in any batch, so
-  `VAE.decode` is not wrapped, and neither is `VAE.encode_tiled`. A video
+- **Encode only.** `VAE.decode` is not wrapped, and neither is
+  `VAE.encode_tiled`: measured with FLUX.2's VAE on a Spark, a decode gave
+  the same result in any batch, and one image a call cost up to 10 percent.
+  No other VAE's decode was measured, and its batches still follow the
+  reading. A video
   VAE's frames are one item along time and stay one call. The test for an
   image VAE is stock's own: `VAE.encode` treats the first dimension as
   separate items exactly when `latent_dim` is 2, or 3 with `not_video` set;
