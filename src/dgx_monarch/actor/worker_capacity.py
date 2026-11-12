@@ -15,7 +15,7 @@ import socket
 from dataclasses import replace
 from typing import Any
 
-from .. import capacity_classic_bake
+from .. import capacity_classic_bake, capacity_lora_bake
 from ..log import get_logger
 from ..transfer_utils import failure_summary
 from . import actor_footprint, capacity_quote, in_place_fallback, resident_ledger, store_fsdp
@@ -295,15 +295,18 @@ def _my_slots(worker: Any, specs: list[dict]) -> list[dict]:
 
 
 def _classic_bake_probe(worker: Any, store: Any, stored: Any, spec: dict, unet_name: str,
-                        in_place_bake_proven: bool) -> Any:
-    """The stock probe for a stack that bakes ComfyUI's classic way; ``None`` on the default.
+                        in_place_bake_proven: bool, *, other_held: bool = False, covered: bool = False) -> Any:
+    """The stock probe for a stack that bakes ComfyUI's classic way in a fresh load; else ``None``.
 
     It charges the bake's own term and, with the render's permission, prices
     the in-place bake where the classic price misses, by the arguments
     ``ModelStore.ensure`` decides by (``in_place_fallback.route``), so the
     fleet is not refused a stack change the store would bake in place, nor
-    admitted to one it would refuse. This endpoint knows the slot's base by
-    its file name; the store compares the whole base key, options included.
+    admitted to one it would refuse. A change the classic hot swap makes in
+    place (``in_place_fallback.loads_fresh`` says no: the other slot holds a
+    model, or the held stack's backup covers the new one) keeps today's
+    price. This endpoint knows the slot's base by its file name; the store
+    compares the whole base key, options included.
     """
     loras = spec.get("loras")
     if not loras or store_fsdp.active(worker):
@@ -311,8 +314,9 @@ def _classic_bake_probe(worker: Any, store: Any, stored: Any, spec: dict, unet_n
     base_key = getattr(stored, "base_key", ()) or ()
     held = bool(stored is not None and base_key and base_key[0] == unet_name)
     args = in_place_fallback.route(store, stored, held, in_place_bake_proven)
-    return None if args is None else capacity_classic_bake.probe(
-        loras, capacity_quote.default_resolve_lora_path, **args)
+    if args is None or not in_place_fallback.loads_fresh(stored, held, other_held, covered):
+        return None
+    return capacity_classic_bake.probe(loras, capacity_quote.default_resolve_lora_path, **args)
 
 
 def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
@@ -337,6 +341,12 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
     base_key = getattr(stored, "base_key", ()) or ()
     retry = bool(getattr(stored, "slab_auto_retry", False)
                  and base_key and base_key[0] == unet_name)
+    request_key = _request_key(snapshot, slot, spec, unet_name)
+    other = store.current if slot == capacity_quote.SLOT_UNCOND else store.uncond
+    # The held stack's backup covers this change (a strength, an order, a LoRA removed): the
+    # classic hot swap re-applies in place and no fresh load, so no classic bake, follows.
+    covered = capacity_lora_bake.held_backup_credit(
+        snapshot.get(slot), request_key, os.path.getsize(path) if os.path.exists(path) else 0) > 0
     return capacity_quote.price(
         path=path,
         unet_name=unet_name,
@@ -355,13 +365,14 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         family_override=getattr(store, "family_override", None),
         node_options=options,
         lora_stack=spec.get("loras"),
-        fit_probe=_classic_bake_probe(worker, store, stored, spec, unet_name, in_place_bake_proven),
+        fit_probe=_classic_bake_probe(worker, store, stored, spec, unet_name, in_place_bake_proven,
+                                      other_held=other is not None, covered=covered),
         slot=slot,
         pinned_staging=pinned_staging,
         # A slot baked in place that ``ensure`` will not reuse for this request is priced as a load.
         store_snapshot=in_place_fallback.quote_snapshot(store, stored, snapshot, slot, in_place_bake_proven),
         budget_bytes_already_charged=charged,
-        request_key=_request_key(snapshot, slot, spec, unet_name),
+        request_key=request_key,
     )
 
 

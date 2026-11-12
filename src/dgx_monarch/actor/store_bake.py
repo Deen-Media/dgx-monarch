@@ -469,8 +469,8 @@ def hot_swap_transition(
     if uncovered:
         logger.info(
             "model store [%s]: a LoRA change on %s would copy the model off the GPU first "
-            "(no host copy of %d of the %d weights the new stack patches), so the slot is "
-            "dropped and base and stack load fresh", slot, unet_name, uncovered, patched)
+            "(no host copy of %d of the %d weights the new stack patches), so it is not "
+            "hot-swapped: base and stack load fresh, or bake in place", slot, unet_name, uncovered, patched)
         return None
     store_identity.assert_stable_identity(
         request_artifact_identity(unet_name, lora_stack), requested_identity,

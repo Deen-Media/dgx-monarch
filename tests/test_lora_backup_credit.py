@@ -225,14 +225,28 @@ def test_a_stack_whose_files_cannot_be_sized_gets_no_backup_credit(quote, monkey
 def test_a_lora_the_held_stack_lacks_keeps_146s_price_and_card(quote):
     head = quote(_b3_store(), [(NARROW, 1.0)])
     assert "backup_bytes" not in head.measured
-    assert head.measured["credit_bytes"] == BF16_BYTES and head.measured["required_gib"] == 38.6
-    assert head.measured["headroom_gib"] == -14.3
-    with pytest.raises(old_model.OldModelRefusal) as raised:
+    # #146's price, 38.6 GiB, and since 2026-11-12 what the classic bake of the new stack adds
+    # beside it (capacity_classic_bake): the store may load this change fresh, and this
+    # synthetic BF16 file's header cannot be read, so the bake is charged on its whole size.
+    bake = head.measured["bake_bytes"]
+    assert head.measured["bake"] == "classic" and bake > 0
+    assert head.measured["credit_bytes"] == BF16_BYTES
+    assert head.measured["required_bytes"] == capacity_fit.stock_required_bytes(BF16_BYTES) - BF16_BYTES + bake
+    assert capacity_fit.gib(head.measured["required_bytes"] - bake) == 38.6
+    assert head.measured["headroom_gib"] == round(-14.3 - bake / _GIB, 1)
+    # Until 2026-11-12 this refusal carried the Old model in the way card, and a clear made room
+    # for #146's 38.6 GiB. With the bake's share on top a cleared box is still short by the
+    # price, so the card is not offered and the fleet refuses outright. The share here is the
+    # full-precision guard (0.75 of the bytes, no BF16 measurement yet); the hardware block's
+    # BF16 rows decide whether it stays.
+    with pytest.raises(capacity_agreement.FleetCapacityError) as raised:
         decide(_fleet(head), 2, unet_name=BASE, keep=frozenset({BASE}))
-    assert old_model.offer_of(raised.value) is not None
-    assert ("the change needs 38.6 GiB beside the 30.5 GiB copy of this file the Worker already "
-            "holds, room for a host copy of the weights its LoRA stack changes and the floor."
-            ) in str(raised.value)
+    assert not isinstance(raised.value, old_model.OldModelRefusal)
+    assert (f"the change needs {head.measured['required_gib']} GiB beside the 30.5 GiB copy of this file "
+            "the Worker already holds, room for a host copy of the weights its LoRA stack changes and "
+            "the floor.") in str(raised.value)
+    assert f"That includes {capacity_fit.gib(bake)} GiB for the LoRA stack's classic bake." in str(raised.value)
+    assert "Baking it in place was not tried: no identity-gate PASS" in str(raised.value)
 
 
 def test_a_lora_the_backup_does_not_cover_still_reloads(rig, monkeypatch):

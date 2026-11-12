@@ -489,22 +489,41 @@ def test_the_fresh_loads_probe_charges_the_classic_bake_and_never_prices_in_plac
     assert again.in_place_bytes == 0 and again.in_place_note == "; " + fallback.TRIED
 
 
-@pytest.mark.parametrize("reading, bake", [(80.0, "classic"), (51.0, "classic"), (30.0, "in_place"), (9.0, None)])
-@pytest.mark.parametrize("other_slot_held", [False, True])
-def test_the_quote_the_store_and_the_walls_pick_one_bake_at_one_reading(
-        worker_side, monkeypatch, reading, bake, other_slot_held):
-    """One held-base stack change, one reading: the quote's probe, ``take`` and the fresh load's wall agree.
+def test_the_term_and_the_fallback_belong_to_a_change_that_loads_fresh():
+    """What the quote asks of its snapshot is what ``ensure``'s order does: hot swap first, then ``take``."""
+    bare, stacked = _stored(), _stored(lora_sig=(("held", 1.0),))
+    assert fallback.loads_fresh(None, False, False, False)  # an empty slot, or another model
+    assert fallback.loads_fresh(bare, True, False, False)  # the hot swap declines: nothing backs the patches
+    assert fallback.loads_fresh(stacked, True, False, False)  # a stack with a file the held one lacks
+    assert not fallback.loads_fresh(stacked, True, False, True)  # a strength change: re-applied from the backup
+    assert not fallback.loads_fresh(bare, True, True, False)  # beside a held slot the hot swap stays in place
+    unplaced = _stored()
+    unplaced.base_patcher.model.model_loaded_weight_memory = 0
+    assert not fallback.loads_fresh(unplaced, True, False, False)  # ComfyUI has placed none of it
+    assert fallback.loads_fresh(_stored(base_baked=True), True, True, True)  # a baked base is never hot-swapped
 
-    The other slot holding a model changes nothing: the store asks ``take``
-    before the classic hot swap, by the arguments the quote prices with.
-    """
+
+def test_a_change_the_hot_swap_makes_in_place_keeps_todays_price(worker_side, monkeypatch):
+    from dgx_monarch.actor import store_fsdp, worker_capacity
+
+    monkeypatch.setattr(store_fsdp, "active", lambda _worker: False)
+    stored, spec = _stored(), {"unet_name": "m.safetensors", "loras": STACK}
+    probe = worker_capacity._classic_bake_probe
+    assert probe(object(), _store(stored), stored, spec, "m.safetensors", True, other_held=True) is None
+    stacked = _stored(lora_sig=(("held", 1.0),))
+    assert probe(object(), _store(stacked), stacked, spec, "m.safetensors", True, covered=True) is None
+    assert probe(object(), _store(stacked), stacked, spec, "m.safetensors", True) is not None
+
+
+@pytest.mark.parametrize("reading, bake", [(80.0, "classic"), (51.0, "classic"), (30.0, "in_place"), (9.0, None)])
+def test_the_quote_the_store_and_the_walls_pick_one_bake_at_one_reading(worker_side, monkeypatch, reading, bake):
+    """One held-base stack change, one reading: the quote's probe, ``take`` and the fresh load's wall agree."""
     from dgx_monarch.actor import store_fsdp, worker_capacity
 
     monkeypatch.setattr(store_fsdp, "active", lambda _worker: False)
     worker_side.avail_gib = reading
     stored = _stored()
     store = _store(stored)
-    store.uncond = _stored(base_key=("other.safetensors", ())) if other_slot_held else None
     spec = {"unet_name": "m.safetensors", "loras": STACK}
     quoted = worker_capacity._classic_bake_probe(object(), store, stored, spec, "m.safetensors", True)(
         "/models/m.safetensors", {})
@@ -550,15 +569,14 @@ def test_the_ladders_row_gives_the_wall_back_its_bake_term(ltx):
     assert capacity_quote.RankPrice is not None
 
 
-def test_the_partial_load_route_charges_the_line_for_the_layers_still_to_bake(monkeypatch):
-    from dgx_monarch.actor import lora_cast_time, lora_partial_load
+def test_the_partial_load_route_charges_the_line_for_the_layers_still_to_bake():
+    from dgx_monarch.actor import lora_partial_load
 
-    monkeypatch.setattr(lora_cast_time, "_module_bytes", lambda module: module.nbytes)
-    monkeypatch.setattr(lora_partial_load, "_host_copies_are_file_pages", lambda: False)
-    pending = [(f"k{index}", types.SimpleNamespace(nbytes=110 * MIB)) for index in range(148)]
-    need = lora_partial_load._room_needed(object(), pending)
-    # ComfyUI's backup of each layer, and 2 GiB plus 7.5 MiB a layer: no bytes guard on this route.
-    assert need == 148 * 110 * MIB + price.CLASSIC_BAKE_FIXED_BYTES + 148 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+    pending = [(f"k{index}", types.SimpleNamespace()) for index in range(148)]
+    # 2 GiB plus 7.5 MiB a layer, beside ComfyUI's backups: no bytes guard on this route.
+    assert lora_partial_load._bake_room(pending) == (
+        price.CLASSIC_BAKE_FIXED_BYTES + 148 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
+    assert lora_partial_load._bake_room([]) == 0
 
 
 def test_the_fleets_sentence_names_the_bake_and_the_in_place_bake_not_taken(ltx):

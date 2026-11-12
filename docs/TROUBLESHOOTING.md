@@ -968,8 +968,8 @@ gpu_load 230.2s)` on the BF16 Wan-Animate 2 memory-saver template (2026-11-05).
 ComfyUI copied the whole model off the GPU before it applied the LoRA. The
 Worker now drops the bare base and loads base and LoRA fresh instead, at the
 same price, and its journal says so: `a LoRA change on <file> would copy the
-model off the GPU first ... so the slot is dropped and base and stack load
-fresh`, followed by an ordinary `load` line.
+model off the GPU first ... so it is not hot-swapped: base and stack load
+fresh, or bake in place`, followed by an ordinary `load` line.
 
 ## 19. Blank ComfyUI canvas (grid renders, no menu/sidebar) after an update
 

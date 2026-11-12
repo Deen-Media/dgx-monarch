@@ -2399,9 +2399,15 @@ is not yet read, and the price does not depend on it. Three rules follow.
   loaded base is the default's own path and leaves almost none of that
   memory. So where the classic price, credited what dropping the slot's
   resident returns, does not fit, and the in-place price does (one copy of
-  the stack and 2 GiB of working memory), the store bakes in place. It asks
-  before the classic hot swap and before it drops anything, by the arguments
-  the quote prices with, so both pick the same bake. Where the slot holds the
+  the stack and 2 GiB of working memory), the store bakes in place. The term
+  and the fallback belong to a change that ends in a fresh load. A change
+  ComfyUI's classic hot swap makes in place (the held stack's backup covers
+  the new one, as for a strength change, or the other slot holds a model)
+  has neither and keeps its price: such a change grew the Worker by 0.8 GiB
+  on the 2026-11-05 hardware leg. So the store asks after the hot swap has
+  declined and before it drops anything, and the quote reads the same state
+  from its snapshot and prices by the same arguments, so both pick the same
+  bake. Where the slot holds the
   base bare the bake runs on it. Where it holds anything else (nothing,
   another model, this base with a stack of either kind) the slot is dropped,
   the base loads bare at the stock price and the bake runs on that: a stack
@@ -3435,7 +3441,7 @@ an enforced requirement. The current exceptions are:
 | `actor/capacity_quote.py` | 539 | residency memory estimates and the response fields parsed by the driver, including slab LoRA bake memory and default LoRA-path selection |
 | `capacity_agreement.py` | 567 | the driver's collection, its one pure decision function and the fleet card it composes |
 | `actor/worker.py` | 509 | ordered checks and adapter installation for each freshly loaded base in `_inject_for_topology` |
-| `actor/model_store.py` | 514 | the store's one `ensure`: reuse, the two swaps, the in-place fallback's single call before any drop, and the fresh load, in the order they must be tried |
+| `actor/model_store.py` | 511 | the store's one `ensure`: reuse, the two swaps, the in-place fallback's single call before any drop, and the fresh load, in the order they must be tried |
 | `gate_ledger.py` | 527 | the ledger's protocol number and its burn history live together, so the record of why a version was retired cannot drift from the number itself |
 | `comfy_surface.py` | 533 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
 | `adapters/fsdp.py` | 589 | the FSDP launch contract in one place: admitted kinds and profiles, the live precision rescan, the wrap with ignored islands and quantized shards, the streaming shard build hand-off, and the shard-build price |

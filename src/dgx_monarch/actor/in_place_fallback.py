@@ -21,9 +21,13 @@ Where it holds anything else (nothing, another model, this base with a stack
 of either kind) the slot is dropped, the base loads bare at the ordinary stock
 price, and the bake runs on that: a stack is never baked on top of another.
 
-``ModelStore.ensure`` calls ``take`` before the classic hot swap and before
-any drop, so the quote (``worker_capacity``), the store and the fresh load's
-walls price one stack change by ``route``'s arguments and pick the same bake.
+``ModelStore.ensure`` calls ``take`` where a fresh load would follow: after
+the classic hot swap has declined or was not tried, and before any drop. A
+change the hot swap makes in place (the held stack's backup covers it, or
+the other slot holds a model) is not a fresh load and takes neither the term
+nor the fallback. The quote (``worker_capacity``) reads the same state
+through ``loads_fresh``, and prices by ``route``'s arguments, so the quote,
+the store and the fresh load's walls pick the same bake.
 
 The slot it leaves is baked, with no backup and no un-bake record, so the
 next stack change reloads the base. It is marked ``baked_in_place``, as the
@@ -104,6 +108,27 @@ def held_bytes(stored: Any) -> int:
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
 
+def loads_fresh(stored: Any, held: bool, other_held: bool, covered: bool) -> bool:
+    """Whether ``ModelStore.ensure`` ends this classic stack change in a fresh load.
+
+    The classic bake's term, and the in-place bake in its place, belong to a
+    change the store makes by dropping the slot and loading base and stack
+    fresh. A change the classic hot swap makes in place has neither: ComfyUI
+    re-applies the stack from its own backup, which grew the actor by 0.8 GiB
+    on the 2026-11-05 hardware leg. ``ensure`` gets this from its own order
+    (the hot swap first, then ``take``); the quote asks here, with what its
+    snapshot knows: the hot swap is tried on a held base that is not baked,
+    and it stays in place when the other slot holds a model, when ComfyUI has
+    placed none of the base, or when the held stack's backup covers the new
+    stack (``covered``, ``capacity_lora_bake.held_backup_credit``).
+    """
+    if not held or stored.base_baked:
+        return True
+    if other_held or held_bytes(stored) <= 0:
+        return False
+    return not covered
+
+
 def route(store: Any, stored: Any, held: bool, allowed: bool) -> dict[str, Any] | None:
     """``capacity_classic_bake.priced``'s arguments for one stack change; ``None`` when no classic bake is in play.
 
@@ -146,8 +171,8 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
          load_bare: Callable[[], Any]) -> tuple[Any, str] | None:
     """Bake this stack in place if the classic price misses, the in-place one fits and the gate allows it.
 
-    ``None`` sends the caller on to the classic hot swap or the fresh load,
-    whose own walls price the classic bake and refuse or admit it.
+    ``None`` sends the caller on to the fresh load, whose own walls price the
+    classic bake and refuse or admit it.
     ``load_bare`` loads the base with no stack into an empty slot. A bake
     that starts and fails has dropped the slot (``lazy_swap_transition``
     does), and the fresh load then prices the classic bake against what that
@@ -208,5 +233,5 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
     return result
 
 
-__all__ = ["TRIED", "fresh_load_probe", "held_bytes", "is_bare_stock", "must_reload", "permission",
-           "permitted", "quote_snapshot", "route", "take"]
+__all__ = ["TRIED", "fresh_load_probe", "held_bytes", "is_bare_stock", "loads_fresh", "must_reload",
+           "permission", "permitted", "quote_snapshot", "route", "take"]

@@ -148,18 +148,26 @@ def _host_copies_are_file_pages() -> bool:
 
 
 def _room_needed(patcher: Any, pending: list[tuple[str, Any]]) -> int:
-    """Bytes of the shared pool the full load needs beyond what the partial load holds."""
-    from .. import capacity_classic_bake as price
+    """Host bytes the full load needs beyond what the partial load holds."""
     from . import lora_cast_time
 
     need = sum(lora_cast_time._module_bytes(module) for _key, module in pending)  # ComfyUI's backup of each
     if _host_copies_are_file_pages():
         need += max(0, int(patcher.model_size()) - int(patcher.loaded_size()))  # and every layer it moves
-    # And what baking those layers ComfyUI's classic way adds on the device beside them: the line
-    # the stock price charges a stack (2 GiB and 7.5 MiB a layer), on the layers still to bake.
-    # Not its bytes guard: this route's BF16 cell ran on hardware under the rule without the
-    # term, and the guard has no measurement behind it.
-    return need + price.term_from_weights(((price.OTHER, 0) for _ in pending), guard=False)
+    return need
+
+
+def _bake_room(pending: list[tuple[str, Any]]) -> int:
+    """What baking the pending layers ComfyUI's classic way adds on the device beside them.
+
+    The line the stock price charges a stack (``capacity_classic_bake``: 2 GiB
+    and 7.5 MiB a layer), on the layers still to bake. Not its bytes guard:
+    this route's BF16 cell ran on hardware under the rule without the term,
+    and the guard has no measurement behind it.
+    """
+    from .. import capacity_classic_bake as price
+
+    return price.term_from_weights(((price.OTHER, 0) for _ in pending), guard=False)
 
 
 def _registered(patcher: Any) -> bool:
@@ -184,7 +192,7 @@ def make_whole(patcher: Any) -> str | None:
         return ("this GPU has memory of its own, and ComfyUI loaded the model partly because it does "
                 "not fit there whole")
     pending = _patched_off_device(patcher)
-    need = _room_needed(patcher, pending)
+    need = _room_needed(patcher, pending) + _bake_room(pending)
     room = _host_room()
     if need > room:
         return (f"baking the {len(pending)} patched layer(s) still off the device needs {need / _GIB:.1f} GiB "

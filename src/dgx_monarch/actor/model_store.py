@@ -323,18 +323,6 @@ class ModelStore:
             if result is not None:
                 return result
 
-        # Before the classic hot swap and before any drop: where the classic bake's price misses and
-        # the gate allows it, the stack is baked in place (actor/in_place_fallback.py). Not on a
-        # slot this call has already set aside. The pin is released, since the bake may drop the slot.
-        pinned, stored = stored is not None, None
-        result = None if fsdp_launch or (not pinned and self._stored(slot) is not None) \
-            else in_place_fallback.take(
-                self, slot, unet_name, options, lora_stack, base_key, requested_identity, log,
-                request_artifact_identity, lambda: self.ensure(
-                    unet_name, options, None, slot, on_base_loaded, fsdp_launch, rescue_consent))
-        if result is not None:
-            return result
-        stored = self._stored(slot) if pinned else None
         if stored is not None and stored.base_key == base_key and not self.lora_low_rss \
                 and not stored.base_baked:
             # Hot-swap (clone the pristine base, re-apply loras), or None when the
@@ -352,7 +340,16 @@ class ModelStore:
         # Release ensure's local pin before dropping the old slot: USP injection
         # creates a model reference cycle, so a live local would defeat _drop's
         # gc.collect() and briefly retain two full DiTs.
-        stored = None
+        set_aside, stored = stored is None and self._stored(slot) is not None, None
+        # A fresh load would follow, and nothing is dropped yet: where the classic bake's price
+        # misses and the gate allows it, the stack is baked in place (actor/in_place_fallback.py).
+        # Not on a slot this call set aside above (an identity that drifted, a slab retry).
+        result = None if fsdp_launch or set_aside else in_place_fallback.take(
+            self, slot, unet_name, options, lora_stack, base_key, requested_identity, log,
+            request_artifact_identity, lambda: self.ensure(
+                unet_name, options, None, slot, on_base_loaded, fsdp_launch, rescue_consent))
+        if result is not None:
+            return result
         return store_load.fresh_load(
             self, slot, unet_name, options, lora_stack, quant_kind, requested_identity,
             base_key, on_base_loaded, fsdp_launch, fsdp_preflight_path,

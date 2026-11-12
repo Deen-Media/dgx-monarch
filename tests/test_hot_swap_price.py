@@ -180,7 +180,17 @@ def test_the_worker_quote_credits_the_base_its_own_store_holds(monkeypatch, tmp_
     reloaded = worker_capacity.quote(worker, {"specs": [
         {"unet_name": BASE, "options": {}, "loras": LORA_STACK, "slot": "cond"}],
         "rescue_consent": None})["quotes"][0]
-    assert reloaded["verdict"] == "fits" and reloaded["measured"]["credit_bytes"] == BF16_BYTES
+    assert reloaded["measured"]["credit_bytes"] == BF16_BYTES
+    # That reload bakes its stack ComfyUI's classic way, which since 2026-11-12 has a price of
+    # its own (capacity_classic_bake). This sparse BF16 file's header cannot be read, so the
+    # bake is charged on its whole size, and the reload no longer fits the 61.8 GiB read here.
+    bake = reloaded["measured"]["bake_bytes"]
+    assert reloaded["measured"]["bake"] == "classic" and bake > 0.7 * BF16_BYTES
+    assert reloaded["measured"]["required_bytes"] == (
+        capacity_fit.stock_required_bytes(BF16_BYTES) - BF16_BYTES + bake)
+    assert reloaded["verdict"] != "fits"
+    # Without that bake's share the same reload fits, as it did.
+    assert reloaded["measured"]["required_bytes"] - bake <= HEAD_AVAILABLE
 
 
 def test_a_credited_sentence_names_its_box_in_plain_words():
