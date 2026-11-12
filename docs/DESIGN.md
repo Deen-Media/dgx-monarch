@@ -2191,26 +2191,56 @@ actors' correction uses (TROUBLESHOOTING #12). Every other device and the
 allocator's cached-free bytes stay ComfyUI's own. The floor is the driver's
 alone: an actor's loads are priced before a byte is read, and nothing prices a
 VAE batch. `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` leaves ComfyUI's reading in
-place. What it does not settle: a batch whose estimate is most of the box (six
-2048 views in one VAE batch are priced at 82.8 GiB) still splits by what the
-session has available. `dgxm doctor`'s `driver memory reading` row says which
-reading the running driver has, from the driver's own `/system_stats`.
+place. What the reading alone does not settle: a batch whose estimate is most
+of the box (six 2048 views in one VAE batch are priced at 82.8 GiB) would
+still split by what the session has available. The next rule settles that for
+encodes. `dgxm doctor`'s `driver memory reading` row says which reading the
+running driver has, from the driver's own `/system_stats`.
 
-**One image a VAE batch is the rule that does not read memory, and it is off
-by default.** Any rule that divides memory by an estimate moves when memory
-moves. `vae_item_batches` runs an image VAE's encode or decode of N items as N
-calls of ComfyUI's own function on one item, so each call's batch count is 1
-whatever memory reads and the result is one fixed tensor for a given input; a
-video VAE, whose frames are one item, is left alone. It is not what stock
-gives when stock has room: a stock ComfyUI with memory for the whole batch
-encodes each image beside the others, and a VAE's result for an image depends
-on that, so with the rule on a batch of images does not match the same batch
-on a box without this pack (a single image matches either way). The rule goes
-on by default only when hardware has shown that it costs under 5 percent of
-the VAE's own time, that one graph gives one conditioning at every size, and
-that its result for N images is N separate stock encodes bit for bit.
-`DGXM_VAE_ITEM_BATCHES=1` on the driver turns it on until then, and
-`DGXM_DISABLE_VAE_ITEM_BATCHES=1` turns it off whatever the default.
+**The driver encodes a batch of images one image a call.** Any rule that
+divides memory by an estimate moves when memory moves, and a VAE's result for
+an image depends on the batch it shared. Only one split never depends on
+memory: one image. So on the same GPUs as the reading, and by default,
+`vae_encode_item` runs an image VAE's encode of N images as N calls of
+ComfyUI's own `VAE.encode` on one image each, joined in order. Each call's
+batch count is 1 whatever memory reads, so a graph's conditioning is one
+fixed tensor at every size and in every memory state, and image i's latent is
+what stock gives for image i alone. Three things bound it:
+
+- **Encode only.** `VAE.decode` is not wrapped, and neither is
+  `VAE.encode_tiled`: measured with FLUX.2's VAE on a Spark, a decode gave
+  the same result in any batch, and one image a call cost up to 10 percent.
+  No other VAE's decode was measured, and its batches still follow the
+  reading. A video
+  VAE's frames are one item along time and stay one call. The test for an
+  image VAE is stock's own: `VAE.encode` treats the first dimension as
+  separate items exactly when `latent_dim` is 2, or 3 with `not_video` set;
+  an audio VAE carries `extra_1d_channel`. A VAE that lacks one of the three
+  attributes is left whole.
+- **It steps aside, it does not break a render.** A call with arguments this
+  version does not know, a batch it cannot slice or results it cannot join
+  hand the call back to stock's whole batch, once and for the life of the
+  process, with one WARNING. An error ComfyUI itself raises on an image (out
+  of memory, a cancelled prompt) is passed on, and nothing runs again after
+  it. The surface canary holds the call's shape and the canary runs the
+  rule's test on ComfyUI's real `VAE`.
+- **It is not what a box without this pack gives.** A stock ComfyUI with room
+  for the whole batch encodes each image beside the others and gets other
+  bits (one BF16 step on most values). A single image matches either way. A
+  stock render and a DGX Monarch render in the same driver take the driver's
+  conditioning, so they compare on the same bits.
+
+Measured on a Spark with FLUX.2's VAE (2026-11-11, 4 and 6 images at 1024 and
+2048): one image a call took 0.86 to 1.0 of the whole batch's time and peaked
+at 2.28 GiB, where six 2048 images in one batch took 12.41 GiB. The same
+measurement is why decode is left alone: its results were identical either
+way and one image a call read up to 10 percent slower. Other image VAEs are
+exact by construction and were not timed. `DGXM_DISABLE_VAE_ENCODE_ITEM=1` on
+the driver turns the rule off; the reading's switch does not. The driver
+publishes the rule's state in `/dgxm/telemetry` (`driver_rules`, read for
+each answer and never cached with the rest of the payload), and doctor's
+`driver memory reading` row repeats it: on, off by the switch, or stepped
+aside.
 
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a
@@ -2937,8 +2967,8 @@ dgx-monarch/
 │   │                          #   own credit (nodes/loader_relief.py asks)
 │   ├── driver_uma_memory.py   # on unified memory, ComfyUI's free-memory reading
 │   │                          #   in the driver is MemAvailable less a floor (§5.9)
-│   ├── vae_item_batches.py    # one image a VAE batch, a batch rule that does
-│   │                          #   not read memory; off unless switched on
+│   ├── vae_encode_item.py     # on unified memory, the driver encodes a batch
+│   │                          #   of images one image a call (§5.9)
 │   ├── vae_decode_route.py    # Worker-assisted VAE decode (§5.6): the knob,
 │   │                          #   the keyed stock-decode wrappers and the split
 │   ├── vae_decode_plan.py     # unit plans read off ComfyUI's own loops, and
@@ -3114,7 +3144,8 @@ dgx-monarch/
 │       ├── vae_decode_row.py   # doctor row: the decode knob and the driver's
 │       │                       #   last VAE decode, read over HTTP
 │       ├── driver_memory_row.py # doctor row: which free-memory reading the
-│       │                       #   running driver has, from its /system_stats
+│       │                       #   running driver has, from its /system_stats,
+│       │                       #   and what it says of its encode rule
 │       ├── update_worktree.py  # owned detached-worktree cleanup
 │       └── update_worker_attestation.py # exact remote source/pin-payload proof
 ├── web/js/dgx_monarch_readiness_model.js # pure fail-closed browser normalizer
@@ -3196,7 +3227,7 @@ an enforced requirement. The current exceptions are:
 | `capacity_agreement.py` | 567 | the driver's collection, its one pure decision function and the fleet card it composes |
 | `actor/worker.py` | 509 | ordered checks and adapter installation for each freshly loaded base in `_inject_for_topology` |
 | `gate_ledger.py` | 527 | the ledger's protocol number and its burn history live together, so the record of why a version was retired cannot drift from the number itself |
-| `comfy_surface.py` | 527 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
+| `comfy_surface.py` | 528 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
 | `adapters/fsdp.py` | 589 | the FSDP launch contract in one place: admitted kinds and profiles, the live precision rescan, the wrap with ignored islands and quantized shards, the streaming shard build hand-off, and the shard-build price |
 | `nodes/gate_identity.py` | 583 | canonical normal/Fleet capability construction, proof-scope binding, authorization, and typed denial |
 | `nodes/loader_preflight.py` | 593 | the loader-site capacity answer in one place: the two windows, the residency ladder they are priced against and the slab rescue offer |
@@ -3359,7 +3390,8 @@ Every milestone must satisfy this checklist:
   warns and suggests drop_caches. ComfyUI's own planner also read free memory
   there; the pack corrects that reading in its actors and in the driver
   (§5.9, "ComfyUI in the driver reads the box as it is"), and doctor's
-  `driver memory reading` row says which reading the running driver has.
+  `driver memory reading` row says which reading the running driver has, and
+  whether it encodes a batch of images one image a call.
 - Monarch bring-up failures map to preflight checks and troubleshooting entries.
 - `scripts/setup_env.sh` documents the aarch64 torchaudio constraint, which
   applies only to ComfyUI before v0.38.0.
