@@ -18,6 +18,9 @@ ComfyUI's nodes.NODE_CLASS_MAPPINGS and this pack's nodes, this canary checks:
    rewrite on Queue (dynamic_prompt_errors). The API path keeps that text, so
    such a graph would render one prompt from the browser and another from the
    API, the sweep and Studio.
+7. The MiniMax-H3-Image caption read gives the caption its table states for
+   each answer, through ComfyUI's own Extract Text, Replace Text (Regex),
+   Trim Text and Compare Text nodes (parse_chain_errors).
 
 Conversion uses benchmark.sweep.convert.convert and object_info_widget_names,
 the same functions used by the live sweep.
@@ -256,6 +259,224 @@ def dynamic_widget_errors(node_class: str, generated: list, declared_names: list
     return errors
 
 
+# ---- The MiniMax-H3-Image caption read ------------------------------------------
+#
+# The shipped MiniMax-H3-Image graphs read the expander's caption by pattern:
+# Extract Text takes the value of the answer's outermost wrapper, Replace Text
+# (Regex) turns a backslash before a double quote, a backslash or a slash into
+# that mark, and Trim Text and Compare Text decide whether a caption was read.
+# The table below is the contract: each answer, the caption the image model
+# gets, and "read" or "request" (no caption, so the graph sends the request as
+# written). tests/test_minimax_h3_image_templates.py runs it through stand-ins
+# for the four nodes; main() runs it through ComfyUI's own.
+PARSE_TEMPLATE = "dgx-monarch-minimax-h3-image-t2i.json"
+PARSE_NODES = ("RegexExtract", "RegexReplace", "StringTrim", "StringCompare")
+PARSE_CASES = (
+    ("a valid object",
+     '{"expanded_caption": "A photograph of a boat."}',
+     "A photograph of a boat.", "read"),
+    ("escaped double quotes",
+     '{"expanded_caption": "A sign that reads \\"OPEN\\" on a door."}',
+     'A sign that reads "OPEN" on a door.', "read"),
+    ("an escaped double quote at the caption's end",
+     '{"expanded_caption": "The sign says \\"OK\\""}',
+     'The sign says "OK"', "read"),
+    ("an escaped backslash",
+     '{"expanded_caption": "Chalk text \'A\\\\B = C\' on a board."}',
+     "Chalk text 'A\\B = C' on a board.", "read"),
+    ("an escaped path",
+     '{"expanded_caption": "A label that reads C:\\\\new\\\\temp."}',
+     "A label that reads C:\\new\\temp.", "read"),
+    ("an escaped slash",
+     '{"expanded_caption": "A sign that says 1\\/2 off."}',
+     "A sign that says 1/2 off.", "read"),
+    ("a code fence",
+     '```json\n{"expanded_caption": "A photograph of a boat."}\n```',
+     "A photograph of a boat.", "read"),
+    ("text before and after the object",
+     'Here is the caption: {"expanded_caption": "A photograph of a boat."} I hope it helps.',
+     "A photograph of a boat.", "read"),
+    ("inner double quotes",
+     '{"expanded_caption": "A card that says "status ok" in black letters."}',
+     'A card that says "status ok" in black letters.', "read"),
+    ("an inner JSON object copied as typed",
+     '{"expanded_caption": "A card with the text {"status": "ok"} in black. Brackets float beside it."}',
+     'A card with the text {"status": "ok"} in black. Brackets float beside it.', "read"),
+    ("an inner object that itself holds the answer key",
+     '{"expanded_caption": "A poster that reads {"expanded_caption": "hello"} in red."}',
+     'A poster that reads {"expanded_caption": "hello"} in red.', "read"),
+    ("a raw double quote then a closing brace inside the caption",
+     '{"expanded_caption": "A sign with the marks "} painted on it, in a blue room."}',
+     'A sign with the marks "} painted on it, in a blue room.', "read"),
+    ("a raw double quote at the very end of the caption",
+     '{"expanded_caption": "The sign says "OK""}',
+     'The sign says "OK"', "read"),
+    ("raw and escaped double quotes in one caption",
+     '{"expanded_caption": "A \\"big\\" dog by a sign that says "OPEN"."}',
+     'A "big" dog by a sign that says "OPEN".', "read"),
+    ("inner double quotes inside a code fence, with text after",
+     '```json\n{"expanded_caption": "A "big" dog."}\n```\nDone.',
+     'A "big" dog.', "read"),
+    ("a raw path whose backslashes look like JSON escapes stays as typed",
+     '{"expanded_caption": "A label that reads C:\\new\\temp."}',
+     "A label that reads C:\\new\\temp.", "read"),
+    ("a raw path with other backslashes",
+     '{"expanded_caption": "A label that reads C:\\data\\files."}',
+     "A label that reads C:\\data\\files.", "read"),
+    ("backslash-escaped quotes around the value",
+     '{\n"expanded_caption": \\"A yellow circle on a wall.\\"}"',
+     "A yellow circle on a wall.", "read"),
+    ("an escaped and a plain closing quote",
+     '{\n"expanded_caption": \\"A black bicycle.\\""\n}',
+     "A black bicycle.", "read"),
+    ("a raw double quote then a comma inside the caption",
+     '{"expanded_caption": "A sign reads ", then more."}',
+     'A sign reads ", then more.', "read"),
+    ("an inner object with two keys at the caption's end",
+     '{"expanded_caption": "A card with the text {"status": "ok", "code": "7"}"}',
+     'A card with the text {"status": "ok", "code": "7"}', "read"),
+    ("a second key after the caption",
+     '{"expanded_caption": "A cat on a mat.", "aspect_ratio": "1:1"}',
+     "A cat on a mat.", "read"),
+    ("more keys on their own lines, a number and true among them",
+     '{\n  "expanded_caption": "A cat on a mat.",\n  "seed": 7,\n  "safe": true\n}',
+     "A cat on a mat.", "read"),
+    ("a second key whose string holds an escaped quote",
+     '{"expanded_caption": "A cat on a mat.", "note": "say \\"hi\\""}',
+     "A cat on a mat.", "read"),
+    ("inner double quotes, then a second key",
+     '{"expanded_caption": "A "big" cat.", "aspect_ratio": "1:1"}',
+     'A "big" cat.', "read"),
+    ("a second key with an exponent number",
+     '{"expanded_caption": "A cat.", "score": 1e-5}',
+     "A cat.", "read"),
+    ("a second key with a hyphen in its name",
+     '{"expanded_caption": "A cat.", "aspect-ratio": "1:1"}',
+     "A cat.", "read"),
+    ("a second key with a space in its name and a signed fraction with an exponent",
+     '{"expanded_caption": "A cat.", "aspect ratio": -1.5E+3, "ok": true}',
+     "A cat.", "read"),
+    ("a second key whose name holds an escaped quote",
+     '{"expanded_caption": "A cat.", "the \\"best\\" one": null}',
+     "A cat.", "read"),
+    ("inner double quotes, then a hyphen key with an exponent number",
+     '{"expanded_caption": "A "big" cat.", "aspect-ratio": 2.5e3}',
+     'A "big" cat.', "read"),
+    ("a second key whose name begins with the answer key's, with a number",
+     '{"expanded_caption": "A cat.", "expanded_caption_length": 6}',
+     "A cat.", "read"),
+    ("a second key whose name begins with the answer key's, with a string",
+     '{"expanded_caption": "A cat.", "expanded_caption_en": "A cat."}',
+     "A cat.", "read"),
+    ("a key before the caption",
+     '{"aspect_ratio": "1:1", "expanded_caption": "A cat on a mat."}',
+     "A cat on a mat.", "read"),
+    ("a planning object before the answer",
+     '{"plan": "one cat, one mat"} {"expanded_caption": "A cat on a mat."}',
+     "A cat on a mat.", "read"),
+    # The limits of reading by pattern, kept here so a change to any is seen.
+    ("limit: an escaped line break stays as typed",
+     '{"expanded_caption": "Line one.\\nLine two."}',
+     "Line one.\\nLine two.", "read"),
+    ("limit: an escaped tab stays as typed",
+     '{"expanded_caption": "Left.\\tRight."}',
+     "Left.\\tRight.", "read"),
+    ("limit: a unicode escape stays as typed",
+     '{"expanded_caption": "A caf\\u00e9 sign."}',
+     "A caf\\u00e9 sign.", "read"),
+    ("limit: two objects are read as one caption",
+     '{"expanded_caption": "The first."} {"expanded_caption": "The second."}',
+     'The first."} {"expanded_caption": "The second.', "read"),
+    ("limit: the answer key written twice is read as one caption",
+     '{"expanded_caption": "The first.", "expanded_caption": "The second."}',
+     'The first.", "expanded_caption": "The second.', "read"),
+    ("limit: a caption that ends on an unmatched quote after words shaped like a key is cut",
+     '{"expanded_caption": "A sign with "sale", "50% off": "today"}',
+     'A sign with "sale', "read"),
+    ("limit: a first object that is not valid joins the second",
+     '{"expanded_caption": "A} {"expanded_caption": "C"}',
+     'A} {"expanded_caption": "C', "read"),
+    ("limit: a note after the object that holds a quote then a brace joins the caption",
+     '{"expanded_caption": "A cat."} Note: the form is {"expanded_caption": "..."}',
+     'A cat."} Note: the form is {"expanded_caption": "...', "read"),
+    ("limit: a second key with an object as its value joins the caption",
+     '{"expanded_caption": "A cat.", "meta": {"a": "b"}}',
+     'A cat.", "meta": {"a": "b', "read"),
+    ("limit: a drawn backslash written unescaped before a double quote is read as an escape",
+     '{"expanded_caption": "A sign that reads \'x\\"y\' on a wall."}',
+     'A sign that reads \'x"y\' on a wall.', "read"),
+    ("limit: a drawn backslash written unescaped before a slash is read as an escape",
+     '{"expanded_caption": "A face \'\\/\' drawn on a wall."}',
+     "A face '/' drawn on a wall.", "read"),
+    ("a raw line break inside the caption is kept",
+     '{"expanded_caption": "Line one.\nLine two."}',
+     "Line one.\nLine two.", "read"),
+    ("limit: a second key with a list as its value loses the caption",
+     '{"expanded_caption": "A cat.", "tags": ["a", "b"]}', "", "request"),
+    ("an object as the value", '{"expanded_caption": {"text": "A cat."}}', "", "request"),
+    ("null as the value", '{"expanded_caption": null}', "", "request"),
+    ("a trailing comma after the caption", '{"expanded_caption": "A cat.",}', "", "request"),
+    ("an answer cut short", '{"expanded_caption": "A photograph of a small weather sta', "", "request"),
+    ("an empty value", '{"expanded_caption": ""}', "", "request"),
+    ("a blank value", '{"expanded_caption": "   "}', "", "request"),
+    ("plain prose", "A photograph of a boat on a beach.", "", "request"),
+    ("another key", '{"caption": "A photograph of a boat."}', "", "request"),
+    ("an empty answer", "", "", "request"),
+)
+
+
+def parse_settings(api: dict) -> dict:
+    """The caption read's widget values, from a converted MiniMax-H3-Image graph."""
+    def only(kind: str) -> dict:
+        (inputs,) = [node["inputs"] for node in api.values() if node["class_type"] == kind]
+        return inputs
+
+    read, marks = only("RegexExtract"), only("RegexReplace")
+    return {"read": tuple(read[name] for name in (
+                "regex_pattern", "mode", "case_insensitive", "multiline", "dotall", "group_index")),
+            "marks": tuple(marks[name] for name in (
+                "regex_pattern", "replace", "case_insensitive", "multiline", "dotall", "count"))}
+
+
+def caption_from(answer: str, settings: dict, run: Callable) -> tuple[str, str]:
+    """The caption the graph's read gives for one answer, or ("", "request").
+
+    ``run(node_class, *args)`` executes one node and returns its first output.
+    """
+    caption = run("RegexReplace", run("RegexExtract", answer, *settings["read"]),
+                  *settings["marks"])
+    if run("StringCompare", run("StringTrim", caption, "Both"), "", "Equal", True):
+        return "", "request"
+    return caption, "read"
+
+
+def parse_chain_errors(settings: dict, run: Callable) -> list[str]:
+    errors = []
+    for what, answer, caption, read in PARSE_CASES:
+        got = caption_from(answer, settings, run)
+        if got != (caption, read):
+            errors.append(f"caption read: {what}: expected {(caption, read)!r}, got {got!r}")
+    return errors
+
+
+def _parse_chain_failures(node_classes: dict, names: Callable) -> list[str]:
+    """The table through ComfyUI's own nodes, with the shipped graph's widget values."""
+    if any(kind not in node_classes for kind in PARSE_NODES):
+        return []  # an older ComfyUI: the template's own check says what it lacks
+    from benchmark.sweep import convert as sweep_convert
+
+    try:
+        api = sweep_convert.convert(
+            json.loads((TEMPLATE_DIRS[0] / PARSE_TEMPLATE).read_text(encoding="utf-8")), names)
+    except (KeyError, ValueError):
+        return []
+
+    def run(kind: str, *args):
+        return node_classes[kind].execute(*args).result[0]
+
+    return parse_chain_errors(parse_settings(api), run)
+
+
 def main() -> None:
     node_classes = _comfy_and_pack_nodes()
     from comfy_api.internal import _ComfyNodeInternal
@@ -325,6 +546,9 @@ def main() -> None:
             )
         failures.extend(dynamic_widget_errors(node_class, generated, comfy_names[node_class],
                                               declared))
+
+    # The MiniMax-H3-Image caption read, through ComfyUI's own four nodes.
+    failures.extend(_parse_chain_failures(node_classes, names))
 
     if failures:
         for line in failures:

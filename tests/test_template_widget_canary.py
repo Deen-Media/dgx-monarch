@@ -126,3 +126,49 @@ def test_dynamic_widget_errors_hold_the_generators_rows_to_the_schema():
     (error,) = canary.dynamic_widget_errors(
         "Node", generated(rows), convert.object_info_widget_names(bare), bare)
     assert "but comfy master reveals []" in error
+
+
+def test_parse_chain_errors_name_the_answer_whose_caption_drifted():
+    """The caption read's table, through nodes that behave and through ones that do not."""
+    settings = {"read": ("pattern", "First Group", False, False, True, 2),
+                "marks": ("escape", r"\1", False, False, False, 0)}
+    calls = []
+
+    def nodes(read, decoded=None):
+        def run(kind, *args):
+            calls.append((kind, args[1:]))
+            if kind == "RegexExtract":
+                return read
+            if kind == "RegexReplace":
+                return args[0] if decoded is None else decoded
+            if kind == "StringTrim":
+                return args[0].strip()
+            return args[0] == args[1]
+        return run
+
+    # The read's output goes through the decode pass, with the graph's widget values.
+    assert canary.caption_from("answer", settings, nodes("A boat.")) == ("A boat.", "read")
+    assert ("RegexExtract", settings["read"]) in calls and ("RegexReplace", settings["marks"]) in calls
+    assert canary.caption_from("answer", settings, nodes("raw", "decoded")) == ("decoded", "read")
+    # An empty or blank caption hands over to the request.
+    assert canary.caption_from("answer", settings, nodes("")) == ("", "request")
+    assert canary.caption_from("answer", settings, nodes(" \n")) == ("", "request")
+    # Nodes that read nothing fail every row that expects a caption, by name.
+    errors = canary.parse_chain_errors(settings, nodes(""))
+    expecting = [what for what, _answer, _caption, read in canary.PARSE_CASES if read != "request"]
+    assert len(errors) == len(expecting) == 46
+    assert errors[0].startswith("caption read: a valid object: expected ('A photograph of a boat.', 'read')")
+
+
+def test_parse_settings_reads_the_graphs_own_widget_values():
+    api = {"1": {"class_type": "RegexExtract",
+                 "inputs": {"string": ["9", 0], "regex_pattern": "p", "mode": "First Group",
+                            "case_insensitive": False, "multiline": False, "dotall": True,
+                            "group_index": 2}},
+           "2": {"class_type": "RegexReplace",
+                 "inputs": {"string": ["1", 0], "regex_pattern": "q", "replace": "r",
+                            "case_insensitive": False, "multiline": False, "dotall": False,
+                            "count": 0}}}
+    assert canary.parse_settings(api) == {
+        "read": ("p", "First Group", False, False, True, 2),
+        "marks": ("q", "r", False, False, False, 0)}

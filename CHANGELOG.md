@@ -67,6 +67,19 @@
   unrelated to the request, or spend the expander's run and fall back to the
   request
   ([TROUBLESHOOTING #153](docs/TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
+- The MiniMax-H3-Image templates' prompt expander now answers at once, and
+  its answer is read with more care. Generate Text runs with reasoning off,
+  at most 1024 new tokens and `mtp` off, at temperature 0.7 and top_p 0.8,
+  and the expander's three texts are rewritten for it. Reasoning had no
+  budget of its own in the node, so a run that reasoned up to `max_length`
+  returned no caption. The caption is now read by pattern, not as strict
+  JSON: a double quote or a JSON object inside the caption no longer loses
+  it, cuts it short or is taken for the answer. A caption that still cannot
+  be read falls back to the request as written. An empty
+  request skips the expander: no language model runs for it. The switch still
+  ships false in both templates. Two hardware probes ran its text stage; a
+  render with the expander on is not yet run on hardware
+  ([MODELS](docs/MODELS.md#model-minimax-h3-image)).
 - The sweep converter, which the template release test shares, reads the
   child widgets a ComfyUI dynamic combo reveals, under their dotted names,
   from a driver's schema or from the template generator's table. Every

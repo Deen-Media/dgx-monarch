@@ -1099,8 +1099,9 @@ ComfyUI's own two templates for the family: the INT8 ConvRot DiT and text
 encoder, the FP16 VAE, KSampler at 6 steps, CFG 1, `euler` and `simple` on a
 zeroed negative, and ComfyUI's prompt expander chain behind an If/Else switch:
 Replace Text puts the request into a task prompt where it says `{input text}`,
-Generate Text runs the W4A8 expander on it with ComfyUI's decoding numbers, and
-Extract Text from JSON reads `expanded_caption` out of the answer. The
+Generate Text runs the W4A8 expander on it, and
+Extract Text reads the caption out of the answer under the key
+`expanded_caption`. The
 expander's task prompt and system prompt boxes hold this project's own texts,
 and both templates ship the switch false, so as shipped each renders from the
 request as written. Text to image renders
@@ -1115,7 +1116,7 @@ request cites them as `<Picture 1>`, `<Picture 2>`.
 The edit's canvas nodes are ComfyUI's own: two Resize Image/Mask nodes, to
 4 MP by area and then to a multiple of 32, and Get Image Size. The graphs
 leave out ComfyUI's subgraph wrapper, its Markdown notes and its Image Compare
-node, and set the switch on the If/Else node itself. Five more things differ
+node, and set the switch on the If/Else node itself. Eight more things differ
 from ComfyUI's graphs, each on purpose:
 
 - The expander's task prompt and system prompt boxes hold this project's own
@@ -1124,11 +1125,35 @@ from ComfyUI's graphs, each on purpose:
 - Both templates ship the switch false, where ComfyUI's ship it true: the
   edit through a Boolean box, text to image through its subgraph's
   `enable_PE` input.
-- An answer with no caption falls back to the request. Extract Text from JSON
-  returns an empty text for an answer that does not parse or lacks the key,
-  and ComfyUI's graphs would then render from an empty prompt. Here Trim Text
-  and Compare Text test the caption against the empty text, and a second
-  If/Else sends the request as written when it is empty.
+- Generate Text runs with this project's settings, not ComfyUI's: reasoning
+  off (`thinking` false), `max_length` 1024, `mtp` off, temperature 0.7 and
+  top_p 0.8. ComfyUI's templates reason, at `max_length` 8192 and 8196, `mtp`
+  `auto`, temperature 1.0 and top_p 0.95. The node gives reasoning no budget
+  of its own, so a run that reasons up to `max_length` returns no caption;
+  the texts here ask for the answer at once.
+- The caption is read by pattern, where ComfyUI's graphs read strict JSON.
+  The texts here ask the expander to copy drawn words exactly, double quotes
+  included, and a strict read is wrong for such an answer in three ways: a
+  raw double quote inside the caption leaves no valid object, so the caption
+  is lost; a copied object that itself holds the key `expanded_caption` is
+  read in place of the answer; and a raw quote followed by a closing brace
+  cuts the caption short. So Extract Text takes everything between the
+  opening quote of `expanded_caption` and the quote that closes the value:
+  the last quote a closing brace follows, or, when more keys with a string,
+  a number, `true`, `false` or `null` stand after the caption, the quote
+  before them. Replace
+  Text (Regex) then turns a backslash before a double quote, a backslash or
+  a slash into that mark, as a JSON read would. The texts
+  expect this read: with a strict JSON read alone they would lose captions.
+- A caption that cannot be read falls back to the request. When the read
+  holds no caption (an answer cut short, plain prose, an empty value),
+  ComfyUI's graphs would render from an empty prompt. Here
+  Trim Text and Compare Text test the caption against the empty text, and an
+  If/Else sends the request as written.
+- An empty request skips the expander. The same Trim Text, Compare Text and
+  If/Else pattern, keyed on the request, sends an empty request straight to
+  the model, as with the switch false. The If/Else is lazy, so Generate Text
+  never runs for it: no language-model time, and nothing invented.
 - The text to image canvas is two numbers on the conditioning node, where
   ComfyUI wires a Resolution Selector, because the loader's price and the
   sweep read numbers.
@@ -1149,9 +1174,17 @@ files. The testing graph keeps both boxes empty.
 
 **Running the expander.** Set the switch titled
 `If/Else Switch (expander on or off)` to true. The driver then loads the
-7.3 GB expander beside the text encoder, and Generate Text may write up to
-8192 tokens (8196 in the edit) before the render starts; the edit also hands
-it the picture. Neither the wait nor the memory has been measured. You may
+7.3 GB expander beside the text encoder, and Generate Text writes its answer,
+at most 1024 new tokens with reasoning off, before the render starts; the
+edit also hands it the picture. In a first probe on a DGX Spark that text
+stage took about 7 seconds for text to image and about 13 seconds for the
+edit, at the median over the probe's requests at one seed, and 16.6 seconds
+for the longest counted request, of 426 words (2026-11-11; the Spark ran
+under its stability clock cap and the rig was not quiet). A second probe the
+same day ran the caption read that ships, and 125 of 125 counted runs gave
+the image stage a caption. The expander's memory has no hardware record yet. An empty
+request skips the expander
+and goes to the model as written. You may
 replace either text with your own: keep `{input text}` in the task prompt
 where the request belongs, and have the answer hold the caption under the key
 `expanded_caption`. A graph whose expander is on with an empty task prompt, or
@@ -1161,18 +1194,22 @@ with no error from ComfyUI, so a DGX Monarch loader, sampler or
 Identity Gate refuses it, class P
 ([#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
 The empty-caption fallback does not quiet that refusal: ComfyUI must run the
-expander to decide the fallback, so with the switch true the refusal still
-answers.
+expander to decide it, so with the switch true and a request to expand the
+refusal still answers. An empty request runs no expander and refuses nothing.
 
 **The expander and repeatability.** With the switch true the prompt is text a
-language model wrote, and Preview as Text shows it. ComfyUI's sampled decoding
-can change that text from run to run at a fixed seed with this expander file:
-the file carries a multi-token-prediction draft head, Generate Text's `mtp`
-`auto` re-fits the draft tree from measured step time, and every step draws
-one token a tree row from the seeded generator (ComfyUI 0.45.0,
-`comfy/text_encoders/qwen35.py`). So compare renders and check identity with
-the switch false, as both templates and the testing graph ship. The expander
-has not run on hardware under this project, with these texts or any other.
+language model sampled, and Preview as Text shows it. Generate Text has its
+own seed, 0 as shipped, and the sampler's seed does not reach it. The
+templates set `mtp` off, so Generate Text decodes in its plain loop with one
+seeded generator. With `mtp` `auto` and this expander file the text could
+change from run to run at a fixed seed: the file carries a
+multi-token-prediction draft head, ComfyUI re-fits the draft tree from
+measured step time, and every step draws one token a tree row from the
+seeded generator (ComfyUI 0.45.0, `comfy/text_encoders/qwen35.py`). In a
+first probe on a DGX Spark one seed gave one caption with `mtp` off in 5 of
+5 repeats. Five repeats of one request are not a guarantee, so compare
+renders and check identity with the switch false, as both
+templates and the testing graph ship.
 
 The testing graph `dgx-monarch-test-minimax-h3-image-grid` samples through
 Sampler Custom (DGX Monarch) on the checkpoint's own grid, with the expander
@@ -1271,8 +1308,18 @@ every identity, speed and memory row is NOT RUN
 checkpoint's INT8 attention pins and a world of one GPU keeps them, so the two
 renders are not identical, and the size of that difference is not measured.
 The prompt expander ships off, with this project's own texts in its two
-prompt boxes; the texts have not been tried on hardware, and no render
-with it on has run on hardware. The W4A8 DiT refuses FSDP. Studio's CPU compile tests skip both
+prompt boxes; the expander rows in VALIDATION, for the texts and for a render
+with it on, are NOT RUN. The caption read has five limits. Text after the
+answer that holds a double quote before a closing brace, such as a second
+object, the answer's key written twice or a note that quotes the format, is
+read into the caption. A second key whose value is a list or an object joins
+the caption or loses it. A caption that ends on an unmatched double quote
+after words shaped like a key and a value is cut before them. A `\u`
+escape, and an escaped line break or tab, stay in the caption as typed. And a
+backslash the request wants drawn before a double quote, a backslash or a
+slash is read as an escape when the expander writes it unescaped; escaped, it
+comes through.
+The W4A8 DiT refuses FSDP. Studio's CPU compile tests skip both
 graphs until a driver schema is recorded on ComfyUI 0.45.0.
 
 <a id="model-longcat-image"></a>

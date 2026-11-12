@@ -3443,9 +3443,9 @@ recipe (the four files, 6 steps, CFG 1, `euler`, `simple`, the expander chain
 wired as ComfyUI wires it), holds the task prompt and system prompt boxes of
 the two shipped graphs to this project's tracked texts byte for byte and the
 testing graph's boxes empty, holds the switch to the generator's one value
-(off as shipped) and off in the testing graph, holds the empty-caption
-fallback's wiring, holds the testing
-graph's Manual Sigmas to
+(off as shipped) and off in the testing graph, holds the wiring of the
+caption read, the empty-caption fallback and the empty-request skip, holds
+the testing graph's Manual Sigmas to
 the published header's grid, and holds each Note to the auto table, the
 driver's cfg and dp preflight, the gate's proof request and the manifest's
 byte counts. The template widget canary passes against ComfyUI 0.45.0 with
@@ -3460,7 +3460,7 @@ whose dynamic combo reveals a child widget, so the sweep converter, which the
 release test shares, learned to read them. `tests/test_sweep_convert_dynamic.py`
 holds every node of every committed graph that reveals no child to the flat
 reading it had before, and pins the nodes that do reveal one to five: the
-edit graph's two, and Generate Text with ComfyUI's decoding numbers in the
+edit graph's two, and Generate Text with sampling on in the
 three graphs. The widget canary holds the generator's child lists to ComfyUI's
 schema, and passes against ComfyUI 0.45.0.
 
@@ -3470,8 +3470,9 @@ lacks the `{input text}` marker, refuses class P
 `tests/test_expander_prompt.py` holds the sentence, holds it to the UNET
 loader, the four samplers and Identity Gate ahead of each node's own price,
 load and render, and holds that the loader answers for a Fleet render. It
-holds that the empty-caption fallback, a switch driven by Compare Text, does
-not quiet the refusal, and that with the outer switch false nothing of the
+holds that the empty-caption fallback, a switch driven
+by Compare Text over the answer, does not quiet the refusal, that an empty
+request refuses nothing, and that with the outer switch false nothing of the
 expander runs. It holds that an expander which runs only for an extra Preview
 as Text refuses nothing, as does one behind a switch whose choice the graph
 does not state. And it holds that the shipped texts with the switch on refuse
@@ -3479,24 +3480,44 @@ nothing, and that no other committed graph meets the refusal, as shipped or
 with every typed switch on, the testing graph's empty boxes apart.
 
 With the expander switch true, a render of either template depends on text a
-language model wrote on the driver. Generate Text holds ComfyUI's sampled
-decoding numbers, and with this expander file sampled text can change from
-run to run at a fixed seed ([MODELS](MODELS.md#model-minimax-h3-image)). So
+language model wrote on the driver, sampled at Generate Text's own seed
+([MODELS](MODELS.md#model-minimax-h3-image)). So
 every identity row here uses a graph with the switch false, as all three
 ship, and a row with the expander on records its caption beside the picture.
-The two shipped templates carry this project's own expander texts, which no
-hardware run has tried. They ship with the switch false until the expander
-rows below pass: every counted run returns a caption, the caption keeps the
-request in at least 95 percent of runs, at most one picture pair a graph
-looks worse with the expander on than off, and the expander's time is
-recorded. None of that has run.
+The two shipped templates carry this project's own expander texts and its
+settings for Generate Text: reasoning off, `max_length` 1024, `mtp` off,
+temperature 0.7 and top_p 0.8. `tests/test_minimax_h3_image_templates.py`
+holds those five values in both shipped graphs. It holds the caption read to
+a table of fifty-six answers, kept in the widget canary. Forty-six give
+the image stage a caption: a valid object, a code fence, text around the
+object, escaped double quotes, an escaped backslash and an escaped slash;
+inner double quotes, an inner JSON object, an inner object that holds the
+answer's own key, a raw double quote before a closing brace or a comma, and
+raw and escaped quotes in one caption; more keys before or after the
+caption, a key with a hyphen or a space, a key that begins with the answer's
+own and a number with an exponent among
+them; a raw path, which stays as typed, and a raw line break, which is
+kept; and eleven rows that pin the read's limits. Ten fall back to the
+request: a cut answer, an empty value, a blank value, an object or `null` as
+the value, a trailing comma, plain prose, another key, an empty answer, and
+the one limit that loses a caption (a second key with a list as its value).
+The test runs the table through stand-ins for the four stock nodes, written
+from ComfyUI 0.45.0's code, and holds that a strict JSON read is wrong in
+the shapes the texts invite. The widget canary runs the table through
+ComfyUI's own nodes on 0.45.0. A CPU walk of
+the text path, with If/Else evaluating only the branch its switch selects as
+ComfyUI's lazy inputs do, holds that an empty request reaches no Generate
+Text run. Both templates ship with the switch false. The expander rows
+below say what a run with the switch true must show, and none has a record
+with these texts and settings yet.
 | template behaviour | what a run must show | status |
 |---|---|---|
 | The text to image template | `dgx-monarch-minimax-h3-image-t2i.json` as shipped, the switch false, 6 steps at 2048 square, on the pair under `auto` and in a world of one GPU | NOT RUN |
 | The edit template | `dgx-monarch-minimax-h3-image-edit.json` as shipped, the switch false, one picture, on the pair under `auto` and in a world of one GPU | NOT RUN |
-| The expander on, text stage | each shipped template with the switch true and the shipped texts, a set of requests at five values of Generate Text's own seed: both outputs of Generate Text and the extracted caption recorded; every counted run returns a caption; quoted words are kept letter for letter; an edit names its picture `<Picture 1>`; the shipped request queued four times at one seed to see whether the caption repeats; the expander's median and longest time and the driver's memory with it loaded | NOT RUN |
+| The expander on, text stage | each shipped template with the switch true, the shipped texts and the shipped Generate Text settings, a set of requests at five values of Generate Text's own seed: both outputs of Generate Text and the extracted caption recorded; every counted run returns a caption; quoted words are kept letter for letter; an edit names its picture `<Picture 1>`; the shipped request queued four times at one seed to see whether the caption repeats; the expander's median and longest time and the driver's memory with it loaded | NOT RUN |
 | The expander on, picture stage | text to image and edit pairs with the expander on and off at the same KSampler seed, judged on the subject and, for an edit, on what lies outside the change | NOT RUN |
-| The empty-caption fallback | each shipped template with the switch true and an answer that holds no caption, from a task prompt replaced with one that asks for plain prose: the render uses the request, and Preview as Text shows the request | NOT RUN |
+| The caption read and its fallback | each shipped template with the switch true: a request that holds a JSON object or quoted words gives the image stage a caption, at five expander seeds; an answer that holds no caption, from a task prompt replaced with one that asks for plain prose, renders the request, and Preview as Text shows the request | NOT RUN |
+| An empty request | each shipped template with the switch true and an empty request box: no Generate Text run starts, and the model gets the empty request as with the switch false | NOT RUN |
 | The empty expander refuses | the testing graph with the switch true, its boxes empty as shipped, and a shipped template with its task prompt box emptied: the class P refusal of [#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt) at the loader before the DiT loads, and at the sampler on a re-queue of a graph that first rendered with the switch false, after the expander has run and before the render | NOT RUN |
 | The edit template in the browser | opened from Browse Templates on ComfyUI 0.45.0: the picture sockets `images.image_1` and `images.image1` keep their wires, each Resize Image/Mask node shows its child widget with the stored value, and Queue sends the API prompt the converter writes | NOT RUN |
 | The release-test rows | both templates in the [template release test](#release-test-2026-11-04): one step, seed 1031, uly2 | NOT RUN |

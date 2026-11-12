@@ -37,12 +37,15 @@ canary = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(canary)
 IDEOGRAM = ("dgx-monarch-ideogram4-t2i", "dgx-monarch-test-ideogram4-lora")
 # Classes the recording lacks whose flags were read from ComfyUI's source
-# instead, each with the inputs it marks dynamicPrompts. Replace Text and
-# Extract Text from JSON mark none (comfy_extras/nodes_string.py at 0.45.0), and
-# the MiniMax-H3-Image graphs keep ComfyUI's `{input text}` marker in Replace
-# Text's find box. The widget canary reads the real schema on every run, so a
+# instead, each with the inputs it marks dynamicPrompts. Replace Text, Extract
+# Text and Replace Text (Regex) mark none (comfy_extras/nodes_string.py at
+# 0.45.0). The
+# MiniMax-H3-Image graphs keep ComfyUI's `{input text}` marker in Replace
+# Text's find box and a pattern with a brace in Extract Text's pattern box. The
+# widget canary reads the real schema on every run, so a
 # flag ComfyUI adds later fails there.
-SOURCE_READ_FLAGS: dict[str, tuple[str, ...]] = {"StringReplace": (), "JsonExtractString": ()}
+SOURCE_READ_FLAGS: dict[str, tuple[str, ...]] = {
+    "StringReplace": (), "RegexExtract": (), "RegexReplace": ()}
 
 
 def _api(path: Path) -> dict:
@@ -87,13 +90,15 @@ def test_the_recorded_schema_still_flags_clip_text_encode():
 def test_the_source_read_flags_stand_in_only_where_the_recording_is_silent():
     # A class the recording holds is read from the recording; its row here must go.
     assert not set(SOURCE_READ_FLAGS) & set(SCHEMA)
-    # The one brace text they let through: ComfyUI's marker in Replace Text's find box.
+    # The brace texts they let through: ComfyUI's marker in Replace Text's find box,
+    # and the caption pattern in Extract Text's pattern box.
     marked = {(path.stem, node["class_type"], name, value)
               for path in TEMPLATES for node in _api(path).values()
               if node["class_type"] in SOURCE_READ_FLAGS
               for name, value in node["inputs"].items()
               if isinstance(value, str) and canary.process_dynamic_prompt(value) != value}
-    assert {row[1:] for row in marked} == {("StringReplace", "find", "{input text}")}
+    assert {row[1:3] for row in marked} == {("StringReplace", "find"), ("RegexExtract", "regex_pattern")}
+    assert {row[3] for row in marked if row[1] == "StringReplace"} == {"{input text}"}
     assert {row[0] for row in marked} == {
         "dgx-monarch-minimax-h3-image-edit", "dgx-monarch-minimax-h3-image-t2i",
         "dgx-monarch-test-minimax-h3-image-grid"}

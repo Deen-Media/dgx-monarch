@@ -7,7 +7,7 @@ MiniMax-H3-Image's edit graph, every committed template held a key that
 revealed nothing, and the converter read a dynamic combo as one slot. These
 tests hold three things: the new graphs convert to what ComfyUI's own
 templates store; ComfyUI's own thirteen Generate Text values, with sampling
-on, convert too, and the three MiniMax-H3-Image graphs ship them; and every
+on, convert too, as do the values the three MiniMax-H3-Image graphs ship; and every
 node of every committed template that reveals no child reads exactly as the
 flat reader read it. CPU only: no ComfyUI import.
 """
@@ -204,9 +204,14 @@ def test_the_generator_lists_generate_texts_children_in_upstreams_order():
     api = convert.convert(_node("TextGenerateV2", UPSTREAM_GENERATE_TEXT), names)
     assert api["2"]["inputs"] == GENERATE_TEXT_ON
     # The generator writes the same thirteen values for upstream's decoding.
+    upstream = {"sampling_mode": "on", "sampling_mode.temperature": 1.0, "sampling_mode.top_k": 20,
+                "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,
+                "sampling_mode.repetition_penalty": 1.0, "sampling_mode.presence_penalty": 0.0,
+                "sampling_mode.seed": 0}
+    assert list(upstream) == list(gen_templates.H3I_DECODING)
     spec = {"title": "probe", "nodes": [
         {"key": "expand", "type": "TextGenerateV2", "pos": (0, 0),
-         "widgets": {"prompt": "", "max_length": 8192, **gen_templates.H3I_DECODING,
+         "widgets": {"prompt": "", "max_length": 8192, **upstream,
                      "thinking": True, "use_default_template": True, "mtp": "auto"}}]}
     (node,) = gen_templates.build(spec)["nodes"]
     assert node["widgets_values"] == UPSTREAM_GENERATE_TEXT

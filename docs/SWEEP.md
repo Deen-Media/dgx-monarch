@@ -316,10 +316,7 @@ graphs wire a prompt expander behind an If/Else switch and ship the switch
 off, so each sends the request as written and its cells are identity rows
 like any other. A cell whose graph has the switch on is not an identity row.
 The text its DiT renders is then written at queue time by a language model on
-the driver, with ComfyUI's sampled decoding, and sampled text from this
-expander file can change from run to run at a fixed seed: its draft head
-re-fits the draft tree from measured step time, and every step draws one
-token a tree row from the seeded generator. Such a cell's number carries
+the driver, sampled at Generate Text's own seed. Such a cell's number carries
 whatever the expander wrote on each arm, so record its caption and score
 identity on the graph as shipped. The two shipped templates carry this
 project's expander texts in their task prompt and system prompt boxes, so

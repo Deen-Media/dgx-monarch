@@ -8384,7 +8384,7 @@ titled `If/Else Switch (expander on or off)` is true.
 **Cause:** the MiniMax-H3-Image templates wire the prompt expander as ComfyUI's
 own templates do. Replace Text puts the request into a task prompt where the
 task prompt says `{input text}`, Generate Text runs the expander model on that
-text, and Extract Text from JSON reads the caption out of the answer. The two
+text, and Extract Text reads the caption out of the answer. The two
 shipped templates carry this project's own task prompt and system prompt in
 the two text boxes, with the switch false. So an empty task prompt box in one
 of them means someone emptied it, and a task prompt without `{input text}`
@@ -8394,9 +8394,9 @@ and refuses this way if its switch is set to true.
 
 With the switch true and the task prompt box empty, Replace Text hands on an
 empty text whatever the request says, and Generate Text answers an empty
-prompt. If that answer holds a caption the model renders from it, and if it
-holds none the graph falls back to the request, after the expander has spent
-its time on nothing. A task prompt that lacks `{input text}` is worse: the
+prompt. If a caption can be read from that answer the model renders from it,
+and if none can the graph falls back to the request, after the expander has
+spent its time on nothing. A task prompt that lacks `{input text}` is worse: the
 expander writes a caption for the task prompt alone, and the render ignores
 the request. ComfyUI raises no error for either. dgx-monarch reads the chain
 in the prompt graph and refuses both. On a first queue the UNET loader
@@ -8413,9 +8413,12 @@ refuses nothing. It must be fed by a Replace Text node whose text is typed or
 comes from a Text box. A switch counts by what it states, typed on the node
 or through a Boolean box wired to it. An expander behind an If/Else Switch or
 Soft Switch that states no choice, or behind a Branch node, is not sure to
-run, and refuses nothing. The templates' own empty-caption fallback is such a
-switch, driven by Compare Text, and does not quiet the refusal: ComfyUI must
-run the expander to decide it.
+run, and refuses nothing. The templates' own skip of an empty request is an
+If/Else driven by Compare Text over the request box: the graph states that
+text, so the check knows an empty request runs no expander, and refuses
+nothing for it. Their empty-caption
+fallback is driven by Compare Text over the expander's answer, and does not
+quiet the refusal: ComfyUI must run the expander to decide it.
 
 **Fix:** set the switch titled `If/Else Switch (expander on or off)` to false,
 and the request goes to the model as written. To run the expander, put a task
