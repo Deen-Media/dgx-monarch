@@ -121,15 +121,17 @@ def _two_rows_an_image(self, pixel_samples):
                                   "a result that is not one row an image", "a batch that cannot be sliced"])
 def test_it_steps_aside_once_when_comfyui_does_not_behave_as_expected(case, caplog):
     """Drift in ComfyUI's call must not break a render: stock's whole batch answers, with one warning."""
-    whole = []
+    calls = []
 
     def original(self, pixel_samples, *args, **kwargs):
-        whole.append(pixel_samples.shape[0])
+        calls.append((pixel_samples.shape[0], args, tuple(kwargs)))
         if case == "results that are not tensors":
             return _not_a_tensor(self, pixel_samples)
         if case == "a result that is not one row an image":
             return _two_rows_an_image(self, pixel_samples)
-        return ("stock", pixel_samples.shape[0], args, tuple(kwargs))
+        if case == "a batch that cannot be sliced":
+            return "stock's answer"
+        return pixel_samples.sum(dim=(1, 2, 3), keepdim=True)
 
     wrapped = vae_encode_item.by_item(original)
     pixels = _SliceFails() if case == "a batch that cannot be sliced" else torch.zeros(6, 4, 4, 3)
@@ -137,18 +139,19 @@ def test_it_steps_aside_once_when_comfyui_does_not_behave_as_expected(case, capl
             "an unknown keyword": lambda: wrapped(_image_vae(), pixels, tiled=True)}.get(
                 case, lambda: wrapped(_image_vae(), pixels))
     with caplog.at_level("WARNING"):
-        first = call()
-    assert whole[-1] == 6  # the answer is stock's own call on the whole batch
+        call()
+    assert calls[-1][0] == 6  # the answer is stock's own call on the whole batch
     assert caplog.text.count("stepped aside") == 1
     assert vae_encode_item.state() == vae_encode_item.STEPPED_ASIDE
+    # An argument the rule does not know is never dropped: no call on one image is made without it.
     if case == "an unknown argument":
-        assert first == ("stock", 6, (0.5,), ())
+        assert calls == [(6, (0.5,), ())]
     if case == "an unknown keyword":
-        assert first == ("stock", 6, (), ("tiled",))
+        assert calls == [(6, (), ("tiled",))]
     # From then on every call is stock's, a plain batch included, and nothing more is logged.
-    whole.clear()
+    calls.clear()
     wrapped(_image_vae(), torch.zeros(4, 4, 4, 3))
-    assert whole == [4] and caplog.text.count("stepped aside") == 1
+    assert calls == [(4, (), ())] and caplog.text.count("stepped aside") == 1
 
 
 def _comfy_stand_in(monkeypatch, *, total):
