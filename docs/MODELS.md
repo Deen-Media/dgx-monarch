@@ -1309,10 +1309,12 @@ checkpoint's INT8 attention pins and a world of one GPU keeps them, so the two
 renders are not identical, and the size of that difference is not measured.
 The prompt expander ships off, with this project's own texts in its two
 prompt boxes; the expander rows in VALIDATION, for the texts and for a render
-with it on, are NOT RUN. The caption read has four limits. Text after the
+with it on, are NOT RUN. The caption read has five limits. Text after the
 answer that holds a double quote before a closing brace, such as a second
-object or a note that quotes the format, is read into the caption. A second
-key whose value is a list or an object joins the caption or loses it. A `\u`
+object, the answer's key written twice or a note that quotes the format, is
+read into the caption. A second key whose value is a list or an object joins
+the caption or loses it. A caption that ends on an unmatched double quote
+after words shaped like a key and a value is cut before them. A `\u`
 escape, and an escaped line break or tab, stay in the caption as typed. And a
 backslash the request wants drawn before a double quote, a backslash or a
 slash is read as an escape when the expander writes it unescaped; escaped, it

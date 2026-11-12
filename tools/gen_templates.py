@@ -6025,8 +6025,11 @@ H3I_SKIP_TITLE = "If/Else Switch (empty request: skip the expander)"
 # follows with no later quote-then-brace in the answer. So a raw double quote
 # inside the caption, or a JSON object copied into it, cannot end it early or
 # be taken for the answer. Between that quote and the brace the pattern lets
-# more keys stand, each with a string, a number, true, false or null, so a
-# second key after the caption stays out of it. Group 1 is a backslash
+# more keys stand, each a JSON string with a string, a number, true, false
+# or null as its value, so a second key after the caption stays out of it.
+# The answer's own key is not taken as such a key: an answer that writes it
+# twice is read as one caption, and a run of starts of the key cannot make
+# the search slow. Group 1 is a backslash
 # before the opening quote: some answers escape the quotes around the value,
 # and then the closing quote is escaped too and stays out of the caption. An
 # empty value or an answer cut short gives no match, and the empty-caption
@@ -6034,12 +6037,13 @@ H3I_SKIP_TITLE = "If/Else Switch (empty request: skip the expander)"
 # runs it through ComfyUI's own nodes; tests/test_minimax_h3_image_templates.py
 # runs the same table through stand-ins.
 # The pattern backtracks. An ordinary answer takes under a millisecond. The
-# slowest shape found, starts of the key chained by commas with no closing
-# brace, takes about half a second at 6,000 characters, which is longer than
-# any answer 1024 tokens have given.
+# slowest shape found, a long run of keys with no closing brace, takes about
+# 40 ms at 6,000 characters, which is longer than any answer 1024 tokens
+# have given.
 H3I_CAPTION_PATTERN = (
     r'"expanded_caption\\?"\s*:\s*(\\)?"(.*?)(?(1)\\"\s*"?|")\s*'
-    r'(?:,\s*"\w+"\s*:\s*(?:"(?:[^"\\]|\\.)*"|-?[0-9][0-9.]*|true|false|null)\s*)*'
+    r'(?:,\s*(?!"expanded_caption\\?")"(?:[^"\\]|\\.)*"\s*:\s*'
+    r'(?:"(?:[^"\\]|\\.)*"|-?[0-9][0-9.]*(?:[eE][+-]?[0-9]+)?|true|false|null)\s*)*'
     r'\}(?!.*"\s*\})')
 # The one decode pass: a backslash before a double quote, a backslash or a
 # slash becomes that mark. One pass with a backreference, so an escaped

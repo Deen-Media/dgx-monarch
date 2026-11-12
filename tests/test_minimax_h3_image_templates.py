@@ -458,7 +458,7 @@ def test_the_pattern_holds_against_the_table_of_answers(name):
     assert canary.parse_chain_errors(settings, _stand_in) == []
     counts = {read: sum(1 for row in canary.PARSE_CASES if row[3] == read)
               for read in ("read", "request")}
-    assert counts == {"read": 37, "request": 10} and len(canary.PARSE_CASES) == 47
+    assert counts == {"read": 46, "request": 10} and len(canary.PARSE_CASES) == 56
     # The table has teeth. A pattern that stops at the first closing quote loses the
     # captions with a quote inside them, one that runs to the last quote and brace
     # takes a second key into the caption, and a read without the decode pass leaves
@@ -469,6 +469,20 @@ def test_the_pattern_holds_against_the_table_of_answers(name):
     greedy = {**settings, "read": (r'"expanded_caption\\?"\s*:\s*(\\)?"(.*)(?(1)\\"\s*"?|")\s*\}',
                                    "First Group", False, False, True, 2)}
     assert len(canary.parse_chain_errors(greedy, _stand_in)) >= 4
+    # Trailing keys are JSON strings and their numbers may carry an exponent: a pattern
+    # that takes only word keys and plain numbers fails those rows.
+    narrow = {**settings, "read": (
+        r'"expanded_caption\\?"\s*:\s*(\\)?"(.*?)(?(1)\\"\s*"?|")\s*'
+        r'(?:,\s*"\w+"\s*:\s*(?:"(?:[^"\\]|\\.)*"|-?[0-9][0-9.]*|true|false|null)\s*)*'
+        r'\}(?!.*"\s*\})', "First Group", False, False, True, 2)}
+    assert len(canary.parse_chain_errors(narrow, _stand_in)) >= 5
+    # The answer's own key is not taken as a trailing key, and only that key: a guard
+    # on the name's first letters alone fails the keys that merely begin with it.
+    prefix = {**settings, "read": (
+        gen_templates.H3I_CAPTION_PATTERN.replace(r'(?!"expanded_caption\\?")', '(?!"expanded_caption)'),
+        "First Group", False, False, True, 2)}
+    assert prefix["read"][0] != gen_templates.H3I_CAPTION_PATTERN
+    assert len(canary.parse_chain_errors(prefix, _stand_in)) == 2
     raw = {**settings, "marks": (r"(?!)", "", False, False, False, 0)}
     assert len(canary.parse_chain_errors(raw, _stand_in)) >= 5
 
