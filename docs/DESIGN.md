@@ -2382,11 +2382,19 @@ is not yet read, and the price does not depend on it. Three rules follow.
   (5.52 and 14.16 GiB for the two LTX stacks). The weights are counted from
   the checkpoint's and the LoRAs' headers, which give the Worker's own counts
   for both LTX stacks (1660 and 480); a patched bias counts as a weight, and
-  a stack that cannot be mapped charges every weight. Where no measurement
-  covers the layers the charge is the larger of that and 0.75 of the patched
-  bytes: a quantized FP8 weight larger than the largest one measured (64 MiB,
-  the LTX file's largest patched weight), and every full-precision weight
-  (BF16, FP16, FP32), which has no measured point yet. The stack's own files
+  a stack that cannot be mapped charges every weight, and a checkpoint whose
+  header cannot be read is charged as the largest stack measured (1660
+  weights). What is measured: quantized FP8, INT8 ConvRot and plain FP8, by
+  the rows above. A quantized FP8 weight larger than the largest one under
+  those rows (64 MiB, the LTX file's largest patched weight) is past them,
+  and a stack that patches one is charged the larger of the line and 0.75 of
+  its patched quantized FP8 bytes. What waits for a measurement: every
+  full-precision weight (BF16, FP16, FP32). Those are charged by the line
+  until the next hardware block reads two BF16 cells (a Klein BF16 stack cut
+  at the latent, and the BF16 Wan-Animate 2 template's first stack change);
+  a share of their bytes with no cell behind it would have priced a recovery
+  that worked on hardware on 2026-11-05 as a refusal. One constant
+  (`GUARDED_BY_BYTES`) holds that choice. The stack's own files
   are charged too: the Worker reads them into host memory for the bake.
   `StockFit` carries the term, so the Worker's two walls and the quote the
   driver reads charge one figure by one function, and every refusal prints
@@ -2440,8 +2448,8 @@ is not yet read, and the price does not depend on it. Three rules follow.
   its stack keeps the classic bake.
 
 Not yet run on hardware as a rule; the figures above are what it is built on.
-The term has no measured point on a full-precision file, which is why those
-are guarded by their bytes.
+The term has no measured point on a full-precision file; the line it charges
+there is the one the quantized rows gave.
 
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a

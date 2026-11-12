@@ -62,12 +62,20 @@ def test_a_quantized_fp8_weight_past_the_largest_measured_takes_the_bytes_guard(
     assert price.term_from_weights(past_it) == max(line, guard)
 
 
-def test_full_precision_weights_have_no_measured_point_and_are_always_guarded():
+def test_full_precision_weights_are_charged_by_the_line_until_a_bf16_cell_is_measured(monkeypatch):
+    """No BF16, FP16 or FP32 cell exists yet, so no share of their bytes is charged (the lead's ruling).
+
+    One constant decides it: with the format added to ``GUARDED_BY_BYTES`` the
+    same weights take the bytes guard, which is the whole change the hardware
+    block's two BF16 cells would call for.
+    """
     weights = _weights(148, price.FULL_PRECISION, 110 * MIB)  # a BF16 file's patched layers
     line = price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 148
     guard = int(0.75 * 148 * 110 * MIB)
-    assert guard > line and price.term_from_weights(weights) == guard
-    assert price.FULL_PRECISION not in price.MEASURED_LARGEST_WEIGHT_BYTES
+    assert guard > line and price.term_from_weights(weights) == line
+    assert price.GUARDED_BY_BYTES == (price.FP8_QUANTIZED,)
+    monkeypatch.setattr(price, "GUARDED_BY_BYTES", (price.FP8_QUANTIZED, price.FULL_PRECISION))
+    assert price.term_from_weights(weights) == guard  # no measured point: guarded whatever the layers' size
 
 
 def test_int8_and_plain_fp8_weights_are_charged_by_the_line_alone():
@@ -137,12 +145,13 @@ def test_a_stack_it_cannot_map_or_read_charges_every_weight(tmp_path):
         price.CLASSIC_BAKE_FIXED_BYTES + len(every) * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
 
 
-def test_a_checkpoint_whose_header_cannot_be_read_is_charged_on_its_whole_size(tmp_path):
+def test_a_checkpoint_whose_header_cannot_be_read_is_charged_as_the_largest_stack_measured(tmp_path):
     path = tmp_path / "base.ckpt"
     path.write_bytes(b"not a safetensors file" * 100)
     lora = _lora(tmp_path, ["blocks.0.attn"])
     charged = price.classic_bake_bytes(str(path), STACK, _resolver({"stack.safetensors": lora}))
-    assert charged == price.CLASSIC_BAKE_FIXED_BYTES + int(0.75 * path.stat().st_size)
+    assert price.UNREADABLE_STACK_WEIGHTS == 1660  # LTX 2.3's own stack
+    assert charged == price.CLASSIC_BAKE_FIXED_BYTES + 1660 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
 
 
 def test_the_in_place_bake_charges_one_copy_of_the_stack_and_its_working_memory():

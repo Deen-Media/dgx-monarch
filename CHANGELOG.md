@@ -650,9 +650,10 @@
   past the price, and the Worker's GPU figure ended 12.3 GiB above the same
   model's load with no stack (5.0 GiB for a 0.3 GiB stack on the same file,
   1.2 GiB on an INT8 file, 0.8 GiB on a plain FP8 file). The price now adds
-  2 GiB plus 7.5 MiB for each weight the stack patches, and a share of the
-  patched bytes for layers no measurement covers yet, which includes every
-  BF16 and FP16 file. A load that fitted the old price and does not fit the
+  2 GiB plus 7.5 MiB for each weight the stack patches, and for a quantized
+  FP8 layer larger than any measured, a share of the patched bytes. No BF16
+  or FP16 file has been measured yet; those are charged the same line until
+  one is. A load that fitted the old price and does not fit the
   new one is refused with the new figure, where before it was admitted and
   took the box under its floor. Where the classic bake does not fit and
   baking in place on the loaded model would, the Worker bakes in place, as
@@ -661,12 +662,7 @@
   the identity gate holds a PASS for the combination's in-place bake, which a
   render of it with `lora_low_rss` on records; with no PASS the refusal says
   so and names both prices. The default (`lora_low_rss` on) is priced as
-  before. Nothing to set, with one case to know: no BF16 measurement of the
-  classic bake exists yet, so a BF16 file's stack is priced at 0.75 of its
-  patched bytes, and the BF16 Wan-Animate 2 memory-saver graph (which ships
-  with the switch off) may be refused at its LoRA change on a fresh pair
-  until its combination has a gate PASS; render it once with `lora_low_rss`
-  on, or leave the switch on. Not yet run on hardware
+  before. Nothing to set. Not yet run on hardware
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by

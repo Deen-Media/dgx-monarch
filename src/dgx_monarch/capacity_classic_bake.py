@@ -13,12 +13,27 @@ stack (docs/DESIGN.md section 5.9 holds the table and the dates):
 - Qwen Image plain FP8, 720 patched weights: 0.84 GiB.
 
 ``classic_bake_bytes`` charges 2 GiB plus 7.5 MiB a patched weight, which
-covers every point (5.52 and 14.16 GiB for the two LTX stacks), and a share of
-the patched bytes where no measurement covers the layers: a quantized FP8
-weight larger than the largest one measured, and every full-precision weight,
-which has no measured point at all. A patched bias counts as a weight, as it
-does in the count the Worker logs. The stock price (``capacity_fit``) had no
-term for any of it, and a 7.1 GiB stack took a load 8.7 GiB past its price.
+covers every point (5.52 and 14.16 GiB for the two LTX stacks). A patched bias
+counts as a weight, as it does in the count the Worker logs. The stock price
+(``capacity_fit``) had no term for any of it, and a 7.1 GiB stack took a load
+8.7 GiB past its price.
+
+What is measured and what is not:
+
+- Quantized FP8, INT8 ConvRot and plain FP8 weights have the points above. A
+  quantized FP8 weight larger than the largest one under those points (64
+  MiB) is past them, and a stack that patches one is charged the larger of
+  the line and 0.75 of its patched quantized FP8 bytes (the larger share the
+  two LTX points gave, 0.68, rounded up).
+- Full-precision weights (BF16, FP16, FP32) have no measured point. They are
+  charged by the line, as the lead ruled on 2026-11-12, until the hardware
+  block's two BF16 cells are in (a Klein BF16 stack cut at the latent, and the
+  BF16 Wan-Animate 2 template's first stack change). A share of their bytes
+  with no cell behind it priced a recovery that worked on hardware (clear and
+  retry on that template, 2026-11-05) as a refusal. ``GUARDED_BY_BYTES`` is
+  the one place to change when those cells are read.
+- A stack or a checkpoint whose header cannot be read is charged the line for
+  ``UNREADABLE_STACK_WEIGHTS``, the largest count measured.
 
 The stack's own files are charged on every classic price: the Worker reads
 them into host memory for the bake, and a clone that read them earlier has
@@ -37,7 +52,6 @@ call the same functions with the same arguments, so one load has one price.
 """
 from __future__ import annotations
 
-import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any
@@ -54,15 +68,22 @@ CLASSIC_BAKE_FIXED_BYTES = 2 * GIB
 CLASSIC_BAKE_BYTES_PER_WEIGHT = int(7.5 * MIB)
 # The larger share of the patched bytes measured (0.68), rounded up.
 CLASSIC_BAKE_GUARD_RATIO = 0.75
-# The largest patched weight under each format's measured points. A stack whose
-# largest patched weight of that format is no larger is charged by the line
-# alone. A format with no row here has no measured point and is always guarded.
-# The FP8 row is read from the LTX 2.3 scaled FP8 file's header (2026-11-12): the
-# largest weight either measured stack patches is 64.0 MiB.
 FP8_QUANTIZED = "fp8_quantized"
 FULL_PRECISION = "full_precision"
 OTHER = "other"
+# The formats whose patched bytes are guarded by ``CLASSIC_BAKE_GUARD_RATIO`` past their
+# measured points. FULL_PRECISION is not in it: no BF16, FP16 or FP32 cell exists yet, and
+# those weights are charged by the line until the hardware block's two BF16 cells are read.
+# Adding it here (with or without a row below) is the whole change if they call for it.
+GUARDED_BY_BYTES: tuple[str, ...] = (FP8_QUANTIZED,)
+# The largest patched weight under each guarded format's measured points. A stack whose
+# largest patched weight of that format is no larger is charged by the line alone; a guarded
+# format with no row here is always guarded. The FP8 row is read from the LTX 2.3 scaled FP8
+# file's header (2026-11-12): the largest weight either measured stack patches is 64.0 MiB.
 MEASURED_LARGEST_WEIGHT_BYTES = {FP8_QUANTIZED: 64 * MIB}
+# What a stack is counted as when its files or its checkpoint's header cannot be read: the
+# largest count of patched weights measured (LTX 2.3's own stack).
+UNREADABLE_STACK_WEIGHTS = 1660
 # The bake's working memory beside the stack's own bytes (1.9 and 1.2 GiB measured).
 IN_PLACE_BAKE_FIXED_BYTES = 2 * GIB
 
@@ -110,7 +131,7 @@ def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True)
     if not guard:
         return line
     guarded = 0
-    for kind in (FP8_QUANTIZED, FULL_PRECISION):
+    for kind in GUARDED_BY_BYTES:
         sizes = by_class.get(kind)
         if not sizes:
             continue
@@ -151,16 +172,15 @@ def classic_bake_bytes(checkpoint_path: str, lora_stack: list | None,
                        resolve_lora_path: Callable[[str], str]) -> int:
     """What the classic bake of ``lora_stack`` adds on the device beside this checkpoint's weights.
 
-    A checkpoint whose header cannot be read is charged as if the stack
-    patched every byte of it at the guard's share.
+    A checkpoint whose header cannot be read gives no weights to count or to
+    class, so the stack is charged the line for ``UNREADABLE_STACK_WEIGHTS``.
     """
     if not lora_stack:
         return 0
     try:
         tensors = read_safetensors_header(checkpoint_path).tensors
     except Exception:
-        size = os.path.getsize(checkpoint_path) if os.path.exists(checkpoint_path) else 0
-        return CLASSIC_BAKE_FIXED_BYTES + int(CLASSIC_BAKE_GUARD_RATIO * size)
+        return term_from_weights((OTHER, 0) for _ in range(UNREADABLE_STACK_WEIGHTS))
     keys = patched_weights(tensors, lora_stack, resolve_lora_path)
     return term_from_weights((weight_class(key, tensors), tensors[key].nbytes) for key in keys)
 
@@ -238,7 +258,7 @@ def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, h
 
 
 __all__ = ["CLASSIC_BAKE_BYTES_PER_WEIGHT", "CLASSIC_BAKE_FIXED_BYTES", "CLASSIC_BAKE_GUARD_RATIO",
-           "FP8_QUANTIZED", "FULL_PRECISION", "GATE_HAS_NOT_PASSED", "IN_PLACE_BAKE_FIXED_BYTES",
-           "IN_PLACE_BAKE_PROVEN", "MEASURED_LARGEST_WEIGHT_BYTES", "OTHER", "classic_bake_bytes",
-           "in_place_bake_bytes", "patched_weights", "priced", "probe", "stack_bytes", "term_from_weights",
-           "weight_class"]
+           "FP8_QUANTIZED", "FULL_PRECISION", "GATE_HAS_NOT_PASSED", "GUARDED_BY_BYTES",
+           "IN_PLACE_BAKE_FIXED_BYTES", "IN_PLACE_BAKE_PROVEN", "MEASURED_LARGEST_WEIGHT_BYTES", "OTHER",
+           "UNREADABLE_STACK_WEIGHTS", "classic_bake_bytes", "in_place_bake_bytes", "patched_weights", "priced",
+           "probe", "stack_bytes", "term_from_weights", "weight_class"]

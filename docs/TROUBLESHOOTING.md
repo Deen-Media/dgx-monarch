@@ -736,12 +736,11 @@ you may see:
   then baked in place when the classic bake does not fit. Change nothing else
   on the Init node between the two renders: the PASS counts only for the same
   settings with the switch on. Or free memory, or leave the switch on.
-- **A BF16 or FP16 file is priced high.** No measurement of the classic bake
-  on a full-precision file exists yet, so its patched weights are charged
-  0.75 of their bytes. The BF16 Wan-Animate 2 memory-saver graph, which ships
-  with the switch off, may be refused at its LoRA change on a fresh pair for
-  that reason until its combination has a gate PASS. Leaving `lora_low_rss`
-  on avoids the classic bake altogether.
+- **A BF16 or FP16 file is priced on the quantized files' figures.** No
+  measurement of the classic bake on a full-precision file exists yet, so
+  its stack is charged the same 2 GiB plus 7.5 MiB a patched weight, and the
+  figure may move once one is taken. Leaving `lora_low_rss` on avoids the
+  classic bake altogether.
 
 The default, `lora_low_rss` on, is not affected ([DESIGN](DESIGN.md), "A LoRA
 stack's classic bake has a price").

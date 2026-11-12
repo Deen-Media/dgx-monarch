@@ -1742,7 +1742,7 @@
       "test_a_cast_resident_gets_no_backup_credit": "446bb92e44e8fd22",
       "test_a_clear_is_weighed_against_the_price_a_cleared_box_pays": "833f5fa49361d082",
       "test_a_lora_the_backup_does_not_cover_still_reloads": "b96b9c0ca87c8e5b",
-      "test_a_lora_the_held_stack_lacks_keeps_146s_price_and_card": "5a378774822109cc",
+      "test_a_lora_the_held_stack_lacks_keeps_146s_price_and_card": "656e2c9048451ecf",
       "test_a_partly_loaded_resident_carries_no_swap_credit": "63f2b95c5c17df50",
       "test_a_reorder_is_credited_the_backup": "de8daa564aa89194",
       "test_a_slab_resident_is_never_told_its_drop_copies_nothing": "fc7529dc76b2c1fa",
