@@ -668,7 +668,7 @@ What to know:
   ([DESIGN](DESIGN.md), "The driver encodes a batch of images one image a
   call").
 
-**Before a decode it cannot fit, the driver gives back what is idle.** One
+**Before a decode it cannot fit, the driver frees what the decode needs.** One
 more case of the same kind. ComfyUI prices a VAE decode, finds its free memory
 under the price, logs `0 models unloaded.` (with DynamicVRAM on it unloads no
 model for a VAE) and decodes whole anyway. On a discrete GPU that ends in an
@@ -678,34 +678,37 @@ render's decode took the box to 6.7 GiB available while the driver still held
 32 GiB of text encoders that no later node needed. The render finished and
 nothing failed, but nothing was holding the box there either. So on the same
 GPUs, when the driver's ComfyUI is about to run a decode it prices above its
-free memory, the pack first unloads the models ComfyUI holds in the driver
-and, if that is not enough and no render is in flight, asks the Workers to
-release their cached memory. Then ComfyUI's decode runs unchanged. Confirm the
-driver log line `unified memory: before a VAE decode that ComfyUI prices above
-its free memory`. When it acts it logs one line that starts `decode relief:`
-with ComfyUI's price, what it unloaded and what MemAvailable read on each
-side. What to know:
+free memory, the pack first has ComfyUI free that much from the models it
+holds idle (text encoders, CLIP vision), through ComfyUI's own call. Then
+ComfyUI's decode runs unchanged. Confirm the driver log line `unified memory:
+before a VAE decode that ComfyUI prices above its free memory`. When it acts
+it logs one line that starts `decode relief:` with ComfyUI's price, the idle
+models it freed from, and what MemAvailable read on each side. What to know:
 
-- The decode is ComfyUI's own call with the same arguments, and unloading
+- The decode is ComfyUI's own call with the same arguments, and freeing
   changes no weight. A video or a single image decodes to the same bits as
   before. A decode of several images takes as many a batch as ComfyUI's free
-  memory allows, as it always did; the relief raises that figure on a tight
-  box, so such a decode batches as it would on a roomy one.
-- What it costs when it acts: the text encoder loads again when you next
-  change the prompt's text (an unchanged prompt pays nothing), and the next
-  render's first step re-grows the Workers' cache if they were asked.
+  memory allows, as it always did.
+- The VAE in hand and every diffusion model stay loaded. A decode inside a
+  running sampler (a preview node that decodes at every step) frees nothing.
+- What it costs when it acts: a text encoder that gave up memory loads it
+  again when you next change the prompt's text. An unchanged prompt pays
+  nothing.
 - It adds room and does not bound a decode. If the line ends `is still priced
-  above the ... free and runs as ComfyUI runs it`, nothing idle was left to
-  give back: use VAE Decode (Tiled), a shorter clip or a smaller frame.
-- It never acts while a render this driver started is still in flight (a
-  KSampler Pipeline decoding one result while the next samples), and says so
-  once: `the driver kept what it holds because ...`.
+  above the ... free and runs as ComfyUI runs it`, or says `ComfyUI held no
+  idle model here to free`, nothing idle was left: use VAE Decode (Tiled), a
+  shorter clip or a smaller frame.
+- It keeps everything while a render this driver started is still in flight
+  (a KSampler Pipeline decoding one result while the next samples), under
+  `DGXM_DISABLE_DRIVER_UNLOAD=1`, and with DynamicVRAM off, where ComfyUI
+  unloads for the decode itself. It says why once: `the driver kept what it
+  holds because ...`.
 - `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns it off, for
   diagnosis. If a call it makes fails, it steps aside with one WARNING and
   ComfyUI's own decode runs. `dgxm doctor`'s `driver memory reading` row adds
   a clause only when it is off, stepped aside or not installed
   ([DESIGN](DESIGN.md), "Before a decode priced above free memory, the driver
-  gives back what is idle").
+  frees what the decode needs").
 
 ## 13. uly2+fsdp / ring2+fsdp render deadlocks (hangs, no error)
 

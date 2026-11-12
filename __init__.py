@@ -40,8 +40,8 @@ driver_uma_memory.install_driver()
 vae_encode_item.install_driver()
 
 # On the same GPUs, before a VAE decode that ComfyUI prices above its free
-# memory, this process unloads the models it holds idle and asks the Workers
-# to release cached memory, then runs ComfyUI's decode unchanged
+# memory, this process has ComfyUI free what the decode needs from the models
+# it holds idle, then runs ComfyUI's decode unchanged
 # (src/dgx_monarch/vae_decode_relief.py). It never raises, it steps aside if a
 # call it makes fails, and DGXM_DISABLE_VAE_DECODE_RELIEF=1 turns it off.
 vae_decode_relief.install_driver()

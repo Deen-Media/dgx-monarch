@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from .. import mesh_setup, runtime_observer, vae_decode_relief
+from .. import mesh_setup, runtime_observer
 from ..log import get_logger
 from ..refusal import parse_leading_refusal_tag
 from ..retry_policy import retry_twice
@@ -422,7 +422,6 @@ class PendingRender:
                 results, self._topo, self._latent, self._future)
             phase = "release"
             self._close(abandoned=False)
-            vae_decode_relief.note_mesh(self._handle)  # lease retired: a decode may now ask these Workers
             runtime_observer.completed(self._execution_scope)
             return finished
         except BaseException as exc:

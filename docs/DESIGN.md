@@ -2242,8 +2242,8 @@ each answer and never cached with the rest of the payload), and doctor's
 `driver memory reading` row repeats it: on, off by the switch, or stepped
 aside.
 
-**Before a decode priced above free memory, the driver gives back what is
-idle.** ComfyUI prices a VAE decode and asks its loader for that much room.
+**Before a decode priced above free memory, the driver frees what the decode
+needs.** ComfyUI prices a VAE decode and asks its loader for that much room.
 With DynamicVRAM on, every model in the driver is dynamic, the loader unloads
 none of them for another dynamic model and logs `0 models unloaded.`, and the
 decode runs whole anyway, because its batch is at least one item. On a
@@ -2255,61 +2255,71 @@ with 6.7 GiB read as free, used 9.3 and took the box to 6.7 GiB available
 while the driver held 32 GiB of text encoders no later node needed; and a
 decode priced at 5.6 GiB started with 4.9 read as free and took the box from
 12.5 to 7.8 GiB. No fault followed either. So on the same GPUs as the
-reading, and by default, `vae_decode_relief` wraps `VAE.decode` in the
-driver. When the decode's price plus ComfyUI's reserve exceeds what ComfyUI
-reads as free, it first unloads the models ComfyUI holds in the driver,
-through ComfyUI's own `/free` sequence. If the decode is still priced above
-the reading and a mesh is live and idle, it asks the Workers to release their
-cached allocator blocks (`clear_vram` at `soft`, which unloads no model).
-Then ComfyUI's decode runs. Six things bound it:
+reading, with DynamicVRAM on, and by default, `vae_decode_relief` wraps
+`VAE.decode` in the driver. When the decode's price plus ComfyUI's reserve
+exceeds what ComfyUI reads as free, it calls ComfyUI's own `free_memory` for
+that requirement, as ComfyUI's classic loader does there, keeping the VAE in
+hand and every diffusion model loaded. ComfyUI frees just what the call needs
+from the other models it holds, in its own order, and a DynamicVRAM model
+gives up pages without being unloaded where that is enough. Then ComfyUI's
+decode runs. Seven things bound it:
 
 - **The trigger is ComfyUI's own.** The price is `VAE.memory_used_decode` and
   the requirement is the one `load_models_gpu` computes from it
   (`minimum_inference_memory`, `extra_reserved_memory`), both called and not
   copied, against the reading ComfyUI takes a moment later. It is the state in
   which ComfyUI itself logs `0 models unloaded.` A decode that fits costs two
-  calls and nothing else.
-- **No output changes.** The wrapper calls ComfyUI's decode with the caller's
+  calls and nothing else. The VAE's own weights are left out of the trigger:
+  DynamicVRAM places them against its own budget.
+- **No result changes.** The wrapper calls ComfyUI's decode with the caller's
   own arguments in every path and computes nothing that reaches the result. A
   decode of one item (every video, every single image) takes a batch of one
   before and after. A decode of several images takes `free / price` images a
-  batch, as it always did; the relief only raises a tight box's free figure
-  towards a roomy box's. Unloading changes no weight: ComfyUI loads a model
-  again through its own loader when a node next asks for it.
-- **Never while a render is in flight.** A pipelined render decodes one result
-  while later ones sample, and their models and the Workers' caches are in
-  use. The relief asks `driver_unload.busy_reason`, the check the render-site
-  unload makes, and then keeps everything and says so once. A synchronous
-  render has retired its lease and its progress tracker before its sampler
-  node returns, so a decode after it is free to act.
-- **It adds room; it does not bound a decode.** With nothing idle the decode
-  runs as ComfyUI runs it, and one line says so.
-- **What it costs when it acts.** The text encoder loads again when a prompt's
-  text next changes (an unchanged prompt's conditioning is cached), a stock
-  diffusion model the driver held loads again at its next render, the VAE in
-  hand is staged again by the decode itself, and the next render's first step
-  re-grows the Workers' cache if they were asked (a Worker that held a VAE for
-  Worker-assisted decode drops it with its cache and loads it again at its
-  next unit). With only the VAE in hand held, nothing is unloaded. Measured
-  on this release's own unload at the render-site checks (2026-11-11 and
-  2026-11-12, the first Spark under its clock cap, max 2100 MHz): unloading
-  the LTX text encoder and two VAEs returned 30.6 GiB, and one Worker's
-  released cache returned 10.2 and 11.9 GiB. ComfyUI's prices run above
-  the use (16.1 GiB priced for the decode that used 9.3), so some reliefs are
-  not needed; each costs that and nothing more.
+  batch, as it always did, and that free figure already counted what
+  DynamicVRAM could evict (`ModelPatcher.get_free_memory`), so the count
+  barely moves. Freeing changes no weight: ComfyUI faults a page back, or
+  loads a model again, with the same bytes when a node next asks for it.
+- **Never inside a running sampler.** Preview nodes call `VAE.decode` at every
+  step, and a stock sampler in the driver is nothing the pack's own render
+  tracker sees. Freeing there could unload the model being sampled, which
+  ComfyUI's dynamic path never does. So `comfy.samplers.CFGGuider.sample` is
+  wrapped with a per-thread depth count, the relief does nothing while it is
+  above zero, and the decode wrapper is never installed without that guard.
+  Diffusion models are also never freed, whoever asks.
+- **Never while a render this driver started is in flight.** A pipelined
+  render decodes one result while later ones sample. The relief asks
+  `driver_unload.busy_reason`, the check the render-site unload makes, and
+  then keeps everything and says so once. A synchronous render has retired
+  its lease and its progress tracker before its sampler node returns.
+- **It honours the unload switch and DynamicVRAM off.**
+  `DGXM_DISABLE_DRIVER_UNLOAD=1` means the driver unloads none of ComfyUI's
+  models on its own, and the relief then keeps everything. With DynamicVRAM
+  off ComfyUI's classic loader already unloads for the decode, and unloading a
+  classic model on unified memory copies it first, so the relief does nothing.
+- **It adds room; it does not bound a decode.** It frees what ComfyUI prices,
+  and ComfyUI's prices have run above the use in every record (16.1 GiB priced
+  for the decode that used 9.3). With nothing idle the decode runs as ComfyUI
+  runs it, and one line says so. The Workers are not asked for their cached
+  memory here: the one Worker call there is reaches every box, and only the
+  driver host's Workers share the decode's memory.
 - **It steps aside, it does not break a decode.** If a call it makes raises,
   ComfyUI's own decode answers then and for the life of the process, with one
-  WARNING. A Worker call that fails or cannot claim the mesh is a skip, not a
-  fault. A VAE that cannot price its latent is that decode's matter alone.
+  WARNING. A VAE that cannot price its latent is that decode's matter alone.
   ComfyUI's interrupt passes through.
 
-`DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns it off, for diagnosis;
-the reading's switch does not. The driver publishes its state beside the
-encode rule's in `/dgxm/telemetry` (`driver_rules`), and doctor's `driver
-memory reading` row adds a clause only when it is off, stepped aside or not
-installed. `VAE.decode_tiled` is not wrapped (it is already the bounded form)
-and neither is `VAE.encode`. **NOT RUN** on hardware as merged: the two
-records above are of the build before it (TROUBLESHOOTING #12).
+What it costs when it acts: a text encoder that gave up pages faults them
+back, or loads again, when a prompt's text next changes; an unchanged
+prompt's conditioning is cached. On this release's own unload at the
+render-site checks (2026-11-11 and 2026-11-12, the first Spark under its
+clock cap, max 2100 MHz), unloading the LTX text encoder and two VAEs
+returned 30.6 GiB. `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns the
+relief off, for diagnosis; the reading's switch does not. The driver
+publishes its state beside the encode rule's in `/dgxm/telemetry`
+(`driver_rules`), and doctor's `driver memory reading` row adds a clause only
+when it is off, stepped aside or not installed. `VAE.decode_tiled` is not
+wrapped (it is already the bounded form) and neither is `VAE.encode`. **NOT
+RUN** on hardware as merged: the two records above are of the build before it
+(TROUBLESHOOTING #12).
 
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a
@@ -3039,8 +3049,8 @@ dgx-monarch/
 │   ├── vae_encode_item.py     # on unified memory, the driver encodes a batch
 │   │                          #   of images one image a call (§5.9)
 │   ├── vae_decode_relief.py   # on unified memory, before a VAE decode ComfyUI
-│   │                          #   prices above its free memory the driver gives
-│   │                          #   back idle models and Worker caches (§5.9)
+│   │                          #   prices above its free memory the driver has it
+│   │                          #   free that much from its idle models (§5.9)
 │   ├── vae_decode_route.py    # Worker-assisted VAE decode (§5.6): the knob,
 │   │                          #   the keyed stock-decode wrappers and the split
 │   ├── vae_decode_plan.py     # unit plans read off ComfyUI's own loops, and

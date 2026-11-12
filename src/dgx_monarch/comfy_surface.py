@@ -62,9 +62,10 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.model_management", "load_models_gpu", "force_full_load", positional=("models",)),
     _call("comfy.model_management", "unload_all_models"),
     _call("comfy.model_management", "soft_empty_cache"),
-    # What load_models_gpu requires free for a priced call; vae_decode_relief calls both.
+    # What load_models_gpu requires free for a priced call, and the classic loader's way to free it (vae_decode_relief).
     _call("comfy.model_management", "minimum_inference_memory"),
     _call("comfy.model_management", "extra_reserved_memory"),
+    _call("comfy.model_management", "free_memory", "keep_loaded", "for_dynamic", positional=("memory_required", "device")),
     _call("comfy.model_management", "cast_to_device", "copy", positional=("tensor", "device", "dtype")),
     _call("comfy.model_management", "lora_compute_dtype", positional=("device",)),
     _call("comfy.model_management", "cast_to", "dtype", "device", positional=("weight",)),
