@@ -346,7 +346,8 @@ def _classic_bake_probe(worker: Any, store: Any, stored: Any, spec: dict, held: 
 
 def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
            pinned_staging: bool | None, rescue_consent: dict | None,
-           charged: int, in_place_bake_proven: bool = False) -> RankPrice:
+           charged: int, in_place_bake_proven: bool = False,
+           other_loads_first: bool = False) -> RankPrice:
     from .model_store import (
         SLAB_VOUCHED_FAMILIES,
         _slab_capable_path,
@@ -377,6 +378,13 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         stored, path, spec.get("loras"), capacity_quote.default_resolve_lora_path)
     # A slot ``ensure`` sets aside is never offered the in-place bake, whatever permission came.
     bake_allowed = in_place_bake_proven and (in_place_fallback.SET_ASIDE if set_aside else True)
+    # ``ensure`` reuses only on the files the slot loaded: a checkpoint or a LoRA of this stack
+    # that changed on disk since makes the same request a reload, not a reuse.
+    moved = set_aside or (held and in_place_fallback.stack_files_moved(
+        stored, spec.get("loras"), capacity_quote.default_resolve_lora_path))
+    # The store decides this slot's hot swap when its load runs: by then an earlier slot of the
+    # same request (the conditional model of a pair) holds its model, whatever it holds now.
+    other_held = other is not None or other_loads_first
     return capacity_quote.price(
         path=path,
         unet_name=unet_name,
@@ -396,11 +404,13 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         node_options=options,
         lora_stack=spec.get("loras"),
         fit_probe=_classic_bake_probe(worker, store, stored, spec, held, bake_allowed,
-                                      other_held=other is not None, covered=covered, charged=charged),
+                                      other_held=other_held, covered=covered, charged=charged),
         slot=slot,
         pinned_staging=pinned_staging,
-        # A slot baked in place that ``ensure`` will not reuse for this request is priced as a load.
-        store_snapshot=in_place_fallback.quote_snapshot(store, stored, snapshot, slot, in_place_bake_proven),
+        # A slot ``ensure`` will not reuse for this request (baked in place with no permission, or
+        # a file changed on disk) is priced as a load.
+        store_snapshot=in_place_fallback.quote_snapshot(
+            store, stored, snapshot, slot, in_place_bake_proven, request_key, moved),
         budget_bytes_already_charged=charged,
         request_key=request_key,
     )
@@ -450,6 +460,7 @@ def quote(worker: Any, request: Any) -> dict:
     snapshot = _with_resident_bytes(store.snapshot(), facts, keys, backups, partials, drops)
     pinned = _pinned_staging()
     charged = 0
+    earlier: set[str] = set()  # the slots this request loads before the one being priced
     for spec in _my_slots(worker, specs):
         try:
             row = _price(worker, store, spec, snapshot=snapshot,
@@ -457,13 +468,15 @@ def quote(worker: Any, request: Any) -> dict:
                          rescue_consent=consent if isinstance(consent, dict) else None,
                          charged=charged,
                          in_place_bake_proven=(isinstance(request, dict)
-                                               and request.get("in_place_bake_proven") is True))
+                                               and request.get("in_place_bake_proven") is True),
+                         other_loads_first=bool(earlier - {_slot_of(spec)}))
         except Exception as exc:
             # No claim either way, which admits: a probe this rank could not run
             # is not evidence that the load does not fit here.
             log.warning("capacity quote made no claim for slot %s (%s)",
                         _slot_of(spec), failure_summary(exc))
             row = _no_claim(_slot_of(spec), failure_summary(exc))
+        earlier.add(_slot_of(spec))
         charged += _charged_bytes(row, spec)
         # ``shmem_bytes`` is the ladder's own read and is not touched here: one
         # /proc/meminfo parser, and one read per row.

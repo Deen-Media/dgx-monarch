@@ -275,7 +275,7 @@ class ModelStore:
         base_key, request_key = self.make_keys(unet_name, options, lora_stack, quant_kind)
         authoritative_slab_retry = False
 
-        if stored is not None and stored.base_key == base_key and (
+        if in_place_fallback.holds_base(stored, base_key) and (
             store_identity.base_artifact_identity(stored.artifact_identity)
             != store_identity.base_artifact_identity(requested_identity)
             or not store_detect.fsdp_reuse_matches_proof(stored, fsdp_checkpoint_proof)
@@ -287,7 +287,7 @@ class ModelStore:
             )
             stored = None
 
-        if stored is not None and stored.base_key == base_key:
+        if in_place_fallback.holds_base(stored, base_key):
             # Same checkpoint: detection already ran at load time, and the
             # option-derived kind can be weaker (scaled-fp8 checkpoints load
             # through default options). Compare with the detected kind so an
@@ -308,9 +308,9 @@ class ModelStore:
             log.info("model store [%s]: %s%s -- %s", slot, TRANSITION_REUSE, reload_note, unet_name)
             return stored.active_patcher, TRANSITION_REUSE
 
-        if stored is not None and stored.base_key == base_key:  # before either swap (#129)
+        if in_place_fallback.holds_base(stored, base_key):  # before either swap (#129)
             lora_quant_guard.assert_lora_quant_supported(stored.family, stored.quant_kind, lora_stack)
-        if stored is not None and stored.base_key == base_key and self.lora_low_rss \
+        if in_place_fallback.holds_base(stored, base_key) and self.lora_low_rss \
                 and (stored.unbake is not None or not stored.lora_sig):
             # Low-RSS hot-swap restores verified bytes and re-bakes in place. An
             # ordinary failure drops the slot and falls through to a full load; an
@@ -323,7 +323,7 @@ class ModelStore:
             if result is not None:
                 return result
 
-        if stored is not None and stored.base_key == base_key and not self.lora_low_rss \
+        if in_place_fallback.holds_base(stored, base_key) and not self.lora_low_rss \
                 and not stored.base_baked:
             # Hot-swap (clone the pristine base, re-apply loras), or None when the
             # swap would copy the model off the GPU first: then a fresh load.

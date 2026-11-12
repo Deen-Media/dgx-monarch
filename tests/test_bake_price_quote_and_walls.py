@@ -294,6 +294,78 @@ def test_a_pairs_second_model_takes_the_bake_that_fits_the_budget_the_first_leav
     assert "identity-gate PASS" in refused["measured"]["in_place_note"]
 
 
+def test_an_unchanged_request_is_not_quoted_a_reuse_once_a_file_it_names_changed_on_disk(quote, monkeypatch):
+    """``ensure`` reuses on the key and on the files the slot loaded; read by the key alone it was quoted nothing."""
+    from dgx_monarch.gate_ledger import artifact_signature
+
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    store = _b3_store()
+    spec = {"unet_name": BASE, "options": {}, "loras": [{"name": LORA, "strength": 1.0}], "slot": "cond"}
+    checkpoint = artifact_signature(ms.resolve_model_path("", BASE))
+    lora = artifact_signature(cq.default_resolve_lora_path(LORA))
+
+    def loaded(checkpoint_print, lora_print):
+        return {"artifacts": [{"kind": "diffusion_models", "name": BASE, "signature": checkpoint_print},
+                              {"kind": "loras", "name": LORA, "signature": lora_print}]}
+
+    store.current.artifact_identity = loaded(checkpoint, lora)
+    same = _rows(store, monkeypatch, [spec], 120 * GIB)[0]
+    assert same["would_load"] == cq.WOULD_LOAD_REUSE and "bake" not in (same["measured"] or {})
+    for moved in (loaded("another file's fingerprint", lora), loaded(checkpoint, "another file's fingerprint")):
+        store.current.artifact_identity = moved
+        row = _rows(store, monkeypatch, [spec], 120 * GIB)[0]
+        # The store reloads: base and stack fresh, with the classic bake (this fixture's headers map nothing).
+        assert row["would_load"] == cq.WOULD_LOAD_SWAP and row["measured"]["bake"] == "classic"
+        assert row["measured"]["required_bytes"] > UNREAD_TERM
+    # A changed request on the same slot keeps the price it had: only a would-be reuse is un-reused.
+    store.current.artifact_identity = loaded(checkpoint, lora)
+    assert "bake" not in _rows(store, monkeypatch, [dict(spec, loras=COVERED)], 120 * GIB)[0]["measured"]
+
+
+def test_a_pairs_second_model_reads_the_first_slot_as_held_as_the_store_will_find_it(quote, monkeypatch):
+    """The conditional slot is empty at the quote and loads first; the store then hot-swaps the second in place."""
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    store = _b3_store()
+    store.uncond, store.current = store.current, None
+    first = {"unet_name": "first.safetensors", "options": {}, "slot": "cond"}
+    second = {"unet_name": BASE, "options": {}, "slot": "uncond",
+              "loras": [{"name": NARROW, "strength": 1.0}]}  # a file the held backup does not cover
+    alone = _rows(store, monkeypatch, [second], 200 * GIB)[0]
+    assert alone["slot"] == "uncond" and alone["measured"]["bake"] == "classic"  # no other model: a fresh load
+    paired = _rows(store, monkeypatch, [first, second], 200 * GIB)[1]
+    assert paired["slot"] == "uncond" and "bake" not in paired["measured"]  # beside the first: the hot swap
+
+
+def test_one_rewritten_file_in_a_stack_of_two_held_files_ends_the_shortcut(tmp_path):
+    from dgx_monarch.gate_ledger import artifact_signature
+
+    checkpoint, _resolve = _files(tmp_path, ["blocks.0.attn"])
+    one, two = tmp_path / "one.safetensors", tmp_path / "two.safetensors"
+
+    def write(path, stems):
+        entries = {}
+        for stem in stems:
+            entries[f"diffusion_model.{stem}.lora_down.weight"] = ("BF16", [4, 4])
+            entries[f"diffusion_model.{stem}.lora_up.weight"] = ("BF16", [4, 4])
+        _write_safetensors(path, entries)
+
+    write(one, ["blocks.0.attn"])
+    write(two, ["blocks.0.mlp"])
+    resolve = _resolver({"one.safetensors": str(one), "two.safetensors": str(two)})
+    stored = _stored_with_backup(BACKED, lora_sig=(("one.safetensors", 1.0), ("two.safetensors", 1.0)))
+    stored.artifact_identity = {"artifacts": [
+        {"kind": "diffusion_models", "name": "base.safetensors", "signature": "x"},
+        {"kind": "loras", "name": "one.safetensors", "signature": artifact_signature(str(one))},
+        {"kind": "loras", "name": "two.safetensors", "signature": artifact_signature(str(two))}]}
+    both = [{"name": "one.safetensors", "strength": 0.5}, {"name": "two.safetensors", "strength": 0.5}]
+    assert fallback.backup_covers(stored, "/no/such/checkpoint", both, resolve)  # by name, no header read
+    assert not fallback.stack_files_moved(stored, both, resolve)
+    write(two, ["blocks.0.mlp", "blocks.1.attn"])  # the second file alone, to a layer the backup lacks
+    assert not fallback.backup_covers(stored, checkpoint, both, resolve)
+    assert not fallback.backup_covers(stored, "/no/such/checkpoint", both, resolve)  # no shortcut by the first's name
+    assert fallback.stack_files_moved(stored, both, resolve) and not fallback.stack_files_moved(stored, both[:1], resolve)
+
+
 def _stored_with_backup(keys, lora_sig=(("held.safetensors", 1.0),), patches=None):
     backup = {key: object() for key in keys}
     return types.SimpleNamespace(

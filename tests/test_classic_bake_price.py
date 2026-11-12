@@ -464,6 +464,23 @@ def test_a_base_that_carries_a_stack_is_dropped_and_reloaded_bare_never_baked_on
         assert store.dropped == ["cond"] and loaded == ["bare"]
 
 
+def test_another_models_bare_base_is_dropped_and_this_base_loaded_never_baked_on(worker_side):
+    """A bare stock base, but another model's: the slot holds this base only by the whole key."""
+    worker_side.avail_gib = 35.0
+    store = _store(_stored(base_key=("other.safetensors", ())))
+    loaded = []
+
+    def load_bare():
+        assert store._stored("cond") is None  # the other model went first
+        loaded.append("bare")
+        store.slots["cond"] = _stored()
+
+    with fallback.permission(ALLOW):
+        assert _take(store, load_bare) == ("patcher", "hot-swap")
+    assert store.dropped == ["cond"] and loaded == ["bare"]
+    assert worker_side.baked == [("cond", "m.safetensors", ("m.safetensors", ()))]
+
+
 def test_the_default_and_a_request_with_no_stack_never_reach_the_rule(worker_side):
     with fallback.permission(ALLOW):
         assert _take(_store(_stored(), low_rss=True)) is None

@@ -2424,9 +2424,21 @@ is not yet read, and the price does not depend on it. Three rules follow.
   dtype, for one) is a fresh load, and is priced as one. A slot whose
   checkpoint file has changed on disk since its load is set aside by the
   store: base and stack load fresh and no in-place bake is offered, and the
-  quote prices that. For the second model of a dual-model render the bake is
-  chosen against the reading less the first model's charge, as the store
-  chooses it beside the loaded first model. Where the slot holds the
+  quote prices that. A request whose key is the slot's own is quoted a reuse
+  only while the checkpoint and the stack's LoRA files still carry the
+  fingerprints the slot recorded, which is the store's own rule for a reuse.
+  For the second model of a dual-model render the bake is chosen against the
+  reading less the first model's charge, as the store chooses it beside the
+  loaded first model, and the first slot is counted as held, as the store
+  finds it. Three places still work out a second time what the store
+  decides, and are known duplications until one function serves both sides.
+  The pair's budget is the reading less the first model's peak price and not
+  what its load leaves, which errs toward a refusal. The quote matches the
+  slab-retry flag's base by file name where the store compares the whole key;
+  no classic bake is in play there, since slab residency needs `lora_low_rss`
+  on. And `in_place_fallback.loads_fresh` restates the gates of
+  `store_bake.copies_off_the_gpu` (the other slot, stock residency, placed
+  bytes) and does not share them. Where the slot holds the
   base bare the bake runs on it. Where it holds anything else (nothing,
   another model, this base with a stack of either kind) the slot is dropped,
   the base loads bare at the stock price and the bake runs on that: a stack

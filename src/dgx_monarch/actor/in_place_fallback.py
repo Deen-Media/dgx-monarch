@@ -46,7 +46,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 from collections.abc import Callable, Iterator
-from typing import Any
+from typing import Any, TypeGuard
 
 from .. import capacity_classic_bake
 from ..log import get_logger
@@ -112,13 +112,14 @@ def held_bytes(stored: Any) -> int:
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
 
-def holds_base(stored: Any, base_key: Any) -> bool:
-    """Whether this slot holds the request's base, as ``ModelStore.ensure`` compares it.
+def holds_base(stored: Any, base_key: Any) -> TypeGuard[Any]:
+    """Whether this slot holds the request's base: the one comparison ``ModelStore.ensure`` makes.
 
-    The comparison is the store's own: the whole base key, the file name and
-    the loader options together. A request that keeps the file and changes an
-    option (the weight dtype, for one) asks for another base, and the store
-    drops the slot and loads fresh.
+    ``ensure`` calls this at each of its branches, ``take`` calls it, and the
+    quote calls it with a key from the store's own builder. It compares the
+    whole base key, the file name and the loader options together. A request
+    that keeps the file and changes an option (the weight dtype, for one)
+    asks for another base, and the store drops the slot and loads fresh.
     """
     return stored is not None and bool(base_key) and getattr(stored, "base_key", None) == base_key
 
@@ -246,10 +247,29 @@ def route(store: Any, stored: Any, held: bool, allowed: bool | str) -> dict[str,
             "in_place": True if allowed is True else (allowed or capacity_classic_bake.GATE_HAS_NOT_PASSED)}
 
 
-def quote_snapshot(store: Any, stored: Any, snapshot: dict, slot: str, allowed: bool) -> dict:
-    """The snapshot the quote prices against: a slot ``ensure`` will not reuse is not read as a reuse."""
+def stack_files_moved(stored: Any, lora_stack: list | None, resolve_lora_path: Callable[[str], str]) -> bool:
+    """Whether a LoRA file of this stack differs on disk from the fingerprint the slot recorded for it."""
+    names = {entry.get("name") for entry in lora_stack or () if isinstance(entry, dict)}
+    return not _held_files_unchanged(stored, names, resolve_lora_path)
+
+
+def quote_snapshot(store: Any, stored: Any, snapshot: dict, slot: str, allowed: bool,
+                   request_key: str = "", moved: bool = False) -> dict:
+    """The snapshot the quote prices against: a slot ``ensure`` will not reuse is not read as a reuse.
+
+    Two cases. A slot baked in place that this request may not reuse
+    (``must_reload``). And a request whose key is the slot's own while a file
+    it names has changed on disk since the slot loaded it (``moved``: the
+    checkpoint, or a LoRA of the stack): ``ensure`` reuses only when the
+    recorded fingerprints match too, so it reloads, with the classic bake
+    where the stack loads fresh. Read as a reuse, that request was quoted
+    nothing.
+    """
     entry = snapshot.get(slot)
-    if stored is None or not isinstance(entry, dict) or not must_reload(store, stored, allowed):
+    if stored is None or not isinstance(entry, dict):
+        return snapshot
+    stale = moved and bool(request_key) and entry.get("request_key") == request_key
+    if not stale and not must_reload(store, stored, allowed):
         return snapshot
     return {**snapshot, slot: {**entry, "request_key": None, "swaps_in_place": False}}
 
@@ -339,4 +359,5 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
 
 
 __all__ = ["SET_ASIDE", "TRIED", "backup_covers", "checkpoint_moved", "fresh_load_probe", "held_bytes", "holds_base",
-           "is_bare_stock", "loads_fresh", "must_reload", "permission", "permitted", "quote_snapshot", "route", "take"]
+           "is_bare_stock", "loads_fresh", "must_reload", "permission", "permitted", "quote_snapshot", "route",
+           "stack_files_moved", "take"]
