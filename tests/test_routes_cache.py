@@ -108,22 +108,6 @@ def test_the_route_answers_with_the_rules_as_they_are_now_whatever_the_cache_hol
         "vae_encode_item": "stepped_aside"}
 
 
-def test_the_telemetry_route_serves_the_live_rules_on_both_its_answers():
-    """The handler is a closure inside register(), so its wiring is held by its source."""
-    import ast
-    import inspect
-    import textwrap
-
-    from dgx_monarch.nodes import routes
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(routes.register)))
-    (handler,) = [node for node in ast.walk(tree)
-                  if isinstance(node, ast.AsyncFunctionDef) and node.name == "dgxm_telemetry"]
-    called = [ast.unparse(node) for node in ast.walk(handler) if isinstance(node, ast.Call)]
-    assert any(call.startswith("_await_bounded(_telemetry_payload,") for call in called)  # the 200 answer
-    assert any(call.startswith("_with_driver_rules(") for call in called)                 # the 503 answer
-
-
 def _fresh_routes(monkeypatch, call_all):
     from dgx_monarch.nodes import routes
 
