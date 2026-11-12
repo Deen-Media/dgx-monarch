@@ -347,9 +347,10 @@ def _with_driver_rules(payload: dict) -> dict:
     carries ``telemetry_error``), or up to a second old; a rule that has since
     stepped aside must not be reported as on.
     """
-    from .. import vae_encode_item
+    from .. import vae_decode_relief, vae_encode_item
 
-    return {**payload, "driver_rules": {"vae_encode_item": vae_encode_item.state()}}
+    return {**payload, "driver_rules": {"vae_encode_item": vae_encode_item.state(),
+                                        "vae_decode_relief": vae_decode_relief.state()}}
 
 
 def _telemetry_payload() -> dict:

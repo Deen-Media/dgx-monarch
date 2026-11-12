@@ -2250,6 +2250,106 @@ each answer and never cached with the rest of the payload), and doctor's
 `driver memory reading` row repeats it: on, off by the switch, or stepped
 aside.
 
+**Before a decode priced above free memory, the driver frees what the decode
+needs.** ComfyUI prices a VAE decode and asks its loader for that much room.
+With DynamicVRAM on, every model in the driver is dynamic, the loader unloads
+none of them for another dynamic model and logs `0 models unloaded.`, and the
+decode runs whole anyway, because its batch is at least one item. On a
+discrete GPU the allocator then fails at the card's limit and ComfyUI falls
+back to tiles. On unified memory nothing fails until the kernel does. On
+2026-11-12, in two one-GPU video renders on a DGX Spark under its clock cap
+(max 2100 MHz), a decode priced at 16.5 GiB with ComfyUI's reserve started
+with 6.7 GiB read as free, used 9.3 and took the box to 6.7 GiB available
+while the driver held 32 GiB of text encoders no later node needed; and a
+decode priced at 5.6 GiB started with 4.9 read as free and took the box from
+12.5 to 7.8 GiB. No fault followed either. Both graphs set `lora_low_rss`
+off, which keeps ComfyUI's weight backup on the Worker; rerun on a fresh
+fleet, the first graph read a low of 11.63 GiB with nothing given back, 11.41
+with the driver's memory reading switched off (so the reading is not what
+took the box down), and 34.47 with the Spark's default `lora_low_rss`. A
+driver that has run other graphs first holds
+their text encoders too, which is ordinary use. So on the same GPUs as the
+reading, with DynamicVRAM on, and by default, `vae_decode_relief` wraps
+`VAE.decode` in the driver. When the decode's price plus ComfyUI's reserve
+exceeds what ComfyUI reads as free, it calls ComfyUI's own `free_memory` for
+that requirement, as ComfyUI's classic loader does there, keeping every model
+loaded except the text encoders. ComfyUI frees just what the call needs from
+the text encoders it holds, in its own order, and a DynamicVRAM model gives
+up pages without being unloaded where that is enough. Then ComfyUI's decode
+runs. Eight things bound it:
+
+- **Only text encoders are freed.** By an allow-list, not a deny-list: a text
+  encoder is the one kind of model ComfyUI marks for certain (`is_clip` on its
+  patcher, set in `comfy.sd.CLIP`), nothing samples with one, and every gain
+  on record is one (24 and 7.7 GiB in the first record, 6.3 in the second). A
+  diffusion model, the VAE in hand, another VAE, CLIP vision, a ControlNet, an
+  adapter or a model patch is never touched, whoever calls, from whatever
+  thread and whatever sampler. A text encoder on another device than the
+  decode's is left too, since ComfyUI's call frees on one device.
+
+- **The trigger is ComfyUI's own.** The price is `VAE.memory_used_decode` and
+  the requirement is the one `load_models_gpu` computes from it
+  (`minimum_inference_memory`, `extra_reserved_memory`), both called and not
+  copied, against the reading ComfyUI takes a moment later. It is the state in
+  which ComfyUI itself logs `0 models unloaded.` A decode that fits costs two
+  calls and nothing else. The VAE's own weights are left out of the trigger:
+  DynamicVRAM places them against its own budget.
+- **No result changes.** The wrapper calls ComfyUI's decode with the caller's
+  own arguments in every path and computes nothing that reaches the result. A
+  decode of one item (every video, every single image) takes a batch of one
+  before and after. A decode of several images takes `free / price` images a
+  batch, as it always did, and that free figure already counted what
+  DynamicVRAM could evict (`ModelPatcher.get_free_memory`), so the count
+  barely moves. Freeing changes no weight: ComfyUI faults a page back, or
+  loads a model again, with the same bytes when a node next asks for it.
+- **Never while a sampler runs.** Preview nodes call `VAE.decode` at every
+  step, and a stock sampler in the driver is nothing the pack's own render
+  tracker sees. So `comfy.samplers.CFGGuider.sample` is wrapped with a
+  process-wide depth count, the relief does nothing while it is above zero,
+  whichever thread the decode comes from, and the decode wrapper is never
+  installed without that guard. ComfyUI runs one prompt at a time, so a
+  process-wide count loses nothing. A sampler that builds its own loop and
+  never reaches `CFGGuider.sample` is not counted; for that one the allow-list
+  is the whole protection, and it is enough.
+- **Its tests of "in use" are its own.** The render-site unload asks
+  `driver_unload.busy_reason` because it drops every model and calls the
+  Workers. The relief does neither, and it does not ask that check: on
+  2026-11-12 the check read "a call to the Workers is still in flight" after a
+  render had finished, and a relief that leaned on it would go dead exactly
+  where a decode follows a render. The sampler guard and the allow-list are
+  the whole test. A render on the Workers uses no model in the driver's
+  process.
+- **It honours the unload switch and DynamicVRAM off.**
+  `DGXM_DISABLE_DRIVER_UNLOAD=1` means the driver unloads none of ComfyUI's
+  models on its own, and the relief then keeps everything. With DynamicVRAM
+  off ComfyUI's classic loader already unloads for the decode, and unloading a
+  classic model on unified memory copies it first, so the relief does nothing.
+- **It adds room; it does not bound a decode.** It frees what ComfyUI prices,
+  and ComfyUI's prices have run above the use in every record (16.1 GiB priced
+  for the decode that used 9.3). With nothing idle the decode runs as ComfyUI
+  runs it, and one line says so. The Workers are not asked for their cached
+  memory here: the one Worker call there is reaches every box, and only the
+  driver host's Workers share the decode's memory.
+- **It steps aside, it does not break a decode.** If a call it makes raises,
+  ComfyUI's own decode answers then and for the life of the process, with one
+  WARNING. A VAE that cannot price its latent is that decode's matter alone.
+  ComfyUI's interrupt passes through.
+
+What it costs when it acts: a text encoder that gave up pages faults them
+back, or loads again, when a prompt's text next changes; an unchanged
+prompt's conditioning is cached. What a freed page returns has no hardware
+record yet. The nearest is a whole unload, which the render-site checks make:
+on 2026-11-11 and 2026-11-12, with the first Spark under its clock cap (max
+2100 MHz), unloading the LTX text encoder and two VAEs whole returned 30.6
+GiB. `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns the
+relief off, for diagnosis; the reading's switch does not. The driver
+publishes its state beside the encode rule's in `/dgxm/telemetry`
+(`driver_rules`), and doctor's `driver memory reading` row adds a clause only
+when it is off, stepped aside or not installed. `VAE.decode_tiled` is not
+wrapped (it is already the bounded form) and neither is `VAE.encode`. **NOT
+RUN** on hardware as merged: the two records above are of the build before it
+(TROUBLESHOOTING #12).
+
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a
 purge, and a purge runs only when the thread that owns them allocates again
@@ -2977,6 +3077,9 @@ dgx-monarch/
 │   │                          #   in the driver is MemAvailable less a floor (§5.9)
 │   ├── vae_encode_item.py     # on unified memory, the driver encodes a batch
 │   │                          #   of images one image a call (§5.9)
+│   ├── vae_decode_relief.py   # on unified memory, before a VAE decode ComfyUI
+│   │                          #   prices above its free memory the driver has it
+│   │                          #   free that much from its text encoders (§5.9)
 │   ├── vae_decode_route.py    # Worker-assisted VAE decode (§5.6): the knob,
 │   │                          #   the keyed stock-decode wrappers and the split
 │   ├── vae_decode_plan.py     # unit plans read off ComfyUI's own loops, and
@@ -3235,7 +3338,7 @@ an enforced requirement. The current exceptions are:
 | `capacity_agreement.py` | 567 | the driver's collection, its one pure decision function and the fleet card it composes |
 | `actor/worker.py` | 509 | ordered checks and adapter installation for each freshly loaded base in `_inject_for_topology` |
 | `gate_ledger.py` | 527 | the ledger's protocol number and its burn history live together, so the record of why a version was retired cannot drift from the number itself |
-| `comfy_surface.py` | 528 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
+| `comfy_surface.py` | 533 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
 | `adapters/fsdp.py` | 589 | the FSDP launch contract in one place: admitted kinds and profiles, the live precision rescan, the wrap with ignored islands and quantized shards, the streaming shard build hand-off, and the shard-build price |
 | `nodes/gate_identity.py` | 583 | canonical normal/Fleet capability construction, proof-scope binding, authorization, and typed denial |
 | `nodes/loader_preflight.py` | 593 | the loader-site capacity answer in one place: the two windows, the residency ladder they are priced against and the slab rescue offer |

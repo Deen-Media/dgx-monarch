@@ -602,6 +602,29 @@
   trial switch `DGXM_VAE_ITEM_BATCHES` of an earlier build of this release,
   which also wrapped decode, is gone
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- On a DGX Spark, before a VAE decode that ComfyUI prices above its free
+  memory, the driver frees what the decode needs and then runs ComfyUI's
+  decode unchanged. With DynamicVRAM on, ComfyUI unloads no model for a VAE,
+  logs `0 models unloaded.` and decodes whole whatever its free memory reads,
+  and on unified memory no out-of-memory error stops it: on 2026-11-12, with
+  the Spark under its clock cap (max 2100 MHz), a one-GPU video render's
+  decode took the box to 6.7 GiB available while the driver held 32 GiB of
+  text encoders no later node needed. The driver now has ComfyUI free the
+  decode's price from the text encoders it holds, through ComfyUI's own call.
+  Every other model stays loaded, and a decode made while a sampler runs (a
+  preview at every step) frees nothing. Nothing to set.
+  The decode is ComfyUI's own call with the same arguments, and a video or a
+  single image decodes to the same bits as before; a decode of several images
+  takes as many a batch as ComfyUI's free memory allows, as it always did.
+  What it costs when it acts: a text encoder that gave up memory loads it
+  again when a prompt's text next changes. It adds room and does not bound a
+  decode: with nothing idle the decode runs as before and one `decode relief:`
+  line says so. It keeps everything under `DGXM_DISABLE_DRIVER_UNLOAD=1`.
+  `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns it off for
+  diagnosis, it steps aside with one WARNING if a call it makes fails, and
+  `dgxm doctor`'s `driver memory reading` row says so when it is not working.
+  Not yet run on hardware
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
   class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,

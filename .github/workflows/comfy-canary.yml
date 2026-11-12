@@ -52,6 +52,7 @@ on:
       - "tests/test_flux_views_comfy_exactness.py"
       - "tests/test_held_rows_price.py"
       - "tests/test_vae_encode_item.py"
+      - "tests/test_vae_decode_relief.py"
       - "tests/test_anima_cond_branch.py"
       - "tests/test_moss_image_comfy_exactness.py"
       - "tests/test_moss_image_parity.py"
@@ -350,6 +351,15 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_vae_encode_item.py
+      # Before a VAE decode ComfyUI prices above its free memory, the driver
+      # gives back what is idle (vae_decode_relief.py): on comfy's real VAE a
+      # decode must give the same tensor with the relief acting, and the two
+      # lines of comfy's decode and loader that the trigger mirrors must still
+      # read as they do. The regular CI job has no ComfyUI, so these skip there.
+      - name: Decode relief vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_vae_decode_relief.py
       # Anima's text branch: the Worker's bind of stock's extra_conds under
       # inference mode, stock's model calls on the Worker's KSampler path, and
       # the persistence canary with LoRA units on the llm_adapter.
@@ -547,6 +557,7 @@ jobs:
           tests/test_flux_views_comfy_exactness.py
           tests/test_held_rows_price.py
           tests/test_vae_encode_item.py
+          tests/test_vae_decode_relief.py
           tests/test_qwen_image21_adapter.py
           tests/test_qwen_image21_prefix_cache.py
           tests/test_adaln_parity_blocks.py

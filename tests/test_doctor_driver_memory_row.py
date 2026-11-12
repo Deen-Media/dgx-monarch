@@ -291,3 +291,48 @@ def test_under_a_cgroup_limit_one_pool_is_judged_against_the_box():
     uncorrected = _stats(device_free=5 * GIB, available=20 * GIB, host_total=32 * GIB)
     status, detail = driver_memory_row.classify(uncorrected, machine_total=float(SPARK))
     assert status == WARN and "run doctor again before acting" in detail
+
+
+def _with_relief(state, **kwargs):
+    """A corrected driver's answer whose rules block also carries the decode relief's state."""
+    answer = _corrected(encode="installed", **kwargs)
+    answer[driver_memory_row.RULES_KEY]["vae_decode_relief"] = state
+    return answer
+
+
+def test_a_decode_relief_that_is_on_or_unpublished_adds_nothing_to_the_row():
+    """The usual row stays as short as it was; only a relief that is not working is worth a line."""
+    plain = driver_memory_row.classify(_corrected(encode="installed"))
+    assert plain[0] == OK and plain[1].endswith("a VAE encode of several images runs one image a call")
+    assert driver_memory_row.classify(_with_relief("installed")) == plain
+    for unpublished in (None, 7, "a state this version does not know", {"nested": 1}):
+        assert driver_memory_row.classify(_with_relief(unpublished)) == plain
+        assert driver_memory_row.relief_clause(_with_relief(unpublished)) == (None, "")
+    # A rules block that is not a mapping at all says nothing either.
+    answer = _corrected()
+    answer[driver_memory_row.RULES_KEY] = "installed"
+    assert driver_memory_row.relief_clause(answer) == (None, "")
+
+
+@pytest.mark.parametrize("state, said", [
+    ("off", "the decode relief is off, because the driver runs with DGXM_DISABLE_VAE_DECODE_RELIEF=1"),
+    ("stepped_aside", "the decode relief stepped aside in this driver (one WARNING in its log says why)"),
+    ("no_comfy", "the decode relief is not installed in this driver (no_comfy)"),
+    ("probe_failed", "the decode relief is not installed in this driver (probe_failed)"),
+    ("unset", "the decode relief is not installed in this driver (unset)"),
+])
+def test_a_decode_relief_that_is_not_working_is_a_warning_that_says_why(state, said):
+    status, detail = driver_memory_row.classify(_with_relief(state))
+    assert status == WARN
+    assert detail.startswith("reads the box as it is") and said in detail
+    # After the encode clause, which still reads as it did.
+    assert detail.index("a VAE encode of several images runs one image a call") < detail.index("the decode relief")
+    assert "starts with the driver's text encoders still loaded" in detail
+    assert not detail.endswith("for that call")  # the relief steps aside on any failure: no guess at the cause
+
+
+def test_the_uncorrected_reading_carries_the_relief_clause_too():
+    answer = _stats(device_free=5 * GIB, available=66 * GIB, encode="installed")
+    answer[driver_memory_row.RULES_KEY]["vae_decode_relief"] = "off"
+    status, detail = driver_memory_row.classify(answer)
+    assert status == WARN and "ComfyUI's own reading" in detail and "the decode relief is off" in detail
