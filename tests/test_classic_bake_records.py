@@ -58,16 +58,19 @@ def _of(count: int, kind: str, nbytes: int) -> tuple:
 
 
 RECORDS = (
-    # INT8 ConvRot Wan-Animate 2 with its LoRA: the shipped dgx-monarch-wan-animate2 template's pair. The
-    # file has 480 INT8 weights; the other patched keys are biases and norm weights, and a few embeddings.
-    # 45.0: loaded partly, baked whole by the partial-load route, low 11.93. 44.8: the same state, which
-    # the first term refused at 49.5.
+    # INT8 ConvRot Wan-Animate 2 with its LoRA: the shipped dgx-monarch-wan-animate2 template's pair. By
+    # the headers the stack patches 480 INT8 weights, 774 BF16 biases and norm weights of at most 640 KiB,
+    # and 7 BF16 embedding weights of 1.4 MiB and up. 45.0: loaded partly, baked whole by the
+    # partial-load route, low 11.93. 44.8: the same state, which the first term refused at 49.5.
     Record("int8 wan-animate 2, 1261 patched keys", 37.6,
-           _of(480, price.INT8_QUANTIZED, 30 * MIB) + _of(776, price.FULL_PRECISION, 16 * KIB)
-           + _of(5, price.FULL_PRECISION, 50 * MIB),
+           _of(480, price.INT8_QUANTIZED, 30 * MIB) + _of(774, price.FULL_PRECISION, 16 * KIB)
+           + _of(7, price.FULL_PRECISION, 50 * MIB),
            0.69, (45.0, 44.8), took_gib=33.1),
-    # INT8 ConvRot MiniMax H3 with its LoRA, whole. 50.9: low 7.73. 50.4: refused by the first term at 51.4.
-    Record("int8 minimax h3, 208 patched keys", 46.0, _of(208, price.INT8_QUANTIZED, 90 * MIB),
+    # INT8 ConvRot MiniMax H3 with its LoRA, whole. By the headers the stack patches 200 INT8 weights and
+    # 8 large BF16 ones. 50.9: low 7.73. 50.4: refused by the first term at 51.4. The table's tightest
+    # row: the price sits 0.5 GiB under the 50.4 reading.
+    Record("int8 minimax h3, 208 patched keys", 46.0,
+           _of(200, price.INT8_QUANTIZED, 90 * MIB) + _of(8, price.FULL_PRECISION, 100 * MIB),
            1.82, (50.9, 50.4), took_gib=43.2),
     # Plain FP8 Qwen Image with its LoRA, whole. 49.1: low 10.19, less than the stock price promised.
     # 48.7: refused by the first term at 53.0. One weight count only.
@@ -83,9 +86,10 @@ RECORDS = (
     # BF16 Wan-Animate 2 with the same LoRA: the shipped memory-saver template, on a pair. 97.8 is the
     # first Spark's Worker, 113.6 the second's, whose low was 36.21: it took 1.3 to 1.4 GiB more than
     # the price covers. That shortfall is on record and waits for a measured pass; this row fails if a
-    # change makes it larger.
+    # change makes it larger. 95.0: the cleared first Spark of 2026-11-05 ("about 95 GiB" in DESIGN
+    # 5.9), where that template's clear and retry rendered; no trace of that reading was read again.
     Record("bf16 wan-animate 2, 1261 patched keys", 69.13, _of(1261, price.FULL_PRECISION, 24 * MIB),
-           0.69, (97.8, 113.6), took_gib=77.4, short_gib=1.5),
+           0.69, (97.8, 113.6, 95.0), took_gib=77.4, short_gib=1.5),
     # BF16 Klein with its 2.27 GiB stack, 121 patched weights by the headers, whole and roomy. The Worker
     # printed a price of 45.7 GiB. No low was read after its price line.
     Record("bf16 klein, 121 patched keys", 40.51, _of(121, price.FULL_PRECISION, 140 * MIB),

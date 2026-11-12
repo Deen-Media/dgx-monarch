@@ -39,13 +39,18 @@ and ``tests/test_classic_bake_records.py`` holds each record against it:
   that one weight count. The INT8 records are of whole stacks: the
   Wan-Animate 2 file has 480 INT8 weights, so at least 781 of that stack's
   1261 keys are other keys, and by the file's header nearly all of those are
-  the biases and norm weights of the same blocks, a few KiB each. So beside
-  a weight of such a class a patched key under ``SMALL_KEY_BYTES`` carries no
-  share either; a larger weight of another format in the same stack keeps its
-  own. A stack with no such weight is counted as the line was fitted, its
-  biases included.
+  the biases and norm weights of the same blocks, a few KiB each. So in a
+  stack whose patched bytes are mostly weights of such a class, a patched key
+  under ``SMALL_KEY_BYTES`` carries no share either; a larger weight of
+  another format in the same stack keeps its own. Every other stack is
+  counted as the line was fitted, its biases included. That difference is a
+  fitting choice and not physics: a bias costs the same few KiB on any
+  format, and the scaled FP8 line simply has its biases inside its slope.
+- **A stack is read by the format that holds most of its patched bytes**, for
+  the small keys and for the files alike, so one stray key of another format
+  does not change how the whole stack is charged.
 - **Full precision** (BF16, FP16, FP32): the line and the files. A Klein BF16
-  stack of 148 patched weights rose 1.00 GiB against a line of 3.08, and the
+  stack of 121 patched weights rose 1.00 GiB against a line of 2.89, and the
   BF16 Wan-Animate 2 template's stack of 1261 rose at most 7.4 against 11.24;
   that template's load took 13.3 GiB over the stock price, 1.3 more than the
   line and the files charge, so nothing is trimmed there.
@@ -103,12 +108,13 @@ OTHER = "other"
 # Plain FP8: its one whole-load record (720 patched keys) took 1.1 GiB less than the stock
 # price, where the line charges 7.3. A class a later measurement puts here is one word.
 NO_PER_WEIGHT_SHARE: tuple[str, ...] = (INT8_QUANTIZED, PLAIN_FP8)
-# Beside a weight of such a class, a patched key smaller than this carries no share either.
-# The INT8 records are of whole stacks, and most of a stack's keys there are the biases and
-# norm weights of the INT8 blocks (a few KiB each; 781 of the 1261 on Wan-Animate 2).
+# In a stack whose patched bytes are mostly such weights, a patched key smaller than this
+# carries no share either. The INT8 records are of whole stacks, and most of a stack's keys
+# there are the biases and norm weights of the INT8 blocks (774 of the 1261 on Wan-Animate 2,
+# none over 640 KiB; the file's next tensor up is 1.4 MiB).
 SMALL_KEY_BYTES = MIB
-# The classes whose line already covers the stack's files: a stack that patches a weight of
-# one is not charged its files again. Scaled FP8: the line alone leaves 4.5 and 4.0 GiB above
+# The classes whose line already covers the stack's files: a stack whose patched bytes are
+# mostly of one is not charged its files again. Scaled FP8: the line alone leaves 4.5 and 4.0 GiB above
 # what LTX's two stacks took plus the floor; with the 7.1 GiB of files added, the larger
 # stack was priced 11.5 GiB over its need and refused states that had rendered.
 FILES_IN_THE_LINE: tuple[str, ...] = (FP8_QUANTIZED,)
@@ -165,14 +171,30 @@ def weight_class(key: str, tensors: Mapping[str, TensorDescriptor]) -> str:
     return OTHER
 
 
+def _most_bytes_are(by_class: Iterable[tuple[str, Iterable[int]]], classes: tuple[str, ...]) -> bool:
+    """Whether more than half of a stack's patched bytes are weights of ``classes``.
+
+    A stack is read by the format that holds most of what it patches, so one
+    stray key of another format cannot change how the whole stack is charged.
+    A stack with no bytes to read (an unreadable header) is of no format.
+    """
+    total = inside = 0
+    for kind, sizes in by_class:
+        held = sum(sizes)
+        total += held
+        if kind in classes:
+            inside += held
+    return 2 * inside > total
+
+
 def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True) -> int:
     """The classic bake's charge for patched weights given as (class, stored bytes).
 
     The fixed part, and the per-weight share for each weight that carries
-    one. A weight of a ``NO_PER_WEIGHT_SHARE`` class carries none, and beside
-    such weights neither does a key under ``SMALL_KEY_BYTES``. A stack with
-    no such weight is counted whole, its biases included, as the line was
-    fitted.
+    one. A weight of a ``NO_PER_WEIGHT_SHARE`` class carries none. In a stack
+    whose patched bytes are mostly such weights, neither does a key under
+    ``SMALL_KEY_BYTES``. Every other stack is counted whole, its biases
+    included, as the line was fitted.
 
     ``guard=False`` charges the line whatever ``GUARDED_BY_BYTES`` names. The
     partial-load route asks for that: its BF16 cell ran on hardware under the
@@ -185,7 +207,7 @@ def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True)
         by_class.setdefault(kind, []).append(max(int(nbytes), 0))
     if not count:
         return 0
-    beside_no_share = any(kind in NO_PER_WEIGHT_SHARE for kind in by_class)
+    beside_no_share = _most_bytes_are(by_class.items(), NO_PER_WEIGHT_SHARE)
     sharing = sum(1 for kind, sizes in by_class.items() if kind not in NO_PER_WEIGHT_SHARE
                   for size in sizes if not beside_no_share or size >= SMALL_KEY_BYTES)
     line = CLASSIC_BAKE_FIXED_BYTES + CLASSIC_BAKE_BYTES_PER_WEIGHT * sharing
@@ -260,16 +282,16 @@ def stack_bytes(lora_stack: list | None, resolve_lora_path: Callable[[str], str]
 def charge_from_weights(weights: Iterable[tuple[str, int]], stack_files: int) -> int:
     """What a classic price adds for a stack: the term, and the stack's files where the line does not hold them.
 
-    A stack that patches a weight of a ``FILES_IN_THE_LINE`` class (scaled
-    FP8) is charged the line alone. Every other stack is charged its term and
-    its files: the fixed part and the files for INT8 ConvRot and plain FP8,
-    the line and the files for full precision and for a stack that could not
-    be classed. ``tests/test_classic_bake_records.py`` holds this against
-    what each recorded load took.
+    A stack whose patched bytes are mostly weights of a ``FILES_IN_THE_LINE``
+    class (scaled FP8) is charged the line alone. Every other stack is charged
+    its term and its files: the fixed part and the files for INT8 ConvRot and
+    plain FP8, the line and the files for full precision and for a stack that
+    could not be classed. ``tests/test_classic_bake_records.py`` holds this
+    against what each recorded load took.
     """
     listed = list(weights)
-    files = 0 if any(kind in FILES_IN_THE_LINE for kind, _nbytes in listed) else max(int(stack_files), 0)
-    return term_from_weights(listed) + files
+    in_the_line = _most_bytes_are(((kind, (nbytes,)) for kind, nbytes in listed), FILES_IN_THE_LINE)
+    return term_from_weights(listed) + (0 if in_the_line else max(int(stack_files), 0))
 
 
 def classic_charge(checkpoint_path: str, lora_stack: list | None,

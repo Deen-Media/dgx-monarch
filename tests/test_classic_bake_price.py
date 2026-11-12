@@ -77,7 +77,7 @@ def test_the_bytes_guard_is_off_and_one_constant_turns_it_on_for_a_format(monkey
 
 
 def test_full_precision_weights_are_charged_by_the_line_and_no_share_of_their_bytes(monkeypatch):
-    """Two BF16 cells sit under the line (148 weights rose 1.00 GiB, 1261 at most 7.4), so no bytes are charged.
+    """Two BF16 cells sit under the line (121 weights rose 1.00 GiB, 1261 at most 7.4), so no bytes are charged.
 
     One constant decides it: with the format named in ``GUARDED_BY_BYTES`` the
     same weights take the bytes guard.
@@ -86,7 +86,7 @@ def test_full_precision_weights_are_charged_by_the_line_and_no_share_of_their_by
     line = price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 148
     guard = int(0.75 * 148 * 110 * MIB)
     assert guard > line and price.term_from_weights(weights) == line
-    assert line >= 1.00 * GIB
+    assert price.term_from_weights(_weights(121, price.FULL_PRECISION, 140 * MIB)) >= 1.00 * GIB
     assert price.term_from_weights(_weights(1261, price.FULL_PRECISION, 24 * MIB)) >= 7.4 * GIB
     monkeypatch.setattr(price, "GUARDED_BY_BYTES", (price.FULL_PRECISION,))
     assert price.term_from_weights(weights) == guard  # no measured largest weight: guarded whatever the size
@@ -111,6 +111,29 @@ def test_the_stacks_files_are_charged_beside_the_term_except_where_the_line_hold
     mixed = _weights(480, price.FP8_QUANTIZED) + _weights(480, price.FULL_PRECISION, 10 * 1024)
     assert price.charge_from_weights(mixed, files) == fixed + 960 * per_weight
     assert price.charge_from_weights([], files) == files  # a stack that patches no weight still reads its files
+
+
+def test_one_stray_key_of_another_format_does_not_change_how_a_stack_is_charged():
+    """A stack is read by the format that holds most of its patched bytes."""
+    files = int(0.7 * GIB)
+    fixed, per_weight = price.CLASSIC_BAKE_FIXED_BYTES, price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+    small = _weights(288, price.FULL_PRECISION, 10 * 1024)
+    # LTX's shape: scaled FP8 weights, their small keys, and a few BF16 weights. One unmarked FP8 key
+    # among them carries no share itself; the small keys keep theirs and the files stay in the line.
+    scaled = _weights(1344, price.FP8_QUANTIZED, 13 * MIB) + small + _weights(26, price.FULL_PRECISION, 20 * MIB)
+    assert price.charge_from_weights(scaled, files) == fixed + (1344 + 288 + 26) * per_weight
+    stray_plain = [*scaled, (price.PLAIN_FP8, 13 * MIB)]
+    assert price.charge_from_weights(stray_plain, files) == fixed + (1344 + 288 + 26) * per_weight
+    # An INT8 stack with one scaled FP8 weight: that weight carries its share, the small keys still
+    # carry none, and the files are still charged.
+    int8 = _weights(480, price.INT8_QUANTIZED, 30 * MIB) + small
+    assert price.charge_from_weights(int8, files) == fixed + files
+    stray_scaled = [*int8, (price.FP8_QUANTIZED, 30 * MIB)]
+    assert price.charge_from_weights(stray_scaled, files) == fixed + per_weight + files
+    # Half and half is neither format's: the dearer reading on both counts.
+    even = _weights(10, price.INT8_QUANTIZED, 30 * MIB) + _weights(10, price.FP8_QUANTIZED, 30 * MIB)
+    assert price.charge_from_weights(even, files) == fixed + 10 * per_weight + files
+    assert price.charge_from_weights(even + small, files) == fixed + (10 + 288) * per_weight + files
 
 
 def _checkpoint(tmp_path):
@@ -176,11 +199,11 @@ def test_a_stack_it_cannot_map_or_read_charges_every_weight(tmp_path):
 
     assert price.patched_weights(tensors, STACK, missing) == every
     # Every weight is priced by its own class. This header has an INT8 ConvRot weight and a plain FP8
-    # one, which carry no share, and beside them the one small key (the bias) carries none; the scaled
-    # FP8 weight and the BF16 weight do.
+    # one, which carry no share. Most of its bytes are the scaled FP8 weight, so the stack is counted
+    # as that format is: the scaled FP8 weight, the BF16 weight and the bias each carry a share.
     assert len(every) == 5
     assert price.classic_bake_bytes(path, STACK, missing) == (
-        price.CLASSIC_BAKE_FIXED_BYTES + 2 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
+        price.CLASSIC_BAKE_FIXED_BYTES + 3 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
 
 
 def test_a_checkpoint_whose_header_cannot_be_read_is_charged_as_the_largest_stack_measured(tmp_path):

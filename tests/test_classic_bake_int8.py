@@ -160,8 +160,8 @@ def test_the_same_header_as_plain_fp8_is_charged_as_int8_is(tmp_path):
         price.CLASSIC_BAKE_FIXED_BYTES + os.path.getsize(stack))
 
 
-def test_beside_int8_weights_a_large_weight_of_another_format_keeps_its_share_and_a_small_key_does_not():
-    int8 = [(price.INT8_QUANTIZED, 25 * MIB)] * 3
+def test_in_an_int8_stack_a_large_weight_of_another_format_keeps_its_share_and_a_small_key_does_not():
+    int8 = [(price.INT8_QUANTIZED, 25 * MIB)] * 30  # most of the stack's bytes, as on the real files
     large = [(price.FULL_PRECISION, 40 * MIB)] * 2 + [(price.OTHER, 4 * MIB)]
     small = [(price.FULL_PRECISION, 10 * 1024)] * 4
     per_weight = price.CLASSIC_BAKE_BYTES_PER_WEIGHT

@@ -2424,13 +2424,20 @@ rules follow.
     count, 720, and a second count is owed by a measured pass. The INT8 rows
     are of whole stacks, and most of a stack's keys there are the biases and
     norm weights of the INT8 blocks, a few KiB each (the Wan-Animate 2 file
-    has 480 INT8 weights among the 1261 keys its LoRA patches). So beside a
-    weight of such a class a patched key under 1 MiB carries no share
-    either, and a larger weight of another format in the same stack keeps
-    its own. A stack with no such weight is counted as the line was fitted,
-    its biases included.
+    has 480 INT8 weights among the 1261 keys its LoRA patches; 774 of the
+    rest are at most 640 KiB, and the file's next tensor up is 1.4 MiB). So
+    in a stack whose patched bytes are mostly weights of such a class, a
+    patched key under 1 MiB carries no share either, and a larger weight of
+    another format in the same stack keeps its own. Every other stack is
+    counted as the line was fitted, its biases included. That difference is
+    a fitting choice and not physics: a bias costs the same few KiB on any
+    format, and the scaled FP8 line has its biases inside its slope.
+  - **A stack is read by the format that holds most of its patched bytes**,
+    for the small keys and for the files alike, so one stray key of another
+    format does not change how the whole stack is charged. (LTX's own stack
+    patches 28 BF16 keys beside its 1632 scaled FP8 ones.)
   - **Full precision** (BF16, FP16, FP32): the line and the files. A Klein
-    BF16 stack of 148 patched weights rose 1.00 GiB against a line of 3.08
+    BF16 stack of 121 patched weights rose 1.00 GiB against a line of 2.89
     and the BF16 Wan-Animate 2 stack of 1261 at most 7.4 against 11.24, and
     the table's last row took 1.3 GiB more than that price covers, so
     nothing is trimmed there. Whether that 1.3 is the bake or the render's
@@ -2438,8 +2445,8 @@ rules follow.
     pass to say.
   - **The bytes guard** (0.75 of a format's patched bytes, for a weight
     larger than any measured) has no record behind it and is off. Both LTX
-    stacks' largest patched weight is 64.0 MiB; a file with larger ones is
-    past the records.
+    stacks' largest patched weight is 64.0 MiB; a scaled FP8 file with
+    larger ones is past the records and unmeasured.
 
   Three constants hold those choices, one word each to change:
   `NO_PER_WEIGHT_SHARE`, `FILES_IN_THE_LINE` and `GUARDED_BY_BYTES`.
