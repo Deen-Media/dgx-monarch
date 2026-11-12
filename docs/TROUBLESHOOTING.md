@@ -638,13 +638,35 @@ Confirm the driver log line `unified memory: ComfyUI in this process now reads
 free memory as MemAvailable`. `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` on the driver
 turns it off. `dgxm doctor` shows which reading the running driver has in its
 `driver memory reading` row: `reads the box as it is` with the two figures, or
-a warning that it reads the device figure. A batch priced at most of the box
-still splits by what the session has available ([DESIGN](DESIGN.md), "ComfyUI
-in the driver reads the box as it is"). For conditioning that is the same
-bits at every size, `DGXM_VAE_ITEM_BATCHES=1` on the driver encodes and
-decodes image batches one image at a time; it is off by default, and with it
-on a batch of images does not match the same batch on a stock ComfyUI that had
-room to encode it whole.
+a warning that it reads the device figure.
+
+**The driver also encodes a batch of images one image at a time.** The
+reading alone left one case open: a batch priced at most of the box (six 2048
+views are priced at 82.8 GiB) still split by what the session had. So on the
+same GPUs the driver's ComfyUI runs a VAE encode of several images as one
+call of ComfyUI's own encode for each image, and a graph's conditioning is the
+same bits at every size and in every memory state. Confirm the driver log
+line `unified memory: a VAE encode of several images runs one image a call`.
+What to know:
+
+- Decode is not changed (its result does not depend on the batch), and
+  neither is a video VAE or a tiled encode.
+- Each image's latent is what stock ComfyUI gives for that image alone. A
+  stock ComfyUI on a box with room encodes a batch of several images at once
+  and gets other bits for the same images, so a multi-image conditioning made
+  here does not match one made on a box without this pack. A single image
+  matches. A stock render and a DGX Monarch render in this driver share its
+  conditioning and are not affected.
+- Every conditioning of several images changes once against an earlier build
+  of this pack, whose driver encoded them in whatever batches memory gave.
+- On a Spark with FLUX.2's VAE it took 0.86 to 1.0 of the whole batch's time
+  and a peak of 2.28 GiB where six 2048 views in one batch took 12.41 GiB.
+- `DGXM_DISABLE_VAE_ENCODE_ITEM=1` on the driver turns it off. If ComfyUI's
+  encode call changes, the rule steps aside with one WARNING and ComfyUI's own
+  batches answer. `dgxm doctor`'s `driver memory reading` row says which
+  holds: `runs one image a call`, off by the switch, or stepped aside
+  ([DESIGN](DESIGN.md), "The driver encodes a batch of images one image a
+  call").
 
 ## 13. uly2+fsdp / ring2+fsdp render deadlocks (hangs, no error)
 

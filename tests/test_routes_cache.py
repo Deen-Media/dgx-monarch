@@ -57,6 +57,11 @@ def test_telemetry_derives_readiness_from_each_existing_snapshot_once(monkeypatc
     from dgx_monarch import monarch_diagnostics
     assert payload["monarch_diagnostics"] == monarch_diagnostics.status()
     assert "monarch_policy" in payload
+    # Doctor is another process: the driver says here what its encode rule is doing.
+    from dgx_monarch import vae_encode_item
+    assert payload["driver_rules"] == {"vae_encode_item": vae_encode_item.state()}
+    monkeypatch.setitem(vae_encode_item._STATE, "state", vae_encode_item.STEPPED_ASIDE)
+    assert routes._telemetry_uncached()["driver_rules"] == {"vae_encode_item": "stepped_aside"}
 
 
 def _fresh_routes(monkeypatch, call_all):

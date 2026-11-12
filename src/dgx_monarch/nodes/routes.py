@@ -261,6 +261,7 @@ def _telemetry_uncached() -> dict:
         telemetry,
         telemetry_fleet,
         vae_decode_telemetry,
+        vae_encode_item,
     )
     from ..gate_ledger import comfy_commit
     from ..mesh_health import mesh_health_snapshot
@@ -287,6 +288,8 @@ def _telemetry_uncached() -> dict:
         # Driver metrics/OTLP export state: requested is monarch_policy, running is this.
         "monarch_diagnostics": monarch_diagnostics.status(),
         "diagnostic_identity": diagnostic_identity(),
+        # What this process's driver-only rules are doing, for doctor's row (it is another process).
+        "driver_rules": {"vae_encode_item": vae_encode_item.state()},
         "ledger": _ledger_summary(),
         # Lease and teardown state, which _busy_render_key does not read: the
         # accessor reads it in the mesh layer, under that layer's lock order,

@@ -232,7 +232,7 @@ def test_the_entry_point_installs_both_driver_hooks():
                        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
                        and isinstance(stmt.value.func, ast.Attribute)
                        and isinstance(stmt.value.func.value, ast.Name)}
-    assert {"driver_uma_memory.install_driver", "vae_item_batches.install_driver"} <= top_level_calls
+    assert {"driver_uma_memory.install_driver", "vae_encode_item.install_driver"} <= top_level_calls
 
 
 @pytest.mark.parametrize("broken", ["available", "total_of", "default_device"])

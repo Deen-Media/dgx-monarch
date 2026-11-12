@@ -51,6 +51,7 @@ on:
       - "tests/test_flux3_cond_branch.py"
       - "tests/test_flux_views_comfy_exactness.py"
       - "tests/test_held_rows_price.py"
+      - "tests/test_vae_encode_item.py"
       - "tests/test_anima_cond_branch.py"
       - "tests/test_moss_image_comfy_exactness.py"
       - "tests/test_moss_image_parity.py"
@@ -340,6 +341,15 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_held_rows_price.py
+      # The driver encodes a batch of images one image a call
+      # (vae_encode_item.py): on comfy's real VAE the result must be stock's
+      # own encode of each image alone, whatever the free-memory reading says,
+      # and the attributes and the branch the image test reads must still be
+      # there. The regular CI job has no ComfyUI, so these cases skip there.
+      - name: One image a VAE encode vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_vae_encode_item.py
       # Anima's text branch: the Worker's bind of stock's extra_conds under
       # inference mode, stock's model calls on the Worker's KSampler path, and
       # the persistence canary with LoRA units on the llm_adapter.
@@ -536,6 +546,7 @@ jobs:
           tests/test_flux3_cond_branch.py
           tests/test_flux_views_comfy_exactness.py
           tests/test_held_rows_price.py
+          tests/test_vae_encode_item.py
           tests/test_qwen_image21_adapter.py
           tests/test_qwen_image21_prefix_cache.py
           tests/test_adaln_parity_blocks.py
