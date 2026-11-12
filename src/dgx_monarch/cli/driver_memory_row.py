@@ -49,7 +49,9 @@ _AGREE_BYTES = _GIB
 def _driver_rules(candidate: str) -> object:
     """The driver's own ``driver_rules`` block from ``/dgxm/telemetry``, or None when it did not say."""
     try:
-        with urllib.request.urlopen(f"http://{candidate}/dgxm/telemetry", timeout=_TIMEOUT_S) as response:
+        # The route's first answer after a driver starts polls the Workers; later ones are cached.
+        with urllib.request.urlopen(f"http://{candidate}/dgxm/telemetry",
+                                    timeout=comfy_ports._TELEMETRY_TIMEOUT_S) as response:
             telemetry = json.load(response)
     except Exception:
         return None

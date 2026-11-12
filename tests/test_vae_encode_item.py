@@ -313,16 +313,28 @@ def _toy_vae(sd):
 
 
 def _under_readings(vae, call, items):
-    """``call()`` with the VAE's free-memory reading faked to fit 1, 2, 3 and all ``items`` a batch."""
+    """``call()`` with the VAE's free-memory reading faked to fit 1, 2, 3 and all ``items`` a batch.
+
+    Returns the result under each reading, and the batch sizes the VAE's own model was handed.
+    """
     stock_reading = vae.patcher.get_free_memory
-    results = {}
+    model_encode = vae.first_stage_model.encode
+    results, sizes = {}, {}
     try:
         for batch in (1, 2, 3, items):
+            handed = sizes.setdefault(batch, [])
+
+            def recording(pixels_in, *args, handed=handed, **kwargs):
+                handed.append(int(pixels_in.shape[0]))
+                return model_encode(pixels_in, *args, **kwargs)
+
+            vae.first_stage_model.encode = recording
             vae.patcher.get_free_memory = lambda device, batch=batch: batch * call.need + call.need // 2
             results[batch] = call().float().cpu()
     finally:
         vae.patcher.get_free_memory = stock_reading
-    return results
+        vae.first_stage_model.encode = model_encode
+    return results, sizes
 
 
 def test_stocks_encode_follows_the_reading_and_the_rules_is_stocks_own_encode_of_each_image(comfy_sd):
@@ -334,10 +346,11 @@ def test_stocks_encode_follows_the_reading_and_the_rules_is_stocks_own_encode_of
         return vae.encode(pixels)
 
     encode.need = vae.memory_used_encode(tuple(pixels.movedim(-1, 1).shape), vae.vae_dtype)
-    stock = _under_readings(vae, encode, 6)
-    # Stock: the latent depends on the split the reading chose (CPU float32 here; on the GPU
-    # 56 to 64 percent of BF16 values were apart, 2026-11-11).
-    assert any(not torch.equal(stock[1], stock[batch]) for batch in (2, 3, 6))
+    stock, stock_batches = _under_readings(vae, encode, 6)
+    # Stock: the batches follow the reading. On a GPU the latent then differs from split to split
+    # (56 to 64 percent of BF16 values apart, 2026-11-11). On a CPU whether float32 bits move
+    # depends on the wheel, so this test holds the batches and the equalities, not that inequality.
+    assert stock_batches == {1: [1] * 6, 2: [2, 2, 2], 3: [3, 3], 6: [6]}
 
     stock_encode, stock_decode = comfy_sd.VAE.encode, comfy_sd.VAE.decode
     vae_encode_item.install()
@@ -346,13 +359,15 @@ def test_stocks_encode_follows_the_reading_and_the_rules_is_stocks_own_encode_of
         vae_encode_item.install()  # a second install does not stack
         assert comfy_sd.VAE.encode.__wrapped__ is stock_encode
         assert comfy_sd.VAE.decode is stock_decode  # decode is not touched
-        ruled = _under_readings(vae, encode, 6)
+        ruled, ruled_batches = _under_readings(vae, encode, 6)
         by_name = vae.encode(pixel_samples=pixels).float().cpu()
     finally:
         vae_encode_item.uninstall()
     assert comfy_sd.VAE.encode is stock_encode
     assert vae_encode_item.state() == vae_encode_item.UNSET  # it did not step aside on real ComfyUI
-    # The rule: one tensor whatever memory reads.
+    # The rule: the VAE's model is handed one image at a time whatever memory reads, so the
+    # result is one tensor.
+    assert ruled_batches == {batch: [1] * 6 for batch in (1, 2, 3, 6)}
     for batch in (2, 3, 6):
         assert torch.equal(ruled[1], ruled[batch]), batch
     assert torch.equal(by_name, ruled[1])
@@ -360,8 +375,8 @@ def test_stocks_encode_follows_the_reading_and_the_rules_is_stocks_own_encode_of
     alone = torch.cat([vae.encode(pixels[index:index + 1]).float().cpu() for index in range(6)], dim=0)
     assert torch.equal(ruled[1], alone)
     assert torch.equal(ruled[1], stock[1])
-    # And it is not what a stock box with room for the whole batch gives: the docs say so.
-    assert not torch.equal(ruled[1], stock[6])
+    # A stock box with room hands the model all six at once (stock_batches[6] above), which is
+    # where its bits part from these; the docs say so.
 
 
 def test_real_comfyuis_vae_has_the_attributes_and_the_branch_the_image_test_reads(comfy_sd):
