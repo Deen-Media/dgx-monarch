@@ -12,35 +12,67 @@ stack (docs/DESIGN.md section 5.9 holds the table and the dates):
 - MiniMax H3 INT8 ConvRot, 208 patched weights: 1.21 GiB;
 - Qwen Image plain FP8, 720 patched weights: 0.84 GiB.
 
-``classic_bake_bytes`` charges 2 GiB plus 7.5 MiB a patched weight, which
-covers every point (5.52 and 14.16 GiB for the two LTX stacks). A patched bias
-counts as a weight, as it does in the count the Worker logs. The stock price
-(``capacity_fit``) had no term for any of it, and a 7.1 GiB stack took a load
-8.7 GiB past its price.
+The line through the two LTX points, 2 GiB plus 7.5 MiB a patched weight,
+covers both (5.52 and 14.16 GiB). A patched bias counts as a weight, as it
+does in the count the Worker logs. The stock price (``capacity_fit``) had no
+term for any of it, and a 7.1 GiB stack took a load 8.7 GiB past its price.
 
-What is measured and what is not:
+The rises say what to charge for; what a load TOOK says how much. Two
+hardware blocks (2026-11-12, the same Spark and cap) read the box's lowest
+memory after the Worker's price line, for a whole load with its stack and its
+render, against what the stock price promised (docs/DESIGN.md section 5.9,
+the second table). ``classic_charge`` is sized by format from those records,
+and ``tests/test_classic_bake_records.py`` holds each record against it:
 
-- Quantized FP8, INT8 ConvRot and plain FP8 weights have the points above. A
-  quantized FP8 weight larger than the largest one under those points (64
-  MiB) is past them, and a stack that patches one is charged the larger of
-  the line and 0.75 of its patched quantized FP8 bytes (the larger share the
-  two LTX points gave, 0.68, rounded up).
-- Full-precision weights (BF16, FP16, FP32) have no measured point. They are
-  charged by the line, as the lead ruled on 2026-11-12, until the hardware
-  block's two BF16 cells are in (a Klein BF16 stack cut at the latent, and the
-  BF16 Wan-Animate 2 template's first stack change). A share of their bytes
-  with no cell behind it priced a recovery that worked on hardware (clear and
-  retry on that template, 2026-11-05) as a refusal. ``GUARDED_BY_BYTES`` is
-  the one place to change when those cells are read.
+- **Scaled FP8** (an FP8 weight with its scale or ComfyUI's quant record):
+  the line, and the stack's files are NOT added to it. LTX's own stack took
+  55.6 and 54.6 GiB (9.7 over the stock price) and its smaller stack 47.4
+  (1.5 over); the line alone charges 14.16 and 5.52, which leaves 4.5 and 4.0
+  GiB above take plus floor. The files added on top priced the larger stack
+  at 72.1 GiB against a need of 60.6, and refused states that had rendered.
+  Both records are one LoRA file each. The line counts distinct patched keys,
+  and the store reads every file of a stack into host memory and holds them
+  through the bake, so several LoRAs on the same keys could hold more than
+  the line charges. Such a stack is charged no less than its files and
+  ``BEYOND_THE_FILES_BYTES`` (4.7 GiB: what the larger record took beyond its
+  files, and the 2 GiB of spare). No stack of overlapping files is on record.
+- **INT8 ConvRot and plain FP8** carry no per-weight share
+  (``NO_PER_WEIGHT_SHARE``): the fixed 2 GiB and the stack's files. An INT8
+  Wan-Animate 2 load with 1261 patched keys took 0.5 GiB beside the stock
+  price and an INT8 MiniMax H3 load with 208 took 2.2; a plain FP8 Qwen
+  Image load with 720 took 1.1 GiB LESS than the stock price. The line
+  charged them 11.2, 3.5 and 7.3 GiB before the files. Plain FP8 rests on
+  that one weight count. The INT8 records are of whole stacks: the
+  Wan-Animate 2 file has 480 INT8 weights, so at least 781 of that stack's
+  1261 keys are other keys, and by the file's header nearly all of those are
+  the biases and norm weights of the same blocks, a few KiB each. So in a
+  stack whose patched bytes are mostly weights of such a class, a patched key
+  under ``SMALL_KEY_BYTES`` carries no share either; a larger weight of
+  another format in the same stack keeps its own. Every other stack is
+  counted as the line was fitted, its biases included. That difference is a
+  fitting choice and not physics: a bias costs the same few KiB on any
+  format, and the scaled FP8 line simply has its biases inside its slope.
+- **A stack is read by the format that holds most of its patched bytes**, for
+  the small keys and for the files alike, so one stray key of another format
+  does not change how the whole stack is charged.
+- **Full precision** (BF16, FP16, FP32): the line and the files. A Klein BF16
+  stack of 121 patched weights rose 1.00 GiB against a line of 2.89, and the
+  BF16 Wan-Animate 2 template's stack of 1261 rose at most 7.4 against 11.24;
+  that template's load took 13.3 GiB over the stock price, 1.3 more than the
+  line and the files charge, so nothing is trimmed there.
+- **The bytes guard** (0.75 of the patched bytes of a format, for a weight
+  larger than any measured) has no record behind it and is off:
+  ``GUARDED_BY_BYTES`` is empty. Both LTX stacks' largest patched weight is
+  64.0 MiB; a file with larger ones is past the records, and the constant is
+  the one place to change when a cell reads one.
 - A stack whose LoRA file cannot be read or mapped is charged for every weight
   of its checkpoint. A checkpoint whose own header cannot be read gives no
   weights to count, so its stack is charged the line for
-  ``UNREADABLE_STACK_WEIGHTS``, the largest count measured. That is a stand-in
-  and not a bound: a larger model may patch more.
+  ``UNREADABLE_STACK_WEIGHTS``, the largest count measured, and its files.
+  That is a stand-in and not a bound: a larger model may patch more.
 
-The stack's own files are charged on every classic price: the Worker reads
-them into host memory for the bake, and a clone that read them earlier has
-gone by then.
+Where the files are charged it is because the Worker reads them into host
+memory for the bake, and a clone that read them earlier has gone by then.
 
 The in-place bake (what ``lora_low_rss`` does on a loaded model, and what the
 store falls back to when the classic price does not fit and the identity gate
@@ -66,23 +98,49 @@ from .safetensors_header import TensorDescriptor, read_safetensors_header
 GIB = 1 << 30
 MIB = 1 << 20
 
-# A cover of the four measured rises: 5.52 GiB for the 5.03 measured, 14.16 for the 12.34.
+# The line through the two scaled FP8 rises: 5.52 GiB for the 5.03 measured, 14.16 for the 12.34.
 CLASSIC_BAKE_FIXED_BYTES = 2 * GIB
 CLASSIC_BAKE_BYTES_PER_WEIGHT = int(7.5 * MIB)
 # The larger share of the patched bytes measured (0.68), rounded up.
 CLASSIC_BAKE_GUARD_RATIO = 0.75
 FP8_QUANTIZED = "fp8_quantized"
+INT8_QUANTIZED = "int8_quantized"
+PLAIN_FP8 = "plain_fp8"
 FULL_PRECISION = "full_precision"
 OTHER = "other"
-# The formats whose patched bytes are guarded by ``CLASSIC_BAKE_GUARD_RATIO`` past their
-# measured points. FULL_PRECISION is not in it: no BF16, FP16 or FP32 cell exists yet, and
-# those weights are charged by the line until the hardware block's two BF16 cells are read.
-# Adding it here (with or without a row below) is the whole change if they call for it.
-GUARDED_BY_BYTES: tuple[str, ...] = (FP8_QUANTIZED,)
-# The largest patched weight under each guarded format's measured points. A stack whose
-# largest patched weight of that format is no larger is charged by the line alone; a guarded
-# format with no row here is always guarded. The FP8 row is read from the LTX 2.3 scaled FP8
-# file's header (2026-11-12): the largest weight either measured stack patches is 64.0 MiB.
+# The classes whose patched weights are charged no per-weight share, only the fixed part and
+# the stack's files. INT8 ConvRot: a whole load and its render took 0.5 GiB beside the stock
+# price with 1261 patched keys and 2.2 GiB with 208, where the line charges 11.2 and 3.5.
+# Plain FP8: its one whole-load record (720 patched keys) took 1.1 GiB less than the stock
+# price, where the line charges 7.3. A class a later measurement puts here is one word.
+NO_PER_WEIGHT_SHARE: tuple[str, ...] = (INT8_QUANTIZED, PLAIN_FP8)
+# In a stack whose patched bytes are mostly such weights, a patched key smaller than this
+# carries no share either. The INT8 records are of whole stacks, and most of a stack's keys
+# there are the biases and norm weights of the INT8 blocks (774 of the 1261 on Wan-Animate 2,
+# none over 640 KiB; the file's next tensor up is 1.4 MiB).
+SMALL_KEY_BYTES = MIB
+# The classes whose line already covers the stack's files: a stack whose patched bytes are
+# mostly of one is not charged its files again. Scaled FP8: the line alone leaves 4.5 and 4.0 GiB above
+# what LTX's two stacks took plus the floor; with the 7.1 GiB of files added, the larger
+# stack was priced 11.5 GiB over its need and refused states that had rendered.
+FILES_IN_THE_LINE: tuple[str, ...] = (FP8_QUANTIZED,)
+# The least such a stack is charged beyond its own files. The line counts distinct patched
+# keys, so a stack of several LoRAs on the same keys can hold more on the host than the line
+# charges. LTX's own stack took 9.7 GiB over the stock price with 7.08 GiB of files: 2.62
+# beyond them, 2.7 rounded up. With the 2 GiB the line had to keep above take plus floor on
+# both recorded stacks, that is 4.7 GiB. Both records stay on the line (11.8 and 5.0 GiB by
+# this bound against 14.16 and 5.52). 2 GiB alone would leave a stack whose files pass the
+# line 0.6 GiB under the larger record's own take plus floor.
+BEYOND_THE_FILES_BYTES = int(4.7 * GIB)
+# The formats whose patched bytes are guarded by ``CLASSIC_BAKE_GUARD_RATIO`` when a weight
+# is larger than the row below. Empty: no record needs the guard (both LTX stacks' largest
+# patched weight is 64.0 MiB, and BF16's two cells sit under the line). Naming a format here
+# is the whole change if a cell on a file with larger weights calls for it.
+GUARDED_BY_BYTES: tuple[str, ...] = ()
+# The largest patched weight under each format's measured points. A guarded format whose
+# largest patched weight is no larger is charged by the line alone; a guarded format with no
+# row here is always guarded. The FP8 row is read from the LTX 2.3 scaled FP8 file's header
+# (2026-11-12): the largest weight either measured stack patches is 64.0 MiB.
 MEASURED_LARGEST_WEIGHT_BYTES = {FP8_QUANTIZED: 64 * MIB}
 # What a stack is counted as when its checkpoint's header cannot be read: the largest count
 # of patched weights measured (LTX 2.3's own stack). A stand-in, not a bound: a larger model
@@ -92,6 +150,7 @@ UNREADABLE_STACK_WEIGHTS = 1660
 IN_PLACE_BAKE_FIXED_BYTES = 2 * GIB
 
 _FP8_DTYPES = frozenset({"F8_E4M3", "F8_E4M3FNUZ", "F8_E5M2", "F8_E5M2FNUZ"})
+_INT8_DTYPES = frozenset({"I8"})
 _FULL_DTYPES = frozenset({"BF16", "F16", "F32", "F64"})
 _QUANT_MARKERS = (".weight_scale", ".scale_weight", ".comfy_quant")
 _WEIGHT_SUFFIXES = (".weight", ".bias")
@@ -107,22 +166,53 @@ GATE_HAS_NOT_PASSED = ("baking it in place was not tried: no identity-gate PASS 
 
 
 def weight_class(key: str, tensors: Mapping[str, TensorDescriptor]) -> str:
-    """How the classic bake's guard reads one checkpoint weight, from the header alone."""
+    """How the classic bake's price reads one checkpoint weight, from the header alone.
+
+    A quantized weight is one with a quantization marker beside it (its
+    scale, or ComfyUI's quant record): scaled FP8 and INT8 ConvRot. An FP8
+    weight with no marker is plain FP8. An INT8 weight with no marker, and
+    any other dtype, has no record and reads as ``OTHER``, charged by the line.
+    """
     dtype = tensors[key].dtype
     if dtype in _FULL_DTYPES:
         return FULL_PRECISION
     stem = key.rsplit(".", 1)[0]
-    if dtype in _FP8_DTYPES and any(stem + marker in tensors for marker in _QUANT_MARKERS):
-        return FP8_QUANTIZED
+    quantized = any(stem + marker in tensors for marker in _QUANT_MARKERS)
+    if dtype in _FP8_DTYPES:
+        return FP8_QUANTIZED if quantized else PLAIN_FP8
+    if dtype in _INT8_DTYPES and quantized:
+        return INT8_QUANTIZED
     return OTHER
+
+
+def _most_bytes_are(by_class: Iterable[tuple[str, Iterable[int]]], classes: tuple[str, ...]) -> bool:
+    """Whether more than half of a stack's patched bytes are weights of ``classes``.
+
+    A stack is read by the format that holds most of what it patches, so one
+    stray key of another format cannot change how the whole stack is charged.
+    A stack with no bytes to read (an unreadable header) is of no format.
+    """
+    total = inside = 0
+    for kind, sizes in by_class:
+        held = sum(sizes)
+        total += held
+        if kind in classes:
+            inside += held
+    return 2 * inside > total
 
 
 def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True) -> int:
     """The classic bake's charge for patched weights given as (class, stored bytes).
 
-    ``guard=False`` charges the line alone. The partial-load route asks for
-    that: its BF16 cell ran on hardware under the rule without this term, and
-    the bytes guard has no measurement behind it.
+    The fixed part, and the per-weight share for each weight that carries
+    one. A weight of a ``NO_PER_WEIGHT_SHARE`` class carries none. In a stack
+    whose patched bytes are mostly such weights, neither does a key under
+    ``SMALL_KEY_BYTES``. Every other stack is counted whole, its biases
+    included, as the line was fitted.
+
+    ``guard=False`` charges the line whatever ``GUARDED_BY_BYTES`` names. The
+    partial-load route asks for that: its BF16 cell ran on hardware under the
+    rule without this term, and the bytes guard has no measurement behind it.
     """
     count = 0
     by_class: dict[str, list[int]] = {}
@@ -131,7 +221,10 @@ def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True)
         by_class.setdefault(kind, []).append(max(int(nbytes), 0))
     if not count:
         return 0
-    line = CLASSIC_BAKE_FIXED_BYTES + CLASSIC_BAKE_BYTES_PER_WEIGHT * count
+    beside_no_share = _most_bytes_are(by_class.items(), NO_PER_WEIGHT_SHARE)
+    sharing = sum(1 for kind, sizes in by_class.items() if kind not in NO_PER_WEIGHT_SHARE
+                  for size in sizes if not beside_no_share or size >= SMALL_KEY_BYTES)
+    line = CLASSIC_BAKE_FIXED_BYTES + CLASSIC_BAKE_BYTES_PER_WEIGHT * sharing
     if not guard:
         return line
     guarded = 0
@@ -172,26 +265,67 @@ def patched_weights(tensors: Mapping[str, TensorDescriptor], lora_stack: list | 
     return keys
 
 
-def classic_bake_bytes(checkpoint_path: str, lora_stack: list | None,
-                       resolve_lora_path: Callable[[str], str]) -> int:
-    """What the classic bake of ``lora_stack`` adds on the device beside this checkpoint's weights.
+def _patched(checkpoint_path: str, lora_stack: list,
+             resolve_lora_path: Callable[[str], str]) -> list[tuple[str, int]]:
+    """(class, stored bytes) for each checkpoint key the stack patches.
 
     A checkpoint whose header cannot be read gives no weights to count or to
-    class, so the stack is charged the line for ``UNREADABLE_STACK_WEIGHTS``.
+    class, so the stack stands as ``UNREADABLE_STACK_WEIGHTS`` unclassed ones.
     """
-    if not lora_stack:
-        return 0
     try:
         tensors = read_safetensors_header(checkpoint_path).tensors
     except Exception:
-        return term_from_weights((OTHER, 0) for _ in range(UNREADABLE_STACK_WEIGHTS))
+        return [(OTHER, 0)] * UNREADABLE_STACK_WEIGHTS
     keys = patched_weights(tensors, lora_stack, resolve_lora_path)
-    return term_from_weights((weight_class(key, tensors), tensors[key].nbytes) for key in keys)
+    return [(weight_class(key, tensors), tensors[key].nbytes) for key in keys]
+
+
+def classic_bake_bytes(checkpoint_path: str, lora_stack: list | None,
+                       resolve_lora_path: Callable[[str], str]) -> int:
+    """The term alone: what ``term_from_weights`` charges for the weights ``lora_stack`` patches."""
+    if not lora_stack:
+        return 0
+    return term_from_weights(_patched(checkpoint_path, lora_stack, resolve_lora_path))
 
 
 def stack_bytes(lora_stack: list | None, resolve_lora_path: Callable[[str], str]) -> int:
     """The stack's LoRA files on disk; a file that cannot be sized counts as nothing."""
     return int(stack_file_bytes((lora_stack, resolve_lora_path)) or 0) if lora_stack else 0
+
+
+def charge_from_weights(weights: Iterable[tuple[str, int]], stack_files: int) -> int:
+    """What a classic price adds for a stack: the term, and the stack's files where the line does not hold them.
+
+    A stack whose patched bytes are mostly weights of a ``FILES_IN_THE_LINE``
+    class (scaled FP8) is charged the line, which holds the files of the
+    stacks it was fitted on, and never less than its files and
+    ``BEYOND_THE_FILES_BYTES``: the line counts distinct patched keys, so
+    several LoRAs on the same keys add nothing to it, while the store reads
+    every file of the stack into host memory and holds them all through the
+    bake (``ModelStore._build_active``). Every other stack is charged its term
+    and its files, each file once: the fixed part and the files for INT8
+    ConvRot and plain FP8, the line and the files for full precision and for a
+    stack that could not be classed. ``tests/test_classic_bake_records.py``
+    holds this against what each recorded load took.
+    """
+    listed = list(weights)
+    term, files = term_from_weights(listed), max(int(stack_files), 0)
+    if _most_bytes_are(((kind, (nbytes,)) for kind, nbytes in listed), FILES_IN_THE_LINE):
+        return max(term, files + BEYOND_THE_FILES_BYTES)
+    return term + files
+
+
+def classic_charge(checkpoint_path: str, lora_stack: list | None,
+                   resolve_lora_path: Callable[[str], str]) -> int:
+    """What the classic bake of ``lora_stack`` adds to this checkpoint's stock price (``charge_from_weights``).
+
+    The one figure the quote, the Worker's two walls and the in-place choice
+    read for a classic bake.
+    """
+    if not lora_stack:
+        return 0
+    return charge_from_weights(_patched(checkpoint_path, lora_stack, resolve_lora_path),
+                               stack_bytes(lora_stack, resolve_lora_path))
 
 
 def in_place_bake_bytes(stack_files: int) -> int:
@@ -245,7 +379,7 @@ def _chosen(fit: Any, checkpoint_path: str, lora_stack: list, resolve_lora_path:
             held: int, in_place: str | bool, bare_load: bool, reading_words: str) -> Any:
     """``priced``'s choice between the two bakes, against ``fit.avail_bytes`` as given."""
     files = stack_bytes(lora_stack, resolve_lora_path)
-    classic = replace(fit, bake_bytes=classic_bake_bytes(checkpoint_path, lora_stack, resolve_lora_path) + files)
+    classic = replace(fit, bake_bytes=classic_charge(checkpoint_path, lora_stack, resolve_lora_path))
     classic = replace(classic, fits=classic.required_bytes <= classic.avail_bytes)
     if classic.required_bytes - held <= classic.avail_bytes or not in_place:
         return classic
@@ -277,8 +411,9 @@ def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, h
     return fit_probe
 
 
-__all__ = ["CLASSIC_BAKE_BYTES_PER_WEIGHT", "CLASSIC_BAKE_FIXED_BYTES", "CLASSIC_BAKE_GUARD_RATIO",
-           "FP8_QUANTIZED", "FULL_PRECISION", "GATE_HAS_NOT_PASSED", "GUARDED_BY_BYTES",
-           "IN_PLACE_BAKE_FIXED_BYTES", "IN_PLACE_BAKE_PROVEN", "MEASURED_LARGEST_WEIGHT_BYTES", "OTHER",
-           "UNREADABLE_STACK_WEIGHTS", "classic_bake_bytes", "in_place_bake_bytes", "patched_weights", "priced",
-           "probe", "stack_bytes", "term_from_weights", "weight_class"]
+__all__ = ["BEYOND_THE_FILES_BYTES", "CLASSIC_BAKE_BYTES_PER_WEIGHT", "CLASSIC_BAKE_FIXED_BYTES", "CLASSIC_BAKE_GUARD_RATIO",
+           "FILES_IN_THE_LINE", "FP8_QUANTIZED", "FULL_PRECISION", "GATE_HAS_NOT_PASSED", "GUARDED_BY_BYTES",
+           "INT8_QUANTIZED", "IN_PLACE_BAKE_FIXED_BYTES", "IN_PLACE_BAKE_PROVEN", "MEASURED_LARGEST_WEIGHT_BYTES",
+           "NO_PER_WEIGHT_SHARE", "OTHER", "PLAIN_FP8", "SMALL_KEY_BYTES", "UNREADABLE_STACK_WEIGHTS",
+           "charge_from_weights", "classic_bake_bytes", "classic_charge", "in_place_bake_bytes", "patched_weights",
+           "priced", "probe", "stack_bytes", "term_from_weights", "weight_class"]

@@ -650,10 +650,16 @@
   past the price, and the Worker's GPU figure ended 12.3 GiB above the same
   model's load with no stack (5.0 GiB for a 0.3 GiB stack on the same file,
   1.2 GiB on an INT8 file, 0.8 GiB on a plain FP8 file). The price now adds
-  2 GiB plus 7.5 MiB for each weight the stack patches, and for a quantized
-  FP8 layer larger than any measured, a share of the patched bytes. No BF16
-  or FP16 file has been measured yet; those are charged the same line until
-  one is. A load that fitted the old price and does not fit the
+  a charge sized by format from what each measured load took: for scaled FP8,
+  2 GiB plus 7.5 MiB for each weight the stack patches, and never less than
+  the stack's files plus 4.7 GiB (several LoRAs on the same weights hold
+  more than the count shows); for INT8 ConvRot
+  (the shipped Wan-Animate 2 template's file) and plain FP8, 2 GiB and the
+  stack's files, whatever the number of patched weights; for BF16 and FP16,
+  2 GiB plus 7.5 MiB a patched weight and the stack's files. Plain FP8 rests
+  on one measured stack. A test holds the price against every recorded load:
+  it must admit each one and cover what the load took plus the 5 GiB floor.
+  A load that fitted the old price and does not fit the
   new one is refused with the new figure, where before it was admitted and
   took the box under its floor. Where the classic bake does not fit and
   baking in place on the loaded model would, the Worker bakes in place, as
@@ -662,7 +668,8 @@
   the identity gate holds a PASS for the combination's in-place bake, which a
   render of it with `lora_low_rss` on records; with no PASS the refusal says
   so and names both prices. The default (`lora_low_rss` on) is priced as
-  before. Nothing to set. Not yet run on hardware
+  before. Nothing to set. Run on hardware on 2026-11-12 with every format on
+  the one line and its files; the charge by format rests on that day's loads
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by

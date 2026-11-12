@@ -2374,28 +2374,90 @@ rise follows how many weights the stack patches and not the stack's size
 line through the two LTX points is 2.06 GiB plus 6.34 MiB a patched weight.
 The first row's load was priced at 50.9 GiB and used 8.7 GiB more than that
 price allows above its floor. No code on the classic path keeps a buffer for
-a patched layer; whether the memory that stays is live or the allocator's own
-is not yet read, and the price does not depend on it. Three rules follow.
+a patched layer. The memory that stays is the allocator's own reserve and not
+live tensors: after the classic load the Worker read 22.5 GiB allocated
+against 34.2 reserved, and after a soft clear 21.8 against 32.5. The price
+does not depend on it.
 
-- **The term** (`capacity_classic_bake.py`). A classic bake on stock residency
-  is charged 2 GiB plus 7.5 MiB a patched weight, which covers every row
-  (5.52 and 14.16 GiB for the two LTX stacks). The weights are counted from
-  the checkpoint's and the LoRAs' headers, which give the Worker's own counts
-  for both LTX stacks (1660 and 480); a patched bias counts as a weight, and
-  a stack that cannot be mapped charges every weight, and a checkpoint whose
+The rises above are what the term was drawn from. A second set of rows, read
+the same day on the same hardware, is what a load with its stack and its
+render took from the box after the Worker's price line, against what the
+stock price (no term) promised it would take. It says which formats the term
+is true for:
+
+| checkpoint, patched keys, how it loaded | reading | low | took | the stock price promised | short by | first charged | now charged |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Wan-Animate 2 INT8 ConvRot, 1261, loaded partly and baked whole on one GPU | 45.0 | 11.93 | 33.1 | 32.6 | 0.5 | 11.9 | 2.7 |
+| MiniMax H3 INT8 ConvRot, 208, whole | 50.9 | 7.73 | 43.2 | 41.0 | 2.2 | 5.3 | 3.8 |
+| Qwen Image plain FP8, 720, whole | 49.1 | 10.19 | 38.9 | 40.0 | none (1.1 to spare) | 8.1 | 2.8 |
+| LTX 2.3 scaled FP8, 1660, whole | 75.9 | 20.32 | 55.6 | 45.9 | 9.7 | 21.2 | 14.2 |
+| the same file, 480, whole | 82.6 | 35.22 | 47.4 | 45.9 | 1.5 | 5.8 | 5.5 |
+| Wan-Animate 2 BF16, 1261, whole, the second Spark's Worker of a pair | 113.6 | 36.21 | 77.4 | 64.1 | 13.3 | 11.9 | 11.9 |
+
+(GiB. "First charged" is the line and the stack's files for every format,
+as the term was first built; "now charged" is by format, below.) The first
+charge refused four states that had rendered: the shipped Wan-Animate 2
+template's own pair (INT8 ConvRot with its LoRA, `lora_low_rss` off) at a
+reading of 44.8 against a price of 49.5, the MiniMax H3 and Qwen Image loads
+at 50.4 and 48.7, and the LTX load at 68.5 against 72.1. So the charge is
+sized by format from what each load took, and a test holds every row of this
+table against it (`tests/test_classic_bake_records.py`): the price must admit
+each reading on record and cover what the load took plus the floor. Three
+rules follow.
+
+- **The term** (`capacity_classic_bake.py`). The line through the two LTX
+  rows of the first table is 2 GiB plus 7.5 MiB a patched weight (5.52 and
+  14.16 GiB for the two stacks). The weights are counted from the
+  checkpoint's and the LoRAs' headers, which give the Worker's own counts
+  for both LTX stacks (1660 and 480); a patched bias counts as a weight, a
+  stack that cannot be mapped charges every weight, and a checkpoint whose
   header cannot be read is charged as the largest stack measured (1660
-  weights). What is measured: quantized FP8, INT8 ConvRot and plain FP8, by
-  the rows above. A quantized FP8 weight larger than the largest one under
-  those rows (64 MiB, the LTX file's largest patched weight) is past them,
-  and a stack that patches one is charged the larger of the line and 0.75 of
-  its patched quantized FP8 bytes. What waits for a measurement: every
-  full-precision weight (BF16, FP16, FP32). Those are charged by the line
-  until the next hardware block reads two BF16 cells (a Klein BF16 stack cut
-  at the latent, and the BF16 Wan-Animate 2 template's first stack change);
-  a share of their bytes with no cell behind it would have priced a recovery
-  that worked on hardware on 2026-11-05 as a refusal. One constant
-  (`GUARDED_BY_BYTES`) holds that choice. The stack's own files
-  are charged too: the Worker reads them into host memory for the bake.
+  weights) and its files. What a classic price adds is sized by format:
+  - **Scaled FP8** (an FP8 weight with its scale or ComfyUI's quant record
+    beside it): the line, and the stack's files are not added to it. The
+    line alone leaves 4.5 and 4.0 GiB above what LTX's two stacks took plus
+    the floor. With the 7.1 GiB of files on top, the larger stack was priced
+    at 72.1 GiB against a need of 60.6. Both records are one LoRA file each.
+    The line counts distinct patched keys, and the store reads every file of
+    a stack into host memory and holds them through the bake, so several
+    LoRAs on the same keys can hold more than the line charges. Such a stack
+    is charged no less than its files and 4.7 GiB: the 2.62 GiB the larger
+    record took beyond its files, rounded up, and the 2 GiB of spare. Both
+    records stay on the line (the bound gives 11.8 and 5.0 GiB). No stack of
+    overlapping files has been measured.
+  - **INT8 ConvRot and plain FP8**: no per-weight share; the fixed 2 GiB and
+    the stack's files. Both INT8 rows and the plain FP8 row are covered with
+    room (the table's last two columns). Plain FP8 rests on one weight
+    count, 720, and a second count is owed by a measured pass. The INT8 rows
+    are of whole stacks, and most of a stack's keys there are the biases and
+    norm weights of the INT8 blocks, a few KiB each (the Wan-Animate 2 file
+    has 480 INT8 weights among the 1261 keys its LoRA patches; 774 of the
+    rest are at most 640 KiB, and the file's next tensor up is 1.4 MiB). So
+    in a stack whose patched bytes are mostly weights of such a class, a
+    patched key under 1 MiB carries no share either, and a larger weight of
+    another format in the same stack keeps its own. Every other stack is
+    counted as the line was fitted, its biases included. That difference is
+    a fitting choice and not physics: a bias costs the same few KiB on any
+    format, and the scaled FP8 line has its biases inside its slope.
+  - **A stack is read by the format that holds most of its patched bytes**,
+    for the small keys and for the files alike, so one stray key of another
+    format does not change how the whole stack is charged. (LTX's own stack
+    patches 28 BF16 keys beside its 1632 scaled FP8 ones.)
+  - **Full precision** (BF16, FP16, FP32): the line and the files. A Klein
+    BF16 stack of 121 patched weights rose 1.00 GiB against a line of 2.89
+    and the BF16 Wan-Animate 2 stack of 1261 at most 7.4 against 11.24, and
+    the table's last row took 1.3 GiB more than that price covers, so
+    nothing is trimmed there. Whether that 1.3 is the bake or the render's
+    own activations, which a load price does not claim, is for the measured
+    pass to say.
+  - **The bytes guard** (0.75 of a format's patched bytes, for a weight
+    larger than any measured) has no record behind it and is off. Both LTX
+    stacks' largest patched weight is 64.0 MiB; a scaled FP8 file with
+    larger ones is past the records and unmeasured.
+
+  Three constants hold those choices, one word each to change:
+  `NO_PER_WEIGHT_SHARE`, `FILES_IN_THE_LINE` and `GUARDED_BY_BYTES`; a
+  fourth, `BEYOND_THE_FILES_BYTES`, is the scaled FP8 bound above.
   `StockFit` carries the term, so the Worker's two walls and the quote the
   driver reads charge one figure by one function, and every refusal prints
   it. The partial-load route's room rule charges the line for the layers
@@ -2452,7 +2514,14 @@ is not yet read, and the price does not depend on it. Three rules follow.
   dropped, as with any refused fresh load.
 - **The permission** (`nodes/in_place_bake_permission.py`). The in-place bake
   is another bake path, and a memory rule must not move a combination onto a
-  path the identity gate has not passed. A graph that turns the switch off
+  path the identity gate has not passed. The partial-load route
+  (`actor/lora_partial_load.py`) is not such a path and needs no gate: it
+  loads the rest of the model through ComfyUI's own loader on the model's
+  own patcher, so every key is baked by the function a whole classic load
+  uses, and what changes is residency (the backup is freed, the slot is
+  marked baked). The in-place bake restores and re-bakes each key by the
+  pack's own protocol, and whether that equals ComfyUI's bake for a
+  combination is what the gate proves. A graph that turns the switch off
   runs no ceremony, so the driver sends a permission and never a prohibition:
   the sample request carries it only when the gate ledger holds an exact PASS,
   and no FAIL, for the combination with the in-place bake on (the pair's key
@@ -2472,9 +2541,14 @@ is not yet read, and the price does not depend on it. Three rules follow.
   permission: a loader node or the scheduler node that loads a model with
   its stack keeps the classic bake.
 
-Not yet run on hardware as a rule; the figures above are what it is built on.
-The term has no measured point on a full-precision file; the line it charges
-there is the one the quantized rows gave.
+Run on hardware on 2026-11-12 as first built (the line and the files for
+every format): the refusal with no permission, the gate's PASS, the in-place
+bake with the classic latent on a held base, on an empty slot and on the
+pair, the classic bake admitted at its price, and the fleet's own refusal
+where neither fits. The charge by format is built on the second table. Two
+points it does not hold are read by the proof block before the release: a
+whole classic INT8 load with many patched weights at tight memory, and the
+scaled FP8 load at a reading 2 GiB above its new price.
 
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a

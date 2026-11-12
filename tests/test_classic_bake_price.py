@@ -34,13 +34,22 @@ def _weights(count: int, kind: str = price.OTHER, nbytes: int = 16 * MIB):
 
 
 @pytest.mark.parametrize("count, kind, measured_gib", [
-    (1660, price.FP8_QUANTIZED, 12.34), (480, price.FP8_QUANTIZED, 5.03),
-    (208, price.OTHER, 1.21), (720, price.OTHER, 0.84)])
-def test_the_line_is_never_under_a_measured_rise(count, kind, measured_gib):
+    (1660, price.FP8_QUANTIZED, 12.34), (480, price.FP8_QUANTIZED, 5.03)])
+def test_the_line_is_never_under_a_measured_scaled_fp8_rise(count, kind, measured_gib):
     charged = price.term_from_weights(_weights(count, kind))
     assert charged == price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * count
     assert charged >= measured_gib * GIB
     assert charged <= (measured_gib + 6.5) * GIB  # a cover, not a blank cheque
+
+
+@pytest.mark.parametrize("count, kind, measured_gib", [
+    (208, price.INT8_QUANTIZED, 1.21), (208, price.INT8_QUANTIZED, 0.99),
+    (720, price.PLAIN_FP8, 0.84), (720, price.PLAIN_FP8, 1.74)])
+def test_int8_convrot_and_plain_fp8_take_the_fixed_part_which_covers_their_measured_rises(count, kind, measured_gib):
+    """MiniMax H3 INT8 ConvRot (208 patched weights) and Qwen Image plain FP8 (720): two reads each, 2026-11-12."""
+    charged = price.term_from_weights(_weights(count, kind))
+    assert charged == price.CLASSIC_BAKE_FIXED_BYTES >= measured_gib * GIB
+    assert price.NO_PER_WEIGHT_SHARE == (price.INT8_QUANTIZED, price.PLAIN_FP8)
 
 
 def test_the_line_sits_within_a_sixth_of_both_ltx_points():
@@ -52,37 +61,105 @@ def test_no_patched_weight_charges_nothing():
     assert price.term_from_weights([]) == 0
 
 
-def test_a_quantized_fp8_weight_past_the_largest_measured_takes_the_bytes_guard():
+def test_the_bytes_guard_is_off_and_one_constant_turns_it_on_for_a_format(monkeypatch):
+    """No record needs the guard: both LTX stacks' largest patched weight is the 64 MiB it starts past."""
     limit = price.MEASURED_LARGEST_WEIGHT_BYTES[price.FP8_QUANTIZED]
     at_the_limit = _weights(60, price.FP8_QUANTIZED, limit)  # enough of them that the guard would bind
     past_it = [*at_the_limit[:-1], (price.FP8_QUANTIZED, limit + 1)]
     line = price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 60
     guard = int(price.CLASSIC_BAKE_GUARD_RATIO * (59 * limit + limit + 1))
-    assert guard > line
+    assert guard > line and price.GUARDED_BY_BYTES == ()
+    assert price.term_from_weights(at_the_limit) == line and price.term_from_weights(past_it) == line
+    monkeypatch.setattr(price, "GUARDED_BY_BYTES", (price.FP8_QUANTIZED,))
     assert price.term_from_weights(at_the_limit) == line  # at the measured size: the line alone
     assert price.term_from_weights(past_it) == guard  # one byte past it: the guard
+    assert price.term_from_weights(past_it, guard=False) == line  # the partial-load route's own rule
 
 
-def test_full_precision_weights_are_charged_by_the_line_until_a_bf16_cell_is_measured(monkeypatch):
-    """No BF16, FP16 or FP32 cell exists yet, so no share of their bytes is charged (the lead's ruling).
+def test_full_precision_weights_are_charged_by_the_line_and_no_share_of_their_bytes(monkeypatch):
+    """Two BF16 cells sit under the line (121 weights rose 1.00 GiB, 1261 at most 7.4), so no bytes are charged.
 
-    One constant decides it: with the format added to ``GUARDED_BY_BYTES`` the
-    same weights take the bytes guard, which is the whole change the hardware
-    block's two BF16 cells would call for.
+    One constant decides it: with the format named in ``GUARDED_BY_BYTES`` the
+    same weights take the bytes guard.
     """
     weights = _weights(148, price.FULL_PRECISION, 110 * MIB)  # a BF16 file's patched layers
     line = price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 148
     guard = int(0.75 * 148 * 110 * MIB)
     assert guard > line and price.term_from_weights(weights) == line
-    assert price.GUARDED_BY_BYTES == (price.FP8_QUANTIZED,)
-    monkeypatch.setattr(price, "GUARDED_BY_BYTES", (price.FP8_QUANTIZED, price.FULL_PRECISION))
-    assert price.term_from_weights(weights) == guard  # no measured point: guarded whatever the layers' size
+    assert price.term_from_weights(_weights(121, price.FULL_PRECISION, 140 * MIB)) >= 1.00 * GIB
+    assert price.term_from_weights(_weights(1261, price.FULL_PRECISION, 24 * MIB)) >= 7.4 * GIB
+    monkeypatch.setattr(price, "GUARDED_BY_BYTES", (price.FULL_PRECISION,))
+    assert price.term_from_weights(weights) == guard  # no measured largest weight: guarded whatever the size
 
 
-def test_int8_and_plain_fp8_weights_are_charged_by_the_line_alone():
+def test_a_weight_with_no_record_is_charged_by_the_line():
     weights = _weights(208, price.OTHER, 94 * MIB)
     assert price.term_from_weights(weights) == (price.CLASSIC_BAKE_FIXED_BYTES
                                                 + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 208)
+
+
+def test_the_stacks_files_are_charged_beside_the_term_except_where_the_line_holds_them():
+    files = int(0.7 * GIB)
+    fixed, per_weight = price.CLASSIC_BAKE_FIXED_BYTES, price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+    assert price.FILES_IN_THE_LINE == (price.FP8_QUANTIZED,)
+    assert price.charge_from_weights(_weights(480, price.FP8_QUANTIZED), files) == fixed + 480 * per_weight
+    assert price.charge_from_weights(_weights(480, price.INT8_QUANTIZED), files) == fixed + files
+    assert price.charge_from_weights(_weights(720, price.PLAIN_FP8), files) == fixed + files
+    assert price.charge_from_weights(_weights(148, price.FULL_PRECISION), files) == fixed + 148 * per_weight + files
+    assert price.charge_from_weights(_weights(9, price.OTHER, 0), files) == fixed + 9 * per_weight + files
+    # A scaled FP8 stack with its biases (full precision) beside it: one count, and no files again.
+    mixed = _weights(480, price.FP8_QUANTIZED) + _weights(480, price.FULL_PRECISION, 10 * 1024)
+    assert price.charge_from_weights(mixed, files) == fixed + 960 * per_weight
+    assert price.charge_from_weights([], files) == files  # a stack that patches no weight still reads its files
+
+
+def test_a_scaled_fp8_stack_is_never_charged_less_than_its_files_and_what_the_bake_takes_beyond_them():
+    """Several LoRAs on the same keys do not move the count, and the store holds every file on the host."""
+    fixed, per_weight = price.CLASSIC_BAKE_FIXED_BYTES, price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+    beyond = price.BEYOND_THE_FILES_BYTES
+    weights = _weights(1660, price.FP8_QUANTIZED, 11 * MIB)
+    line = fixed + 1660 * per_weight
+    # The two recorded stacks, one file each: the line is the larger, so their prices do not move.
+    assert price.charge_from_weights(weights, LTX_OWN_STACK) == line > LTX_OWN_STACK + beyond
+    small = _weights(480, price.FP8_QUANTIZED, 25 * MIB)
+    assert price.charge_from_weights(small, int(0.305 * GIB)) == fixed + 480 * per_weight
+    # The same keys under three such files: the line alone would charge 14.2 GiB for 21.2 GiB on the host.
+    three = 3 * LTX_OWN_STACK
+    assert three > line
+    assert price.charge_from_weights(weights, three) == three + beyond
+    # The bound is what the larger record took beyond its files (2.62 GiB) and 2 GiB of spare.
+    assert beyond >= int((9.7 - 7.08 + 2.0) * GIB)
+    # At the crossover the price moves without a step.
+    at = line - beyond
+    assert price.charge_from_weights(weights, at) == line == price.charge_from_weights(weights, at - 1)
+    assert price.charge_from_weights(weights, at + 1) == line + 1
+    # The other classes already charge every file beside their term.
+    assert price.charge_from_weights(_weights(480, price.INT8_QUANTIZED), three) == fixed + three
+    assert price.charge_from_weights(_weights(720, price.PLAIN_FP8), three) == fixed + three
+    assert price.charge_from_weights(_weights(148, price.FULL_PRECISION), three) == fixed + 148 * per_weight + three
+
+
+def test_one_stray_key_of_another_format_does_not_change_how_a_stack_is_charged():
+    """A stack is read by the format that holds most of its patched bytes."""
+    files = int(0.7 * GIB)
+    fixed, per_weight = price.CLASSIC_BAKE_FIXED_BYTES, price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+    small = _weights(288, price.FULL_PRECISION, 10 * 1024)
+    # LTX's shape: scaled FP8 weights, their small keys, and a few BF16 weights. One unmarked FP8 key
+    # among them carries no share itself; the small keys keep theirs and the files stay in the line.
+    scaled = _weights(1344, price.FP8_QUANTIZED, 13 * MIB) + small + _weights(26, price.FULL_PRECISION, 20 * MIB)
+    assert price.charge_from_weights(scaled, files) == fixed + (1344 + 288 + 26) * per_weight
+    stray_plain = [*scaled, (price.PLAIN_FP8, 13 * MIB)]
+    assert price.charge_from_weights(stray_plain, files) == fixed + (1344 + 288 + 26) * per_weight
+    # An INT8 stack with one scaled FP8 weight: that weight carries its share, the small keys still
+    # carry none, and the files are still charged.
+    int8 = _weights(480, price.INT8_QUANTIZED, 30 * MIB) + small
+    assert price.charge_from_weights(int8, files) == fixed + files
+    stray_scaled = [*int8, (price.FP8_QUANTIZED, 30 * MIB)]
+    assert price.charge_from_weights(stray_scaled, files) == fixed + per_weight + files
+    # Half and half is neither format's: the dearer reading on both counts.
+    even = _weights(10, price.INT8_QUANTIZED, 30 * MIB) + _weights(10, price.FP8_QUANTIZED, 30 * MIB)
+    assert price.charge_from_weights(even, files) == fixed + 10 * per_weight + files
+    assert price.charge_from_weights(even + small, files) == fixed + (10 + 288) * per_weight + files
 
 
 def _checkpoint(tmp_path):
@@ -114,9 +191,9 @@ def test_a_weight_is_classed_from_the_header_alone(tmp_path):
     path, _tensors = _checkpoint(tmp_path)
     tensors = price.read_safetensors_header(path).tensors
     assert price.weight_class("blocks.0.attn.weight", tensors) == price.FP8_QUANTIZED
-    assert price.weight_class("blocks.0.plain.weight", tensors) == price.OTHER  # FP8 with no quant marker
+    assert price.weight_class("blocks.0.plain.weight", tensors) == price.PLAIN_FP8  # FP8 with no quant marker
     assert price.weight_class("blocks.0.mlp.weight", tensors) == price.FULL_PRECISION
-    assert price.weight_class("blocks.0.int.weight", tensors) == price.OTHER
+    assert price.weight_class("blocks.0.int.weight", tensors) == price.INT8_QUANTIZED  # INT8 with its scale
 
 
 def test_the_price_counts_the_weights_the_stack_patches(tmp_path):
@@ -125,7 +202,12 @@ def test_the_price_counts_the_weights_the_stack_patches(tmp_path):
     resolve = _resolver({"stack.safetensors": lora})
     tensors = price.read_safetensors_header(path).tensors
     assert price.patched_weights(tensors, STACK, resolve) == {"blocks.0.attn.weight", "blocks.0.int.weight"}
+    # The scaled FP8 weight carries the per-weight share; the INT8 ConvRot weight beside it carries none.
     assert price.classic_bake_bytes(path, STACK, resolve) == (
+        price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
+    both_shared = _lora(tmp_path, ["blocks.0.attn", "blocks.0.mlp"], name="shared.safetensors")
+    assert price.classic_bake_bytes(path, [{"name": "shared.safetensors"}], _resolver(
+        {"shared.safetensors": both_shared})) == (
         price.CLASSIC_BAKE_FIXED_BYTES + 2 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
     assert price.classic_bake_bytes(path, None, resolve) == 0
     assert price.classic_bake_bytes(path, [], resolve) == 0
@@ -142,8 +224,12 @@ def test_a_stack_it_cannot_map_or_read_charges_every_weight(tmp_path):
         raise FileNotFoundError("no such LoRA")
 
     assert price.patched_weights(tensors, STACK, missing) == every
-    assert price.classic_bake_bytes(path, STACK, missing) >= (
-        price.CLASSIC_BAKE_FIXED_BYTES + len(every) * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
+    # Every weight is priced by its own class. This header has an INT8 ConvRot weight and a plain FP8
+    # one, which carry no share. Most of its bytes are the scaled FP8 weight, so the stack is counted
+    # as that format is: the scaled FP8 weight, the BF16 weight and the bias each carry a share.
+    assert len(every) == 5
+    assert price.classic_bake_bytes(path, STACK, missing) == (
+        price.CLASSIC_BAKE_FIXED_BYTES + 3 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
 
 
 def test_a_checkpoint_whose_header_cannot_be_read_is_charged_as_the_largest_stack_measured(tmp_path):
@@ -169,11 +255,19 @@ def _fit(avail_gib: float, size: int = LTX_BYTES) -> StockFit:
 
 @pytest.fixture
 def ltx(monkeypatch):
-    """LTX's own stack by its recorded figures: 14.2 GiB of classic bake, 7.08 GiB of files."""
+    """A stack whose classic price adds 21.2 GiB: a 14.2 GiB term and 7.08 GiB of files, on LTX's file.
+
+    These are the figures LTX's own stack had while the files were added to
+    the line. Its own charge is now the line alone (``charge_from_weights``,
+    held by tests/test_classic_bake_records.py). The tests that take this
+    fixture are about the rule that picks between the two bakes, whose
+    arithmetic does not depend on the format, so the figures stay.
+    """
     term = price.term_from_weights(_weights(1660, price.FP8_QUANTIZED))
-    monkeypatch.setattr(price, "classic_bake_bytes", lambda _path, stack, _resolve: term if stack else 0)
+    charge = term + LTX_OWN_STACK
+    monkeypatch.setattr(price, "classic_charge", lambda _path, stack, _resolve: charge if stack else 0)
     monkeypatch.setattr(price, "stack_bytes", lambda stack, _resolve: LTX_OWN_STACK if stack else 0)
-    return term + LTX_OWN_STACK  # what a classic price adds: the term and the stack's files
+    return charge  # what this stack's classic price adds
 
 
 HELD = int(21.85 * GIB)  # what dropping the bare LTX base returns
