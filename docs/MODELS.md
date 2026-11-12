@@ -367,7 +367,9 @@ between this workflow and another on the same topology, and both models loaded
 from disk on the way back
 ([TROUBLESHOOTING #33](TROUBLESHOOTING.md#33-a-live-topology-or-residency-policy-change-times-out-while-retiring-a-large-resident)).
 A workflow saved from the older template keeps the old setting; turn it on in
-the Init node to match. The records under Test results were taken with it off,
+the Init node to match. The first render after this change runs the identity
+gate again, because a gate verdict covers one setting. The records under Test
+results were taken with it off,
 and this graph has not been run on hardware with it on yet. The first render of this
 dual-model graph runs the identity gate over both models, and its PASS covers
 only that pair; on cfg2 the gate cannot run, so a cfg2 render uses stock
