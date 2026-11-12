@@ -1100,7 +1100,8 @@ encoder, the FP16 VAE, KSampler at 6 steps, CFG 1, `euler` and `simple` on a
 zeroed negative, and ComfyUI's prompt expander chain behind an If/Else switch:
 Replace Text puts the request into a task prompt where it says `{input text}`,
 Generate Text runs the W4A8 expander on it, and
-Extract Text from JSON reads `expanded_caption` out of the answer. The
+Extract Text reads the caption out of the answer under the key
+`expanded_caption`. The
 expander's task prompt and system prompt boxes hold this project's own texts,
 and both templates ship the switch false, so as shipped each renders from the
 request as written. Text to image renders
@@ -1115,7 +1116,7 @@ request cites them as `<Picture 1>`, `<Picture 2>`.
 The edit's canvas nodes are ComfyUI's own: two Resize Image/Mask nodes, to
 4 MP by area and then to a multiple of 32, and Get Image Size. The graphs
 leave out ComfyUI's subgraph wrapper, its Markdown notes and its Image Compare
-node, and set the switch on the If/Else node itself. Seven more things differ
+node, and set the switch on the If/Else node itself. Eight more things differ
 from ComfyUI's graphs, each on purpose:
 
 - The expander's task prompt and system prompt boxes hold this project's own
@@ -1130,13 +1131,23 @@ from ComfyUI's graphs, each on purpose:
   `auto`, temperature 1.0 and top_p 0.95. The node gives reasoning no budget
   of its own, so a run that reasons up to `max_length` returns no caption;
   the texts here ask for the answer at once.
-- A caption that cannot be read falls back to the request. Extract Text from
-  JSON reads a valid answer. An answer that is not valid JSON, most often a
-  caption with a double quote inside it, returns nothing there, so Extract
-  Text reads it a second time by pattern: everything between the opening
-  quote of `expanded_caption` and the last quote a closing brace follows.
-  When neither read holds a caption (an answer cut short, plain prose, an
-  empty value), ComfyUI's graphs would render from an empty prompt. Here
+- The caption is read by pattern, where ComfyUI's graphs read strict JSON.
+  The texts here ask the expander to copy drawn words exactly, double quotes
+  included, and a strict read is wrong for such an answer in three ways: a
+  raw double quote inside the caption leaves no valid object, so the caption
+  is lost; a copied object that itself holds the key `expanded_caption` is
+  read in place of the answer; and a raw quote followed by a closing brace
+  cuts the caption short. So Extract Text takes everything between the
+  opening quote of `expanded_caption` and the quote that closes the value:
+  the last quote a closing brace follows, or, when more keys with a string,
+  a number, `true`, `false` or `null` stand after the caption, the quote
+  before them. Replace
+  Text (Regex) then turns a backslash before a double quote, a backslash or
+  a slash into that mark, as a JSON read would. The texts
+  expect this read: with a strict JSON read alone they would lose captions.
+- A caption that cannot be read falls back to the request. When the read
+  holds no caption (an answer cut short, plain prose, an empty value),
+  ComfyUI's graphs would render from an empty prompt. Here
   Trim Text and Compare Text test the caption against the empty text, and an
   If/Else sends the request as written.
 - An empty request skips the expander. The same Trim Text, Compare Text and
@@ -1176,9 +1187,8 @@ request, or spend the expander's run and fall back to the request,
 with no error from ComfyUI, so a DGX Monarch loader, sampler or
 Identity Gate refuses it, class P
 ([#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
-Neither the second read of the caption nor the empty-caption fallback quiets
-that refusal: ComfyUI must run the
-expander to decide them, so with the switch true and a request to expand the
+The empty-caption fallback does not quiet that refusal: ComfyUI must run the
+expander to decide it, so with the switch true and a request to expand the
 refusal still answers. An empty request runs no expander and refuses nothing.
 
 **The expander and repeatability.** With the switch true the prompt is text a
@@ -1292,7 +1302,14 @@ checkpoint's INT8 attention pins and a world of one GPU keeps them, so the two
 renders are not identical, and the size of that difference is not measured.
 The prompt expander ships off, with this project's own texts in its two
 prompt boxes; the expander rows in VALIDATION, for the texts and for a render
-with it on, are NOT RUN. The W4A8 DiT refuses FSDP. Studio's CPU compile tests skip both
+with it on, are NOT RUN. The caption read has four limits. Text after the
+answer that holds a double quote before a closing brace, such as a second
+object or a note that quotes the format, is read into the caption. A second
+key whose value is a list or an object joins the caption or loses it. A `\u`
+escape, and an escaped line break or tab, stay in the caption as typed. And a
+backslash the request wants drawn before a double quote, a backslash or a
+slash is read as an escape.
+The W4A8 DiT refuses FSDP. Studio's CPU compile tests skip both
 graphs until a driver schema is recorded on ComfyUI 0.45.0.
 
 <a id="model-longcat-image"></a>

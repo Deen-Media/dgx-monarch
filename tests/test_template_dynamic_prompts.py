@@ -38,14 +38,14 @@ _SPEC.loader.exec_module(canary)
 IDEOGRAM = ("dgx-monarch-ideogram4-t2i", "dgx-monarch-test-ideogram4-lora")
 # Classes the recording lacks whose flags were read from ComfyUI's source
 # instead, each with the inputs it marks dynamicPrompts. Replace Text, Extract
-# Text and Extract Text from JSON mark none (comfy_extras/nodes_string.py at
+# Text and Replace Text (Regex) mark none (comfy_extras/nodes_string.py at
 # 0.45.0). The
 # MiniMax-H3-Image graphs keep ComfyUI's `{input text}` marker in Replace
 # Text's find box and a pattern with a brace in Extract Text's pattern box. The
 # widget canary reads the real schema on every run, so a
 # flag ComfyUI adds later fails there.
 SOURCE_READ_FLAGS: dict[str, tuple[str, ...]] = {
-    "StringReplace": (), "JsonExtractString": (), "RegexExtract": ()}
+    "StringReplace": (), "RegexExtract": (), "RegexReplace": ()}
 
 
 def _api(path: Path) -> dict:

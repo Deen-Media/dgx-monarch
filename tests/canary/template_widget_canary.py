@@ -19,8 +19,8 @@ ComfyUI's nodes.NODE_CLASS_MAPPINGS and this pack's nodes, this canary checks:
    such a graph would render one prompt from the browser and another from the
    API, the sweep and Studio.
 7. The MiniMax-H3-Image caption read gives the caption its table states for
-   each answer, through ComfyUI's own Extract Text from JSON, Trim Text,
-   Compare Text and Extract Text nodes (parse_chain_errors).
+   each answer, through ComfyUI's own Extract Text, Replace Text (Regex),
+   Trim Text and Compare Text nodes (parse_chain_errors).
 
 Conversion uses benchmark.sweep.convert.convert and object_info_widget_names,
 the same functions used by the live sweep.
@@ -261,65 +261,124 @@ def dynamic_widget_errors(node_class: str, generated: list, declared_names: list
 
 # ---- The MiniMax-H3-Image caption read ------------------------------------------
 #
-# The shipped MiniMax-H3-Image graphs read the expander's answer twice: Extract
-# Text from JSON first, and Extract Text by pattern when that returns nothing,
-# with Trim Text and Compare Text deciding which read holds a caption. The
-# table below is the contract: each answer, the caption the image model gets,
-# and the read that gave it ("request" when neither did and the graph sends
-# the request as written). tests/test_minimax_h3_image_templates.py runs it
-# through a stand-in for the four nodes; main() runs it through ComfyUI's own.
+# The shipped MiniMax-H3-Image graphs read the expander's caption by pattern:
+# Extract Text takes the value of the answer's outermost wrapper, Replace Text
+# (Regex) turns a backslash before a double quote, a backslash or a slash into
+# that mark, and Trim Text and Compare Text decide whether a caption was read.
+# The table below is the contract: each answer, the caption the image model
+# gets, and "read" or "request" (no caption, so the graph sends the request as
+# written). tests/test_minimax_h3_image_templates.py runs it through stand-ins
+# for the four nodes; main() runs it through ComfyUI's own.
 PARSE_TEMPLATE = "dgx-monarch-minimax-h3-image-t2i.json"
-PARSE_NODES = ("JsonExtractString", "StringTrim", "StringCompare", "RegexExtract")
+PARSE_NODES = ("RegexExtract", "RegexReplace", "StringTrim", "StringCompare")
 PARSE_CASES = (
     ("a valid object",
      '{"expanded_caption": "A photograph of a boat."}',
-     "A photograph of a boat.", "strict"),
-    ("escaped quotes and a backslash, which the strict read decodes",
-     '{"expanded_caption": "A sign that reads \\"OPEN\\" beside the path C:\\\\tmp."}',
-     'A sign that reads "OPEN" beside the path C:\\tmp.', "strict"),
+     "A photograph of a boat.", "read"),
+    ("escaped double quotes",
+     '{"expanded_caption": "A sign that reads \\"OPEN\\" on a door."}',
+     'A sign that reads "OPEN" on a door.', "read"),
+    ("an escaped double quote at the caption's end",
+     '{"expanded_caption": "The sign says \\"OK\\""}',
+     'The sign says "OK"', "read"),
+    ("an escaped backslash",
+     '{"expanded_caption": "Chalk text \'A\\\\B = C\' on a board."}',
+     "Chalk text 'A\\B = C' on a board.", "read"),
+    ("an escaped path",
+     '{"expanded_caption": "A label that reads C:\\\\new\\\\temp."}',
+     "A label that reads C:\\new\\temp.", "read"),
+    ("an escaped slash",
+     '{"expanded_caption": "A sign that says 1\\/2 off."}',
+     "A sign that says 1/2 off.", "read"),
     ("a code fence",
      '```json\n{"expanded_caption": "A photograph of a boat."}\n```',
-     "A photograph of a boat.", "strict"),
+     "A photograph of a boat.", "read"),
     ("text before and after the object",
      'Here is the caption: {"expanded_caption": "A photograph of a boat."} I hope it helps.',
-     "A photograph of a boat.", "strict"),
-    ("two objects: the first that parses wins",
-     '{"expanded_caption": "The first."} {"expanded_caption": "The second."}',
-     "The first.", "strict"),
+     "A photograph of a boat.", "read"),
     ("inner double quotes",
      '{"expanded_caption": "A card that says "status ok" in black letters."}',
-     'A card that says "status ok" in black letters.', "loose"),
+     'A card that says "status ok" in black letters.', "read"),
     ("an inner JSON object copied as typed",
      '{"expanded_caption": "A card with the text {"status": "ok"} in black. Brackets float beside it."}',
-     'A card with the text {"status": "ok"} in black. Brackets float beside it.', "loose"),
-    ("an inner object at the very end of the caption",
-     '{"expanded_caption": "A card with the text {"status": "ok"}"}',
-     'A card with the text {"status": "ok"}', "loose"),
+     'A card with the text {"status": "ok"} in black. Brackets float beside it.', "read"),
+    ("an inner object that itself holds the answer key",
+     '{"expanded_caption": "A poster that reads {"expanded_caption": "hello"} in red."}',
+     'A poster that reads {"expanded_caption": "hello"} in red.', "read"),
+    ("a raw double quote then a closing brace inside the caption",
+     '{"expanded_caption": "A sign with the marks "} painted on it, in a blue room."}',
+     'A sign with the marks "} painted on it, in a blue room.', "read"),
     ("a raw double quote at the very end of the caption",
      '{"expanded_caption": "The sign says "OK""}',
-     'The sign says "OK"', "loose"),
+     'The sign says "OK"', "read"),
+    ("raw and escaped double quotes in one caption",
+     '{"expanded_caption": "A \\"big\\" dog by a sign that says "OPEN"."}',
+     'A "big" dog by a sign that says "OPEN".', "read"),
     ("inner double quotes inside a code fence, with text after",
      '```json\n{"expanded_caption": "A "big" dog."}\n```\nDone.',
-     'A "big" dog.', "loose"),
+     'A "big" dog.', "read"),
+    ("a raw path whose backslashes look like JSON escapes stays as typed",
+     '{"expanded_caption": "A label that reads C:\\new\\temp."}',
+     "A label that reads C:\\new\\temp.", "read"),
+    ("a raw path with other backslashes",
+     '{"expanded_caption": "A label that reads C:\\data\\files."}',
+     "A label that reads C:\\data\\files.", "read"),
     ("backslash-escaped quotes around the value",
      '{\n"expanded_caption": \\"A yellow circle on a wall.\\"}"',
-     "A yellow circle on a wall.", "loose"),
+     "A yellow circle on a wall.", "read"),
     ("an escaped and a plain closing quote",
      '{\n"expanded_caption": \\"A black bicycle.\\""\n}',
-     "A black bicycle.", "loose"),
-    ("escaped inner quotes stay as typed in the loose read",
-     '{"expanded_caption": "A \\"big\\" dog beside a sign that says "OPEN"."}',
-     'A \\"big\\" dog beside a sign that says "OPEN".', "loose"),
-    ("two objects, the first not valid JSON: the strict read takes the second",
-     '{"expanded_caption": "A "red" boat."} {"expanded_caption": "The second."}',
-     "The second.", "strict"),
-    # Two limits of reading strictly first, kept here so a change to either is seen.
-    ("an inner object that holds the answer key: the strict read takes its value",
-     '{"expanded_caption": "A chalk board that shows {"expanded_caption": "hello"} in white."}',
-     "hello", "strict"),
-    ("a raw backslash that is a JSON escape: the strict read decodes it",
-     '{"expanded_caption": "A label that reads C:\\new\\temp."}',
-     "A label that reads C:\new\temp.", "strict"),
+     "A black bicycle.", "read"),
+    ("a raw double quote then a comma inside the caption",
+     '{"expanded_caption": "A sign reads ", then more."}',
+     'A sign reads ", then more.', "read"),
+    ("an inner object with two keys at the caption's end",
+     '{"expanded_caption": "A card with the text {"status": "ok", "code": "7"}"}',
+     'A card with the text {"status": "ok", "code": "7"}', "read"),
+    ("a second key after the caption",
+     '{"expanded_caption": "A cat on a mat.", "aspect_ratio": "1:1"}',
+     "A cat on a mat.", "read"),
+    ("more keys on their own lines, a number and true among them",
+     '{\n  "expanded_caption": "A cat on a mat.",\n  "seed": 7,\n  "safe": true\n}',
+     "A cat on a mat.", "read"),
+    ("a second key whose string holds an escaped quote",
+     '{"expanded_caption": "A cat on a mat.", "note": "say \\"hi\\""}',
+     "A cat on a mat.", "read"),
+    ("inner double quotes, then a second key",
+     '{"expanded_caption": "A "big" cat.", "aspect_ratio": "1:1"}',
+     'A "big" cat.', "read"),
+    ("a key before the caption",
+     '{"aspect_ratio": "1:1", "expanded_caption": "A cat on a mat."}',
+     "A cat on a mat.", "read"),
+    ("a planning object before the answer",
+     '{"plan": "one cat, one mat"} {"expanded_caption": "A cat on a mat."}',
+     "A cat on a mat.", "read"),
+    # The limits of reading by pattern, kept here so a change to any is seen.
+    ("limit: an escaped line break stays as typed",
+     '{"expanded_caption": "Line one.\\nLine two."}',
+     "Line one.\\nLine two.", "read"),
+    ("limit: an escaped tab stays as typed",
+     '{"expanded_caption": "Left.\\tRight."}',
+     "Left.\\tRight.", "read"),
+    ("limit: a unicode escape stays as typed",
+     '{"expanded_caption": "A caf\\u00e9 sign."}',
+     "A caf\\u00e9 sign.", "read"),
+    ("limit: two objects are read as one caption",
+     '{"expanded_caption": "The first."} {"expanded_caption": "The second."}',
+     'The first."} {"expanded_caption": "The second.', "read"),
+    ("limit: a first object that is not valid joins the second",
+     '{"expanded_caption": "A} {"expanded_caption": "C"}',
+     'A} {"expanded_caption": "C', "read"),
+    ("limit: a note after the object that holds a quote then a brace joins the caption",
+     '{"expanded_caption": "A cat."} Note: the form is {"expanded_caption": "..."}',
+     'A cat."} Note: the form is {"expanded_caption": "...', "read"),
+    ("limit: a second key with an object as its value joins the caption",
+     '{"expanded_caption": "A cat.", "meta": {"a": "b"}}',
+     'A cat.", "meta": {"a": "b', "read"),
+    ("limit: a second key with a list as its value loses the caption",
+     '{"expanded_caption": "A cat.", "tags": ["a", "b"]}', "", "request"),
+    ("an object as the value", '{"expanded_caption": {"text": "A cat."}}', "", "request"),
+    ("null as the value", '{"expanded_caption": null}', "", "request"),
     ("an answer cut short", '{"expanded_caption": "A photograph of a small weather sta', "", "request"),
     ("an empty value", '{"expanded_caption": ""}', "", "request"),
     ("a blank value", '{"expanded_caption": "   "}', "", "request"),
@@ -335,27 +394,23 @@ def parse_settings(api: dict) -> dict:
         (inputs,) = [node["inputs"] for node in api.values() if node["class_type"] == kind]
         return inputs
 
-    regex = only("RegexExtract")
-    return {"key": only("JsonExtractString")["key"],
-            **{name: regex[name] for name in ("regex_pattern", "mode", "case_insensitive",
-                                              "multiline", "dotall", "group_index")}}
+    read, marks = only("RegexExtract"), only("RegexReplace")
+    return {"read": tuple(read[name] for name in (
+                "regex_pattern", "mode", "case_insensitive", "multiline", "dotall", "group_index")),
+            "marks": tuple(marks[name] for name in (
+                "regex_pattern", "replace", "case_insensitive", "multiline", "dotall", "count"))}
 
 
 def caption_from(answer: str, settings: dict, run: Callable) -> tuple[str, str]:
-    """The caption the graph's read gives for one answer, and which read gave it.
+    """The caption the graph's read gives for one answer, or ("", "request").
 
     ``run(node_class, *args)`` executes one node and returns its first output.
     """
-    def empty(text: str) -> bool:
-        return run("StringCompare", run("StringTrim", text, "Both"), "", "Equal", True)
-
-    strict = run("JsonExtractString", answer, settings["key"])
-    if not empty(strict):
-        return strict, "strict"
-    loose = run("RegexExtract", answer, settings["regex_pattern"], settings["mode"],
-                settings["case_insensitive"], settings["multiline"], settings["dotall"],
-                settings["group_index"])
-    return (loose, "loose") if not empty(loose) else ("", "request")
+    caption = run("RegexReplace", run("RegexExtract", answer, *settings["read"]),
+                  *settings["marks"])
+    if run("StringCompare", run("StringTrim", caption, "Both"), "", "Equal", True):
+        return "", "request"
+    return caption, "read"
 
 
 def parse_chain_errors(settings: dict, run: Callable) -> list[str]:

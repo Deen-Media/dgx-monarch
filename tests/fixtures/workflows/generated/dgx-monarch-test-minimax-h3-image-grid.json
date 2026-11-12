@@ -1,8 +1,8 @@
 {
  "id": "minimax-h3-image-on-its-sigma-grid",
  "revision": 0,
- "last_node_id": 32,
- "last_link_id": 39,
+ "last_node_id": 29,
+ "last_link_id": 34,
  "nodes": [
   {
    "id": 1,
@@ -124,7 +124,7 @@
      "type": "DGXM_MODEL",
      "slot_index": 0,
      "links": [
-      30
+      25
      ]
     }
    ],
@@ -161,7 +161,7 @@
      "type": "CLIP",
      "slot_index": 0,
      "links": [
-      27
+      22
      ]
     }
    ],
@@ -229,8 +229,8 @@
      "type": "VAE",
      "slot_index": 0,
      "links": [
-      28,
-      38
+      23,
+      33
      ]
     }
    ],
@@ -263,10 +263,10 @@
      "slot_index": 0,
      "links": [
       3,
+      13,
+      14,
       18,
-      19,
-      23,
-      24
+      19
      ]
     }
    ],
@@ -435,8 +435,7 @@
      "type": "STRING",
      "slot_index": 0,
      "links": [
-      7,
-      10
+      7
      ]
     },
     {
@@ -467,24 +466,24 @@
   },
   {
    "id": 12,
-   "type": "JsonExtractString",
+   "type": "RegexExtract",
    "pos": [
     1440,
     650
    ],
    "size": [
     315,
-    118
+    228
    ],
    "flags": {},
    "order": 11,
    "mode": 0,
    "inputs": [
     {
-     "name": "json_string",
+     "name": "string",
      "type": "STRING",
      "widget": {
-      "name": "json_string"
+      "name": "string"
      },
      "link": 7
     }
@@ -495,29 +494,33 @@
      "type": "STRING",
      "slot_index": 0,
      "links": [
-      8,
-      12
+      8
      ]
     }
    ],
    "properties": {
-    "Node name for S&R": "JsonExtractString"
+    "Node name for S&R": "RegexExtract"
    },
    "widgets_values": [
     "",
-    "expanded_caption"
+    "\"expanded_caption\\\\?\"\\s*:\\s*(\\\\)?\"(.*?)(?(1)\\\\\"\\s*\"?|\")\\s*(?:,\\s*\"\\w+\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|-?[0-9][0-9.]*|true|false|null)\\s*)*\\}(?!.*\"\\s*\\})",
+    "First Group",
+    false,
+    false,
+    true,
+    2
    ]
   },
   {
    "id": 13,
-   "type": "StringTrim",
+   "type": "RegexReplace",
    "pos": [
     420,
     1220
    ],
    "size": [
     315,
-    118
+    228
    ],
    "flags": {},
    "order": 12,
@@ -538,7 +541,55 @@
      "type": "STRING",
      "slot_index": 0,
      "links": [
-      9
+      9,
+      12
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "RegexReplace"
+   },
+   "widgets_values": [
+    "",
+    "\\\\([\"\\\\/])",
+    "\\1",
+    false,
+    false,
+    false,
+    0
+   ]
+  },
+  {
+   "id": 14,
+   "type": "StringTrim",
+   "pos": [
+    760,
+    840
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "string",
+     "type": "STRING",
+     "widget": {
+      "name": "string"
+     },
+     "link": 9
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      10
      ]
     }
    ],
@@ -551,18 +602,18 @@
    ]
   },
   {
-   "id": 14,
+   "id": 15,
    "type": "StringCompare",
    "pos": [
-    760,
-    1220
+    1100,
+    840
    ],
    "size": [
     315,
     162
    ],
    "flags": {},
-   "order": 13,
+   "order": 14,
    "mode": 0,
    "inputs": [
     {
@@ -571,7 +622,7 @@
      "widget": {
       "name": "string_a"
      },
-     "link": 9
+     "link": 10
     }
    ],
    "outputs": [
@@ -595,58 +646,11 @@
    ]
   },
   {
-   "id": 15,
-   "type": "RegexExtract",
-   "pos": [
-    1100,
-    1220
-   ],
-   "size": [
-    315,
-    228
-   ],
-   "flags": {},
-   "order": 14,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "string",
-     "type": "STRING",
-     "widget": {
-      "name": "string"
-     },
-     "link": 10
-    }
-   ],
-   "outputs": [
-    {
-     "name": "STRING",
-     "type": "STRING",
-     "slot_index": 0,
-     "links": [
-      13
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "RegexExtract"
-   },
-   "widgets_values": [
-    "",
-    "\"expanded_caption\\\\?\"\\s*:\\s*\\\\?\"(.*?)(?:(?:\\\\\")*\"|(?:\\\\\")+)\\s*\\}(?!.*\"\\s*\\})",
-    "First Group",
-    false,
-    false,
-    true,
-    1
-   ]
-  },
-  {
    "id": 16,
    "type": "ComfySwitchNode",
    "pos": [
     1440,
-    1220
+    840
    ],
    "size": [
     315,
@@ -681,7 +685,6 @@
      "type": "STRING",
      "slot_index": 0,
      "links": [
-      14,
       17
      ]
     }
@@ -692,14 +695,14 @@
    "widgets_values": [
     false
    ],
-   "title": "If/Else Switch (caption did not parse: read it by pattern)"
+   "title": "If/Else Switch (empty caption: send the request)"
   },
   {
    "id": 17,
    "type": "StringTrim",
    "pos": [
-    760,
-    840
+    420,
+    1410
    ],
    "size": [
     315,
@@ -740,8 +743,8 @@
    "id": 18,
    "type": "StringCompare",
    "pos": [
-    1100,
-    840
+    760,
+    1410
    ],
    "size": [
     315,
@@ -784,8 +787,8 @@
    "id": 19,
    "type": "ComfySwitchNode",
    "pos": [
-    1440,
-    840
+    1100,
+    1410
    ],
    "size": [
     315,
@@ -820,145 +823,7 @@
      "type": "STRING",
      "slot_index": 0,
      "links": [
-      22
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "ComfySwitchNode"
-   },
-   "widgets_values": [
-    false
-   ],
-   "title": "If/Else Switch (empty caption: send the request)"
-  },
-  {
-   "id": 20,
-   "type": "StringTrim",
-   "pos": [
-    420,
-    1410
-   ],
-   "size": [
-    315,
-    118
-   ],
-   "flags": {},
-   "order": 19,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "string",
-     "type": "STRING",
-     "widget": {
-      "name": "string"
-     },
-     "link": 19
-    }
-   ],
-   "outputs": [
-    {
-     "name": "STRING",
-     "type": "STRING",
-     "slot_index": 0,
-     "links": [
       20
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "StringTrim"
-   },
-   "widgets_values": [
-    "",
-    "Both"
-   ]
-  },
-  {
-   "id": 21,
-   "type": "StringCompare",
-   "pos": [
-    760,
-    1410
-   ],
-   "size": [
-    315,
-    162
-   ],
-   "flags": {},
-   "order": 20,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "string_a",
-     "type": "STRING",
-     "widget": {
-      "name": "string_a"
-     },
-     "link": 20
-    }
-   ],
-   "outputs": [
-    {
-     "name": "BOOLEAN",
-     "type": "BOOLEAN",
-     "slot_index": 0,
-     "links": [
-      21
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "StringCompare"
-   },
-   "widgets_values": [
-    "",
-    "",
-    "Equal",
-    true
-   ]
-  },
-  {
-   "id": 22,
-   "type": "ComfySwitchNode",
-   "pos": [
-    1100,
-    1410
-   ],
-   "size": [
-    315,
-    140
-   ],
-   "flags": {},
-   "order": 21,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "on_false",
-     "type": "STRING",
-     "link": 22
-    },
-    {
-     "name": "on_true",
-     "type": "STRING",
-     "link": 23
-    },
-    {
-     "name": "switch",
-     "type": "BOOLEAN",
-     "widget": {
-      "name": "switch"
-     },
-     "link": 21
-    }
-   ],
-   "outputs": [
-    {
-     "name": "output",
-     "type": "STRING",
-     "slot_index": 0,
-     "links": [
-      25
      ]
     }
    ],
@@ -971,7 +836,7 @@
    "title": "If/Else Switch (empty request: skip the expander)"
   },
   {
-   "id": 23,
+   "id": 20,
    "type": "ComfySwitchNode",
    "pos": [
     760,
@@ -982,18 +847,18 @@
     118
    ],
    "flags": {},
-   "order": 22,
+   "order": 19,
    "mode": 0,
    "inputs": [
     {
      "name": "on_false",
      "type": "STRING",
-     "link": 24
+     "link": 19
     },
     {
      "name": "on_true",
      "type": "STRING",
-     "link": 25
+     "link": 20
     }
    ],
    "outputs": [
@@ -1002,8 +867,8 @@
      "type": "STRING",
      "slot_index": 0,
      "links": [
-      26,
-      29
+      21,
+      24
      ]
     }
    ],
@@ -1016,7 +881,7 @@
    "title": "If/Else Switch (expander on or off)"
   },
   {
-   "id": 24,
+   "id": 21,
    "type": "PreviewAny",
    "pos": [
     1100,
@@ -1027,13 +892,13 @@
     80
    ],
    "flags": {},
-   "order": 23,
+   "order": 20,
    "mode": 0,
    "inputs": [
     {
      "name": "source",
      "type": "*",
-     "link": 26
+     "link": 21
     }
    ],
    "outputs": [
@@ -1050,7 +915,7 @@
    "widgets_values": []
   },
   {
-   "id": 25,
+   "id": 22,
    "type": "MiniMaxH3ImageConditioning",
    "pos": [
     1440,
@@ -1061,18 +926,18 @@
     206
    ],
    "flags": {},
-   "order": 24,
+   "order": 21,
    "mode": 0,
    "inputs": [
     {
      "name": "clip",
      "type": "CLIP",
-     "link": 27
+     "link": 22
     },
     {
      "name": "vae",
      "type": "VAE",
-     "link": 28
+     "link": 23
     },
     {
      "name": "prompt",
@@ -1080,7 +945,7 @@
      "widget": {
       "name": "prompt"
      },
-     "link": 29
+     "link": 24
     }
    ],
    "outputs": [
@@ -1089,7 +954,7 @@
      "type": "CONDITIONING",
      "slot_index": 0,
      "links": [
-      31
+      26
      ]
     },
     {
@@ -1097,7 +962,7 @@
      "type": "LATENT",
      "slot_index": 1,
      "links": [
-      36
+      31
      ]
     }
    ],
@@ -1111,7 +976,7 @@
    ]
   },
   {
-   "id": 26,
+   "id": 23,
    "type": "DGXMonarchBasicGuider",
    "pos": [
     1780,
@@ -1122,18 +987,18 @@
     96
    ],
    "flags": {},
-   "order": 25,
+   "order": 22,
    "mode": 0,
    "inputs": [
     {
      "name": "model",
      "type": "DGXM_MODEL",
-     "link": 30
+     "link": 25
     },
     {
      "name": "conditioning",
      "type": "CONDITIONING",
-     "link": 31
+     "link": 26
     }
    ],
    "outputs": [
@@ -1142,7 +1007,7 @@
      "type": "DGXM_GUIDER",
      "slot_index": 0,
      "links": [
-      33
+      28
      ]
     }
    ],
@@ -1153,7 +1018,7 @@
    "dgxm_widgets": {}
   },
   {
-   "id": 27,
+   "id": 24,
    "type": "KSamplerSelect",
    "pos": [
     1780,
@@ -1164,7 +1029,7 @@
     80
    ],
    "flags": {},
-   "order": 26,
+   "order": 23,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -1173,7 +1038,7 @@
      "type": "SAMPLER",
      "slot_index": 0,
      "links": [
-      34
+      29
      ]
     }
    ],
@@ -1185,7 +1050,7 @@
    ]
   },
   {
-   "id": 28,
+   "id": 25,
    "type": "RandomNoise",
    "pos": [
     1780,
@@ -1196,7 +1061,7 @@
     96
    ],
    "flags": {},
-   "order": 27,
+   "order": 24,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -1205,7 +1070,7 @@
      "type": "NOISE",
      "slot_index": 0,
      "links": [
-      32
+      27
      ]
     }
    ],
@@ -1218,7 +1083,7 @@
    ]
   },
   {
-   "id": 29,
+   "id": 26,
    "type": "ManualSigmas",
    "pos": [
     1780,
@@ -1229,7 +1094,7 @@
     80
    ],
    "flags": {},
-   "order": 28,
+   "order": 25,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -1238,7 +1103,7 @@
      "type": "SIGMAS",
      "slot_index": 0,
      "links": [
-      35
+      30
      ]
     }
    ],
@@ -1250,7 +1115,7 @@
    ]
   },
   {
-   "id": 30,
+   "id": 27,
    "type": "DGXMonarchSamplerCustom",
    "pos": [
     2120,
@@ -1261,33 +1126,33 @@
     184
    ],
    "flags": {},
-   "order": 29,
+   "order": 26,
    "mode": 0,
    "inputs": [
     {
      "name": "noise",
      "type": "NOISE",
-     "link": 32
+     "link": 27
     },
     {
      "name": "guider",
      "type": "DGXM_GUIDER",
-     "link": 33
+     "link": 28
     },
     {
      "name": "sampler",
      "type": "SAMPLER",
-     "link": 34
+     "link": 29
     },
     {
      "name": "sigmas",
      "type": "SIGMAS",
-     "link": 35
+     "link": 30
     },
     {
      "name": "latent_image",
      "type": "LATENT",
-     "link": 36
+     "link": 31
     }
    ],
    "outputs": [
@@ -1296,7 +1161,7 @@
      "type": "LATENT",
      "slot_index": 0,
      "links": [
-      37
+      32
      ]
     },
     {
@@ -1313,7 +1178,7 @@
    "dgxm_widgets": {}
   },
   {
-   "id": 31,
+   "id": 28,
    "type": "VAEDecode",
    "pos": [
     2460,
@@ -1324,18 +1189,18 @@
     96
    ],
    "flags": {},
-   "order": 30,
+   "order": 27,
    "mode": 0,
    "inputs": [
     {
      "name": "samples",
      "type": "LATENT",
-     "link": 37
+     "link": 32
     },
     {
      "name": "vae",
      "type": "VAE",
-     "link": 38
+     "link": 33
     }
    ],
    "outputs": [
@@ -1344,7 +1209,7 @@
      "type": "IMAGE",
      "slot_index": 0,
      "links": [
-      39
+      34
      ]
     }
    ],
@@ -1354,7 +1219,7 @@
    "widgets_values": []
   },
   {
-   "id": 32,
+   "id": 29,
    "type": "SaveImage",
    "pos": [
     2800,
@@ -1365,13 +1230,13 @@
     96
    ],
    "flags": {},
-   "order": 31,
+   "order": 28,
    "mode": 0,
    "inputs": [
     {
      "name": "images",
      "type": "IMAGE",
-     "link": 39
+     "link": 34
     }
    ],
    "outputs": [
@@ -1465,7 +1330,7 @@
   ],
   [
    10,
-   11,
+   14,
    0,
    15,
    0,
@@ -1473,7 +1338,7 @@
   ],
   [
    11,
-   14,
+   15,
    0,
    16,
    2,
@@ -1481,7 +1346,7 @@
   ],
   [
    12,
-   12,
+   13,
    0,
    16,
    0,
@@ -1489,7 +1354,7 @@
   ],
   [
    13,
-   15,
+   7,
    0,
    16,
    1,
@@ -1497,7 +1362,7 @@
   ],
   [
    14,
-   16,
+   7,
    0,
    17,
    0,
@@ -1545,161 +1410,121 @@
   ],
   [
    20,
+   19,
+   0,
+   20,
+   1,
+   "STRING"
+  ],
+  [
+   21,
    20,
    0,
    21,
    0,
-   "STRING"
-  ],
-  [
-   21,
-   21,
-   0,
-   22,
-   2,
-   "BOOLEAN"
-  ],
-  [
-   22,
-   19,
-   0,
-   22,
-   0,
-   "STRING"
-  ],
-  [
-   23,
-   7,
-   0,
-   22,
-   1,
-   "STRING"
-  ],
-  [
-   24,
-   7,
-   0,
-   23,
-   0,
-   "STRING"
-  ],
-  [
-   25,
-   22,
-   0,
-   23,
-   1,
-   "STRING"
-  ],
-  [
-   26,
-   23,
-   0,
-   24,
-   0,
    "*"
   ],
   [
-   27,
+   22,
    4,
    0,
-   25,
+   22,
    0,
    "CLIP"
   ],
   [
-   28,
+   23,
    6,
    0,
-   25,
+   22,
    1,
    "VAE"
   ],
   [
-   29,
-   23,
+   24,
+   20,
    0,
-   25,
+   22,
    2,
    "STRING"
   ],
   [
-   30,
+   25,
    3,
    0,
-   26,
+   23,
    0,
    "DGXM_MODEL"
   ],
   [
-   31,
-   25,
-   0,
    26,
+   22,
+   0,
+   23,
    1,
    "CONDITIONING"
   ],
   [
-   32,
-   28,
+   27,
+   25,
    0,
-   30,
+   27,
    0,
    "NOISE"
   ],
   [
-   33,
-   26,
+   28,
+   23,
    0,
-   30,
+   27,
    1,
    "DGXM_GUIDER"
   ],
   [
-   34,
-   27,
+   29,
+   24,
    0,
-   30,
+   27,
    2,
    "SAMPLER"
   ],
   [
-   35,
-   29,
-   0,
    30,
+   26,
+   0,
+   27,
    3,
    "SIGMAS"
   ],
   [
-   36,
-   25,
+   31,
+   22,
    1,
-   30,
+   27,
    4,
    "LATENT"
   ],
   [
-   37,
-   30,
+   32,
+   27,
    0,
-   31,
+   28,
    0,
    "LATENT"
   ],
   [
-   38,
+   33,
    6,
    0,
-   31,
+   28,
    1,
    "VAE"
   ],
   [
-   39,
-   31,
+   34,
+   28,
    0,
-   32,
+   29,
    0,
    "IMAGE"
   ]

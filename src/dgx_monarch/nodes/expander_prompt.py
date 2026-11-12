@@ -2,7 +2,7 @@
 
 ComfyUI's MiniMax-H3-Image templates splice the request into a task prompt with
 Replace Text, hand the result to Generate Text, and read the caption out of the
-answer with Extract Text from JSON. The DGX Monarch templates keep that chain,
+answer. The DGX Monarch templates keep that chain and read the caption by pattern,
 with the switch that selects the expander off. The two shipped templates carry
 this project's own task prompt in the box Replace Text reads; the testing graph
 ships that box empty, and a user may empty or replace it. Replace Text over an
@@ -37,10 +37,10 @@ though: ComfyUI needs that value to choose. The shipped graphs use all of
 this. An empty request skips the expander through an If/Else whose
 ``switch`` is Compare Text over the trimmed request box: the graph states
 that text, so the walk knows which way it goes, and an empty request, which
-runs no expander, refuses nothing. The loose caption read and the
-empty-caption fallback are If/Else nodes whose ``switch`` reads Compare Text
+runs no expander, refuses nothing. The
+empty-caption fallback is an If/Else whose ``switch`` reads Compare Text
 over the expander's own answer: no graph states that, but the expander must
-run to decide them, so with the outer switch true and a request to expand
+run to decide it, so with the outer switch true and a request to expand
 the refusal still answers. Any graph this cannot read refuses nothing. A lazy
 node of another pack is not known here and reads as running all its inputs.
 

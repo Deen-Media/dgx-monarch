@@ -93,7 +93,7 @@ _KNOWN_NODE_TYPES = frozenset({
     "StringTrim",
     "StringCompare",
     "RegexExtract",
-    "JsonExtractString",
+    "RegexReplace",
     "TextEncodeMageFlowEdit",
     "TextEncodeQwenImage21",
     "QwenImage21Cache",

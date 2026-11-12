@@ -30632,7 +30632,7 @@
       }
     },
     {
-      "digest": "9af3cf9205ed88daa12ec03c4a74a66e9eb23b430e8f8399174758966cba2cee",
+      "digest": "73b9c5302cf073a78f7f5e4f3d79fcf7d25ff8f36e9199b4a1d723d4272abd09",
       "id": "workflow.dgx-monarch-minimax-h3-image-edit",
       "name": "dgx-monarch-minimax-h3-image-edit",
       "source": "example_workflows/dgx-monarch-minimax-h3-image-edit.json",
@@ -30647,23 +30647,23 @@
                 "value"
               ],
               [
-                31,
+                28,
                 "seed"
               ],
               [
-                31,
+                28,
                 "steps"
               ],
               [
-                31,
+                28,
                 "cfg"
               ],
               [
-                31,
+                28,
                 "sampler_name"
               ],
               [
-                31,
+                28,
                 "scheduler"
               ],
               [
@@ -30676,14 +30676,14 @@
               ]
             ],
             "outputs": [
-              33
+              30
             ]
           }
         },
         "groups": [],
         "id": "minimax-h3-image-image-editing",
-        "last_link_id": 44,
-        "last_node_id": 33,
+        "last_link_id": 39,
+        "last_node_id": 30,
         "links": [
           [
             1,
@@ -30791,7 +30791,7 @@
           ],
           [
             14,
-            15,
+            18,
             0,
             19,
             0,
@@ -30799,7 +30799,7 @@
           ],
           [
             15,
-            18,
+            19,
             0,
             20,
             2,
@@ -30807,7 +30807,7 @@
           ],
           [
             16,
-            16,
+            17,
             0,
             20,
             0,
@@ -30815,7 +30815,7 @@
           ],
           [
             17,
-            19,
+            7,
             0,
             20,
             1,
@@ -30823,7 +30823,7 @@
           ],
           [
             18,
-            20,
+            7,
             0,
             21,
             0,
@@ -30871,169 +30871,129 @@
           ],
           [
             24,
+            23,
+            0,
+            24,
+            1,
+            "STRING"
+          ],
+          [
+            25,
             24,
             0,
             25,
             0,
-            "STRING"
-          ],
-          [
-            25,
-            25,
-            0,
-            26,
-            2,
-            "BOOLEAN"
-          ],
-          [
-            26,
-            23,
-            0,
-            26,
-            0,
-            "STRING"
-          ],
-          [
-            27,
-            7,
-            0,
-            26,
-            1,
-            "STRING"
-          ],
-          [
-            28,
-            7,
-            0,
-            27,
-            0,
-            "STRING"
-          ],
-          [
-            29,
-            26,
-            0,
-            27,
-            1,
-            "STRING"
-          ],
-          [
-            30,
-            27,
-            0,
-            28,
-            0,
             "*"
           ],
           [
-            31,
+            26,
             4,
             0,
-            29,
+            26,
             0,
             "CLIP"
           ],
           [
+            27,
+            6,
+            0,
+            26,
+            1,
+            "VAE"
+          ],
+          [
+            28,
+            13,
+            0,
+            26,
+            2,
+            "IMAGE"
+          ],
+          [
+            29,
+            24,
+            0,
+            26,
+            3,
+            "STRING"
+          ],
+          [
+            30,
+            14,
+            0,
+            26,
+            4,
+            "INT"
+          ],
+          [
+            31,
+            14,
+            1,
+            26,
+            5,
+            "INT"
+          ],
+          [
             32,
+            26,
+            0,
+            27,
+            0,
+            "CONDITIONING"
+          ],
+          [
+            33,
+            3,
+            0,
+            28,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            34,
+            26,
+            0,
+            28,
+            1,
+            "CONDITIONING"
+          ],
+          [
+            35,
+            27,
+            0,
+            28,
+            2,
+            "CONDITIONING"
+          ],
+          [
+            36,
+            26,
+            1,
+            28,
+            3,
+            "LATENT"
+          ],
+          [
+            37,
+            28,
+            0,
+            29,
+            0,
+            "LATENT"
+          ],
+          [
+            38,
             6,
             0,
             29,
             1,
             "VAE"
-          ],
-          [
-            33,
-            13,
-            0,
-            29,
-            2,
-            "IMAGE"
-          ],
-          [
-            34,
-            27,
-            0,
-            29,
-            3,
-            "STRING"
-          ],
-          [
-            35,
-            14,
-            0,
-            29,
-            4,
-            "INT"
-          ],
-          [
-            36,
-            14,
-            1,
-            29,
-            5,
-            "INT"
-          ],
-          [
-            37,
-            29,
-            0,
-            30,
-            0,
-            "CONDITIONING"
-          ],
-          [
-            38,
-            3,
-            0,
-            31,
-            0,
-            "DGXM_MODEL"
           ],
           [
             39,
             29,
             0,
-            31,
-            1,
-            "CONDITIONING"
-          ],
-          [
-            40,
             30,
-            0,
-            31,
-            2,
-            "CONDITIONING"
-          ],
-          [
-            41,
-            29,
-            1,
-            31,
-            3,
-            "LATENT"
-          ],
-          [
-            42,
-            31,
-            0,
-            32,
-            0,
-            "LATENT"
-          ],
-          [
-            43,
-            6,
-            0,
-            32,
-            1,
-            "VAE"
-          ],
-          [
-            44,
-            32,
-            0,
-            33,
             0,
             "IMAGE"
           ]
@@ -31129,7 +31089,7 @@
             "title": "DGX Monarch | MiniMax-H3-Image image editing",
             "type": "Note",
             "widgets_values": [
-              "MiniMax-H3-Image edit of one picture, at about 4 MP in 6 steps, on the INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's own template loads. Load your picture in Load Image. The two Resize Image/Mask nodes bring it to 4 MP and then to a multiple of 32, as in ComfyUI's template, and Get Image Size hands that size to MiniMax H3 Image Conditioning, so the render keeps the picture's shape. The conditioning node shows the picture to the text encoder and, through the VAE, hands it to the DiT as a reference; call it <Picture 1> in the request. For more pictures, add a Load Image and the two resize nodes for each and wire them to image_2, image_3 and so on, and to the next image input of Generate Text if you turn the expander on; image_1 stays the picture to edit. ComfyUI's template notes say the model works from about 4 MP to 20 MP and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or 6272x2688, sides swapped for portrait. A reference of this size adds about as many rows as the target, so an edit needs more Worker memory than text to image at the same size. The request box goes to the model as written. A prompt expander is wired and off: Replace Text puts the request into the task prompt where it says {input text}, Generate Text runs the expander model on the driver, with reasoning off, Extract Text from JSON reads the caption out of its answer, and the switch titled If/Else Switch (expander on or off) picks that caption or the request. As shipped that switch is false. ComfyUI's edit template ships its switch true, through a Boolean box, with MiniMax's texts in the two boxes. Set the switch to true to have the expander write the prompt: then the driver loads the 7.3 GB expander beside the text encoder, and Generate Text may write up to 1024 tokens before the render starts, a wait not yet timed on hardware with these settings. The task prompt and system prompt boxes hold this project's own texts, written from public research on the model. They are not MiniMax's prompts, which MiniMax publishes in its Hugging Face repository MiniMaxAI/MiniMax-H3-Image-PE under its own licence; nothing of those is in this graph. You may replace either text with your own: keep {input text} in the task prompt where the request belongs, and have the answer hold the caption under the key expanded_caption. An answer that is not valid JSON, such as a caption with a double quote inside it, is read a second time by pattern. If neither read holds a caption, the switch titled If/Else Switch (empty caption: send the request) sends the request as written instead. An empty request skips the expander: no language model runs for it. Preview as Text shows the text that is rendered either way. A DGX Monarch loader or sampler refuses a graph whose expander is on with an empty task prompt, or with one that lacks the marker (docs/TROUBLESHOOTING.md #153). With the switch true the prompt is text a language model sampled, at Generate Text's own seed and not the sampler's, so compare renders and check identity with the switch false. Sampling is KSampler at CFG 1 with euler and the simple scheduler, as in ComfyUI's template. At 6 steps that schedule lands within a thousandth of the sigma grid the checkpoint carries, and the output head picks its blocks by the nearest grid point, so keep 6 steps, euler and simple. Add no shift node: ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family. auto asks for sequence-parallel (uly2) on a configured pair, and a world of one GPU runs stock ComfyUI's forward. Every published DiT of this family pins comfy-kitchen's INT8 attention on all 50 blocks: a world of one GPU keeps the pins, as stock does, uly2 drops them and runs exact attention, and the render record says which. The two kernels differ, so a render on the pair is not bit for bit the render on one GPU. cfg2 and dp2 refuse, because the DiT takes one sample a call, and a padded ring refuses. The driver holds the 27.1 GB text encoder and the 1.2 GB VAE, and the 7.3 GB expander from the first render with the switch true (as shipped, this graph never loads it); each Worker holds the 21.0 GB DiT. The first render of a new model, LoRA and residency combination runs the identity gate before any pixels, on this graph's mesh and topology: proof renders of at most two steps, from a fresh load before and after the swap or reload under test, must match bit for bit, and with slab residency on, one more render with slab off must match too. Allow a few minutes for these two to four proof renders. Later renders of the same combination skip the gate. This graph samples with KSampler (DGX Monarch), so each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 on this schedule; they span head blocks the 6-step render takes one at a time, and every proof leg spans them alike. No render of this family has run on hardware yet: docs/VALIDATION.md, under MiniMax-H3-Image, lists each hardware leg as NOT RUN beside the adapter's CPU proof against stock ComfyUI. Needs ComfyUI 0.45.0 or newer on the driver and every Worker. Expects minimax_h3_image_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_int8_convrot.safetensors and qwen3.5_9b_w4a8_gptq.safetensors in models/text_encoders (CLIP type minimax), and minimax_h3_image_vae_fp16.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it. The pack places a demo file drawn from code under each name this graph loads that ComfyUI's input folder lacks; one you delete comes back at the next start unless DGXM_DEMO_INPUTS=off is set. Load your own for real work."
+              "MiniMax-H3-Image edit of one picture, at about 4 MP in 6 steps, on the INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's own template loads. Load your picture in Load Image. The two Resize Image/Mask nodes bring it to 4 MP and then to a multiple of 32, as in ComfyUI's template, and Get Image Size hands that size to MiniMax H3 Image Conditioning, so the render keeps the picture's shape. The conditioning node shows the picture to the text encoder and, through the VAE, hands it to the DiT as a reference; call it <Picture 1> in the request. For more pictures, add a Load Image and the two resize nodes for each and wire them to image_2, image_3 and so on, and to the next image input of Generate Text if you turn the expander on; image_1 stays the picture to edit. ComfyUI's template notes say the model works from about 4 MP to 20 MP and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or 6272x2688, sides swapped for portrait. A reference of this size adds about as many rows as the target, so an edit needs more Worker memory than text to image at the same size. The request box goes to the model as written. A prompt expander is wired and off: Replace Text puts the request into the task prompt where it says {input text}, Generate Text runs the expander model on the driver, with reasoning off, Extract Text reads the caption out of its answer, and the switch titled If/Else Switch (expander on or off) picks that caption or the request. As shipped that switch is false. ComfyUI's edit template ships its switch true, through a Boolean box, with MiniMax's texts in the two boxes. Set the switch to true to have the expander write the prompt: then the driver loads the 7.3 GB expander beside the text encoder, and Generate Text may write up to 1024 tokens before the render starts, a wait not yet timed on hardware with these settings. The task prompt and system prompt boxes hold this project's own texts, written from public research on the model. They are not MiniMax's prompts, which MiniMax publishes in its Hugging Face repository MiniMaxAI/MiniMax-H3-Image-PE under its own licence; nothing of those is in this graph. You may replace either text with your own: keep {input text} in the task prompt where the request belongs, and have the answer hold the caption under the key expanded_caption. Extract Text reads the caption by pattern, not as strict JSON, so a double quote or a JSON object inside the caption does not lose it or cut it short; the texts ask the expander to copy drawn words exactly, and they expect this read. If the read holds no caption, the switch titled If/Else Switch (empty caption: send the request) sends the request as written instead. An empty request skips the expander: no language model runs for it. Preview as Text shows the text that is rendered either way. A DGX Monarch loader or sampler refuses a graph whose expander is on with an empty task prompt, or with one that lacks the marker (docs/TROUBLESHOOTING.md #153). With the switch true the prompt is text a language model sampled, at Generate Text's own seed and not the sampler's, so compare renders and check identity with the switch false. Sampling is KSampler at CFG 1 with euler and the simple scheduler, as in ComfyUI's template. At 6 steps that schedule lands within a thousandth of the sigma grid the checkpoint carries, and the output head picks its blocks by the nearest grid point, so keep 6 steps, euler and simple. Add no shift node: ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family. auto asks for sequence-parallel (uly2) on a configured pair, and a world of one GPU runs stock ComfyUI's forward. Every published DiT of this family pins comfy-kitchen's INT8 attention on all 50 blocks: a world of one GPU keeps the pins, as stock does, uly2 drops them and runs exact attention, and the render record says which. The two kernels differ, so a render on the pair is not bit for bit the render on one GPU. cfg2 and dp2 refuse, because the DiT takes one sample a call, and a padded ring refuses. The driver holds the 27.1 GB text encoder and the 1.2 GB VAE, and the 7.3 GB expander from the first render with the switch true (as shipped, this graph never loads it); each Worker holds the 21.0 GB DiT. The first render of a new model, LoRA and residency combination runs the identity gate before any pixels, on this graph's mesh and topology: proof renders of at most two steps, from a fresh load before and after the swap or reload under test, must match bit for bit, and with slab residency on, one more render with slab off must match too. Allow a few minutes for these two to four proof renders. Later renders of the same combination skip the gate. This graph samples with KSampler (DGX Monarch), so each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 on this schedule; they span head blocks the 6-step render takes one at a time, and every proof leg spans them alike. No render of this family has run on hardware yet: docs/VALIDATION.md, under MiniMax-H3-Image, lists each hardware leg as NOT RUN beside the adapter's CPU proof against stock ComfyUI. Needs ComfyUI 0.45.0 or newer on the driver and every Worker. Expects minimax_h3_image_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_int8_convrot.safetensors and qwen3.5_9b_w4a8_gptq.safetensors in models/text_encoders (CLIP type minimax), and minimax_h3_image_vae_fp16.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it. The pack places a demo file drawn from code under each name this graph loads that ComfyUI's input folder lacks; one you delete comes back at the next start unless DGXM_DEMO_INPUTS=off is set. Load your own for real work."
             ]
           },
           {
@@ -31151,7 +31111,7 @@
             "outputs": [
               {
                 "links": [
-                  38
+                  33
                 ],
                 "name": "model",
                 "slot_index": 0,
@@ -31184,7 +31144,7 @@
             "outputs": [
               {
                 "links": [
-                  31
+                  26
                 ],
                 "name": "CLIP",
                 "slot_index": 0,
@@ -31252,8 +31212,8 @@
             "outputs": [
               {
                 "links": [
-                  32,
-                  43
+                  27,
+                  38
                 ],
                 "name": "VAE",
                 "slot_index": 0,
@@ -31286,10 +31246,10 @@
               {
                 "links": [
                   3,
+                  17,
+                  18,
                   22,
-                  23,
-                  27,
-                  28
+                  23
                 ],
                 "name": "STRING",
                 "slot_index": 0,
@@ -31526,7 +31486,7 @@
                 "links": [
                   6,
                   8,
-                  33
+                  28
                 ],
                 "name": "resized",
                 "slot_index": 0,
@@ -31566,7 +31526,7 @@
             "outputs": [
               {
                 "links": [
-                  35
+                  30
                 ],
                 "name": "width",
                 "slot_index": 0,
@@ -31574,7 +31534,7 @@
               },
               {
                 "links": [
-                  36
+                  31
                 ],
                 "name": "height",
                 "slot_index": 1,
@@ -31634,8 +31594,7 @@
             "outputs": [
               {
                 "links": [
-                  11,
-                  14
+                  11
                 ],
                 "name": "generated_text",
                 "slot_index": 0,
@@ -31682,10 +31641,10 @@
             "inputs": [
               {
                 "link": 11,
-                "name": "json_string",
+                "name": "string",
                 "type": "STRING",
                 "widget": {
-                  "name": "json_string"
+                  "name": "string"
                 }
               }
             ],
@@ -31694,8 +31653,7 @@
             "outputs": [
               {
                 "links": [
-                  12,
-                  16
+                  12
                 ],
                 "name": "STRING",
                 "slot_index": 0,
@@ -31707,16 +31665,21 @@
               650
             ],
             "properties": {
-              "Node name for S&R": "JsonExtractString"
+              "Node name for S&R": "RegexExtract"
             },
             "size": [
               315,
-              118
+              228
             ],
-            "type": "JsonExtractString",
+            "type": "RegexExtract",
             "widgets_values": [
               "",
-              "expanded_caption"
+              "\"expanded_caption\\\\?\"\\s*:\\s*(\\\\)?\"(.*?)(?(1)\\\\\"\\s*\"?|\")\\s*(?:,\\s*\"\\w+\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|-?[0-9][0-9.]*|true|false|null)\\s*)*\\}(?!.*\"\\s*\\})",
+              "First Group",
+              false,
+              false,
+              true,
+              2
             ]
           },
           {
@@ -31737,7 +31700,8 @@
             "outputs": [
               {
                 "links": [
-                  13
+                  13,
+                  16
                 ],
                 "name": "STRING",
                 "slot_index": 0,
@@ -31747,6 +31711,53 @@
             "pos": [
               420,
               1220
+            ],
+            "properties": {
+              "Node name for S&R": "RegexReplace"
+            },
+            "size": [
+              315,
+              228
+            ],
+            "type": "RegexReplace",
+            "widgets_values": [
+              "",
+              "\\\\([\"\\\\/])",
+              "\\1",
+              false,
+              false,
+              false,
+              0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 18,
+            "inputs": [
+              {
+                "link": 13,
+                "name": "string",
+                "type": "STRING",
+                "widget": {
+                  "name": "string"
+                }
+              }
+            ],
+            "mode": 0,
+            "order": 17,
+            "outputs": [
+              {
+                "links": [
+                  14
+                ],
+                "name": "STRING",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              760,
+              840
             ],
             "properties": {
               "Node name for S&R": "StringTrim"
@@ -31763,10 +31774,10 @@
           },
           {
             "flags": {},
-            "id": 18,
+            "id": 19,
             "inputs": [
               {
-                "link": 13,
+                "link": 14,
                 "name": "string_a",
                 "type": "STRING",
                 "widget": {
@@ -31775,7 +31786,7 @@
               }
             ],
             "mode": 0,
-            "order": 17,
+            "order": 18,
             "outputs": [
               {
                 "links": [
@@ -31787,8 +31798,8 @@
               }
             ],
             "pos": [
-              760,
-              1220
+              1100,
+              840
             ],
             "properties": {
               "Node name for S&R": "StringCompare"
@@ -31803,53 +31814,6 @@
               "",
               "Equal",
               true
-            ]
-          },
-          {
-            "flags": {},
-            "id": 19,
-            "inputs": [
-              {
-                "link": 14,
-                "name": "string",
-                "type": "STRING",
-                "widget": {
-                  "name": "string"
-                }
-              }
-            ],
-            "mode": 0,
-            "order": 18,
-            "outputs": [
-              {
-                "links": [
-                  17
-                ],
-                "name": "STRING",
-                "slot_index": 0,
-                "type": "STRING"
-              }
-            ],
-            "pos": [
-              1100,
-              1220
-            ],
-            "properties": {
-              "Node name for S&R": "RegexExtract"
-            },
-            "size": [
-              315,
-              228
-            ],
-            "type": "RegexExtract",
-            "widgets_values": [
-              "",
-              "\"expanded_caption\\\\?\"\\s*:\\s*\\\\?\"(.*?)(?:(?:\\\\\")*\"|(?:\\\\\")+)\\s*\\}(?!.*\"\\s*\\})",
-              "First Group",
-              false,
-              false,
-              true,
-              1
             ]
           },
           {
@@ -31880,7 +31844,6 @@
             "outputs": [
               {
                 "links": [
-                  18,
                   21
                 ],
                 "name": "output",
@@ -31890,7 +31853,7 @@
             ],
             "pos": [
               1440,
-              1220
+              840
             ],
             "properties": {
               "Node name for S&R": "ComfySwitchNode"
@@ -31899,7 +31862,7 @@
               315,
               140
             ],
-            "title": "If/Else Switch (caption did not parse: read it by pattern)",
+            "title": "If/Else Switch (empty caption: send the request)",
             "type": "ComfySwitchNode",
             "widgets_values": [
               false
@@ -31931,8 +31894,8 @@
               }
             ],
             "pos": [
-              760,
-              840
+              420,
+              1410
             ],
             "properties": {
               "Node name for S&R": "StringTrim"
@@ -31973,8 +31936,8 @@
               }
             ],
             "pos": [
-              1100,
-              840
+              760,
+              1410
             ],
             "properties": {
               "Node name for S&R": "StringCompare"
@@ -32019,145 +31982,7 @@
             "outputs": [
               {
                 "links": [
-                  26
-                ],
-                "name": "output",
-                "slot_index": 0,
-                "type": "STRING"
-              }
-            ],
-            "pos": [
-              1440,
-              840
-            ],
-            "properties": {
-              "Node name for S&R": "ComfySwitchNode"
-            },
-            "size": [
-              315,
-              140
-            ],
-            "title": "If/Else Switch (empty caption: send the request)",
-            "type": "ComfySwitchNode",
-            "widgets_values": [
-              false
-            ]
-          },
-          {
-            "flags": {},
-            "id": 24,
-            "inputs": [
-              {
-                "link": 23,
-                "name": "string",
-                "type": "STRING",
-                "widget": {
-                  "name": "string"
-                }
-              }
-            ],
-            "mode": 0,
-            "order": 23,
-            "outputs": [
-              {
-                "links": [
                   24
-                ],
-                "name": "STRING",
-                "slot_index": 0,
-                "type": "STRING"
-              }
-            ],
-            "pos": [
-              420,
-              1410
-            ],
-            "properties": {
-              "Node name for S&R": "StringTrim"
-            },
-            "size": [
-              315,
-              118
-            ],
-            "type": "StringTrim",
-            "widgets_values": [
-              "",
-              "Both"
-            ]
-          },
-          {
-            "flags": {},
-            "id": 25,
-            "inputs": [
-              {
-                "link": 24,
-                "name": "string_a",
-                "type": "STRING",
-                "widget": {
-                  "name": "string_a"
-                }
-              }
-            ],
-            "mode": 0,
-            "order": 24,
-            "outputs": [
-              {
-                "links": [
-                  25
-                ],
-                "name": "BOOLEAN",
-                "slot_index": 0,
-                "type": "BOOLEAN"
-              }
-            ],
-            "pos": [
-              760,
-              1410
-            ],
-            "properties": {
-              "Node name for S&R": "StringCompare"
-            },
-            "size": [
-              315,
-              162
-            ],
-            "type": "StringCompare",
-            "widgets_values": [
-              "",
-              "",
-              "Equal",
-              true
-            ]
-          },
-          {
-            "flags": {},
-            "id": 26,
-            "inputs": [
-              {
-                "link": 26,
-                "name": "on_false",
-                "type": "STRING"
-              },
-              {
-                "link": 27,
-                "name": "on_true",
-                "type": "STRING"
-              },
-              {
-                "link": 25,
-                "name": "switch",
-                "type": "BOOLEAN",
-                "widget": {
-                  "name": "switch"
-                }
-              }
-            ],
-            "mode": 0,
-            "order": 25,
-            "outputs": [
-              {
-                "links": [
-                  29
                 ],
                 "name": "output",
                 "slot_index": 0,
@@ -32183,26 +32008,26 @@
           },
           {
             "flags": {},
-            "id": 27,
+            "id": 24,
             "inputs": [
               {
-                "link": 28,
+                "link": 23,
                 "name": "on_false",
                 "type": "STRING"
               },
               {
-                "link": 29,
+                "link": 24,
                 "name": "on_true",
                 "type": "STRING"
               }
             ],
             "mode": 0,
-            "order": 26,
+            "order": 23,
             "outputs": [
               {
                 "links": [
-                  30,
-                  34
+                  25,
+                  29
                 ],
                 "name": "output",
                 "slot_index": 0,
@@ -32228,16 +32053,16 @@
           },
           {
             "flags": {},
-            "id": 28,
+            "id": 25,
             "inputs": [
               {
-                "link": 30,
+                "link": 25,
                 "name": "source",
                 "type": "*"
               }
             ],
             "mode": 0,
-            "order": 27,
+            "order": 24,
             "outputs": [
               {
                 "links": [],
@@ -32262,25 +32087,25 @@
           },
           {
             "flags": {},
-            "id": 29,
+            "id": 26,
             "inputs": [
               {
-                "link": 31,
+                "link": 26,
                 "name": "clip",
                 "type": "CLIP"
               },
               {
-                "link": 32,
+                "link": 27,
                 "name": "vae",
                 "type": "VAE"
               },
               {
-                "link": 33,
+                "link": 28,
                 "name": "images.image_1",
                 "type": "IMAGE"
               },
               {
-                "link": 34,
+                "link": 29,
                 "name": "prompt",
                 "type": "STRING",
                 "widget": {
@@ -32288,7 +32113,7 @@
                 }
               },
               {
-                "link": 35,
+                "link": 30,
                 "name": "width",
                 "type": "INT",
                 "widget": {
@@ -32296,7 +32121,7 @@
                 }
               },
               {
-                "link": 36,
+                "link": 31,
                 "name": "height",
                 "type": "INT",
                 "widget": {
@@ -32305,12 +32130,12 @@
               }
             ],
             "mode": 0,
-            "order": 28,
+            "order": 25,
             "outputs": [
               {
                 "links": [
-                  37,
-                  39
+                  32,
+                  34
                 ],
                 "name": "positive",
                 "slot_index": 0,
@@ -32318,7 +32143,7 @@
               },
               {
                 "links": [
-                  41
+                  36
                 ],
                 "name": "LATENT",
                 "slot_index": 1,
@@ -32345,20 +32170,20 @@
           },
           {
             "flags": {},
-            "id": 30,
+            "id": 27,
             "inputs": [
               {
-                "link": 37,
+                "link": 32,
                 "name": "conditioning",
                 "type": "CONDITIONING"
               }
             ],
             "mode": 0,
-            "order": 29,
+            "order": 26,
             "outputs": [
               {
                 "links": [
-                  40
+                  35
                 ],
                 "name": "CONDITIONING",
                 "slot_index": 0,
@@ -32390,35 +32215,35 @@
               "steps": 6
             },
             "flags": {},
-            "id": 31,
+            "id": 28,
             "inputs": [
               {
-                "link": 38,
+                "link": 33,
                 "name": "model",
                 "type": "DGXM_MODEL"
               },
               {
-                "link": 39,
+                "link": 34,
                 "name": "positive",
                 "type": "CONDITIONING"
               },
               {
-                "link": 40,
+                "link": 35,
                 "name": "negative",
                 "type": "CONDITIONING"
               },
               {
-                "link": 41,
+                "link": 36,
                 "name": "latent_image",
                 "type": "LATENT"
               }
             ],
             "mode": 0,
-            "order": 30,
+            "order": 27,
             "outputs": [
               {
                 "links": [
-                  42
+                  37
                 ],
                 "name": "LATENT",
                 "slot_index": 0,
@@ -32449,25 +32274,25 @@
           },
           {
             "flags": {},
-            "id": 32,
+            "id": 29,
             "inputs": [
               {
-                "link": 42,
+                "link": 37,
                 "name": "samples",
                 "type": "LATENT"
               },
               {
-                "link": 43,
+                "link": 38,
                 "name": "vae",
                 "type": "VAE"
               }
             ],
             "mode": 0,
-            "order": 31,
+            "order": 28,
             "outputs": [
               {
                 "links": [
-                  44
+                  39
                 ],
                 "name": "IMAGE",
                 "slot_index": 0,
@@ -32490,16 +32315,16 @@
           },
           {
             "flags": {},
-            "id": 33,
+            "id": 30,
             "inputs": [
               {
-                "link": 44,
+                "link": 39,
                 "name": "images",
                 "type": "IMAGE"
               }
             ],
             "mode": 0,
-            "order": 32,
+            "order": 29,
             "outputs": [
               {
                 "links": [],
@@ -32530,7 +32355,7 @@
       }
     },
     {
-      "digest": "7ec43db67447f6711ca7fe39a15b3698ca3572d12561ff1bf1b83068071d1f49",
+      "digest": "a49da7cd4ebf3f2d3f3aef83012ede7a356869d1b6478f835dccb1869178f96f",
       "id": "workflow.dgx-monarch-minimax-h3-image-t2i",
       "name": "dgx-monarch-minimax-h3-image-t2i",
       "source": "example_workflows/dgx-monarch-minimax-h3-image-t2i.json",
@@ -32545,31 +32370,31 @@
                 "value"
               ],
               [
-                27,
+                24,
                 "seed"
               ],
               [
-                25,
+                22,
                 "width"
               ],
               [
-                25,
+                22,
                 "height"
               ],
               [
-                27,
+                24,
                 "steps"
               ],
               [
-                27,
+                24,
                 "cfg"
               ],
               [
-                27,
+                24,
                 "sampler_name"
               ],
               [
-                27,
+                24,
                 "scheduler"
               ],
               [
@@ -32578,14 +32403,14 @@
               ]
             ],
             "outputs": [
-              29
+              26
             ]
           }
         },
         "groups": [],
         "id": "minimax-h3-image-text-to-image",
-        "last_link_id": 37,
-        "last_node_id": 29,
+        "last_link_id": 32,
+        "last_node_id": 26,
         "links": [
           [
             1,
@@ -32661,7 +32486,7 @@
           ],
           [
             10,
-            11,
+            14,
             0,
             15,
             0,
@@ -32669,7 +32494,7 @@
           ],
           [
             11,
-            14,
+            15,
             0,
             16,
             2,
@@ -32677,7 +32502,7 @@
           ],
           [
             12,
-            12,
+            13,
             0,
             16,
             0,
@@ -32685,7 +32510,7 @@
           ],
           [
             13,
-            15,
+            7,
             0,
             16,
             1,
@@ -32693,7 +32518,7 @@
           ],
           [
             14,
-            16,
+            7,
             0,
             17,
             0,
@@ -32741,145 +32566,105 @@
           ],
           [
             20,
+            19,
+            0,
+            20,
+            1,
+            "STRING"
+          ],
+          [
+            21,
             20,
             0,
             21,
             0,
-            "STRING"
-          ],
-          [
-            21,
-            21,
-            0,
-            22,
-            2,
-            "BOOLEAN"
-          ],
-          [
-            22,
-            19,
-            0,
-            22,
-            0,
-            "STRING"
-          ],
-          [
-            23,
-            7,
-            0,
-            22,
-            1,
-            "STRING"
-          ],
-          [
-            24,
-            7,
-            0,
-            23,
-            0,
-            "STRING"
-          ],
-          [
-            25,
-            22,
-            0,
-            23,
-            1,
-            "STRING"
-          ],
-          [
-            26,
-            23,
-            0,
-            24,
-            0,
             "*"
           ],
           [
-            27,
+            22,
             4,
             0,
-            25,
+            22,
             0,
             "CLIP"
           ],
           [
+            23,
+            6,
+            0,
+            22,
+            1,
+            "VAE"
+          ],
+          [
+            24,
+            20,
+            0,
+            22,
+            2,
+            "STRING"
+          ],
+          [
+            25,
+            22,
+            0,
+            23,
+            0,
+            "CONDITIONING"
+          ],
+          [
+            26,
+            3,
+            0,
+            24,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            27,
+            22,
+            0,
+            24,
+            1,
+            "CONDITIONING"
+          ],
+          [
             28,
+            23,
+            0,
+            24,
+            2,
+            "CONDITIONING"
+          ],
+          [
+            29,
+            22,
+            1,
+            24,
+            3,
+            "LATENT"
+          ],
+          [
+            30,
+            24,
+            0,
+            25,
+            0,
+            "LATENT"
+          ],
+          [
+            31,
             6,
             0,
             25,
             1,
             "VAE"
-          ],
-          [
-            29,
-            23,
-            0,
-            25,
-            2,
-            "STRING"
-          ],
-          [
-            30,
-            25,
-            0,
-            26,
-            0,
-            "CONDITIONING"
-          ],
-          [
-            31,
-            3,
-            0,
-            27,
-            0,
-            "DGXM_MODEL"
           ],
           [
             32,
             25,
             0,
-            27,
-            1,
-            "CONDITIONING"
-          ],
-          [
-            33,
             26,
-            0,
-            27,
-            2,
-            "CONDITIONING"
-          ],
-          [
-            34,
-            25,
-            1,
-            27,
-            3,
-            "LATENT"
-          ],
-          [
-            35,
-            27,
-            0,
-            28,
-            0,
-            "LATENT"
-          ],
-          [
-            36,
-            6,
-            0,
-            28,
-            1,
-            "VAE"
-          ],
-          [
-            37,
-            28,
-            0,
-            29,
             0,
             "IMAGE"
           ]
@@ -32975,7 +32760,7 @@
             "title": "DGX Monarch | MiniMax-H3-Image text to image",
             "type": "Note",
             "widgets_values": [
-              "MiniMax-H3-Image text to image at 2048x2048 (4 MP) in 6 steps, on the INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's own template loads. Set width and height on MiniMax H3 Image Conditioning in multiples of 32. ComfyUI's template notes say the model works from about 4 MP to 20 MP and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or 6272x2688, sides swapped for portrait. The request box goes to the model as written. A prompt expander is wired and off: Replace Text puts the request into the task prompt where it says {input text}, Generate Text runs the expander model on the driver, with reasoning off, Extract Text from JSON reads the caption out of its answer, and the switch titled If/Else Switch (expander on or off) picks that caption or the request. As shipped that switch is false. ComfyUI's text to image template ships its switch true, through its subgraph's enable_PE input, with MiniMax's texts in the two boxes. Set the switch to true to have the expander write the prompt: then the driver loads the 7.3 GB expander beside the text encoder, and Generate Text may write up to 1024 tokens before the render starts, a wait not yet timed on hardware with these settings. The task prompt and system prompt boxes hold this project's own texts, written from public research on the model. They are not MiniMax's prompts, which MiniMax publishes in its Hugging Face repository MiniMaxAI/MiniMax-H3-Image-PE under its own licence; nothing of those is in this graph. You may replace either text with your own: keep {input text} in the task prompt where the request belongs, and have the answer hold the caption under the key expanded_caption. An answer that is not valid JSON, such as a caption with a double quote inside it, is read a second time by pattern. If neither read holds a caption, the switch titled If/Else Switch (empty caption: send the request) sends the request as written instead. An empty request skips the expander: no language model runs for it. Preview as Text shows the text that is rendered either way. A DGX Monarch loader or sampler refuses a graph whose expander is on with an empty task prompt, or with one that lacks the marker (docs/TROUBLESHOOTING.md #153). With the switch true the prompt is text a language model sampled, at Generate Text's own seed and not the sampler's, so compare renders and check identity with the switch false. Sampling is KSampler at CFG 1 with euler and the simple scheduler, as in ComfyUI's template. At 6 steps that schedule lands within a thousandth of the sigma grid the checkpoint carries, and the output head picks its blocks by the nearest grid point, so keep 6 steps, euler and simple. Add no shift node: ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family. auto asks for sequence-parallel (uly2) on a configured pair, and a world of one GPU runs stock ComfyUI's forward. Every published DiT of this family pins comfy-kitchen's INT8 attention on all 50 blocks: a world of one GPU keeps the pins, as stock does, uly2 drops them and runs exact attention, and the render record says which. The two kernels differ, so a render on the pair is not bit for bit the render on one GPU. cfg2 and dp2 refuse, because the DiT takes one sample a call, and a padded ring refuses. The driver holds the 27.1 GB text encoder and the 1.2 GB VAE, and the 7.3 GB expander from the first render with the switch true (as shipped, this graph never loads it); each Worker holds the 21.0 GB DiT. The first render of a new model, LoRA and residency combination runs the identity gate before any pixels, on this graph's mesh and topology: proof renders of at most two steps, from a fresh load before and after the swap or reload under test, must match bit for bit, and with slab residency on, one more render with slab off must match too. Allow a few minutes for these two to four proof renders. Later renders of the same combination skip the gate. This graph samples with KSampler (DGX Monarch), so each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 on this schedule; they span head blocks the 6-step render takes one at a time, and every proof leg spans them alike. No render of this family has run on hardware yet: docs/VALIDATION.md, under MiniMax-H3-Image, lists each hardware leg as NOT RUN beside the adapter's CPU proof against stock ComfyUI. Needs ComfyUI 0.45.0 or newer on the driver and every Worker. Expects minimax_h3_image_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_int8_convrot.safetensors and qwen3.5_9b_w4a8_gptq.safetensors in models/text_encoders (CLIP type minimax), and minimax_h3_image_vae_fp16.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+              "MiniMax-H3-Image text to image at 2048x2048 (4 MP) in 6 steps, on the INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's own template loads. Set width and height on MiniMax H3 Image Conditioning in multiples of 32. ComfyUI's template notes say the model works from about 4 MP to 20 MP and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or 6272x2688, sides swapped for portrait. The request box goes to the model as written. A prompt expander is wired and off: Replace Text puts the request into the task prompt where it says {input text}, Generate Text runs the expander model on the driver, with reasoning off, Extract Text reads the caption out of its answer, and the switch titled If/Else Switch (expander on or off) picks that caption or the request. As shipped that switch is false. ComfyUI's text to image template ships its switch true, through its subgraph's enable_PE input, with MiniMax's texts in the two boxes. Set the switch to true to have the expander write the prompt: then the driver loads the 7.3 GB expander beside the text encoder, and Generate Text may write up to 1024 tokens before the render starts, a wait not yet timed on hardware with these settings. The task prompt and system prompt boxes hold this project's own texts, written from public research on the model. They are not MiniMax's prompts, which MiniMax publishes in its Hugging Face repository MiniMaxAI/MiniMax-H3-Image-PE under its own licence; nothing of those is in this graph. You may replace either text with your own: keep {input text} in the task prompt where the request belongs, and have the answer hold the caption under the key expanded_caption. Extract Text reads the caption by pattern, not as strict JSON, so a double quote or a JSON object inside the caption does not lose it or cut it short; the texts ask the expander to copy drawn words exactly, and they expect this read. If the read holds no caption, the switch titled If/Else Switch (empty caption: send the request) sends the request as written instead. An empty request skips the expander: no language model runs for it. Preview as Text shows the text that is rendered either way. A DGX Monarch loader or sampler refuses a graph whose expander is on with an empty task prompt, or with one that lacks the marker (docs/TROUBLESHOOTING.md #153). With the switch true the prompt is text a language model sampled, at Generate Text's own seed and not the sampler's, so compare renders and check identity with the switch false. Sampling is KSampler at CFG 1 with euler and the simple scheduler, as in ComfyUI's template. At 6 steps that schedule lands within a thousandth of the sigma grid the checkpoint carries, and the output head picks its blocks by the nearest grid point, so keep 6 steps, euler and simple. Add no shift node: ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family. auto asks for sequence-parallel (uly2) on a configured pair, and a world of one GPU runs stock ComfyUI's forward. Every published DiT of this family pins comfy-kitchen's INT8 attention on all 50 blocks: a world of one GPU keeps the pins, as stock does, uly2 drops them and runs exact attention, and the render record says which. The two kernels differ, so a render on the pair is not bit for bit the render on one GPU. cfg2 and dp2 refuse, because the DiT takes one sample a call, and a padded ring refuses. The driver holds the 27.1 GB text encoder and the 1.2 GB VAE, and the 7.3 GB expander from the first render with the switch true (as shipped, this graph never loads it); each Worker holds the 21.0 GB DiT. The first render of a new model, LoRA and residency combination runs the identity gate before any pixels, on this graph's mesh and topology: proof renders of at most two steps, from a fresh load before and after the swap or reload under test, must match bit for bit, and with slab residency on, one more render with slab off must match too. Allow a few minutes for these two to four proof renders. Later renders of the same combination skip the gate. This graph samples with KSampler (DGX Monarch), so each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 on this schedule; they span head blocks the 6-step render takes one at a time, and every proof leg spans them alike. No render of this family has run on hardware yet: docs/VALIDATION.md, under MiniMax-H3-Image, lists each hardware leg as NOT RUN beside the adapter's CPU proof against stock ComfyUI. Needs ComfyUI 0.45.0 or newer on the driver and every Worker. Expects minimax_h3_image_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_int8_convrot.safetensors and qwen3.5_9b_w4a8_gptq.safetensors in models/text_encoders (CLIP type minimax), and minimax_h3_image_vae_fp16.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
             ]
           },
           {
@@ -32997,7 +32782,7 @@
             "outputs": [
               {
                 "links": [
-                  31
+                  26
                 ],
                 "name": "model",
                 "slot_index": 0,
@@ -33030,7 +32815,7 @@
             "outputs": [
               {
                 "links": [
-                  27
+                  22
                 ],
                 "name": "CLIP",
                 "slot_index": 0,
@@ -33098,8 +32883,8 @@
             "outputs": [
               {
                 "links": [
-                  28,
-                  36
+                  23,
+                  31
                 ],
                 "name": "VAE",
                 "slot_index": 0,
@@ -33132,10 +32917,10 @@
               {
                 "links": [
                   3,
+                  13,
+                  14,
                   18,
-                  19,
-                  23,
-                  24
+                  19
                 ],
                 "name": "STRING",
                 "slot_index": 0,
@@ -33304,8 +33089,7 @@
             "outputs": [
               {
                 "links": [
-                  7,
-                  10
+                  7
                 ],
                 "name": "generated_text",
                 "slot_index": 0,
@@ -33352,10 +33136,10 @@
             "inputs": [
               {
                 "link": 7,
-                "name": "json_string",
+                "name": "string",
                 "type": "STRING",
                 "widget": {
-                  "name": "json_string"
+                  "name": "string"
                 }
               }
             ],
@@ -33364,8 +33148,7 @@
             "outputs": [
               {
                 "links": [
-                  8,
-                  12
+                  8
                 ],
                 "name": "STRING",
                 "slot_index": 0,
@@ -33377,16 +33160,21 @@
               650
             ],
             "properties": {
-              "Node name for S&R": "JsonExtractString"
+              "Node name for S&R": "RegexExtract"
             },
             "size": [
               315,
-              118
+              228
             ],
-            "type": "JsonExtractString",
+            "type": "RegexExtract",
             "widgets_values": [
               "",
-              "expanded_caption"
+              "\"expanded_caption\\\\?\"\\s*:\\s*(\\\\)?\"(.*?)(?(1)\\\\\"\\s*\"?|\")\\s*(?:,\\s*\"\\w+\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|-?[0-9][0-9.]*|true|false|null)\\s*)*\\}(?!.*\"\\s*\\})",
+              "First Group",
+              false,
+              false,
+              true,
+              2
             ]
           },
           {
@@ -33407,7 +33195,8 @@
             "outputs": [
               {
                 "links": [
-                  9
+                  9,
+                  12
                 ],
                 "name": "STRING",
                 "slot_index": 0,
@@ -33417,6 +33206,53 @@
             "pos": [
               420,
               1220
+            ],
+            "properties": {
+              "Node name for S&R": "RegexReplace"
+            },
+            "size": [
+              315,
+              228
+            ],
+            "type": "RegexReplace",
+            "widgets_values": [
+              "",
+              "\\\\([\"\\\\/])",
+              "\\1",
+              false,
+              false,
+              false,
+              0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 14,
+            "inputs": [
+              {
+                "link": 9,
+                "name": "string",
+                "type": "STRING",
+                "widget": {
+                  "name": "string"
+                }
+              }
+            ],
+            "mode": 0,
+            "order": 13,
+            "outputs": [
+              {
+                "links": [
+                  10
+                ],
+                "name": "STRING",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              760,
+              840
             ],
             "properties": {
               "Node name for S&R": "StringTrim"
@@ -33433,10 +33269,10 @@
           },
           {
             "flags": {},
-            "id": 14,
+            "id": 15,
             "inputs": [
               {
-                "link": 9,
+                "link": 10,
                 "name": "string_a",
                 "type": "STRING",
                 "widget": {
@@ -33445,7 +33281,7 @@
               }
             ],
             "mode": 0,
-            "order": 13,
+            "order": 14,
             "outputs": [
               {
                 "links": [
@@ -33457,8 +33293,8 @@
               }
             ],
             "pos": [
-              760,
-              1220
+              1100,
+              840
             ],
             "properties": {
               "Node name for S&R": "StringCompare"
@@ -33473,53 +33309,6 @@
               "",
               "Equal",
               true
-            ]
-          },
-          {
-            "flags": {},
-            "id": 15,
-            "inputs": [
-              {
-                "link": 10,
-                "name": "string",
-                "type": "STRING",
-                "widget": {
-                  "name": "string"
-                }
-              }
-            ],
-            "mode": 0,
-            "order": 14,
-            "outputs": [
-              {
-                "links": [
-                  13
-                ],
-                "name": "STRING",
-                "slot_index": 0,
-                "type": "STRING"
-              }
-            ],
-            "pos": [
-              1100,
-              1220
-            ],
-            "properties": {
-              "Node name for S&R": "RegexExtract"
-            },
-            "size": [
-              315,
-              228
-            ],
-            "type": "RegexExtract",
-            "widgets_values": [
-              "",
-              "\"expanded_caption\\\\?\"\\s*:\\s*\\\\?\"(.*?)(?:(?:\\\\\")*\"|(?:\\\\\")+)\\s*\\}(?!.*\"\\s*\\})",
-              "First Group",
-              false,
-              false,
-              true,
-              1
             ]
           },
           {
@@ -33550,7 +33339,6 @@
             "outputs": [
               {
                 "links": [
-                  14,
                   17
                 ],
                 "name": "output",
@@ -33560,7 +33348,7 @@
             ],
             "pos": [
               1440,
-              1220
+              840
             ],
             "properties": {
               "Node name for S&R": "ComfySwitchNode"
@@ -33569,7 +33357,7 @@
               315,
               140
             ],
-            "title": "If/Else Switch (caption did not parse: read it by pattern)",
+            "title": "If/Else Switch (empty caption: send the request)",
             "type": "ComfySwitchNode",
             "widgets_values": [
               false
@@ -33601,8 +33389,8 @@
               }
             ],
             "pos": [
-              760,
-              840
+              420,
+              1410
             ],
             "properties": {
               "Node name for S&R": "StringTrim"
@@ -33643,8 +33431,8 @@
               }
             ],
             "pos": [
-              1100,
-              840
+              760,
+              1410
             ],
             "properties": {
               "Node name for S&R": "StringCompare"
@@ -33689,145 +33477,7 @@
             "outputs": [
               {
                 "links": [
-                  22
-                ],
-                "name": "output",
-                "slot_index": 0,
-                "type": "STRING"
-              }
-            ],
-            "pos": [
-              1440,
-              840
-            ],
-            "properties": {
-              "Node name for S&R": "ComfySwitchNode"
-            },
-            "size": [
-              315,
-              140
-            ],
-            "title": "If/Else Switch (empty caption: send the request)",
-            "type": "ComfySwitchNode",
-            "widgets_values": [
-              false
-            ]
-          },
-          {
-            "flags": {},
-            "id": 20,
-            "inputs": [
-              {
-                "link": 19,
-                "name": "string",
-                "type": "STRING",
-                "widget": {
-                  "name": "string"
-                }
-              }
-            ],
-            "mode": 0,
-            "order": 19,
-            "outputs": [
-              {
-                "links": [
                   20
-                ],
-                "name": "STRING",
-                "slot_index": 0,
-                "type": "STRING"
-              }
-            ],
-            "pos": [
-              420,
-              1410
-            ],
-            "properties": {
-              "Node name for S&R": "StringTrim"
-            },
-            "size": [
-              315,
-              118
-            ],
-            "type": "StringTrim",
-            "widgets_values": [
-              "",
-              "Both"
-            ]
-          },
-          {
-            "flags": {},
-            "id": 21,
-            "inputs": [
-              {
-                "link": 20,
-                "name": "string_a",
-                "type": "STRING",
-                "widget": {
-                  "name": "string_a"
-                }
-              }
-            ],
-            "mode": 0,
-            "order": 20,
-            "outputs": [
-              {
-                "links": [
-                  21
-                ],
-                "name": "BOOLEAN",
-                "slot_index": 0,
-                "type": "BOOLEAN"
-              }
-            ],
-            "pos": [
-              760,
-              1410
-            ],
-            "properties": {
-              "Node name for S&R": "StringCompare"
-            },
-            "size": [
-              315,
-              162
-            ],
-            "type": "StringCompare",
-            "widgets_values": [
-              "",
-              "",
-              "Equal",
-              true
-            ]
-          },
-          {
-            "flags": {},
-            "id": 22,
-            "inputs": [
-              {
-                "link": 22,
-                "name": "on_false",
-                "type": "STRING"
-              },
-              {
-                "link": 23,
-                "name": "on_true",
-                "type": "STRING"
-              },
-              {
-                "link": 21,
-                "name": "switch",
-                "type": "BOOLEAN",
-                "widget": {
-                  "name": "switch"
-                }
-              }
-            ],
-            "mode": 0,
-            "order": 21,
-            "outputs": [
-              {
-                "links": [
-                  25
                 ],
                 "name": "output",
                 "slot_index": 0,
@@ -33853,26 +33503,26 @@
           },
           {
             "flags": {},
-            "id": 23,
+            "id": 20,
             "inputs": [
               {
-                "link": 24,
+                "link": 19,
                 "name": "on_false",
                 "type": "STRING"
               },
               {
-                "link": 25,
+                "link": 20,
                 "name": "on_true",
                 "type": "STRING"
               }
             ],
             "mode": 0,
-            "order": 22,
+            "order": 19,
             "outputs": [
               {
                 "links": [
-                  26,
-                  29
+                  21,
+                  24
                 ],
                 "name": "output",
                 "slot_index": 0,
@@ -33898,16 +33548,16 @@
           },
           {
             "flags": {},
-            "id": 24,
+            "id": 21,
             "inputs": [
               {
-                "link": 26,
+                "link": 21,
                 "name": "source",
                 "type": "*"
               }
             ],
             "mode": 0,
-            "order": 23,
+            "order": 20,
             "outputs": [
               {
                 "links": [],
@@ -33932,20 +33582,20 @@
           },
           {
             "flags": {},
-            "id": 25,
+            "id": 22,
             "inputs": [
               {
-                "link": 27,
+                "link": 22,
                 "name": "clip",
                 "type": "CLIP"
               },
               {
-                "link": 28,
+                "link": 23,
                 "name": "vae",
                 "type": "VAE"
               },
               {
-                "link": 29,
+                "link": 24,
                 "name": "prompt",
                 "type": "STRING",
                 "widget": {
@@ -33954,12 +33604,12 @@
               }
             ],
             "mode": 0,
-            "order": 24,
+            "order": 21,
             "outputs": [
               {
                 "links": [
-                  30,
-                  32
+                  25,
+                  27
                 ],
                 "name": "positive",
                 "slot_index": 0,
@@ -33967,7 +33617,7 @@
               },
               {
                 "links": [
-                  34
+                  29
                 ],
                 "name": "LATENT",
                 "slot_index": 1,
@@ -33994,20 +33644,20 @@
           },
           {
             "flags": {},
-            "id": 26,
+            "id": 23,
             "inputs": [
               {
-                "link": 30,
+                "link": 25,
                 "name": "conditioning",
                 "type": "CONDITIONING"
               }
             ],
             "mode": 0,
-            "order": 25,
+            "order": 22,
             "outputs": [
               {
                 "links": [
-                  33
+                  28
                 ],
                 "name": "CONDITIONING",
                 "slot_index": 0,
@@ -34039,35 +33689,35 @@
               "steps": 6
             },
             "flags": {},
-            "id": 27,
+            "id": 24,
             "inputs": [
               {
-                "link": 31,
+                "link": 26,
                 "name": "model",
                 "type": "DGXM_MODEL"
               },
               {
-                "link": 32,
+                "link": 27,
                 "name": "positive",
                 "type": "CONDITIONING"
               },
               {
-                "link": 33,
+                "link": 28,
                 "name": "negative",
                 "type": "CONDITIONING"
               },
               {
-                "link": 34,
+                "link": 29,
                 "name": "latent_image",
                 "type": "LATENT"
               }
             ],
             "mode": 0,
-            "order": 26,
+            "order": 23,
             "outputs": [
               {
                 "links": [
-                  35
+                  30
                 ],
                 "name": "LATENT",
                 "slot_index": 0,
@@ -34098,25 +33748,25 @@
           },
           {
             "flags": {},
-            "id": 28,
+            "id": 25,
             "inputs": [
               {
-                "link": 35,
+                "link": 30,
                 "name": "samples",
                 "type": "LATENT"
               },
               {
-                "link": 36,
+                "link": 31,
                 "name": "vae",
                 "type": "VAE"
               }
             ],
             "mode": 0,
-            "order": 27,
+            "order": 24,
             "outputs": [
               {
                 "links": [
-                  37
+                  32
                 ],
                 "name": "IMAGE",
                 "slot_index": 0,
@@ -34139,16 +33789,16 @@
           },
           {
             "flags": {},
-            "id": 29,
+            "id": 26,
             "inputs": [
               {
-                "link": 37,
+                "link": 32,
                 "name": "images",
                 "type": "IMAGE"
               }
             ],
             "mode": 0,
-            "order": 28,
+            "order": 25,
             "outputs": [
               {
                 "links": [],

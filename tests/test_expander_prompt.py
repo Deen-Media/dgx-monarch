@@ -132,31 +132,29 @@ def test_the_testing_graph_with_the_switch_on_refuses():
 
 
 def _switches(graph: dict) -> dict:
-    """The four If/Else switches of a family graph by role, from the outer one in."""
+    """The three If/Else switches of a family graph by role, from the outer one in."""
     outer_id, outer = _outer(graph)
     skip_id = outer["on_true"][0]
     fallback_id = graph[skip_id]["inputs"]["on_false"][0]
-    caption_id = graph[fallback_id]["inputs"]["on_false"][0]
-    ids = {"outer": outer_id, "skip": skip_id, "fallback": fallback_id, "caption": caption_id}
+    ids = {"outer": outer_id, "skip": skip_id, "fallback": fallback_id}
     assert all(graph[key]["class_type"] == "ComfySwitchNode" for key in ids.values())
-    assert len(set(ids.values())) == 4
+    assert len(set(ids.values())) == 3
     return ids
 
 
 @pytest.mark.parametrize("name", FAMILY_GRAPHS)
 @pytest.mark.parametrize("task", ["", UNMARKED])
-def test_the_caption_reads_and_the_fallback_do_not_quiet_the_refusal(name, task):
-    """Two If/Else nodes take their choice from Compare Text over the expander's own
-    answer: the one that picks the strict or the loose read, and the empty-caption
-    fallback. No graph states that choice, so neither of their branches is sure to
-    run, but their `switch` inputs are: ComfyUI must run the expander to choose. With
-    the outer switch true and a request to expand, the refusal therefore still decides."""
+def test_the_empty_caption_fallback_does_not_quiet_the_refusal(name, task):
+    """The empty-caption fallback takes its choice from Compare Text over the
+    expander's own answer. No graph states that choice, so neither of its branches is
+    sure to run, but its `switch` input is: ComfyUI must run the expander to choose.
+    With the outer switch true and a request to expand, the refusal therefore still
+    decides."""
     graph = _switched_on(name, task)
     ids = _switches(graph)
     expand_id, _ = _one(graph, "TextGenerateV2")
-    for role in ("fallback", "caption"):
-        assert graph_live.is_link(graph[ids[role]]["inputs"]["switch"])
-        assert graph_live.skipped_branch(graph[ids[role]]) is None
+    assert graph_live.is_link(graph[ids["fallback"]]["inputs"]["switch"])
+    assert graph_live.skipped_branch(graph[ids["fallback"]]) is None
     sure = graph_live.live_nodes(graph, sure=True)
     # The skip switch is read through, since its choice is not stated on the node:
     # only the walk in expander_prompt knows the request box decides it.
@@ -230,16 +228,16 @@ def test_a_switch_whose_choice_compare_text_states_is_read_as_that_choice():
 @pytest.mark.parametrize("name", FAMILY_GRAPHS)
 def test_with_the_outer_switch_false_nothing_of_the_expander_runs(name):
     """The outer switch is lazy and states false, so ComfyUI never asks for the skip,
-    the fallback, either read of the caption, Generate Text or the expander's loader:
+    the fallback, the read of the caption, Generate Text or the expander's loader:
     the walk the loader prices with drops them all, and so does the sure one."""
     graph = _with_task(name, None, False)
     ids = _switches(graph)
     expand_id, expand = _one(graph, "TextGenerateV2")
-    chain = {ids["skip"], ids["fallback"], ids["caption"], expand_id, expand["clip"][0],
+    chain = {ids["skip"], ids["fallback"], expand_id, expand["clip"][0],
              *(key for key, node in graph.items() if node["class_type"] in (
-                 "StringCompare", "StringTrim", "JsonExtractString", "RegexExtract",
+                 "StringCompare", "StringTrim", "RegexExtract", "RegexReplace",
                  "StringReplace"))}
-    assert len(chain) == 14
+    assert len(chain) == 11
     assert not chain & graph_live.live_nodes(graph)
     assert not chain & graph_live.live_nodes(graph, sure=True)
     graph[ids["outer"]]["inputs"]["switch"] = True
@@ -381,7 +379,7 @@ def test_an_undecided_node_beside_the_render_path_does_not_turn_the_check_off():
     """Only what stands between the expander and a render matters. A Branch node or a
     switch that states no choice elsewhere in the graph leaves the refusal standing."""
     graph = _switched_on(T2I)
-    extract_id, _ = _one(graph, "JsonExtractString")
+    extract_id, _ = _one(graph, "RegexReplace")
     graph["900"] = {"class_type": "BranchNode", "inputs": {"branch0": [extract_id, 0]}}
     graph["901"] = {"class_type": "ComfySoftSwitchNode",
                     "inputs": {"switch": ["902", 0], "on_true": [extract_id, 0],
@@ -398,7 +396,7 @@ def test_an_expander_that_runs_only_for_a_preview_refuses_nothing(name, tap):
     as Text hangs on the chain. ComfyUI runs the expander for that preview alone; the
     picture takes the request as written, so there is nothing to refuse."""
     graph = _emptied(name)
-    extract_id, _ = _one(graph, "JsonExtractString")
+    extract_id, _ = _one(graph, "RegexReplace")
     expand_id, _ = _one(graph, "TextGenerateV2")
     splice_id, _ = _one(graph, "StringReplace")
     source = {"extract": [extract_id, 0], "thinking": [expand_id, 1], "replace": [splice_id, 0]}[tap]

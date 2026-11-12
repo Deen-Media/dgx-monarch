@@ -3443,8 +3443,8 @@ recipe (the four files, 6 steps, CFG 1, `euler`, `simple`, the expander chain
 wired as ComfyUI wires it), holds the task prompt and system prompt boxes of
 the two shipped graphs to this project's tracked texts byte for byte and the
 testing graph's boxes empty, holds the switch to the generator's one value
-(off as shipped) and off in the testing graph, holds the wiring of the two
-caption reads, the empty-caption fallback and the empty-request skip, holds
+(off as shipped) and off in the testing graph, holds the wiring of the
+caption read, the empty-caption fallback and the empty-request skip, holds
 the testing graph's Manual Sigmas to
 the published header's grid, and holds each Note to the auto table, the
 driver's cfg and dp preflight, the gate's proof request and the manifest's
@@ -3470,8 +3470,8 @@ lacks the `{input text}` marker, refuses class P
 `tests/test_expander_prompt.py` holds the sentence, holds it to the UNET
 loader, the four samplers and Identity Gate ahead of each node's own price,
 load and render, and holds that the loader answers for a Fleet render. It
-holds that the caption reads and the empty-caption fallback, switches driven
-by Compare Text over the answer, do not quiet the refusal, that an empty
+holds that the empty-caption fallback, a switch driven
+by Compare Text over the answer, does not quiet the refusal, that an empty
 request refuses nothing, and that with the outer switch false nothing of the
 expander runs. It holds that an expander which runs only for an extra Preview
 as Text refuses nothing, as does one behind a switch whose choice the graph
@@ -3488,13 +3488,21 @@ The two shipped templates carry this project's own expander texts and its
 settings for Generate Text: reasoning off, `max_length` 1024, `mtp` off,
 temperature 0.7 and top_p 0.8. `tests/test_minimax_h3_image_templates.py`
 holds those five values in both shipped graphs. It holds the caption read to
-a table of twenty-two answers, kept in the widget canary: a valid object, a code
-fence, text around the object and two objects read strictly; inner double
-quotes, an inner JSON object, a quote at the caption's end and escaped quotes
-around the value read by pattern; a cut answer, an empty value, plain prose
-and another key fall back to the request. The test runs the table through
-stand-ins for the four stock nodes, written from ComfyUI 0.45.0's code, and
-the widget canary runs it through ComfyUI's own nodes on 0.45.0. A CPU walk of
+a table of forty-three answers, kept in the widget canary. Thirty-four give
+the image stage a caption: a valid object, a code fence, text around the
+object, escaped double quotes, an escaped backslash and an escaped slash;
+inner double quotes, an inner JSON object, an inner object that holds the
+answer's own key, a raw double quote before a closing brace or a comma, and
+raw and escaped quotes in one caption; more keys before or after the
+caption; a raw path, which stays as typed; and seven rows that pin the
+read's limits. Nine fall back to the request: a cut answer, an empty value,
+a blank value, an object or `null` as the value, plain prose, another key,
+an empty answer, and the one limit that loses a caption (a second key with
+a list as its value).
+The test runs the table through stand-ins for the four stock nodes, written
+from ComfyUI 0.45.0's code, and holds that a strict JSON read is wrong in
+the shapes the texts invite. The widget canary runs the table through
+ComfyUI's own nodes on 0.45.0. A CPU walk of
 the text path, with If/Else evaluating only the branch its switch selects as
 ComfyUI's lazy inputs do, holds that an empty request reaches no Generate
 Text run. Both templates ship with the switch false. The expander rows

@@ -118,20 +118,20 @@ STOCK = {
     "PrimitiveStringMultiline": ["value"],
     # The MiniMax-H3-Image expander chain, as ComfyUI's templates wire it:
     # Replace Text stores ["", "{input text}", ""] with string and replace
-    # wired, and Extract Text from JSON stores ["", "expanded_caption"] with
-    # json_string wired. Neither marks an input for the browser's dynamic
+    # wired. It marks no input for the browser's dynamic
     # prompt pass, so the marker's braces stay as typed.
     "StringReplace": ["string", "find", "replace"],
-    "JsonExtractString": ["json_string", "key"],
     # The empty-caption fallback: Trim Text and Compare Text, whose advanced
     # case_sensitive widget still holds a slot. Neither marks an input for the
     # dynamic prompt pass.
     "StringTrim": ["string", "mode"],
     "StringCompare": ["string_a", "string_b", "mode", "case_sensitive"],
-    # Extract Text, the regex node of the tolerant caption read. Its three
+    # Extract Text and Replace Text (Regex), the caption read. Their three
     # flag widgets and group_index are advanced and still hold their slots.
     "RegexExtract": ["string", "regex_pattern", "mode", "case_insensitive", "multiline",
                      "dotall", "group_index"],
+    "RegexReplace": ["string", "regex_pattern", "replace", "case_insensitive", "multiline",
+                     "dotall", "count"],
     # The p-h3-image graph's V3 nodes. Their autogrow image sockets start
     # empty, as BerniniConditioning's do, so none is declared below.
     "PH3ImageConditioning": ["prompt", "width", "height"],
@@ -268,10 +268,10 @@ STOCK_OUTPUTS = {
     "CLIPTextEncode": [("CONDITIONING", "CONDITIONING")],
     "PrimitiveStringMultiline": [("STRING", "STRING")],
     "StringReplace": [("STRING", "STRING")],
-    "JsonExtractString": [("STRING", "STRING")],
     "StringTrim": [("STRING", "STRING")],
     "StringCompare": [("BOOLEAN", "BOOLEAN")],
     "RegexExtract": [("STRING", "STRING")],
+    "RegexReplace": [("STRING", "STRING")],
     "PH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
     "MiniMaxH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
     "TextGenerateV2": [("generated_text", "STRING"), ("thinking", "STRING")],
@@ -5942,7 +5942,7 @@ TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
 # the edit's two Resize Image/Mask nodes and Get Image Size, and the prompt
 # expander chain as ComfyUI wires it: Replace Text puts the request into a
 # task prompt, Generate Text runs the W4A8 expander,
-# Extract Text from JSON reads the caption out, and an If/Else switch
+# Extract Text reads the caption out, and an If/Else switch
 # picks the caption or the request. Eight things differ, each on purpose.
 # Generate Text runs with this project's settings (H3I_DECODING, H3I_GENERATE),
 # where ComfyUI's templates reason at up to 8192 or 8196 tokens.
@@ -5954,11 +5954,13 @@ TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
 # language model. The switch is off as shipped (H3I_EXPANDER_ON), where
 # ComfyUI's two templates ship it on (text to image through its subgraph's
 # enable_PE input, whose value wins over the inner node's stored false, the
-# edit through a Boolean box). The caption is read twice: by Extract Text
-# from JSON, and when that returns nothing, by pattern, so a raw double quote
-# inside the caption does not lose it. An answer with no caption in either
-# read falls back to the request: Trim Text and Compare Text test the caption
-# against the empty text, and an If/Else picks the request when it is empty,
+# edit through a Boolean box). The caption is read by pattern and not as
+# strict JSON: ComfyUI's Extract Text from JSON loses a caption that holds a
+# raw double quote, and can take an inner object or a cut caption for the
+# answer, and the texts here ask for drawn words copied exactly. An answer
+# with no caption falls back to the request: Trim Text and Compare Text test
+# the caption against the empty text, and an If/Else picks the request when
+# it is empty,
 # where ComfyUI's graph would render from nothing. An empty request skips the
 # expander by the same pattern, keyed on the request, so it starts no
 # language-model run. A graph that turns the expander
@@ -6013,23 +6015,34 @@ def _h3i_prompt(which: str) -> str:
 # This is the one value to change to ship the expander on: the outer switch,
 # both Notes and the template test read it. The testing graph stays off.
 H3I_EXPANDER_ON = False
-# The titles that tell the two If/Else switches apart for a reader.
+# The titles that tell the three If/Else switches apart for a reader.
 H3I_SWITCH_TITLE = "If/Else Switch (expander on or off)"
 H3I_FALLBACK_TITLE = "If/Else Switch (empty caption: send the request)"
-H3I_LOOSE_TITLE = "If/Else Switch (caption did not parse: read it by pattern)"
 H3I_SKIP_TITLE = "If/Else Switch (empty request: skip the expander)"
-# The pattern Extract Text reads the caption by when the answer is not valid
-# JSON, with dotall on and the first group taken. The group is everything
-# between the opening quote of the expanded_caption value and the LAST quote
-# that a closing brace follows, so a raw double quote inside the caption, or a
-# JSON object copied into it, cannot end it early. A backslash before the
-# quotes around the key and the value is allowed and stays out of the group:
-# some answers escape those quotes. An empty value or an answer cut short
-# gives no match, and the empty-caption fallback sends the request.
-# tests/test_minimax_h3_image_templates.py holds a table of cases, and the
-# widget canary runs the same table through ComfyUI's own nodes.
-H3I_LOOSE_PATTERN = (r'"expanded_caption\\?"\s*:\s*\\?"(.*?)(?:(?:\\")*"|(?:\\")+)\s*\}'
-                     r'(?!.*"\s*\})')
+# The pattern Extract Text reads the caption by, with dotall on and group 2
+# taken. The group runs from the opening quote of the expanded_caption value
+# to the quote that closes the answer: the first quote that a closing brace
+# follows with no later quote-then-brace in the answer. So a raw double quote
+# inside the caption, or a JSON object copied into it, cannot end it early or
+# be taken for the answer. Between that quote and the brace the pattern lets
+# more keys stand, each with a string, a number, true, false or null, so a
+# second key after the caption stays out of it. Group 1 is a backslash
+# before the opening quote: some answers escape the quotes around the value,
+# and then the closing quote is escaped too and stays out of the caption. An
+# empty value or an answer cut short gives no match, and the empty-caption
+# fallback sends the request. The widget canary holds a table of answers and
+# runs it through ComfyUI's own nodes; tests/test_minimax_h3_image_templates.py
+# runs the same table through stand-ins.
+H3I_CAPTION_PATTERN = (
+    r'"expanded_caption\\?"\s*:\s*(\\)?"(.*?)(?(1)\\"\s*"?|")\s*'
+    r'(?:,\s*"\w+"\s*:\s*(?:"(?:[^"\\]|\\.)*"|-?[0-9][0-9.]*|true|false|null)\s*)*'
+    r'\}(?!.*"\s*\})')
+# The one decode pass: a backslash before a double quote, a backslash or a
+# slash becomes that mark. One pass with a backreference, so an escaped
+# backslash before a quote cannot be read twice. Other escapes stay as
+# typed: an escaped line break or tab (the texts ask for one line), a \u
+# escape, and a raw backslash in a path the request asked to have drawn.
+H3I_UNESCAPE = (r'\\(["\\/])', r'\1')
 # Where MiniMax publishes its own prompts, which this project does not ship.
 H3I_PROMPT_REPO = "MiniMaxAI/MiniMax-H3-Image-PE"
 # How Generate Text runs, in one place. These are this project's settings for
@@ -6088,7 +6101,7 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
     chain = (
         "Replace Text puts the request into the task prompt where it says "
         + H3I_MARKER + ", Generate Text runs the expander model on the driver, with "
-        "reasoning off, Extract Text from JSON reads the caption out "
+        "reasoning off, Extract Text reads the caption out "
         "of its answer, and the switch titled " + H3I_SWITCH_TITLE + " picks that "
         "caption or the request. ")
     cost = (
@@ -6117,9 +6130,11 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
         + H3I_PROMPT_REPO + " under its own licence; nothing of those is in this "
         "graph. You may replace either text with your own: keep " + H3I_MARKER +
         " in the task prompt where the request belongs, and have the answer hold "
-        "the caption under the key expanded_caption. An answer that is not valid "
-        "JSON, such as a caption with a double quote inside it, is read a second "
-        "time by pattern. If neither read holds a caption, the switch titled "
+        "the caption under the key expanded_caption. Extract Text reads the "
+        "caption by pattern, not as strict JSON, so a double quote or a JSON "
+        "object inside the caption does not lose it or cut it short; the texts "
+        "ask the expander to copy drawn words exactly, and they expect this read. "
+        "If the read holds no caption, the switch titled "
         + H3I_FALLBACK_TITLE + " sends the request as written instead. An empty "
         "request skips the expander: no language model runs for it. Preview as "
         "Text shows the text that is rendered "
@@ -6229,50 +6244,44 @@ def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dic
         {"key": "expand", "type": "TextGenerateV2", "pos": (3, 3),
          "widgets": {"prompt": "", **H3I_DECODING, **H3I_GENERATE},
          "wire": expand_wire},
-        {"key": "extract", "type": "JsonExtractString", "pos": (4, 3),
-         "widgets": {"json_string": "", "key": "expanded_caption"},
-         "wire": {"json_string": ("expand", 0)}},
-        # Reading the caption, in two steps. Extract Text from JSON is strict:
-        # it handles escapes, a code fence and text around the object, and it
-        # returns "" when the answer is not valid JSON. A caption that holds a
-        # raw double quote is that case: the model copied a quoted word or a
-        # JSON object from the request as typed. So when the strict read is
-        # empty, Extract Text reads the answer by pattern (H3I_LOOSE_PATTERN),
-        # and an If/Else picks whichever read holds a caption. The loose read
-        # runs only then: the If/Else is lazy.
-        {"key": "strict_trim", "type": "StringTrim", "pos": (1, 6),
-         "widgets": {"string": "", "mode": "Both"},
-         "wire": {"string": ("extract", 0)}},
-        {"key": "strict_empty", "type": "StringCompare", "pos": (2, 6),
-         "widgets": {"string_a": "", "string_b": "", "mode": "Equal",
-                     "case_sensitive": True},
-         "wire": {"string_a": ("strict_trim", 0)}},
-        {"key": "loose", "type": "RegexExtract", "pos": (3, 6),
-         "widgets": {"string": "", "regex_pattern": H3I_LOOSE_PATTERN, "mode": "First Group",
+        # Reading the caption. The answer is meant as one JSON object, and a
+        # strict JSON read is wrong in three shapes the texts invite by asking
+        # for drawn words copied exactly: a raw double quote inside the caption
+        # makes the answer invalid; a copied object that itself holds the
+        # answer key is the first object that parses, so its value is taken;
+        # and a raw quote followed by a closing brace ends the caption early.
+        # So Extract Text reads the caption by pattern (H3I_CAPTION_PATTERN):
+        # the outermost wrapper, whatever the caption holds. Replace Text
+        # (Regex) then turns a backslash before a double quote, a backslash or
+        # a slash into that mark, which is what a JSON read would do for the
+        # escapes a model writes (H3I_UNESCAPE). One read and no branch.
+        {"key": "read", "type": "RegexExtract", "pos": (4, 3),
+         "widgets": {"string": "", "regex_pattern": H3I_CAPTION_PATTERN, "mode": "First Group",
                      "case_insensitive": False, "multiline": False, "dotall": True,
-                     "group_index": 1},
+                     "group_index": 2},
          "wire": {"string": ("expand", 0)}},
-        {"key": "caption", "type": "ComfySwitchNode", "pos": (4, 6),
-         "title": H3I_LOOSE_TITLE, "widgets": {"switch": False},
-         "wire": {"switch": ("strict_empty", 0), "on_false": ("extract", 0),
-                  "on_true": ("loose", 0)}},
-        # The empty-caption fallback. When neither read holds a caption (an
+        {"key": "marks", "type": "RegexReplace", "pos": (1, 6),
+         "widgets": {"string": "", "regex_pattern": H3I_UNESCAPE[0], "replace": H3I_UNESCAPE[1],
+                     "case_insensitive": False, "multiline": False, "dotall": False,
+                     "count": 0},
+         "wire": {"string": ("read", 0)}},
+        # The empty-caption fallback. When the read holds no caption (an
         # answer cut short, plain prose, an empty value), ComfyUI's own graph
         # would render from nothing. Compare Text tests the trimmed caption
-        # against the empty text and drives another If/Else, which hands on
-        # the request when the caption is empty and the caption as read
+        # against the empty text and drives an If/Else, which hands on the
+        # request when the caption is empty and the caption as read
         # otherwise. Its switch input is not lazy, so ComfyUI runs the
         # expander for it whichever way it goes.
         {"key": "trim", "type": "StringTrim", "pos": (2, 4),
          "widgets": {"string": "", "mode": "Both"},
-         "wire": {"string": ("caption", 0)}},
+         "wire": {"string": ("marks", 0)}},
         {"key": "compare", "type": "StringCompare", "pos": (3, 4),
          "widgets": {"string_a": "", "string_b": "", "mode": "Equal",
                      "case_sensitive": True},
          "wire": {"string_a": ("trim", 0)}},
         {"key": "fallback", "type": "ComfySwitchNode", "pos": (4, 4),
          "title": H3I_FALLBACK_TITLE, "widgets": {"switch": False},
-         "wire": {"switch": ("compare", 0), "on_false": ("caption", 0),
+         "wire": {"switch": ("compare", 0), "on_false": ("marks", 0),
                   "on_true": ("request", 0)}},
         # An empty request skips the expander. Compare Text tests the trimmed
         # request against the empty text and drives an If/Else whose on_true

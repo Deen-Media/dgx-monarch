@@ -8362,7 +8362,7 @@ titled `If/Else Switch (expander on or off)` is true.
 **Cause:** the MiniMax-H3-Image templates wire the prompt expander as ComfyUI's
 own templates do. Replace Text puts the request into a task prompt where the
 task prompt says `{input text}`, Generate Text runs the expander model on that
-text, and Extract Text from JSON reads the caption out of the answer. The two
+text, and Extract Text reads the caption out of the answer. The two
 shipped templates carry this project's own task prompt and system prompt in
 the two text boxes, with the switch false. So an empty task prompt box in one
 of them means someone emptied it, and a task prompt without `{input text}`
@@ -8394,9 +8394,9 @@ Soft Switch that states no choice, or behind a Branch node, is not sure to
 run, and refuses nothing. The templates' own skip of an empty request is an
 If/Else driven by Compare Text over the request box: the graph states that
 text, so the check knows an empty request runs no expander, and refuses
-nothing for it. Their second read of the caption and their empty-caption
-fallback are driven by Compare Text over the expander's answer, and do not
-quiet the refusal: ComfyUI must run the expander to decide them.
+nothing for it. Their empty-caption
+fallback is driven by Compare Text over the expander's answer, and does not
+quiet the refusal: ComfyUI must run the expander to decide it.
 
 **Fix:** set the switch titled `If/Else Switch (expander on or off)` to false,
 and the request goes to the model as written. To run the expander, put a task

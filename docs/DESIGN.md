@@ -1972,7 +1972,7 @@ again.
 
 **A prompt expander that cannot see the request refuses before the render.** The
 MiniMax-H3-Image templates wire ComfyUI's expander chain, Replace Text into
-Generate Text into Extract Text from JSON behind a lazy switch, and ship it
+Generate Text behind a lazy switch, read the caption by pattern, and ship it
 off. The two shipped templates carry this project's own task prompt and
 system prompt in the chain's text boxes, because the text ComfyUI's templates
 carry there is MiniMax's and this project does not ship it; the testing graph
@@ -2002,12 +2002,11 @@ follows a switch's branch only when the switch states its choice, typed,
 through a Boolean box or through Compare Text over texts the graph states, and
 follows no input of a Branch node. It still follows
 what feeds a switch's own `switch` input, which ComfyUI must run to choose.
-That is what keeps the refusal standing in the shipped graphs. An answer that
-is not valid JSON is read a second time by pattern, and an answer with no
-caption in either read falls back to the request; both go through If/Else
-nodes whose `switch` reads Compare Text over the expander's answer, so with
-the outer switch on and a request to expand, the expander runs whichever way
-they go. An empty request skips the expander through one more If/Else whose
+That is what keeps the refusal standing in the shipped graphs. An answer with
+no caption falls back to the request through an If/Else whose `switch` reads
+Compare Text over the expander's answer, so with the outer switch on and a
+request to expand, the expander runs whichever way it goes. An empty request
+skips the expander through one more If/Else whose
 `switch` is Compare Text over the trimmed request box. The graph states that
 text, so the walk reads the choice as it reads a typed one: an empty request
 runs no expander and refuses nothing. A graph wired another way and
