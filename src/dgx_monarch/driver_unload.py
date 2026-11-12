@@ -23,7 +23,8 @@ render whose DiT load is still pending counts the model that load replaces
 unload through ``nodes/loader_relief.py``, with this module's calls.
 
 Three things this path never touches. A render still running in this driver:
-the driver keeps the models and the caches, and the refusal says why. The
+the driver keeps the models and the caches, and the refusal says why
+(``busy_reason`` reads the fleet attached now, not a mesh a reset stopped). The
 Workers' residents: the trim releases cached allocator blocks and unloads no
 model. ComfyUI's node output cache: the current prompt still needs its own
 outputs, and ComfyUI's default cache already drops earlier prompts' outputs
@@ -206,25 +207,60 @@ def _lease_count(handle: Any, attribute: str) -> int:
     return sum(int(count) for count in dict(getattr(handle, attribute, None) or {}).values())
 
 
+def serving_fleet(handle: Any) -> Any:
+    """The mesh that serves this driver's loads now: ``handle``, or the one
+    attached in its place; None when ``handle`` is retired and none is.
+
+    ComfyUI caches the Init node's output, so a loader or a render is handed
+    the mesh that node attached. A reset since then has retired it, and a
+    fresh fleet on the same config serves the loads.
+    """
+    if handle is None or not (getattr(handle, "defunct", False)
+                              or getattr(handle, "teardown_complete", False)):
+        return handle
+    from .nodes import recycle_drain
+
+    return recycle_drain.attached_fleet(handle)
+
+
+def _fleets_at_work(handle: Any) -> list[Any]:
+    """The meshes whose work could still need what the driver holds.
+
+    A mesh with a confirmed stop has no process left, so it is left out: a
+    reset leaves its "recycle group teardown" mark on the handle it retires,
+    which reads as a call in flight for as long as the handle lives. A
+    retired mesh with no confirmed stop is still read, since its Workers may
+    be alive, and so is the fleet attached in a retired mesh's place.
+    """
+    if handle is None:
+        return []
+    fleets = [] if getattr(handle, "teardown_complete", False) else [handle]
+    serving = serving_fleet(handle)
+    if serving is not None and serving is not handle:
+        fleets.append(serving)
+    return fleets
+
+
 def busy_reason(handle: Any) -> str:
     """Why the driver must keep what it holds now, or empty when it may free it.
 
     The driver's progress tracker spans every render this process started,
-    from before dispatch to its cleanup, pipelined submissions included. The
-    handle's leases and in-flight call cover a result or a Worker call that
-    outlives it. State that cannot be read keeps everything.
+    from before dispatch to its cleanup, pipelined submissions included. A
+    mesh's leases and in-flight call cover a result or a Worker call that
+    outlives it (``_fleets_at_work``). A status read and a capacity quote set
+    none of these. State that cannot be read keeps everything.
     """
     try:
         from .telemetry import render_progress
 
         if render_progress.snapshot().get("active"):
             return "a render is still running in this driver"
-        if handle is not None:
-            if _lease_count(handle, "sample_leases"):
+        for fleet in _fleets_at_work(handle):
+            if _lease_count(fleet, "sample_leases"):
                 return "a render result is still held on the mesh"
-            if _lease_count(handle, "abandoned_sample_leases"):
+            if _lease_count(fleet, "abandoned_sample_leases"):
                 return "an abandoned render may still be running on the Workers"
-            if client_lease.dispatch_in_flight(handle):
+            if client_lease.dispatch_in_flight(fleet):
                 return "a call to the Workers is still in flight"
     except Exception:
         return "the driver could not read whether a render is running"
@@ -406,6 +442,11 @@ def _after_refusal(steps: Sequence[Callable[[], object]], index: int,
     mm = comfy_model_management()
     held = held_models(mm) if mm is not None else []
     busy = busy_reason(handle)
+    # The trim goes to the fleet attached now, whose actors hold the caches.
+    try:
+        handle = serving_fleet(handle)
+    except Exception:
+        handle = None
     unloaded: Unloaded | None = None
     if held:
         names = tuple(name for _entry, name in held)

@@ -2645,7 +2645,15 @@ render is live in this driver: a pipelined submission behind a render in
 flight, a held or abandoned result lease, or a Worker call in flight keeps the
 models, and the refusal says which. On 2026-11-04 a KSampler Pipeline push
 behind two MiniMax H3 renders in flight refused that way, keeping the text
-encoder the renders used. It never touches the Workers' residents or
+encoder the renders used. The driver asks this of the Workers attached now. A
+reset is not work in flight: ComfyUI caches the Init node's output, so after
+Reset attached mesh or a Clear and retry the graph still carries the mesh the
+reset stopped, and that mesh holds no render, result or call. A status read
+and the loader's own capacity question never count either. On 2026-11-12,
+before this rule, a loader 50 s after a finished render kept 16.0 GiB of
+ComfyUI's models "because a call to the Workers is still in flight" and
+refused 0.1 GiB short: the reset between two renders had left its teardown
+mark on the stopped mesh. It never touches the Workers' residents or
 ComfyUI's cached node outputs. The cross-rank agreement
 ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box))
 prices a load that replaces a Worker's stock resident after the drop that

@@ -201,6 +201,30 @@ def test_a_running_render_keeps_its_models_and_the_refusal_says_so(monkeypatch, 
             "ends.") in str(raised.value)
 
 
+def test_a_reset_since_the_init_node_ran_does_not_keep_the_models(
+        monkeypatch, tmp_path, box, journal):
+    """2026-11-12: ComfyUI served the Init node's mesh from its cache, a reset had retired that
+    handle, and a loader 50 s after a finished render refused 0.1 GiB short with 16.0 GiB of
+    ComfyUI's models kept "because a call to the Workers is still in flight"."""
+    from dgx_monarch import mesh as mesh_mod
+
+    mesh, asked = _rigged(monkeypatch, tmp_path, box, held_gib=None)
+    fresh = mesh.handle
+    reset = unloads._reset_mesh(monkeypatch)
+    retired = cards._LiveHandle()
+    retired.config = fresh.config
+    for mark in ("defunct", "teardown_complete", "setup_cleanup_state"):
+        setattr(retired, mark, getattr(reset, mark))   # what the real reset leaves
+    assert retired.teardown_complete and retired.setup_cleanup_state is not None
+    monkeypatch.setattr(mesh_mod, "_MESHES", {("k",): fresh})
+    mesh.handle = retired                       # what the cached Init output still carries
+    calls = _comfy(monkeypatch, box)
+    assert loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None, slot="cond") is None
+    assert asked, "the fleet attached now answered the loader's question"
+    assert calls.unload == 1 and calls.mm.current_loaded_models == [] and _cards() == []
+    assert ["fits after unloading the 2 models" in record.getMessage() for record in journal] == [True]
+
+
 def test_the_kill_switch_keeps_the_first_reading(monkeypatch, tmp_path, box):
     mesh, _asked = _rigged(monkeypatch, tmp_path, box, held_gib=None)
     calls = _comfy(monkeypatch, box)

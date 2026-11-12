@@ -2153,7 +2153,13 @@ the class C rule of offering the fitting strategy first. Each step runs at most
 once per render, and once more in the identity gate's stock reference leg
 ("Where the ceremony cannot help"), only after a check refused, never while a render, a result
 lease or a Worker call is live in the driver, and never reaches a Worker
-resident or ComfyUI's node output cache. The loader windows take the first
+resident or ComfyUI's node output cache. "Live" is read on the fleet attached
+now (`driver_unload.busy_reason`): ComfyUI caches the Init node's output, so
+after a reset a graph still carries the mesh the reset stopped, whose handle
+keeps the reset's own teardown mark. A mesh with a confirmed stop has no
+process left and holds no work, so it is not read; the fleet attached in its
+place is, and the actor trim goes to that fleet. A mesh whose stop was not
+confirmed is still read, since its Workers may be alive. The loader windows take the first
 step only, after the swap credit (below): before a loader refuses it unloads
 ComfyUI's models, which ComfyUI reloads on demand for the text encoder and
 VAEs the graph still needs, or, where ComfyUI holds no model, releases the
