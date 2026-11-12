@@ -195,6 +195,39 @@ def test_what_the_backup_covers_is_read_as_the_store_reads_it(tmp_path):
     assert fallback.backup_covers(unreadable, checkpoint, OTHER_FILE, resolve)  # the store's own gate swaps in place
 
 
+def test_a_held_file_rewritten_on_disk_under_its_own_name_is_read_again_not_trusted_by_name(tmp_path):
+    """The store builds the stack from the file as it is now, so the quote must not take its name for its keys."""
+    from dgx_monarch.gate_ledger import artifact_signature
+
+    checkpoint, _resolve = _files(tmp_path, ["blocks.0.attn"])
+    held_file = tmp_path / "held.safetensors"
+
+    def write(stems):
+        entries = {}
+        for stem in stems:
+            entries[f"diffusion_model.{stem}.lora_down.weight"] = ("BF16", [4, 4])
+            entries[f"diffusion_model.{stem}.lora_up.weight"] = ("BF16", [4, 4])
+        _write_safetensors(held_file, entries)
+
+    write(["blocks.0.attn", "blocks.0.mlp"])
+    resolve = _resolver({"held.safetensors": str(held_file)})
+    stored = _stored_with_backup(BACKED)
+    stored.artifact_identity = {"artifacts": [
+        {"kind": "diffusion_models", "name": "base.safetensors", "signature": "x"},
+        {"kind": "loras", "name": "held.safetensors", "signature": artifact_signature(str(held_file))}]}
+    strength_change = [{"name": "held.safetensors", "strength": 0.5}]
+    assert fallback.backup_covers(stored, "/no/such/checkpoint", strength_change, resolve)  # by name, no header read
+    write(["blocks.0.attn", "blocks.0.mlp", "blocks.1.attn"])  # the same name, one more layer
+    assert not fallback.backup_covers(stored, checkpoint, strength_change, resolve)  # mapped again: not covered
+    write(["blocks.0.attn"])  # rewritten to patch less: still inside the backup, read from its headers
+    assert fallback.backup_covers(stored, checkpoint, strength_change, resolve)
+    held_file.unlink()
+    assert not fallback.backup_covers(stored, checkpoint, strength_change, resolve)  # gone: not covered
+    # A slot that recorded no fingerprint for the name has nothing to compare and keeps the shortcut.
+    stored.artifact_identity = {}
+    assert fallback.backup_covers(stored, "/no/such/checkpoint", strength_change, resolve)
+
+
 def test_the_partial_load_route_declines_when_the_bakes_room_is_missing(monkeypatch):
     """``make_whole`` asks for the backups' room and the bake's line; the line alone can decline it."""
     from dgx_monarch.actor import lora_partial_load

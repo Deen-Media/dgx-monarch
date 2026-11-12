@@ -109,6 +109,29 @@ def held_bytes(stored: Any) -> int:
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
 
+def _held_files_unchanged(stored: Any, names: set, resolve_lora_path: Callable[[str], str]) -> bool:
+    """No LoRA file of these names differs on disk from the fingerprint the slot recorded at its load.
+
+    A file rewritten under its own name may patch other weights than the held
+    stack did, and the store builds the stack from the file as it is now. A
+    slot that recorded no fingerprint for a name gives nothing to compare and
+    reads as unchanged; a file that cannot be fingerprinted reads as changed.
+    """
+    identity = getattr(stored, "artifact_identity", None)
+    artifacts = identity.get("artifacts") if isinstance(identity, dict) else None
+    recorded = {item.get("name"): item.get("signature") for item in artifacts or ()
+                if isinstance(item, dict) and item.get("kind") == "loras"}
+    if not recorded:
+        return True
+    from ..gate_ledger import artifact_signature
+
+    try:
+        return all(name not in recorded or artifact_signature(resolve_lora_path(str(name))) == recorded[name]
+                   for name in names)
+    except Exception:
+        return False
+
+
 def backup_covers(stored: Any, checkpoint_path: str, lora_stack: list | None,
                   resolve_lora_path: Callable[[str], str]) -> bool:
     """Whether ComfyUI's backup on this slot holds every weight ``lora_stack`` patches.
@@ -118,8 +141,9 @@ def backup_covers(stored: Any, checkpoint_path: str, lora_stack: list | None,
     means the change is made in place), read from the slot itself and so true
     for every format, without building the stack. The backup's own keys are
     the source. A stack of the held stack's own files (a strength change, a
-    reorder, a LoRA removed) patches what the held stack patched. Any other
-    stack is mapped from the checkpoint's and the LoRAs' headers and each
+    reorder, a LoRA removed) patches what the held stack patched, as long as
+    those files are the ones the slot loaded (``_held_files_unchanged``). Any
+    other stack is mapped from the checkpoint's and the LoRAs' headers and each
     weight looked for among the backup's keys; where a header cannot be read
     the answer is no, which prices the dearer fresh load.
     """
@@ -131,7 +155,8 @@ def backup_covers(stored: Any, checkpoint_path: str, lora_stack: list | None,
     held_patches = getattr(getattr(stored, "active_patcher", None), "patches", None)
     held_names = {entry[0] for entry in getattr(stored, "lora_sig", ()) or () if entry}
     new_names = {entry.get("name") for entry in lora_stack if isinstance(entry, dict)}
-    if new_names <= held_names and isinstance(held_patches, dict) and set(held_patches) <= set(backup):
+    if (new_names <= held_names and isinstance(held_patches, dict) and set(held_patches) <= set(backup)
+            and _held_files_unchanged(stored, new_names, resolve_lora_path)):
         return True
     from ..capacity_lora_bake import _prefix_variants
     from ..safetensors_header import read_safetensors_header
