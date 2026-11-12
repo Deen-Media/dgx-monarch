@@ -1180,9 +1180,9 @@ edit also hands it the picture. In a first probe on a DGX Spark that text
 stage took about 7 seconds for text to image and about 13 seconds for the
 edit, at the median over the probe's requests at one seed, and 16.6 seconds
 for the longest counted request, of 426 words (2026-11-11; the Spark ran
-under its stability clock cap and the rig was not quiet). The probe timed
-Generate Text with these texts and settings; the caption read that ships was
-built after it. The expander's memory has no hardware record yet. An empty
+under its stability clock cap and the rig was not quiet). A second probe the
+same day ran the caption read that ships, and 125 of 125 counted runs gave
+the image stage a caption. The expander's memory has no hardware record yet. An empty
 request skips the expander
 and goes to the model as written. You may
 replace either text with your own: keep `{input text}` in the task prompt
