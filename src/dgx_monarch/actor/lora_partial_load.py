@@ -147,30 +147,19 @@ def _host_copies_are_file_pages() -> bool:
         return True
 
 
-def _weight_class(module: Any) -> str:
-    """How the classic bake's price reads this layer's stored weight (``capacity_classic_bake.weight_class``)."""
-    from .. import capacity_classic_bake as price
-
-    weight = getattr(module, "weight", None)
-    payload = getattr(weight, "_qdata", None)
-    if payload is not None:
-        return price.FP8_QUANTIZED if "float8" in str(payload.dtype) else price.OTHER
-    full = ("torch.bfloat16", "torch.float16", "torch.float32", "torch.float64")
-    return price.FULL_PRECISION if str(getattr(weight, "dtype", "")) in full else price.OTHER
-
-
 def _room_needed(patcher: Any, pending: list[tuple[str, Any]]) -> int:
     """Bytes of the shared pool the full load needs beyond what the partial load holds."""
-    from .. import capacity_classic_bake
+    from .. import capacity_classic_bake as price
     from . import lora_cast_time
 
-    sizes = [(module, lora_cast_time._module_bytes(module)) for _key, module in pending]
-    need = sum(size for _module, size in sizes)  # ComfyUI's backup of each
+    need = sum(lora_cast_time._module_bytes(module) for _key, module in pending)  # ComfyUI's backup of each
     if _host_copies_are_file_pages():
         need += max(0, int(patcher.model_size()) - int(patcher.loaded_size()))  # and every layer it moves
-    # And what baking those layers ComfyUI's classic way adds on the device beside them: the same
-    # term the stock price charges for a whole stack, on the layers still to bake.
-    return need + capacity_classic_bake.term_from_weights((_weight_class(module), size) for module, size in sizes)
+    # And what baking those layers ComfyUI's classic way adds on the device beside them: the line
+    # the stock price charges a stack (2 GiB and 7.5 MiB a layer), on the layers still to bake.
+    # Not its bytes guard: this route's BF16 cell ran on hardware under the rule without the
+    # term, and the guard has no measurement behind it.
+    return need + price.term_from_weights(((price.OTHER, 0) for _ in pending), guard=False)
 
 
 def _registered(patcher: Any) -> bool:

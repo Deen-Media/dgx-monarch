@@ -661,7 +661,12 @@
   the identity gate holds a PASS for the combination's in-place bake, which a
   render of it with `lora_low_rss` on records; with no PASS the refusal says
   so and names both prices. The default (`lora_low_rss` on) is priced as
-  before. Nothing to set. Not yet run on hardware
+  before. Nothing to set, with one case to know: no BF16 measurement of the
+  classic bake exists yet, so a BF16 file's stack is priced at 0.75 of its
+  patched bytes, and the BF16 Wan-Animate 2 memory-saver graph (which ships
+  with the switch off) may be refused at its LoRA change on a fresh pair
+  until its combination has a gate PASS; render it once with `lora_low_rss`
+  on, or leave the switch on. Not yet run on hardware
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by

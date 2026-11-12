@@ -55,7 +55,7 @@ def test_no_patched_weight_charges_nothing():
 def test_a_quantized_fp8_weight_past_the_largest_measured_takes_the_bytes_guard():
     limit = price.MEASURED_LARGEST_WEIGHT_BYTES[price.FP8_QUANTIZED]
     at_the_limit = _weights(40, price.FP8_QUANTIZED, limit)
-    past_it = at_the_limit[:-1] + [(price.FP8_QUANTIZED, limit + 1)]
+    past_it = [*at_the_limit[:-1], (price.FP8_QUANTIZED, limit + 1)]
     line = price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 40
     assert price.term_from_weights(at_the_limit) == line
     guard = int(price.CLASSIC_BAKE_GUARD_RATIO * (39 * limit + limit + 1))
@@ -145,12 +145,11 @@ def test_a_checkpoint_whose_header_cannot_be_read_is_charged_on_its_whole_size(t
     assert charged == price.CLASSIC_BAKE_FIXED_BYTES + int(0.75 * path.stat().st_size)
 
 
-def test_the_in_place_bake_charges_the_stack_twice_and_its_working_memory():
-    assert price.in_place_bake_bytes(LTX_OWN_STACK, stack_read=False) == 2 * LTX_OWN_STACK + 2 * GIB
-    assert price.in_place_bake_bytes(LTX_OWN_STACK, stack_read=True) == LTX_OWN_STACK + 2 * GIB
+def test_the_in_place_bake_charges_one_copy_of_the_stack_and_its_working_memory():
+    assert price.in_place_bake_bytes(LTX_OWN_STACK) == LTX_OWN_STACK + 2 * GIB
     # Never under the measured rises: 8.28 GiB for the 7.08 GiB stack, 2.25 for the 0.305 GiB one.
-    assert price.in_place_bake_bytes(LTX_OWN_STACK, stack_read=True) >= 8.28 * GIB
-    assert price.in_place_bake_bytes(int(0.305 * GIB), stack_read=True) >= 2.25 * GIB
+    assert price.in_place_bake_bytes(LTX_OWN_STACK) >= 8.28 * GIB
+    assert price.in_place_bake_bytes(int(0.305 * GIB)) >= 2.25 * GIB
 
 
 def _fit(avail_gib: float, size: int = LTX_BYTES) -> StockFit:
@@ -164,7 +163,10 @@ def ltx(monkeypatch):
     term = price.term_from_weights(_weights(1660, price.FP8_QUANTIZED))
     monkeypatch.setattr(price, "classic_bake_bytes", lambda _path, stack, _resolve: term if stack else 0)
     monkeypatch.setattr(price, "stack_bytes", lambda stack, _resolve: LTX_OWN_STACK if stack else 0)
-    return term
+    return term + LTX_OWN_STACK  # what a classic price adds: the term and the stack's files
+
+
+HELD = int(21.85 * GIB)  # what dropping the bare LTX base returns
 
 
 def test_a_stock_price_with_no_stack_is_unchanged(ltx):
@@ -173,70 +175,79 @@ def test_a_stock_price_with_no_stack_is_unchanged(ltx):
     assert fit.bake_bytes == 0 and "classic bake" not in fit.terms and "bake" not in fit.measured()
 
 
-def test_the_classic_bake_is_added_to_the_stock_price_and_named(ltx):
-    roomy = price.priced(_fit(75.8), "p", STACK, None, stack_read=True)
+def test_the_classic_bake_and_the_stacks_files_are_added_to_the_stock_price_and_named(ltx):
+    roomy = price.priced(_fit(75.8), "p", STACK, None)
     assert roomy.bake_bytes == ltx and roomy.fits
     assert roomy.required_bytes == capacity_fit.stock_required_bytes(LTX_BYTES) + ltx
     assert "GiB for the LoRA stack's classic bake" in roomy.terms
     assert roomy.measured()["bake"] == "classic" and roomy.measured()["bake_bytes"] == ltx
     # The record: this load used 54.6 GiB of an allowed 45.9; the price now allows what it used.
     assert roomy.required_bytes - FLOOR >= 54.6 * GIB
-    # A price read before the stack is read charges the stack's files as well.
-    assert price.priced(_fit(75.8), "p", STACK, None).bake_bytes == ltx + LTX_OWN_STACK
 
 
 def test_todays_admitted_but_short_load_is_now_refused_by_the_classic_price(ltx):
-    short = price.priced(_fit(52.0), "p", STACK, None, stack_read=True)  # today's 50.9 admits this
+    short = price.priced(_fit(52.0), "p", STACK, None)  # today's 50.9 admits this
     assert _fit(52.0).fits and not short.fits and short.in_place_bytes == 0
     assert short.in_place_note == ""  # the question of an in-place bake did not arise
 
 
 def test_with_the_permission_the_in_place_price_is_taken_where_the_classic_one_misses(ltx):
-    held = int(21.85 * GIB)
-    taken = price.priced(_fit(30.0), "p", STACK, None, stack_read=True, held_base_bytes=held, in_place=True)
+    taken = price.priced(_fit(30.0), "p", STACK, None, held_bytes=HELD, in_place=True)
     assert taken.fits and taken.in_place_bytes == LTX_OWN_STACK + 2 * GIB
     assert taken.required_bytes == taken.in_place_bytes + FLOOR  # no file term and no credit
     assert "bake the LoRA stack in place" in taken.terms
     assert taken.measured()["bake"] == "in_place"
     # A later credit cannot lower or raise an in-place price.
-    assert dataclasses.replace(taken, credit_bytes=held).required_bytes == taken.required_bytes
+    assert dataclasses.replace(taken, credit_bytes=HELD).required_bytes == taken.required_bytes
 
 
 def test_the_classic_bake_is_kept_wherever_it_fits_even_with_the_permission(ltx):
-    held = int(21.85 * GIB)
-    kept = price.priced(_fit(44.0), "p", STACK, None, stack_read=True, held_base_bytes=held, in_place=True)
+    kept = price.priced(_fit(51.0), "p", STACK, None, held_bytes=HELD, in_place=True)
     assert kept.in_place_bytes == 0 and kept.bake_bytes == ltx
-    assert kept.required_bytes - held <= kept.avail_bytes  # fits once the drop returns the held copy
+    assert kept.required_bytes - HELD <= kept.avail_bytes  # fits once the drop returns the held copy
+    # One GiB under that, it does not, and the in-place bake is taken.
+    assert price.priced(_fit(49.5), "p", STACK, None, held_bytes=HELD, in_place=True).in_place_bytes > 0
 
 
 def test_without_the_permission_the_classic_price_decides_alone_and_says_why(ltx):
-    held = int(21.85 * GIB)
-    refused = price.priced(_fit(30.0), "p", STACK, None, stack_read=True, held_base_bytes=held,
-                           in_place=price.NO_GATE_PASS)
+    refused = price.priced(_fit(30.0), "p", STACK, None, held_bytes=HELD, in_place=price.GATE_HAS_NOT_PASSED)
     assert not refused.fits and refused.in_place_bytes == 0
-    assert "baking it in place would need" in refused.in_place_note and "identity-gate PASS" in refused.terms
-    assert refused.measured()["in_place_note"] == refused.in_place_note
+    assert refused.in_place_note == "; " + price.GATE_HAS_NOT_PASSED and "identity-gate PASS" in refused.terms
     block = refused.measured()
-    assert stock_words.bake_sentences(block).startswith(" Baking it in place would need")
+    assert block["in_place_note"] == refused.in_place_note
+    assert stock_words.bake_sentences(block).startswith(" Baking it in place was not tried")
+    assert stock_words.bake_sentences(block).endswith("prove it.")
     assert "for the LoRA stack's classic bake" in stock_words.stock_second_term(block)
+    assert " That includes " in stock_words.bake_sentences(block, name_the_term=True)
 
 
-def test_when_neither_price_fits_the_refusal_names_both(ltx):
-    refused = price.priced(_fit(9.0), "p", STACK, None, stack_read=True,
-                           held_base_bytes=int(21.85 * GIB), in_place=True)
+def test_when_neither_price_fits_the_refusal_names_both_and_the_reading(ltx):
+    refused = price.priced(_fit(9.0), "p", STACK, None, held_bytes=HELD, in_place=True)
     assert not refused.fits and refused.in_place_bytes == 0
-    assert "classic bake" in refused.terms and "which is not available either" in refused.terms
+    assert "classic bake" in refused.terms
+    assert "baking it in place would need 14.1 GiB beside the" in refused.terms
+    assert "and 9.0 GiB was read" in refused.terms
 
 
 def test_an_empty_slot_prices_the_bare_load_and_then_the_bake_beside_it(ltx):
     taken = price.priced(_fit(60.0), "p", STACK, None, in_place=True, bare_load=True)
     stock = capacity_fit.stock_required_bytes(LTX_BYTES)
-    assert taken.fits and taken.in_place_bytes == max(stock - FLOOR, LTX_BYTES + 2 * LTX_OWN_STACK + 2 * GIB)
+    assert taken.fits and taken.in_place_bytes == max(stock - FLOOR, LTX_BYTES + LTX_OWN_STACK + 2 * GIB)
     assert not price.priced(_fit(49.0), "p", STACK, None, in_place=True, bare_load=True).fits
 
 
+def test_a_slot_that_holds_something_else_is_credited_what_its_drop_returns(ltx):
+    other = int(20 * GIB)
+    # 35 read: the classic needs 72.1 less the 20 returned, the bare route 50.9 less the 20.
+    taken = price.priced(_fit(35.0), "p", STACK, None, held_bytes=other, in_place=True, bare_load=True)
+    assert taken.fits and taken.in_place_bytes == capacity_fit.stock_required_bytes(LTX_BYTES) - FLOOR - other
+    # With the classic fitting once that model is gone, the classic is kept.
+    assert price.priced(_fit(53.0), "p", STACK, None, held_bytes=other, in_place=True,
+                        bare_load=True).in_place_bytes == 0
+
+
 def test_the_probe_wraps_the_stock_probe_with_this_loads_terms(ltx):
-    probe = price.probe(STACK, None, stack_read=True, stock_load_fit=lambda _path, _options: _fit(75.8))
+    probe = price.probe(STACK, None, stock_load_fit=lambda _path, _options: _fit(75.8))
     assert probe("p", {}).bake_bytes == ltx
 
 
@@ -252,7 +263,8 @@ def test_a_quote_request_carries_the_permission_only_as_true():
 def _stored(**changes):
     stored = types.SimpleNamespace(
         base_key=("m.safetensors", ()), lora_sig=(), base_baked=False, unbake=None, baked_in_place=False,
-        base_patcher=types.SimpleNamespace(model=types.SimpleNamespace(model_loaded_weight_memory=LTX_BYTES)))
+        base_patcher=types.SimpleNamespace(
+            backup={}, model=types.SimpleNamespace(model_loaded_weight_memory=HELD)))
     for name, value in changes.items():
         setattr(stored, name, value)
     return stored
@@ -260,20 +272,29 @@ def _stored(**changes):
 
 def _store(stored=None, low_rss=False):
     slots = {"cond": stored}
-    return types.SimpleNamespace(lora_low_rss=low_rss, slab_weights="auto", slots=slots,
-                                 _stored=lambda slot: slots.get(slot))
+    dropped: list[str] = []
+
+    def drop(slot):
+        dropped.append(slot)
+        slots[slot] = None
+
+    return types.SimpleNamespace(lora_low_rss=low_rss, slab_weights="auto", slots=slots, dropped=dropped,
+                                 _stored=lambda slot: slots.get(slot), _drop=drop)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def stock_resident(monkeypatch):
     from dgx_monarch.actor import store_residency
 
     monkeypatch.setattr(store_residency, "describe", lambda _stored: {"residency": "stock"})
 
 
+ALLOW = {price.IN_PLACE_BAKE_PROVEN: True}
+
+
 def test_the_permission_is_true_only_for_the_value_true_and_only_inside_its_block():
     assert not fallback.permitted()
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
+    with fallback.permission(ALLOW):
         assert fallback.permitted()
         with fallback.permission({price.IN_PLACE_BAKE_PROVEN: "true"}):
             assert not fallback.permitted()
@@ -286,7 +307,7 @@ def test_the_permission_is_true_only_for_the_value_true_and_only_inside_its_bloc
 
 def test_the_permission_is_withdrawn_when_the_load_raises():
     with pytest.raises(RuntimeError):
-        with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
+        with fallback.permission(ALLOW):
             raise RuntimeError("the load failed")
     assert not fallback.permitted()
 
@@ -294,34 +315,53 @@ def test_the_permission_is_withdrawn_when_the_load_raises():
 def test_a_slot_baked_in_place_is_not_reused_with_the_switch_off_and_no_permission():
     baked = _stored(baked_in_place=True, base_baked=True)
     assert fallback.must_reload(_store(baked), baked)
+    assert not fallback.must_reload(_store(baked), baked, True)
     assert not fallback.must_reload(_store(baked, low_rss=True), baked)  # the default reuses its own bakes
     assert not fallback.must_reload(_store(), _stored())  # a classic slot
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
+    with fallback.permission(ALLOW):
         assert not fallback.must_reload(_store(baked), baked)
+        assert fallback.must_reload(_store(baked), baked, False)  # the quote's own permission decides there
 
 
-def test_only_a_bare_stock_base_is_baked_in_place(stock_resident):
-    assert fallback.eligibility(_store(), _stored(), True, True) is True
-    assert fallback.eligibility(_store(), _stored(), True, False) == price.NO_GATE_PASS
-    assert fallback.eligibility(_store(), None, False, True) is True  # an empty slot loads bare first
-    for held in (_stored(lora_sig=(("a", 1.0),)), _stored(base_baked=True), _stored(unbake=object())):
-        assert fallback.eligibility(_store(), held, True, True) == price.HOLDS_A_STACK
-    assert fallback.eligibility(_store(low_rss=True), _stored(), True, True) == ""
-
-
-def test_a_base_on_another_residency_is_not_baked_in_place(monkeypatch):
+def test_a_base_is_bare_only_by_the_stores_record_and_by_comfyuis_backup(monkeypatch):
     from dgx_monarch.actor import store_residency
 
-    monkeypatch.setattr(store_residency, "describe", lambda _stored: {"residency": "slab"})
-    assert fallback.eligibility(_store(), _stored(), True, True) == price.HOLDS_A_STACK
+    assert fallback.is_bare_stock(_stored())
+    for held in (_stored(lora_sig=(("a", 1.0),)), _stored(base_baked=True), _stored(unbake=object())):
+        assert not fallback.is_bare_stock(held)
+    swapped_to_bare = _stored()
+    swapped_to_bare.base_patcher.backup = {"blocks.0.attn.weight": object()}  # the old stack's originals
+    assert not fallback.is_bare_stock(swapped_to_bare)
     sharded = _stored()
     sharded.base_patcher._dgxm_fsdp = True
-    monkeypatch.setattr(store_residency, "describe", lambda _stored: {"residency": "stock"})
-    assert fallback.eligibility(_store(), sharded, True, True) == price.HOLDS_A_STACK
+    assert not fallback.is_bare_stock(sharded) and fallback.held_bytes(sharded) == 0
+    monkeypatch.setattr(store_residency, "describe", lambda _stored: {"residency": "slab"})
+    assert not fallback.is_bare_stock(_stored()) and fallback.held_bytes(_stored()) == 0
+
+
+def test_the_route_is_the_same_arguments_for_every_caller():
+    bare = _stored()
+    assert fallback.route(_store(), bare, True, True) == {"held_bytes": HELD, "bare_load": False, "in_place": True}
+    assert fallback.route(_store(), bare, True, False)["in_place"] == price.GATE_HAS_NOT_PASSED
+    # Nothing held, another model held, or this base with a stack: the base is reloaded bare first.
+    assert fallback.route(_store(), None, False, True) == {"held_bytes": 0, "bare_load": True, "in_place": True}
+    assert fallback.route(_store(), bare, False, True) == {"held_bytes": HELD, "bare_load": True, "in_place": True}
+    assert fallback.route(_store(), _stored(base_baked=True), True, True)["bare_load"] is True
+    assert fallback.route(_store(low_rss=True), bare, True, True) is None  # the default: no classic bake
+
+
+def test_the_quote_does_not_read_a_slot_the_store_will_reload_as_a_reuse():
+    baked = _stored(baked_in_place=True, base_baked=True)
+    snapshot = {"cond": {"request_key": "k", "swaps_in_place": True, "residency": "stock"}, "uncond": None}
+    assert fallback.quote_snapshot(_store(baked), baked, snapshot, "cond", True) is snapshot
+    priced_as_a_load = fallback.quote_snapshot(_store(baked), baked, snapshot, "cond", False)
+    assert priced_as_a_load["cond"]["request_key"] is None and priced_as_a_load["cond"]["residency"] == "stock"
+    assert snapshot["cond"]["request_key"] == "k"  # the caller's snapshot is not edited
+    assert fallback.quote_snapshot(_store(), _stored(), snapshot, "cond", False) is snapshot
 
 
 @pytest.fixture
-def worker_side(monkeypatch, ltx, stock_resident):
+def worker_side(monkeypatch, ltx):
     """``take``'s seams: the model path, the stock probe's reading and the store's in-place bake."""
     from dgx_monarch.actor import capacity_quote, comfy_bridge, store_bake
 
@@ -351,43 +391,54 @@ def _take(store, load_bare=lambda: pytest.fail("the base must not be loaded agai
 
 def test_without_the_permission_the_fallback_is_never_taken(worker_side):
     store = _store(_stored())
-    assert _take(store) is None and worker_side.baked == []
+    assert _take(store) is None and worker_side.baked == [] and store.dropped == []
 
 
 def test_with_the_permission_and_a_classic_miss_the_stack_is_baked_in_place(worker_side, caplog):
     store = _store(_stored())
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}), caplog.at_level("INFO"):
+    with fallback.permission(ALLOW), caplog.at_level("INFO"):
         assert _take(store) == ("patcher", "hot-swap")
-    assert worker_side.baked == [("cond", "m.safetensors", ("m.safetensors", ()))]
+    assert worker_side.baked == [("cond", "m.safetensors", ("m.safetensors", ()))] and store.dropped == []
     slot = store._stored("cond")
-    assert slot.unbake is None and slot.base_baked and slot.baked_in_place  # the next change reloads from disk
+    assert slot.unbake is None and slot.base_baked and slot.baked_in_place  # the next change reloads the base
     assert "baked it in place on the loaded model" in caplog.text
     assert "the identity gate has passed this combination's in-place bake" in caplog.text
 
 
 def test_with_the_permission_the_classic_bake_is_still_taken_where_it_fits(worker_side):
-    worker_side.avail_gib = 44.0  # the drop returns 21.85, and the classic change then fits
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
+    worker_side.avail_gib = 51.0  # the drop returns 21.85, and the classic change then fits
+    with fallback.permission(ALLOW):
         assert _take(_store(_stored())) is None
     assert worker_side.baked == []
 
 
-def test_neither_price_fitting_leaves_the_resident_untouched(worker_side):
+def test_neither_price_fitting_leaves_the_resident_untouched_and_logs_the_figures(worker_side, caplog):
     worker_side.avail_gib = 9.0
     store = _store(_stored())
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
+    with fallback.permission(ALLOW), caplog.at_level("INFO"):
         assert _take(store) is None
-    assert worker_side.baked == [] and store._stored("cond") is not None
+    assert worker_side.baked == [] and store._stored("cond") is not None and store.dropped == []
+    assert "does not fit here; baking it in place would need 14.1 GiB" in caplog.text
 
 
-def test_a_base_that_carries_a_classic_stack_is_not_baked_in_place(worker_side):
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
-        assert _take(_store(_stored(lora_sig=(("old", 1.0),)))) is None
-    assert worker_side.baked == []
+def test_a_base_that_carries_a_stack_is_dropped_and_reloaded_bare_never_baked_on(worker_side):
+    worker_side.avail_gib = 35.0  # the bare route needs 50.9 less the 21.85 its drop returns
+    for held in (_stored(lora_sig=(("old", 1.0),)), _stored(base_baked=True, baked_in_place=True)):
+        store = _store(held)
+        loaded = []
+
+        def load_bare(store=store, loaded=loaded):
+            assert store._stored("cond") is None  # the stacked base went first
+            loaded.append("bare")
+            store.slots["cond"] = _stored()
+
+        with fallback.permission(ALLOW):
+            assert _take(store, load_bare) == ("patcher", "hot-swap")
+        assert store.dropped == ["cond"] and loaded == ["bare"]
 
 
 def test_the_default_and_a_request_with_no_stack_never_reach_the_rule(worker_side):
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
+    with fallback.permission(ALLOW):
         assert _take(_store(_stored(), low_rss=True)) is None
         assert fallback.take(_store(_stored()), "cond", "m.safetensors", None, None, ("m.safetensors", ()), {},
                              None, lambda *_args: {}, lambda: None) is None
@@ -395,7 +446,7 @@ def test_the_default_and_a_request_with_no_stack_never_reach_the_rule(worker_sid
 
 
 def test_an_empty_slot_loads_the_base_bare_and_then_bakes(worker_side):
-    worker_side.avail_gib = 60.0  # the classic load needs 72.2 here; the bare base needs 50.9
+    worker_side.avail_gib = 60.0  # the classic load needs 72.1 here; the bare base needs 50.9
     store = _store(None)
     loaded = []
 
@@ -403,16 +454,17 @@ def test_an_empty_slot_loads_the_base_bare_and_then_bakes(worker_side):
         loaded.append("bare")
         store.slots["cond"] = _stored(base_key=("m.safetensors", (), "fp8"))
 
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
+    with fallback.permission(ALLOW):
         assert _take(store, load_bare) == ("patcher", "hot-swap")
     # The baked slot is keyed as the loaded base is, whose detected kind the request did not know.
-    assert loaded == ["bare"] and worker_side.baked == [("cond", "m.safetensors", ("m.safetensors", (), "fp8"))]
+    assert loaded == ["bare"] and store.dropped == []
+    assert worker_side.baked == [("cond", "m.safetensors", ("m.safetensors", (), "fp8"))]
 
 
 def test_a_bare_load_that_did_not_leave_a_bare_stock_base_goes_to_the_fresh_load(worker_side):
     worker_side.avail_gib = 60.0
     store = _store(None)
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
+    with fallback.permission(ALLOW):
         assert _take(store, lambda: None) is None
     assert worker_side.baked == []
 
@@ -420,27 +472,102 @@ def test_a_bare_load_that_did_not_leave_a_bare_stock_base_goes_to_the_fresh_load
 def test_a_bake_that_fails_returns_to_the_fresh_load(worker_side):
     worker_side.fail = True
     store = _store(_stored())
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
+    with fallback.permission(ALLOW):
         assert _take(store) is None
     assert len(worker_side.baked) == 1 and store._stored("cond") is None
 
 
-def test_the_fresh_loads_probe_charges_the_classic_bake_and_never_prices_in_place(worker_side):
+def test_the_fresh_loads_probe_charges_the_classic_bake_and_never_prices_in_place(worker_side, ltx):
     held = _store(_stored())
-    assert fallback.fresh_load_probe(_store(_stored(), low_rss=True), "cond", ("m.safetensors", ()), STACK) is None
-    assert fallback.fresh_load_probe(held, "cond", ("m.safetensors", ()), None) is None
-    worker_side.avail_gib = 30.0
-    refused = fallback.fresh_load_probe(held, "cond", ("m.safetensors", ()), STACK)("/models/m", {})
-    assert not refused.fits and refused.in_place_bytes == 0
-    assert refused.bake_bytes == worker_side_term()  # the stack was read by the swap attempt
-    assert "identity-gate PASS" in refused.in_place_note
-    with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
-        again = fallback.fresh_load_probe(held, "cond", ("m.safetensors", ()), STACK)("/models/m", {})
-    assert again.in_place_bytes == 0 and price.DID_NOT_FIT_EITHER in again.in_place_note
-    # An empty slot has read nothing yet, so the stack's files are charged as well.
-    empty = fallback.fresh_load_probe(_store(None), "cond", ("m.safetensors", ()), STACK)("/models/m", {})
-    assert empty.bake_bytes == worker_side_term() + LTX_OWN_STACK
+    assert fallback.fresh_load_probe(_store(_stored(), low_rss=True), "cond", STACK) is None
+    assert fallback.fresh_load_probe(held, "cond", None) is None
+    refused = fallback.fresh_load_probe(held, "cond", STACK)("/models/m", {})
+    assert not refused.fits and refused.in_place_bytes == 0 and refused.bake_bytes == ltx
+    assert refused.in_place_note == "; " + price.GATE_HAS_NOT_PASSED
+    with fallback.permission(ALLOW):
+        again = fallback.fresh_load_probe(held, "cond", STACK)("/models/m", {})
+    assert again.in_place_bytes == 0 and again.in_place_note == "; " + fallback.TRIED
 
 
-def worker_side_term() -> int:
-    return price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 1660
+@pytest.mark.parametrize("reading, bake", [(80.0, "classic"), (51.0, "classic"), (30.0, "in_place"), (9.0, None)])
+@pytest.mark.parametrize("other_slot_held", [False, True])
+def test_the_quote_the_store_and_the_walls_pick_one_bake_at_one_reading(
+        worker_side, monkeypatch, reading, bake, other_slot_held):
+    """One held-base stack change, one reading: the quote's probe, ``take`` and the fresh load's wall agree.
+
+    The other slot holding a model changes nothing: the store asks ``take``
+    before the classic hot swap, by the arguments the quote prices with.
+    """
+    from dgx_monarch.actor import store_fsdp, worker_capacity
+
+    monkeypatch.setattr(store_fsdp, "active", lambda _worker: False)
+    worker_side.avail_gib = reading
+    stored = _stored()
+    store = _store(stored)
+    store.uncond = _stored(base_key=("other.safetensors", ())) if other_slot_held else None
+    spec = {"unet_name": "m.safetensors", "loras": STACK}
+    quoted = worker_capacity._classic_bake_probe(object(), store, stored, spec, "m.safetensors", True)(
+        "/models/m.safetensors", {})
+    with fallback.permission(ALLOW):
+        took = _take(store)
+    if bake == "in_place":
+        assert quoted.fits and quoted.measured()["bake"] == "in_place" and took == ("patcher", "hot-swap")
+        return
+    assert quoted.measured()["bake"] == "classic" and took is None and worker_side.baked == []
+    # The classic verdict is one verdict: the quote's, credited the drop, and the wall's after it.
+    worker_side.avail_gib = reading + HELD / GIB
+    with fallback.permission(ALLOW):
+        walled = fallback.fresh_load_probe(store, "cond", STACK)("/models/m.safetensors", {})
+    assert walled.bake_bytes == quoted.bake_bytes
+    assert walled.fits is (quoted.required_bytes - HELD <= quoted.avail_bytes) is (bake == "classic")
+
+
+def test_the_quote_without_the_permission_prices_the_classic_bake_alone(worker_side, monkeypatch):
+    from dgx_monarch.actor import store_fsdp, worker_capacity
+
+    monkeypatch.setattr(store_fsdp, "active", lambda _worker: False)
+    stored = _stored()
+    spec = {"unet_name": "m.safetensors", "loras": STACK}
+    quoted = worker_capacity._classic_bake_probe(object(), _store(stored), stored, spec, "m.safetensors", False)(
+        "/models/m.safetensors", {})
+    assert not quoted.fits and quoted.in_place_bytes == 0 and "identity-gate PASS" in quoted.in_place_note
+    assert worker_capacity._classic_bake_probe(
+        object(), _store(stored, low_rss=True), stored, spec, "m.safetensors", True) is None
+    assert worker_capacity._classic_bake_probe(
+        object(), _store(stored), stored, {"unet_name": "m.safetensors"}, "m.safetensors", True) is None
+    monkeypatch.setattr(store_fsdp, "active", lambda _worker: True)
+    assert worker_capacity._classic_bake_probe(object(), _store(stored), stored, spec, "m.safetensors", True) is None
+
+
+def test_the_ladders_row_gives_the_wall_back_its_bake_term(ltx):
+    from dgx_monarch.actor import capacity_quote, store_residency
+
+    refused = price.priced(_fit(30.0), "p", STACK, None, in_place=price.GATE_HAS_NOT_PASSED)
+    row = types.SimpleNamespace(measured=refused.measured(), reason="")
+    rebuilt = store_residency._stock_fit(row)
+    assert rebuilt.bake_bytes == ltx and rebuilt.in_place_note == refused.in_place_note
+    assert rebuilt.required_bytes == refused.required_bytes and rebuilt.terms == refused.terms
+    assert capacity_quote.RankPrice is not None
+
+
+def test_the_partial_load_route_charges_the_line_for_the_layers_still_to_bake(monkeypatch):
+    from dgx_monarch.actor import lora_cast_time, lora_partial_load
+
+    monkeypatch.setattr(lora_cast_time, "_module_bytes", lambda module: module.nbytes)
+    monkeypatch.setattr(lora_partial_load, "_host_copies_are_file_pages", lambda: False)
+    pending = [(f"k{index}", types.SimpleNamespace(nbytes=110 * MIB)) for index in range(148)]
+    need = lora_partial_load._room_needed(object(), pending)
+    # ComfyUI's backup of each layer, and 2 GiB plus 7.5 MiB a layer: no bytes guard on this route.
+    assert need == 148 * 110 * MIB + price.CLASSIC_BAKE_FIXED_BYTES + 148 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+
+
+def test_the_fleets_sentence_names_the_bake_and_the_in_place_bake_not_taken(ltx):
+    from dgx_monarch.actor.capacity_quote import RUNG_EXPLICIT_STOCK, VERDICT_REFUSE, RankPrice
+    from dgx_monarch.capacity_agreement import RankAnswer, _priced_sentence
+
+    refused = price.priced(_fit(30.0), "p", STACK, None, in_place=price.GATE_HAS_NOT_PASSED)
+    quote = RankPrice(VERDICT_REFUSE, RUNG_EXPLICIT_STOCK, priced=True, measured=refused.measured(),
+                      checkpoint_bytes=LTX_BYTES, slot="cond", would_load="swap", holds_resident={})
+    sentence = _priced_sentence(RankAnswer(rank=0, host="box", quotes=(quote,)), quote, "m.safetensors")
+    assert "GiB for the LoRA stack's classic bake" in sentence
+    assert "Baking it in place was not tried: no identity-gate PASS" in sentence

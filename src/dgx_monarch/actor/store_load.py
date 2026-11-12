@@ -71,9 +71,8 @@ def fresh_load(
     # Before the drop and the placement: the old-model card's arena is measured
     # from this process's first reading (actor_footprint.py).
     actor_footprint.note_first_load()
-    # Read before the drop: a classic stack's bake is priced beside the stock load, and
-    # whether the stack is already in host memory depends on what the slot held.
-    bake_probe = in_place_fallback.fresh_load_probe(store, slot, base_key, lora_stack)
+    # A classic stack's bake is priced beside the stock load at both walls below.
+    bake_probe = in_place_fallback.fresh_load_probe(store, slot, lora_stack)
     store._drop(slot)
     t0 = time.perf_counter()
     path = fsdp_preflight_path or resolve_model_path(

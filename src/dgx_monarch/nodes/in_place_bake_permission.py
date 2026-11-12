@@ -10,9 +10,10 @@ switch off" proves nothing.
 
 ``stamp`` therefore sends a permission and never a prohibition. It sets the
 request's ``capacity_classic_bake.IN_PLACE_BAKE_PROVEN`` to ``True`` only
-when the gate ledger holds an exact PASS, and no FAIL in the ledger or in this
-session, for every key of the render: the pair's own key for a dual-model
-render, then the conditional model's. The capability context it reads is this
+when the gate ledger holds an exact PASS under the key the gate's own grant
+reads (the pair's key for a dual-model render, the model's own otherwise), and
+no FAIL in the ledger or in this session under that key or, for a dual-model
+render, the conditional model's own. The capability context it reads is this
 render's own with ``lora_low_rss`` on (or auto, or unset: the three ways a
 graph asks for the in-place bake), which is where a default render of the
 same combination records its PASS and is the context the in-place bake runs
@@ -73,7 +74,9 @@ def proven(model: Any, handle: Any, *, resolved_topology: Any = None, resolved_a
                 states.append(ledger.lookup(key, artifacts, commit, context))
             if "fail" in states:
                 return False
-            passed = passed or all(state == "pass" for state in states)
+            # The PASS is the one the gate's own grant reads: the pair's key for a dual-model
+            # render (nodes/gate_dual.py), the model's own otherwise. It is first in ``keys``.
+            passed = passed or states[0] == "pass"
         return passed
     except Exception as exc:
         # No permission is always safe: the classic bake keeps its own price and its own refusal.

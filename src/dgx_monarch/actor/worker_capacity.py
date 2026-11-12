@@ -299,20 +299,20 @@ def _classic_bake_probe(worker: Any, store: Any, stored: Any, spec: dict, unet_n
     """The stock probe for a stack that bakes ComfyUI's classic way; ``None`` on the default.
 
     It charges the bake's own term and, with the render's permission, prices
-    the in-place bake where the classic price misses: the same two prices and
-    the same permission ``ModelStore.ensure`` decides by
-    (``actor/in_place_fallback.py``), so the fleet is not refused a stack
-    change the store would bake in place, nor admitted to one it would refuse.
+    the in-place bake where the classic price misses, by the arguments
+    ``ModelStore.ensure`` decides by (``in_place_fallback.route``), so the
+    fleet is not refused a stack change the store would bake in place, nor
+    admitted to one it would refuse. This endpoint knows the slot's base by
+    its file name; the store compares the whole base key, options included.
     """
     loras = spec.get("loras")
-    if store.lora_low_rss or not loras or store_fsdp.active(worker):
+    if not loras or store_fsdp.active(worker):
         return None
     base_key = getattr(stored, "base_key", ()) or ()
     held = bool(stored is not None and base_key and base_key[0] == unet_name)
-    why = in_place_fallback.eligibility(store, stored, held, in_place_bake_proven)
-    return capacity_classic_bake.probe(
-        loras, capacity_quote.default_resolve_lora_path, in_place=why, bare_load=not held,
-        held_base_bytes=in_place_fallback.held_bytes(stored) if held and why is True else 0)
+    args = in_place_fallback.route(store, stored, held, in_place_bake_proven)
+    return None if args is None else capacity_classic_bake.probe(
+        loras, capacity_quote.default_resolve_lora_path, **args)
 
 
 def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
@@ -358,7 +358,8 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         fit_probe=_classic_bake_probe(worker, store, stored, spec, unet_name, in_place_bake_proven),
         slot=slot,
         pinned_staging=pinned_staging,
-        store_snapshot=snapshot,
+        # A slot baked in place that ``ensure`` will not reuse for this request is priced as a load.
+        store_snapshot=in_place_fallback.quote_snapshot(store, stored, snapshot, slot, in_place_bake_proven),
         budget_bytes_already_charged=charged,
         request_key=_request_key(snapshot, slot, spec, unet_name),
     )

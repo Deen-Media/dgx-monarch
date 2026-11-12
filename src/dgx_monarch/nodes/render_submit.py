@@ -47,7 +47,6 @@ from ..old_model import OldModelRefusal
 from ..progress import ProgressReceiver
 from ..transfer import pack_latent
 from . import consent_waiver, model_patch_preflight, old_model_clear, refusal_lead, render_preflight, render_rows
-from . import in_place_bake_permission
 from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .gate_dual import forced_stock_state
 from .gate_identity import (
@@ -55,6 +54,8 @@ from .gate_identity import (
     model_for_request,
     model_with_worker_overrides,
 )
+from .in_place_bake_permission import IN_PLACE_BAKE_PROVEN
+from .in_place_bake_permission import stamp as stamp_in_place_bake_permission
 from .pending import PendingRender, PendingRenderHandoff
 from .render_quarantine import _enforce_persisted_quarantine
 from .render_result import _finish_render
@@ -282,7 +283,7 @@ def _submit_render_guarded(
         "_dgxm_artifact_sets",
         "_dgxm_artifact_preflight",
         "_dgxm_krea2_ref_preflight",
-        _ADOPTION_CONTEXT_REQUEST_KEY, in_place_bake_permission.IN_PLACE_BAKE_PROVEN,
+        _ADOPTION_CONTEXT_REQUEST_KEY, IN_PLACE_BAKE_PROVEN,
     ):
         request.pop(internal_key, None)
     model = model_for_request(model, request)
@@ -357,7 +358,7 @@ def _submit_render_guarded(
                 model, handle, authorization)
         model = model_with_worker_overrides(
             model, authorization.worker_args, handle=handle)
-        in_place_bake_permission.stamp(  # only an exact gate PASS lets a Worker bake a classic stack in place
+        stamp_in_place_bake_permission(  # only an exact gate PASS lets a Worker bake a classic stack in place
             request, model, handle, resolved_topology=topo, resolved_attention=sample_attention)
         spec = model.mesh
         validate_render_topology(model, topo, latent["samples"])
