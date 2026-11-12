@@ -38,13 +38,18 @@ When it keeps everything:
   ``CFGGuider.sample`` is wrapped with a per-thread depth count and the relief
   does nothing while it is above zero. Diffusion models are also never freed,
   whoever asks.
-- **While a render this driver started is in flight**
-  (``driver_unload.busy_reason``): a pipelined render decodes one result while
-  later ones sample.
 - **With ``DGXM_DISABLE_DRIVER_UNLOAD=1``**, whose meaning is that the driver
   unloads none of ComfyUI's models on its own.
 - **With DynamicVRAM off.** ComfyUI's classic loader already unloads for the
   decode, and unloading a classic model on unified memory copies it first.
+
+It does not ask the pack's shared busy check (``driver_unload.busy_reason``).
+That check guards the render-site unload, which drops every model and calls
+the Workers; on 2026-11-12 it read "a call to the Workers is still in flight"
+after a render had finished. This rule's own tests of "in use" are narrower
+and enough for what it frees: the sampler guard, and the two kinds of model it
+never frees. A render on the Workers uses no model in this process, and the
+decode's own node is the only thing ComfyUI is executing here.
 
 What it costs: two calls on every decode (a price and a reading). When it
 acts, a text encoder that gave up pages faults them back, or loads again, when
@@ -230,12 +235,11 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
 
     priced = (f"ComfyUI priced this VAE decode at {_gib(price)} GiB ({_gib(need)} GiB with its "
               f"reserve) against {_gib(reading)} GiB free")
+    why = ""
     if sampling_depth() > 0:
         why = SAMPLER_RUNNING
     elif mesh_safety.env_enabled(driver_unload.DRIVER_UNLOAD_DISABLE_ENV):
         why = UNLOAD_SWITCH
-    else:
-        why = driver_unload.busy_reason(None)
     if why:
         if why not in told:
             told.add(why)

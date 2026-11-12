@@ -698,11 +698,10 @@ models it freed from, and what MemAvailable read on each side. What to know:
   above the ... free and runs as ComfyUI runs it`, or says `ComfyUI held no
   idle model here to free`, nothing idle was left: use VAE Decode (Tiled), a
   shorter clip or a smaller frame.
-- It keeps everything while a render this driver started is still in flight
-  (a KSampler Pipeline decoding one result while the next samples), under
-  `DGXM_DISABLE_DRIVER_UNLOAD=1`, and with DynamicVRAM off, where ComfyUI
-  unloads for the decode itself. It says why once: `the driver kept what it
-  holds because ...`.
+- It keeps everything under `DGXM_DISABLE_DRIVER_UNLOAD=1`, and with
+  DynamicVRAM off, where ComfyUI unloads for the decode itself. When it keeps
+  everything for a decode that is short, it says why once: `the driver kept
+  what it holds because ...`.
 - `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns it off, for
   diagnosis. If a call it makes fails, it steps aside with one WARNING and
   ComfyUI's own decode runs. `dgxm doctor`'s `driver memory reading` row adds

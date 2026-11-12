@@ -3,8 +3,8 @@
 On by default at node import on a GPU that shares the host's memory. These
 tests hold the trigger (ComfyUI's own price and reserve against its reading),
 what is kept loaded (the VAE in hand, every diffusion model), when everything
-is kept (inside a sampler, a render in flight, the unload switch, DynamicVRAM
-off), that the caller's decode is stock's own call with the caller's own
+is kept (inside a sampler, the unload switch, DynamicVRAM off), that the
+pack's shared busy check is not asked, that the caller's decode is stock's own call with the caller's own
 arguments, how it fails open, and the gate. On real ComfyUI (CPU, random
 weights; skipped where ComfyUI is not importable) a decode gives the same
 tensor with the relief acting as without it.
@@ -49,7 +49,6 @@ def _a_driver_with_dynamic_vram(monkeypatch):
     monkeypatch.setitem(sys.modules, "comfy.memory_management", SimpleNamespace(aimdo_enabled=True))
     monkeypatch.setitem(sys.modules, "comfy.model_base", SimpleNamespace(BaseModel=_BaseModel))
     monkeypatch.delenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, raising=False)
-    monkeypatch.setattr(driver_unload, "busy_reason", lambda handle: "")
     monkeypatch.setattr(vae_decode_relief, "_SETTLE_S", 0.0)
 
 
@@ -301,23 +300,23 @@ def test_the_sampler_count_is_per_thread_nests_and_comes_back_after_an_error():
     assert depths == [1, 2, 1] and vae_decode_relief.sampling_depth() == 0
 
 
-@pytest.mark.parametrize("why", [
-    "a render is still running in this driver",
-    "the driver could not read whether a render is running",
-])
-def test_a_render_in_flight_keeps_everything_and_says_so_once(monkeypatch, caplog, why):
-    """A pipelined render decodes one result while later ones sample."""
+def test_the_relief_does_not_ask_the_packs_shared_busy_check(monkeypatch, caplog):
+    """That check read busy after a finished render on hardware (2026-11-12); this rule has its own tests.
+
+    The shared check guards an unload of every model and a call to the
+    Workers. The relief frees neither a diffusion model nor the VAE in hand,
+    calls no Worker, and stands down inside a sampler, so a busy answer from
+    the shared check must not stop it.
+    """
     asked = []
-    monkeypatch.setattr(driver_unload, "busy_reason", lambda handle: asked.append(handle) or why)
-    ran = []
-    mm = _model_management([GIB], held=[_loaded(_TextEncoder())], ran=ran)
-    wrapped, _calls, answer = _wrapped(monkeypatch, mm, ran)
+    monkeypatch.setattr(driver_unload, "busy_reason",
+                        lambda handle: asked.append(handle) or "a call to the Workers is still in flight")
+    mm = _model_management([GIB, 30 * GIB], held=[_loaded(_TextEncoder())])
+    _available(monkeypatch, 8 * GIB, 30 * GIB)
+    wrapped, _calls, answer = _wrapped(monkeypatch, mm)
     with caplog.at_level("INFO"):
         assert wrapped(_Vae(price=4 * GIB), LATENT) is answer
-        assert wrapped(_Vae(price=4 * GIB), LATENT) is answer
-    assert ran == ["decode", "decode"] and mm.freed == [] and asked == [None, None]
-    assert caplog.text.count("decode relief:") == 1
-    assert f"the driver kept what it holds because {why}" in caplog.text
+    assert asked == [] and len(mm.freed) == 1 and "kept what it holds" not in caplog.text
     assert vae_decode_relief.state() == vae_decode_relief.UNSET
 
 
@@ -348,7 +347,7 @@ def test_with_dynamic_vram_off_comfyuis_own_loader_unloads_and_the_relief_does_n
     assert mm.freed == [] and mm.asked == [] and vae.priced == [] and "decode relief" not in caplog.text
 
 
-@pytest.mark.parametrize("broken", ["reading", "floor", "busy_reason", "model_base", "free_memory", "available"])
+@pytest.mark.parametrize("broken", ["reading", "floor", "model_base", "free_memory", "available"])
 def test_any_failure_steps_aside_once_and_the_decode_in_hand_still_runs(monkeypatch, caplog, broken):
     ran = []
     mm = _model_management([RuntimeError("reading broke")] if broken == "reading" else [GIB, 2 * GIB],
@@ -360,8 +359,6 @@ def test_any_failure_steps_aside_once_and_the_decode_in_hand_still_runs(monkeypa
 
     if broken == "floor":
         mm.minimum_inference_memory = broke
-    elif broken == "busy_reason":
-        monkeypatch.setattr(driver_unload, "busy_reason", broke)
     elif broken == "model_base":
         monkeypatch.delitem(sys.modules, "comfy.model_base")
     elif broken == "free_memory":

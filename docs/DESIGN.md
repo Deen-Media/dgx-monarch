@@ -2291,11 +2291,15 @@ decode runs. Seven things bound it:
   wrapped with a per-thread depth count, the relief does nothing while it is
   above zero, and the decode wrapper is never installed without that guard.
   Diffusion models are also never freed, whoever asks.
-- **Never while a render this driver started is in flight.** A pipelined
-  render decodes one result while later ones sample. The relief asks
-  `driver_unload.busy_reason`, the check the render-site unload makes, and
-  then keeps everything and says so once. A synchronous render has retired
-  its lease and its progress tracker before its sampler node returns.
+- **Its tests of "in use" are its own.** The render-site unload asks
+  `driver_unload.busy_reason` because it drops every model and calls the
+  Workers. The relief does neither, and it does not ask that check: on
+  2026-11-12 the check read "a call to the Workers is still in flight" after a
+  render had finished, and a relief that leaned on it would go dead exactly
+  where a decode follows a render. The sampler guard and the two kinds of
+  model it never frees are the whole test. A render on the Workers uses no
+  model in the driver's process, and the decode's own node is the only thing
+  ComfyUI is executing there.
 - **It honours the unload switch and DynamicVRAM off.**
   `DGXM_DISABLE_DRIVER_UNLOAD=1` means the driver unloads none of ComfyUI's
   models on its own, and the relief then keeps everything. With DynamicVRAM

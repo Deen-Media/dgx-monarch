@@ -619,8 +619,7 @@
   What it costs when it acts: a text encoder that gave up memory loads it
   again when a prompt's text next changes. It adds room and does not bound a
   decode: with nothing idle the decode runs as before and one `decode relief:`
-  line says so. It keeps everything while a render this driver started is
-  still in flight and under `DGXM_DISABLE_DRIVER_UNLOAD=1`.
+  line says so. It keeps everything under `DGXM_DISABLE_DRIVER_UNLOAD=1`.
   `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns it off for
   diagnosis, it steps aside with one WARNING if a call it makes fails, and
   `dgxm doctor`'s `driver memory reading` row says so when it is not working.
