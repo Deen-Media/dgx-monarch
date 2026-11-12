@@ -15,7 +15,7 @@ import threading
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from .. import family_select, latent_scale
+from .. import family_select, latent_scale, vae_decode_relief
 from ..adapters.detect import CheckpointSniffError, sniff_checkpoint_for_topology, sniff_nearest_signatures
 from ..adoption_evidence import (
     claim_active_context as _claim_adoption_context,
@@ -344,6 +344,9 @@ def run_render(model: ModelSpec, request: dict, latent: dict, cfg_value: float |
         )
         result = pending.result()
         render_preflight.note_successful_render(getattr(model, "unet_name", None))
+        # The result's own cleanup has retired its lease by now. A decode that follows may ask
+        # this mesh's Workers to release cached memory (vae_decode_relief.py).
+        vae_decode_relief.note_mesh(getattr(getattr(model, "mesh", None), "handle", None))
         return result
     except BaseException as primary:
         cleanup_error: BaseException | None = None

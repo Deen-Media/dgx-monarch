@@ -668,6 +668,42 @@ What to know:
   ([DESIGN](DESIGN.md), "The driver encodes a batch of images one image a
   call").
 
+**Before a decode it cannot fit, the driver gives back what is idle.** One
+more case of the same kind. ComfyUI prices a VAE decode, finds its free memory
+under the price, logs `0 models unloaded.` (with DynamicVRAM on it unloads no
+model for a VAE) and decodes whole anyway. On a discrete GPU that ends in an
+out-of-memory error and a tiled decode. On a Spark nothing stops it: on
+2026-11-12, with the Spark under its clock cap (max 2100 MHz), a one-GPU video
+render's decode took the box to 6.7 GiB available while the driver still held
+32 GiB of text encoders that no later node needed. The render finished and
+nothing failed, but nothing was holding the box there either. So on the same
+GPUs, when the driver's ComfyUI is about to run a decode it prices above its
+free memory, the pack first unloads the models ComfyUI holds in the driver
+and, if that is not enough and no render is in flight, asks the Workers to
+release their cached memory. Then ComfyUI's decode runs unchanged. Confirm the
+driver log line `unified memory: before a VAE decode that ComfyUI prices above
+its free memory`. When it acts it logs one line that starts `decode relief:`
+with ComfyUI's price, what it unloaded and what MemAvailable read on each
+side. What to know:
+
+- No output changes: the decode is ComfyUI's own call with the same
+  arguments, and unloading changes no weight.
+- What it costs when it acts: the text encoder loads again when you next
+  change the prompt's text (an unchanged prompt pays nothing), and the next
+  render's first step re-grows the Workers' cache if they were asked.
+- It adds room and does not bound a decode. If the line ends `is still priced
+  above the ... free and runs as ComfyUI runs it`, nothing idle was left to
+  give back: use VAE Decode (Tiled), a shorter clip or a smaller frame.
+- It never acts while a render this driver started is still in flight (a
+  KSampler Pipeline decoding one result while the next samples), and says so
+  once: `the driver kept what it holds because ...`.
+- `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns it off, for
+  diagnosis. If a call it makes fails, it steps aside with one WARNING and
+  ComfyUI's own decode runs. `dgxm doctor`'s `driver memory reading` row adds
+  a clause only when it is off, stepped aside or not installed
+  ([DESIGN](DESIGN.md), "Before a decode priced above free memory, the driver
+  gives back what is idle").
+
 ## 13. uly2+fsdp / ring2+fsdp render deadlocks (hangs, no error)
 
 **Symptom:** an FSDP topology combined with sequence parallelism (uly2+fsdp;

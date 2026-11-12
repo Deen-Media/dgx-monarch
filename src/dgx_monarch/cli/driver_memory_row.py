@@ -17,6 +17,12 @@ reads that state for each answer and does not cache it with the rest, so the
 block is current even where the answer carries ``telemetry_error``. A state the
 driver did not publish is said to be unobserved and changes no verdict.
 
+The same block carries the decode relief's state (``vae_decode_relief``):
+before a VAE decode ComfyUI prices above its free memory, the driver gives
+back what is idle. The row says nothing of it while it is on, or where the
+driver did not publish it, and adds a clause only when it is off, stepped
+aside or not installed, so the usual row stays as short as it was.
+
 The classifier takes the parsed answer and needs no driver, CUDA or network.
 """
 from __future__ import annotations
@@ -26,7 +32,7 @@ import urllib.request
 from collections.abc import Mapping
 from typing import Any
 
-from .. import vae_encode_item
+from .. import vae_decode_relief, vae_encode_item
 from ..driver_uma_memory import DISABLE_ENV, floor_bytes
 from . import comfy_ports
 from .probe_certainty import OK, WARN
@@ -36,6 +42,7 @@ ENTRY = "docs/TROUBLESHOOTING.md #12"
 # Where ``fetch`` puts the driver's ``driver_rules`` telemetry block, and the rule's name in it.
 RULES_KEY = "dgxm_driver_rules"
 ENCODE_RULE = "vae_encode_item"
+RELIEF_RULE = "vae_decode_relief"
 _TELEMETRY_KEY = "driver_rules"
 _KNOWN_STATES = frozenset({vae_encode_item.NOT_LINUX, vae_encode_item.NOT_INTEGRATED, vae_encode_item.NO_COMFY,
                            vae_encode_item.PROBE_FAILED, vae_encode_item.UNSET})
@@ -106,9 +113,33 @@ def encode_clause(answer: Mapping[str, Any]) -> tuple[str | None, str]:
                   "driver's /dgxm/telemetry did not say)")
 
 
+def relief_clause(answer: Mapping[str, Any]) -> tuple[str | None, str]:
+    """``(status, clause)`` for the decode relief in one driver, from what that driver published.
+
+    On, or not published (an older driver, a cold telemetry answer): no clause
+    and no verdict, so the row reads as it did before the rule existed. Only a
+    relief that is not working is worth a line.
+    """
+    rules = answer.get(RULES_KEY)
+    state = rules.get(RELIEF_RULE) if isinstance(rules, Mapping) else None
+    risk = ("so a VAE decode ComfyUI prices above its free memory starts with the driver's idle models "
+            "still loaded")
+    if state == vae_decode_relief.OFF:
+        return WARN, (f"the decode relief is off, because the driver runs with "
+                      f"{vae_decode_relief.DISABLE_ENV}=1, {risk}")
+    if state == vae_decode_relief.STEPPED_ASIDE:
+        return WARN, ("the decode relief stepped aside in this driver (one WARNING in its log says why), "
+                      f"{risk}; this pack version and this ComfyUI do not go together for that call")
+    if isinstance(state, str) and state in _KNOWN_STATES:
+        return WARN, f"the decode relief is not installed in this driver ({state}), {risk}"
+    return None, ""
+
+
 def _with_encode(status: str, detail: str, answer: Mapping[str, Any]) -> tuple[str, str]:
     encode_status, clause = encode_clause(answer)
-    return (WARN if WARN in (status, encode_status) else status), f"{detail}; {clause}"
+    relief_status, relief = relief_clause(answer)
+    said = f"{detail}; {clause}" + (f"; {relief}" if relief else "")
+    return (WARN if WARN in (status, encode_status, relief_status) else status), said
 
 
 def _number(value: object) -> float | None:

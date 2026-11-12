@@ -86,16 +86,19 @@ def test_the_route_answers_with_the_rules_as_they_are_now_whatever_the_cache_hol
     the rule's state sat in that snapshot, a rule that has since stepped aside
     would still read as on. So the state is read for each answer.
     """
-    from dgx_monarch import vae_encode_item
+    from dgx_monarch import vae_decode_relief, vae_encode_item
     from dgx_monarch.nodes import routes
 
     monkeypatch.setitem(vae_encode_item._STATE, "state", vae_encode_item.INSTALLED)
+    monkeypatch.setitem(vae_decode_relief._STATE, "state", vae_decode_relief.INSTALLED)
     _failing_or_slow_refresh(routes, monkeypatch, how)
-    assert routes._telemetry_payload()["driver_rules"] == {"vae_encode_item": "installed"}
-    # The rule steps aside after the snapshot was taken.
+    assert routes._telemetry_payload()["driver_rules"] == {"vae_encode_item": "installed",
+                                                           "vae_decode_relief": "installed"}
+    # The rule steps aside after the snapshot was taken, and the decode relief is switched to off.
     monkeypatch.setitem(vae_encode_item._STATE, "state", vae_encode_item.STEPPED_ASIDE)
+    monkeypatch.setitem(vae_decode_relief._STATE, "state", vae_decode_relief.OFF)
     answer = routes._telemetry_payload()
-    assert answer["driver_rules"] == {"vae_encode_item": "stepped_aside"}
+    assert answer["driver_rules"] == {"vae_encode_item": "stepped_aside", "vae_decode_relief": "off"}
     assert answer["workers"] == ["cached"]  # the rest is still the snapshot
     if how == "the snapshot is young":
         assert "telemetry_error" not in answer
@@ -105,7 +108,7 @@ def test_the_route_answers_with_the_rules_as_they_are_now_whatever_the_cache_hol
     assert "driver_rules" not in routes._TELEMETRY_CACHE["data"]
     # The route's own timeout answer says it too.
     assert routes._with_driver_rules({"workers": [], "telemetry_error": "TimeoutError"})["driver_rules"] == {
-        "vae_encode_item": "stepped_aside"}
+        "vae_encode_item": "stepped_aside", "vae_decode_relief": "off"}
 
 
 def _fresh_routes(monkeypatch, call_all):

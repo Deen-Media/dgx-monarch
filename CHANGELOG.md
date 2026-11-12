@@ -602,6 +602,27 @@
   trial switch `DGXM_VAE_ITEM_BATCHES` of an earlier build of this release,
   which also wrapped decode, is gone
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- On a DGX Spark, before a VAE decode that ComfyUI prices above its free
+  memory, the driver gives back what is idle and then runs ComfyUI's decode
+  unchanged. With DynamicVRAM on, ComfyUI unloads no model for a VAE, logs
+  `0 models unloaded.` and decodes whole whatever its free memory reads, and
+  on unified memory no out-of-memory error stops it: on 2026-11-12, with the
+  Spark under its clock cap (max 2100 MHz), a one-GPU video render's decode
+  took the box to 6.7 GiB available while the driver held 32 GiB of text
+  encoders no later node needed. The driver now unloads the models ComfyUI
+  holds in it, through ComfyUI's own unload, and if the decode is still priced
+  above its free memory and no render is in flight it asks the Workers to
+  release their cached memory. Nothing to set, and no output changes: the
+  decode is ComfyUI's own call with the same arguments. What it costs when it
+  acts: the text encoder loads again when a prompt's text next changes, and
+  the next render's first step re-grows the Workers' cache if they were asked.
+  It adds room and does not bound a decode: with nothing idle the decode runs
+  as before and one `decode relief:` line says so. It never acts while a
+  render this driver started is still in flight. `DGXM_DISABLE_VAE_DECODE_RELIEF=1`
+  on the driver turns it off for diagnosis, it steps aside with one WARNING if
+  a call it makes fails, and `dgxm doctor`'s `driver memory reading` row says
+  so when it is not working. Not yet run on hardware
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
   class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,
