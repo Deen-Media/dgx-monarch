@@ -294,25 +294,31 @@ def _my_slots(worker: Any, specs: list[dict]) -> list[dict]:
     return [spec for spec in specs if _slot_of(spec) == mine] or specs
 
 
-def _holds_base(stored: Any, spec: dict, unet_name: str, path: str) -> bool:
-    """Whether the slot holds this spec's base by the store's own comparison (``in_place_fallback.holds_base``).
+def _held_base(stored: Any, spec: dict, unet_name: str, path: str) -> tuple[bool, bool]:
+    """``(held, set_aside)``: the slot holds this spec's base for a swap, or ``ensure`` will set it aside.
 
-    The key is built as ``ModelStore.ensure`` builds it, from the file name
-    and the loader options together, so a request that changes an option on a
+    The comparison is the store's own (``in_place_fallback.holds_base``): the
+    key is built as ``ModelStore.ensure`` builds it, from the file name and
+    the loader options together, so a request that changes an option on a
     held file is read as the fresh load the store makes of it. Options the
-    store's builder cannot take give no key, which reads as not held.
+    store's builder cannot take give no key, which reads as not held. A slot
+    with this key whose checkpoint file has changed on disk is one ``ensure``
+    sets aside: no swap is made on it and no in-place bake is offered.
     """
     from .model_store import ModelStore
 
     try:
         base_key = ModelStore.make_keys(unet_name, spec.get("options"), None, "")[0]
     except Exception:
-        return False
-    return in_place_fallback.holds_base(stored, base_key, path)
+        return False, False
+    if not in_place_fallback.holds_base(stored, base_key):
+        return False, False
+    moved = in_place_fallback.checkpoint_moved(stored, path)
+    return not moved, moved
 
 
 def _classic_bake_probe(worker: Any, store: Any, stored: Any, spec: dict, held: bool,
-                        in_place_bake_proven: bool, *, other_held: bool = False, covered: bool = False,
+                        in_place_bake_proven: bool | str, *, other_held: bool = False, covered: bool = False,
                         charged: int = 0) -> Any:
     """The stock probe for a stack that bakes ComfyUI's classic way in a fresh load; else ``None``.
 
@@ -323,9 +329,11 @@ def _classic_bake_probe(worker: Any, store: Any, stored: Any, spec: dict, held: 
     admitted to one it would refuse. A change the classic hot swap makes in
     place (``in_place_fallback.loads_fresh`` says no: the other slot holds a
     model, or the held stack's backup covers the new one) keeps today's
-    price. ``held`` is ``_holds_base``'s answer, the store's own comparison
-    of the base. ``charged`` is what this request's earlier slots take: the
-    bake is chosen against the budget left for this slot.
+    price. ``held`` is ``_held_base``'s answer, the store's own comparison
+    of the base. ``in_place_bake_proven`` is the render's permission, or the
+    clause that says why the store will not offer the in-place bake.
+    ``charged`` is what this request's earlier slots take: the bake is chosen
+    against the budget left for this slot.
     """
     loras = spec.get("loras")
     if not loras or store_fsdp.active(worker):
@@ -364,9 +372,11 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
     # swap then re-applies in place, and no fresh load, so no classic bake, follows. Read from
     # the slot's own backup, the fact the store acts on, so it holds for every format. Asked
     # only of a slot that holds this base as the store compares it (name and options).
-    held = _holds_base(stored, spec, unet_name, path)
+    held, set_aside = _held_base(stored, spec, unet_name, path)
     covered = held and in_place_fallback.backup_covers(
         stored, path, spec.get("loras"), capacity_quote.default_resolve_lora_path)
+    # A slot ``ensure`` sets aside is never offered the in-place bake, whatever permission came.
+    bake_allowed = in_place_bake_proven and (in_place_fallback.SET_ASIDE if set_aside else True)
     return capacity_quote.price(
         path=path,
         unet_name=unet_name,
@@ -385,7 +395,7 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         family_override=getattr(store, "family_override", None),
         node_options=options,
         lora_stack=spec.get("loras"),
-        fit_probe=_classic_bake_probe(worker, store, stored, spec, held, in_place_bake_proven,
+        fit_probe=_classic_bake_probe(worker, store, stored, spec, held, bake_allowed,
                                       other_held=other is not None, covered=covered, charged=charged),
         slot=slot,
         pinned_staging=pinned_staging,

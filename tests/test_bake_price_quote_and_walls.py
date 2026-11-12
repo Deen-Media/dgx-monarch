@@ -213,24 +213,55 @@ def test_the_store_loads_fresh_when_a_loader_option_changes_on_a_held_file(class
     assert asked == [] and BAKE_WORDS in str(raised.value) and calls.load == 1
 
 
-def test_the_slot_holds_a_base_by_the_whole_key_and_the_file_it_loaded(tmp_path):
+def _base_identity(signature):
+    return {"artifacts": [{"kind": "diffusion_models", "name": BASE, "signature": signature}]}
+
+
+def test_the_slot_holds_a_base_by_the_whole_key_and_is_set_aside_when_its_file_moved(tmp_path):
     from dgx_monarch.gate_ledger import artifact_signature
 
     checkpoint = tmp_path / "base.safetensors"
     checkpoint.write_bytes(b"a" * 4096)
     key = ms.ModelStore.make_keys("base.safetensors", {}, None, "")[0]
     stored = types.SimpleNamespace(base_key=key, artifact_identity={})
-    assert fallback.holds_base(stored, key) and fallback.holds_base(stored, key, str(checkpoint))
+    assert fallback.holds_base(stored, key)
     assert not fallback.holds_base(None, key) and not fallback.holds_base(stored, ())
     assert not fallback.holds_base(stored, ms.ModelStore.make_keys("base.safetensors", RECAST, None, "")[0])
-    stored.artifact_identity = {"artifacts": [
-        {"kind": "diffusion_models", "name": "base.safetensors", "signature": artifact_signature(str(checkpoint))}]}
-    assert fallback.holds_base(stored, key, str(checkpoint))
+    assert not fallback.checkpoint_moved(stored, str(checkpoint))  # no fingerprint recorded: nothing to compare
+    stored.artifact_identity = _base_identity(artifact_signature(str(checkpoint)))
+    assert not fallback.checkpoint_moved(stored, str(checkpoint))
     checkpoint.write_bytes(b"b" * 8192)  # rewritten under its own name: ``ensure`` sets such a slot aside
-    assert not fallback.holds_base(stored, key, str(checkpoint))
-    assert fallback.holds_base(stored, key)  # ``take`` asks after ``ensure``'s own check of the file
+    assert fallback.checkpoint_moved(stored, str(checkpoint))
     checkpoint.unlink()
-    assert not fallback.holds_base(stored, key, str(checkpoint))
+    assert fallback.checkpoint_moved(stored, str(checkpoint))  # gone: the dearer reading
+    # The worker endpoint puts the two together: held for a swap, or set aside.
+    spec = {"unet_name": "base.safetensors", "options": {}}
+    stored.artifact_identity = {}
+    assert worker_capacity._held_base(stored, spec, "base.safetensors", str(checkpoint)) == (True, False)
+    assert worker_capacity._held_base(stored, dict(spec, options=RECAST), "base.safetensors", "p") == (False, False)
+    assert worker_capacity._held_base(stored, dict(spec, options=7), "base.safetensors", "p") == (False, False)
+    stored.artifact_identity = _base_identity("another file's fingerprint")
+    assert worker_capacity._held_base(stored, spec, "base.safetensors", str(checkpoint)) == (False, True)
+
+
+def test_a_slot_the_store_sets_aside_is_quoted_the_fresh_load_and_no_in_place_bake(quote, monkeypatch):
+    """A checkpoint rewritten under its own name: ``ensure`` sets the slot aside and never asks ``take``."""
+    from dgx_monarch.gate_ledger import artifact_signature
+
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    bare = _b3_store(stack=(), base__backup={})
+    bare.current.lora_sig = ()
+    spec = {"unet_name": BASE, "options": {}, "loras": [{"name": LORA, "strength": 1.0}], "slot": "cond"}
+    bare.current.artifact_identity = _base_identity(artifact_signature(ms.resolve_model_path("", BASE)))
+    kept = _rows(bare, monkeypatch, [spec], 45 * GIB, proven=True)[0]
+    assert kept["verdict"] == cq.VERDICT_FITS and kept["measured"]["bake"] == "in_place"  # the file the slot loaded
+    bare.current.artifact_identity = _base_identity("another file's fingerprint")
+    moved = _rows(bare, monkeypatch, [spec], 45 * GIB, proven=True)[0]
+    assert moved["verdict"] == cq.VERDICT_REFUSE and moved["measured"]["bake"] == "classic"
+    assert moved["measured"]["in_place_note"] == "; " + fallback.SET_ASIDE
+    # Without the permission the refusal says the gate has not passed, as for any slot.
+    unproven = _rows(bare, monkeypatch, [spec], 45 * GIB)[0]["measured"]
+    assert unproven["bake"] == "classic" and "identity-gate PASS" in unproven["in_place_note"]
 
 
 def test_a_pairs_second_model_takes_the_bake_that_fits_the_budget_the_first_leaves(quote, monkeypatch, tmp_path):

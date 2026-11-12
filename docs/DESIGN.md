@@ -2420,9 +2420,11 @@ is not yet read, and the price does not depend on it. Three rules follow.
   slot holds a model. It prices by the same arguments, so both pick the same
   bake. Both read "the slot holds this base" by the store's one comparison
   (`in_place_fallback.holds_base`): the file name and the loader options
-  together, on the checkpoint file the slot loaded. A request that keeps the
-  file and changes an option (the weight dtype, for one) is a fresh load, and
-  is priced as one. For the second model of a dual-model render the bake is
+  together. A request that keeps the file and changes an option (the weight
+  dtype, for one) is a fresh load, and is priced as one. A slot whose
+  checkpoint file has changed on disk since its load is set aside by the
+  store: base and stack load fresh and no in-place bake is offered, and the
+  quote prices that. For the second model of a dual-model render the bake is
   chosen against the reading less the first model's charge, as the store
   chooses it beside the loaded first model. Where the slot holds the
   base bare the bake runs on it. Where it holds anything else (nothing,

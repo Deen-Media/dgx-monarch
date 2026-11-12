@@ -60,6 +60,9 @@ _PERMITTED: contextvars.ContextVar[bool] = contextvars.ContextVar("dgxm_in_place
 # logs its own figures when it priced one; a slot ``ensure`` set aside is never offered.
 TRIED = ("baking it in place was not done: it did not fit, its bake failed, or this slot was set "
          "aside (the Worker's log says which)")
+# The quote's clause for a slot ``ensure`` will set aside (``checkpoint_moved``): no in-place bake is offered.
+SET_ASIDE = ("baking it in place is not offered: the checkpoint file has changed on disk since this slot "
+             "loaded it, so base and stack load fresh")
 
 
 @contextlib.contextmanager
@@ -109,34 +112,38 @@ def held_bytes(stored: Any) -> int:
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
 
-def holds_base(stored: Any, base_key: Any, checkpoint_path: str | None = None) -> bool:
+def holds_base(stored: Any, base_key: Any) -> bool:
     """Whether this slot holds the request's base, as ``ModelStore.ensure`` compares it.
 
     The comparison is the store's own: the whole base key, the file name and
     the loader options together. A request that keeps the file and changes an
     option (the weight dtype, for one) asks for another base, and the store
-    drops the slot and loads fresh. ``ensure`` also sets a slot aside when its
-    checkpoint's fingerprint has moved, before it asks ``take``; the quote
-    passes ``checkpoint_path`` to read that here. A slot that recorded no
-    fingerprint gives nothing to compare; a file that cannot be fingerprinted
-    reads as another base, which prices the dearer fresh load.
+    drops the slot and loads fresh.
     """
-    if stored is None or not base_key or getattr(stored, "base_key", None) != base_key:
-        return False
-    if checkpoint_path is None:
-        return True
+    return stored is not None and bool(base_key) and getattr(stored, "base_key", None) == base_key
+
+
+def checkpoint_moved(stored: Any, checkpoint_path: str) -> bool:
+    """Whether the checkpoint file differs on disk from the fingerprint this slot recorded at its load.
+
+    ``ensure`` sets such a slot aside before any swap: it does not hot-swap
+    it, never offers it to ``take``, and loads base and stack fresh. The quote
+    asks here, so it prices that load and no in-place bake (``SET_ASIDE``). A
+    slot that recorded no fingerprint gives nothing to compare; a file that
+    cannot be fingerprinted reads as moved, which prices the dearer load.
+    """
     identity = getattr(stored, "artifact_identity", None)
     artifacts = identity.get("artifacts") if isinstance(identity, dict) else None
     first = artifacts[0] if isinstance(artifacts, list) and artifacts else None
     recorded = first.get("signature") if isinstance(first, dict) else None
     if recorded is None:
-        return True
+        return False
     from ..gate_ledger import artifact_signature
 
     try:
-        return bool(artifact_signature(checkpoint_path) == recorded)
+        return bool(artifact_signature(checkpoint_path) != recorded)
     except Exception:
-        return False
+        return True
 
 
 def _held_files_unchanged(stored: Any, names: set, resolve_lora_path: Callable[[str], str]) -> bool:
@@ -223,17 +230,20 @@ def loads_fresh(stored: Any, held: bool, other_held: bool, covered: bool) -> boo
     return not covered
 
 
-def route(store: Any, stored: Any, held: bool, allowed: bool) -> dict[str, Any] | None:
+def route(store: Any, stored: Any, held: bool, allowed: bool | str) -> dict[str, Any] | None:
     """``capacity_classic_bake.priced``'s arguments for one stack change; ``None`` when no classic bake is in play.
 
     One function for the quote, the store and the walls, so they cannot price
     one change two ways. ``held`` says the slot holds this request's base
     (``holds_base``: the whole base key, never the file name alone).
+    ``allowed`` is ``True`` when the store may bake in place, ``False`` when
+    the gate's permission did not come, or the clause that says why the store
+    will not offer it (``SET_ASIDE``).
     """
     if store.lora_low_rss or getattr(store, "slab_weights", False) is True:
         return None
     return {"held_bytes": held_bytes(stored), "bare_load": not (held and is_bare_stock(stored)),
-            "in_place": True if allowed else capacity_classic_bake.GATE_HAS_NOT_PASSED}
+            "in_place": True if allowed is True else (allowed or capacity_classic_bake.GATE_HAS_NOT_PASSED)}
 
 
 def quote_snapshot(store: Any, stored: Any, snapshot: dict, slot: str, allowed: bool) -> dict:
@@ -328,5 +338,5 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
     return result
 
 
-__all__ = ["TRIED", "backup_covers", "fresh_load_probe", "held_bytes", "holds_base", "is_bare_stock", "loads_fresh",
-           "must_reload", "permission", "permitted", "quote_snapshot", "route", "take"]
+__all__ = ["SET_ASIDE", "TRIED", "backup_covers", "checkpoint_moved", "fresh_load_probe", "held_bytes", "holds_base",
+           "is_bare_stock", "loads_fresh", "must_reload", "permission", "permitted", "quote_snapshot", "route", "take"]
