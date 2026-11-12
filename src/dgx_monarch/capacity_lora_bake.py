@@ -33,8 +33,25 @@ _LORA_SUFFIXES: tuple[tuple[str, str], ...] = (
     (".lora_up.weight", ".weight"),
     (".lora_A.weight", ".weight"),
     (".lora_B.weight", ".weight"),
+    # ComfyUI's other spellings of the same pair (comfy/weight_adapter/lora.py). A file in
+    # one of them named no suffix this table knew, so its stack was priced as every weight of
+    # the checkpoint: 1933 for a Qwen Image LoRA whose Worker counted 240 (2026-11-12).
+    (".lora.down.weight", ".weight"),
+    (".lora.up.weight", ".weight"),
+    ("_lora.down.weight", ".weight"),
+    ("_lora.up.weight", ".weight"),
+    (".lora_linear_layer.down.weight", ".weight"),
+    (".lora_linear_layer.up.weight", ".weight"),
+    (".lora_A.default.weight", ".weight"),
+    (".lora_B.default.weight", ".weight"),
+    (".lora_A", ".weight"),
+    (".lora_B", ".weight"),
     (".diff", ".weight"),
     (".diff_b", ".bias"),
+    # ComfyUI's norm deltas and its whole-weight replacement (comfy/lora.py).
+    (".w_norm", ".weight"),
+    (".b_norm", ".bias"),
+    (".set_weight", ".weight"),
 )
 
 # A per-block attention pin a LoRA can carry; it patches no weight.

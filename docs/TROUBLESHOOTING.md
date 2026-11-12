@@ -738,14 +738,18 @@ you may see:
   settings with the switch on. Or free memory, or leave the switch on.
 - **What the price adds depends on the checkpoint's format**, sized from
   what loads took on hardware on 2026-11-12:
-  - scaled FP8 (LTX 2.3's file): 2 GiB plus 7.5 MiB for each weight the
-    stack patches, or the stack's files plus 4.7 GiB where that is more (a
-    stack of several LoRAs on the same weights);
-  - INT8 ConvRot (the shipped Wan-Animate 2 template's file) and plain FP8:
-    2 GiB and the stack's own files, whatever the number of patched weights.
-    Plain FP8 rests on one measured stack;
-  - BF16 and FP16: 2 GiB plus 7.5 MiB a patched weight, and the stack's
-    files.
+  - scaled FP8 (LTX 2.3's file), BF16 and FP16: 2 GiB plus 7.5 MiB for each
+    weight the stack patches;
+  - INT8 ConvRot (the shipped Wan-Animate 2 template's file): 2 GiB plus 3.4
+    MiB for each patched weight;
+  - plain FP8: 2 GiB.
+
+  The stack's own LoRA files are added, each as often as the stack lists it,
+  when the price is read before the Worker has read them: a load into a
+  Worker that holds no model, and every fleet quote. A LoRA change on a model
+  the Worker already holds is priced after it has read them, and is charged
+  none. So the same stack shows a larger figure on an empty Worker than on a
+  held model, and both are right for the reading beside them.
 
   A refusal prints the figure. If a load with `lora_low_rss` off is refused
   on a box you believe has room, the default setting (`lora_low_rss` on) is

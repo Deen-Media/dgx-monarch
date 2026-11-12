@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import time
 from collections.abc import Callable, Iterator
 from typing import Any, TypeGuard
 
@@ -283,20 +284,76 @@ def quote_snapshot(store: Any, stored: Any, snapshot: dict, slot: str, allowed: 
     return snapshot
 
 
+_STACK_READ = "_dgxm_stack_read"
+# How long a note that the stack was read stands. The fresh load follows the declined swap in
+# the same ``ensure`` call, within seconds; a note older than this is from a call that never
+# reached its fresh load, and is not believed.
+_STACK_READ_MAX_AGE_S = 120.0
+
+
+def _stack_signature(lora_stack: list | None) -> tuple:
+    from .model_store import lora_signature
+
+    return lora_signature(lora_stack)
+
+
+def note_stack_read(store: Any, slot: str, lora_stack: list | None) -> None:
+    """Record that the store has just read this stack's files into host memory for ``slot``.
+
+    ``store_bake.hot_swap_transition`` calls it when it declines: it built the
+    stack (``ModelStore._build_active`` reads every LoRA file) to count what
+    the swap would copy, and those bytes have left the box's reading by the
+    time the fresh load prices. On 2026-11-12 the reading at the stack's price
+    line sat 7.1 GiB under the base's, the size of the 7.08 GiB file, and the
+    load took the same total from there as from an empty Worker less that
+    file.
+    """
+    setattr(store, _STACK_READ, (slot, _stack_signature(lora_stack), time.monotonic()))
+
+
+def forget_stack_read(store: Any) -> None:
+    if getattr(store, _STACK_READ, None) is not None:
+        setattr(store, _STACK_READ, None)
+
+
+def stack_on_host(store: Any, slot: str, lora_stack: list | None, *, consume: bool = False) -> bool:
+    """Whether the reading a classic price is about to be held against was taken after this stack was read.
+
+    True only for the slot and the stack ``note_stack_read`` named, and only
+    while the note is fresh. ``consume`` clears the note: the fresh load's
+    probe reads it once, so a later load of the same stack into an empty slot
+    is charged its files.
+    """
+    noted = getattr(store, _STACK_READ, None)
+    if consume:
+        forget_stack_read(store)
+    if not noted or not lora_stack:
+        return False
+    try:
+        noted_slot, signature, at = noted
+        return bool(noted_slot == slot and signature == _stack_signature(lora_stack)
+                    and time.monotonic() - at <= _STACK_READ_MAX_AGE_S)
+    except Exception:
+        return False
+
+
 def fresh_load_probe(store: Any, slot: str, lora_stack: list | None) -> Callable[[str, dict], Any] | None:
     """The stock probe the Worker's own walls price a fresh load with.
 
     ``None`` on the default and with no stack: nothing is added to the stock
     price. A fresh load never bakes in place and has already been handed the
     slot to drop, so nothing is credited and the reason the in-place bake was
-    not taken rides along for the refusal.
+    not taken rides along for the refusal. Where this load follows a hot swap
+    that read the stack and declined, the price charges none of the stack's
+    files (``stack_on_host``); a load into an empty slot charges them all.
     """
+    on_host = stack_on_host(store, slot, lora_stack, consume=True)  # one fresh load reads it, once
     if store.lora_low_rss or not lora_stack:
         return None
     from .capacity_quote import default_resolve_lora_path
 
     return capacity_classic_bake.probe(
-        lora_stack, default_resolve_lora_path,
+        lora_stack, default_resolve_lora_path, stack_on_host=on_host,
         in_place=TRIED if permitted() else capacity_classic_bake.GATE_HAS_NOT_PASSED)
 
 
@@ -329,7 +386,9 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
     path = str(resolve_model_path("diffusion_models", unet_name))
     fit = capacity_classic_bake.priced(
         capacity_fit.stock_load_fit(path, _to_comfy_model_options(options)), path, lora_stack,
-        default_resolve_lora_path, **args)
+        default_resolve_lora_path, stack_on_host=stack_on_host(store, slot, lora_stack), **args)
+    if getattr(fit, "in_place_bytes", 0):
+        forget_stack_read(store)  # the bake drops, loads or bakes: the box is no longer as the swap left it
     if not getattr(fit, "in_place_bytes", 0):
         note = str(getattr(fit, "in_place_note", "") or "")
         if note:  # the classic price missed and so did the in-place one: the walls refuse, this says why
@@ -367,6 +426,6 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
     return result
 
 
-__all__ = ["SET_ASIDE", "TRIED", "backup_covers", "checkpoint_moved", "fresh_load_probe", "held_bytes", "holds_base",
-           "is_bare_stock", "loads_fresh", "must_reload", "permission", "permitted", "quote_snapshot", "route",
-           "stack_files_moved", "take"]
+__all__ = ["SET_ASIDE", "TRIED", "backup_covers", "checkpoint_moved", "forget_stack_read", "fresh_load_probe",
+           "held_bytes", "holds_base", "is_bare_stock", "loads_fresh", "must_reload", "note_stack_read", "permission",
+           "permitted", "quote_snapshot", "route", "stack_files_moved", "stack_on_host", "take"]

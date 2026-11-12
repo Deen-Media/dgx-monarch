@@ -44,7 +44,11 @@ EMBEDDINGS = [("text_embedding.0", 5120, 4096), ("text_embedding.2", 5120, 5120)
 HEAD_KEYS = 11
 PATCHED = BLOCKS * (len(LINEARS) * 2 + len(NORMS) + 2) + len(EMBEDDINGS) * 2 + HEAD_KEYS
 LINE = price.CLASSIC_BAKE_FIXED_BYTES + PATCHED * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
-INT8_TERM = price.CLASSIC_BAKE_FIXED_BYTES + len(EMBEDDINGS) * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+INT8_SHARE = price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]
+# The fixed part, the INT8 share for the INT8 weights and for the small keys beside them, and the
+# line's share for the five large full-precision weights.
+INT8_TERM = (price.CLASSIC_BAKE_FIXED_BYTES + (PATCHED - len(EMBEDDINGS)) * INT8_SHARE
+             + len(EMBEDDINGS) * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
 
 
 def _files(tmp_path, quantized_dtype="I8"):
@@ -103,7 +107,7 @@ def test_an_int8_convrot_weight_is_its_own_class_and_needs_its_marker(tmp_path):
     assert price.weight_class("d.weight", tensors) == price.FP8_QUANTIZED
     assert price.weight_class("e.weight", tensors) == price.PLAIN_FP8
     assert price.weight_class("a.bias", tensors) == price.FULL_PRECISION
-    assert price.NO_PER_WEIGHT_SHARE == (price.INT8_QUANTIZED, price.PLAIN_FP8)
+    assert set(price.LIGHT_SHARE_BYTES) == {price.INT8_QUANTIZED, price.PLAIN_FP8}
 
 
 def test_the_wan_animate_2_shaped_int8_stack_is_charged_the_fixed_part_not_the_line(tmp_path):
@@ -114,12 +118,14 @@ def test_the_wan_animate_2_shaped_int8_stack_is_charged_the_fixed_part_not_the_l
     assert len(keys) == PATCHED == 1261
     assert sum(price.weight_class(key, tensors) == price.INT8_QUANTIZED for key in keys) == 480
     charged = price.classic_bake_bytes(checkpoint, STACK, resolve)
-    # The fixed 2 GiB, and a share for each of the five large full-precision weights beside the INT8 ones.
+    # The fixed 2 GiB, the INT8 share for the INT8 weights and the small keys beside them, and the
+    # line's share for each of the five large full-precision weights.
     assert charged == INT8_TERM
-    assert charged >= 0.5 * GIB  # what the hardware cell took beside the stock price
-    assert LINE - charged > 9 * GIB  # what the line charged this stack beyond that (11.2 GiB in all)
-    # The whole addition to the stock price: the term and the stack's file.
+    assert 6.1 * GIB < charged < 6.3 * GIB  # the whole classic load of such a stack took 6.8 with its file
+    assert LINE - charged > 5 * GIB  # what the line charged this stack beyond that (11.2 GiB in all)
+    # The whole addition to the stock price: the term, and the stack's file while it is still to be read.
     assert price.classic_charge(checkpoint, STACK, resolve) == INT8_TERM + os.path.getsize(stack)
+    assert price.classic_charge(checkpoint, STACK, resolve, stack_on_host=True) == INT8_TERM
 
 
 def test_the_same_header_as_scaled_fp8_keeps_the_line_and_is_not_charged_its_files_again(tmp_path):
@@ -131,7 +137,8 @@ def test_the_same_header_as_scaled_fp8_keeps_the_line_and_is_not_charged_its_fil
     assert len(keys) == PATCHED and len(quantized) == 480
     # Every patched key counts, the biases included, as the line was fitted.
     assert price.classic_bake_bytes(checkpoint, STACK, resolve) == LINE
-    assert price.classic_charge(checkpoint, STACK, resolve) == LINE  # the line holds the files
+    assert price.classic_charge(checkpoint, STACK, resolve) == LINE + os.path.getsize(stack)  # still to be read
+    assert price.classic_charge(checkpoint, STACK, resolve, stack_on_host=True) == LINE  # read before the price
     # This file's largest quantized weight is past the measured 64 MiB; the bytes guard is off (no record).
     assert max(quantized) > price.MEASURED_LARGEST_WEIGHT_BYTES[price.FP8_QUANTIZED]
 
@@ -151,10 +158,10 @@ def test_overlapping_loras_on_a_scaled_fp8_base_are_charged_for_the_files_they_h
     thrice = STACK * 3
     assert len(price.patched_weights(read, thrice, resolve)) == PATCHED  # the count does not move
     assert price.stack_bytes(thrice, resolve) == 3 * one
-    assert price.classic_charge(checkpoint, STACK, resolve) == LINE  # one file: the line holds it
-    charged = price.classic_charge(checkpoint, thrice, resolve)
-    assert charged == 3 * one + price.BEYOND_THE_FILES_BYTES > LINE
-    # The same three entries on the INT8 header: the fixed part, the five large weights, every file.
+    assert price.classic_charge(checkpoint, STACK, resolve) == LINE + one
+    assert price.classic_charge(checkpoint, thrice, resolve) == LINE + 3 * one  # each entry is a read
+    assert price.classic_charge(checkpoint, thrice, resolve, stack_on_host=True) == LINE  # all three read already
+    # The same three entries on the INT8 header: its own term, and every file.
     int8_checkpoint, _ = _files(tmp_path)
     _write_safetensors(stack, tensors)  # _files rewrote the LoRA without its padding
     assert price.classic_charge(int8_checkpoint, thrice, resolve) == INT8_TERM + 3 * one
@@ -188,15 +195,15 @@ def test_in_an_int8_stack_a_large_weight_of_another_format_keeps_its_share_and_a
     int8 = [(price.INT8_QUANTIZED, 25 * MIB)] * 30  # most of the stack's bytes, as on the real files
     large = [(price.FULL_PRECISION, 40 * MIB)] * 2 + [(price.OTHER, 4 * MIB)]
     small = [(price.FULL_PRECISION, 10 * 1024)] * 4
-    per_weight = price.CLASSIC_BAKE_BYTES_PER_WEIGHT
-    assert price.term_from_weights(int8) == price.CLASSIC_BAKE_FIXED_BYTES
-    assert price.term_from_weights(int8 + small) == price.CLASSIC_BAKE_FIXED_BYTES
-    assert price.term_from_weights(int8 + large + small) == price.CLASSIC_BAKE_FIXED_BYTES + 3 * per_weight
+    per_weight, fixed = price.CLASSIC_BAKE_BYTES_PER_WEIGHT, price.CLASSIC_BAKE_FIXED_BYTES
+    assert price.term_from_weights(int8) == fixed + 30 * INT8_SHARE
+    assert price.term_from_weights(int8 + small) == fixed + 34 * INT8_SHARE  # a small key takes the INT8 share
+    assert price.term_from_weights(int8 + large + small) == fixed + 34 * INT8_SHARE + 3 * per_weight
     at_the_edge = [(price.FULL_PRECISION, price.SMALL_KEY_BYTES), (price.FULL_PRECISION, price.SMALL_KEY_BYTES - 1)]
-    assert price.term_from_weights(int8 + at_the_edge) == price.CLASSIC_BAKE_FIXED_BYTES + per_weight
-    # A scaled FP8 weight in the same stack keeps its share, and its own guard.
+    assert price.term_from_weights(int8 + at_the_edge) == fixed + 31 * INT8_SHARE + per_weight
+    # A scaled FP8 weight in the same stack keeps the line's share.
     scaled = [(price.FP8_QUANTIZED, 16 * MIB)] * 2
-    assert price.term_from_weights(int8 + scaled) == price.CLASSIC_BAKE_FIXED_BYTES + 2 * per_weight
+    assert price.term_from_weights(int8 + scaled) == fixed + 30 * INT8_SHARE + 2 * per_weight
 
 
 def test_a_stack_with_no_int8_weight_is_counted_as_it_was_fitted_small_keys_included():

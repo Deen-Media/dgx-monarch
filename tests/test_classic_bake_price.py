@@ -45,11 +45,12 @@ def test_the_line_is_never_under_a_measured_scaled_fp8_rise(count, kind, measure
 @pytest.mark.parametrize("count, kind, measured_gib", [
     (208, price.INT8_QUANTIZED, 1.21), (208, price.INT8_QUANTIZED, 0.99),
     (720, price.PLAIN_FP8, 0.84), (720, price.PLAIN_FP8, 1.74)])
-def test_int8_convrot_and_plain_fp8_take_the_fixed_part_which_covers_their_measured_rises(count, kind, measured_gib):
+def test_int8_convrot_and_plain_fp8_take_their_own_share_which_covers_their_measured_rises(count, kind, measured_gib):
     """MiniMax H3 INT8 ConvRot (208 patched weights) and Qwen Image plain FP8 (720): two reads each, 2026-11-12."""
     charged = price.term_from_weights(_weights(count, kind))
-    assert charged == price.CLASSIC_BAKE_FIXED_BYTES >= measured_gib * GIB
-    assert price.NO_PER_WEIGHT_SHARE == (price.INT8_QUANTIZED, price.PLAIN_FP8)
+    assert charged == price.CLASSIC_BAKE_FIXED_BYTES + count * price.LIGHT_SHARE_BYTES[kind] >= measured_gib * GIB
+    assert price.LIGHT_SHARE_BYTES == {price.INT8_QUANTIZED: int(3.4 * MIB), price.PLAIN_FP8: 0}
+    assert price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED] < price.CLASSIC_BAKE_BYTES_PER_WEIGHT
 
 
 def test_the_line_sits_within_a_sixth_of_both_ltx_points():
@@ -98,68 +99,64 @@ def test_a_weight_with_no_record_is_charged_by_the_line():
                                                 + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 208)
 
 
-def test_the_stacks_files_are_charged_beside_the_term_except_where_the_line_holds_them():
+def test_the_stacks_files_are_charged_on_a_reading_taken_before_they_are_read_and_not_after():
+    """Every class the same way: the files are part of what a load takes from a box that has not read them."""
     files = int(0.7 * GIB)
     fixed, per_weight = price.CLASSIC_BAKE_FIXED_BYTES, price.CLASSIC_BAKE_BYTES_PER_WEIGHT
-    assert price.FILES_IN_THE_LINE == (price.FP8_QUANTIZED,)
-    assert price.charge_from_weights(_weights(480, price.FP8_QUANTIZED), files) == fixed + 480 * per_weight
-    assert price.charge_from_weights(_weights(480, price.INT8_QUANTIZED), files) == fixed + files
-    assert price.charge_from_weights(_weights(720, price.PLAIN_FP8), files) == fixed + files
-    assert price.charge_from_weights(_weights(148, price.FULL_PRECISION), files) == fixed + 148 * per_weight + files
-    assert price.charge_from_weights(_weights(9, price.OTHER, 0), files) == fixed + 9 * per_weight + files
-    # A scaled FP8 stack with its biases (full precision) beside it: one count, and no files again.
-    mixed = _weights(480, price.FP8_QUANTIZED) + _weights(480, price.FULL_PRECISION, 10 * 1024)
-    assert price.charge_from_weights(mixed, files) == fixed + 960 * per_weight
+    int8 = price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]
+    terms = {
+        price.FP8_QUANTIZED: (_weights(480, price.FP8_QUANTIZED), fixed + 480 * per_weight),
+        price.INT8_QUANTIZED: (_weights(480, price.INT8_QUANTIZED), fixed + 480 * int8),
+        price.PLAIN_FP8: (_weights(720, price.PLAIN_FP8), fixed),
+        price.FULL_PRECISION: (_weights(148, price.FULL_PRECISION), fixed + 148 * per_weight),
+        price.OTHER: (_weights(9, price.OTHER, 0), fixed + 9 * per_weight),
+    }
+    for weights, term in terms.values():
+        assert price.term_from_weights(weights) == term
+        assert price.charge_from_weights(weights, files) == term + files  # an empty slot, and every quote
+        assert price.charge_from_weights(weights, files, stack_on_host=True) == term  # after a declined hot swap
     assert price.charge_from_weights([], files) == files  # a stack that patches no weight still reads its files
+    assert price.charge_from_weights([], files, stack_on_host=True) == 0
 
 
-def test_a_scaled_fp8_stack_is_never_charged_less_than_its_files_and_what_the_bake_takes_beyond_them():
-    """Several LoRAs on the same keys do not move the count, and the store holds every file on the host."""
+def test_a_file_listed_more_than_once_is_charged_as_often_as_the_worker_reads_it():
+    """The line counts distinct patched keys; the Worker reads the file for each entry (block C, 2026-11-12)."""
     fixed, per_weight = price.CLASSIC_BAKE_FIXED_BYTES, price.CLASSIC_BAKE_BYTES_PER_WEIGHT
-    beyond = price.BEYOND_THE_FILES_BYTES
     weights = _weights(1660, price.FP8_QUANTIZED, 11 * MIB)
     line = fixed + 1660 * per_weight
-    # The two recorded stacks, one file each: the line is the larger, so their prices do not move.
-    assert price.charge_from_weights(weights, LTX_OWN_STACK) == line > LTX_OWN_STACK + beyond
-    small = _weights(480, price.FP8_QUANTIZED, 25 * MIB)
-    assert price.charge_from_weights(small, int(0.305 * GIB)) == fixed + 480 * per_weight
-    # The same keys under three such files: the line alone would charge 14.2 GiB for 21.2 GiB on the host.
-    three = 3 * LTX_OWN_STACK
-    assert three > line
-    assert price.charge_from_weights(weights, three) == three + beyond
-    # The bound is what the larger record took beyond its files (2.62 GiB) and 2 GiB of spare.
-    assert beyond >= int((9.7 - 7.08 + 2.0) * GIB)
-    # At the crossover the price moves without a step.
-    at = line - beyond
-    assert price.charge_from_weights(weights, at) == line == price.charge_from_weights(weights, at - 1)
-    assert price.charge_from_weights(weights, at + 1) == line + 1
-    # The other classes already charge every file beside their term.
-    assert price.charge_from_weights(_weights(480, price.INT8_QUANTIZED), three) == fixed + three
-    assert price.charge_from_weights(_weights(720, price.PLAIN_FP8), three) == fixed + three
-    assert price.charge_from_weights(_weights(148, price.FULL_PRECISION), three) == fixed + 148 * per_weight + three
+    once, twice = LTX_OWN_STACK, 2 * LTX_OWN_STACK
+    assert price.charge_from_weights(weights, once) == line + once
+    assert price.charge_from_weights(weights, twice) == line + twice  # the count has not moved, the files have
+    # From an empty Worker the single stack took 62.5 GiB and the doubled one 69.5: 7.0 apart, the file.
+    assert (price.charge_from_weights(weights, twice) - price.charge_from_weights(weights, once)) == once
+    assert price.charge_from_weights(weights, twice, stack_on_host=True) == line
 
 
 def test_one_stray_key_of_another_format_does_not_change_how_a_stack_is_charged():
     """A stack is read by the format that holds most of its patched bytes."""
-    files = int(0.7 * GIB)
     fixed, per_weight = price.CLASSIC_BAKE_FIXED_BYTES, price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+    int8_share = price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]
     small = _weights(288, price.FULL_PRECISION, 10 * 1024)
-    # LTX's shape: scaled FP8 weights, their small keys, and a few BF16 weights. One unmarked FP8 key
-    # among them carries no share itself; the small keys keep theirs and the files stay in the line.
+    # LTX's shape: scaled FP8 weights, their small keys, and a few BF16 weights, all on the line. One
+    # unmarked FP8 key among them takes its own class's share (nothing); the small keys keep the line's.
     scaled = _weights(1344, price.FP8_QUANTIZED, 13 * MIB) + small + _weights(26, price.FULL_PRECISION, 20 * MIB)
-    assert price.charge_from_weights(scaled, files) == fixed + (1344 + 288 + 26) * per_weight
-    stray_plain = [*scaled, (price.PLAIN_FP8, 13 * MIB)]
-    assert price.charge_from_weights(stray_plain, files) == fixed + (1344 + 288 + 26) * per_weight
-    # An INT8 stack with one scaled FP8 weight: that weight carries its share, the small keys still
-    # carry none, and the files are still charged.
+    assert price.term_from_weights(scaled) == fixed + (1344 + 288 + 26) * per_weight
+    assert price.term_from_weights([*scaled, (price.PLAIN_FP8, 13 * MIB)]) == fixed + (1344 + 288 + 26) * per_weight
+    # An INT8 stack: its weights and its small keys take the INT8 share. One scaled FP8 weight among
+    # them takes the line's share, and the small keys still take INT8's.
     int8 = _weights(480, price.INT8_QUANTIZED, 30 * MIB) + small
-    assert price.charge_from_weights(int8, files) == fixed + files
+    assert price.term_from_weights(int8) == fixed + (480 + 288) * int8_share
     stray_scaled = [*int8, (price.FP8_QUANTIZED, 30 * MIB)]
-    assert price.charge_from_weights(stray_scaled, files) == fixed + per_weight + files
-    # Half and half is neither format's: the dearer reading on both counts.
+    assert price.term_from_weights(stray_scaled) == fixed + (480 + 288) * int8_share + per_weight
+    # A plain FP8 stack with the same small keys: nothing for either.
+    assert price.term_from_weights(_weights(720, price.PLAIN_FP8, 26 * MIB) + small) == fixed
+    # Half and half is neither format's: the small keys take the line's share, the dearer reading.
     even = _weights(10, price.INT8_QUANTIZED, 30 * MIB) + _weights(10, price.FP8_QUANTIZED, 30 * MIB)
-    assert price.charge_from_weights(even, files) == fixed + 10 * per_weight + files
-    assert price.charge_from_weights(even + small, files) == fixed + (10 + 288) * per_weight + files
+    assert price.term_from_weights(even) == fixed + 10 * int8_share + 10 * per_weight
+    assert price.term_from_weights(even + small) == fixed + 10 * int8_share + (10 + 288) * per_weight
+    # Two light classes in one stack: the small keys follow the one that holds more bytes.
+    both = _weights(10, price.INT8_QUANTIZED, 30 * MIB) + _weights(30, price.PLAIN_FP8, 30 * MIB) + small
+    assert price.term_from_weights(both) == fixed + 10 * int8_share
 
 
 def _checkpoint(tmp_path):
@@ -202,15 +199,41 @@ def test_the_price_counts_the_weights_the_stack_patches(tmp_path):
     resolve = _resolver({"stack.safetensors": lora})
     tensors = price.read_safetensors_header(path).tensors
     assert price.patched_weights(tensors, STACK, resolve) == {"blocks.0.attn.weight", "blocks.0.int.weight"}
-    # The scaled FP8 weight carries the per-weight share; the INT8 ConvRot weight beside it carries none.
+    # The scaled FP8 weight carries the line's share; the INT8 ConvRot weight beside it carries its own.
     assert price.classic_bake_bytes(path, STACK, resolve) == (
-        price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
+        price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+        + price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED])
     both_shared = _lora(tmp_path, ["blocks.0.attn", "blocks.0.mlp"], name="shared.safetensors")
     assert price.classic_bake_bytes(path, [{"name": "shared.safetensors"}], _resolver(
         {"shared.safetensors": both_shared})) == (
         price.CLASSIC_BAKE_FIXED_BYTES + 2 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
     assert price.classic_bake_bytes(path, None, resolve) == 0
     assert price.classic_bake_bytes(path, [], resolve) == 0
+
+
+def test_comfyuis_other_lora_spellings_map_to_the_keys_they_patch(tmp_path):
+    """A LoRA spelled ``.lora.down.weight`` named no suffix the mapping knew, and was counted as every weight.
+
+    On hardware (2026-11-12) the Worker counted 240 patched weights for such a
+    Qwen Image LoRA and the header mapping gave 1933, the whole model.
+    """
+    path, _tensors = _checkpoint(tmp_path)
+    tensors = price.read_safetensors_header(path).tensors
+    spellings = [(".lora.down.weight", ".lora.up.weight"), ("_lora.down.weight", "_lora.up.weight"),
+                 (".lora_linear_layer.down.weight", ".lora_linear_layer.up.weight"),
+                 (".lora_A.default.weight", ".lora_B.default.weight"), (".lora_A", ".lora_B")]
+    for index, (down, up) in enumerate(spellings):
+        name = f"spelled{index}.safetensors"
+        _write_safetensors(tmp_path / name, {f"transformer.blocks.0.attn{down}": ("BF16", [4, 4]),
+                                             f"transformer.blocks.0.attn{up}": ("BF16", [4, 4])})
+        assert price.patched_weights(tensors, [{"name": name}], _resolver({name: str(tmp_path / name)})) == {
+            "blocks.0.attn.weight"}, down
+    _write_safetensors(tmp_path / "norms.safetensors", {
+        "transformer.blocks.0.mlp.w_norm": ("BF16", [1024]), "transformer.blocks.0.mlp.b_norm": ("BF16", [1024]),
+        "transformer.blocks.0.attn.set_weight": ("BF16", [4, 4])})
+    assert price.patched_weights(tensors, [{"name": "norms.safetensors"}], _resolver(
+        {"norms.safetensors": str(tmp_path / "norms.safetensors")})) == {
+        "blocks.0.mlp.weight", "blocks.0.mlp.bias", "blocks.0.attn.weight"}
 
 
 def test_a_stack_it_cannot_map_or_read_charges_every_weight(tmp_path):
@@ -225,11 +248,13 @@ def test_a_stack_it_cannot_map_or_read_charges_every_weight(tmp_path):
 
     assert price.patched_weights(tensors, STACK, missing) == every
     # Every weight is priced by its own class. This header has an INT8 ConvRot weight and a plain FP8
-    # one, which carry no share. Most of its bytes are the scaled FP8 weight, so the stack is counted
-    # as that format is: the scaled FP8 weight, the BF16 weight and the bias each carry a share.
+    # one, which take their own shares (3.4 MiB and nothing). Most of its bytes are the scaled FP8
+    # weight, so the rest is counted as that format is: the scaled FP8 weight, the BF16 weight and the
+    # bias each carry the line's share.
     assert len(every) == 5
     assert price.classic_bake_bytes(path, STACK, missing) == (
-        price.CLASSIC_BAKE_FIXED_BYTES + 3 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
+        price.CLASSIC_BAKE_FIXED_BYTES + 3 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+        + price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED])
 
 
 def test_a_checkpoint_whose_header_cannot_be_read_is_charged_as_the_largest_stack_measured(tmp_path):
@@ -255,19 +280,21 @@ def _fit(avail_gib: float, size: int = LTX_BYTES) -> StockFit:
 
 @pytest.fixture
 def ltx(monkeypatch):
-    """A stack whose classic price adds 21.2 GiB: a 14.2 GiB term and 7.08 GiB of files, on LTX's file.
+    """LTX's own stack by its recorded figures: a 14.2 GiB term and 7.08 GiB of files.
 
-    These are the figures LTX's own stack had while the files were added to
-    the line. Its own charge is now the line alone (``charge_from_weights``,
-    held by tests/test_classic_bake_records.py). The tests that take this
-    fixture are about the rule that picks between the two bakes, whose
-    arithmetic does not depend on the format, so the figures stay.
+    What a classic price adds for it on a reading taken before the file is
+    read: 21.2 GiB, the term and the file. On a reading taken after
+    (``stack_on_host``), the term alone.
     """
     term = price.term_from_weights(_weights(1660, price.FP8_QUANTIZED))
     charge = term + LTX_OWN_STACK
-    monkeypatch.setattr(price, "classic_charge", lambda _path, stack, _resolve: charge if stack else 0)
+
+    def classic_charge(_path, stack, _resolve, *, stack_on_host=False):
+        return 0 if not stack else term if stack_on_host else charge
+
+    monkeypatch.setattr(price, "classic_charge", classic_charge)
     monkeypatch.setattr(price, "stack_bytes", lambda stack, _resolve: LTX_OWN_STACK if stack else 0)
-    return charge  # what this stack's classic price adds
+    return charge  # what this stack's classic price adds from a box that has not read its file
 
 
 HELD = int(21.85 * GIB)  # what dropping the bare LTX base returns
@@ -641,6 +668,54 @@ def test_the_fresh_loads_probe_charges_the_classic_bake_and_never_prices_in_plac
     with fallback.permission(ALLOW):
         again = fallback.fresh_load_probe(held, "cond", STACK)("/models/m", {})
     assert again.in_place_bytes == 0 and again.in_place_note == "; " + fallback.TRIED
+
+
+def test_after_a_declined_hot_swap_the_walls_charge_none_of_the_stacks_files_and_only_once(worker_side, ltx):
+    """The swap read the stack before it declined; the fresh load prices against a box those bytes have left."""
+    term = ltx - LTX_OWN_STACK
+    store = _store(_stored())
+    assert not fallback.stack_on_host(store, "cond", STACK)
+    assert fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {}).bake_bytes == ltx  # an empty slot
+    fallback.note_stack_read(store, "cond", STACK)
+    assert fallback.stack_on_host(store, "cond", STACK)
+    assert not fallback.stack_on_host(store, "uncond", STACK)  # another slot's stack
+    assert not fallback.stack_on_host(store, "cond", [{"name": "other.safetensors", "strength": 0.8}])
+    assert not fallback.stack_on_host(store, "cond", None)
+    assert fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {}).bake_bytes == term
+    # The probe read the note once: the next fresh load of this stack is charged its file again.
+    assert not fallback.stack_on_host(store, "cond", STACK)
+    assert fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {}).bake_bytes == ltx
+    # A probe for another stack, or on the default, clears a note it does not use.
+    fallback.note_stack_read(store, "cond", STACK)
+    assert fallback.fresh_load_probe(store, "cond", None) is None
+    assert not fallback.stack_on_host(store, "cond", STACK)
+
+
+def test_a_note_too_old_to_be_this_calls_is_not_believed(worker_side, ltx, monkeypatch):
+    store = _store(_stored())
+    fallback.note_stack_read(store, "cond", STACK)
+    assert fallback.stack_on_host(store, "cond", STACK) and fallback._STACK_READ_MAX_AGE_S >= 60
+    monkeypatch.setattr(fallback, "_STACK_READ_MAX_AGE_S", -1.0)  # every note is now older than allowed
+    assert not fallback.stack_on_host(store, "cond", STACK)
+    assert fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {}).bake_bytes == ltx
+
+
+def test_the_fallback_reads_the_same_note_and_keeps_the_classic_bake_where_it_then_fits(worker_side):
+    worker_side.avail_gib = 46.0  # the classic change needs 50.3 with the file still to read, 43.2 with it read
+    plain = _store(_stored())
+    with fallback.permission(ALLOW):
+        assert _take(plain) == ("patcher", "hot-swap")  # no note: the file is charged, so the bake goes in place
+    worker_side.baked.clear()
+    noted = _store(_stored())
+    fallback.note_stack_read(noted, "cond", STACK)
+    with fallback.permission(ALLOW):
+        assert _take(noted) is None  # the classic bake fits the reading the file has already left
+    assert worker_side.baked == [] and fallback.stack_on_host(noted, "cond", STACK)  # kept for the fresh load
+    # Where the fallback does bake, the box is no longer as the swap left it, and the note goes.
+    worker_side.avail_gib = 30.0
+    with fallback.permission(ALLOW):
+        assert _take(noted) == ("patcher", "hot-swap")
+    assert not fallback.stack_on_host(noted, "cond", STACK)
 
 
 def test_the_term_and_the_fallback_belong_to_a_change_that_loads_fresh():

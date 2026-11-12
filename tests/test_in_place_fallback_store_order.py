@@ -76,6 +76,40 @@ def test_a_fallback_that_declines_is_followed_by_the_fresh_load(classic):
     assert transition == "load" and calls.load == 2 and store.current is not bare
 
 
+def test_a_declined_hot_swap_notes_the_stack_it_read_for_the_fresh_load_that_follows(classic, monkeypatch):
+    """The real swap reads the stack to count what it would copy; the walls then charge none of its files."""
+    store, _calls, _asked, _answer = classic
+    seen: dict = {}
+    real_probe = in_place_fallback.fresh_load_probe
+
+    def take(store_, slot, unet_name, options, lora_stack, *_rest):
+        seen["at take"] = in_place_fallback.stack_on_host(store_, slot, lora_stack)
+        return None
+
+    def probe(store_, slot, lora_stack):
+        seen["at the walls"] = in_place_fallback.stack_on_host(store_, slot, lora_stack)
+        return real_probe(store_, slot, lora_stack)
+
+    monkeypatch.setattr(in_place_fallback, "take", take)
+    monkeypatch.setattr(in_place_fallback, "fresh_load_probe", probe)
+    _patcher, transition = store.ensure(BASE, {}, STACK)
+    assert transition == "load" and seen == {"at take": True, "at the walls": True}
+    assert not in_place_fallback.stack_on_host(store, "cond", STACK)  # read once
+    # The same stack into a slot the store holds nothing in: no swap ran, so nothing was read first.
+    store._drop("cond")
+    seen.clear()
+    store.ensure(BASE, {}, STACK)
+    assert seen == {"at take": False, "at the walls": False}
+
+
+def test_a_hot_swap_that_stays_in_place_leaves_no_note(classic):
+    store, _calls, _asked, _answer = classic
+    in_place_fallback.note_stack_read(store, "cond", STACK)  # a note an earlier call left behind
+    store.current.base_patcher.backup = {"w1": object(), "w2": object()}  # ComfyUI's backup covers the stack
+    _patcher, transition = store.ensure(BASE, {}, STACK)
+    assert transition == "hot-swap" and not in_place_fallback.stack_on_host(store, "cond", STACK)
+
+
 def test_a_change_the_hot_swap_makes_in_place_never_asks_the_fallback(classic):
     store, calls, asked, _answer = classic
     store.current.base_patcher.backup = {"w1": object(), "w2": object()}  # ComfyUI's backup covers the stack
