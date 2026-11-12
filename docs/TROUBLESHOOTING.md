@@ -736,24 +736,22 @@ you may see:
   then baked in place when the classic bake does not fit. Change nothing else
   on the Init node between the two renders: the PASS counts only for the same
   settings with the switch on. Or free memory, or leave the switch on.
-- **A plain FP8 or scaled FP8 stack is refused with room to spare.** The
-  price charges those formats 2 GiB plus 7.5 MiB for each weight the stack
-  patches, and the stack's own files. On the hardware runs of 2026-11-12 an
-  LTX 2.3 scaled FP8 load with its 7.1 GiB stack took about 11 GiB less than
-  that price, and a plain FP8 load took no more than its price with no term
-  at all. So with `lora_low_rss` off such a load can be refused on a box that
-  would have run it. The default setting, `lora_low_rss` on, is not priced
-  this way and is not refused so. If you need the switch off, render the
-  combination once with it on: the gate records its PASS, and from then on
-  the Worker bakes in place wherever the classic price does not fit.
-- **An INT8 ConvRot file is charged less.** Its stack takes little beside the
-  weights (0.5 and 2.2 GiB on the two hardware runs), so the price adds only
-  2 GiB and the stack's files, whatever the number of patched weights. The
-  shipped Wan-Animate 2 template is such a file with the switch off.
-- **A BF16 or FP16 file is charged the same line as scaled FP8.** Two
-  hardware runs say the line covers it (a 148-weight stack rose 1.0 GiB
-  against 3.1 charged, a 1261-weight stack at most 7.4 against 11.2).
-  Leaving `lora_low_rss` on avoids the classic bake altogether.
+- **What the price adds depends on the checkpoint's format**, sized from
+  what loads took on hardware on 2026-11-12:
+  - scaled FP8 (LTX 2.3's file): 2 GiB plus 7.5 MiB for each weight the
+    stack patches;
+  - INT8 ConvRot (the shipped Wan-Animate 2 template's file) and plain FP8:
+    2 GiB and the stack's own files, whatever the number of patched weights.
+    Plain FP8 rests on one measured stack;
+  - BF16 and FP16: 2 GiB plus 7.5 MiB a patched weight, and the stack's
+    files.
+
+  A refusal prints the figure. If a load with `lora_low_rss` off is refused
+  on a box you believe has room, the default setting (`lora_low_rss` on) is
+  not priced this way and is not refused so. If you need the switch off,
+  render the combination once with it on: the gate records its PASS, and
+  from then on the Worker bakes in place wherever the classic price does not
+  fit.
 
 The default, `lora_low_rss` on, is not affected ([DESIGN](DESIGN.md), "A LoRA
 stack's classic bake has a price").

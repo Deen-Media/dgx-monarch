@@ -2385,55 +2385,64 @@ render took from the box after the Worker's price line, against what the
 stock price (no term) promised it would take. It says which formats the term
 is true for:
 
-| checkpoint, patched keys, how it loaded | reading | low | took | the stock price promised | short by | the line charged |
-|---|---:|---:|---:|---:|---:|---:|
-| Wan-Animate 2 INT8 ConvRot, 1261, loaded partly and baked whole on one GPU | 45.0 | 11.93 | 33.1 | 32.6 | 0.5 | 11.9 |
-| MiniMax H3 INT8 ConvRot, 208, whole | 50.9 | 7.73 | 43.2 | 41.0 | 2.2 | 5.3 |
-| Qwen Image plain FP8, 720, whole | 49.1 | 10.19 | 38.9 | 40.0 | none (1.1 to spare) | 8.1 |
-| LTX 2.3 scaled FP8, 1660, whole | 75.9 | 20.32 | 55.6 | 45.9 | 9.7 | 21.2 |
-| Wan-Animate 2 BF16, 1261, whole, the second Spark's Worker of a pair | 113.6 | 36.21 | 77.4 | 64.1 | 13.3 | 12.0 |
+| checkpoint, patched keys, how it loaded | reading | low | took | the stock price promised | short by | first charged | now charged |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Wan-Animate 2 INT8 ConvRot, 1261, loaded partly and baked whole on one GPU | 45.0 | 11.93 | 33.1 | 32.6 | 0.5 | 11.9 | 2.7 |
+| MiniMax H3 INT8 ConvRot, 208, whole | 50.9 | 7.73 | 43.2 | 41.0 | 2.2 | 5.3 | 3.8 |
+| Qwen Image plain FP8, 720, whole | 49.1 | 10.19 | 38.9 | 40.0 | none (1.1 to spare) | 8.1 | 2.8 |
+| LTX 2.3 scaled FP8, 1660, whole | 75.9 | 20.32 | 55.6 | 45.9 | 9.7 | 21.2 | 14.2 |
+| the same file, 480, whole | 82.6 | 35.22 | 47.4 | 45.9 | 1.5 | 5.8 | 5.5 |
+| Wan-Animate 2 BF16, 1261, whole, the second Spark's Worker of a pair | 113.6 | 36.21 | 77.4 | 64.1 | 13.3 | 11.9 | 11.9 |
 
-(GiB. "The line charged" is the term and the stack's files as first built.)
-The stock price is short where the term says it is for scaled FP8 and for
-BF16 with a large stack. It is not short for INT8 ConvRot, whatever the
-count, and the line refused the shipped Wan-Animate 2 template (INT8 ConvRot
-with its LoRA, `lora_low_rss` off) at readings where it had rendered. So the
-term is right-sized by format, below. Three rules follow.
+(GiB. "First charged" is the line and the stack's files for every format,
+as the term was first built; "now charged" is by format, below.) The first
+charge refused four states that had rendered: the shipped Wan-Animate 2
+template's own pair (INT8 ConvRot with its LoRA, `lora_low_rss` off) at a
+reading of 44.8 against a price of 49.5, the MiniMax H3 and Qwen Image loads
+at 50.4 and 48.7, and the LTX load at 68.5 against 72.1. So the charge is
+sized by format from what each load took, and a test holds every row of this
+table against it (`tests/test_classic_bake_records.py`): the price must admit
+each reading on record and cover what the load took plus the floor. Three
+rules follow.
 
-- **The term** (`capacity_classic_bake.py`). A classic bake on stock residency
-  is charged 2 GiB plus 7.5 MiB a patched weight, which covers every row
-  (5.52 and 14.16 GiB for the two LTX stacks). The weights are counted from
-  the checkpoint's and the LoRAs' headers, which give the Worker's own counts
-  for both LTX stacks (1660 and 480); a patched bias counts as a weight, and
-  a stack that cannot be mapped charges every weight, and a checkpoint whose
+- **The term** (`capacity_classic_bake.py`). The line through the two LTX
+  rows of the first table is 2 GiB plus 7.5 MiB a patched weight (5.52 and
+  14.16 GiB for the two stacks). The weights are counted from the
+  checkpoint's and the LoRAs' headers, which give the Worker's own counts
+  for both LTX stacks (1660 and 480); a patched bias counts as a weight, a
+  stack that cannot be mapped charges every weight, and a checkpoint whose
   header cannot be read is charged as the largest stack measured (1660
-  weights). The line is scaled FP8's: it is drawn through the two LTX rows.
-  A quantized FP8 weight larger than the largest one under
-  those rows (64 MiB, the LTX file's largest patched weight) is past them,
-  and a stack that patches one is charged the larger of the line and 0.75 of
-  its patched quantized FP8 bytes. **INT8 ConvRot carries no per-weight
-  share**: a stack on such a file is charged the fixed 2 GiB and its files,
-  which cover both INT8 rows of the second table (2.7 GiB against 0.5, and
-  3.8 against 2.2). Those rows are of whole stacks, and most of a stack's
-  keys there are the biases and norm weights of the INT8 blocks, a few KiB
-  each (the Wan-Animate 2 file has 480 INT8 weights among the 1261 keys its
-  LoRA patches). So beside INT8 weights a patched key under 1 MiB carries no
-  share either, and a larger weight of another format in the same stack
-  keeps its own. One constant (`NO_PER_WEIGHT_SHARE`) names the classes
-  charged so, and a class a later measurement puts beside INT8 is one word
-  there. Full-precision weights (BF16, FP16, FP32) are charged by the line:
-  a Klein BF16 stack of 148 patched weights rose 1.00 GiB against a line of
-  3.08, and the BF16 Wan-Animate 2 stack of 1261 rose at most 7.4 against
-  11.24, so the line stands, and the second table's last row says it is not
-  generous. No share of their bytes is charged; one constant
-  (`GUARDED_BY_BYTES`) holds that choice. Plain FP8 is charged by the line
-  on one weight count, where the stock price was not short at all, and by
-  the fourth row the line with the files is about 11 GiB more than LTX's own
-  stack took: with the switch off a plain FP8 or scaled FP8 stack may be
-  refused with room to spare. Reading lows at two stack sizes at the price's
-  edge, for scaled FP8, plain FP8 and BF16, is what a later measured pass
-  owes. The stack's own files
-  are charged too: the Worker reads them into host memory for the bake.
+  weights) and its files. What a classic price adds is sized by format:
+  - **Scaled FP8** (an FP8 weight with its scale or ComfyUI's quant record
+    beside it): the line, and the stack's files are not added to it. The
+    line alone leaves 4.5 and 4.0 GiB above what LTX's two stacks took plus
+    the floor. With the 7.1 GiB of files on top, the larger stack was priced
+    at 72.1 GiB against a need of 60.6.
+  - **INT8 ConvRot and plain FP8**: no per-weight share; the fixed 2 GiB and
+    the stack's files. Both INT8 rows and the plain FP8 row are covered with
+    room (the table's last two columns). Plain FP8 rests on one weight
+    count, 720, and a second count is owed by a measured pass. The INT8 rows
+    are of whole stacks, and most of a stack's keys there are the biases and
+    norm weights of the INT8 blocks, a few KiB each (the Wan-Animate 2 file
+    has 480 INT8 weights among the 1261 keys its LoRA patches). So beside a
+    weight of such a class a patched key under 1 MiB carries no share
+    either, and a larger weight of another format in the same stack keeps
+    its own. A stack with no such weight is counted as the line was fitted,
+    its biases included.
+  - **Full precision** (BF16, FP16, FP32): the line and the files. A Klein
+    BF16 stack of 148 patched weights rose 1.00 GiB against a line of 3.08
+    and the BF16 Wan-Animate 2 stack of 1261 at most 7.4 against 11.24, and
+    the table's last row took 1.3 GiB more than that price covers, so
+    nothing is trimmed there. Whether that 1.3 is the bake or the render's
+    own activations, which a load price does not claim, is for the measured
+    pass to say.
+  - **The bytes guard** (0.75 of a format's patched bytes, for a weight
+    larger than any measured) has no record behind it and is off. Both LTX
+    stacks' largest patched weight is 64.0 MiB; a file with larger ones is
+    past the records.
+
+  Three constants hold those choices, one word each to change:
+  `NO_PER_WEIGHT_SHARE`, `FILES_IN_THE_LINE` and `GUARDED_BY_BYTES`.
   `StockFit` carries the term, so the Worker's two walls and the quote the
   driver reads charge one figure by one function, and every refusal prints
   it. The partial-load route's room rule charges the line for the layers
@@ -2517,13 +2526,14 @@ term is right-sized by format, below. Three rules follow.
   permission: a loader node or the scheduler node that loads a model with
   its stack keeps the classic bake.
 
-Run on hardware on 2026-11-12 as first built (the line for every format): the
-refusal with no permission, the gate's PASS, the in-place bake with the
-classic latent on a held base, on an empty slot and on the pair, the classic
-bake admitted at its price, and the fleet's own refusal where neither fits.
-The INT8 ConvRot class is built on the second table's two INT8 rows; a whole
-classic INT8 load with many patched weights at tight memory is the one point
-those rows do not hold, and the proof block reads it before the release.
+Run on hardware on 2026-11-12 as first built (the line and the files for
+every format): the refusal with no permission, the gate's PASS, the in-place
+bake with the classic latent on a held base, on an empty slot and on the
+pair, the classic bake admitted at its price, and the fleet's own refusal
+where neither fits. The charge by format is built on the second table. Two
+points it does not hold are read by the proof block before the release: a
+whole classic INT8 load with many patched weights at tight memory, and the
+scaled FP8 load at a reading 2 GiB above its new price.
 
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a

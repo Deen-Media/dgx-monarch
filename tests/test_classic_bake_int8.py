@@ -94,14 +94,16 @@ def test_an_int8_convrot_weight_is_its_own_class_and_needs_its_marker(tmp_path):
         "b.weight": ("I8", [8, 8]), "b.comfy_quant": ("U8", [72]),
         "c.weight": ("I8", [8, 8]),  # INT8 with no quantization marker beside it: not ConvRot by the header
         "d.weight": ("F8_E4M3", [8, 8]), "d.weight_scale": ("F32", [1]),
+        "e.weight": ("F8_E4M3", [8, 8]),  # FP8 with no marker: plain FP8
         "a.bias": ("BF16", [8])})
     tensors = price.read_safetensors_header(str(path)).tensors
     assert price.weight_class("a.weight", tensors) == price.INT8_QUANTIZED
     assert price.weight_class("b.weight", tensors) == price.INT8_QUANTIZED
     assert price.weight_class("c.weight", tensors) == price.OTHER
     assert price.weight_class("d.weight", tensors) == price.FP8_QUANTIZED
+    assert price.weight_class("e.weight", tensors) == price.PLAIN_FP8
     assert price.weight_class("a.bias", tensors) == price.FULL_PRECISION
-    assert price.NO_PER_WEIGHT_SHARE == (price.INT8_QUANTIZED,)
+    assert price.NO_PER_WEIGHT_SHARE == (price.INT8_QUANTIZED, price.PLAIN_FP8)
 
 
 def test_the_wan_animate_2_shaped_int8_stack_is_charged_the_fixed_part_not_the_line(tmp_path):
@@ -116,20 +118,46 @@ def test_the_wan_animate_2_shaped_int8_stack_is_charged_the_fixed_part_not_the_l
     assert charged == INT8_TERM
     assert charged >= 0.5 * GIB  # what the hardware cell took beside the stock price
     assert LINE - charged > 9 * GIB  # what the line charged this stack beyond that (11.2 GiB in all)
+    # The whole addition to the stock price: the term and the stack's file.
+    assert price.classic_charge(checkpoint, STACK, resolve) == INT8_TERM + os.path.getsize(stack)
 
 
-def test_the_same_header_as_scaled_fp8_keeps_the_line_and_its_guard(tmp_path):
+def test_the_same_header_as_scaled_fp8_keeps_the_line_and_is_not_charged_its_files_again(tmp_path):
     checkpoint, stack = _files(tmp_path, quantized_dtype="F8_E4M3")
     resolve = _resolver({"a.safetensors": stack})
     tensors = price.read_safetensors_header(checkpoint).tensors
     keys = price.patched_weights(tensors, STACK, resolve)
     quantized = [tensors[key].nbytes for key in keys if price.weight_class(key, tensors) == price.FP8_QUANTIZED]
     assert len(keys) == PATCHED and len(quantized) == 480
-    # Every patched key counts, the biases included, as the line was fitted; this file's largest
-    # quantized weight is past the measured 64 MiB, so the bytes guard is read too.
+    # Every patched key counts, the biases included, as the line was fitted.
+    assert price.classic_bake_bytes(checkpoint, STACK, resolve) == LINE
+    assert price.classic_charge(checkpoint, STACK, resolve) == LINE  # the line holds the files
+    # This file's largest quantized weight is past the measured 64 MiB; the bytes guard is off (no record).
     assert max(quantized) > price.MEASURED_LARGEST_WEIGHT_BYTES[price.FP8_QUANTIZED]
-    assert price.classic_bake_bytes(checkpoint, STACK, resolve) == max(
-        LINE, int(price.CLASSIC_BAKE_GUARD_RATIO * sum(quantized)))
+
+
+def test_the_same_header_as_plain_fp8_is_charged_as_int8_is(tmp_path):
+    """FP8 weights with no quantization marker beside them: the fixed part and the files."""
+    tensors: dict = {}
+    lora: dict = {}
+    for block in range(60):
+        for name in ("attn.to_q", "attn.to_k", "attn.to_v", "attn.to_out"):
+            stem = f"blocks.{block}.{name}"
+            tensors[f"{stem}.weight"] = ("F8_E4M3", [3072, 3072])
+            tensors[f"{stem}.bias"] = ("F8_E4M3", [3072])
+            lora[f"diffusion_model.{stem}.lora_down.weight"] = ("BF16", [4, 4])
+            lora[f"diffusion_model.{stem}.lora_up.weight"] = ("BF16", [4, 4])
+            lora[f"diffusion_model.{stem}.diff_b"] = ("BF16", [3072])
+    checkpoint, stack = tmp_path / "plain.safetensors", tmp_path / "a.safetensors"
+    _write_safetensors(checkpoint, tensors)
+    _write_safetensors(stack, lora)
+    resolve = _resolver({"a.safetensors": str(stack)})
+    read = price.read_safetensors_header(str(checkpoint)).tensors
+    keys = price.patched_weights(read, STACK, resolve)
+    assert len(keys) == 480 and {price.weight_class(key, read) for key in keys} == {price.PLAIN_FP8}
+    assert price.classic_bake_bytes(str(checkpoint), STACK, resolve) == price.CLASSIC_BAKE_FIXED_BYTES
+    assert price.classic_charge(str(checkpoint), STACK, resolve) == (
+        price.CLASSIC_BAKE_FIXED_BYTES + os.path.getsize(stack))
 
 
 def test_beside_int8_weights_a_large_weight_of_another_format_keeps_its_share_and_a_small_key_does_not():

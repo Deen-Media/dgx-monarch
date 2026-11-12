@@ -650,17 +650,14 @@
   past the price, and the Worker's GPU figure ended 12.3 GiB above the same
   model's load with no stack (5.0 GiB for a 0.3 GiB stack on the same file,
   1.2 GiB on an INT8 file, 0.8 GiB on a plain FP8 file). The price now adds
-  2 GiB plus 7.5 MiB for each weight the stack patches, and for a quantized
-  FP8 layer larger than any measured, a share of the patched bytes. BF16
-  and FP16 files are charged the same line, which two hardware runs cover.
-  An INT8 ConvRot file is charged only the 2 GiB and the stack's files,
-  whatever the number of patched weights: its loads took 0.5 and 2.2 GiB
-  beside the old price, and the shipped Wan-Animate 2 template is such a
-  file with the switch off. For plain FP8 and scaled FP8 the new price is
-  more than the measured loads took (about 11 GiB more for the LTX stack),
-  so with the switch off such a load may be refused with room to spare; the
-  default setting is not, and one render with the switch on lets the gate
-  permit the in-place bake from then on. A load that fitted the old price and does not fit the
+  a charge sized by format from what each measured load took: for scaled FP8,
+  2 GiB plus 7.5 MiB for each weight the stack patches; for INT8 ConvRot
+  (the shipped Wan-Animate 2 template's file) and plain FP8, 2 GiB and the
+  stack's files, whatever the number of patched weights; for BF16 and FP16,
+  2 GiB plus 7.5 MiB a patched weight and the stack's files. Plain FP8 rests
+  on one measured stack. A test holds the price against every recorded load:
+  it must admit each one and cover what the load took plus the 5 GiB floor.
+  A load that fitted the old price and does not fit the
   new one is refused with the new figure, where before it was admitted and
   took the box under its floor. Where the classic bake does not fit and
   baking in place on the loaded model would, the Worker bakes in place, as
@@ -670,7 +667,7 @@
   render of it with `lora_low_rss` on records; with no PASS the refusal says
   so and names both prices. The default (`lora_low_rss` on) is priced as
   before. Nothing to set. Run on hardware on 2026-11-12 with every format on
-  the one line; the INT8 ConvRot figure rests on that day's two INT8 loads
+  the one line and its files; the charge by format rests on that day's loads
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
