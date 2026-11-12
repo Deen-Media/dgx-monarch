@@ -34,13 +34,19 @@ def _weights(count: int, kind: str = price.OTHER, nbytes: int = 16 * MIB):
 
 
 @pytest.mark.parametrize("count, kind, measured_gib", [
-    (1660, price.FP8_QUANTIZED, 12.34), (480, price.FP8_QUANTIZED, 5.03),
-    (208, price.OTHER, 1.21), (720, price.OTHER, 0.84)])
+    (1660, price.FP8_QUANTIZED, 12.34), (480, price.FP8_QUANTIZED, 5.03), (720, price.OTHER, 0.84)])
 def test_the_line_is_never_under_a_measured_rise(count, kind, measured_gib):
     charged = price.term_from_weights(_weights(count, kind))
     assert charged == price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * count
     assert charged >= measured_gib * GIB
     assert charged <= (measured_gib + 6.5) * GIB  # a cover, not a blank cheque
+
+
+@pytest.mark.parametrize("count, measured_gib", [(208, 1.21), (208, 0.99)])
+def test_int8_convrot_weights_are_charged_the_fixed_part_which_covers_their_measured_rises(count, measured_gib):
+    """MiniMax H3 INT8 ConvRot, 208 patched weights: 1.21 GiB (BAKE-2) and 0.99 (block B), both 2026-11-12."""
+    charged = price.term_from_weights(_weights(count, price.INT8_QUANTIZED))
+    assert charged == price.CLASSIC_BAKE_FIXED_BYTES >= measured_gib * GIB
 
 
 def test_the_line_sits_within_a_sixth_of_both_ltx_points():
@@ -79,7 +85,7 @@ def test_full_precision_weights_are_charged_by_the_line_until_a_bf16_cell_is_mea
     assert price.term_from_weights(weights) == guard  # no measured point: guarded whatever the layers' size
 
 
-def test_int8_and_plain_fp8_weights_are_charged_by_the_line_alone():
+def test_plain_fp8_weights_are_charged_by_the_line_alone():
     weights = _weights(208, price.OTHER, 94 * MIB)
     assert price.term_from_weights(weights) == (price.CLASSIC_BAKE_FIXED_BYTES
                                                 + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 208)
@@ -116,7 +122,7 @@ def test_a_weight_is_classed_from_the_header_alone(tmp_path):
     assert price.weight_class("blocks.0.attn.weight", tensors) == price.FP8_QUANTIZED
     assert price.weight_class("blocks.0.plain.weight", tensors) == price.OTHER  # FP8 with no quant marker
     assert price.weight_class("blocks.0.mlp.weight", tensors) == price.FULL_PRECISION
-    assert price.weight_class("blocks.0.int.weight", tensors) == price.OTHER
+    assert price.weight_class("blocks.0.int.weight", tensors) == price.INT8_QUANTIZED  # INT8 with its scale
 
 
 def test_the_price_counts_the_weights_the_stack_patches(tmp_path):
@@ -125,7 +131,12 @@ def test_the_price_counts_the_weights_the_stack_patches(tmp_path):
     resolve = _resolver({"stack.safetensors": lora})
     tensors = price.read_safetensors_header(path).tensors
     assert price.patched_weights(tensors, STACK, resolve) == {"blocks.0.attn.weight", "blocks.0.int.weight"}
+    # The scaled FP8 weight carries the per-weight share; the INT8 ConvRot weight beside it carries none.
     assert price.classic_bake_bytes(path, STACK, resolve) == (
+        price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
+    both_shared = _lora(tmp_path, ["blocks.0.attn", "blocks.0.mlp"], name="shared.safetensors")
+    assert price.classic_bake_bytes(path, [{"name": "shared.safetensors"}], _resolver(
+        {"shared.safetensors": both_shared})) == (
         price.CLASSIC_BAKE_FIXED_BYTES + 2 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
     assert price.classic_bake_bytes(path, None, resolve) == 0
     assert price.classic_bake_bytes(path, [], resolve) == 0
@@ -142,8 +153,11 @@ def test_a_stack_it_cannot_map_or_read_charges_every_weight(tmp_path):
         raise FileNotFoundError("no such LoRA")
 
     assert price.patched_weights(tensors, STACK, missing) == every
-    assert price.classic_bake_bytes(path, STACK, missing) >= (
-        price.CLASSIC_BAKE_FIXED_BYTES + len(every) * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
+    # Every weight is priced by its own class. This header has one INT8 ConvRot weight, which carries
+    # no share, and beside it the one small key (the bias) carries none; the other three weights do.
+    assert len(every) == 5
+    assert price.classic_bake_bytes(path, STACK, missing) == (
+        price.CLASSIC_BAKE_FIXED_BYTES + 3 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
 
 
 def test_a_checkpoint_whose_header_cannot_be_read_is_charged_as_the_largest_stack_measured(tmp_path):

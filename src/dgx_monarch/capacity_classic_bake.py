@@ -18,6 +18,22 @@ counts as a weight, as it does in the count the Worker logs. The stock price
 (``capacity_fit``) had no term for any of it, and a 7.1 GiB stack took a load
 8.7 GiB past its price.
 
+The line is scaled FP8's: it is drawn through the two LTX points. INT8
+ConvRot does not follow it. Two hardware blocks read what a whole load and
+its render took beside the stock price (2026-11-12, the same Spark and cap):
+0.5 GiB for INT8 Wan-Animate 2 with 1261 patched keys, which the line would
+charge 11.2, and 2.2 GiB for INT8 MiniMax H3 with 208. So a patched INT8
+ConvRot weight carries no per-weight share (``NO_PER_WEIGHT_SHARE``). The
+fixed 2 GiB and the stack's files, which every classic price charges, cover
+both records: 2.7 GiB against the 0.5, and 3.8 against the 2.2. Those
+records are of whole stacks: the
+Wan-Animate 2 file has 480 INT8 weights, so at least 781 of that stack's
+1261 keys are other keys, and by the file's header nearly all of those are
+the biases and norm weights of the same blocks, a few KiB each. So
+beside INT8 weights a patched key under ``SMALL_KEY_BYTES`` carries no share
+either; a larger weight of another format in the same stack keeps its own.
+A stack with no INT8 weight is counted as it was fitted, its biases included.
+
 What is measured and what is not:
 
 - Quantized FP8, INT8 ConvRot and plain FP8 weights have the points above. A
@@ -25,13 +41,17 @@ What is measured and what is not:
   MiB) is past them, and a stack that patches one is charged the larger of
   the line and 0.75 of its patched quantized FP8 bytes (the larger share the
   two LTX points gave, 0.68, rounded up).
-- Full-precision weights (BF16, FP16, FP32) have no measured point. They are
-  charged by the line, as the lead ruled on 2026-11-12, until the hardware
-  block's two BF16 cells are in (a Klein BF16 stack cut at the latent, and the
-  BF16 Wan-Animate 2 template's first stack change). A share of their bytes
-  with no cell behind it priced a recovery that worked on hardware (clear and
+- Plain FP8 is charged by the line on one weight count (720), where the
+  stock price was not short at all; with the switch off such a stack may be
+  refused with room to spare until a second stack size is read.
+- Full-precision weights (BF16, FP16, FP32) are charged by the line. The
+  hardware block's two BF16 cells are in (2026-11-12): a Klein BF16 stack of
+  148 patched weights rose 1.00 GiB against a line of 3.08, and the BF16
+  Wan-Animate 2 template's stack of 1261 rose at most 7.4 against 11.24, so
+  the line stands and no share of their bytes is charged. A share with no
+  cell behind it had priced a recovery that worked on hardware (clear and
   retry on that template, 2026-11-05) as a refusal. ``GUARDED_BY_BYTES`` is
-  the one place to change when those cells are read.
+  the one place to change if a later cell calls for it.
 - A stack whose LoRA file cannot be read or mapped is charged for every weight
   of its checkpoint. A checkpoint whose own header cannot be read gives no
   weights to count, so its stack is charged the line for
@@ -72,8 +92,18 @@ CLASSIC_BAKE_BYTES_PER_WEIGHT = int(7.5 * MIB)
 # The larger share of the patched bytes measured (0.68), rounded up.
 CLASSIC_BAKE_GUARD_RATIO = 0.75
 FP8_QUANTIZED = "fp8_quantized"
+INT8_QUANTIZED = "int8_quantized"
 FULL_PRECISION = "full_precision"
 OTHER = "other"
+# The classes whose patched weights are charged no per-weight share, only the fixed part and
+# the stack's files. INT8 ConvRot: a whole load and its render took 0.5 GiB beside the stock
+# price with 1261 patched keys and 2.2 GiB with 208 (block A, 2026-11-12), where the line
+# charges 11.2 and 3.5. A class a later measurement puts beside it is one word here.
+NO_PER_WEIGHT_SHARE: tuple[str, ...] = (INT8_QUANTIZED,)
+# Beside a weight of such a class, a patched key smaller than this carries no share either.
+# The INT8 records are of whole stacks, and most of a stack's keys there are the biases and
+# norm weights of the INT8 blocks (a few KiB each; 781 of the 1261 on Wan-Animate 2).
+SMALL_KEY_BYTES = MIB
 # The formats whose patched bytes are guarded by ``CLASSIC_BAKE_GUARD_RATIO`` past their
 # measured points. FULL_PRECISION is not in it: no BF16, FP16 or FP32 cell exists yet, and
 # those weights are charged by the line until the hardware block's two BF16 cells are read.
@@ -92,6 +122,7 @@ UNREADABLE_STACK_WEIGHTS = 1660
 IN_PLACE_BAKE_FIXED_BYTES = 2 * GIB
 
 _FP8_DTYPES = frozenset({"F8_E4M3", "F8_E4M3FNUZ", "F8_E5M2", "F8_E5M2FNUZ"})
+_INT8_DTYPES = frozenset({"I8"})
 _FULL_DTYPES = frozenset({"BF16", "F16", "F32", "F64"})
 _QUANT_MARKERS = (".weight_scale", ".scale_weight", ".comfy_quant")
 _WEIGHT_SUFFIXES = (".weight", ".bias")
@@ -107,18 +138,32 @@ GATE_HAS_NOT_PASSED = ("baking it in place was not tried: no identity-gate PASS 
 
 
 def weight_class(key: str, tensors: Mapping[str, TensorDescriptor]) -> str:
-    """How the classic bake's guard reads one checkpoint weight, from the header alone."""
+    """How the classic bake's price reads one checkpoint weight, from the header alone.
+
+    A quantized weight is one with a quantization marker beside it (its
+    scale, or ComfyUI's quant record): scaled FP8 and INT8 ConvRot. An FP8
+    weight with no marker is plain FP8 and reads as ``OTHER``.
+    """
     dtype = tensors[key].dtype
     if dtype in _FULL_DTYPES:
         return FULL_PRECISION
     stem = key.rsplit(".", 1)[0]
-    if dtype in _FP8_DTYPES and any(stem + marker in tensors for marker in _QUANT_MARKERS):
+    quantized = any(stem + marker in tensors for marker in _QUANT_MARKERS)
+    if dtype in _FP8_DTYPES and quantized:
         return FP8_QUANTIZED
+    if dtype in _INT8_DTYPES and quantized:
+        return INT8_QUANTIZED
     return OTHER
 
 
 def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True) -> int:
     """The classic bake's charge for patched weights given as (class, stored bytes).
+
+    The fixed part, and the per-weight share for each weight that carries
+    one. A weight of a ``NO_PER_WEIGHT_SHARE`` class carries none, and beside
+    such weights neither does a key under ``SMALL_KEY_BYTES``. A stack with
+    no such weight is counted whole, its biases included, as the line was
+    fitted.
 
     ``guard=False`` charges the line alone. The partial-load route asks for
     that: its BF16 cell ran on hardware under the rule without this term, and
@@ -131,7 +176,10 @@ def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True)
         by_class.setdefault(kind, []).append(max(int(nbytes), 0))
     if not count:
         return 0
-    line = CLASSIC_BAKE_FIXED_BYTES + CLASSIC_BAKE_BYTES_PER_WEIGHT * count
+    beside_no_share = any(kind in NO_PER_WEIGHT_SHARE for kind in by_class)
+    sharing = sum(1 for kind, sizes in by_class.items() if kind not in NO_PER_WEIGHT_SHARE
+                  for size in sizes if not beside_no_share or size >= SMALL_KEY_BYTES)
+    line = CLASSIC_BAKE_FIXED_BYTES + CLASSIC_BAKE_BYTES_PER_WEIGHT * sharing
     if not guard:
         return line
     guarded = 0
@@ -278,7 +326,8 @@ def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, h
 
 
 __all__ = ["CLASSIC_BAKE_BYTES_PER_WEIGHT", "CLASSIC_BAKE_FIXED_BYTES", "CLASSIC_BAKE_GUARD_RATIO",
-           "FP8_QUANTIZED", "FULL_PRECISION", "GATE_HAS_NOT_PASSED", "GUARDED_BY_BYTES",
-           "IN_PLACE_BAKE_FIXED_BYTES", "IN_PLACE_BAKE_PROVEN", "MEASURED_LARGEST_WEIGHT_BYTES", "OTHER",
-           "UNREADABLE_STACK_WEIGHTS", "classic_bake_bytes", "in_place_bake_bytes", "patched_weights", "priced",
-           "probe", "stack_bytes", "term_from_weights", "weight_class"]
+           "FP8_QUANTIZED", "FULL_PRECISION", "GATE_HAS_NOT_PASSED", "GUARDED_BY_BYTES", "INT8_QUANTIZED",
+           "IN_PLACE_BAKE_FIXED_BYTES", "IN_PLACE_BAKE_PROVEN", "MEASURED_LARGEST_WEIGHT_BYTES",
+           "NO_PER_WEIGHT_SHARE", "OTHER", "SMALL_KEY_BYTES", "UNREADABLE_STACK_WEIGHTS", "classic_bake_bytes",
+           "in_place_bake_bytes", "patched_weights", "priced", "probe", "stack_bytes", "term_from_weights",
+           "weight_class"]
