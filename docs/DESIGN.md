@@ -2350,6 +2350,62 @@ wrapped (it is already the bounded form) and neither is `VAE.encode`. **NOT
 RUN** on hardware as merged: the two records above are of the build before it
 (TROUBLESHOOTING #12).
 
+**A Worker makes room for its CUDA context before it creates one.** The
+rules above are the driver's. This one is the Worker's, because the context
+is made there: a Worker's first CUDA call is ComfyUI's import of
+`comfy.model_management` inside `comfy_bridge.ensure_comfy`, which every
+setup reaches by one door, `worker_env.setup_impl` (an attached Worker, a
+local mesh and a respawn alike). No endpoint that runs before setup touches
+CUDA: status and `clear_vram` both say so and return early. On a GPU that
+shares the host's memory the NVIDIA driver needs free memory for a new
+context, and the page cache does not count: on 2026-11-12, on a DGX Spark
+under its clock cap (max 2100 MHz), two Worker starts failed in
+`cuDevicePrimaryCtxRetain` with 1.6 and 4.6 GiB free while 45 and 47 GiB
+were available, and the kernel log read `NV_ERR_NO_MEMORY` from the driver's
+allocation of the context's main buffer. All 94 other starts on record had
+8.9 GiB free or more, and made their context. `actor/context_room.py` holds
+two rules for it.
+
+- **Room first.** Setup calls the bootstrap through `context_room`, which
+  reads `/proc/meminfo` before the bootstrap runs. With 12 GiB free or more
+  it does nothing else. With less, and 17 GiB or more available (the 12 GiB
+  mark and the 5 GiB floor), on a GPU that shares the host's memory, it
+  writes to anonymous memory in steps of 1 GiB up to 12 GiB, holds every
+  step, and releases all of it together. The kernel gives page cache back to
+  serve the writes, and the release leaves that memory free. Before each
+  step it checks that the step leaves 5 GiB available, and stops if not. It
+  locks nothing. The amount is the mark and not the mark less what is free:
+  a process's first writes take the free pages, so writing 7 GiB on a box
+  with 5 GiB free leaves about 7 free afterwards.
+- **The gate asks the driver library, not torch.** Whether the GPU shares the
+  host's memory is the CUDA driver's device attribute
+  (`cuDeviceGetAttribute`, `CU_DEVICE_ATTRIBUTE_INTEGRATED`), which answers
+  from a device handle with no context. The pack's other gates read torch's
+  device properties, which is right where a context exists; before one, no
+  torch call is known to make none. The reading comes first, so a start with
+  room makes no driver call either.
+- **A refusal in words behind it.** If the bootstrap still fails with a CUDA
+  out-of-memory error before `comfy.model_management` has imported, the
+  Worker raises a class C refusal (`ContextMemoryError`) that says what
+  failed, what is free and what is available on its box, what the make-room
+  step did or why it did nothing, and what to do. Any other error passes on
+  as it was raised. The remedy it names is a reset of the attached mesh
+  after memory is freed: no record shows a second try in the same process
+  making a context, and a setup that failed leaves the Worker marked as not
+  torn down until a reset or a teardown settles it.
+- **It fails open, and it has one switch.** A fault anywhere in the step is
+  logged once and the bootstrap goes on as before. `DGXM_DISABLE_CONTEXT_ROOM=1`
+  in the Worker's environment turns the step off, for diagnosis; the refusal
+  stays. One line in the Worker's journal says what the step did whenever
+  free memory was short, and the Worker's status carries the same
+  (`context_room`).
+
+What it costs when it acts: a few seconds, and up to 12 GiB of page cache
+that files must be read into again. The Worker's unit sets no memory limit,
+so the reading is the box's. Not yet run on hardware: whether memory freed
+this way serves the driver's request is what the proof cell reads, and if it
+does not, the refusal stands alone.
+
 **A LoRA stack's classic bake has a price, and where it does not fit the
 Worker bakes in place if the identity gate allows.** With `lora_low_rss` off a
 Worker bakes a stack ComfyUI's classic way: the slot is dropped, base and
@@ -3137,6 +3193,8 @@ dgx-monarch/
 │   │   └── setup_binding.py   # follow-up RPC topology/token reassertion
 │   ├── actor/                 # GPUWorker, model store, failure decorators
 │   │   ├── comfy_custom_nodes.py # headless custom-node discovery/cleanup
+│   │   ├── context_room.py    # free memory for the Worker's CUDA context
+│   │   │                      #   before its first CUDA call, and the refusal
 │   │   ├── pread_backend.py   # lazy safetensors backend shim
 │   │   ├── load_profile_file.py # bounded per-host directory of Init
 │   │   │                      #   load_profile reports

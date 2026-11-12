@@ -710,6 +710,40 @@ models it freed from, and what MemAvailable read on each side. What to know:
   ([DESIGN](DESIGN.md), "Before a decode priced above free memory, the driver
   frees what the decode needs").
 
+**A Worker that starts with little free memory makes room for its GPU
+context.** A Worker makes its CUDA context at the first render after it
+starts, and on a Spark the NVIDIA driver needs free memory for it: memory
+the page cache holds does not count, although the system would give it back.
+On 2026-11-12, with the Spark under its clock cap (max 2100 MHz), two Worker
+starts with 1.6 and 4.6 GiB free and 45 and 47 GiB available ended in `Actor
+call dgxm_worker.setup failed` and `CUDA error: out of memory ... from
+cuDevicePrimaryCtxRetain`. So before its first CUDA call a Worker now reads
+the box's memory, and if less than 12 GiB is free while 17 GiB or more is
+available it writes to up to 12 GiB of memory and releases it at once, which
+makes the system give that much page cache back. What you may see:
+
+- **In the Worker's journal, `free memory was N GiB with M GiB available, so
+  the Worker made room for its GPU context: X GiB touched and released in S
+  seconds`.** Nothing to do. It took a few seconds, and files read earlier
+  are read from disk again when next used.
+- **`the Worker made no room for its GPU context: ...`** in the same place.
+  Free memory was short and the step did not run; the line says why (too
+  little available to do it safely, or a GPU with memory of its own).
+- **A refusal that starts `this Worker could not start on its GPU: the NVIDIA
+  driver could not get memory for a new CUDA context`.** The context could
+  not be made even so. The text gives the free and available memory of the
+  Worker's box and what the Worker did first. Close a program that holds
+  memory, or wait for a large download or file copy to end, then click Reset
+  attached mesh and queue again. If nothing can be closed, a root shell can
+  drop the page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`). On a pair
+  the refusal does not name which box: look at both.
+
+`DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment (a drop-in for the
+Worker's unit, then a Worker restart) turns the make-room step off, for
+diagnosis; the refusal stays. Not yet run on hardware
+([DESIGN](DESIGN.md), "A Worker makes room for its CUDA context before it
+creates one").
+
 **A LoRA stack with `lora_low_rss` off is refused, or baked in place.** With
 the switch off a Worker bakes a stack ComfyUI's classic way, and that bake
 takes memory beside the weights that the price used to leave out: on

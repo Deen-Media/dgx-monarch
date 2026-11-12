@@ -71,6 +71,10 @@ REFUSAL_CLASSES = frozenset({
     # load could not be made whole (actor/lora_partial_load.py).
     "OffloadedInputQuantError",
     "RenderMemoryPriceError",
+    # The NVIDIA driver could not get memory for a Worker's CUDA context
+    # (actor/context_room.py). Class C: free memory is short, and the Worker
+    # made what room it could before the try.
+    "ContextMemoryError",
     "DualModelLoadDivergenceError",
     # The post-load readiness exchange (actor/rank_readiness.py). Class P on
     # the healthy rank: MIN carries agreement and not identity, so this rank

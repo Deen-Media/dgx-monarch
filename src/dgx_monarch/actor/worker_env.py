@@ -17,7 +17,7 @@ from ..transfer_utils import (
 )
 from . import fsdp_checkpoint_pin, load_fault, rendezvous, vae_decode
 from .attention_dispatch import _AttentionDispatch as _AttentionDispatch
-from .comfy_bridge import ensure_comfy
+from .context_room import ensure_comfy  # comfy_bridge's, with room for the CUDA context
 from .worker_authorization import (
     accuracy_waiver_stamps as accuracy_waiver_stamps,
 )

@@ -108,7 +108,7 @@ def status_impl(worker) -> dict:
     from .. import monarch_policy, return_diagnostics, runtime_diagnostics
     from ..monarch_capabilities import diagnostic_identity
     from ..telemetry import event_snapshot
-    from . import vae_decode
+    from . import context_room, vae_decode
 
     event_seq, events = event_snapshot(32)
     info: dict[str, Any] = {
@@ -120,6 +120,8 @@ def status_impl(worker) -> dict:
         # The decode VAE this actor holds beside the DiT, priced and reported
         # like any resident (actor/vae_decode.py).
         "vae_decode": vae_decode.status_block(worker),
+        # What the Worker did to have free memory for its CUDA context (actor/context_room.py).
+        "context_room": context_room.status_block(),
         "nccl": False,
         # A failed setup/teardown rollback is a persistent dirty-state latch.
         # Publish only its boolean verdict: the exception detail stays in the
