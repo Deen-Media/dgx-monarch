@@ -105,6 +105,13 @@ _STATE = {"state": UNSET}
 # How many of ComfyUI's samplers are running in this thread. A decode inside one is a preview.
 _SAMPLING = threading.local()
 
+# How much ComfyUI is asked to free. False: the decode's own requirement and no more, so the
+# driver holds its floor through the decode with the least taken (decided 2026-11-12). True:
+# every idle model, ComfyUI's own "all of it" figure. That is the decided fallback if hardware
+# shows a page free returns too little, and this line is the whole change.
+FREE_ALL_IDLE = False
+_EVERYTHING = 1e30
+
 SAMPLER_RUNNING = "a sampler is running in this thread, and a decode inside it must not free what it samples with"
 UNLOAD_SWITCH = "the driver runs with DGXM_DISABLE_DRIVER_UNLOAD=1"
 
@@ -244,7 +251,7 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
     before = int(mesh_safety.mem_available_bytes() or 0)
     # ComfyUI's classic loader's own call for this requirement: it frees in its own order until the
     # call fits, and a DynamicVRAM model gives up pages without being unloaded where that is enough.
-    mm.free_memory(need, device, keep_loaded=keep, for_dynamic=False)
+    mm.free_memory(_EVERYTHING if FREE_ALL_IDLE else need, device, keep_loaded=keep, for_dynamic=False)
     gc.collect()
     mm.soft_empty_cache()
     time.sleep(_SETTLE_S)
@@ -362,7 +369,7 @@ def uninstall() -> None:
     _set(UNSET)
 
 
-__all__ = ["DISABLE_ENV", "INSTALLED", "NOT_INTEGRATED", "NOT_LINUX", "NO_COMFY", "OFF", "PROBE_FAILED",
-           "SAMPLER_RUNNING", "STEPPED_ASIDE", "UNLOAD_SWITCH", "UNSET", "decode_need", "decode_price",
+__all__ = ["DISABLE_ENV", "FREE_ALL_IDLE", "INSTALLED", "NOT_INTEGRATED", "NOT_LINUX", "NO_COMFY", "OFF",
+           "PROBE_FAILED", "SAMPLER_RUNNING", "STEPPED_ASIDE", "UNLOAD_SWITCH", "UNSET", "decode_need", "decode_price",
            "install", "install_driver", "kept_and_idle", "loader_need", "relieve", "sampling_depth",
            "state", "uninstall", "with_relief", "with_sampler_guard"]

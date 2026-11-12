@@ -194,6 +194,20 @@ def test_a_decode_priced_above_the_reading_frees_what_it_needs_and_then_decodes_
     assert wrapped(vae, samples_in=LATENT) is answer and calls[-1][2] == {"samples_in": LATENT}
 
 
+def test_the_decided_fallback_frees_every_idle_model_and_keeps_the_same_models(monkeypatch):
+    """One line switches the amount asked for; what is kept loaded does not change with it."""
+    assert vae_decode_relief.FREE_ALL_IDLE is False  # the decision of 2026-11-12: the requirement, no more
+    vae = _Vae(price=4 * GIB)
+    own, flux = SimpleNamespace(model=vae.patcher), _loaded(_Flux())
+    monkeypatch.setattr(vae_decode_relief, "FREE_ALL_IDLE", True)
+    mm = _model_management([2 * GIB, 30 * GIB], held=[own, _loaded(_TextEncoder()), flux])
+    _available(monkeypatch, 14 * GIB, 46 * GIB)
+    wrapped, _calls, answer = _wrapped(monkeypatch, mm)
+    assert wrapped(vae, LATENT) is answer
+    ((asked, device, kept, for_dynamic),) = mm.freed
+    assert asked == 1e30 and device == "cuda:0" and for_dynamic is False and kept == [own, flux]
+
+
 def test_a_decode_still_short_after_the_relief_runs_as_comfyui_runs_it_and_the_line_says_so(monkeypatch, caplog):
     mm = _model_management([GIB, 3 * GIB], held=[_loaded(_TextEncoder())])
     _available(monkeypatch, 8 * GIB, 10 * GIB)
