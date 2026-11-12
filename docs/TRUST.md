@@ -435,7 +435,7 @@ copied from historical evidence.
    and compile preparation. The sole authoritative live-precision scan runs
    after that preparation and immediately before the first FSDP parameter
    mutation; direct calls use the same path. This is enforced by
-   [`store_fsdp.py:96-113`](../src/dgx_monarch/actor/store_fsdp.py#L96-L113 "anchor:validate_injection") and
+   [`store_fsdp.py:103-120`](../src/dgx_monarch/actor/store_fsdp.py#L103-L120 "anchor:validate_injection") and
    [`fsdp.py:379-437`](../src/dgx_monarch/adapters/fsdp.py#L379-L437 "anchor:apply_fsdp_capacity_mode"), with one-scan and same-patcher drift coverage in
    [`test_fsdp_capacity.py:1207-1207`](../tests/test_fsdp_capacity.py#L1207-L1207 "anchor:test_worker_runs_one_live_precision_scan_after_preparation"),
    [`test_fsdp_capacity.py:1237-1237`](../tests/test_fsdp_capacity.py#L1237-L1237 "anchor:test_worker_live_scan_observes_same_patcher_model_replacement"), and
@@ -533,7 +533,7 @@ copied from historical evidence.
    [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization"), and
    [`worker_authorization.py:145-155`](../src/dgx_monarch/actor/worker_authorization.py#L145-L155 "anchor:assert_resident_artifact_identity"),
    with production call order at
-   [`sample_protocol.py:181-462`](../src/dgx_monarch/actor/sample_protocol.py#L181-L462 "anchor:run_sample").
+   [`sample_protocol.py:181-463`](../src/dgx_monarch/actor/sample_protocol.py#L181-L463 "anchor:run_sample").
    Driver and worker failures are covered by
    [`test_fleet.py:678-712`](../tests/test_fleet.py#L678-L712 "anchor:test_fleet_forces_stock_policy_until_exact_context_pass"),
    [`test_fleet.py:753-822`](../tests/test_fleet.py#L753-L822 "anchor:test_fleet_preserves_requested_policy_only_for_exact_context_pass"),
@@ -618,7 +618,7 @@ copied from historical evidence.
     Authorization, setup binding, driver validation, and
     worker revalidation are
     [`gate_identity.py:343-482`](../src/dgx_monarch/nodes/gate_identity.py#L343-L482 "anchor:authorize_normal_render"),
-    [`render_submit.py:250-489`](../src/dgx_monarch/nodes/render_submit.py#L250-L489 "anchor:_submit_render_guarded"),
+    [`render_submit.py:252-493`](../src/dgx_monarch/nodes/render_submit.py#L252-L493 "anchor:_submit_render_guarded"),
     [`mesh_residency.py:96-161`](../src/dgx_monarch/mesh_residency.py#L96-L161 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:253-397`](../src/dgx_monarch/mesh_residency.py#L253-L397 "anchor:assert_normal_render_residency_grant"),
     [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"), and
@@ -834,7 +834,7 @@ copied from historical evidence.
   boundaries are
   [`gate_identity.py:282-296`](../src/dgx_monarch/nodes/gate_identity.py#L282-L296 "anchor:model_for_request"),
   [`gate_identity.py:343-482`](../src/dgx_monarch/nodes/gate_identity.py#L343-L482 "anchor:authorize_normal_render"),
-  [`render_submit.py:250-489`](../src/dgx_monarch/nodes/render_submit.py#L250-L489 "anchor:_submit_render_guarded"),
+  [`render_submit.py:252-493`](../src/dgx_monarch/nodes/render_submit.py#L252-L493 "anchor:_submit_render_guarded"),
   [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:145-155`](../src/dgx_monarch/actor/worker_authorization.py#L145-L155 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
@@ -1059,7 +1059,7 @@ copied from historical evidence.
   integration, ownership, refusal, status, platform binding, and release are
   [`comfy_bridge.py:162-268`](../src/dgx_monarch/actor/comfy_bridge.py#L162-L268 "anchor:slab_load"),
   [`comfy_bridge.py:271-330`](../src/dgx_monarch/actor/comfy_bridge.py#L271-L330 "anchor:load_diffusion_model_slab"),
-  [`model_store.py:238-341`](../src/dgx_monarch/actor/model_store.py#L238-L341 "anchor:ensure"),
+  [`model_store.py:239-352`](../src/dgx_monarch/actor/model_store.py#L239-L352 "anchor:ensure"),
   [`slab_lifetime.py:22-22`](../src/dgx_monarch/actor/slab_lifetime.py#L22-L22 "anchor:_RETAINED_FAILED_LOAD_SLABS"),
   [`slab_lifetime.py:28-28`](../src/dgx_monarch/actor/slab_lifetime.py#L28-L28 "anchor:_RETAINED_FAILED_LOAD_RESOURCES"),
   [`slab_lifetime.py:32-32`](../src/dgx_monarch/actor/slab_lifetime.py#L32-L32 "anchor:_FAILED_LOAD_CLEANUP_POISONED"),
@@ -1083,10 +1083,10 @@ copied from historical evidence.
   [`slab.py:436-480`](../src/dgx_monarch/actor/slab.py#L436-L480 "anchor:close"),
   [`slab_lifetime.py:203-252`](../src/dgx_monarch/actor/slab_lifetime.py#L203-L252 "anchor:release_after_explicit_unload"),
   [`slab_lifetime.py:255-378`](../src/dgx_monarch/actor/slab_lifetime.py#L255-L378 "anchor:cleanup_failed_load"),
-  [`model_store.py:408-451`](../src/dgx_monarch/actor/model_store.py#L408-L451 "anchor:_drop"),
-  [`model_store.py:465-465`](../src/dgx_monarch/actor/model_store.py#L465-L465 "anchor:unload_all"),
-  [`model_store.py:473-476`](../src/dgx_monarch/actor/model_store.py#L473-L476 "anchor:release_retained_cleanup"), and
-  [`model_store.py:483-498`](../src/dgx_monarch/actor/model_store.py#L483-L498 "anchor:snapshot").
+  [`model_store.py:419-462`](../src/dgx_monarch/actor/model_store.py#L419-L462 "anchor:_drop"),
+  [`model_store.py:476-476`](../src/dgx_monarch/actor/model_store.py#L476-L476 "anchor:unload_all"),
+  [`model_store.py:484-487`](../src/dgx_monarch/actor/model_store.py#L484-L487 "anchor:release_retained_cleanup"), and
+  [`model_store.py:494-509`](../src/dgx_monarch/actor/model_store.py#L494-L509 "anchor:snapshot").
   Retention, refusal, and recovery are covered by
   [`test_slab.py:256-279`](../tests/test_slab.py#L256-L279 "anchor:test_close_attempts_annex_after_primary_arena_failure"),
   [`test_slab.py:670-681`](../tests/test_slab.py#L670-L681 "anchor:test_close_retains_live_export_until_retry"),
