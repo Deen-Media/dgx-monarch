@@ -173,6 +173,23 @@ def test_a_decode_that_fits_is_left_alone(monkeypatch, caplog):
     assert vae_decode_relief.state() == vae_decode_relief.UNSET
 
 
+def test_a_reading_equal_to_the_need_is_not_short(monkeypatch):
+    """ComfyUI's loader frees only when free memory is under the need; at the need itself it does not."""
+    mm = _model_management([4 * GIB + GIB // 2], held=[_loaded(_TextEncoder())])
+    wrapped, _calls, answer = _wrapped(monkeypatch, mm)
+    assert wrapped(_Vae(price=4 * GIB), LATENT) is answer
+    assert mm.freed == []
+
+
+def test_a_reading_above_the_price_and_under_price_plus_reserve_is_short(monkeypatch):
+    """The reserve is part of the need, as in ComfyUI's loader, so the relief acts inside that band."""
+    mm = _model_management([4 * GIB + GIB // 4, 30 * GIB], held=[_loaded(_TextEncoder())])
+    _available(monkeypatch, 8 * GIB, 30 * GIB)
+    wrapped, _calls, answer = _wrapped(monkeypatch, mm)
+    assert wrapped(_Vae(price=4 * GIB), LATENT) is answer
+    assert len(mm.freed) == 1
+
+
 def test_a_decode_priced_above_the_reading_frees_what_it_needs_and_then_decodes_with_the_callers_arguments(
         monkeypatch, caplog):
     ran = []
@@ -915,3 +932,73 @@ def test_on_real_comfyui_a_whole_sampler_with_a_preview_decode_frees_nothing_whi
     assert _same(after, stock_previews[-1][1])
     said = [record for record in caplog.records if vae_decode_relief.SAMPLER_RUNNING in record.getMessage()]
     assert len(said) == 1 and "stepped aside" not in caplog.text and idle is not None
+
+
+def test_on_real_comfyui_a_preview_decoded_from_another_thread_frees_nothing(comfy_sd, real_comfy, monkeypatch):
+    """The same real sampler, with each preview decoded on a thread the step callback starts and joins.
+
+    The count is process-wide, so that thread sees a sampler running. A count
+    kept per thread would read 0 there and free the text encoder under the
+    sampler at the first step.
+    """
+    anima = pytest.importorskip("comfy.ldm.anima.model", reason="this ComfyUI predates Anima")
+    import comfy.ops
+    import comfy.sample
+    import comfy.samplers
+
+    mm = real_comfy
+    torch.set_num_threads(2)
+    vae = _toy_vae(comfy_sd, channels=16)
+    idle = _toy_vae(comfy_sd)
+    idle.patcher.is_clip = True  # the mark of a text encoder, as in the tests above
+    idle.decode(torch.zeros(1, 4, 8, 8))
+    patcher = comfy_sd.load_diffusion_model_state_dict(_tiny_state(comfy.ops, anima.Anima))
+    positive, negative = _pair()
+    freed, seen = [], []
+    real_free = mm.free_memory
+
+    def recording(memory_required, device, *args, **kwargs):
+        freed.append(kwargs)
+        return real_free(memory_required, device, *args, **kwargs)
+
+    def preview(step, x0, x, total_steps):
+        box = []
+
+        def other():
+            with torch.inference_mode():  # per thread: a previewer's own thread enters it itself
+                box.append((vae_decode_relief.sampling_depth(), len(freed),
+                            vae.decode(x0).float().cpu().clone()))
+
+        thread = threading.Thread(target=other, name="preview-on-another-thread")
+        thread.start()
+        thread.join()
+        seen.append(box[0])
+
+    def sample():
+        del seen[:]
+        with torch.inference_mode():
+            latent = comfy.sample.fix_empty_latent_channels(patcher, torch.zeros(1, 4, 8, 8))
+            noise = comfy.sample.prepare_noise(latent, SEED, None)
+            out = comfy.sample.sample(patcher, noise, STEPS, CFG, "euler", "simple", positive, negative,
+                                      latent, denoise=1.0, disable_pbar=True, seed=SEED, callback=preview)
+        return out.clone(), list(seen)
+
+    stock_sample = comfy.samplers.CFGGuider.sample
+    try:
+        monkeypatch.setattr(mm, "get_free_memory", lambda dev=None, torch_free_too=False: (
+            (SHORT_READING, 0) if torch_free_too else SHORT_READING))
+        monkeypatch.setattr(mm, "free_memory", recording)
+        stock_latent, stock_seen = sample()
+        assert freed == []
+        vae_decode_relief.install()
+        latent, inside = sample()
+        during = list(freed)
+    finally:
+        monkeypatch.undo()
+        vae_decode_relief.uninstall()
+    assert comfy.samplers.CFGGuider.sample is stock_sample
+    assert len(inside) == len(stock_seen) >= STEPS
+    assert all(depth == 1 and count == 0 for depth, count, _ in inside), [row[:2] for row in inside]
+    assert during == [] and vae_decode_relief.sampling_depth() == 0 and idle is not None
+    assert _same(latent, stock_latent)
+    assert all(_same(mine[2], theirs[2]) for mine, theirs in zip(inside, stock_seen, strict=True))
