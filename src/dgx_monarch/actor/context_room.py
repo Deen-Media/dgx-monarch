@@ -35,7 +35,8 @@ where a context exists and is not known to be safe before one.
 
 **A plain refusal behind it.** If the bootstrap still fails with a CUDA
 out-of-memory error before ``comfy.model_management`` has imported, the
-Worker raises a class C refusal that says what failed, what is free and
+Worker raises a class C refusal (guard ``gpu_context_memory``, no card) that
+says what failed, what is free and
 available, what the make-room step did, and what to do. Any other error
 passes on unchanged.
 
@@ -120,7 +121,7 @@ class Outcome:
             early = f" ({self.why})" if self.why else ""
             return (f"Before that the Worker made room: it wrote to {_gib(self.touched)} GiB "
                     f"of memory and released it{after}{early}, and the context still could "
-                    "not be made.")
+                    "not be made, so free memory may not be all the driver lacks.")
         if self.why:
             return f"The Worker made no room first: {self.why}."
         return "The Worker made no room first."
@@ -284,18 +285,16 @@ def _is_cuda_out_of_memory(exc: BaseException) -> bool:
     return "out of memory" in text and "cuda" in text
 
 
-def refusal_text(outcome: Outcome, reading: Reading | None) -> str:
-    """The class C refusal for a context the driver could not make."""
-    figures = ("The memory of this Worker's box could not be read." if reading is None else
-               f"{_gib(reading[0])} GiB of memory is free on this Worker's box and "
-               f"{_gib(reading[1])} GiB is available: the driver needs free memory, and the "
-               "rest of what is available is page cache, files the system has read and still "
-               "keeps.")
-    return refusal(RefusalClass.CAPACITY, (
-        "this Worker could not start on its GPU: the NVIDIA driver could not get memory for "
-        f"a new CUDA context. {figures} {outcome.sentence()} Nothing was loaded. Close a "
-        "program that holds memory, or wait for a large download or file copy to end, then "
-        "click Reset attached mesh and queue again."), troubleshooting=12)
+GUARD = "gpu_context_memory"
+
+
+def _figures(reading: Reading | None) -> str:
+    if reading is None:
+        return "The memory of this Worker's box could not be read."
+    return (f"{_gib(reading[0])} GiB of memory is free on this Worker's box and "
+            f"{_gib(reading[1])} GiB is available: the driver needs free memory, and the "
+            "rest of what is available is page cache, files the system has read and still "
+            "keeps.")
 
 
 def refuse_unmade_context(exc: BaseException, outcome: Outcome) -> None:
@@ -310,7 +309,13 @@ def refuse_unmade_context(exc: BaseException, outcome: Outcome) -> None:
         reading = meminfo()
     except Exception:
         reading = None
-    raise ContextMemoryError(refusal_text(outcome, reading)) from exc
+    raise ContextMemoryError(refusal(
+        RefusalClass.CAPACITY,
+        "this Worker could not start on its GPU: the NVIDIA driver could not get memory for "
+        f"a new CUDA context. {_figures(reading)} {outcome.sentence()} Nothing was loaded. "
+        "Close a program that holds memory, or wait for a large download or file copy to "
+        "end, then click Reset attached mesh and queue again.",
+        guard=GUARD, troubleshooting=12)) from exc
 
 
 def ensure_comfy(*args: Any, **kwargs: Any) -> None:

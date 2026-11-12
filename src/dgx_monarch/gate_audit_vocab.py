@@ -46,12 +46,13 @@ KIND_GUARDS: dict[str, frozenset[str]] = {
         "driver_footprint_preflight",
         "loader_footprint_preflight",
         "partial_load_divergence",
-        # None of the three below is waivable, so no waiver row cites them.
+        # None of the four below is waivable, so no waiver row cites them.
         # They are listed because check_guard must accept every refusal.GUARDS
         # entry under the kind it declares (tests/test_refusal_classes.py).
         "slab_load_preflight",
         "cross_rank_capacity",
         "slab_lora_bake_preflight",
+        "gpu_context_memory",
     }),
     "auto-rescue-standing": frozenset(),
     "waive-preflight:activation_footprint": frozenset({"activation_footprint_preflight"}),

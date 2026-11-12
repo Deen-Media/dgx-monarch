@@ -2362,8 +2362,8 @@ context, and the page cache does not count: on 2026-11-12, on a DGX Spark
 under its clock cap (max 2100 MHz), two Worker starts failed in
 `cuDevicePrimaryCtxRetain` with 1.6 and 4.6 GiB free while 45 and 47 GiB
 were available, and the kernel log read `NV_ERR_NO_MEMORY` from the driver's
-allocation of the context's main buffer. All 94 other starts on record had
-8.9 GiB free or more, and made their context. `actor/context_room.py` holds
+allocation of the context's main buffer. Every other start on record had
+8.9 GiB free or more, and made its context. `actor/context_room.py` holds
 two rules for it.
 
 - **Room first.** Setup calls the bootstrap through `context_room`, which
@@ -2386,7 +2386,8 @@ two rules for it.
   room makes no driver call either.
 - **A refusal in words behind it.** If the bootstrap still fails with a CUDA
   out-of-memory error before `comfy.model_management` has imported, the
-  Worker raises a class C refusal (`ContextMemoryError`) that says what
+  Worker raises a class C refusal (`ContextMemoryError`, guard
+  `gpu_context_memory`, no card: no consent makes memory free) that says what
   failed, what is free and what is available on its box, what the make-room
   step did or why it did nothing, and what to do. Any other error passes on
   as it was raised. The remedy it names is a reset of the attached mesh
@@ -2396,7 +2397,8 @@ two rules for it.
 - **It fails open, and it has one switch.** A fault anywhere in the step is
   logged once and the bootstrap goes on as before. `DGXM_DISABLE_CONTEXT_ROOM=1`
   in the Worker's environment turns the step off, for diagnosis; the refusal
-  stays. One line in the Worker's journal says what the step did whenever
+  stays. The worker loop's environment filter lets that name through to the
+  actors (`cli/worker_process_env.py`). One line in the Worker's journal says what the step did whenever
   free memory was short, and the Worker's status carries the same
   (`context_room`).
 

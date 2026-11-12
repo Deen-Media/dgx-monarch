@@ -73,6 +73,9 @@ _SAFE_EXACT = frozenset({
     # Restores the drop through ComfyUI's global unload (actor/resident_ledger.py).
     # It can only make a drop slower and withhold a swap credit.
     "DGXM_DISABLE_COPY_FREE_DROP",
+    # Turns off the make-room step before a Worker's CUDA context
+    # (actor/context_room.py). It can only leave a start as it was before.
+    "DGXM_DISABLE_CONTEXT_ROOM",
 })
 
 # Locale is the only inherited namespace. Fabric settings come from validated

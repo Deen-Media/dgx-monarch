@@ -350,17 +350,28 @@ def test_a_context_that_still_cannot_be_made_is_refused_in_words(monkeypatch):
     assert raised.value.__cause__ is failure
     text = str(raised.value)
     tag = parse_leading_refusal_tag(text)
-    assert tag is not None and tag.refusal_class is RefusalClass.CAPACITY and tag.guard is None
+    assert tag is not None and tag.refusal_class is RefusalClass.CAPACITY
+    assert tag.guard == context_room.GUARD and not tag.waivable
     assert text == (
-        "[dgxm:C] this Worker could not start on its GPU: the NVIDIA driver could not get "
+        "[dgxm:C guard=gpu_context_memory waivable=0] this Worker could not start on its GPU: "
+        "the NVIDIA driver could not get "
         "memory for a new CUDA context. 11.8 GiB of memory is free on this Worker's box and 45.0 "
         "GiB is available: the driver needs free memory, and the rest of what is available is page "
         "cache, files the system has read and still keeps. Before that the Worker made room: "
         "it wrote to 12.0 GiB of memory and released it, after which 11.8 GiB was free, and "
-        "the context still could not be made. Nothing was loaded. Close a program that holds "
+        "the context still could not be made, so free memory may not be all the driver "
+        "lacks. Nothing was loaded. Close a program that holds "
         "memory, or wait for a large download or file copy to end, then click Reset attached "
         "mesh and queue again. See docs/TROUBLESHOOTING.md #12.")
     assert "Traceback" not in text and "cuDevicePrimaryCtxRetain" not in text
+
+
+def _refused(monkeypatch, outcome, reading) -> str:
+    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    monkeypatch.setattr(context_room, "meminfo", lambda: reading)
+    with pytest.raises(context_room.ContextMemoryError) as raised:
+        context_room.refuse_unmade_context(RuntimeError(OOM), outcome)
+    return str(raised.value)
 
 
 @pytest.mark.parametrize(("outcome", "says"), [
@@ -370,16 +381,33 @@ def test_a_context_that_still_cannot_be_made_is_refused_in_words(monkeypatch):
      "The Worker made no room first: this GPU has memory of its own."),
     (context_room.Outcome("roomy", 13 * _GIB, 40 * _GIB), "The Worker made no room first."),
 ])
-def test_the_refusal_says_what_the_worker_did_first(outcome, says):
-    text = context_room.refusal_text(outcome, (int(1.6 * _GIB), int(45.1 * _GIB)))
+def test_the_refusal_says_what_the_worker_did_first(monkeypatch, outcome, says):
+    text = _refused(monkeypatch, outcome, (int(1.6 * _GIB), int(45.1 * _GIB)))
     assert "1.6 GiB of memory is free on this Worker's box and 45.1 GiB is available" in text
     assert says in text
 
 
-def test_the_refusal_stands_where_memory_cannot_be_read():
-    text = context_room.refusal_text(context_room.Outcome(), None)
+def test_the_refusal_stands_where_memory_cannot_be_read(monkeypatch):
+    text = _refused(monkeypatch, context_room.Outcome(), None)
     assert "The memory of this Worker's box could not be read." in text
-    assert text.startswith("[dgxm:C] ")
+    assert text.startswith("[dgxm:C guard=gpu_context_memory waivable=0] ")
+
+
+def test_the_switch_reaches_the_actor_through_the_worker_loops_filter():
+    """The worker loop deletes every name outside its list before actors inherit it."""
+    from dgx_monarch.cli import worker_process_env
+
+    environment = {"PATH": "/usr/bin", context_room.DISABLE_ENV: "1"}
+    assert worker_process_env.filter_worker_environment(environment) == 0
+    assert environment[context_room.DISABLE_ENV] == "1"
+
+
+def test_the_guard_is_in_the_vocabulary_and_offers_no_card():
+    from dgx_monarch.refusal import GUARDS, WAIVABLE_GUARDS
+
+    spec = GUARDS[context_room.GUARD]
+    assert spec.refusal_class is RefusalClass.CAPACITY and not spec.waivable_now
+    assert context_room.GUARD not in WAIVABLE_GUARDS
 
 
 @pytest.mark.parametrize("error", [
