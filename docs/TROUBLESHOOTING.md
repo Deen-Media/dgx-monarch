@@ -678,8 +678,8 @@ render's decode took the box to 6.7 GiB available while the driver still held
 32 GiB of text encoders that no later node needed. The render finished and
 nothing failed, but nothing was holding the box there either. So on the same
 GPUs, when the driver's ComfyUI is about to run a decode it prices above its
-free memory, the pack first has ComfyUI free that much from the models it
-holds idle (text encoders, CLIP vision), through ComfyUI's own call. Then
+free memory, the pack first has ComfyUI free that much from the text encoders
+it holds, through ComfyUI's own call. Then
 ComfyUI's decode runs unchanged. Confirm the driver log line `unified memory:
 before a VAE decode that ComfyUI prices above its free memory`. When it acts
 it logs one line that starts `decode relief:` with ComfyUI's price, the idle
@@ -689,15 +689,16 @@ models it freed from, and what MemAvailable read on each side. What to know:
   changes no weight. A video or a single image decodes to the same bits as
   before. A decode of several images takes as many a batch as ComfyUI's free
   memory allows, as it always did.
-- The VAE in hand and every diffusion model stay loaded. A decode inside a
-  running sampler (a preview node that decodes at every step) frees nothing.
+- Only text encoders give up memory. Every other model stays loaded: the
+  diffusion model, the VAE, CLIP vision, a ControlNet. A decode made while a
+  sampler runs (a preview node that decodes at every step) frees nothing.
 - What it costs when it acts: a text encoder that gave up memory loads it
   again when you next change the prompt's text. An unchanged prompt pays
   nothing.
 - It adds room and does not bound a decode. If the line ends `is still priced
   above the ... free and runs as ComfyUI runs it`, or says `ComfyUI held no
-  idle model here to free`, nothing idle was left: use VAE Decode (Tiled), a
-  shorter clip or a smaller frame.
+  text encoder here to free from`, nothing was left to give: use VAE Decode
+  (Tiled), a shorter clip or a smaller frame.
 - It keeps everything under `DGXM_DISABLE_DRIVER_UNLOAD=1`, and with
   DynamicVRAM off, where ComfyUI unloads for the decode itself. When it keeps
   everything for a decode that is short, it says why once: `the driver kept

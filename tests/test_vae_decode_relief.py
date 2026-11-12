@@ -25,15 +25,15 @@ from module_location_helpers import from_checkout
 GIB = 2 ** 30
 
 
-class _BaseModel:
-    """Stands in for ``comfy.model_base.BaseModel``: what marks a diffusion model."""
-
-
-class _Flux(_BaseModel):
-    pass
+class _Flux:
+    """A diffusion model."""
 
 
 class _TextEncoder:
+    """A text encoder: the one kind of model the relief frees from."""
+
+
+class _SecondTextEncoder(_TextEncoder):
     pass
 
 
@@ -41,13 +41,16 @@ class _ClipVision:
     pass
 
 
+class _ControlNet:
+    pass
+
+
 @pytest.fixture(autouse=True)
 def _a_driver_with_dynamic_vram(monkeypatch):
     """The state every case starts from: the rule unset, no sampler running, DynamicVRAM on, no switch."""
     monkeypatch.setitem(vae_decode_relief._STATE, "state", vae_decode_relief.UNSET)
-    monkeypatch.setattr(vae_decode_relief._SAMPLING, "depth", 0, raising=False)
+    monkeypatch.setitem(vae_decode_relief._SAMPLING, "depth", 0)
     monkeypatch.setitem(sys.modules, "comfy.memory_management", SimpleNamespace(aimdo_enabled=True))
-    monkeypatch.setitem(sys.modules, "comfy.model_base", SimpleNamespace(BaseModel=_BaseModel))
     monkeypatch.delenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, raising=False)
     monkeypatch.setattr(vae_decode_relief, "_SETTLE_S", 0.0)
 
@@ -70,9 +73,13 @@ class _Vae:
         return self._price
 
 
-def _loaded(inner):
-    """One entry of ``current_loaded_models``: a loaded model whose patcher holds ``inner``."""
-    return SimpleNamespace(model=SimpleNamespace(model=inner))
+def _loaded(inner, device="cuda:0"):
+    """One entry of ``current_loaded_models``: a loaded model whose patcher holds ``inner``.
+
+    ComfyUI marks a text encoder's patcher with ``is_clip``; every other patcher carries it False.
+    """
+    return SimpleNamespace(model=SimpleNamespace(model=inner, is_clip=isinstance(inner, _TextEncoder)),
+                           device=device)
 
 
 def _model_management(readings, *, held=(), inference=GIB, reserve=GIB // 2, ran=None):
@@ -168,7 +175,8 @@ def test_a_decode_priced_above_the_reading_frees_what_it_needs_and_then_decodes_
     ran = []
     vae = _Vae(price=4 * GIB)
     own, flux = SimpleNamespace(model=vae.patcher), _loaded(_Flux())
-    held = [_loaded(_TextEncoder()), own, flux, _loaded(_ClipVision())]
+    clip_vision, control = _loaded(_ClipVision()), _loaded(_ControlNet())
+    held = [_loaded(_TextEncoder()), own, flux, clip_vision, _loaded(_SecondTextEncoder()), control]
     mm = _model_management([2 * GIB, 30 * GIB], held=held, ran=ran)
     _available(monkeypatch, 14 * GIB, 46 * GIB)
     wrapped, calls, answer = _wrapped(monkeypatch, mm, ran)
@@ -179,14 +187,15 @@ def test_a_decode_priced_above_the_reading_frees_what_it_needs_and_then_decodes_
     assert ran == ["free_memory", "soft_empty_cache", "decode"]
     ((need, device, kept, for_dynamic),) = mm.freed
     assert need == 4 * GIB + GIB // 2 and device == "cuda:0" and for_dynamic is False
-    # The VAE in hand and the diffusion model stay loaded, whoever is using them.
-    assert kept == [own, flux]
+    # Everything that is not a text encoder stays loaded, whoever is using it: the VAE in hand, the
+    # diffusion model, CLIP vision, a ControlNet.
+    assert kept == [own, flux, clip_vision, control]
     (call,) = calls
     assert call[0] is vae and call[1][0] is LATENT and call[2]["vae_options"] is options
     assert caplog.text.count("decode relief:") == 1
     line = next(record.getMessage() for record in caplog.records if "decode relief:" in record.getMessage())
     assert "priced this VAE decode at 4.0 GiB (4.5 GiB with its reserve) against 2.0 GiB free" in line
-    assert "from the 2 idle models it held (_TextEncoder, _ClipVision)" in line
+    assert "from the 2 text encoders it held (_TextEncoder, _SecondTextEncoder)" in line
     assert "MemAvailable read 14.0 GiB before that and 46.0 GiB after it" in line
     assert line.endswith("the decode starts with 30.0 GiB free")
     # By name too.
@@ -213,18 +222,24 @@ def test_a_decode_still_short_after_the_relief_runs_as_comfyui_runs_it_and_the_l
     wrapped, _calls, answer = _wrapped(monkeypatch, mm)
     with caplog.at_level("INFO"):
         assert wrapped(_Vae(price=4 * GIB), LATENT) is answer
-    assert "from the 1 idle model it held (_TextEncoder)" in caplog.text
+    assert "from the 1 text encoder it held (_TextEncoder)" in caplog.text
     assert caplog.records[-1].getMessage().endswith(
         "the decode is still priced above the 3.0 GiB free and runs as ComfyUI runs it")
 
 
-@pytest.mark.parametrize("held", ["nothing", "the vae in hand", "a diffusion model", "both"])
-def test_with_nothing_idle_nothing_is_freed_and_one_line_says_so(monkeypatch, caplog, held):
-    """On a box that stays tight a decode must not free its own VAE, nor a model a sampler may be using."""
+@pytest.mark.parametrize("held", ["nothing", "the vae in hand", "a diffusion model", "what a sampler may use",
+                                  "a text encoder on another device", "a marker that is not True"])
+def test_with_no_text_encoder_to_free_from_nothing_is_freed_and_one_line_says_so(monkeypatch, caplog, held):
+    """Only a text encoder is freed. Anything a sampler could be using is kept, whoever calls."""
     vae = _Vae(price=4 * GIB)
+    uncertain = _loaded(_ClipVision())
+    uncertain.model.is_clip = 1  # not ComfyUI's own True: not a model this rule is certain of
     entries = {"nothing": [], "the vae in hand": [SimpleNamespace(model=vae.patcher)],
                "a diffusion model": [_loaded(_Flux())],
-               "both": [SimpleNamespace(model=vae.patcher), _loaded(_Flux())]}[held]
+               "what a sampler may use": [SimpleNamespace(model=vae.patcher), _loaded(_Flux()),
+                                          _loaded(_ControlNet()), _loaded(_ClipVision()), _loaded(object())],
+               "a text encoder on another device": [_loaded(_TextEncoder(), device="cpu")],
+               "a marker that is not True": [uncertain]}[held]
     ran = []
     mm = _model_management([GIB], held=entries, ran=ran)
     wrapped, _calls, answer = _wrapped(monkeypatch, mm, ran)
@@ -233,7 +248,7 @@ def test_with_nothing_idle_nothing_is_freed_and_one_line_says_so(monkeypatch, ca
         assert wrapped(vae, LATENT) is answer
     assert ran == ["decode", "decode"] and mm.freed == []
     assert caplog.text.count("decode relief:") == 1
-    assert "ComfyUI held no idle model here to free, so the decode runs as ComfyUI runs it" in caplog.text
+    assert "ComfyUI held no text encoder here to free from, so the decode runs as ComfyUI runs it" in caplog.text
 
 
 def test_an_entry_whose_model_is_gone_is_neither_kept_nor_named(monkeypatch):
@@ -242,10 +257,15 @@ def test_an_entry_whose_model_is_gone_is_neither_kept_nor_named(monkeypatch):
     mm = _model_management([0], held=[dead, _loaded(_TextEncoder()), _loaded(_Flux())])
     keep, idle = vae_decode_relief.kept_and_idle(mm, vae)
     assert keep == [mm.current_loaded_models[2]] and idle == ["_TextEncoder"]
-    # A patcher with no inner model is named by its own class and counts as idle.
-    bare = SimpleNamespace(model=_ClipVision())
+    # A text encoder's patcher with no inner model is named by its own class.
+    bare = SimpleNamespace(model=SimpleNamespace(is_clip=True))
     mm.current_loaded_models = [bare]
-    assert vae_decode_relief.kept_and_idle(mm, vae) == ([], ["_ClipVision"])
+    assert vae_decode_relief.kept_and_idle(mm, vae) == ([], ["SimpleNamespace"])
+    # The VAE in hand is kept even if something marked its patcher as a text encoder.
+    vae.patcher.is_clip = True
+    own = SimpleNamespace(model=vae.patcher)
+    mm.current_loaded_models = [own]
+    assert vae_decode_relief.kept_and_idle(mm, vae) == ([own], [])
 
 
 def test_a_decode_inside_a_running_sampler_is_a_preview_and_frees_nothing(monkeypatch, caplog):
@@ -270,13 +290,15 @@ def test_a_decode_inside_a_running_sampler_is_a_preview_and_frees_nothing(monkey
     assert ran == ["decode"] * 3 and mm.freed == []
     # Said once, not at every step.
     assert caplog.text.count("decode relief:") == 1
-    assert "the driver kept what it holds because a sampler is running in this thread" in caplog.text
+    assert "the driver kept what it holds because a sampler is running, and a decode made while it runs" \
+           in caplog.text
     # Once the sampler has returned, a decode is relieved as usual.
     _available(monkeypatch, 8 * GIB, 30 * GIB)
     assert wrapped(vae, LATENT) is answer and len(mm.freed) == 1
 
 
-def test_the_sampler_count_is_per_thread_nests_and_comes_back_after_an_error():
+def test_the_sampler_count_is_seen_from_every_thread_nests_and_comes_back_after_an_error():
+    """A decode from another thread while a sampler runs must read the sampler as running too."""
     depths = []
 
     def inner(self):
@@ -296,7 +318,7 @@ def test_the_sampler_count_is_per_thread_nests_and_comes_back_after_an_error():
         thread.join()
         return other
 
-    assert vae_decode_relief.with_sampler_guard(outer)(object()) == [0]  # another thread is not sampling
+    assert vae_decode_relief.with_sampler_guard(outer)(object()) == [1]  # another thread sees it running
     assert depths == [1, 2, 1] and vae_decode_relief.sampling_depth() == 0
 
 
@@ -347,7 +369,7 @@ def test_with_dynamic_vram_off_comfyuis_own_loader_unloads_and_the_relief_does_n
     assert mm.freed == [] and mm.asked == [] and vae.priced == [] and "decode relief" not in caplog.text
 
 
-@pytest.mark.parametrize("broken", ["reading", "floor", "model_base", "free_memory", "available"])
+@pytest.mark.parametrize("broken", ["reading", "floor", "held", "free_memory", "available"])
 def test_any_failure_steps_aside_once_and_the_decode_in_hand_still_runs(monkeypatch, caplog, broken):
     ran = []
     mm = _model_management([RuntimeError("reading broke")] if broken == "reading" else [GIB, 2 * GIB],
@@ -359,8 +381,8 @@ def test_any_failure_steps_aside_once_and_the_decode_in_hand_still_runs(monkeypa
 
     if broken == "floor":
         mm.minimum_inference_memory = broke
-    elif broken == "model_base":
-        monkeypatch.delitem(sys.modules, "comfy.model_base")
+    elif broken == "held":
+        mm.current_loaded_models = 7  # not a list of loaded models at all
     elif broken == "free_memory":
         mm.free_memory = broke
     elif broken == "available":
@@ -505,7 +527,7 @@ def test_on_by_default_on_an_integrated_gpu_and_only_there(monkeypatch, caplog):
     with caplog.at_level("INFO"):
         assert vae_decode_relief.install_driver() == vae_decode_relief.INSTALLED
     assert installs == ["install"] and vae_decode_relief.state() == vae_decode_relief.INSTALLED
-    assert "free what the decode needs from the models it holds idle" in caplog.text
+    assert "free what the decode needs from the text encoders it holds" in caplog.text
     assert vae_decode_relief.DISABLE_ENV in caplog.text
     # A discrete GPU or the CPU: ComfyUI's own decode, nothing installed.
     installs = _comfy_stand_in(monkeypatch, total=None)
@@ -655,10 +677,8 @@ def real_comfy(comfy_sd, monkeypatch):
     Only the relief's own reading of it is answered yes.
     """
     import comfy.memory_management
-    import comfy.model_base
     import comfy.model_management as mm
 
-    monkeypatch.setitem(sys.modules, "comfy.model_base", comfy.model_base)
     monkeypatch.setitem(sys.modules, "comfy.memory_management", comfy.memory_management)
     monkeypatch.setattr(vae_decode_relief, "_dynamic_vram_on", lambda: True)
     return mm
@@ -702,8 +722,12 @@ def test_on_real_comfyui_a_decode_is_the_same_tensor_with_the_relief_acting(comf
     try:
         assert getattr(comfy_sd.VAE.decode, "_dgxm_decode_relief", False) is True
         assert comfy_sd.VAE.decode.__wrapped__ is stock_decode and comfy_sd.VAE.encode is stock_encode
-        # A second model ComfyUI holds idle: another VAE that has decoded once.
+        # A second model ComfyUI holds idle, carrying the one mark the relief reads on a text
+        # encoder's patcher. (A real text encoder is a tokenizer and a checkpoint; the mark is
+        # what the rule keys on, and real ComfyUI's unload of it is what is under test.)
         idle = _toy_vae(comfy_sd)
+        assert idle.patcher.is_clip is False and vae.patcher.is_clip is False  # ComfyUI's own default
+        idle.patcher.is_clip = True
         idle.decode(latent)
         roomy = vae.decode(latent).float().cpu().clone()
         assert torch.equal(roomy, plain)
@@ -717,11 +741,12 @@ def test_on_real_comfyui_a_decode_is_the_same_tensor_with_the_relief_acting(comf
         with caplog.at_level("INFO"):
             relieved = vae.decode(latent).float().cpu().clone()
             by_name = vae.decode(samples_in=latent).float().cpu().clone()
+        state_while_installed = vae_decode_relief.state()
     finally:
         monkeypatch.undo()
         vae_decode_relief.uninstall()
     assert comfy_sd.VAE.decode is stock_decode
-    assert vae_decode_relief.state() == vae_decode_relief.UNSET  # it did not step aside on real ComfyUI
+    assert state_while_installed != vae_decode_relief.STEPPED_ASIDE  # read before uninstall resets it
     ours = [call for call in freed if call[2] is False and call[1] is not None]
     assert ours and ours[0][0] == need and [entry.model for entry in ours[0][1]] == [vae.patcher]
     assert "decode relief:" in caplog.text and "stepped aside" not in caplog.text and idle is not None
@@ -733,7 +758,6 @@ def test_real_comfyui_still_reads_as_the_relief_mirrors(comfy_sd, real_comfy):
     import inspect
 
     import comfy.memory_management
-    import comfy.model_base
     import comfy.samplers
 
     mm = real_comfy
@@ -749,11 +773,12 @@ def test_real_comfyui_still_reads_as_the_relief_mirrors(comfy_sd, real_comfy):
     assert "if shift_model not in keep_loaded and not shift_model.is_dead():" in free
     assert "is_dynamic() and for_dynamic" in free
     assert isinstance(vars(comfy.memory_management)["aimdo_enabled"], bool)
-    assert inspect.isclass(comfy.model_base.BaseModel)
     assert "sample" in vars(comfy.samplers.CFGGuider)
+    # The one mark the relief frees by: ComfyUI sets it on a text encoder's patcher and nowhere else.
+    assert "self.patcher.is_clip = True" in inspect.getsource(comfy_sd.CLIP.__init__)
     vae = _toy_vae(comfy_sd)
     assert vars(vae)["latent_dim"] == 2 and hasattr(vae, "vae_dtype") and hasattr(vae, "device")
-    assert vae.patcher is not None and not isinstance(vae.patcher.model, comfy.model_base.BaseModel)
+    assert vae.patcher is not None and vae.patcher.is_clip is False
 
 
 def test_on_real_comfyui_the_sampler_entry_is_guarded_and_a_decode_inside_a_guard_frees_nothing(
@@ -770,6 +795,7 @@ def test_on_real_comfyui_the_sampler_entry_is_guarded_and_a_decode_inside_a_guar
     vae = _toy_vae(comfy_sd)
     latent = torch.randn(1, 4, 8, 8, generator=torch.Generator().manual_seed(9))
     other = _toy_vae(comfy_sd)
+    other.patcher.is_clip = True  # the mark of a text encoder, as in the test above
     other.decode(latent)
     plain = vae.decode(latent).float().cpu().clone()
     freed = []

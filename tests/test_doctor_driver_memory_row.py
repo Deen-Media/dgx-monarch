@@ -327,7 +327,8 @@ def test_a_decode_relief_that_is_not_working_is_a_warning_that_says_why(state, s
     assert detail.startswith("reads the box as it is") and said in detail
     # After the encode clause, which still reads as it did.
     assert detail.index("a VAE encode of several images runs one image a call") < detail.index("the decode relief")
-    assert "starts with the driver's idle models still loaded" in detail
+    assert "starts with the driver's text encoders still loaded" in detail
+    assert not detail.endswith("for that call")  # the relief steps aside on any failure: no guess at the cause
 
 
 def test_the_uncorrected_reading_carries_the_relief_clause_too():

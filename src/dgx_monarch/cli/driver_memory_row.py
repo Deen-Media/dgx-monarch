@@ -122,14 +122,14 @@ def relief_clause(answer: Mapping[str, Any]) -> tuple[str | None, str]:
     """
     rules = answer.get(RULES_KEY)
     state = rules.get(RELIEF_RULE) if isinstance(rules, Mapping) else None
-    risk = ("so a VAE decode ComfyUI prices above its free memory starts with the driver's idle models "
+    risk = ("so a VAE decode ComfyUI prices above its free memory starts with the driver's text encoders "
             "still loaded")
     if state == vae_decode_relief.OFF:
         return WARN, (f"the decode relief is off, because the driver runs with "
                       f"{vae_decode_relief.DISABLE_ENV}=1, {risk}")
     if state == vae_decode_relief.STEPPED_ASIDE:
         return WARN, ("the decode relief stepped aside in this driver (one WARNING in its log says why), "
-                      f"{risk}; this pack version and this ComfyUI do not go together for that call")
+                      f"{risk}")
     if isinstance(state, str) and state in _KNOWN_STATES:
         return WARN, f"the decode relief is not installed in this driver ({state}), {risk}"
     return None, ""

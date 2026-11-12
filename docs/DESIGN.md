@@ -2263,11 +2263,20 @@ their text encoders too, which is ordinary use. So on the same GPUs as the
 reading, with DynamicVRAM on, and by default, `vae_decode_relief` wraps
 `VAE.decode` in the driver. When the decode's price plus ComfyUI's reserve
 exceeds what ComfyUI reads as free, it calls ComfyUI's own `free_memory` for
-that requirement, as ComfyUI's classic loader does there, keeping the VAE in
-hand and every diffusion model loaded. ComfyUI frees just what the call needs
-from the other models it holds, in its own order, and a DynamicVRAM model
-gives up pages without being unloaded where that is enough. Then ComfyUI's
-decode runs. Seven things bound it:
+that requirement, as ComfyUI's classic loader does there, keeping every model
+loaded except the text encoders. ComfyUI frees just what the call needs from
+the text encoders it holds, in its own order, and a DynamicVRAM model gives
+up pages without being unloaded where that is enough. Then ComfyUI's decode
+runs. Eight things bound it:
+
+- **Only text encoders are freed.** By an allow-list, not a deny-list: a text
+  encoder is the one kind of model ComfyUI marks for certain (`is_clip` on its
+  patcher, set in `comfy.sd.CLIP`), nothing samples with one, and every gain
+  on record is one (24 and 7.7 GiB in the first record, 6.3 in the second). A
+  diffusion model, the VAE in hand, another VAE, CLIP vision, a ControlNet, an
+  adapter or a model patch is never touched, whoever calls, from whatever
+  thread and whatever sampler. A text encoder on another device than the
+  decode's is left too, since ComfyUI's call frees on one device.
 
 - **The trigger is ComfyUI's own.** The price is `VAE.memory_used_decode` and
   the requirement is the one `load_models_gpu` computes from it
@@ -2284,22 +2293,23 @@ decode runs. Seven things bound it:
   DynamicVRAM could evict (`ModelPatcher.get_free_memory`), so the count
   barely moves. Freeing changes no weight: ComfyUI faults a page back, or
   loads a model again, with the same bytes when a node next asks for it.
-- **Never inside a running sampler.** Preview nodes call `VAE.decode` at every
+- **Never while a sampler runs.** Preview nodes call `VAE.decode` at every
   step, and a stock sampler in the driver is nothing the pack's own render
-  tracker sees. Freeing there could unload the model being sampled, which
-  ComfyUI's dynamic path never does. So `comfy.samplers.CFGGuider.sample` is
-  wrapped with a per-thread depth count, the relief does nothing while it is
-  above zero, and the decode wrapper is never installed without that guard.
-  Diffusion models are also never freed, whoever asks.
+  tracker sees. So `comfy.samplers.CFGGuider.sample` is wrapped with a
+  process-wide depth count, the relief does nothing while it is above zero,
+  whichever thread the decode comes from, and the decode wrapper is never
+  installed without that guard. ComfyUI runs one prompt at a time, so a
+  process-wide count loses nothing. A sampler that builds its own loop and
+  never reaches `CFGGuider.sample` is not counted; for that one the allow-list
+  is the whole protection, and it is enough.
 - **Its tests of "in use" are its own.** The render-site unload asks
   `driver_unload.busy_reason` because it drops every model and calls the
   Workers. The relief does neither, and it does not ask that check: on
   2026-11-12 the check read "a call to the Workers is still in flight" after a
   render had finished, and a relief that leaned on it would go dead exactly
-  where a decode follows a render. The sampler guard and the two kinds of
-  model it never frees are the whole test. A render on the Workers uses no
-  model in the driver's process, and the decode's own node is the only thing
-  ComfyUI is executing there.
+  where a decode follows a render. The sampler guard and the allow-list are
+  the whole test. A render on the Workers uses no model in the driver's
+  process.
 - **It honours the unload switch and DynamicVRAM off.**
   `DGXM_DISABLE_DRIVER_UNLOAD=1` means the driver unloads none of ComfyUI's
   models on its own, and the relief then keeps everything. With DynamicVRAM
@@ -3060,7 +3070,7 @@ dgx-monarch/
 │   │                          #   of images one image a call (§5.9)
 │   ├── vae_decode_relief.py   # on unified memory, before a VAE decode ComfyUI
 │   │                          #   prices above its free memory the driver has it
-│   │                          #   free that much from its idle models (§5.9)
+│   │                          #   free that much from its text encoders (§5.9)
 │   ├── vae_decode_route.py    # Worker-assisted VAE decode (§5.6): the knob,
 │   │                          #   the keyed stock-decode wrappers and the split
 │   ├── vae_decode_plan.py     # unit plans read off ComfyUI's own loops, and
@@ -3319,7 +3329,7 @@ an enforced requirement. The current exceptions are:
 | `capacity_agreement.py` | 567 | the driver's collection, its one pure decision function and the fleet card it composes |
 | `actor/worker.py` | 509 | ordered checks and adapter installation for each freshly loaded base in `_inject_for_topology` |
 | `gate_ledger.py` | 527 | the ledger's protocol number and its burn history live together, so the record of why a version was retired cannot drift from the number itself |
-| `comfy_surface.py` | 528 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
+| `comfy_surface.py` | 533 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
 | `adapters/fsdp.py` | 589 | the FSDP launch contract in one place: admitted kinds and profiles, the live precision rescan, the wrap with ignored islands and quantized shards, the streaming shard build hand-off, and the shard-build price |
 | `nodes/gate_identity.py` | 583 | canonical normal/Fleet capability construction, proof-scope binding, authorization, and typed denial |
 | `nodes/loader_preflight.py` | 593 | the loader-site capacity answer in one place: the two windows, the residency ladder they are priced against and the slab rescue offer |

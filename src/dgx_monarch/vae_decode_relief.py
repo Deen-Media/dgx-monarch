@@ -17,11 +17,19 @@ of text encoders no later node needed. A decode priced at 5.6 GiB started with
 So on such a GPU, with DynamicVRAM on, when ComfyUI is about to run a decode
 whose price and reserve exceed what it reads as free, this process first does
 what ComfyUI's classic loader does there: it calls ComfyUI's own
-``free_memory`` for that requirement, with ``for_dynamic=False``, keeping the
-VAE in hand and every diffusion model loaded. ComfyUI then frees just what the
-call needs from the other models it holds (text encoders, CLIP vision), in its
-own order, and a DynamicVRAM model gives up pages without being unloaded where
-that is enough. Then ComfyUI's decode runs with the caller's own arguments.
+``free_memory`` for that requirement, with ``for_dynamic=False``, keeping
+every model loaded except the text encoders. ComfyUI then frees just what the
+call needs from the text encoders it holds, in its own order, and a
+DynamicVRAM model gives up pages without being unloaded where that is enough.
+Then ComfyUI's decode runs with the caller's own arguments.
+
+Only text encoders are freed, by an allow-list and not a deny-list: a text
+encoder is the one kind of model ComfyUI marks for certain (``is_clip`` on its
+patcher, set in ``comfy.sd.CLIP``), nothing samples with one, and every gain
+on record is one (24 and 7.7 GiB in the first record above, 6.3 in the
+second). A diffusion model, the VAE in hand, another VAE, CLIP vision, a
+ControlNet, an adapter or a model patch is never touched, whoever calls and
+from whatever sampler.
 
 Nothing here computes anything that reaches the result. A decode of one item
 (every video, every single image) takes a batch of one before and after. A
@@ -33,11 +41,14 @@ bytes when a node next asks for it.
 
 When it keeps everything:
 
-- **Inside a running sampler.** Preview nodes call ``VAE.decode`` at every
-  step. Freeing there could unload what the sampler samples with, so
-  ``CFGGuider.sample`` is wrapped with a per-thread depth count and the relief
-  does nothing while it is above zero. Diffusion models are also never freed,
-  whoever asks.
+- **While a sampler runs.** Preview nodes call ``VAE.decode`` at every step.
+  Freeing there would take memory from under a running sampler, so
+  ``CFGGuider.sample`` is wrapped with a process-wide depth count and the
+  relief does nothing while it is above zero, whichever thread the decode
+  comes from. A sampler that builds its own loop and never reaches
+  ``CFGGuider.sample`` is not counted; for that one the allow-list above is
+  the whole protection, and it is enough: such a sampler does not sample with
+  a text encoder either.
 - **With ``DGXM_DISABLE_DRIVER_UNLOAD=1``**, whose meaning is that the driver
   unloads none of ComfyUI's models on its own.
 - **With DynamicVRAM off.** ComfyUI's classic loader already unloads for the
@@ -47,9 +58,8 @@ It does not ask the pack's shared busy check (``driver_unload.busy_reason``).
 That check guards the render-site unload, which drops every model and calls
 the Workers; on 2026-11-12 it read "a call to the Workers is still in flight"
 after a render had finished. This rule's own tests of "in use" are narrower
-and enough for what it frees: the sampler guard, and the two kinds of model it
-never frees. A render on the Workers uses no model in this process, and the
-decode's own node is the only thing ComfyUI is executing here.
+and enough for what it frees: the sampler guard, and the one kind of model it
+frees at all. A render on the Workers uses no model in this process.
 
 What it costs: two calls on every decode (a price and a reading). When it
 acts, a text encoder that gave up pages faults them back, or loads again, when
@@ -107,17 +117,20 @@ _GIB = 2 ** 30
 _SETTLE_S = 0.05
 _INSTALL_LOCK = threading.Lock()
 _STATE = {"state": UNSET}
-# How many of ComfyUI's samplers are running in this thread. A decode inside one is a preview.
-_SAMPLING = threading.local()
+# How many of ComfyUI's samplers are running in this process. A decode while one runs is a
+# preview, whichever thread makes it. ComfyUI runs one prompt at a time, so a process-wide
+# count loses nothing against a per-thread one.
+_SAMPLING_LOCK = threading.Lock()
+_SAMPLING = {"depth": 0}
 
 # How much ComfyUI is asked to free. False: the decode's own requirement and no more, so the
 # driver holds its floor through the decode with the least taken (decided 2026-11-12). True:
-# every idle model, ComfyUI's own "all of it" figure. That is the decided fallback if hardware
+# every text encoder whole, ComfyUI's own "all of it" figure. That is the decided fallback if hardware
 # shows a page free returns too little, and this line is the whole change.
 FREE_ALL_IDLE = False
 _EVERYTHING = 1e30
 
-SAMPLER_RUNNING = "a sampler is running in this thread, and a decode inside it must not free what it samples with"
+SAMPLER_RUNNING = "a sampler is running, and a decode made while it runs must not free memory under it"
 UNLOAD_SWITCH = "the driver runs with DGXM_DISABLE_DRIVER_UNLOAD=1"
 
 
@@ -136,20 +149,22 @@ def _gib(value: int) -> str:
 
 
 def sampling_depth() -> int:
-    """How many of ComfyUI's samplers are running in this thread."""
-    return int(getattr(_SAMPLING, "depth", 0))
+    """How many of ComfyUI's samplers are running in this process."""
+    return int(_SAMPLING["depth"])
 
 
 def with_sampler_guard(original: Callable[..., Any]) -> Callable[..., Any]:
-    """``original`` (``CFGGuider.sample``) counted in and out, so a decode inside it is known as one."""
+    """``original`` (``CFGGuider.sample``) counted in and out, so a decode while it runs is known as one."""
 
     @functools.wraps(original)
     def counted_sample(self: Any, *args: Any, **kwargs: Any) -> Any:
-        _SAMPLING.depth = sampling_depth() + 1
+        with _SAMPLING_LOCK:
+            _SAMPLING["depth"] += 1
         try:
             return original(self, *args, **kwargs)
         finally:
-            _SAMPLING.depth = sampling_depth() - 1
+            with _SAMPLING_LOCK:
+                _SAMPLING["depth"] -= 1
 
     setattr(counted_sample, _GUARD_KEY, True)
     return counted_sample
@@ -180,25 +195,27 @@ def decode_need(mm: Any, vae: Any, samples: Any) -> tuple[int, int]:
 
 
 def kept_and_idle(mm: Any, vae: Any) -> tuple[list[Any], list[str]]:
-    """What ComfyUI holds here, split: the entries the relief keeps loaded, and the names of the rest.
+    """What ComfyUI holds here, split: the entries the relief keeps loaded, and the text encoders' names.
 
-    Kept: the VAE in hand, and every diffusion model (``comfy.model_base.BaseModel``),
-    which a sampler somewhere may be using. The rest (text encoders, CLIP
-    vision, another graph's VAE) is what ComfyUI may free for this decode.
+    Freeable: a text encoder (its patcher carries ``is_clip``, which
+    ``comfy.sd.CLIP`` sets) on the decode's own device, since ``free_memory``
+    frees on one device. Kept: everything else, the VAE in hand first of all.
+    A model this cannot read is kept.
     """
-    base = sys.modules["comfy.model_base"].BaseModel
     own = getattr(vae, "patcher", None)
+    device = getattr(vae, "device", None)
     keep: list[Any] = []
     idle: list[str] = []
     for loaded in list(mm.current_loaded_models):
         patcher = loaded.model
         if patcher is None:
             continue
-        inner = getattr(patcher, "model", None)
-        if patcher is own or isinstance(inner, base):
-            keep.append(loaded)
-        else:
+        text_encoder = getattr(patcher, "is_clip", False) is True and patcher is not own
+        if text_encoder and getattr(loaded, "device", device) == device:
+            inner = getattr(patcher, "model", None)
             idle.append(type(patcher if inner is None else inner).__name__)
+        else:
+            keep.append(loaded)
     return keep, idle
 
 
@@ -249,8 +266,8 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
     if not idle:
         if "nothing idle" not in told:
             told.add("nothing idle")
-            log.info("decode relief: %s; ComfyUI held no idle model here to free, so the decode runs as "
-                     "ComfyUI runs it", priced)
+            log.info("decode relief: %s; ComfyUI held no text encoder here to free from, so the decode "
+                     "runs as ComfyUI runs it", priced)
         return False
     before = int(mesh_safety.mem_available_bytes() or 0)
     # ComfyUI's classic loader's own call for this requirement: it frees in its own order until the
@@ -263,8 +280,8 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
     after = int(mm.get_free_memory(device))
     tail = (f"the decode starts with {_gib(after)} GiB free" if after >= need else
             f"the decode is still priced above the {_gib(after)} GiB free and runs as ComfyUI runs it")
-    log.info("decode relief: %s, so the driver had ComfyUI free what the decode needs from the %d idle "
-             "model%s it held (%s): MemAvailable read %s GiB before that and %s GiB after it; %s",
+    log.info("decode relief: %s, so the driver had ComfyUI free what the decode needs from the %d text "
+             "encoder%s it held (%s): MemAvailable read %s GiB before that and %s GiB after it; %s",
              priced, len(idle), "" if len(idle) == 1 else "s", ", ".join(idle), _gib(before),
              _gib(available), tail)
     return True
@@ -329,7 +346,7 @@ def install_driver() -> str:
                     "(%s: %s)", type(exc).__name__, exc)
         return _set(NO_COMFY)
     log.info("unified memory: before a VAE decode that ComfyUI prices above its free memory, this process "
-             "has ComfyUI free what the decode needs from the models it holds idle (%s=1 turns this off)",
+             "has ComfyUI free what the decode needs from the text encoders it holds (%s=1 turns this off)",
              DISABLE_ENV)
     return _set(INSTALLED)
 

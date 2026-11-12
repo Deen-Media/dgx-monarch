@@ -610,9 +610,9 @@
   the Spark under its clock cap (max 2100 MHz), a one-GPU video render's
   decode took the box to 6.7 GiB available while the driver held 32 GiB of
   text encoders no later node needed. The driver now has ComfyUI free the
-  decode's price from the models it holds idle, through ComfyUI's own call.
-  The VAE in hand and every diffusion model stay loaded, and a decode inside
-  a running sampler (a preview at every step) frees nothing. Nothing to set.
+  decode's price from the text encoders it holds, through ComfyUI's own call.
+  Every other model stays loaded, and a decode made while a sampler runs (a
+  preview at every step) frees nothing. Nothing to set.
   The decode is ComfyUI's own call with the same arguments, and a video or a
   single image decodes to the same bits as before; a decode of several images
   takes as many a batch as ComfyUI's free memory allows, as it always did.
