@@ -50,7 +50,7 @@ def _a_driver_with_dynamic_vram(monkeypatch):
     monkeypatch.setitem(sys.modules, "comfy.model_base", SimpleNamespace(BaseModel=_BaseModel))
     monkeypatch.delenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, raising=False)
     monkeypatch.setattr(driver_unload, "busy_reason", lambda handle: "")
-    monkeypatch.setattr(vae_decode_relief.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(vae_decode_relief, "_SETTLE_S", 0.0)
 
 
 class _Vae:

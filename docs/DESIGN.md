@@ -2309,10 +2309,11 @@ decode runs. Seven things bound it:
 
 What it costs when it acts: a text encoder that gave up pages faults them
 back, or loads again, when a prompt's text next changes; an unchanged
-prompt's conditioning is cached. On this release's own unload at the
-render-site checks (2026-11-11 and 2026-11-12, the first Spark under its
-clock cap, max 2100 MHz), unloading the LTX text encoder and two VAEs
-returned 30.6 GiB. `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns the
+prompt's conditioning is cached. What a freed page returns has no hardware
+record yet. The nearest is a whole unload, which the render-site checks make:
+on 2026-11-11 and 2026-11-12, with the first Spark under its clock cap (max
+2100 MHz), unloading the LTX text encoder and two VAEs whole returned 30.6
+GiB. `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns the
 relief off, for diagnosis; the reading's switch does not. The driver
 publishes its state beside the encode rule's in `/dgxm/telemetry`
 (`driver_rules`), and doctor's `driver memory reading` row adds a clause only
