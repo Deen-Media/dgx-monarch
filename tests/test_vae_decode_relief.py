@@ -21,8 +21,11 @@ import torch
 
 from dgx_monarch import driver_uma_memory, driver_unload, mesh_safety, vae_decode_relief
 from module_location_helpers import from_checkout
+from test_anima_cond_branch import CFG, SEED, STEPS, _pair, _same, _tiny_state
 
 GIB = 2 ** 30
+# A free-memory figure under any decode's requirement, and above zero: ComfyUI divides by it.
+SHORT_READING = 64 * 2 ** 20
 
 
 class _Flux:
@@ -674,19 +677,24 @@ def real_comfy(comfy_sd, monkeypatch):
 
     ComfyUI's own flag is left as it is: with ``--cpu`` its allocator is not
     set up, and switching the flag would send ComfyUI's loader down that path.
-    Only the relief's own reading of it is answered yes.
+    Only the relief's own reading of it is answered yes. Each test's models
+    are dropped after it, so the next one counts only what it loaded itself.
     """
+    import gc
+
     import comfy.memory_management
     import comfy.model_management as mm
 
     monkeypatch.setitem(sys.modules, "comfy.memory_management", comfy.memory_management)
     monkeypatch.setattr(vae_decode_relief, "_dynamic_vram_on", lambda: True)
-    return mm
+    yield mm
+    mm.unload_all_models()
+    gc.collect()
 
 
-def _toy_vae(sd):
+def _toy_vae(sd, channels=4):
     """ComfyUI's plain AutoencoderKL layout, named by one key; every weight random."""
-    vae = sd.VAE(sd={"decoder.conv_in.weight": torch.zeros(512, 4, 3, 3)})
+    vae = sd.VAE(sd={"decoder.conv_in.weight": torch.zeros(512, channels, 3, 3)})
     generator = torch.Generator().manual_seed(0)
     with torch.no_grad():
         for parameter in vae.first_stage_model.parameters():
@@ -733,11 +741,15 @@ def test_on_real_comfyui_a_decode_is_the_same_tensor_with_the_relief_acting(comf
         assert torch.equal(roomy, plain)
         held = vae_decode_relief.kept_and_idle(mm, vae)
         assert [entry.model for entry in held[0]] == [vae.patcher] and len(held[1]) == 1
-        # Read as short of the decode's price: the relief has ComfyUI free for it, keeping the VAE
-        # in hand, and ComfyUI's own decode gives the same tensor.
+        # Read as short of the decode's price. ComfyUI's own decode also reads this figure (it
+        # slices its attention by it), so the reference is stock's decode under the same reading:
+        # the two then differ in the relief alone.
+        monkeypatch.setattr(mm, "get_free_memory", lambda dev=None, torch_free_too=False: (
+            (SHORT_READING, 0) if torch_free_too else SHORT_READING))
+        short = stock_decode(vae, latent).float().cpu().clone()
+        # The relief has ComfyUI free for the decode, keeping the VAE in hand, and ComfyUI's own
+        # decode gives the same tensor.
         monkeypatch.setattr(mm, "free_memory", recording)
-        monkeypatch.setattr(mm, "get_free_memory",
-                            lambda dev=None, torch_free_too=False: (0, 0) if torch_free_too else 0)
         with caplog.at_level("INFO"):
             relieved = vae.decode(latent).float().cpu().clone()
             by_name = vae.decode(samples_in=latent).float().cpu().clone()
@@ -750,7 +762,7 @@ def test_on_real_comfyui_a_decode_is_the_same_tensor_with_the_relief_acting(comf
     ours = [call for call in freed if call[2] is False and call[1] is not None]
     assert ours and ours[0][0] == need and [entry.model for entry in ours[0][1]] == [vae.patcher]
     assert "decode relief:" in caplog.text and "stepped aside" not in caplog.text and idle is not None
-    assert torch.equal(relieved, plain) and torch.equal(by_name, plain)
+    assert torch.equal(relieved, short) and torch.equal(by_name, short)
 
 
 def test_real_comfyui_still_reads_as_the_relief_mirrors(comfy_sd, real_comfy):
@@ -786,8 +798,8 @@ def test_on_real_comfyui_the_sampler_entry_is_guarded_and_a_decode_inside_a_guar
     """Install puts the guard on ComfyUI's real sampler entry, and a real decode under a guard is left alone.
 
     The decode here runs inside the guard the relief installs, on a stand-in
-    for the sampler's body. A whole ComfyUI sampler with a preview callback is
-    the hardware row's and a later CPU test's: it needs a model to sample.
+    for the sampler's body. The test below runs a whole ComfyUI sampler with a
+    preview callback.
     """
     import comfy.samplers
 
@@ -797,16 +809,17 @@ def test_on_real_comfyui_the_sampler_entry_is_guarded_and_a_decode_inside_a_guar
     other = _toy_vae(comfy_sd)
     other.patcher.is_clip = True  # the mark of a text encoder, as in the test above
     other.decode(latent)
-    plain = vae.decode(latent).float().cpu().clone()
+    vae.decode(latent)
     freed = []
-    stock_sample = comfy.samplers.CFGGuider.sample
+    stock_sample, stock_decode = comfy.samplers.CFGGuider.sample, comfy_sd.VAE.decode
     vae_decode_relief.install()
     try:
         guarded = comfy.samplers.CFGGuider.sample
         assert getattr(guarded, "_dgxm_sampler_guard", False) is True and guarded.__wrapped__ is stock_sample
+        monkeypatch.setattr(mm, "get_free_memory", lambda dev=None, torch_free_too=False: (
+            (SHORT_READING, 0) if torch_free_too else SHORT_READING))
+        plain = stock_decode(vae, latent).float().cpu().clone()  # stock, under the same short reading
         monkeypatch.setattr(mm, "free_memory", lambda *args, **kwargs: freed.append(kwargs) or [])
-        monkeypatch.setattr(mm, "get_free_memory",
-                            lambda dev=None, torch_free_too=False: (0, 0) if torch_free_too else 0)
         preview = vae_decode_relief.with_sampler_guard(lambda self: vae.decode(latent).float().cpu().clone())
         inside = preview(object())
         assert freed == []
@@ -819,3 +832,86 @@ def test_on_real_comfyui_the_sampler_entry_is_guarded_and_a_decode_inside_a_guar
     assert comfy.samplers.CFGGuider.sample is stock_sample
     assert torch.equal(inside, plain) and torch.equal(outside, plain) and other is not None
     assert vae_decode_relief.sampling_depth() == 0
+
+
+def test_on_real_comfyui_a_whole_sampler_with_a_preview_decode_frees_nothing_while_it_runs(
+        comfy_sd, real_comfy, monkeypatch, caplog):
+    """A real ComfyUI sampler run whose step callback decodes a preview, as a previewer does.
+
+    Every preview is priced above the reading while a text encoder sits idle:
+    the state in which the relief acts. Inside the sampler it must not. The
+    count is up at every step, nothing is freed, and the sampled latent and
+    every preview equal stock's. The same decode after the sampler returns is
+    relieved, and the sampled model is among the models kept.
+    """
+    anima =pytest.importorskip("comfy.ldm.anima.model", reason="this ComfyUI predates Anima")
+    import comfy.ops
+    import comfy.sample
+    import comfy.samplers
+
+    mm = real_comfy
+    torch.set_num_threads(2)
+    vae = _toy_vae(comfy_sd, channels=16)  # the tiny model's latent is 16 channels with a frame axis
+    idle = _toy_vae(comfy_sd)
+    idle.patcher.is_clip = True  # the mark of a text encoder, as in the tests above
+    idle.decode(torch.zeros(1, 4, 8, 8))
+    patcher = comfy_sd.load_diffusion_model_state_dict(_tiny_state(comfy.ops, anima.Anima))
+    positive, negative = _pair()
+    freed, seen, previews = [], [], []
+    real_free = mm.free_memory
+
+    def recording(memory_required, device, *args, **kwargs):
+        freed.append(kwargs)
+        return real_free(memory_required, device, *args, **kwargs)
+
+    def preview(step, x0, x, total_steps):
+        seen.append((vae_decode_relief.sampling_depth(), len(vae_decode_relief.kept_and_idle(mm, vae)[1]),
+                     len(freed)))
+        previews.append((x0.clone(), vae.decode(x0).float().cpu().clone()))
+
+    def sample():
+        del seen[:], previews[:]
+        with torch.inference_mode():
+            latent = comfy.sample.fix_empty_latent_channels(patcher, torch.zeros(1, 4, 8, 8))
+            noise = comfy.sample.prepare_noise(latent, SEED, None)
+            out = comfy.sample.sample(patcher, noise, STEPS, CFG, "euler", "simple", positive, negative,
+                                      latent, denoise=1.0, disable_pbar=True, seed=SEED, callback=preview)
+        return out.clone(), list(seen), list(previews)
+
+    stock_sample, stock_decode = comfy.samplers.CFGGuider.sample, comfy_sd.VAE.decode
+    try:
+        # The sampler reads this figure too (its cond batches), so both runs read the same one.
+        monkeypatch.setattr(mm, "get_free_memory", lambda dev=None, torch_free_too=False: (
+            (SHORT_READING, 0) if torch_free_too else SHORT_READING))
+        monkeypatch.setattr(mm, "free_memory", recording)
+        stock_latent, stock_seen, stock_previews = sample()
+        assert freed == []  # stock frees nothing on this device, so every call below is the relief's
+        vae_decode_relief.install()
+        with caplog.at_level("INFO"):
+            latent, inside, ours = sample()
+            freed_by_the_sampler_run = list(freed)
+            last = ours[-1][0]
+            with torch.inference_mode():
+                after = vae.decode(last).float().cpu().clone()
+        kept = [entry.model for entry in freed[0]["keep_loaded"]] if freed else []
+    finally:
+        monkeypatch.undo()
+        vae_decode_relief.uninstall()
+    assert comfy.samplers.CFGGuider.sample is stock_sample and comfy_sd.VAE.decode is stock_decode
+    # Stock, with no guard: the count stays down. With the relief installed the real sampler
+    # entry is the guarded one, so every preview sees the count up and an idle text encoder held.
+    assert len(stock_seen) == len(inside) >= STEPS
+    assert all(depth == 0 for depth, _, _ in stock_seen)
+    assert all(row == (1, 1, 0) for row in inside), inside
+    assert freed_by_the_sampler_run == []
+    assert vae_decode_relief.sampling_depth() == 0
+    # The same decode once the sampler has returned is relieved, and keeps the sampled model.
+    assert len(freed) == 1 and freed[0]["for_dynamic"] is False
+    assert vae.patcher in kept and any(getattr(model, "model", None) is patcher.model for model in kept)
+    assert all(torch.isfinite(image).all() for _, image in ours)
+    assert _same(latent, stock_latent)
+    assert all(_same(mine[0], theirs[0]) and _same(mine[1], theirs[1])
+               for mine, theirs in zip(ours, stock_previews, strict=True))
+    assert _same(after, stock_previews[-1][1])
+    said = [record for record in caplog.records if vae_decode_relief.SAMPLER_RUNNING in record.getMessage()]
+    assert len(said) == 1 and "stepped aside" not in caplog.text and idle is not None
