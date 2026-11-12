@@ -107,7 +107,7 @@ def fresh_load_probe(store: Any, slot: str, base_key: tuple,
     why = eligibility(store, stored, held, permitted())
     return capacity_classic_bake.probe(
         lora_stack, default_resolve_lora_path, stack_read=bool(held and not stored.base_baked),
-        in_place="that is not available either" if why is True else why)
+        in_place=capacity_classic_bake.DID_NOT_FIT_EITHER if why is True else why)
 
 
 def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack: list | None,

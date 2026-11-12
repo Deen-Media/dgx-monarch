@@ -436,7 +436,7 @@ def test_the_fresh_loads_probe_charges_the_classic_bake_and_never_prices_in_plac
     assert "identity-gate PASS" in refused.in_place_note
     with fallback.permission({price.IN_PLACE_BAKE_PROVEN: True}):
         again = fallback.fresh_load_probe(held, "cond", ("m.safetensors", ()), STACK)("/models/m", {})
-    assert again.in_place_bytes == 0 and "that is not available either" in again.in_place_note
+    assert again.in_place_bytes == 0 and price.DID_NOT_FIT_EITHER in again.in_place_note
     # An empty slot has read nothing yet, so the stack's files are charged as well.
     empty = fallback.fresh_load_probe(_store(None), "cond", ("m.safetensors", ()), STACK)("/models/m", {})
     assert empty.bake_bytes == worker_side_term() + LTX_OWN_STACK

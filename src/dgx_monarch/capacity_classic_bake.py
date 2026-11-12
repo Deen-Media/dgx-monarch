@@ -70,7 +70,8 @@ IN_PLACE_BAKE_PROVEN = "_dgxm_in_place_bake_proven"
 NO_GATE_PASS = ("no identity-gate PASS for this combination's in-place bake came with this load; render "
                 "it once with lora_low_rss on so the gate can prove it")
 HOLDS_A_STACK = "the loaded model already carries a classic stack, which the in-place bake does not take"
-NO_LOADED_BASE = "no copy of this base is loaded to bake on"
+# At the fresh load's own walls, after the store tried the in-place bake with the permission.
+DID_NOT_FIT_EITHER = "that did not fit beside the loaded copy either, or its bake failed"
 
 
 def weight_class(key: str, tensors: Mapping[str, TensorDescriptor]) -> str:
@@ -217,6 +218,6 @@ def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, s
 
 __all__ = ["CLASSIC_BAKE_BYTES_PER_WEIGHT", "CLASSIC_BAKE_FIXED_BYTES", "CLASSIC_BAKE_GUARD_RATIO",
            "FP8_QUANTIZED", "FULL_PRECISION", "HOLDS_A_STACK", "IN_PLACE_BAKE_FIXED_BYTES", "IN_PLACE_BAKE_PROVEN",
-           "MEASURED_LARGEST_WEIGHT_BYTES", "NO_GATE_PASS", "NO_LOADED_BASE", "OTHER", "classic_bake_bytes",
+           "DID_NOT_FIT_EITHER", "MEASURED_LARGEST_WEIGHT_BYTES", "NO_GATE_PASS", "OTHER", "classic_bake_bytes",
            "in_place_bake_bytes", "patched_weights", "priced", "probe", "stack_bytes", "term_from_weights",
            "weight_class"]
