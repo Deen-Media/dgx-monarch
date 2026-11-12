@@ -2254,7 +2254,12 @@ back to tiles. On unified memory nothing fails until the kernel does. On
 with 6.7 GiB read as free, used 9.3 and took the box to 6.7 GiB available
 while the driver held 32 GiB of text encoders no later node needed; and a
 decode priced at 5.6 GiB started with 4.9 read as free and took the box from
-12.5 to 7.8 GiB. No fault followed either. So on the same GPUs as the
+12.5 to 7.8 GiB. No fault followed either. Both graphs set `lora_low_rss`
+off, which keeps ComfyUI's weight backup on the Worker; the first render with
+the Spark's default read a low of 34.5 GiB, and with the driver's memory
+reading switched off it read the same low within 0.3 GiB, so the reading is
+not what took the box down. A driver that has run other graphs first holds
+their text encoders too, which is ordinary use. So on the same GPUs as the
 reading, with DynamicVRAM on, and by default, `vae_decode_relief` wraps
 `VAE.decode` in the driver. When the decode's price plus ComfyUI's reserve
 exceeds what ComfyUI reads as free, it calls ComfyUI's own `free_memory` for
