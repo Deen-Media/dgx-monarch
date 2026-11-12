@@ -18,6 +18,7 @@ from ..log import get_logger
 from ..mesh_safety import stock_load_preflight  # noqa: F401 - read by store_load
 from ..transfer_utils import failure_summary
 from . import (
+    in_place_fallback,
     lora_shape_guard,
     resident_ledger,
     slab_lifetime,
@@ -274,7 +275,7 @@ class ModelStore:
         base_key, request_key = self.make_keys(unet_name, options, lora_stack, quant_kind)
         authoritative_slab_retry = False
 
-        if stored is not None and stored.base_key == base_key and (
+        if in_place_fallback.holds_base(stored, base_key) and (
             store_identity.base_artifact_identity(stored.artifact_identity)
             != store_identity.base_artifact_identity(requested_identity)
             or not store_detect.fsdp_reuse_matches_proof(stored, fsdp_checkpoint_proof)
@@ -286,7 +287,7 @@ class ModelStore:
             )
             stored = None
 
-        if stored is not None and stored.base_key == base_key:
+        if in_place_fallback.holds_base(stored, base_key):
             # Same checkpoint: detection already ran at load time, and the
             # option-derived kind can be weaker (scaled-fp8 checkpoints load
             # through default options). Compare with the detected kind so an
@@ -298,7 +299,8 @@ class ModelStore:
                 stored = None
 
         if stored is not None and stored.request_key == request_key \
-                and stored.artifact_identity == requested_identity:
+                and stored.artifact_identity == requested_identity \
+                and not in_place_fallback.must_reload(self, stored):  # baked in place, no gate PASS sent
             reload_note = ""
             if slot in self._gpu_evicted:
                 self._gpu_evicted.discard(slot)  # this reuse re-materializes it
@@ -306,9 +308,9 @@ class ModelStore:
             log.info("model store [%s]: %s%s -- %s", slot, TRANSITION_REUSE, reload_note, unet_name)
             return stored.active_patcher, TRANSITION_REUSE
 
-        if stored is not None and stored.base_key == base_key:  # before either swap (#129)
+        if in_place_fallback.holds_base(stored, base_key):  # before either swap (#129)
             lora_quant_guard.assert_lora_quant_supported(stored.family, stored.quant_kind, lora_stack)
-        if stored is not None and stored.base_key == base_key and self.lora_low_rss \
+        if in_place_fallback.holds_base(stored, base_key) and self.lora_low_rss \
                 and (stored.unbake is not None or not stored.lora_sig):
             # Low-RSS hot-swap restores verified bytes and re-bakes in place. An
             # ordinary failure drops the slot and falls through to a full load; an
@@ -321,7 +323,7 @@ class ModelStore:
             if result is not None:
                 return result
 
-        if stored is not None and stored.base_key == base_key and not self.lora_low_rss \
+        if in_place_fallback.holds_base(stored, base_key) and not self.lora_low_rss \
                 and not stored.base_baked:
             # Hot-swap (clone the pristine base, re-apply loras), or None when the
             # swap would copy the model off the GPU first: then a fresh load.
@@ -338,7 +340,16 @@ class ModelStore:
         # Release ensure's local pin before dropping the old slot: USP injection
         # creates a model reference cycle, so a live local would defeat _drop's
         # gc.collect() and briefly retain two full DiTs.
-        stored = None
+        set_aside, stored = stored is None and self._stored(slot) is not None, None
+        # A fresh load would follow, and nothing is dropped yet: where the classic bake's price
+        # misses and the gate allows it, the stack is baked in place (actor/in_place_fallback.py).
+        # Not on a slot this call set aside above (an identity that drifted, a slab retry).
+        result = None if fsdp_launch or set_aside else in_place_fallback.take(
+            self, slot, unet_name, options, lora_stack, base_key, requested_identity, log,
+            request_artifact_identity, lambda: self.ensure(
+                unet_name, options, None, slot, on_base_loaded, fsdp_launch, rescue_consent))
+        if result is not None:
+            return result
         return store_load.fresh_load(
             self, slot, unet_name, options, lora_stack, quant_kind, requested_identity,
             base_key, on_base_loaded, fsdp_launch, fsdp_preflight_path,

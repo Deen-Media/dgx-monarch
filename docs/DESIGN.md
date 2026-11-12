@@ -2350,6 +2350,132 @@ wrapped (it is already the bounded form) and neither is `VAE.encode`. **NOT
 RUN** on hardware as merged: the two records above are of the build before it
 (TROUBLESHOOTING #12).
 
+**A LoRA stack's classic bake has a price, and where it does not fit the
+Worker bakes in place if the identity gate allows.** With `lora_low_rss` off a
+Worker bakes a stack ComfyUI's classic way: the slot is dropped, base and
+stack load fresh from the host, and ComfyUI keeps a host backup of every
+patched weight. The stock price (the file, the host copy it is placed from and
+the floor) had no term for the stack. On one GPU of a DGX Spark under its
+clock cap (max 2100 MHz), 2026-11-12, as the rise of the Worker's GPU figure
+over the same model's load with no stack, and what stays after a soft clear:
+
+| checkpoint and how its patched layers bake | stack on disk | patched weights | switch | rise | stays |
+|---|---:|---:|---|---:|---:|
+| LTX 2.3 scaled FP8, ComfyUI's classic bake | 7.08 GiB | 1660 (18.07 GiB) | off | 12.34 GiB | 10.65 GiB |
+| the same, a smaller stack | 0.305 GiB | 480 (12.0 GiB) | off | 5.03 GiB | 3.40 GiB |
+| MiniMax H3 INT8 ConvRot, cast-time math | 1.82 GiB | 208 | off | 1.21 GiB | 0.12 GiB |
+| Qwen Image plain FP8, classic bake | 0.79 GiB | 720 | off | 0.84 GiB | not read |
+| LTX 2.3, its own stack baked in place | 7.08 GiB | 1660 | on | 8.28 GiB | 0.47 GiB |
+| LTX 2.3, the smaller stack baked in place | 0.305 GiB | 480 | on | 2.25 GiB | 0.62 GiB |
+
+The latents are the same with the switch off and on, for both LTX stacks. The
+rise follows how many weights the stack patches and not the stack's size
+(the two LTX stacks are 23 times apart in size and 2.5 apart in rise): the
+line through the two LTX points is 2.06 GiB plus 6.34 MiB a patched weight.
+The first row's load was priced at 50.9 GiB and used 8.7 GiB more than that
+price allows above its floor. No code on the classic path keeps a buffer for
+a patched layer; whether the memory that stays is live or the allocator's own
+is not yet read, and the price does not depend on it. Three rules follow.
+
+- **The term** (`capacity_classic_bake.py`). A classic bake on stock residency
+  is charged 2 GiB plus 7.5 MiB a patched weight, which covers every row
+  (5.52 and 14.16 GiB for the two LTX stacks). The weights are counted from
+  the checkpoint's and the LoRAs' headers, which give the Worker's own counts
+  for both LTX stacks (1660 and 480); a patched bias counts as a weight, and
+  a stack that cannot be mapped charges every weight, and a checkpoint whose
+  header cannot be read is charged as the largest stack measured (1660
+  weights). What is measured: quantized FP8, INT8 ConvRot and plain FP8, by
+  the rows above. A quantized FP8 weight larger than the largest one under
+  those rows (64 MiB, the LTX file's largest patched weight) is past them,
+  and a stack that patches one is charged the larger of the line and 0.75 of
+  its patched quantized FP8 bytes. What waits for a measurement: every
+  full-precision weight (BF16, FP16, FP32). Those are charged by the line
+  until the next hardware block reads two BF16 cells (a Klein BF16 stack cut
+  at the latent, and the BF16 Wan-Animate 2 template's first stack change);
+  a share of their bytes with no cell behind it would have priced a recovery
+  that worked on hardware on 2026-11-05 as a refusal. One constant
+  (`GUARDED_BY_BYTES`) holds that choice. The stack's own files
+  are charged too: the Worker reads them into host memory for the bake.
+  `StockFit` carries the term, so the Worker's two walls and the quote the
+  driver reads charge one figure by one function, and every refusal prints
+  it. The partial-load route's room rule charges the line for the layers
+  still to bake, without the bytes guard: its BF16 cell ran on hardware
+  under the rule without the term. The default (`lora_low_rss` on) and FSDP,
+  which takes no classic bake, are charged nothing new. The loader node's own
+  preflight runs before any LoRA node and cannot know the stack.
+- **The fallback** (`actor/in_place_fallback.py`). Baking in place on the
+  loaded base is the default's own path and leaves almost none of that
+  memory. So where the classic price, credited what dropping the slot's
+  resident returns, does not fit, and the in-place price does (one copy of
+  the stack and 2 GiB of working memory), the store bakes in place. The term
+  and the fallback belong to a change that ends in a fresh load. A change
+  ComfyUI's classic hot swap makes in place (the held stack's backup covers
+  the new one, as for a strength change, or the other slot holds a model)
+  has neither and keeps its price: such a change grew the Worker by 0.8 GiB
+  on the 2026-11-05 hardware leg. So the store asks after the hot swap has
+  declined and before it drops anything. The quote reads the same fact the
+  hot swap acts on, for every format: whether ComfyUI's backup on the slot
+  holds every weight the new stack patches (the held stack's own files, or
+  for another file the weights its headers map to), and whether the other
+  slot holds a model. It prices by the same arguments, so both pick the same
+  bake. Both read "the slot holds this base" by the store's one comparison
+  (`in_place_fallback.holds_base`): the file name and the loader options
+  together. A request that keeps the file and changes an option (the weight
+  dtype, for one) is a fresh load, and is priced as one. A slot whose
+  checkpoint file has changed on disk since its load is set aside by the
+  store: base and stack load fresh and no in-place bake is offered, and the
+  quote prices that. A request whose key is the slot's own is quoted a reuse
+  only while the checkpoint and the stack's LoRA files still carry the
+  fingerprints the slot recorded, which is the store's own rule for a reuse.
+  A LoRA file rewritten under its own name makes the same request a stack
+  change on the held base, priced as any other, with ComfyUI's backup
+  credited only where it still covers the stack. For the second model of a dual-model render the bake is chosen against the
+  reading less the first model's charge, as the store chooses it beside the
+  loaded first model, and the first slot is counted as held, as the store
+  finds it. Three places still work out a second time what the store
+  decides, and are known duplications until one function serves both sides.
+  The pair's budget is the reading less the first model's peak price and not
+  what its load leaves, which errs toward a refusal. The quote matches the
+  slab-retry flag's base by file name where the store compares the whole key;
+  no classic bake is in play there, since slab residency needs `lora_low_rss`
+  on. And `in_place_fallback.loads_fresh` restates the gates of
+  `store_bake.copies_off_the_gpu` (the other slot, stock residency, placed
+  bytes) and does not share them. Where the slot holds the
+  base bare the bake runs on it. Where it holds anything else (nothing,
+  another model, this base with a stack of either kind) the slot is dropped,
+  the base loads bare at the stock price and the bake runs on that: a stack
+  is never baked on top of another, and a base counts as bare only when
+  ComfyUI's backup of it is empty too. The baked slot keeps no backup and no
+  un-bake record, so the next stack change reloads the base. One line says
+  the fallback was taken, and the quote's measured block says which bake was
+  priced. A refusal at the Worker's own wall comes after the slot is
+  dropped, as with any refused fresh load.
+- **The permission** (`nodes/in_place_bake_permission.py`). The in-place bake
+  is another bake path, and a memory rule must not move a combination onto a
+  path the identity gate has not passed. A graph that turns the switch off
+  runs no ceremony, so the driver sends a permission and never a prohibition:
+  the sample request carries it only when the gate ledger holds an exact PASS,
+  and no FAIL, for the combination with the in-place bake on (the pair's key
+  for a dual-model render, as the gate's own grant reads it). The PASS must
+  sit under this graph's other worker arguments unchanged, so a graph whose
+  Init node differs in more than the switch from the one that earned it gets
+  none. It rides the
+  per-dispatch request and not the worker arguments, which the gate's
+  capability context holds whole. Absent means no fallback, on every path
+  that does not set it: the classic price decides alone, and the refusal
+  names both prices and both cures (free memory, or render the combination
+  once with `lora_low_rss` on so the gate can prove it). The quote reads the
+  same permission, so the fleet is not admitted to a change a Worker would
+  refuse. A slot baked in place is not reused by a request with the switch
+  off and no permission; it is dropped and loaded the classic way, and the
+  quote prices it as that load. Only a sample dispatch carries the
+  permission: a loader node or the scheduler node that loads a model with
+  its stack keeps the classic bake.
+
+Not yet run on hardware as a rule; the figures above are what it is built on.
+The term has no measured point on a full-precision file; the line it charges
+there is the one the quantized rows gave.
+
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a
 purge, and a purge runs only when the thread that owns them allocates again
@@ -2970,6 +3096,9 @@ dgx-monarch/
 │   │   ├── lora_partial_load.py # a one-GPU partial load with a LoRA stack: the
 │   │   │                      #   low-RSS bake taken for that load, or the
 │   │   │                      #   refusal where an FP8 layer would differ
+│   │   ├── in_place_fallback.py # a classic LoRA bake that does not fit is
+│   │   │                      #   baked in place on the held base, when the
+│   │   │                      #   driver sent the gate's permission (§5.9)
 │   │   ├── vae_decode.py      # the vae_decode endpoint and the one resident
 │   │   │                      #   decode VAE an actor may hold (§5.6)
 │   │   └── rdma_handoff.py    # durable worker descriptor ownership + ACK
@@ -3082,6 +3211,9 @@ dgx-monarch/
 │   │                          #   in the driver is MemAvailable less a floor (§5.9)
 │   ├── vae_encode_item.py     # on unified memory, the driver encodes a batch
 │   │                          #   of images one image a call (§5.9)
+│   ├── capacity_classic_bake.py # what a LoRA stack's classic bake adds to the
+│   │                          #   stock price, and the in-place bake's own
+│   │                          #   price (§5.9)
 │   ├── vae_decode_relief.py   # on unified memory, before a VAE decode ComfyUI
 │   │                          #   prices above its free memory the driver has it
 │   │                          #   free that much from its text encoders (§5.9)
@@ -3342,6 +3474,7 @@ an enforced requirement. The current exceptions are:
 | `actor/capacity_quote.py` | 539 | residency memory estimates and the response fields parsed by the driver, including slab LoRA bake memory and default LoRA-path selection |
 | `capacity_agreement.py` | 567 | the driver's collection, its one pure decision function and the fleet card it composes |
 | `actor/worker.py` | 509 | ordered checks and adapter installation for each freshly loaded base in `_inject_for_topology` |
+| `actor/model_store.py` | 511 | the store's one `ensure`: reuse, the two swaps, the in-place fallback's single call before any drop, and the fresh load, in the order they must be tried |
 | `gate_ledger.py` | 527 | the ledger's protocol number and its burn history live together, so the record of why a version was retired cannot drift from the number itself |
 | `comfy_surface.py` | 533 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
 | `adapters/fsdp.py` | 589 | the FSDP launch contract in one place: admitted kinds and profiles, the live precision rescan, the wrap with ignored islands and quantized shards, the streaming shard build hand-off, and the shard-build price |

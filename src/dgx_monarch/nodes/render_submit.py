@@ -54,6 +54,8 @@ from .gate_identity import (
     model_for_request,
     model_with_worker_overrides,
 )
+from .in_place_bake_permission import IN_PLACE_BAKE_PROVEN
+from .in_place_bake_permission import stamp as stamp_in_place_bake_permission
 from .pending import PendingRender, PendingRenderHandoff
 from .render_quarantine import _enforce_persisted_quarantine
 from .render_result import _finish_render
@@ -281,7 +283,7 @@ def _submit_render_guarded(
         "_dgxm_artifact_sets",
         "_dgxm_artifact_preflight",
         "_dgxm_krea2_ref_preflight",
-        _ADOPTION_CONTEXT_REQUEST_KEY,
+        _ADOPTION_CONTEXT_REQUEST_KEY, IN_PLACE_BAKE_PROVEN,
     ):
         request.pop(internal_key, None)
     model = model_for_request(model, request)
@@ -356,6 +358,8 @@ def _submit_render_guarded(
                 model, handle, authorization)
         model = model_with_worker_overrides(
             model, authorization.worker_args, handle=handle)
+        stamp_in_place_bake_permission(  # only an exact gate PASS lets a Worker bake a classic stack in place
+            request, model, handle, resolved_topology=topo, resolved_attention=sample_attention)
         spec = model.mesh
         validate_render_topology(model, topo, latent["samples"])
         topology_label = topo.describe()

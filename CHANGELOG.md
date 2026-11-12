@@ -640,6 +640,30 @@
   `dgxm doctor`'s `driver memory reading` row says so when it is not working.
   Not yet run on hardware
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- On a DGX Spark, a LoRA stack loaded with `lora_low_rss` off is now priced
+  at what its bake takes, and where that does not fit the Worker bakes the
+  stack in place when the identity gate has passed the combination. This
+  changes which loads with `lora_low_rss` off are admitted. With the switch
+  off a Worker bakes ComfyUI's classic way, and the price had no term for
+  the stack: on 2026-11-12, with the Spark under its clock cap (max 2100
+  MHz), a 7.1 GiB stack on an LTX 2.3 scaled FP8 file took its load 8.7 GiB
+  past the price, and the Worker's GPU figure ended 12.3 GiB above the same
+  model's load with no stack (5.0 GiB for a 0.3 GiB stack on the same file,
+  1.2 GiB on an INT8 file, 0.8 GiB on a plain FP8 file). The price now adds
+  2 GiB plus 7.5 MiB for each weight the stack patches, and for a quantized
+  FP8 layer larger than any measured, a share of the patched bytes. No BF16
+  or FP16 file has been measured yet; those are charged the same line until
+  one is. A load that fitted the old price and does not fit the
+  new one is refused with the new figure, where before it was admitted and
+  took the box under its floor. Where the classic bake does not fit and
+  baking in place on the loaded model would, the Worker bakes in place, as
+  the default does, keeps no weight backup, and logs one line that starts
+  `LoRA bake: the classic bake of this stack needs`. It does that only when
+  the identity gate holds a PASS for the combination's in-place bake, which a
+  render of it with `lora_low_rss` on records; with no PASS the refusal says
+  so and names both prices. The default (`lora_low_rss` on) is priced as
+  before. Nothing to set. Not yet run on hardware
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
   class ancestry alone: `wan` took the Wan VACE, Camera, HuMo, S2V, Animate,

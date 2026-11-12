@@ -15,9 +15,10 @@ import socket
 from dataclasses import replace
 from typing import Any
 
+from .. import capacity_classic_bake
 from ..log import get_logger
 from ..transfer_utils import failure_summary
-from . import actor_footprint, capacity_quote, resident_ledger, store_fsdp
+from . import actor_footprint, capacity_quote, in_place_fallback, resident_ledger, store_fsdp
 from .capacity_quote import RankPrice
 
 log = get_logger(__name__)
@@ -293,9 +294,60 @@ def _my_slots(worker: Any, specs: list[dict]) -> list[dict]:
     return [spec for spec in specs if _slot_of(spec) == mine] or specs
 
 
+def _held_base(stored: Any, spec: dict, unet_name: str, path: str) -> tuple[bool, bool]:
+    """``(held, set_aside)``: the slot holds this spec's base for a swap, or ``ensure`` will set it aside.
+
+    The comparison is the store's own (``in_place_fallback.holds_base``): the
+    key is built as ``ModelStore.ensure`` builds it, from the file name and
+    the loader options together, so a request that changes an option on a
+    held file is read as the fresh load the store makes of it. Options the
+    store's builder cannot take give no key, which reads as not held. A slot
+    with this key whose checkpoint file has changed on disk is one ``ensure``
+    sets aside: no swap is made on it and no in-place bake is offered.
+    """
+    from .model_store import ModelStore
+
+    try:
+        base_key = ModelStore.make_keys(unet_name, spec.get("options"), None, "")[0]
+    except Exception:
+        return False, False
+    if not in_place_fallback.holds_base(stored, base_key):
+        return False, False
+    moved = in_place_fallback.checkpoint_moved(stored, path)
+    return not moved, moved
+
+
+def _classic_bake_probe(worker: Any, store: Any, stored: Any, spec: dict, held: bool,
+                        in_place_bake_proven: bool | str, *, other_held: bool = False, covered: bool = False,
+                        charged: int = 0) -> Any:
+    """The stock probe for a stack that bakes ComfyUI's classic way in a fresh load; else ``None``.
+
+    It charges the bake's own term and, with the render's permission, prices
+    the in-place bake where the classic price misses, by the arguments
+    ``ModelStore.ensure`` decides by (``in_place_fallback.route``), so the
+    fleet is not refused a stack change the store would bake in place, nor
+    admitted to one it would refuse. A change the classic hot swap makes in
+    place (``in_place_fallback.loads_fresh`` says no: the other slot holds a
+    model, or the held stack's backup covers the new one) keeps today's
+    price. ``held`` is ``_held_base``'s answer, the store's own comparison
+    of the base. ``in_place_bake_proven`` is the render's permission, or the
+    clause that says why the store will not offer the in-place bake.
+    ``charged`` is what this request's earlier slots take: the bake is chosen
+    against the budget left for this slot.
+    """
+    loras = spec.get("loras")
+    if not loras or store_fsdp.active(worker):
+        return None
+    args = in_place_fallback.route(store, stored, held, in_place_bake_proven)
+    if args is None or not in_place_fallback.loads_fresh(stored, held, other_held, covered):
+        return None
+    return capacity_classic_bake.probe(loras, capacity_quote.default_resolve_lora_path, charged=charged, **args)
+
+
 def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
            pinned_staging: bool | None, rescue_consent: dict | None,
-           charged: int) -> RankPrice:
+           charged: int, in_place_bake_proven: bool = False,
+           other_loads_first: bool = False) -> RankPrice:
     from .model_store import (
         SLAB_VOUCHED_FAMILIES,
         _slab_capable_path,
@@ -315,6 +367,24 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
     base_key = getattr(stored, "base_key", ()) or ()
     retry = bool(getattr(stored, "slab_auto_retry", False)
                  and base_key and base_key[0] == unet_name)
+    request_key = _request_key(snapshot, slot, spec, unet_name)
+    other = store.current if slot == capacity_quote.SLOT_UNCOND else store.uncond
+    # ComfyUI's backup on this slot holds every weight the new stack patches: the classic hot
+    # swap then re-applies in place, and no fresh load, so no classic bake, follows. Read from
+    # the slot's own backup, the fact the store acts on, so it holds for every format. Asked
+    # only of a slot that holds this base as the store compares it (name and options).
+    held, set_aside = _held_base(stored, spec, unet_name, path)
+    covered = held and in_place_fallback.backup_covers(
+        stored, path, spec.get("loras"), capacity_quote.default_resolve_lora_path)
+    # A slot ``ensure`` sets aside is never offered the in-place bake, whatever permission came.
+    bake_allowed = in_place_bake_proven and (in_place_fallback.SET_ASIDE if set_aside else True)
+    # ``ensure`` reuses only on the files the slot loaded: a LoRA of this stack that changed on
+    # disk since makes the same request a stack change on the held base, not a reuse.
+    stack_moved = held and in_place_fallback.stack_files_moved(
+        stored, spec.get("loras"), capacity_quote.default_resolve_lora_path)
+    # The store decides this slot's hot swap when its load runs: by then an earlier slot of the
+    # same request (the conditional model of a pair) holds its model, whatever it holds now.
+    other_held = other is not None or other_loads_first
     return capacity_quote.price(
         path=path,
         unet_name=unet_name,
@@ -333,11 +403,16 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         family_override=getattr(store, "family_override", None),
         node_options=options,
         lora_stack=spec.get("loras"),
+        fit_probe=_classic_bake_probe(worker, store, stored, spec, held, bake_allowed,
+                                      other_held=other_held, covered=covered, charged=charged),
         slot=slot,
         pinned_staging=pinned_staging,
-        store_snapshot=snapshot,
+        # A slot ``ensure`` will not reuse for this request (baked in place with no permission, or
+        # a file changed on disk) is priced as a load.
+        store_snapshot=in_place_fallback.quote_snapshot(
+            store, stored, snapshot, slot, in_place_bake_proven, set_aside, stack_moved, covered),
         budget_bytes_already_charged=charged,
-        request_key=_request_key(snapshot, slot, spec, unet_name),
+        request_key=request_key,
     )
 
 
@@ -385,18 +460,23 @@ def quote(worker: Any, request: Any) -> dict:
     snapshot = _with_resident_bytes(store.snapshot(), facts, keys, backups, partials, drops)
     pinned = _pinned_staging()
     charged = 0
+    earlier: set[str] = set()  # the slots this request loads before the one being priced
     for spec in _my_slots(worker, specs):
         try:
             row = _price(worker, store, spec, snapshot=snapshot,
                          pinned_staging=pinned,
                          rescue_consent=consent if isinstance(consent, dict) else None,
-                         charged=charged)
+                         charged=charged,
+                         in_place_bake_proven=(isinstance(request, dict)
+                                               and request.get("in_place_bake_proven") is True),
+                         other_loads_first=bool(earlier - {_slot_of(spec)}))
         except Exception as exc:
             # No claim either way, which admits: a probe this rank could not run
             # is not evidence that the load does not fit here.
             log.warning("capacity quote made no claim for slot %s (%s)",
                         _slot_of(spec), failure_summary(exc))
             row = _no_claim(_slot_of(spec), failure_summary(exc))
+        earlier.add(_slot_of(spec))
         charged += _charged_bytes(row, spec)
         # ``shmem_bytes`` is the ladder's own read and is not touched here: one
         # /proc/meminfo parser, and one read per row.

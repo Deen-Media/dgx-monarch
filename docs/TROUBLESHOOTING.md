@@ -710,6 +710,41 @@ models it freed from, and what MemAvailable read on each side. What to know:
   ([DESIGN](DESIGN.md), "Before a decode priced above free memory, the driver
   frees what the decode needs").
 
+**A LoRA stack with `lora_low_rss` off is refused, or baked in place.** With
+the switch off a Worker bakes a stack ComfyUI's classic way, and that bake
+takes memory beside the weights that the price used to leave out: on
+2026-11-12, with the Spark under its clock cap (max 2100 MHz), 12.3 GiB for a
+7.1 GiB stack that patches 1660 weights of an LTX 2.3 scaled FP8 file, and 5.0
+GiB for a 0.3 GiB stack that patches 480 of them. The stock price now carries
+it (`N GiB for the LoRA stack's classic bake` in a refusal's brackets). What
+you may see:
+
+- **A refusal where the load used to start.** The old price admitted some
+  loads that then took the box under its floor. The refusal names the classic
+  bake's share, and, after it, what baking in place would need and why that
+  was not done.
+- **`LoRA bake: the classic bake of this stack needs ... so the Worker baked
+  it in place on the loaded model`.** The classic bake did not fit, baking in
+  place did, and the identity gate has passed this model and LoRA combination's
+  in-place bake. The render is the same weights. The model then holds no
+  weight backup, so the next LoRA change on it reloads it from disk.
+- **`no identity-gate PASS for this combination's in-place bake came with
+  this load`.** The Worker bakes in place only for a combination the gate has
+  passed, and a graph with `lora_low_rss` off runs no gate. Render the
+  combination once with `lora_low_rss` on (the default on a DGX Spark): the
+  first-use gate records its PASS, and the same graph with the switch off is
+  then baked in place when the classic bake does not fit. Change nothing else
+  on the Init node between the two renders: the PASS counts only for the same
+  settings with the switch on. Or free memory, or leave the switch on.
+- **A BF16 or FP16 file is priced on the quantized files' figures.** No
+  measurement of the classic bake on a full-precision file exists yet, so
+  its stack is charged the same 2 GiB plus 7.5 MiB a patched weight, and the
+  figure may move once one is taken. Leaving `lora_low_rss` on avoids the
+  classic bake altogether.
+
+The default, `lora_low_rss` on, is not affected ([DESIGN](DESIGN.md), "A LoRA
+stack's classic bake has a price").
+
 ## 13. uly2+fsdp / ring2+fsdp render deadlocks (hangs, no error)
 
 **Symptom:** an FSDP topology combined with sequence parallelism (uly2+fsdp;
@@ -932,8 +967,8 @@ gpu_load 230.2s)` on the BF16 Wan-Animate 2 memory-saver template (2026-11-05).
 ComfyUI copied the whole model off the GPU before it applied the LoRA. The
 Worker now drops the bare base and loads base and LoRA fresh instead, at the
 same price, and its journal says so: `a LoRA change on <file> would copy the
-model off the GPU first ... so the slot is dropped and base and stack load
-fresh`, followed by an ordinary `load` line.
+model off the GPU first ... so it is not hot-swapped: base and stack load
+fresh, or bake in place`, followed by an ordinary `load` line.
 
 ## 19. Blank ComfyUI canvas (grid renders, no menu/sidebar) after an update
 
