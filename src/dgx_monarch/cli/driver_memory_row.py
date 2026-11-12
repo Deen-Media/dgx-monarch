@@ -12,7 +12,9 @@ makes no CUDA context of its own and never attaches a mesh.
 On such a GPU the driver also encodes a batch of images one image a call
 (``vae_encode_item``). No number shows that from outside, so the driver
 publishes the rule's state in ``/dgxm/telemetry`` (``driver_rules``) and the
-row repeats it: on, off by the driver's switch, or stepped aside. A state the
+row repeats it: on, off by the driver's switch, or stepped aside. The route
+reads that state for each answer and does not cache it with the rest, so the
+block is current even where the answer carries ``telemetry_error``. A state the
 driver did not publish is said to be unobserved and changes no verdict.
 
 The classifier takes the parsed answer and needs no driver, CUDA or network.

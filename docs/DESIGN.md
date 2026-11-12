@@ -2232,7 +2232,8 @@ measurement is why decode is left alone: its results were identical either
 way and one image a call read up to 10 percent slower. Other image VAEs are
 exact by construction and were not timed. `DGXM_DISABLE_VAE_ENCODE_ITEM=1` on
 the driver turns the rule off; the reading's switch does not. The driver
-publishes the rule's state in `/dgxm/telemetry` (`driver_rules`), and doctor's
+publishes the rule's state in `/dgxm/telemetry` (`driver_rules`, read for
+each answer and never cached with the rest of the payload), and doctor's
 `driver memory reading` row repeats it: on, off by the switch, or stepped
 aside.
 
