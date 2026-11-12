@@ -1027,7 +1027,9 @@
 
 - Before a render-site capacity check refuses, the driver unloads the models
   ComfyUI holds on its host, such as the last render's text encoder and VAE,
-  and checks again; set `DGXM_DISABLE_DRIVER_UNLOAD=1` to turn this off ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+  and checks again; set `DGXM_DISABLE_DRIVER_UNLOAD=1` to turn this off. It
+  stands down only for work on the Workers attached now, so a Reset attached
+  mesh or a Clear and retry earlier in the session does not stop it ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
 - Three fixes from the 2026-11-04 release test. The identity gate's stock
   comparison frees what the driver host can reload before it gives up, so the
   Flux 2 template renders on a fresh pair instead of refusing with its 33 GiB
