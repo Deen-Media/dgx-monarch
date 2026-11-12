@@ -2363,8 +2363,14 @@ under its clock cap (max 2100 MHz), two Worker starts failed in
 `cuDevicePrimaryCtxRetain` with 1.6 and 4.6 GiB free while 45 and 47 GiB
 were available, and the kernel log read `NV_ERR_NO_MEMORY` from the driver's
 allocation of the context's main buffer. Every other start on record had
-8.9 GiB free or more, and made its context. `actor/context_room.py` holds
-two rules for it.
+8.9 GiB free or more, and made its context. An ordinary GPU allocation
+meets the same answer from the kernel and gets past it: the same day a
+Worker that was already up began a model load with 2.4 and then 1.8 GiB
+free (30 GiB available), the kernel logged the driver's `NV_ERR_NO_MEMORY`
+once with no context line, and the load went on and the render finished. So
+the step belongs before the first CUDA call and nowhere else: a load
+recovers by itself, and the context's main buffer does not.
+`actor/context_room.py` holds two rules for it.
 
 - **Room first.** Setup calls the bootstrap through `context_room`, which
   reads `/proc/meminfo` before the bootstrap runs. With 12 GiB free or more
