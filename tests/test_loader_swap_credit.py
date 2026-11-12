@@ -201,9 +201,82 @@ def test_a_deferred_load_needs_room_for_its_driver_models_beside_the_old_model(m
     assert not relief.short_bytes, "after the drop the DiT itself would fit"
     assert not relief.fits and relief.beside_short_bytes / _GIB == pytest.approx(4.94, abs=0.02)
     assert "this graph's driver models load first, beside flux1-dev" in relief.sentence(LTX23)
-    # The same shortage on an eager load has no driver models to build before the drop.
+    # A load that is known to be eager has no driver models to build before the drop.
     eager = _shape("ltx", avail=30.0, file=21.86, stack=29.94)
     assert _relieve(monkeypatch, eager, _held(FLUX1, 60.0), new=LTX23)[1].fits
+
+
+# An explicit preset. Its load is eager unless an identity ceremony or the dm-cfg2 split
+# defers it to the first render (nodes/loaders.py), and that is decided after the price, on
+# the live fleet. A deferred load drops the old model only at that render, after the driver
+# has built the graph's text encoder and VAEs. So a credited price must hold both ways.
+
+def _explicit(monkeypatch, shape, held_row, *, stack_gib: float, preset: str = "uly2"):
+    """The loader's own call under an explicit preset: the shape says eager, and the driver
+    models the graph still has to build are passed beside it."""
+    _answers(monkeypatch, held_row)
+    mesh = types.SimpleNamespace(handle=_LiveHandle(), topology_preset=preset, worker_args={})
+    return loader_relief.relieve(shape, _stock_windows, mesh=mesh, unet_name=LTX23, options={},
+                                 slot="cond", stack=int(stack_gib * _GIB))
+
+
+def test_a_load_that_may_wait_needs_its_driver_models_beside_the_old_model_with_no_credit(monkeypatch):
+    """20 GiB available, 60 GiB to drop, a 30 GiB driver stack: the credited price fits, and the
+    box would run out building the text encoder and VAEs before the Worker ever drops."""
+    shape = _shape("ltx", avail=20.0, file=10.0, stack=30.0)
+    assert shape.load_stack_bytes == 0, "the shape of an explicit preset says eager"
+    relief = _explicit(monkeypatch, shape, _held(FLUX1, 60.0), stack_gib=30.0)
+    assert relief.credit.bytes == 60 * _GIB and not relief.short_bytes
+    assert not relief.fits and relief.may_wait
+    assert relief.beside_short_bytes == 15 * _GIB, "5 GiB reserve and 30 GiB of models against 20"
+    assert relief.sentence(LTX23) == (
+        " The Worker on this box drops flux1-dev before this load, which frees at least 60.0 GiB, "
+        f"and that would make room for {old_model.display_name(LTX23)}. But this load may wait "
+        "for the first render (an identity ceremony or a one-model-a-rank cfg2 split defers it), "
+        "and this graph's driver models then load first, beside flux1-dev, and they are 15.0 GiB "
+        "short.")
+    # With room for the driver models beside the old one, the same swap is admitted.
+    roomy = _shape("ltx", avail=36.0, file=10.0, stack=30.0)
+    assert _explicit(monkeypatch, roomy, _held(FLUX1, 60.0), stack_gib=30.0).fits
+
+
+def test_a_load_that_may_wait_is_priced_as_one_that_waits_once_a_drop_is_counted(monkeypatch):
+    """36 GiB read and 10 to drop. An eager load's window, 26 GiB, fits on 46. The same load after
+    the driver's 30 GiB of models needs 56, and a Worker would refuse it at the render."""
+    shape = _shape("ltx", avail=36.0, file=10.0, stack=30.0)
+    eager = loader_relief.relieve(
+        shape, _stock_windows, unet_name=LTX23, options={}, slot="cond",
+        mesh=(_answers(monkeypatch, _held(FLUX1, 10.0)),
+              types.SimpleNamespace(handle=_LiveHandle(), topology_preset="uly2", worker_args={}))[1])
+    assert eager.fits, "with no driver model left to build the two orders are one"
+    relief = _explicit(monkeypatch, shape, _held(FLUX1, 10.0), stack_gib=30.0)
+    assert not relief.fits and not relief.beside_short_bytes
+    assert relief.short_bytes / _GIB == pytest.approx(10.0, abs=0.05)
+    assert "is still 10.0 GiB short after that." in relief.sentence(LTX23)
+
+
+def test_under_auto_the_stack_beside_the_old_model_is_the_shapes_own(monkeypatch):
+    """Under auto the shape already carries the driver models: passing them again changes nothing."""
+    shape = _shape("ltx", avail=67.51, file=21.86, stack=29.94, load_stack=29.94)
+    _answers(monkeypatch, _held(FLUX1, 22.17))
+    mesh = types.SimpleNamespace(handle=_LiveHandle(), topology_preset="auto", worker_args={})
+    relief = loader_relief.relieve(shape, _stock_windows, mesh=mesh, unet_name=LTX23, options={},
+                                   slot="cond", stack=int(29.94 * _GIB))
+    assert relief.fits and not relief.may_wait
+
+
+def test_the_loader_hands_the_relief_the_driver_models_it_still_has_to_build(monkeypatch, tmp_path):
+    """End to end on the rig's explicit preset: 47 GiB against 40 read and 12 to drop was let
+    through. With 30 GiB of driver models still to build, the load that may wait needs 77."""
+    from dgx_monarch.nodes import graph_load_price
+
+    mesh = _loader_rig(monkeypatch, tmp_path, held_gib=12.0)
+    _answers(monkeypatch, _held(LONGCAT, 12.0))
+    monkeypatch.setattr(graph_load_price, "load_window_models",
+                        lambda terms, site: (30 * _GIB, ("t5xxl",)))
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None, slot="cond")
+    assert "is still 25.0 GiB short after that." in str(raised.value)
 
 
 def test_a_price_that_charges_no_load_takes_no_credit(monkeypatch):
@@ -425,6 +498,40 @@ def test_the_graphs_other_loader_is_read_as_a_quote_spec():
     assert loader_relief.other_slot_loads(cond, "cond") == [] and loader_relief.other_slot_loads(None, "cond") == []
     linked = {"7": {"class_type": "DGXMonarchUncondUNETLoader", "inputs": {"unet_name": ["4", 0]}}}
     assert loader_relief.other_slot_loads(linked, "cond") is None, "a name on a link cannot be asked"
+
+
+def _switched(choice: object, uncond_inputs: dict) -> dict:
+    """A cond loader and an uncond loader on the two branches of a lazy switch."""
+    return {
+        "3": {"class_type": "DGXMonarchUNETLoader", "inputs": {"unet_name": NEW}},
+        "7": {"class_type": "DGXMonarchUncondUNETLoader", "inputs": uncond_inputs},
+        "8": {"class_type": "ComfySwitchNode",
+              "inputs": {"switch": choice, "on_true": ["7", 0], "on_false": ["3", 0]}},
+        "9": {"class_type": "PreviewAny", "inputs": {"source": ["8", 0]}},
+    }
+
+
+@pytest.mark.parametrize(("choice", "inputs", "expected", "why"), [
+    (False, {"unet_name": UNCOND}, [], "the switch selects the other branch: this loader never runs"),
+    (False, {"unet_name": ["4", 0]}, [], "nor does its linked name cancel the credit"),
+    (True, {"unet_name": UNCOND}, [{"unet_name": UNCOND, "options": {}, "loras": [], "slot": "uncond"}],
+     "the selected branch loads"),
+    (True, {"unet_name": ["4", 0]}, None, "a name on a link, on the branch that runs, cannot be asked"),
+    (["5", 0], {"unet_name": UNCOND}, [{"unet_name": UNCOND, "options": {}, "loras": [], "slot": "uncond"}],
+     "a switch the graph does not decide keeps both branches, the safe side"),
+])
+def test_only_the_loaders_comfyui_will_run_take_room_in_the_other_slot(choice, inputs, expected, why):
+    """The graph price reads the live nodes (``graph_live.live_nodes``), and so does this walk: a
+    loader behind a lazy switch's unselected branch reserved room, or cancelled the whole credit."""
+    assert loader_relief.other_slot_loads(_switched(choice, inputs), "cond") == expected, why
+
+
+def test_a_single_model_swap_keeps_its_credit_beside_an_unselected_branch(monkeypatch):
+    """Row 5's figures with an uncond loader on the branch the switch does not take."""
+    shape = _shape("ltx", avail=67.51, file=21.86, stack=29.94, load_stack=29.94)
+    graph = _switched(False, {"unet_name": ["4", 0]})
+    relief, asked = _dual(monkeypatch, shape, _other(30.0, would_load="fresh"), graph=graph)
+    assert relief.fits and relief.credit.bytes == int(22.17 * _GIB) and len(asked) == 1
 
 
 def _dual(monkeypatch, shape, uncond_row, *, graph=_GRAPH):

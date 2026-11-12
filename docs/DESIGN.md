@@ -2436,9 +2436,20 @@ read from the graph or priced, nothing is credited. A rank answers from the
 topology it last held, so under an explicit preset other than cfg2, where
 every rank loads both models, a rank that sends no row for the other slot
 counts as no answer. A load that fits
-asks no Worker. A deferred load must also leave
-room for the graph's driver models beside the old model, which load before the
-first render drops it. The credit is tried before any card and before the
+asks no Worker. The credit is spent only against memory that is back before
+it is needed, and that depends on when the Worker drops. An eager load drops
+at the loader node, before the driver builds what it has not yet built. A
+deferred load drops at the first render, after the driver has built the
+graph's text encoder and VAEs beside the old model, so those models must fit
+on the reading as it is, with no credit. Under `auto` the load is deferred.
+Under an explicit preset it is eager unless an identity ceremony or the
+dm-cfg2 split defers it (`nodes/loaders.py`), which is decided after the
+price, on the live fleet; so there a credited price must hold both ways: the
+load is priced as one that waits, and the driver models still to build must
+fit beside the old model with no credit. The other slot's load is read from
+the nodes ComfyUI will run (`graph_live.live_nodes`, the walk the graph price
+uses), so a loader behind a lazy switch's unselected branch takes no room and
+cancels no credit. The credit is tried before any card and before the
 driver unloads ComfyUI's models, a refusal that still stands says what was
 counted, and the card is weighed against the uncredited price as at the
 agreement. A credited load forgets the dropped model's loader memo, so that

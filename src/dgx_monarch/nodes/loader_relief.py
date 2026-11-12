@@ -46,6 +46,7 @@ from typing import Any
 from .. import driver_unload, mesh_safety, old_model, swap_credit
 from ..log import get_logger
 from . import graph_load_price, loader_graph, old_model_clear
+from .graph_live import live_nodes
 
 log = get_logger(__name__)
 
@@ -77,6 +78,9 @@ class Relief:
     unloaded: driver_unload.Unloaded | None = None
     # Why the driver kept ComfyUI's models although the load does not fit.
     kept: str = ""
+    # An explicit preset: the load is eager unless a ceremony or dm-cfg2 defers
+    # it, so the driver models were checked beside the old model in case it waits.
+    may_wait: bool = False
 
     def sentence(self, unet_name: str, unloaded: driver_unload.Unloaded | None = None) -> str:
         """What a refusal that still stands says was counted and freed, with a leading space."""
@@ -86,11 +90,15 @@ class Relief:
             new = old_model.display_name(unet_name)
             freed = (f"The Worker on {self.box} drops {old} before this load, which frees at "
                      f"least {self.credit.gib} GiB{self.credit.note}")
+            first = ("But this load may wait for the first render (an identity ceremony or a "
+                     "one-model-a-rank cfg2 split defers it), and this graph's driver models then "
+                     f"load first, beside {old}" if self.may_wait else
+                     f"But this graph's driver models load first, beside {old}")
             parts.append(
                 f"{freed}, and {new} is still {_gib(self.short_bytes)} GiB short after that."
                 if self.short_bytes else
-                f"{freed}, and that would make room for {new}. But this graph's driver models "
-                f"load first, beside {old}, and they are {_gib(self.beside_short_bytes)} GiB short.")
+                f"{freed}, and that would make room for {new}. {first}, and they are "
+                f"{_gib(self.beside_short_bytes)} GiB short.")
         if unloaded is not None:
             parts.append(unloaded.refusal_sentence())
         elif self.kept:
@@ -109,15 +117,23 @@ def other_slot_loads(prompt: Any, slot: str) -> list[dict[str, Any]] | None:
 
     Empty for a graph with none, and None when one is there and its checkpoint
     is not a plain name in the graph (a linked input), so nothing can be asked.
+    Only the nodes ComfyUI will run are read, by the walk the graph price uses
+    (``graph_live.live_nodes``): a loader behind a lazy switch's unselected
+    branch, or one nothing consumes, never loads and takes no room.
     """
     specs: list[dict[str, Any]] = []
-    for node in (prompt.values() if isinstance(prompt, Mapping) else ()):
-        other = _SLOT_OF_LOADER.get(str(node.get("class_type", ""))) if isinstance(node, Mapping) else None
+    if not isinstance(prompt, Mapping):
+        return specs
+    live = live_nodes(prompt)
+    for key, node in prompt.items():
+        if str(key) not in live or not isinstance(node, Mapping):
+            continue
+        other = _SLOT_OF_LOADER.get(str(node.get("class_type", "")))
         if other is None or other == slot:
             continue
         inputs = node.get("inputs")
         name = inputs.get("unet_name") if isinstance(inputs, Mapping) else None
-        if not isinstance(name, str) or not name:
+        if not isinstance(inputs, Mapping) or not isinstance(name, str) or not name:
             return None
         dtype = inputs.get("weight_dtype")
         options = {"weight_dtype": dtype} if isinstance(dtype, str) and dtype != "default" else {}
@@ -185,7 +201,8 @@ def _unload_driver_models(mesh: Any) -> tuple[driver_unload.Unloaded | None, str
 
 def relieve(shape: Any, windows: Callable[[Any], tuple[Any, ...]], *, mesh: Any,
             unet_name: str, options: Any, slot: str,
-            tried: driver_unload.Unloaded | None = None, prompt: Any = None) -> Relief:
+            tried: driver_unload.Unloaded | None = None, prompt: Any = None,
+            stack: int = 0) -> Relief:
     """Count, then free, what the box gets back before this load; never raises.
 
     ``shape`` is the loader's own (``loader_preflight._Shape``) and ``windows``
@@ -193,6 +210,18 @@ def relieve(shape: Any, windows: Callable[[Any], tuple[Any, ...]], *, mesh: Any,
     Workers are not asked and nothing is credited. ``tried`` is the unload an
     earlier pass of this load made, so it is not made again. A result with
     ``unloaded`` set tells the loader to price the load again from the start.
+
+    ``stack`` is the driver models this graph still has to build
+    (``graph_load_price.load_window_models``). The Worker drops the old model
+    when it loads the new one. An eager load does that at the loader node. A
+    deferred load does it at the first render, after the driver has built the
+    graph's text encoder and VAEs beside the old model. Under ``auto`` the
+    load is deferred and ``shape`` already says so. Under an explicit preset
+    it is eager unless an identity ceremony or the dm-cfg2 split defers it
+    (``nodes/loaders.py``), which is decided after this price, on the live
+    fleet. So there the credit must hold both ways: the load is priced as a
+    deferred one, and ``stack`` must fit beside the old model on the reading
+    as it is, with no credit.
     """
     relief = NONE
     try:
@@ -210,14 +239,18 @@ def relieve(shape: Any, windows: Callable[[Any], tuple[Any, ...]], *, mesh: Any,
             credit, mesh, {"unet_name": unet_name, "options": options, "loras": [], "slot": slot},
             other_slot_loads(prompt, slot))
         if credit:
-            priced = windows(replace(shape, mem_available=shape.mem_available + credit.bytes))
+            # What the driver builds before the drop if the load waits for the first render.
+            waits = max(int(shape.load_stack_bytes), int(stack))
+            priced = windows(replace(shape, mem_available=shape.mem_available + credit.bytes,
+                                     load_stack_bytes=waits))
             short = max((window.shortfall for window in priced
                          if not graph_load_price.fits_box(window)), default=0)
             # A deferred load: the driver builds this graph's models before the
             # first render, while the Worker still holds the old model.
-            beside = max(shape.floor_reserve + shape.load_stack_bytes - shape.mem_available, 0)
+            beside = max(shape.floor_reserve + waits - shape.mem_available, 0)
             relief = Relief(fits=not short and not beside, credit=credit, asked=asked,
-                            short_bytes=short, beside_short_bytes=beside, box=box)
+                            short_bytes=short, beside_short_bytes=beside, box=box,
+                            may_wait=waits > shape.load_stack_bytes)
         if relief.fits or tried is not None:
             return relief
         unloaded, kept = _unload_driver_models(mesh)

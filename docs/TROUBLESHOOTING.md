@@ -2274,7 +2274,10 @@ the Worker; the name is on the Worker loop's reviewed inheritance list, so it
 reaches the actors. Remove the drop-in afterwards: `install-service` refuses a unit
 with one ([#90](#90-install-service-or-uninstall-refuses-an-existing-worker-unit)). A check that reads the new model as already loaded
 charges no load and counts no drop. Under `auto` the graph's own driver models load before the
-old model is dropped, so they must fit beside it. In a graph with two
+old model is dropped, so they must fit beside it. Under an explicit preset the
+load may wait for the first render too (an identity ceremony or a
+one-model-a-rank cfg2 split defers it), so the same holds there, and the
+refusal says "this load may wait for the first render". In a graph with two
 diffusion models each check prices one of them, so the count for one slot
 leaves the room the other slot's load takes: what that load adds beyond the
 model its own Worker drops for it. The sentence then reads "which frees at

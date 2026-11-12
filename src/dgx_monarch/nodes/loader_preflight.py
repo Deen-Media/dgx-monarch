@@ -436,7 +436,8 @@ def preflight_loader_footprint(
         if not (fits_box(transient) and fits_box(settled)):
             relief = loader_relief.relieve(shape, lambda priced: _windows(priced, slab=effective_slab),
                                            mesh=mesh, unet_name=unet_name, options=options, slot=slot,
-                                           tried=unloaded, prompt=prompt)
+                                           tried=unloaded, prompt=prompt,
+                                           stack=graph_load_price.load_window_models(terms, site)[0])
             if relief.unloaded is not None:  # ComfyUI's models are gone: price it all again
                 return preflight_loader_footprint(mesh, unet_name, options, prompt, site, slot, relief.unloaded)
         if relief.fits or (fits_box(transient) and fits_box(settled)):
