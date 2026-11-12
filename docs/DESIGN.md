@@ -939,7 +939,8 @@ uncertain-arena rules live in `actor/slab_arena.py`,
 - `request_key = (unet_name, options, lora_signature, quant_kind)`: the store
   reuses an exact match on the same artifact identity, with no fresh load and
   no swap; a slot that a global unload evicted reloads its GPU weights on that
-  reuse.
+  reuse. On unified memory a stock slot's drop is not a global unload: it
+  leaves the other slot loaded (`resident_ledger.unload_dropped`).
 - `base_key = (unet_name, options)`: a match with a different LoRA stack is a
   **hot-swap**. The store clones the pristine base patcher (its weights stay on
   the GPU) and applies the new stack with stock's cast-time math (below), so the
@@ -963,8 +964,10 @@ uncertain-arena rules live in `actor/slab_arena.py`,
   path's own.
   A strength change, a reorder or a removal of a held LoRA keeps the in-place
   swap, because the backup holds every weight it patches, and so does a store
-  whose other slot holds a model, because the drop's global unload would push
-  that model off the GPU the same slow way. The test counts the weights the new
+  whose other slot holds a model. That gate dates from the drop's global
+  unload, which pushed that model off the GPU the same slow way; on unified
+  memory a stock drop no longer touches the other slot, and the gate stays until the
+  route beside a held slot is measured on hardware. The test counts the weights the new
   stack patches, while ComfyUI's cost is every placed weight its backup lacks,
   so it matches that cost only for a LoRA that patches nearly every weight, as
   the Wan distill LoRA does. A strength change on a narrow LoRA stays in place
@@ -2145,8 +2148,12 @@ the class C rule of offering the fitting strategy first. Each step runs at most
 once per render, and once more in the identity gate's stock reference leg
 ("Where the ceremony cannot help"), only after a check refused, never while a render, a result
 lease or a Worker call is live in the driver, and never reaches a Worker
-resident or ComfyUI's node output cache. The loader windows take neither,
-because the graph still needs its text encoder and VAEs before sampling. The
+resident or ComfyUI's node output cache. The loader windows take the first
+step only, after the swap credit (below): before a loader refuses it unloads
+ComfyUI's models, which ComfyUI reloads on demand for the text encoder and
+VAEs the graph still needs, or, where ComfyUI holds no model, releases the
+allocator cache it kept, and prices the load again. They do not ask the
+actors to trim. The
 agreement below credits a Worker resident that a load would replace only where
 the drop was measured: the GPU copy of the slot's own stock resident, never
 the arena a stock load retains, which an in-process unload returns only at
@@ -2363,6 +2370,109 @@ slot, refused its stage 2 at 58.7 GiB available against 60.9 GiB, where the
 hardware had rendered it with 39.9 GiB left at its lowest. Credited, stage 2
 needs 34.3 GiB. The Worker's own ladder prices after its drop, so it never
 needs the credit.
+
+**The driver host's own prices count the same drop.** The loader preflight and
+the render-site checks that charge a pending DiT load (the driver footprint,
+the MiniMax H3 activation price, the reference and pose price) read the driver
+host's MemAvailable, where the head's Worker shares the box. Until 2026-11-11
+they priced the new DiT beside the model its slot was about to drop, so a user
+who changed model in one session met the Old model in the way card with room
+on the box: flux1-dev held and then LTX 2.3 needed 80.8 GiB against 67.5
+available with 22.2 GiB about to be dropped, and MiniMax-H3-Image INT8 after
+BF16 needed 46.0 GiB against 34.1 with the 37.5 GiB BF16 DiT in the same slot.
+Now a price that does not fit asks the Workers on the driver host the
+agreement's own quote and counts the copy the load's own slot drops first
+(`swap_credit.py`, `nodes/loader_relief.py`). It counts only what the
+Worker's own price credited, the row that names the drop and its bytes, so the
+driver never admits on a drop the agreement would not count: a stock resident
+only, never a slab-priced row, a reuse or a LoRA change that keeps its base.
+The rule under the credit is one sentence: no credit where the drop copies
+anything to the host before it frees the old model. A drop through ComfyUI's
+global unload did that in two cases. The store pins only a whole load to its
+device, so ComfyUI's detach copied the device weights of a model it held only
+partly (`model_lowvram`) to the host. And only the dropped slot was pinned, so
+a model the other slot held was unloaded to the host with it. Both copies are
+waste on unified memory, where an offload frees nothing, and both are gone
+there for a stock resident (`actor/resident_ledger.unload_dropped`; a discrete
+GPU keeps the global unload, since an offload frees device memory). The drop
+runs under the actor's GPU lock as before and touches fewer models than the
+global unload did, so nothing a running render needs is moved. It takes only
+the dropped model's records out of ComfyUI's loaded list: a whole load pinned
+and unloaded by ComfyUI's own `model_unload`, a partly loaded one by the step
+ComfyUI takes when it replaces a clone (`detach(unpatch_all=False)`), which
+moves no weight. The slot that stays is left loaded, and it is pinned to its
+device as slab and shard bases already are, so the unload ComfyUI runs at the
+next load that does not use it moves nothing either (with smart memory off, as
+on a Worker, `load_models_gpu` unloads every other model). Its next render
+therefore moves no weight. After a single-model render in between, ComfyUI
+loads the pinned model again in place; a LoRA stack in hot-swap mode is
+applied again then, and its backup sits on the device from there on. ComfyUI prices the next load of an unloaded model at its whole size
+whether its weights went to the host or stayed pinned, and reads free memory
+live, so the pin changes no whole-or-partial load decision. The Worker reports
+where its drop copies nothing (`drop_copy_free` in the slot's snapshot entry,
+from the same predicate the drop runs on), and only there does the credit
+stand beside a partly loaded resident or a held other slot. It does not where
+the other slot is partly loaded or comfy-managed (the drop is the targeted one
+there too, so that slot's host copy moves from the drop to the next load that
+does not use it, unpriced there as it was at the drop), on a discrete GPU, for a
+slab or shard build, which keep the global unload their owners close after,
+or under `DGXM_DISABLE_COPY_FREE_DROP=1`, which restores the earlier drop. The
+store-wide unload (`unload_all`, the clear) keeps the global unload too, since
+ComfyUI must hold no model after it. A
+resident with no credit is priced as held, at the agreement and here, and the
+card's clear replaces it. The tests run the drop on ComfyUI's real classes on
+CPU (the copy-free drop seam of the canary); the dip itself, the memory that
+returns and the kept slot's next render are hardware legs.
+It counts only the slot the load goes into, and only onto a price that charges
+the DiT's own load: one that reads the weights as resident (the loader's memo;
+an explicit preset at the render-site footprint and H3 prices) has no drop to
+count. In a dual-model graph each of these prices charges one DiT alone, and
+the old models, priced as held, used to hide that. So the credit for one slot
+is taken less what the other slot's load adds to the host: that load's file
+less what its own Worker's price credits for the model it drops, read from one
+more quote that carries both loads as the sample-time agreement asks them
+(`swap_credit.growth`). Where that leaves nothing, or the other load cannot be
+read from the graph or priced, nothing is credited. A rank answers from the
+topology it last held, so under an explicit preset other than cfg2, where
+every rank loads both models, a rank that sends no row for the other slot
+counts as no answer. A load that fits
+asks no Worker. The credit is spent only against memory that is back before
+it is needed, and that depends on when the Worker drops. An eager load drops
+at the loader node, before the driver builds what it has not yet built. A
+deferred load drops at the first render, after the driver has built the
+graph's text encoder and VAEs beside the old model, so those models must fit
+on the reading as it is, with no credit. Under `auto` the load is deferred.
+Under an explicit preset it is eager unless an identity ceremony or the
+dm-cfg2 split defers it (`nodes/loaders.py`), which is decided after the
+price, on the live fleet; so there a credited price must hold both ways: the
+load is priced as one that waits, and the driver models still to build must
+fit beside the old model with no credit. The other slot's load is read from
+the nodes ComfyUI will run (`graph_live.live_nodes`, the walk the graph price
+uses), so a loader behind a lazy switch's unselected branch takes no room and
+cancels no credit. The credit is tried before any card and before the
+driver unloads ComfyUI's models, a refusal that still stands says what was
+counted, and the card is weighed against the uncredited price as at the
+agreement. A credited load forgets the dropped model's loader memo, so that
+model is priced when it comes back. Nothing here clears a Worker: the store
+drops the slot as it did before, and the agreement then prices the load on
+every rank with its own credit.
+
+When the credit does not make room, the loader also unloads the models ComfyUI
+holds on the driver host, as the render-site checks do before they refuse, and
+prices the whole load again from a fresh reading with the graph's driver
+models charged whole. It does so once a load, never while a render is running
+in this driver, and not under `DGXM_DISABLE_DRIVER_UNLOAD=1`. That switch
+leaves the credit on at both sites, since the credit is a price and not a
+rescue; `DGXM_DISABLE_SWAP_CREDIT=1` turns the credit off at both. The loader's
+price already counts held models against the graph's own, so the unload makes
+room only by what ComfyUI held beyond them, another graph's larger encoder;
+in the two records above it would have added nothing, and the credit alone
+makes the room. Where ComfyUI holds no model the same step still returns the
+allocator's cached blocks, and the load is priced again if the reading rose
+by a tenth of a GiB or more. The driver's ComfyUI keeps that cache for longer
+since its free-memory reading follows MemAvailable
+(`driver_uma_memory.install_driver`, above), and on the driver host the kept
+blocks count against the Worker's load.
 
 **A LoRA change on a held base is the same credit.** When the resident is a
 stock copy of the same file and the store would keep it and re-apply the new
@@ -2691,7 +2801,8 @@ dgx-monarch/
 │   │   ├── sample_protocol.py # the GPUWorker sample body `_sample_impl` runs
 │   │   ├── slab_wrap.py       # minimal DLPack view of slab-owned byte ranges
 │   │   ├── resident_ledger.py # tells comfy what a slab or a shard already
-│   │   │                      #   holds, so its sample-time load stops asking
+│   │   │                      #   holds, so its sample-time load stops asking;
+│   │   │                      #   and drops a slot with no host copy
 │   │   ├── store_load.py      # fresh-load path of ensure: ladder, load, adoption
 │   │   ├── store_load_ownership.py # exact fresh-load resource/slot transaction
 │   │   ├── store_slab_admit.py # the slab capacity check, its card text, and
@@ -2816,6 +2927,9 @@ dgx-monarch/
 │   ├── driver_unload.py       # free ComfyUI's driver models, then the actors'
 │   │                          #   allocator caches, before a render-site
 │   │                          #   capacity refusal, checking again after each
+│   ├── swap_credit.py         # the copy a load's own slot drops first, counted
+│   │                          #   at the driver host's prices from the Worker's
+│   │                          #   own credit (nodes/loader_relief.py asks)
 │   ├── driver_uma_memory.py   # on unified memory, ComfyUI's free-memory reading
 │   │                          #   in the driver is MemAvailable less a floor (§5.9)
 │   ├── vae_item_batches.py    # one image a VAE batch, a batch rule that does

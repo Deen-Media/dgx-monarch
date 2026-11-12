@@ -2242,6 +2242,72 @@ checkpoint the process loads. Slab is currently the only eligible kind, so
 enabled toggle checked and disabled; unset the variable and restart the driver
 to change it. Automatic rescue never grants an accuracy waiver.
 
+**A load that replaces a model counts the drop first.** A Worker drops the
+model in a slot before it loads another into it, and a stock model's drop
+returns its copy at once. So when the loader's footprint check
+([#52](#52-driver-side-footprint-preflight-refused-a-render)) does not fit, the
+driver asks the Workers on its own box what they hold and counts that copy as
+available, at the loader and at the render-site checks that price a pending
+load. A load
+that then fits goes ahead with no card, and the driver log says why: "fits on
+the head once the Worker there drops flux1-dev, which frees at least 22.2
+GiB". A refusal that still stands says what it counted: "The Worker on the
+head drops flux1-dev before this load, which frees at least 22.2 GiB, and
+<model> is still N GiB short after that." The driver counts only what the
+Worker's own price counted, so only the model in the slot the load goes into,
+and only a stock one: a slab or comfy-managed resident, an FSDP shard, a load
+priced slab-resident and a model in the other slot are priced as still held.
+Nothing is counted where the drop would copy anything to the host before it
+frees the old model, since the box would dip first. On unified memory a
+Worker's drop of a stock model copies nothing: it detaches only that model, whole or partly loaded
+(journal line "loaded partially"), and leaves a model in the other slot loaded
+and pinned to the GPU. So a drop beside a held other slot is counted, and
+that slot's next render moves no weight. The exceptions are a partly loaded or
+comfy-managed model in the other slot, which ComfyUI may still move to the
+host, and a Worker started with `DGXM_DISABLE_COPY_FREE_DROP=1`, which drops
+through ComfyUI's global unload as before; there the card's clear is the safe
+way to replace the model. That variable is read by the Worker, not the
+driver. Set it on each box with a drop-in for the Worker's unit
+(`systemctl --user edit dgxm-worker.service`, with
+`Environment=DGXM_DISABLE_COPY_FREE_DROP=1` under `[Service]`), then restart
+the Worker; the name is on the Worker loop's reviewed inheritance list, so it
+reaches the actors. Remove the drop-in afterwards: `install-service` refuses a unit
+with one ([#90](#90-install-service-or-uninstall-refuses-an-existing-worker-unit)). A check that reads the new model as already loaded
+charges no load and counts no drop. Under `auto` the graph's own driver models load before the
+old model is dropped, so they must fit beside it. Under an explicit preset the
+load may wait for the first render too (an identity ceremony or a
+one-model-a-rank cfg2 split defers it), so the same holds there, and the
+refusal says "this load may wait for the first render". In a graph with two
+diffusion models each check prices one of them, so the count for one slot
+leaves the room the other slot's load takes: what that load adds beyond the
+model its own Worker drops for it. The sentence then reads "which frees at
+least 22.2 GiB, of which 8.0 GiB is set aside for the model this graph loads
+into the other slot", and where the other load takes all of it, or the driver
+cannot read or price it, nothing is counted. `DGXM_DISABLE_SWAP_CREDIT=1` on
+the driver turns the count off at the loader and at the render-site checks,
+which gives the earlier price and its card. Before 2026-11-11 this check priced the new model
+beside the old one: flux1-dev and then LTX 2.3 was 13.3 GiB short with 22.2
+GiB about to be dropped, and MiniMax-H3-Image INT8 after BF16 was 11.9 GiB
+short with 37.5 GiB about to be dropped. No hardware render has run with the
+credit yet.
+
+**Then ComfyUI's own models.** If the drop does not make room, the loader
+unloads the models ComfyUI holds on the driver host, which ComfyUI reloads on
+demand, and prices the load again, as the render-time check below does
+([#56](#56-minimax-h3-render-refused-activation-footprint-preflight)). A load
+that then fits goes ahead, and the driver log names the models and the two
+MemAvailable readings. A refusal that still stands carries them too: "Before
+refusing, the driver unloaded the 2 models (...) ComfyUI held on this host".
+The loader keeps the models while a render is running in this driver and says
+so. This helps only where ComfyUI held more than this graph's own driver
+models need, since this check already counts held models against them. Where
+ComfyUI holds no model the loader still releases the allocator cache it kept,
+and the sentence then reads "the driver released the allocator cache ComfyUI
+kept on this host".
+`DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the unload off here too.
+It leaves the count of the drop on, at the loader and at the render-site
+checks alike: the count is a price, not something the driver frees.
+
 **Old model in the way:** when a model loaded earlier still holds the
 memory a load needs, and a clear of the attached mesh would make room on every
 short box, the refusal says "the old model (<name>) is still loaded on the

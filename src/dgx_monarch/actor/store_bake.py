@@ -418,15 +418,18 @@ def copies_off_the_gpu(store, stored, slot: str, active) -> tuple[int, int]:
     the whole model is copied. On the 2026-11-05 hardware leg the BF16
     Wan-Animate 2 swap spent 230 s in that copy, while a fresh load of base
     and LoRA took 13.1 s and its patch 4.0 s. A fresh load drops the slot
-    without a host copy (``resident_ledger.unload_without_offload``) and the
+    without a host copy (``resident_ledger.unload_dropped``) and the
     sampler patches from the file's own host copy, at the same price.
 
     So ``uncovered`` counts the weights the new stack patches that the backup
     the clones share does not hold, and the store reloads when it is not 0.
     It stays 0, so the swap stays in place, unless every gate holds: classic
     mode (the caller), a stock resident (slab, FSDP and comfy-managed keep their
-    own paths), a model ComfyUI placed on the GPU, and an empty other slot,
-    whose model a drop's global unload would push to the host the same slow way.
+    own paths), a model ComfyUI placed on the GPU, and an empty other slot.
+    That last gate dates from the drop's global unload, which pushed the other
+    slot's model to the host the same slow way. On unified memory a stock drop
+    no longer does (``resident_ledger.unload_dropped``); the gate stays until
+    the in-place route beside a held slot is measured on hardware.
     """
     from . import store_residency
 

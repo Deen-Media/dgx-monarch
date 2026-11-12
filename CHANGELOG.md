@@ -4,6 +4,33 @@
 
 ### Everyday use
 
+- Changing model in one session no longer meets the Old model in the way card
+  when the box has room. A Worker drops the model in a slot before it loads
+  another into it, and the driver's own checks did not count that: flux1-dev
+  and then the shipped LTX 2.3 template needed 80.8 GiB against 67.5 available
+  with 22.2 GiB about to be dropped, and MiniMax-H3-Image INT8 after BF16
+  needed 46.0 GiB against 34.1 with the 37.5 GiB BF16 file in the same slot.
+  The loader's check and the render-site checks for a pending load now count
+  the copy the load's own slot drops, as the cross-rank agreement already did:
+  a stock model only, that slot only, at the size the Worker reports. On
+  unified memory the Worker's drop of a stock model now copies nothing to the host: it detaches
+  only the model it drops, whole or partly loaded, where ComfyUI's global
+  unload copied a partly loaded model's weights, and a model held in the other
+  slot, to the host first. A model in the other slot stays loaded, so its next
+  render moves no weight. Where a drop could still copy (a partly loaded or
+  comfy-managed model in the other slot, or `DGXM_DISABLE_COPY_FREE_DROP=1`
+  on the Worker) it is not counted. In a graph with two diffusion models the
+  count leaves the room the other slot's load takes. Nothing to
+  set, and nothing is cleared that was not dropped before. If that does not
+  make room, the loader also unloads the models ComfyUI holds on the driver
+  host, which ComfyUI reloads on demand, or the allocator cache it kept where
+  it holds none, and prices the load again, as the render-time checks already
+  did; never while a render is running. A load that
+  still does not fit refuses as before and says what it counted and unloaded,
+  and the card is offered only where a clear returns more than the drop.
+  `DGXM_DISABLE_SWAP_CREDIT=1` on the driver turns the count off. Not yet run
+  on hardware
+  ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
 - MiniMax-H3-Image (ComfyUI 0.45.0) runs on its own sharded adapter: stock's
   own packing on every rank, sequence shards with exact pad exclusion on
   Ulysses, and the stacked output head on the checkpoint's grid at stock's

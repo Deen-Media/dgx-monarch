@@ -113,8 +113,8 @@ class ModelStore:
     def __init__(self) -> None:
         self.current: StoredModel | None = None
         self.uncond: StoredModel | None = None  # second model slot for the dual-model guider (Ideogram4)
-        # comfy's unload_all_models() is global: dropping or quant-hot-swapping one
-        # slot evicts the other slot's GPU weights too. Instance lifetime, keyed by
+        # comfy's unload_all_models() is global: a quant hot-swap, or the drop of a slab or
+        # shard build, evicts the other slot's GPU weights too. Instance lifetime, keyed by
         # slot name; a reload or reuse of that slot clears it, and the reuse log says so.
         self._gpu_evicted: set[str] = set()
         # A failed global unload can leave comfy's process-wide model state partly
@@ -402,7 +402,7 @@ class ModelStore:
 
     _invalidate_gpu_weights = staticmethod(store_bake.invalidate_gpu_weights)
 
-    def _drop(self, slot: str) -> None:
+    def _drop(self, slot: str, everything: bool = False) -> None:
         stored = self.uncond if slot == "uncond" else self.current
         if stored is None:
             self._drop_failed.discard(slot)
@@ -419,7 +419,8 @@ class ModelStore:
             fsdp_shard_build.drop_sharded_weights_in_place(
                 (stored.base_patcher, stored.active_patcher),
                 origin=f"model store [{slot}]")
-            resident_ledger.unload_without_offload(mm, (stored.base_patcher, stored.active_patcher))
+            stays = self.current if slot == "uncond" else self.uncond
+            alone = resident_ledger.unload_dropped(mm, stored, stays, everything)
             self._drop_failed.add(slot)
             stored.base_patcher = stored.active_patcher = stored.unbake = None
             resident_ledger.collect_dropped()
@@ -447,7 +448,7 @@ class ModelStore:
         elif owner_kind:
             slab_lifetime.close_or_retain_after_explicit_unload(stored, "model-store resources")
         self._drop_failed.discard(slot)
-        self._mark_other_slot_evicted(slot)
+        resident_ledger.mark_after_drop(self, slot, alone)
         resident_ledger.flush_dropped(mm, slot)
 
     def cleanup_active(self) -> None:
@@ -460,8 +461,8 @@ class ModelStore:
 
     def unload_all(self) -> None:
         resident_ledger.pin_store_for_unload(self.current, self.uncond)
-        self._drop("uncond")
-        self._drop("cond")
+        self._drop("uncond", True)  # store-wide: ComfyUI's global unload, nothing left loaded
+        self._drop("cond", True)
         self.release_retained_cleanup()
 
     def release_retained_cleanup(self) -> None:

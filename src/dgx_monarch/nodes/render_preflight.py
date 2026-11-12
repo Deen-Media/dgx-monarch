@@ -14,6 +14,7 @@ from .. import (
     latent_scale,
     mesh_safety,
     residency_mode,
+    swap_credit,
 )
 from ..adapters.detect import CheckpointSniffError, sniff_checkpoint
 from ..adapters.flux_views import VIEWS_METADATA_KEY
@@ -282,7 +283,7 @@ def _driver_footprint_preflight_for_request(
             request, profile)
         estimate = driver_footprint.estimate_driver_footprint(
             profile=profile,
-            mem_available=avail,
+            mem_available=avail if weights_resident else swap_credit.credited(avail),
             weight_bytes=driver_footprint.file_size_bytes(path),
             weights_resident=weights_resident,
             co_resident=driver_footprint.rank0_co_resident(mesh),
@@ -361,7 +362,7 @@ def activation_footprint_preflight_for_request(
     if family in mesh_safety.REF_POSE_TOKEN_FAMILIES:
         steps.append(lambda: _ref_pose_activation_preflight(
             family, path, unet_name, request, video_shape))
-    driver_unload.check_with_unload(steps, subject=unet_name, handle=getattr(
+    driver_unload.check_with_unload(steps, subject=unet_name, swap=(model, request), handle=getattr(
         getattr(model, "mesh", None), "handle", None))
 
 

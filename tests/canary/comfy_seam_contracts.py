@@ -209,6 +209,9 @@ The seams, in run order:
  59. minimax h3 image row calls  the three row-keyed calls a block makes, where
                               the row-check tool reads them
 before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
+ 60. copy-free drop            a slot's drop taking only its own records out of
+                              comfy's loaded list with no weight moved, and a
+                              pinned model unloaded and loaded back unchanged
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -3208,7 +3211,8 @@ def _assert_offload_pin_seam() -> None:
         "offload pin seam: a matching patch uuid still moved the model "
         f"({moved}); the stock hot-swap's uuid adoption no longer avoids comfy's reload")
     # A drop detaches through the same unpatch, to that clone's offload device
-    # (actor/resident_ledger.py unload_without_offload).
+    # (actor/resident_ledger.py: unload_dropped for a whole stock load,
+    # unload_without_offload for a slab or a shard build).
     model.to = lambda *args, **kwargs: moved.append(args[0] if args else kwargs.get("device")) or to(*args, **kwargs)
     try:
         again.detach(unpatch_all=True)
@@ -3323,6 +3327,154 @@ def _assert_resident_ledger_seam() -> None:
         "partially_load's already-loaded early return, so declaring a residency "
         "with an unbaked LoRA stack on it would silently drop the stack"
     )
+
+def _assert_copy_free_drop_seam() -> None:
+    """A slot's drop detaches its own model and moves no weight (2026-11-11).
+
+    ``actor/resident_ledger.unload_dropped`` takes only the dropped model's
+    records out of comfy's loaded list. It leans on five things comfy does:
+
+    - ``detach(unpatch_all=False)``, the step ``load_models_gpu`` takes when
+      it replaces a clone, moves no weight, so a partly loaded model leaves
+      the list without the host copy ``detach(True)`` makes of its device part;
+    - ``LoadedModel.model_unload()`` with no amount detaches and returns True,
+      and a model pinned to its load device is moved nowhere else by it;
+    - a record still in the list keeps its model exactly as it was;
+    - with smart memory off, as on a Worker, ``free_memory`` unloads every
+      model it is not told to keep, and a pinned one is moved nowhere else by
+      that either, then loads again to the same bytes and the same patch uuid;
+    - comfy prices the next load of a model it unloaded at the model's whole
+      size whether its weights went to the host or stayed pinned on the
+      device, so the pin changes no whole-or-partial load decision.
+    """
+    import types
+    import weakref
+
+    import comfy.model_management as mm
+    import torch
+    from comfy.model_patcher import ModelPatcher
+
+    from dgx_monarch import mesh_safety
+    from dgx_monarch.actor import resident_ledger
+
+    host = torch.device("cpu")
+    device = torch.device("cpu", 0)     # a second name for the CPU stands in for the load device
+
+    def build(seed: int, *, lora: bool = False, partly: bool = False):
+        torch.manual_seed(seed)
+        if partly:
+            # comfy's own layers, which it can leave on the host, and a budget of three
+            # quarters of the model: comfy itself loads part of it and flags the rest.
+            import comfy.ops
+
+            linear = comfy.ops.manual_cast.Linear
+            model = torch.nn.Sequential(*(linear(64, 64, bias=False) for _ in range(3)))
+            with torch.no_grad():
+                for layer in model:
+                    layer.weight.copy_(torch.randn(64, 64))
+        else:
+            model = torch.nn.Sequential(torch.nn.Linear(8, 8, bias=False), torch.nn.Linear(8, 8, bias=False))
+        model.device = host
+        size = sum(weight.numel() * weight.element_size() for weight in model.parameters())
+        patcher = ModelPatcher(model, device, host, size)
+        if lora:
+            patcher.add_patches({"0.weight": (torch.ones(8, 8),)}, 0.5)
+        patcher.partially_load(device, size * 3 // 4 if partly else 1e32)
+        assert model.model_lowvram is partly and (0 < patcher.loaded_size() < size) is partly, (
+            "copy-free drop seam: comfy no longer loads part of a model under a budget below its "
+            f"size (lowvram {model.model_lowvram}, {patcher.loaded_size()} of {size} loaded)")
+        moved: list[str] = []
+        to = model.to
+        model.to = lambda *args, **kwargs: (  # type: ignore[method-assign]
+            moved.append(str(args[0] if args else kwargs.get("device"))) or to(*args, **kwargs))
+        return patcher, model, moved
+
+    def record(patcher):
+        entry = mm.LoadedModel(patcher)
+        entry.real_model = weakref.ref(patcher.model)
+        entry.model_finalizer = weakref.finalize(patcher.model, mm.cleanup_models)
+        entry.model_finalizer.atexit = False
+        return entry
+
+    def stored(patcher):
+        return types.SimpleNamespace(base_patcher=patcher, active_patcher=patcher.clone(), slab=None,
+                                     fsdp_checkpoint_pin=None, residency_rung="stock_fits")
+
+    def weights(model) -> dict:
+        return {key: value.detach().clone() for key, value in model.state_dict().items()}
+
+    saved = (list(mm.current_loaded_models), mm.DISABLE_SMART_MEMORY, mesh_safety.gpu_is_integrated,
+             os.environ.pop(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, None))
+    flushed: list[int] = []
+    soft_empty_cache = mm.soft_empty_cache
+    try:
+        mesh_safety.gpu_is_integrated = lambda: True
+        mm.soft_empty_cache = lambda *args, **kwargs: flushed.append(1)
+
+        # A partly loaded model dropped beside a held, LoRA-patched one.
+        partial, partial_model, partial_moved = build(1, partly=True)
+        partial_at = [layer.weight.data_ptr() for layer in partial_model]
+        kept, kept_model, kept_moved = build(2, lora=True)
+        kept_before, kept_uuid = weights(kept_model), kept_model.current_weight_patches_uuid
+        dropped_slot, kept_slot = stored(partial), stored(kept)
+        gone, stays = record(dropped_slot.active_patcher), record(kept_slot.active_patcher)
+        mm.current_loaded_models[:] = [gone, stays]
+        assert resident_ledger.drop_copies_nothing(dropped_slot, kept_slot), (
+            "copy-free drop seam: the store no longer says this drop copies nothing")
+        assert resident_ledger.unload_dropped(mm, dropped_slot, kept_slot) is True
+        assert mm.current_loaded_models == [stays] and flushed == [1], (
+            "copy-free drop seam: the drop no longer leaves exactly the other slot's record in "
+            f"comfy's loaded list ({len(mm.current_loaded_models)} left) and flushes the cache once")
+        assert partial_moved == [] and partial_at == [layer.weight.data_ptr() for layer in partial_model], (
+            f"copy-free drop seam: detach(unpatch_all=False) now moves a weight ({partial_moved}); a "
+            "partly loaded model's drop would copy its device part to the host again")
+        assert gone.model_finalizer is None and gone.real_model is None
+        assert kept_moved == [] and kept_model.current_weight_patches_uuid == kept_uuid, (
+            f"copy-free drop seam: the drop touched the slot that stays ({kept_moved})")
+        assert all(torch.equal(kept_before[key], value) for key, value in kept_model.state_dict().items()), (
+            "copy-free drop seam: the kept slot's weights changed across the other slot's drop")
+        assert {kept_slot.base_patcher.offload_device, kept_slot.active_patcher.offload_device} == {device}, (
+            "copy-free drop seam: the slot that stays is no longer pinned to its load device")
+
+        # The unload comfy runs at the next load that does not use the kept model.
+        mm.DISABLE_SMART_MEMORY = True
+        unloaded = mm.free_memory(1e30, device)
+        assert unloaded == [stays] and mm.current_loaded_models == [], (
+            "copy-free drop seam: with smart memory off free_memory no longer unloads every model "
+            "it is not told to keep, so the Worker's eviction of an unused slot changed")
+        assert set(kept_moved) <= {str(device)}, (
+            f"copy-free drop seam: a pinned model's unload moved it off its load device ({kept_moved})")
+        twin, twin_model, _twin_moved = build(2, lora=True)
+        twin_entry = record(twin)
+        assert twin_entry.model_unload() is True, (
+            "copy-free drop seam: model_unload() with no amount no longer detaches and returns True")
+        assert twin_model.device == host and kept_model.device == device
+        assert (mm.LoadedModel(kept_slot.active_patcher).model_memory_required(device)
+                == mm.LoadedModel(twin).model_memory_required(device) == kept.model_size()), (
+            "copy-free drop seam: comfy no longer prices the reload of a pinned, unloaded model as it "
+            "prices one whose weights went to the host; the pin could change a whole-or-partial load")
+        mm.load_models_gpu([kept_slot.active_patcher])
+        assert all(torch.equal(kept_before[key], value) for key, value in kept_model.state_dict().items()), (
+            "copy-free drop seam: a pinned model no longer loads back to the bytes it held")
+        assert kept_model.current_weight_patches_uuid == kept_uuid and kept_model.model_lowvram is False
+        assert set(kept_moved) <= {str(device)}
+
+        # A model comfy holds whole: pinned, then comfy's own unload.
+        mm.current_loaded_models[:] = []
+        whole, _whole_model, whole_moved = build(3)
+        whole_slot = stored(whole)
+        only = record(whole_slot.active_patcher)
+        mm.current_loaded_models[:] = [only]
+        assert resident_ledger.unload_dropped(mm, whole_slot, None) is True
+        assert mm.current_loaded_models == [] and set(whole_moved) <= {str(device)}, (
+            f"copy-free drop seam: a whole load's drop moved it off its load device ({whole_moved})")
+    finally:
+        mm.current_loaded_models[:] = saved[0]
+        mm.DISABLE_SMART_MEMORY, mesh_safety.gpu_is_integrated = saved[1], saved[2]
+        mm.soft_empty_cache = soft_empty_cache
+        if saved[3] is not None:
+            os.environ[resident_ledger.COPY_FREE_DROP_DISABLE_ENV] = saved[3]
+
 
 def _calls_on_self(source: str, receiver: str | None) -> set:
     """Attribute names called on ``self`` (or on ``self.<receiver>``)."""
@@ -6764,6 +6916,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("minimax h3 image sampling", _assert_minimax_h3_image_sampling_seam),
     ("minimax h3 image conditioning", _assert_minimax_h3_image_conditioning_seam),
     ("minimax h3 image row calls", _assert_minimax_h3_image_row_calls_seam),
+    ("copy-free drop", _assert_copy_free_drop_seam),
 )
 
 

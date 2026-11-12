@@ -297,6 +297,140 @@ def test_a_backup_read_for_another_resident_is_dropped():
     assert "backup_bytes" not in out["cond"]
 
 
+# A resident ComfyUI holds only partly: its drop copies its device weights to the host
+# before it frees them, so the box dips first and the swap credit must not count it.
+
+@pytest.mark.parametrize(("lowvram", "credited"), [(True, False), (False, True)])
+def test_a_partly_loaded_resident_carries_no_swap_credit(lowvram, credited):
+    from dataclasses import replace
+
+    from dgx_monarch import swap_credit
+    from test_capacity_old_model import _answer, _stock
+
+    store = _b3_store(model__model_lowvram=lowvram)
+    keys: dict = {}
+    backups: dict = {}
+    partials: dict = {}
+    facts = worker_capacity._resident_facts(None, store, keys, backups, partials)
+    assert partials == {"cond": lowvram, "uncond": False}
+    assert "resident_partial" not in facts, "facts are RankPrice fields; the flag rides the snapshot"
+    snapshot = {"cond": {"request_key": keys["cond"], "residency": "stock"}, "uncond": None}
+    out = worker_capacity._with_resident_bytes(snapshot, facts, keys, backups, partials)
+    assert out["cond"]["resident_partial"] is lowvram
+    held = {**out["cond"], "resident_bytes": int(16.9 * _GIB), "resident_name": "flux-2-klein.safetensors"}
+    fit = capacity_lora_bake.credit_stock_swap(
+        capacity_fit.StockFit(False, True, 1 * _GIB, 200 * _GIB), held, {"would_load": "swap"})
+    assert bool(getattr(fit, "credit_bytes", 0)) is credited
+    assert ("dropped" in fit.measured()) is credited
+    row = _stock("fits", size_gib=1.0, avail_gib=200.0, resident="flux-2-klein.safetensors",
+                 word="stock", resident_gib=16.9, slot="cond")
+    row = replace(row, measured=dict(fit.measured()), would_load="swap")
+    assert bool(swap_credit.from_answers([_answer(0, row)], "cond")) is credited
+
+
+@pytest.mark.parametrize(("lowvram", "global_unload", "credited"), [
+    (True, False, True),      # the drop detaches it in place: nothing is copied
+    (True, True, False),      # the earlier drop: its device weights go to the host first
+    (False, False, True),
+    (False, True, True),      # a whole load was always pinned and dropped without a copy
+])
+def test_the_workers_own_quote_credits_a_partly_loaded_resident_only_where_its_drop_copies_nothing(
+        quote, monkeypatch, lowvram, global_unload, credited):
+    """End to end through ``worker_capacity.quote``: another file in the slot, so the load is a swap."""
+    from dgx_monarch.actor import resident_ledger
+
+    monkeypatch.setenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, "1" if global_unload else "")
+    other = "flux-2-klein.safetensors"
+    store = _b3_store(stack=(), model__model_lowvram=lowvram, base__backup={},
+                      stored__base_key=(other, ()), stored__request_key=(other, (), (), "bf16"))
+    head = quote(store, [], available=int(100 * _GIB))
+    assert head.would_load == "swap" and head.resident_names["cond"] == other
+    assert (head.measured.get("credit_bytes", 0) > 0) is credited
+    assert (head.measured.get("dropped") == other) is credited
+
+
+@pytest.mark.parametrize(("other_slot", "global_unload", "credited", "why"), [
+    (None, False, True, "nothing in the other slot"),
+    (None, True, True, "nothing in the other slot, under the earlier drop too"),
+    ("whole", False, True, "the drop leaves the other slot loaded, and pins it for comfy's later unload"),
+    ("whole", True, False, "the global unload copies the other slot's model to the host first"),
+    ("partial", False, False, "a partly loaded other slot cannot be pinned: comfy's later unload copies it"),
+    ("comfy_managed", False, False, "comfy-managed weights are ComfyUI's to move"),
+])
+def test_a_swap_beside_a_held_other_slot_is_credited_only_where_nothing_is_copied(
+        quote, monkeypatch, other_slot, global_unload, credited, why):
+    """The earlier drop ran ComfyUI's global unload with only the dropped slot pinned, so a model
+    held in the other slot was copied to the host before anything was freed. The Worker reports
+    where its drop copies nothing (``resident_ledger.drop_copies_nothing``), and only there
+    does the credit stand."""
+    from dgx_monarch.actor import resident_ledger
+
+    monkeypatch.setenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, "1" if global_unload else "")
+    other = "flux-2-klein.safetensors"
+    store = _b3_store(stack=(), base__backup={}, stored__base_key=(other, ()),
+                      stored__request_key=(other, (), (), "bf16"))
+    if other_slot is not None:
+        # The dual-model graph's second DiT, still held: a model of its own.
+        store.uncond = _b3_store(stack=(), base__backup={},
+                                 model__model_lowvram=other_slot == "partial").current
+        if other_slot == "comfy_managed":
+            store.uncond.residency_rung = cq.RUNG_COMFY_MANAGED
+    head = quote(store, [], available=int(100 * _GIB))
+    assert head.would_load == "swap"
+    assert (head.holds_resident.get("uncond") is not None) is (other_slot is not None)
+    assert (head.measured.get("credit_bytes", 0) > 0) is credited, why
+    assert ("dropped" in head.measured) is credited, why
+
+
+def test_a_slab_resident_is_never_told_its_drop_copies_nothing(monkeypatch):
+    """A slab keeps the global unload its close waits for, so the flag stays off for its slot.
+    So does every drop on a discrete GPU, where an offload frees device memory."""
+    from dgx_monarch.actor import resident_ledger
+
+    monkeypatch.delenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, raising=False)
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
+    store = _b3_store(stored__slab=object())
+    drops: dict = {}
+    worker_capacity._resident_facts(None, store, {}, {}, {}, drops)
+    assert drops == {"cond": False, "uncond": False}
+    stock, beside = _b3_store().current, _b3_store().current
+    assert resident_ledger.drop_copies_nothing(stock, None) and resident_ledger.drop_copies_nothing(stock, beside)
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: False)
+    assert not resident_ledger.drop_copies_nothing(stock, None)
+    assert not resident_ledger.drop_copies_nothing(stock, beside)
+
+
+def test_one_question_with_both_loads_gives_each_rank_the_rows_of_the_slots_it_holds(quote):
+    """What the driver's dual-model credit leans on (``swap_credit.growth``): the real quote
+    answers a two-spec question with a row a slot, each with its load and its file's size, and
+    under dm-cfg2 a rank sends only the row of the one slot it holds."""
+    from dgx_monarch import swap_credit
+
+    other = "flux-2-klein.safetensors"
+    store = _b3_store(stack=(), base__backup={}, stored__base_key=(other, ()),
+                      stored__request_key=(other, (), (), "bf16"))
+    quote(store, [], available=int(100 * _GIB))     # the fixture's box reading
+    specs = [{"unet_name": BASE, "options": {}, "loras": [], "slot": slot} for slot in ("cond", "uncond")]
+
+    def ask(topology: dict, rank: int = 0) -> list[RankAnswer]:
+        worker = types.SimpleNamespace(rank=rank, world=2, topology=topology, _setup_key=("ready",),
+                                       store=store, uma_reserve_gb=0.0)
+        rows = worker_capacity.quote(worker, {"specs": specs, "rescue_consent": None})["quotes"]
+        return [RankAnswer(rank, "host0", tuple(cq.RankPrice.from_row(row) for row in rows),
+                           box=box_names.HEAD)]
+
+    every = ask({"ulysses": 2})
+    assert [(row.slot, row.would_load, row.checkpoint_bytes) for row in every[0].quotes] == [
+        ("cond", "swap", BF16_BYTES), ("uncond", "fresh", BF16_BYTES)]
+    assert swap_credit.from_answers(every, "cond").dropped == other
+    assert swap_credit.growth(every, "uncond") == BF16_BYTES, "a fresh load into the empty slot"
+    one = ask({"cfg": 2})
+    assert [row.slot for row in one[0].quotes] == ["cond"], "rank 0 holds the cond model only"
+    assert swap_credit.from_answers(one, "cond").dropped == other
+    assert swap_credit.growth(one, "uncond") == 0, "the second DiT loads on the other rank"
+    assert [row.slot for row in ask({"cfg": 2}, rank=1)[0].quotes] == ["uncond"]
+
+
 # The credit itself.
 
 def _held(backup: object = BACKUP_BYTES, stack=((LORA, 1.0),), residency: str = "stock") -> dict:

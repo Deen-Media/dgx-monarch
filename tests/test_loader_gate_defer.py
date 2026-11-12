@@ -66,7 +66,7 @@ def _loader_rig(monkeypatch, handle) -> dict:
     seen: dict = {"deferred": [], "placed": [], "loads": 0, "resident": False}
     monkeypatch.setattr(loader_preflight, "preflight_upstream_gated_artifact", lambda *_a: None)
     monkeypatch.setattr(loader_preflight, "preflight_comfy_managed_topology", lambda *_a: None)
-    monkeypatch.setattr(loader_preflight, "preflight_loader_footprint", lambda *_a: None)
+    monkeypatch.setattr(loader_preflight, "preflight_loader_footprint", lambda *_a, **_k: None)
     monkeypatch.setattr(loader_preflight, "record_rescue_row", lambda *_a, **_k: None)
     monkeypatch.setattr(consent_projection, "project_for_loader", lambda *_a, **_k: None)
     monkeypatch.setattr(render_preflight, "preflight_sol_sequence_parallel", lambda *_a: None)

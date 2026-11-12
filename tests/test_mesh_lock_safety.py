@@ -1129,6 +1129,8 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "ContextVar read, not a monarch future",
     ("old_model.py", "graph_names"):
         "ContextVar read, not a monarch future",
+    ("swap_credit.py", "credited"):
+        "ContextVar read, not a monarch future",
     ("vae_decode_route.py", "_entry_wrapper.decode"):
         "ContextVar read, not a monarch future",
     ("vae_decode_route.py", "_tiled_wrapper.tiled_scale_multidim"):

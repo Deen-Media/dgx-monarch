@@ -294,7 +294,7 @@ def test_unload_all_pins_both_slots_before_it_drops_either(rig, monkeypatch):
         resident_ledger, "pin_store_for_unload",
         lambda *slots: order.append(("pin", [slot is not None for slot in slots])))
     drop = store._drop
-    monkeypatch.setattr(store, "_drop", lambda slot: (order.append(slot), drop(slot))[1])
+    monkeypatch.setattr(store, "_drop", lambda slot, *rest: (order.append(slot), drop(slot, *rest))[1])
 
     store.unload_all()
 
@@ -357,3 +357,209 @@ def test_a_failed_flush_after_the_drop_still_completes_it(rig, monkeypatch):
 
     assert store.current is None
     assert store.snapshot()["cleanup_failed_slots"] == []
+
+
+# The copy-free drop (``unload_dropped``): only the dropped model's records leave
+# comfy's loaded list, and no weight moves to the host. The stand-ins below have
+# the shape of comfy's LoadedModel and ModelPatcher; the copy-free drop seam of
+# tests/canary/comfy_seam_contracts.py runs the same drop on the real classes.
+
+class _Record:
+    def __init__(self, patcher, log):
+        self.model, self.log, self.real_model = patcher, log, object()
+        self.model_finalizer = _Namespace(detach=lambda: log.append(("finalizer", patcher.name)))
+
+    def model_unload(self):
+        self.log.append(("model_unload", self.model.name, self.model.offload_device))
+        return True
+
+
+def _Namespace(**fields):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(**fields)
+
+
+def _slot(name, log, *, lowvram=False, model=None, **fields):
+    model = model or _Namespace(model_lowvram=lowvram)
+
+    def patcher(kind):
+        label = f"{name}-{kind}"
+        return _Namespace(name=label, model=model, load_device="cuda:0", offload_device="cpu", backup={"w": 1},
+                          detach=lambda unpatch_all=True: log.append(("detach", label, unpatch_all)),
+                          unpin_all_weights=lambda: log.append(("unpin", label)))
+
+    return _Namespace(**{"base_patcher": patcher("base"), "active_patcher": patcher("active"), "slab": None,
+                         "fsdp_checkpoint_pin": None, "residency_rung": "stock_fits", **fields})
+
+
+def _comfy(log, *records):
+    return _Namespace(current_loaded_models=list(records), unload_all_models=lambda: log.append("unload_all"),
+                      soft_empty_cache=lambda: log.append("flush"))
+
+
+@pytest.fixture
+def unified(monkeypatch):
+    from dgx_monarch import mesh_safety
+
+    monkeypatch.delenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, raising=False)
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
+
+
+def test_a_drop_unloads_only_its_own_model_and_leaves_the_other_slot_loaded(unified):
+    """comfy's global unload would detach the other slot's model to the host too, a copy made
+    before anything is freed. The drop takes its own records out of the list and no other."""
+    log: list = []
+    dropped, kept = _slot("old", log), _slot("stays", log)
+    mine, clone, theirs = (_Record(dropped.active_patcher, log), _Record(dropped.base_patcher, log),
+                           _Record(kept.active_patcher, log))
+    mm = _comfy(log, mine, theirs, clone)
+    assert resident_ledger.unload_dropped(mm, dropped, kept) is True
+    assert mm.current_loaded_models == [theirs]
+    # Each of its records unloads pinned to the load device, so the detach moves nothing.
+    assert log == [("model_unload", "old-base", "cuda:0"), ("model_unload", "old-active", "cuda:0"), "flush"]
+    # The slot that stays is pinned too, for the unload comfy runs at a later load.
+    assert {kept.base_patcher.offload_device, kept.active_patcher.offload_device} == {"cuda:0"}
+
+
+def test_a_partly_loaded_model_is_detached_in_place_on_drop(unified):
+    """Pinned, comfy's detach would copy its host part to the device; unpinned, its device part to
+    the host. Both are waste for a model being thrown away, so it takes the step comfy takes
+    when it replaces a clone, which moves no weight, and what the skipped unpatch would
+    have released is released here."""
+    log: list = []
+    dropped = _slot("old", log, lowvram=True)
+    mine = _Record(dropped.active_patcher, log)
+    mm = _comfy(log, mine)
+    assert resident_ledger.unload_dropped(mm, dropped, None) is True
+    assert mm.current_loaded_models == []
+    assert log == [("detach", "old-active", False), ("unpin", "old-active"), ("finalizer", "old-active"), "flush"]
+    assert dropped.active_patcher.backup == {} and mine.model_finalizer is None and mine.real_model is None
+    assert dropped.active_patcher.offload_device == "cuda:0", "its option patches are not moved either"
+
+
+def test_a_model_both_slots_share_stays_loaded(unified):
+    log: list = []
+    kept = _slot("stays", log)
+    dropped = _slot("old", log, model=kept.base_patcher.model)
+    shared = _Record(kept.active_patcher, log)
+    mm = _comfy(log, shared, _Record(dropped.active_patcher, log))
+    assert resident_ledger.unload_dropped(mm, dropped, kept) is True
+    assert len(mm.current_loaded_models) == 2 and log == ["flush"]
+
+
+@pytest.mark.parametrize(("change", "pinned", "why"), [
+    ({}, True, "a whole stock resident on unified memory"),
+    ({"slab": object()}, True, "a slab resident, pinned at load already"),
+    ({"lowvram": True}, False, "a partly loaded model: the pin would copy its host part to the device"),
+    ({"residency_rung": "comfy_managed"}, False, "comfy-managed weights are ComfyUI's to move"),
+])
+def test_the_slot_that_stays_is_pinned_only_where_no_later_unload_can_copy_it(unified, change, pinned, why):
+    from dgx_monarch.actor import capacity_quote
+
+    assert capacity_quote.RUNG_COMFY_MANAGED == "comfy_managed"
+    log: list = []
+    dropped, kept = _slot("old", log), _slot("stays", log, **change)
+    assert resident_ledger.stays_on_device(kept) is pinned, why
+    assert resident_ledger.stays_on_device(None) is True, "an empty slot has nothing to copy"
+    assert resident_ledger.drop_copies_nothing(dropped, kept) is pinned, why
+    resident_ledger.unload_dropped(_comfy(log, _Record(dropped.active_patcher, log)), dropped, kept)
+    assert (kept.active_patcher.offload_device == "cuda:0") is pinned, why
+
+
+@pytest.mark.parametrize(("change", "switch", "integrated", "why"), [
+    ({"slab": object()}, "", True, "a slab closes only after every model is detached"),
+    ({"fsdp_checkpoint_pin": object()}, "", True, "so does a shard build's checkpoint pin"),
+    ({}, "1", True, "DGXM_DISABLE_COPY_FREE_DROP=1"),
+    ({}, "", False, "a discrete GPU: an offload there frees device memory the next load may need"),
+])
+def test_a_slab_a_shard_build_a_discrete_gpu_and_the_switch_keep_the_global_unload(
+        monkeypatch, unified, change, switch, integrated, why):
+    from dgx_monarch import mesh_safety
+
+    monkeypatch.setenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, switch)
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: integrated)
+    assert resident_ledger.drop_copies_nothing(_slot("old", [], **change), None) is False, (
+        "nothing is promised, even beside an empty slot")
+    log: list = []
+    dropped, kept = _slot("old", log, **change), _slot("stays", log)
+    mm = _comfy(log, _Record(dropped.active_patcher, log), _Record(kept.active_patcher, log))
+    assert resident_ledger.detaches_alone(dropped) is False, why
+    assert resident_ledger.drop_copies_nothing(dropped, kept) is False, "and the price is told so"
+    assert resident_ledger.unload_dropped(mm, dropped, kept) is False
+    assert log == ["unload_all", "flush"], why
+    assert kept.active_patcher.offload_device == "cpu", "the earlier drop pinned only what it dropped"
+
+
+def test_a_shard_base_keeps_the_global_unload_where_a_plain_stock_resident_does_not(unified):
+    plain, shards = _slot("old", []), _slot("old", [])
+    shards.base_patcher._dgxm_fsdp = True
+    assert resident_ledger.detaches_alone(plain) is True
+    assert resident_ledger.detaches_alone(shards) is False
+
+
+def test_the_store_leaves_the_other_slot_loaded_and_unmarked_after_a_drop(rig, monkeypatch):
+    """Both slots held, the cond slot dropped: comfy's list keeps the uncond model, and the store
+    does not mark it as unloaded, since nothing reloads. Under the switch the earlier drop stands."""
+    import sys
+
+    store, calls = rig
+    store.slab_weights = False
+    monkeypatch.delenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, raising=False)
+    store.ensure("m.safetensors", None, STACK)
+    store.ensure("other.safetensors", None, STACK, slot="uncond")
+    from dgx_monarch import mesh_safety
+
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
+    mm = sys.modules["comfy.model_management"]
+    kept = store.uncond.base_patcher
+    kept.load_device = "cuda:0"
+    assert len(mm.current_loaded_models) == 2 and kept.offload_device == "cpu"
+    store._drop("cond")
+    assert store.current is None and store._gpu_evicted == set()
+    assert [record.model for record in mm.current_loaded_models] == [kept]
+    assert (calls.own_unloads, calls.unload_all) == (1, 1), "one unload step, the dropped model's own"
+    assert kept.offload_device == "cuda:0", "the store hands the drop the slot that stays, and it is pinned"
+
+    store.ensure("m.safetensors", None, STACK)
+    monkeypatch.setenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, "1")
+    store._drop("cond")
+    assert store._gpu_evicted == {"uncond"}, "the global unload took the other slot's GPU weights"
+
+
+def test_a_store_wide_unload_stays_global(rig, monkeypatch):
+    """``unload_all`` is the clear: ComfyUI must hold no model after it, the store's or any
+    other, so it keeps the global unload even where a single drop would detach alone."""
+    from dgx_monarch import mesh_safety
+
+    store, calls = rig
+    store.slab_weights = False
+    monkeypatch.delenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, raising=False)
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
+    store.ensure("m.safetensors", None, STACK)
+    store.ensure("other.safetensors", None, STACK, slot="uncond")
+    assert resident_ledger.detaches_alone(store.current), "a single drop of this slot would detach alone"
+    store.unload_all()
+    assert store.current is None and store.uncond is None
+    assert (calls.own_unloads, calls.unload_all) == (0, 2), "two drops, each through the global unload"
+
+
+def test_the_drops_switch_reaches_a_worker_through_its_reviewed_environment():
+    """The worker loop deletes every name outside its reviewed list before the actors start, so
+    a switch set on the Worker's unit is only real if its name is on that list."""
+    from dgx_monarch.cli import worker_process_env
+
+    environment = {"PATH": "/usr/bin", resident_ledger.COPY_FREE_DROP_DISABLE_ENV: "1"}
+    assert worker_process_env.worker_environment_key_allowed(resident_ledger.COPY_FREE_DROP_DISABLE_ENV)
+    assert worker_process_env.filter_worker_environment(environment) == 0
+    assert environment[resident_ledger.COPY_FREE_DROP_DISABLE_ENV] == "1"
+
+
+def test_mark_after_drop_says_what_the_drop_did_to_the_other_slot():
+    store = ModelStore()
+    store.current, store.uncond = object(), object()
+    store._gpu_evicted.add("cond")
+    resident_ledger.mark_after_drop(store, "cond", True)
+    assert store._gpu_evicted == set()
+    resident_ledger.mark_after_drop(store, "cond", False)
+    assert store._gpu_evicted == {"uncond"}
