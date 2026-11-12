@@ -109,6 +109,36 @@ def held_bytes(stored: Any) -> int:
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
 
+def holds_base(stored: Any, base_key: Any, checkpoint_path: str | None = None) -> bool:
+    """Whether this slot holds the request's base, as ``ModelStore.ensure`` compares it.
+
+    The comparison is the store's own: the whole base key, the file name and
+    the loader options together. A request that keeps the file and changes an
+    option (the weight dtype, for one) asks for another base, and the store
+    drops the slot and loads fresh. ``ensure`` also sets a slot aside when its
+    checkpoint's fingerprint has moved, before it asks ``take``; the quote
+    passes ``checkpoint_path`` to read that here. A slot that recorded no
+    fingerprint gives nothing to compare; a file that cannot be fingerprinted
+    reads as another base, which prices the dearer fresh load.
+    """
+    if stored is None or not base_key or getattr(stored, "base_key", None) != base_key:
+        return False
+    if checkpoint_path is None:
+        return True
+    identity = getattr(stored, "artifact_identity", None)
+    artifacts = identity.get("artifacts") if isinstance(identity, dict) else None
+    first = artifacts[0] if isinstance(artifacts, list) and artifacts else None
+    recorded = first.get("signature") if isinstance(first, dict) else None
+    if recorded is None:
+        return True
+    from ..gate_ledger import artifact_signature
+
+    try:
+        return bool(artifact_signature(checkpoint_path) == recorded)
+    except Exception:
+        return False
+
+
 def _held_files_unchanged(stored: Any, names: set, resolve_lora_path: Callable[[str], str]) -> bool:
     """No LoRA file of these names differs on disk from the fingerprint the slot recorded at its load.
 
@@ -197,7 +227,8 @@ def route(store: Any, stored: Any, held: bool, allowed: bool) -> dict[str, Any] 
     """``capacity_classic_bake.priced``'s arguments for one stack change; ``None`` when no classic bake is in play.
 
     One function for the quote, the store and the walls, so they cannot price
-    one change two ways. ``held`` says the slot holds this request's base.
+    one change two ways. ``held`` says the slot holds this request's base
+    (``holds_base``: the whole base key, never the file name alone).
     """
     if store.lora_low_rss or getattr(store, "slab_weights", False) is True:
         return None
@@ -251,7 +282,7 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
     from .store_detect import _to_comfy_model_options
 
     stored = store._stored(slot)
-    args = route(store, stored, stored is not None and stored.base_key == base_key, True)
+    args = route(store, stored, holds_base(stored, base_key), True)
     if args is None:
         return None
     occupied = stored is not None
@@ -297,5 +328,5 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
     return result
 
 
-__all__ = ["TRIED", "backup_covers", "fresh_load_probe", "held_bytes", "is_bare_stock", "loads_fresh", "must_reload",
-           "permission", "permitted", "quote_snapshot", "route", "take"]
+__all__ = ["TRIED", "backup_covers", "fresh_load_probe", "held_bytes", "holds_base", "is_bare_stock", "loads_fresh",
+           "must_reload", "permission", "permitted", "quote_snapshot", "route", "take"]

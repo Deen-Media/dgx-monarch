@@ -2418,7 +2418,13 @@ is not yet read, and the price does not depend on it. Three rules follow.
   holds every weight the new stack patches (the held stack's own files, or
   for another file the weights its headers map to), and whether the other
   slot holds a model. It prices by the same arguments, so both pick the same
-  bake. Where the slot holds the
+  bake. Both read "the slot holds this base" by the store's one comparison
+  (`in_place_fallback.holds_base`): the file name and the loader options
+  together, on the checkpoint file the slot loaded. A request that keeps the
+  file and changes an option (the weight dtype, for one) is a fresh load, and
+  is priced as one. For the second model of a dual-model render the bake is
+  chosen against the reading less the first model's charge, as the store
+  chooses it beside the loaded first model. Where the slot holds the
   base bare the bake runs on it. Where it holds anything else (nothing,
   another model, this base with a stack of either kind) the slot is dropped,
   the base loads bare at the stock price and the bake runs on that: a stack

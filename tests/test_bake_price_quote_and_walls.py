@@ -17,12 +17,12 @@ from dgx_monarch import capacity_fit, mesh_safety
 from dgx_monarch.actor import capacity_quote as cq
 from dgx_monarch.actor import in_place_fallback as fallback
 from dgx_monarch.actor import model_store as ms
-from dgx_monarch.actor import store_residency, worker_capacity
+from dgx_monarch.actor import store_bake, store_residency, worker_capacity
 from dgx_monarch.actor.store_detect import LivePrecisionEvidence
 from dgx_monarch.actor.stored_model import StoredModel
 from store_ensure_helpers import rig as rig  # a fixture tests ask for by name.
 from test_capacity_lora_bake import _resolver, _write_safetensors
-from test_lora_backup_credit import BASE, LORA, NARROW, _b3_store
+from test_lora_backup_credit import BASE, BF16_BYTES, LORA, LORA_FILES, NARROW, _b3_store
 from test_lora_backup_credit import quote as quote  # a fixture tests ask for by name.
 
 GIB = 2 ** 30
@@ -146,6 +146,121 @@ def test_beside_a_held_slot_the_quote_keeps_todays_price_as_the_store_keeps_the_
         precision_evidence=LivePrecisionEvidence("bf16", "bf16"), family="wan_animate2", artifact_identity={},
         residency_rung=cq.RUNG_EXPLICIT_STOCK)
     assert "bake" not in _measured(quote(bare, [(LORA, 1.0)]))
+
+
+# The base as the store compares it, and a pair's second model against the budget left.
+
+def _rows(store, monkeypatch, specs, available, proven=False):
+    """``worker_capacity.quote``'s rows for these specs at one reading, with the ``quote`` fixture's seams in."""
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: available)
+    worker = types.SimpleNamespace(rank=0, world=2, topology={}, _setup_key=("ready",), store=store,
+                                   uma_reserve_gb=0.0)
+    return worker_capacity.quote(worker, {"specs": specs, "rescue_consent": None,
+                                          "in_place_bake_proven": proven})["quotes"]
+
+
+RECAST = {"weight_dtype": "default"}  # another base key by the store's rule, and no cast in the price
+COVERED = [{"name": LORA, "strength": 0.8}]  # a strength change: the held backup covers it
+
+
+def test_a_loader_option_changed_on_a_held_file_is_priced_as_the_fresh_load_the_store_makes(quote, monkeypatch):
+    """The store compares the whole base key, so the held backup and the held copy are not this request's."""
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    store = _b3_store()
+    same = {"unet_name": BASE, "options": {}, "loras": COVERED, "slot": "cond"}
+    changed = dict(same, options=RECAST)
+    assert ms.ModelStore.make_keys(BASE, RECAST, None, "")[0] != store.current.base_key
+    assert "bake" not in _rows(store, monkeypatch, [same], 120 * GIB)[0]["measured"]  # the hot swap in place
+    measured = _rows(store, monkeypatch, [changed], 120 * GIB)[0]["measured"]
+    assert measured["bake"] == "classic" and measured["bake_bytes"] == UNREAD_TERM + LORA_FILES[LORA]
+    # A reading the stock price fits and the bake's share does not: the quote refuses what the wall would.
+    short = measured["required_bytes"] - measured["bake_bytes"] + GIB
+    assert _rows(store, monkeypatch, [same], short)[0]["verdict"] == cq.VERDICT_FITS
+    assert _rows(store, monkeypatch, [changed], short)[0]["verdict"] == cq.VERDICT_REFUSE
+
+
+def test_with_the_permission_a_changed_option_prices_the_bare_reload_not_a_bake_on_the_held_copy(
+        quote, monkeypatch):
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    bare = _b3_store(stack=(), base__backup={})
+    bare.current.lora_sig = ()
+    spec = {"unet_name": BASE, "options": {}, "loras": [{"name": LORA, "strength": 1.0}], "slot": "cond"}
+    on_the_held_copy = price.in_place_bake_bytes(LORA_FILES[LORA])
+    kept = _rows(bare, monkeypatch, [spec], 45 * GIB, proven=True)[0]["measured"]
+    assert kept["bake"] == "in_place" and kept["bake_bytes"] == on_the_held_copy
+    # Another base key: the store drops the held copy and loads the base bare first, at the stock price.
+    changed = _rows(bare, monkeypatch, [dict(spec, options=RECAST)], 45 * GIB, proven=True)[0]["measured"]
+    reload = capacity_fit.stock_required_bytes(BF16_BYTES) - capacity_fit.ABSOLUTE_HOST_FLOOR_BYTES - BF16_BYTES
+    assert changed["bake"] == "in_place" and changed["bake_bytes"] == reload > on_the_held_copy
+
+
+def test_the_store_loads_fresh_when_a_loader_option_changes_on_a_held_file(classic_load, monkeypatch):
+    """The store's side of the same rule, on the real ``ensure``: no hot swap, a fresh load at the walls."""
+    store, calls, box, stock = classic_load
+    box.available = stock + UNREAD_TERM + GIB
+    store.ensure("base.safetensors", {}, STACK)
+    asked = []
+    real_swap = store_bake.hot_swap_transition
+
+    def hot_swap(*args, **kwargs):
+        asked.append("hot swap")
+        return real_swap(*args, **kwargs)
+
+    monkeypatch.setattr(store_bake, "hot_swap_transition", hot_swap)
+    box.available = stock + GIB  # the stock price fits; the bake's share does not
+    with pytest.raises(Exception) as raised:
+        store.ensure("base.safetensors", RECAST, [{"name": "a.safetensors", "strength": 0.5}])
+    assert asked == [] and BAKE_WORDS in str(raised.value) and calls.load == 1
+
+
+def test_the_slot_holds_a_base_by_the_whole_key_and_the_file_it_loaded(tmp_path):
+    from dgx_monarch.gate_ledger import artifact_signature
+
+    checkpoint = tmp_path / "base.safetensors"
+    checkpoint.write_bytes(b"a" * 4096)
+    key = ms.ModelStore.make_keys("base.safetensors", {}, None, "")[0]
+    stored = types.SimpleNamespace(base_key=key, artifact_identity={})
+    assert fallback.holds_base(stored, key) and fallback.holds_base(stored, key, str(checkpoint))
+    assert not fallback.holds_base(None, key) and not fallback.holds_base(stored, ())
+    assert not fallback.holds_base(stored, ms.ModelStore.make_keys("base.safetensors", RECAST, None, "")[0])
+    stored.artifact_identity = {"artifacts": [
+        {"kind": "diffusion_models", "name": "base.safetensors", "signature": artifact_signature(str(checkpoint))}]}
+    assert fallback.holds_base(stored, key, str(checkpoint))
+    checkpoint.write_bytes(b"b" * 8192)  # rewritten under its own name: ``ensure`` sets such a slot aside
+    assert not fallback.holds_base(stored, key, str(checkpoint))
+    assert fallback.holds_base(stored, key)  # ``take`` asks after ``ensure``'s own check of the file
+    checkpoint.unlink()
+    assert not fallback.holds_base(stored, key, str(checkpoint))
+
+
+def test_a_pairs_second_model_takes_the_bake_that_fits_the_budget_the_first_leaves(quote, monkeypatch, tmp_path):
+    """The store bakes the second model beside the loaded first, so the quote chooses after the first's charge."""
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    small = tmp_path / "pair.safetensors"
+    with open(small, "wb") as handle:
+        handle.truncate(10 * GIB)
+    monkeypatch.setattr(ms, "resolve_model_path", lambda _kind, _name: str(small))
+    store = ms.ModelStore()
+    store.lora_low_rss = False
+    store.slab_weights = False
+    stock = capacity_fit.stock_required_bytes(10 * GIB)
+    classic = stock + UNREAD_TERM + LORA_FILES[LORA]
+    specs = [{"unet_name": "first.safetensors", "options": {}, "slot": "cond"},
+             {"unet_name": "second.safetensors", "options": {}, "slot": "uncond",
+              "loras": [{"name": LORA, "strength": 1.0}]}]
+    reading = 2 * stock + GIB  # beside the first model the bare base and its in-place bake fit; the classic does not
+    assert classic <= reading < stock + classic
+    first, second = _rows(store, monkeypatch, specs, reading, proven=True)
+    assert first["verdict"] == cq.VERDICT_FITS and "bake" not in first["measured"]
+    assert second["verdict"] == cq.VERDICT_FITS and second["measured"]["bake"] == "in_place"
+    assert second["measured"]["mem_available_bytes"] == reading - stock  # the first's charge, taken off once
+    # Priced alone at the same reading the same slot keeps the classic bake.
+    alone = _rows(store, monkeypatch, specs[1:], reading, proven=True)[0]
+    assert alone["verdict"] == cq.VERDICT_FITS and alone["measured"]["bake"] == "classic"
+    # Without the permission the pair is refused, and the row says what was left and why no in-place bake.
+    refused = _rows(store, monkeypatch, specs, reading)[1]
+    assert refused["verdict"] == cq.VERDICT_REFUSE and refused["measured"]["bake"] == "classic"
+    assert "identity-gate PASS" in refused["measured"]["in_place_note"]
 
 
 def _stored_with_backup(keys, lora_sig=(("held.safetensors", 1.0),), patches=None):

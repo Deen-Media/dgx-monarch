@@ -208,7 +208,7 @@ def _gib(value: int) -> float:
 
 
 def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora_path: Callable[[str], str],
-           *, held_bytes: int = 0, in_place: str | bool = "", bare_load: bool = False) -> Any:
+           *, held_bytes: int = 0, in_place: str | bool = "", bare_load: bool = False, charged: int = 0) -> Any:
     """``fit`` (a ``capacity_fit.StockFit``) with the classic bake charged, or re-priced as an in-place bake.
 
     Every site that prices one stack change calls this with the same
@@ -225,10 +225,25 @@ def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora
     The in-place price is taken only when the classic one, so credited, does
     not fit and the in-place one does. A classic price that misses carries
     what the in-place bake would have needed and why it was not taken.
+
+    ``charged`` is what this request's earlier slots already take out of the
+    reading (the quote prices a pair's second model after its first). The
+    bake is chosen against what is left, as the store chooses it when that
+    slot's load runs beside the first model. The fit returned keeps the
+    reading as read: ``capacity_quote._charge`` takes the charge off once.
     """
     if not lora_stack or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None:
         return fit
-    held = max(int(held_bytes), 0)
+    read, spent = int(fit.avail_bytes), max(int(charged), 0)
+    fit = replace(fit, avail_bytes=read - spent)
+    return replace(_chosen(fit, checkpoint_path, lora_stack, resolve_lora_path, max(int(held_bytes), 0),
+                           in_place, bare_load, "was left beside this request's other model" if spent else "was read"),
+                   avail_bytes=read)
+
+
+def _chosen(fit: Any, checkpoint_path: str, lora_stack: list, resolve_lora_path: Callable[[str], str],
+            held: int, in_place: str | bool, bare_load: bool, reading_words: str) -> Any:
+    """``priced``'s choice between the two bakes, against ``fit.avail_bytes`` as given."""
     files = stack_bytes(lora_stack, resolve_lora_path)
     classic = replace(fit, bake_bytes=classic_bake_bytes(checkpoint_path, lora_stack, resolve_lora_path) + files)
     classic = replace(classic, fits=classic.required_bytes <= classic.avail_bytes)
@@ -245,18 +260,19 @@ def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora
         return replace(taken, fits=True)
     beside = "" if bare_load else f" beside the {_gib(held)} GiB loaded copy"
     return replace(classic, in_place_note=f"; baking it in place would need {taken.required_gib} GiB{beside}, "
-                   f"and {taken.avail_gib} GiB was read")
+                   f"and {taken.avail_gib} GiB {reading_words}")
 
 
 def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, held_bytes: int = 0,
-          in_place: str | bool = "", bare_load: bool = False,
+          in_place: str | bool = "", bare_load: bool = False, charged: int = 0,
           stock_load_fit: Callable[[str, dict], Any] | None = None) -> Callable[[str, dict], Any]:
     """A stock probe (``capacity_quote.price``'s ``fit_probe``) that charges this load's classic bake."""
     def fit_probe(path: str, model_options: dict) -> Any:
         from . import capacity_fit
 
         return priced((stock_load_fit or capacity_fit.stock_load_fit)(path, model_options), path, lora_stack,
-                      resolve_lora_path, held_bytes=held_bytes, in_place=in_place, bare_load=bare_load)
+                      resolve_lora_path, held_bytes=held_bytes, in_place=in_place, bare_load=bare_load,
+                      charged=charged)
 
     return fit_probe
 

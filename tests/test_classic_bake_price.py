@@ -195,6 +195,23 @@ def test_the_classic_bake_and_the_stacks_files_are_added_to_the_stock_price_and_
     assert roomy.required_bytes - FLOOR >= 54.6 * GIB
 
 
+def test_the_bake_is_chosen_against_what_an_earlier_slot_leaves_and_the_reading_comes_back_as_read(ltx):
+    """A pair's second model: the choice is made after the first slot's charge; the quote takes it off once."""
+    read = int(80.0 * GIB)
+    alone = price.priced(_fit(80.0), "p", STACK, None, in_place=True, bare_load=True)
+    assert alone.fits and alone.in_place_bytes == 0 and alone.bake_bytes == ltx  # the classic bake fits the reading
+    spent = int(25 * GIB)
+    second = price.priced(_fit(80.0), "p", STACK, None, in_place=True, bare_load=True, charged=spent)
+    assert second.in_place_bytes > 0 and second.fits and second.avail_bytes == read
+    assert second.required_bytes <= read - spent < alone.required_bytes
+    short = price.priced(_fit(80.0), "p", STACK, None, in_place=True, bare_load=True, charged=int(40 * GIB))
+    assert not short.fits and short.in_place_bytes == 0 and short.avail_bytes == read
+    assert "and 40.0 GiB was left beside this request's other model" in short.in_place_note
+    # No earlier slot: the same choice as before, and the reading is named as read.
+    assert price.priced(_fit(80.0), "p", STACK, None, in_place=True, bare_load=True, charged=0) == alone
+    assert "GiB was read" in price.priced(_fit(40.0), "p", STACK, None, in_place=True, bare_load=True).in_place_note
+
+
 def test_todays_admitted_but_short_load_is_now_refused_by_the_classic_price(ltx):
     short = price.priced(_fit(52.0), "p", STACK, None)  # today's 50.9 admits this
     assert _fit(52.0).fits and not short.fits and short.in_place_bytes == 0
@@ -535,10 +552,10 @@ def test_a_change_the_hot_swap_makes_in_place_keeps_todays_price(worker_side, mo
     monkeypatch.setattr(store_fsdp, "active", lambda _worker: False)
     stored, spec = _stored(), {"unet_name": "m.safetensors", "loras": STACK}
     probe = worker_capacity._classic_bake_probe
-    assert probe(object(), _store(stored), stored, spec, "m.safetensors", True, other_held=True) is None
+    assert probe(object(), _store(stored), stored, spec, True, True, other_held=True) is None
     stacked = _stored(lora_sig=(("held", 1.0),))
-    assert probe(object(), _store(stacked), stacked, spec, "m.safetensors", True, covered=True) is None
-    assert probe(object(), _store(stacked), stacked, spec, "m.safetensors", True) is not None
+    assert probe(object(), _store(stacked), stacked, spec, True, True, covered=True) is None
+    assert probe(object(), _store(stacked), stacked, spec, True, True) is not None
 
 
 @pytest.mark.parametrize("reading, bake", [(80.0, "classic"), (51.0, "classic"), (30.0, "in_place"), (9.0, None)])
@@ -551,7 +568,7 @@ def test_the_quote_the_store_and_the_walls_pick_one_bake_at_one_reading(worker_s
     stored = _stored()
     store = _store(stored)
     spec = {"unet_name": "m.safetensors", "loras": STACK}
-    quoted = worker_capacity._classic_bake_probe(object(), store, stored, spec, "m.safetensors", True)(
+    quoted = worker_capacity._classic_bake_probe(object(), store, stored, spec, True, True)(
         "/models/m.safetensors", {})
     with fallback.permission(ALLOW):
         took = _take(store)
@@ -573,15 +590,15 @@ def test_the_quote_without_the_permission_prices_the_classic_bake_alone(worker_s
     monkeypatch.setattr(store_fsdp, "active", lambda _worker: False)
     stored = _stored()
     spec = {"unet_name": "m.safetensors", "loras": STACK}
-    quoted = worker_capacity._classic_bake_probe(object(), _store(stored), stored, spec, "m.safetensors", False)(
+    quoted = worker_capacity._classic_bake_probe(object(), _store(stored), stored, spec, True, False)(
         "/models/m.safetensors", {})
     assert not quoted.fits and quoted.in_place_bytes == 0 and "identity-gate PASS" in quoted.in_place_note
     assert worker_capacity._classic_bake_probe(
-        object(), _store(stored, low_rss=True), stored, spec, "m.safetensors", True) is None
+        object(), _store(stored, low_rss=True), stored, spec, True, True) is None
     assert worker_capacity._classic_bake_probe(
-        object(), _store(stored), stored, {"unet_name": "m.safetensors"}, "m.safetensors", True) is None
+        object(), _store(stored), stored, {"unet_name": "m.safetensors"}, True, True) is None
     monkeypatch.setattr(store_fsdp, "active", lambda _worker: True)
-    assert worker_capacity._classic_bake_probe(object(), _store(stored), stored, spec, "m.safetensors", True) is None
+    assert worker_capacity._classic_bake_probe(object(), _store(stored), stored, spec, True, True) is None
 
 
 def test_the_ladders_row_gives_the_wall_back_its_bake_term(ltx):
