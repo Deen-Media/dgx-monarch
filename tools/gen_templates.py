@@ -5936,9 +5936,11 @@ TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
 # FP16 VAE, KSampler at 6 steps, CFG 1, euler and simple, a zeroed negative,
 # the edit's two Resize Image/Mask nodes and Get Image Size, and the prompt
 # expander chain as ComfyUI wires it: Replace Text puts the request into a
-# task prompt, Generate Text runs the W4A8 expander with ComfyUI's decoding
-# numbers, Extract Text from JSON reads the caption out, and an If/Else switch
-# picks the caption or the request. Five things differ, each on purpose.
+# task prompt, Generate Text runs the W4A8 expander,
+# Extract Text from JSON reads the caption out, and an If/Else switch
+# picks the caption or the request. Six things differ, each on purpose.
+# Generate Text runs with this project's settings (H3I_DECODING, H3I_GENERATE),
+# where ComfyUI's templates reason at up to 8192 or 8196 tokens.
 # The task prompt and system prompt boxes of the two shipped graphs hold this
 # project's OWN texts (tools/expander_prompts/minimax_h3_image), written from
 # public research on the model: the text ComfyUI's templates carry there is
@@ -6007,17 +6009,26 @@ H3I_SWITCH_TITLE = "If/Else Switch (expander on or off)"
 H3I_FALLBACK_TITLE = "If/Else Switch (empty caption: send the request)"
 # Where MiniMax publishes its own prompts, which this project does not ship.
 H3I_PROMPT_REPO = "MiniMaxAI/MiniMax-H3-Image-PE"
-# How Generate Text decodes, in one place: ComfyUI's own numbers, sampling_mode
-# on with these seven child widgets in the option's order. With mtp auto on
-# this expander file the text can change from run to run at a fixed seed: the
-# file carries MTP weights, ComfyUI re-fits the draft tree from measured step
-# time, and every step draws one token a tree row from the seeded generator
-# (comfy/text_encoders/qwen35.py at 0.45.0, _generate_mtp).
+# How Generate Text runs, in one place. These are this project's settings for
+# its own texts, not ComfyUI's template values (thinking on, max_length 8192
+# or 8196, mtp auto, temperature 1.0, top_p 0.95). The node gives reasoning
+# no budget of its own: it spends max_length, and a run cut off while it
+# reasons returns no caption. So thinking is off and the texts ask for the
+# answer at once. max_length 1024 leaves room for a long caption and
+# bounds a run. mtp is off: at auto ComfyUI re-fits the draft tree from
+# measured step time and the seeded draws follow the tree, so the text could
+# change from run to run at a fixed seed (comfy/text_encoders/qwen35.py at
+# 0.45.0, _generate_mtp); off, Generate Text decodes in its plain loop with
+# one seeded generator. Temperature 0.7 and top_p 0.8 are the texts' author's
+# choice, taken from Qwen's guidance for answers without reasoning. The other
+# sampling widgets keep ComfyUI's values, in the option's order.
 H3I_DECODING = {
-    "sampling_mode": "on", "sampling_mode.temperature": 1.0, "sampling_mode.top_k": 20,
-    "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,
+    "sampling_mode": "on", "sampling_mode.temperature": 0.7, "sampling_mode.top_k": 20,
+    "sampling_mode.top_p": 0.8, "sampling_mode.min_p": 0.0,
     "sampling_mode.repetition_penalty": 1.0, "sampling_mode.presence_penalty": 0.0,
     "sampling_mode.seed": 0}
+H3I_GENERATE = {"max_length": 1024, "thinking": False, "use_default_template": True,
+                "mtp": "off"}
 H3I_SIZES = ("ComfyUI's template notes say the model works from about 4 MP to 20 MP "
              "and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or "
              "6272x2688, sides swapped for portrait.")
@@ -6053,13 +6064,13 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
         "subgraph's enable_PE input, ") + "with MiniMax's texts in the two boxes. "
     chain = (
         "Replace Text puts the request into the task prompt where it says "
-        + H3I_MARKER + ", Generate Text runs the expander model on the driver with "
-        "ComfyUI's decoding settings, Extract Text from JSON reads the caption out "
+        + H3I_MARKER + ", Generate Text runs the expander model on the driver, with "
+        "reasoning off, Extract Text from JSON reads the caption out "
         "of its answer, and the switch titled " + H3I_SWITCH_TITLE + " picks that "
         "caption or the request. ")
     cost = (
         "the driver loads the 7.3 GB expander beside the text encoder, and Generate "
-        "Text may write up to " + ("8196" if edit else "8192") + " tokens before the "
+        "Text may write up to " + str(H3I_GENERATE["max_length"]) + " tokens before the "
         "render starts")
     if H3I_EXPANDER_ON:
         expander = (
@@ -6072,7 +6083,7 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
             "The request box goes to the model as written. A prompt expander is "
             "wired and off: " + chain + "As shipped that switch is false. " + upstream +
             "Set the switch to true to have the expander write the prompt: then "
-            + cost + ", a wait no hardware run has timed yet. ")
+            + cost + ", a wait not yet timed on hardware with these settings. ")
         memory = ("and the 7.3 GB expander from the first render with the switch true "
                   "(as shipped, this graph never loads it)")
     return (
@@ -6089,8 +6100,8 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
         "either way. A DGX Monarch loader or sampler refuses a graph whose "
         "expander is on with an empty task prompt, or with one that lacks the "
         "marker (docs/TROUBLESHOOTING.md #" + str(EXPANDER_ENTRY) + "). With the "
-        "switch true the prompt is text a language model wrote, and with this "
-        "expander file it can change from run to run even at a fixed seed, so "
+        "switch true the prompt is text a language model sampled, at Generate "
+        "Text's own seed and not the sampler's, so "
         "compare renders and check identity with the switch false. "
         "Sampling is KSampler at CFG 1 with euler and the simple scheduler, as in "
         "ComfyUI's template. At 6 steps that schedule lands within a thousandth of "
@@ -6187,12 +6198,10 @@ def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dic
         expand_wire = {"clip": ("expclip", 0), "images.image1": ("multiple", 0),
                        "system_prompt": ("system", 0), "prompt": ("splice", 0)}
     nodes.extend([
-        # thinking on and max_length as upstream stores them, 8192 in its text
-        # to image graph and 8196 in its edit graph; H3I_DECODING holds
-        # upstream's decoding numbers.
+        # H3I_DECODING and H3I_GENERATE hold this project's settings for the
+        # expander: reasoning off, a short max_length, mtp off.
         {"key": "expand", "type": "TextGenerateV2", "pos": (3, 3),
-         "widgets": {"prompt": "", "max_length": 8196 if edit else 8192, **H3I_DECODING,
-                     "thinking": True, "use_default_template": True, "mtp": "auto"},
+         "widgets": {"prompt": "", **H3I_DECODING, **H3I_GENERATE},
          "wire": expand_wire},
         {"key": "extract", "type": "JsonExtractString", "pos": (4, 3),
          "widgets": {"json_string": "", "key": "expanded_caption"},

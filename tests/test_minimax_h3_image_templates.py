@@ -7,7 +7,7 @@ sample with KSampler at 6 steps, CFG 1, euler and simple on a zeroed negative,
 with the expander behind an If/Else switch. The shipped graphs must keep each
 of those, with the DGX Monarch loader and sampler in place of the stock ones,
 and the expander chain as ComfyUI wires it: Replace Text on `{input text}`,
-Generate Text with ComfyUI's decoding numbers, Extract Text from JSON on
+Generate Text with this project's settings for it, Extract Text from JSON on
 `expanded_caption`. The testing graph walks the checkpoint's own sigma grid
 through Sampler Custom. The edit graph keeps upstream's canvas nodes, two
 Resize Image/Mask nodes and Get Image Size.
@@ -198,10 +198,9 @@ def test_the_expander_chain_is_wired_as_comfyui_wires_it(name):
     expand = chain["expand"]
     assert graph[expand["clip"][0]]["inputs"] == {"clip_name": EXPANDER, "type": "minimax",
                                                   "device": "default"}
-    # thinking and max_length as upstream stores them: 8192 in its text to
-    # image graph, 8196 in its edit graph.
+    # This project's settings for the expander, the same in every graph.
     assert (expand["max_length"], expand["thinking"], expand["use_default_template"],
-            expand["mtp"]) == (8196 if edit else 8192, True, True, "auto")
+            expand["mtp"]) == (1024, False, True, "off")
     assert {key: value for key, value in expand.items()
             if key.startswith("sampling_mode")} == gen_templates.H3I_DECODING
     assert ("images.image1" in expand) is edit
@@ -212,29 +211,48 @@ def test_the_expander_chain_is_wired_as_comfyui_wires_it(name):
                                 else gen_templates.H3I_REQUEST)
 
 
-def test_generate_text_holds_comfyuis_decoding_numbers():
-    """ComfyUI's own two templates store these thirteen values, max_length apart."""
-    assert gen_templates.H3I_DECODING == {
-        "sampling_mode": "on", "sampling_mode.temperature": 1.0, "sampling_mode.top_k": 20,
-        "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,
-        "sampling_mode.repetition_penalty": 1.0, "sampling_mode.presence_penalty": 0.0,
-        "sampling_mode.seed": 0}
+# The five values round 3 of the expander texts was written for, and the widgets
+# that stay as ComfyUI's templates have them.
+ROUND3 = {"thinking": False, "max_length": 1024, "mtp": "off",
+          "sampling_mode.temperature": 0.7, "sampling_mode.top_p": 0.8}
+UNCHANGED = {"sampling_mode": "on", "sampling_mode.top_k": 20, "sampling_mode.min_p": 0.0,
+             "sampling_mode.repetition_penalty": 1.0, "sampling_mode.presence_penalty": 0.0,
+             "sampling_mode.seed": 0, "use_default_template": True}
+
+
+@pytest.mark.parametrize("name", [T2I, EDIT])
+def test_generate_text_holds_the_five_values_the_texts_were_written_for(name):
+    """Reasoning off, at most 1024 new tokens, mtp off, temperature 0.7 and top_p 0.8,
+    in both shipped graphs alike; every other widget keeps ComfyUI's value."""
+    _, expand = _one(_graph(name), "TextGenerateV2")
+    assert {key: expand[key] for key in ROUND3} == ROUND3
+    assert {key: expand[key] for key in UNCHANGED} == UNCHANGED
+    assert expand["prompt"] != "" and isinstance(expand["prompt"], list)
+    widgets = {key for key, value in expand.items() if not isinstance(value, list)}
+    assert widgets == set(ROUND3) | set(UNCHANGED)
+    # The generator holds them in two constants, and the UI graph stores thirteen slots.
+    assert {**gen_templates.H3I_DECODING, **gen_templates.H3I_GENERATE} == {**ROUND3, **UNCHANGED}
+    (stored,) = [node["widgets_values"] for node in _doc(name)["nodes"]
+                 if node["type"] == "TextGenerateV2"]
+    assert stored == ["", 1024, "on", 0.7, 20, 0.8, 0, 1, 0, 0, False, True, "off"]
+
+
+def test_generate_texts_children_follow_the_options_order():
     children = gen_templates.DYNAMIC_WIDGETS["TextGenerateV2"]["sampling_mode"]
     assert [f"sampling_mode.{child}" for child in children["on"]] == [
         key for key in gen_templates.H3I_DECODING if key != "sampling_mode"]
+    # The testing graph runs no expander; its node holds the same values all the same.
     stored = {name: [node["widgets_values"] for node in _doc(name)["nodes"]
                      if node["type"] == "TextGenerateV2"] for name in PATHS}
-    assert stored[T2I] == stored[GRID] == [
-        ["", 8192, "on", 1, 20, 0.95, 0, 1, 0, 0, True, True, "auto"]]
-    assert stored[EDIT] == [["", 8196, "on", 1, 20, 0.95, 0, 1, 0, 0, True, True, "auto"]]
+    assert stored[T2I] == stored[EDIT] == stored[GRID]
 
 
 PROMPTS = ROOT / "tools" / "expander_prompts" / "minimax_h3_image"
 # The texts as the prompt author's last round left them, by SHA-256.
 PROMPT_SHA256 = {
-    "system_prompt.txt": "949563c46a6a2322c209159c72fc396f6ed0194ac77b51dcc879ff89ea93298d",
-    "t2i_task_prompt.txt": "92df9775562d8731aef197fd00b4a482e2543ebb2507d02ef43b3aad48caf73a",
-    "edit_task_prompt.txt": "f61af404739b97da169a89632b654ecbabf4f926ec5aafbff174deef614bd52f",
+    "system_prompt.txt": "2fd3538979706f75a6df22812553f3464bda277cdb1f756fc1f3beebf2b1333d",
+    "t2i_task_prompt.txt": "c92e20cd034b2624798dc72c9fb738f24b53428d7c582d2bd177b5d417d38c81",
+    "edit_task_prompt.txt": "b7134a940c00c01f2cf0238cb950b611b0535619f16a8c6deb159624dc040e72",
 }
 
 
@@ -347,10 +365,96 @@ def test_an_empty_caption_falls_back_to_the_request(name):
     assert preview["source"] == chain["cond"]["prompt"] == [chain["switch_id"], 0]
 
 
+def _rendered(name: str, request: str, answer: str) -> str:
+    """The text the conditioning node receives with the outer switch true, when the
+    expander's answer is ``answer``.
+
+    A CPU stand-in for five stock nodes, each as ComfyUI 0.45.0's code reads
+    (comfy_extras/nodes_string.py, nodes_logic.py): Replace Text is str.replace;
+    Extract Text from JSON returns the key of the first object that parses, as a
+    string, or "" when none parses or the key is absent; Trim Text strips; Compare
+    Text in Equal mode compares; If/Else hands on on_true when its switch is true.
+    Generate Text is the one node not run: its output is the answer given.
+    """
+    graph = _graph(name)
+    chain = _chain(graph)
+    graph[chain["request_id"]]["inputs"]["value"] = request
+    chain["switch"]["switch"] = True
+
+    def value(ref):
+        return run(ref[0]) if isinstance(ref, list) else ref
+
+    def run(key: str):
+        kind, inputs = graph[key]["class_type"], graph[key]["inputs"]
+        if kind == "PrimitiveStringMultiline":
+            return inputs["value"]
+        if kind == "StringReplace":
+            return value(inputs["string"]).replace(inputs["find"], value(inputs["replace"]))
+        if kind == "TextGenerateV2":
+            assert value(inputs["prompt"]), "the expander was handed an empty prompt"
+            return answer
+        if kind == "JsonExtractString":
+            text, decoder = value(inputs["json_string"]), json.JSONDecoder()
+            for start in (i for i, char in enumerate(text) if char == "{"):
+                try:
+                    data, _ = decoder.raw_decode(text, start)
+                except json.JSONDecodeError:
+                    continue
+                found = data.get(inputs["key"])
+                return "" if found is None else str(found)
+            return ""
+        if kind == "StringTrim":
+            assert inputs["mode"] == "Both"
+            return value(inputs["string"]).strip()
+        if kind == "StringCompare":
+            assert inputs["mode"] == "Equal" and inputs["case_sensitive"] is True
+            return value(inputs["string_a"]) == value(inputs["string_b"])
+        if kind == "ComfySwitchNode":
+            return value(inputs["on_true"] if value(inputs["switch"]) else inputs["on_false"])
+        raise AssertionError(f"{kind} is not on the text path")
+
+    return value(chain["cond"]["prompt"])
+
+
+CAPTION = "A photograph of a small weather station at first light, frost on the grass."
+
+
+def test_the_fallback_agrees_with_what_the_round_3_texts_answer():
+    """The text to image text answers an empty request with an empty caption; the edit
+    text never answers with one. The guard handles both, and an answer that holds no
+    caption at all."""
+    t2i, edit = _prompt_file("t2i_task_prompt.txt"), _prompt_file("edit_task_prompt.txt")
+    assert 'answer with an empty caption: {"expanded_caption": ""}' in t2i
+    assert '{"expanded_caption": ""}' not in edit
+    assert "still write a caption: say that <Picture 1> stays exactly as it is" in edit
+    assert "never answer with the request alone" in edit
+    # No text tells the model to hand the request back as the caption any more: the
+    # graph's own fallback is what covers an empty caption.
+    for text in (t2i, edit, _prompt_file("system_prompt.txt")):
+        assert "use the request itself as the caption" not in text
+    # Text to image, an empty request: the stated empty caption falls back to the
+    # request, which is empty, exactly what the model gets with the expander off.
+    assert _rendered(T2I, "", '{"expanded_caption": ""}') == ""
+    # The edit, an empty request: the text asks for a caption that keeps the picture,
+    # and a caption that is not empty goes to the model as extracted.
+    kept = "<Picture 1> stays exactly as it is."
+    assert _rendered(EDIT, "", json.dumps({"expanded_caption": kept})) == kept
+    for name, request in ((T2I, gen_templates.H3I_REQUEST), (EDIT, gen_templates.H3I_EDIT_REQUEST)):
+        # A caption goes through untouched, untrimmed.
+        assert _rendered(name, request, json.dumps({"expanded_caption": CAPTION})) == CAPTION
+        assert _rendered(name, request, json.dumps({"expanded_caption": f" {CAPTION} "})) == f" {CAPTION} "
+        # No caption falls back to the request: an answer cut short at max_length, plain
+        # prose, another key, an empty or blank caption.
+        for answer in ('{"expanded_caption": "A photograph of a small weather sta', CAPTION, "",
+                       '{"caption": "x"}', '{"expanded_caption": ""}',
+                       '{"expanded_caption": " \\n "}'):
+            assert _rendered(name, request, answer) == request, (name, answer)
+
+
 def test_no_text_outside_the_note_and_the_two_prompt_boxes_is_long():
     """ComfyUI's text to image task prompt runs to 15,823 characters, its edit one
     is long too, and its demo caption runs to 3,308. This project's own texts run to
-    1,076, 2,860 and 3,298 bytes, and no other widget comes near."""
+    1,047, 3,235 and 3,672 bytes, and no other widget comes near."""
     ours = {_prompt_file(name) for name in PROMPT_SHA256}
     assert max(len(text) for text in ours) < 4000
     for name in PATHS:
@@ -467,10 +571,11 @@ def test_the_note_says_whose_the_texts_are_and_what_the_expander_costs(name):
     # No sentence tells a user to paste the vendor's files.
     assert "paste" not in note and "prompt/t2i" not in note and "prompt/edit" not in note
     # What turning it on costs: the expander's memory and the tokens it may write.
-    tokens = 8196 if edit else 8192
+    tokens = 1024
     assert (f"the driver loads the 7.3 GB expander beside the text encoder, and Generate "
             f"Text may write up to {tokens} tokens before the render starts") in note
-    assert ("a wait no hardware run has timed yet" in note) is not on
+    assert ("a wait not yet timed on hardware with these settings" in note) is not on
+    assert "Generate Text runs the expander model on the driver, with reasoning off" in note
     # A user may replace the texts, and what a replacement must keep.
     assert ("You may replace either text with your own: keep {input text} in the task "
             "prompt where the request belongs, and have the answer hold the caption under "
@@ -483,7 +588,8 @@ def test_the_note_says_whose_the_texts_are_and_what_the_expander_costs(name):
     assert ("refuses a graph whose expander is on with an empty task prompt, or with one "
             "that lacks the marker "
             f"(docs/TROUBLESHOOTING.md #{expander_prompt.TROUBLESHOOTING})") in note
-    assert "it can change from run to run even at a fixed seed" in note
+    assert ("text a language model sampled, at Generate Text's own seed and not the "
+            "sampler's") in note
     assert "compare renders and check identity with the switch false" in note
     # Both of ComfyUI's templates ship the switch true, with MiniMax's texts.
     assert ("ComfyUI's " + ("edit" if edit else "text to image")
