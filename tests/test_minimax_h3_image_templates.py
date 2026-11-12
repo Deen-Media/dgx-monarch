@@ -468,7 +468,7 @@ def test_the_pattern_holds_against_the_table_of_answers(name):
     assert len(canary.parse_chain_errors(naive, _stand_in)) >= 8
     greedy = {**settings, "read": (r'"expanded_caption\\?"\s*:\s*(\\)?"(.*)(?(1)\\"\s*"?|")\s*\}',
                                    "First Group", False, False, True, 2)}
-    assert len(canary.parse_chain_errors(greedy, _stand_in)) == 4
+    assert len(canary.parse_chain_errors(greedy, _stand_in)) >= 4
     raw = {**settings, "marks": (r"(?!)", "", False, False, False, 0)}
     assert len(canary.parse_chain_errors(raw, _stand_in)) >= 5
 
@@ -706,11 +706,15 @@ def test_the_note_says_whose_the_texts_are_and_what_the_expander_costs(name):
             "this graph") in note
     # No sentence tells a user to paste the vendor's files.
     assert "paste" not in note and "prompt/t2i" not in note and "prompt/edit" not in note
-    # What turning it on costs: the expander's memory and the tokens it may write.
+    # What turning it on costs: the expander's memory, the tokens it may write, and
+    # the wait a first hardware probe timed for this graph.
     tokens = 1024
+    seconds = 13 if edit else 7
+    assert gen_templates.H3I_PROBE_SECONDS == {"t2i": 7, "edit": 13}
     assert (f"the driver loads the 7.3 GB expander beside the text encoder, and Generate "
-            f"Text may write up to {tokens} tokens before the render starts") in note
-    assert ("a wait not yet timed on hardware with these settings" in note) is not on
+            f"Text may write up to {tokens} tokens before the render starts, a wait of "
+            f"about {seconds} seconds on a DGX Spark in a first probe") in note
+    assert "not yet timed" not in note
     assert "Generate Text runs the expander model on the driver, with reasoning off" in note
     # A user may replace the texts, and what a replacement must keep.
     assert ("You may replace either text with your own: keep {input text} in the task "

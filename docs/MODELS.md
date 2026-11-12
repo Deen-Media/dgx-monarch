@@ -1176,8 +1176,14 @@ files. The testing graph keeps both boxes empty.
 `If/Else Switch (expander on or off)` to true. The driver then loads the
 7.3 GB expander beside the text encoder, and Generate Text writes its answer,
 at most 1024 new tokens with reasoning off, before the render starts; the
-edit also hands it the picture. Neither the wait nor the memory has a
-hardware record with these settings yet. An empty request skips the expander
+edit also hands it the picture. In a first probe on a DGX Spark that text
+stage took about 7 seconds for text to image and about 13 seconds for the
+edit, at the median over the probe's requests at one seed, and 16.6 seconds
+for the longest counted request, of 426 words (2026-11-11; the Spark ran
+under its stability clock cap and the rig was not quiet). The probe timed
+Generate Text with these texts and settings; the caption read that ships was
+built after it. The expander's memory has no hardware record yet. An empty
+request skips the expander
 and goes to the model as written. You may
 replace either text with your own: keep `{input text}` in the task prompt
 where the request belongs, and have the answer hold the caption under the key
@@ -1199,9 +1205,10 @@ seeded generator. With `mtp` `auto` and this expander file the text could
 change from run to run at a fixed seed: the file carries a
 multi-token-prediction draft head, ComfyUI re-fits the draft tree from
 measured step time, and every step draws one token a tree row from the
-seeded generator (ComfyUI 0.45.0, `comfy/text_encoders/qwen35.py`). Whether
-the caption repeats at a fixed seed with `mtp` off has no hardware record
-yet. So compare renders and check identity with the switch false, as both
+seeded generator (ComfyUI 0.45.0, `comfy/text_encoders/qwen35.py`). In a
+first probe on a DGX Spark one seed gave one caption with `mtp` off in 5 of
+5 repeats. Five repeats of one request are not a guarantee, so compare
+renders and check identity with the switch false, as both
 templates and the testing graph ship.
 
 The testing graph `dgx-monarch-test-minimax-h3-image-grid` samples through

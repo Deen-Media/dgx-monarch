@@ -6065,6 +6065,9 @@ H3I_DECODING = {
     "sampling_mode.seed": 0}
 H3I_GENERATE = {"max_length": 1024, "thinking": False, "use_default_template": True,
                 "mtp": "off"}
+# The median text stage of a first hardware probe of these texts and settings
+# (2026-11-11, one seed a request), in whole seconds, for the two Notes.
+H3I_PROBE_SECONDS = {"t2i": 7, "edit": 13}
 H3I_SIZES = ("ComfyUI's template notes say the model works from about 4 MP to 20 MP "
              "and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or "
              "6272x2688, sides swapped for portrait.")
@@ -6107,7 +6110,9 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
     cost = (
         "the driver loads the 7.3 GB expander beside the text encoder, and Generate "
         "Text may write up to " + str(H3I_GENERATE["max_length"]) + " tokens before the "
-        "render starts")
+        "render starts, a wait of about "
+        + str(H3I_PROBE_SECONDS["edit" if edit else "t2i"])
+        + " seconds on a DGX Spark in a first probe")
     if H3I_EXPANDER_ON:
         expander = (
             "A prompt expander rewrites the request before the model sees it: "
@@ -6119,7 +6124,7 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
             "The request box goes to the model as written. A prompt expander is "
             "wired and off: " + chain + "As shipped that switch is false. " + upstream +
             "Set the switch to true to have the expander write the prompt: then "
-            + cost + ", a wait not yet timed on hardware with these settings. ")
+            + cost + ". ")
         memory = ("and the 7.3 GB expander from the first render with the switch true "
                   "(as shipped, this graph never loads it)")
     return (
