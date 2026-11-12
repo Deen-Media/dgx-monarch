@@ -88,6 +88,14 @@ class StockFit:
     # The new stack's own LoRA files, which a backup credit is net of: the Worker reads
     # them again into anonymous memory on every in-place change.
     stack_bytes: int = 0
+    # What a LoRA stack's classic bake adds (capacity_classic_bake.priced); 0 is no stack
+    # or the default in-place bake.
+    bake_bytes: int = 0
+    # Set when the store bakes the stack in place on the base it holds because the
+    # classic price does not fit: the price is then this and the floor, nothing else.
+    in_place_bytes: int = 0
+    # On a classic price: why the in-place bake was not priced instead, for the refusal.
+    in_place_note: str = ""
 
     @property
     def size_gib(self) -> float:
@@ -101,9 +109,15 @@ class StockFit:
     @property
     def terms(self) -> str:
         """What the price charges, as every stock refusal prints it in brackets."""
+        floor = f"the {gib(ABSOLUTE_HOST_FLOOR_BYTES)} GiB host floor"
+        if self.in_place_bytes > 0:
+            return (f"{gib(self.in_place_bytes)} GiB to bake the LoRA stack in place on the loaded "
+                    f"model, and {floor}")
         cast = f" cast to a {gib(self.cast_bytes)} GiB copy" if self.cast_bytes > 0 else ""
-        return (f"a {self.size_gib} GiB file{cast}, the host copy it is placed from and the "
-                f"{gib(ABSOLUTE_HOST_FLOOR_BYTES)} GiB host floor")
+        bake = (f", {gib(self.bake_bytes)} GiB for the LoRA stack's classic bake"
+                if self.bake_bytes > 0 else "")
+        return (f"a {self.size_gib} GiB file{cast}, the host copy it is placed from{bake} and "
+                f"{floor}{self.in_place_note}")
 
     @property
     def avail_gib(self) -> float | None:
@@ -114,7 +128,9 @@ class StockFit:
         """The load-path transient the verdict compares against."""
         if not self.applies:
             return int(self.size_bytes)
-        return (stock_required_bytes(self.size_bytes, self.cast_bytes)
+        if self.in_place_bytes > 0:  # nothing is loaded or dropped, so no file term and no credit
+            return int(self.in_place_bytes) + ABSOLUTE_HOST_FLOOR_BYTES
+        return (stock_required_bytes(self.size_bytes, self.cast_bytes) + max(int(self.bake_bytes), 0)
                 - max(int(self.credit_bytes), 0))
 
     @property
@@ -142,6 +158,11 @@ class StockFit:
             credit["dropped"] = self.dropped
         if self.backup_bytes > 0:
             credit.update(backup_bytes=int(self.backup_bytes), stack_bytes=int(self.stack_bytes))
+        if self.bake_bytes > 0 or self.in_place_bytes > 0:  # only a classic stack's price carries these
+            credit.update(bake="in_place" if self.in_place_bytes > 0 else "classic",
+                          bake_bytes=int(self.in_place_bytes or self.bake_bytes))
+            if self.in_place_note:
+                credit["in_place_note"] = self.in_place_note
         return {
             "probe": PROBE_STOCK_LOAD_FIT,
             "checkpoint_bytes": int(self.size_bytes),

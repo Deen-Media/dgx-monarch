@@ -28,6 +28,7 @@ from .actor.capacity_quote import (
     WOULD_LOAD_REUSE,
     RankPrice,
 )
+from .capacity_classic_bake import IN_PLACE_BAKE_PROVEN
 from .capacity_fit import PROBE_PREFLIGHT_WALL, SlabFit, gib, stock_second_term
 from .consent_descriptor import ConsentDescriptor, SlabResidencyRescueOffer
 from .delivery_faults import WorkerDeliveryError
@@ -35,6 +36,7 @@ from .gate_audit_evidence import measured_tag
 from .log import get_logger
 from .mesh_safety import StockLoadCapacityError
 from .refusal import PanelAction, RefusalClass, refusal
+from .stock_words import bake_sentences
 from .transfer_utils import failure_summary, safe_call, safe_note
 
 log = get_logger(__name__)
@@ -190,14 +192,15 @@ def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str) -> st
         if lora:
             second_term += f" and {lora} GiB for the LoRA stack's bake"
     elif measured.get("credit_bytes"):  # the slot's own resident, credited (old_model.py)
-        return old_model.credited_sentence(where, unet_name, quote, needed, weights, avail, abs(headroom))
+        return (old_model.credited_sentence(where, unet_name, quote, needed, weights, avail, abs(headroom))
+                + bake_sentences(measured, name_the_term=True))
     else:
         kind, second_term = "stock", stock_second_term(measured)
     return (
         f"{where} priced a {kind} load of {unet_name}: the load needs "
         f"{needed} GiB, a {weights} GiB file {second_term}, and {avail} GiB of "
         f"unified memory is available, {abs(headroom)} GiB short."
-    )
+    ) + ("" if quote.use_slab else bake_sentences(measured))
 
 
 def _log_fleet(answers: list[RankAnswer], outcome: str) -> None:
@@ -468,13 +471,20 @@ def collect(handle: Any, request: dict, world: int, *,
             if answer.rank < len(named) else answer for answer in answers]
 
 
-def quote_request(specs: list[dict], rescue_consent: dict | None = None) -> dict:
-    """The narrow request the endpoint prices, with no latent riding along."""
+def quote_request(specs: list[dict], rescue_consent: dict | None = None,
+                  in_place_bake_proven: bool = False) -> dict:
+    """The narrow request the endpoint prices, with no latent riding along.
+
+    ``in_place_bake_proven`` is the render's own permission
+    (``nodes/in_place_bake_permission``), so the quote and the store's
+    ``ensure`` price one stack change by one rule. Anything but ``True`` is no.
+    """
     return {
         "specs": [{"unet_name": spec.get("unet_name"), "options": spec.get("options"),
                    "loras": spec.get("loras"), "slot": spec.get("slot", "cond")}
                   for spec in specs],
         "rescue_consent": rescue_consent,
+        "in_place_bake_proven": in_place_bake_proven is True,
     }
 
 
@@ -490,7 +500,8 @@ def agree_sample(handle: Any, request: dict) -> None:
     if isinstance(uncond, dict):
         specs.append(dict(uncond, slot="uncond"))
     agree_or_refuse(
-        handle, quote_request(specs, sample_rescue_consent(request)),
+        handle, quote_request(specs, sample_rescue_consent(request),
+                              request.get(IN_PLACE_BAKE_PROVEN) is True),
         unet_name=str(model.get("unet_name") or "this checkpoint"))
 
 

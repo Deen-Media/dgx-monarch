@@ -18,6 +18,7 @@ from ..log import get_logger
 from ..mesh_safety import stock_load_preflight  # noqa: F401 - read by store_load
 from ..transfer_utils import failure_summary
 from . import (
+    in_place_fallback,
     lora_shape_guard,
     resident_ledger,
     slab_lifetime,
@@ -298,7 +299,8 @@ class ModelStore:
                 stored = None
 
         if stored is not None and stored.request_key == request_key \
-                and stored.artifact_identity == requested_identity:
+                and stored.artifact_identity == requested_identity \
+                and not in_place_fallback.must_reload(self, stored):  # baked in place, no gate PASS sent
             reload_note = ""
             if slot in self._gpu_evicted:
                 self._gpu_evicted.discard(slot)  # this reuse re-materializes it
@@ -339,6 +341,14 @@ class ModelStore:
         # creates a model reference cycle, so a live local would defeat _drop's
         # gc.collect() and briefly retain two full DiTs.
         stored = None
+        # Before any drop: where the classic bake's price misses and the gate allows it, the
+        # stack is baked in place on the held base (actor/in_place_fallback.py).
+        result = None if fsdp_launch else in_place_fallback.take(
+            self, slot, unet_name, options, lora_stack, base_key, requested_identity, log,
+            request_artifact_identity, lambda: self.ensure(
+                unet_name, options, None, slot, on_base_loaded, fsdp_launch, rescue_consent))
+        if result is not None:
+            return result
         return store_load.fresh_load(
             self, slot, unet_name, options, lora_stack, quant_kind, requested_identity,
             base_key, on_base_loaded, fsdp_launch, fsdp_preflight_path,

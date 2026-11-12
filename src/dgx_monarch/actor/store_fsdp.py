@@ -77,6 +77,7 @@ def ensure(worker, *args, **kwargs):
     model. Rescue consent identifies the sample dispatch; other load paths
     disarm waivers so grants cannot survive thread reuse.
     """
+    sample_request = kwargs.pop("sample_request", None)  # not a store argument; read at the end
     _assert_artifact_runnable(args, kwargs)
     from .. import accuracy_waiver
 
@@ -90,7 +91,13 @@ def ensure(worker, *args, **kwargs):
             dispatch="rescue_consent" in kwargs)
     if active(worker):
         kwargs["fsdp_launch"] = True
-    return worker.store.ensure(*args, **kwargs)
+    # A sample dispatch hands over its request, which may carry the driver's permission to bake
+    # a classic stack in place (actor/in_place_fallback.py). It holds for this load alone, and
+    # every other caller (a loader node, a gate ceremony) loads with none.
+    from . import in_place_fallback
+
+    with in_place_fallback.permission(sample_request):
+        return worker.store.ensure(*args, **kwargs)
 
 
 def validate_injection(

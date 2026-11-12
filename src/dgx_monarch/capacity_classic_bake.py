@@ -1,0 +1,222 @@
+"""Price what a LoRA stack's bake adds beside the weights on unified memory.
+
+ComfyUI's classic bake (``lora_low_rss`` off) moves each patched weight from
+the host onto the device among that key's temporaries, and the process's GPU
+figure ends above the weights by an amount that follows how many weights the
+stack patches, not the stack's size. Measured on one GPU of a DGX Spark under
+its clock cap (max 2100 MHz), as the rise over the same model's load with no
+stack (docs/DESIGN.md section 5.9 holds the table and the dates):
+
+- LTX 2.3 scaled FP8, 1660 patched weights (18.07 GiB of them): 12.34 GiB;
+- the same model, 480 patched weights (12.0 GiB): 5.03 GiB;
+- MiniMax H3 INT8 ConvRot, 208 patched weights: 1.21 GiB;
+- Qwen Image plain FP8, 720 patched weights: 0.84 GiB.
+
+Both LTX points sit within a tenth of 1.7 GiB plus 7.0 MiB a patched weight.
+``classic_bake_bytes`` charges that line rounded up, and a share of the
+patched bytes where no measurement covers the layers: a quantized FP8 weight
+larger than the largest one measured, and every full-precision weight, which
+has no measured point at all. The stock price (``capacity_fit``) had no term
+for any of it, and a 7.1 GiB stack took a load 8.7 GiB past its price.
+
+The in-place bake (what ``lora_low_rss`` does on a loaded model, and what the
+store falls back to when the classic price does not fit and the identity gate
+has passed the combination) leaves almost none of that: it rose 8.28 GiB for
+a 7.08 GiB stack and 2.25 for a 0.305 GiB one, the stack's own bytes staged
+on the device plus about 2 GiB of working memory. ``in_place_bake_bytes``
+charges the stack twice (device and host) and that working memory.
+
+No torch and no ComfyUI import: the driver's quote and the Worker's walls
+call the same functions, so one load has one price.
+"""
+from __future__ import annotations
+
+import os
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import replace
+from typing import Any
+
+from .capacity_floor import ABSOLUTE_HOST_FLOOR_BYTES
+from .capacity_lora_bake import _base_index, _find_base_key, _lora_targets, stack_file_bytes
+from .safetensors_header import TensorDescriptor, read_safetensors_header
+
+GIB = 1 << 30
+MIB = 1 << 20
+
+# The fitted line, 1.7 GiB and 7.0 MiB a patched weight, rounded up.
+CLASSIC_BAKE_FIXED_BYTES = 2 * GIB
+CLASSIC_BAKE_BYTES_PER_WEIGHT = int(7.5 * MIB)
+# The larger share of the patched bytes measured (0.68), rounded up.
+CLASSIC_BAKE_GUARD_RATIO = 0.75
+# The largest patched weight under each format's measured points. A stack whose
+# largest patched weight of that format is no larger is charged by the line
+# alone. A format with no row here has no measured point and is always guarded.
+FP8_QUANTIZED = "fp8_quantized"
+FULL_PRECISION = "full_precision"
+OTHER = "other"
+MEASURED_LARGEST_WEIGHT_BYTES = {FP8_QUANTIZED: 64 * MIB}
+# The bake's working memory beside the stack's own bytes (1.9 and 1.2 GiB measured).
+IN_PLACE_BAKE_FIXED_BYTES = 2 * GIB
+
+_FP8_DTYPES = frozenset({"F8_E4M3", "F8_E4M3FNUZ", "F8_E5M2", "F8_E5M2FNUZ"})
+_FULL_DTYPES = frozenset({"BF16", "F16", "F32", "F64"})
+_QUANT_MARKERS = (".weight_scale", ".scale_weight", ".comfy_quant")
+_WEIGHT_SUFFIXES = (".weight", ".bias")
+
+# The sample request's field for the driver's permission (nodes/in_place_bake_permission.py).
+# Only the value True grants it; absent, an older driver, a requeue or a recycle all read as no.
+IN_PLACE_BAKE_PROVEN = "_dgxm_in_place_bake_proven"
+
+NO_GATE_PASS = ("no identity-gate PASS for this combination's in-place bake came with this load; render "
+                "it once with lora_low_rss on so the gate can prove it")
+HOLDS_A_STACK = "the loaded model already carries a classic stack, which the in-place bake does not take"
+NO_LOADED_BASE = "no copy of this base is loaded to bake on"
+
+
+def weight_class(key: str, tensors: Mapping[str, TensorDescriptor]) -> str:
+    """How the classic bake's guard reads one checkpoint weight, from the header alone."""
+    dtype = tensors[key].dtype
+    if dtype in _FULL_DTYPES:
+        return FULL_PRECISION
+    stem = key.rsplit(".", 1)[0]
+    if dtype in _FP8_DTYPES and any(stem + marker in tensors for marker in _QUANT_MARKERS):
+        return FP8_QUANTIZED
+    return OTHER
+
+
+def term_from_weights(weights: Iterable[tuple[str, int]]) -> int:
+    """The classic bake's charge for patched weights given as (class, stored bytes)."""
+    count = 0
+    by_class: dict[str, list[int]] = {}
+    for kind, nbytes in weights:
+        count += 1
+        by_class.setdefault(kind, []).append(max(int(nbytes), 0))
+    if not count:
+        return 0
+    guarded = 0
+    for kind in (FP8_QUANTIZED, FULL_PRECISION):
+        sizes = by_class.get(kind)
+        if not sizes:
+            continue
+        measured = MEASURED_LARGEST_WEIGHT_BYTES.get(kind)
+        if measured is None or max(sizes) > measured:
+            guarded += sum(sizes)
+    line = CLASSIC_BAKE_FIXED_BYTES + CLASSIC_BAKE_BYTES_PER_WEIGHT * count
+    return max(line, int(CLASSIC_BAKE_GUARD_RATIO * guarded))
+
+
+def _every_weight(tensors: Mapping[str, TensorDescriptor]) -> set[str]:
+    return {key for key in tensors if key.endswith(_WEIGHT_SUFFIXES)}
+
+
+def patched_weights(tensors: Mapping[str, TensorDescriptor], lora_stack: list | None,
+                    resolve_lora_path: Callable[[str], str]) -> set[str]:
+    """The checkpoint keys this stack patches; every weight when a file or a target cannot be read."""
+    index = _base_index(tensors)
+    keys: set[str] = set()
+    for entry in lora_stack or ():
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if not name:
+            continue
+        try:
+            targets = _lora_targets(read_safetensors_header(resolve_lora_path(str(name))).tensors)
+        except Exception:
+            return _every_weight(tensors)
+        if targets is None:
+            return _every_weight(tensors)
+        for stem, suffix in targets:
+            found = _find_base_key(stem, suffix, index)
+            if found is None:
+                return _every_weight(tensors)
+            keys.add(found)
+    return keys
+
+
+def classic_bake_bytes(checkpoint_path: str, lora_stack: list | None,
+                       resolve_lora_path: Callable[[str], str]) -> int:
+    """What the classic bake of ``lora_stack`` adds on the device beside this checkpoint's weights.
+
+    A checkpoint whose header cannot be read is charged as if the stack
+    patched every byte of it at the guard's share.
+    """
+    if not lora_stack:
+        return 0
+    try:
+        tensors = read_safetensors_header(checkpoint_path).tensors
+    except Exception:
+        size = os.path.getsize(checkpoint_path) if os.path.exists(checkpoint_path) else 0
+        return CLASSIC_BAKE_FIXED_BYTES + int(CLASSIC_BAKE_GUARD_RATIO * size)
+    keys = patched_weights(tensors, lora_stack, resolve_lora_path)
+    return term_from_weights((weight_class(key, tensors), tensors[key].nbytes) for key in keys)
+
+
+def stack_bytes(lora_stack: list | None, resolve_lora_path: Callable[[str], str]) -> int:
+    """The stack's LoRA files on disk; a file that cannot be sized counts as nothing."""
+    return int(stack_file_bytes((lora_stack, resolve_lora_path)) or 0) if lora_stack else 0
+
+
+def in_place_bake_bytes(stack_file_bytes_total: int, *, stack_read: bool) -> int:
+    """What baking a stack in place on a loaded model takes: the stack on the device and on the host, and working memory.
+
+    With the stack already read, its host copy is in the reading and is not
+    charged again. With ``lora_low_rss`` off the stack stays on the host, so
+    the device share is a cover.
+    """
+    copies = 1 if stack_read else 2
+    return copies * max(int(stack_file_bytes_total), 0) + IN_PLACE_BAKE_FIXED_BYTES
+
+
+def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora_path: Callable[[str], str],
+           *, stack_read: bool = False, held_base_bytes: int = 0, in_place: str | bool = "",
+           bare_load: bool = False) -> Any:
+    """``fit`` (a ``capacity_fit.StockFit``) with the classic bake charged, or re-priced as an in-place bake.
+
+    ``in_place`` is ``True`` when the store may bake this stack in place on
+    the base the slot holds, else the reason it may not ("" when the question
+    does not arise). The in-place price is taken only when the classic price,
+    credited the held copy a drop returns (``held_base_bytes``), does not fit
+    and the in-place one does. A classic price that misses carries the reason
+    the in-place bake was not taken, for the refusal. ``bare_load`` is the
+    empty slot: the base loads bare first at the stock price, and the bake
+    then needs its room beside the loaded copy.
+    """
+    if not lora_stack or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None:
+        return fit
+    files = stack_bytes(lora_stack, resolve_lora_path)
+    bake = classic_bake_bytes(checkpoint_path, lora_stack, resolve_lora_path) + (0 if stack_read else files)
+    classic = replace(fit, bake_bytes=bake)
+    classic = replace(classic, fits=classic.required_bytes <= classic.avail_bytes)
+    if classic.required_bytes - max(int(held_base_bytes), 0) <= classic.avail_bytes or not in_place:
+        return classic
+    need = in_place_bake_bytes(files, stack_read=stack_read)
+    if bare_load:
+        need = max(int(fit.required_bytes) - ABSOLUTE_HOST_FLOOR_BYTES, int(fit.resident_bytes) + need)
+    if in_place is not True:
+        return replace(classic, in_place_note=f"; baking it in place would need "
+                       f"{round((need + ABSOLUTE_HOST_FLOOR_BYTES) / GIB, 1)} GiB, but {in_place}")
+    taken = replace(classic, in_place_bytes=need)
+    if taken.required_bytes <= taken.avail_bytes:
+        return replace(taken, fits=True)
+    return replace(classic, in_place_note=f"; baking it in place would need {taken.required_gib} GiB, "
+                   "which is not available either")
+
+
+def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, stack_read: bool = False,
+          held_base_bytes: int = 0, in_place: str | bool = "", bare_load: bool = False,
+          stock_load_fit: Callable[[str, dict], Any] | None = None) -> Callable[[str, dict], Any]:
+    """A stock probe (``capacity_quote.price``'s ``fit_probe``) that charges this load's classic bake."""
+    def fit_probe(path: str, model_options: dict) -> Any:
+        from . import capacity_fit
+
+        return priced((stock_load_fit or capacity_fit.stock_load_fit)(path, model_options), path, lora_stack,
+                      resolve_lora_path, stack_read=stack_read, held_base_bytes=held_base_bytes,
+                      in_place=in_place, bare_load=bare_load)
+
+    return fit_probe
+
+
+__all__ = ["CLASSIC_BAKE_BYTES_PER_WEIGHT", "CLASSIC_BAKE_FIXED_BYTES", "CLASSIC_BAKE_GUARD_RATIO",
+           "FP8_QUANTIZED", "FULL_PRECISION", "HOLDS_A_STACK", "IN_PLACE_BAKE_FIXED_BYTES", "IN_PLACE_BAKE_PROVEN",
+           "MEASURED_LARGEST_WEIGHT_BYTES", "NO_GATE_PASS", "NO_LOADED_BASE", "OTHER", "classic_bake_bytes",
+           "in_place_bake_bytes", "patched_weights", "priced", "probe", "stack_bytes", "term_from_weights",
+           "weight_class"]

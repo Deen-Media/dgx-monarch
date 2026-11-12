@@ -15,9 +15,10 @@ import socket
 from dataclasses import replace
 from typing import Any
 
+from .. import capacity_classic_bake
 from ..log import get_logger
 from ..transfer_utils import failure_summary
-from . import actor_footprint, capacity_quote, resident_ledger, store_fsdp
+from . import actor_footprint, capacity_quote, in_place_fallback, resident_ledger, store_fsdp
 from .capacity_quote import RankPrice
 
 log = get_logger(__name__)
@@ -293,9 +294,30 @@ def _my_slots(worker: Any, specs: list[dict]) -> list[dict]:
     return [spec for spec in specs if _slot_of(spec) == mine] or specs
 
 
+def _classic_bake_probe(worker: Any, store: Any, stored: Any, spec: dict, unet_name: str,
+                        in_place_bake_proven: bool) -> Any:
+    """The stock probe for a stack that bakes ComfyUI's classic way; ``None`` on the default.
+
+    It charges the bake's own term and, with the render's permission, prices
+    the in-place bake where the classic price misses: the same two prices and
+    the same permission ``ModelStore.ensure`` decides by
+    (``actor/in_place_fallback.py``), so the fleet is not refused a stack
+    change the store would bake in place, nor admitted to one it would refuse.
+    """
+    loras = spec.get("loras")
+    if store.lora_low_rss or not loras or store_fsdp.active(worker):
+        return None
+    base_key = getattr(stored, "base_key", ()) or ()
+    held = bool(stored is not None and base_key and base_key[0] == unet_name)
+    why = in_place_fallback.eligibility(store, stored, held, in_place_bake_proven)
+    return capacity_classic_bake.probe(
+        loras, capacity_quote.default_resolve_lora_path, in_place=why, bare_load=not held,
+        held_base_bytes=in_place_fallback.held_bytes(stored) if held and why is True else 0)
+
+
 def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
            pinned_staging: bool | None, rescue_consent: dict | None,
-           charged: int) -> RankPrice:
+           charged: int, in_place_bake_proven: bool = False) -> RankPrice:
     from .model_store import (
         SLAB_VOUCHED_FAMILIES,
         _slab_capable_path,
@@ -333,6 +355,7 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         family_override=getattr(store, "family_override", None),
         node_options=options,
         lora_stack=spec.get("loras"),
+        fit_probe=_classic_bake_probe(worker, store, stored, spec, unet_name, in_place_bake_proven),
         slot=slot,
         pinned_staging=pinned_staging,
         store_snapshot=snapshot,
@@ -390,7 +413,9 @@ def quote(worker: Any, request: Any) -> dict:
             row = _price(worker, store, spec, snapshot=snapshot,
                          pinned_staging=pinned,
                          rescue_consent=consent if isinstance(consent, dict) else None,
-                         charged=charged)
+                         charged=charged,
+                         in_place_bake_proven=(isinstance(request, dict)
+                                               and request.get("in_place_bake_proven") is True))
         except Exception as exc:
             # No claim either way, which admits: a probe this rank could not run
             # is not evidence that the load does not fit here.

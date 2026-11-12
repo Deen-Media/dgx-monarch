@@ -30,6 +30,9 @@ class StoredModel:
     # The low-RSS bake merged the stack into these weights and freed ComfyUI's
     # backup, so this base cannot be re-cloned for a different stack.
     base_baked: bool = False
+    # The stack was baked on the device onto the loaded base (the default's in-place bake, or
+    # the classic bake's fallback, actor/in_place_fallback.py), not by ComfyUI's own load.
+    baked_in_place: bool = False
 
     def __post_init__(self) -> None:
         # The model points back at its slot, weakly, so the one-GPU partial-load route

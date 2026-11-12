@@ -45,7 +45,23 @@ def stock_terms(size_gib: float, credit_bytes: int = 0, backup_bytes: int = 0,
 def stock_second_term(measured: dict) -> str:
     """The fleet card's words after "a N GiB file": the host copy, and a cast's own copy."""
     cast = measured.get("cast_gib")
-    return (f"cast to a {cast} GiB copy, " if cast else "") + "plus the host copy it is placed from"
+    bake = int(measured.get("bake_bytes") or 0) if measured.get("bake") == "classic" else 0
+    return ((f"cast to a {cast} GiB copy, " if cast else "") + "plus the host copy it is placed from"
+            + (f" and {_gib(bake)} GiB for the LoRA stack's classic bake" if bake else ""))
+
+
+def bake_sentences(measured: dict, *, name_the_term: bool = False) -> str:
+    """What a refusal adds about a LoRA stack's bake: the classic term, and the in-place bake not taken.
+
+    ``name_the_term`` is for a sentence that has not already named the classic
+    bake's share (the credited one). The note is ``capacity_classic_bake``'s,
+    which starts "; baking it in place would need".
+    """
+    bake = int(measured.get("bake_bytes") or 0) if measured.get("bake") == "classic" else 0
+    words = (f" That includes {_gib(bake)} GiB for the LoRA stack's classic bake."
+             if bake and name_the_term else "")
+    note = str(measured.get("in_place_note") or "")
+    return words + (f" B{note[3:]}." if note.startswith("; b") else "")
 
 
 def hot_swap_sentence(where: str, unet_name: str, needed: float, weights: float,
@@ -61,4 +77,4 @@ def hot_swap_sentence(where: str, unet_name: str, needed: float, weights: float,
             f"available, {short} GiB short.")
 
 
-__all__ = ["hot_swap_sentence", "stock_second_term", "stock_terms"]
+__all__ = ["bake_sentences", "hot_swap_sentence", "stock_second_term", "stock_terms"]

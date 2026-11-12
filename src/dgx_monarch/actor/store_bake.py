@@ -334,7 +334,7 @@ def lazy_swap_transition(
         _adopt_patch_uuid(stored, active)
         # The swap re-baked into these weights, or restored them
         # pristine when the new stack is empty.
-        stored.base_baked = bool(lora_stack)
+        stored.base_baked = stored.baked_in_place = bool(lora_stack)
         stored.lora_sig = lora_signature(lora_stack)
         stored.request_key = (*base_key, stored.lora_sig, stored.quant_kind)
         stored.artifact_identity = requested_identity
