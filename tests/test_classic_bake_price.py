@@ -54,12 +54,13 @@ def test_no_patched_weight_charges_nothing():
 
 def test_a_quantized_fp8_weight_past_the_largest_measured_takes_the_bytes_guard():
     limit = price.MEASURED_LARGEST_WEIGHT_BYTES[price.FP8_QUANTIZED]
-    at_the_limit = _weights(40, price.FP8_QUANTIZED, limit)
+    at_the_limit = _weights(60, price.FP8_QUANTIZED, limit)  # enough of them that the guard would bind
     past_it = [*at_the_limit[:-1], (price.FP8_QUANTIZED, limit + 1)]
-    line = price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 40
-    assert price.term_from_weights(at_the_limit) == line
-    guard = int(price.CLASSIC_BAKE_GUARD_RATIO * (39 * limit + limit + 1))
-    assert price.term_from_weights(past_it) == max(line, guard)
+    line = price.CLASSIC_BAKE_FIXED_BYTES + price.CLASSIC_BAKE_BYTES_PER_WEIGHT * 60
+    guard = int(price.CLASSIC_BAKE_GUARD_RATIO * (59 * limit + limit + 1))
+    assert guard > line
+    assert price.term_from_weights(at_the_limit) == line  # at the measured size: the line alone
+    assert price.term_from_weights(past_it) == guard  # one byte past it: the guard
 
 
 def test_full_precision_weights_are_charged_by_the_line_until_a_bf16_cell_is_measured(monkeypatch):
@@ -476,6 +477,22 @@ def test_a_bare_load_that_did_not_leave_a_bare_stock_base_goes_to_the_fresh_load
     with fallback.permission(ALLOW):
         assert _take(store, lambda: None) is None
     assert worker_side.baked == []
+
+
+def test_a_bare_load_that_came_up_on_another_residency_is_not_baked_on(worker_side, monkeypatch):
+    """The base loaded bare, but not as a stock resident (comfy-managed, say): the fresh load takes over."""
+    from dgx_monarch.actor import store_residency
+
+    worker_side.avail_gib = 60.0
+    store = _store(None)
+    monkeypatch.setattr(store_residency, "describe", lambda stored: {"residency": stored.residency})
+
+    def load_bare():
+        store.slots["cond"] = _stored(residency="comfy_managed")
+
+    with fallback.permission(ALLOW):
+        assert _take(store, load_bare) is None
+    assert worker_side.baked == [] and store._stored("cond") is not None
 
 
 def test_a_bake_that_fails_returns_to_the_fresh_load(worker_side):

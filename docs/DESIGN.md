@@ -2413,8 +2413,11 @@ is not yet read, and the price does not depend on it. Three rules follow.
   the new one, as for a strength change, or the other slot holds a model)
   has neither and keeps its price: such a change grew the Worker by 0.8 GiB
   on the 2026-11-05 hardware leg. So the store asks after the hot swap has
-  declined and before it drops anything, and the quote reads the same state
-  from its snapshot and prices by the same arguments, so both pick the same
+  declined and before it drops anything. The quote reads the same fact the
+  hot swap acts on, for every format: whether ComfyUI's backup on the slot
+  holds every weight the new stack patches (the held stack's own files, or
+  for another file the weights its headers map to), and whether the other
+  slot holds a model. It prices by the same arguments, so both pick the same
   bake. Where the slot holds the
   base bare the bake runs on it. Where it holds anything else (nothing,
   another model, this base with a stack of either kind) the slot is dropped,

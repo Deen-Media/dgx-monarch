@@ -56,9 +56,10 @@ log = get_logger(__name__)
 
 _PERMITTED: contextvars.ContextVar[bool] = contextvars.ContextVar("dgxm_in_place_bake_proven", default=False)
 
-# The fresh load's walls, after ``take`` held the permission and did not bake.
-TRIED = ("baking it in place was tried first and did not fit, or its bake failed (the Worker's log has "
-         "the figures)")
+# The fresh load's walls, when the permission came and no in-place bake was made. ``take``
+# logs its own figures when it priced one; a slot ``ensure`` set aside is never offered.
+TRIED = ("baking it in place was not done: it did not fit, its bake failed, or this slot was set "
+         "aside (the Worker's log says which)")
 
 
 @contextlib.contextmanager
@@ -108,6 +109,44 @@ def held_bytes(stored: Any) -> int:
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
 
+def backup_covers(stored: Any, checkpoint_path: str, lora_stack: list | None,
+                  resolve_lora_path: Callable[[str], str]) -> bool:
+    """Whether ComfyUI's backup on this slot holds every weight ``lora_stack`` patches.
+
+    This is the fact the store's classic hot swap acts on
+    (``store_bake.copies_off_the_gpu``: no patched weight outside the backup
+    means the change is made in place), read from the slot itself and so true
+    for every format, without building the stack. The backup's own keys are
+    the source. A stack of the held stack's own files (a strength change, a
+    reorder, a LoRA removed) patches what the held stack patched. Any other
+    stack is mapped from the checkpoint's and the LoRAs' headers and each
+    weight looked for among the backup's keys; where a header cannot be read
+    the answer is no, which prices the dearer fresh load.
+    """
+    backup = getattr(getattr(stored, "base_patcher", None), "backup", None)
+    if not isinstance(backup, dict) or not lora_stack:
+        return True  # the store reads a backup it cannot inspect, or an empty stack, as nothing to copy
+    if not backup:
+        return False
+    held_patches = getattr(getattr(stored, "active_patcher", None), "patches", None)
+    held_names = {entry[0] for entry in getattr(stored, "lora_sig", ()) or () if entry}
+    new_names = {entry.get("name") for entry in lora_stack if isinstance(entry, dict)}
+    if new_names <= held_names and isinstance(held_patches, dict) and set(held_patches) <= set(backup):
+        return True
+    from ..capacity_lora_bake import _prefix_variants
+    from ..safetensors_header import read_safetensors_header
+
+    try:
+        tensors = read_safetensors_header(checkpoint_path).tensors
+    except Exception:
+        return False
+    backed = {(variant, "." + key.rpartition(".")[2])
+              for key in backup for variant in _prefix_variants(key.rpartition(".")[0])}
+    patched = capacity_classic_bake.patched_weights(tensors, lora_stack, resolve_lora_path)
+    return all(any((variant, "." + key.rpartition(".")[2]) in backed
+                   for variant in _prefix_variants(key.rpartition(".")[0])) for key in patched)
+
+
 def loads_fresh(stored: Any, held: bool, other_held: bool, covered: bool) -> bool:
     """Whether ``ModelStore.ensure`` ends this classic stack change in a fresh load.
 
@@ -118,9 +157,9 @@ def loads_fresh(stored: Any, held: bool, other_held: bool, covered: bool) -> boo
     on the 2026-11-05 hardware leg. ``ensure`` gets this from its own order
     (the hot swap first, then ``take``); the quote asks here, with what its
     snapshot knows: the hot swap is tried on a held base that is not baked,
-    and it stays in place when the other slot holds a model, when ComfyUI has
-    placed none of the base, or when the held stack's backup covers the new
-    stack (``covered``, ``capacity_lora_bake.held_backup_credit``).
+    and it stays in place when the other slot holds a model, when the base is
+    not a stock resident ComfyUI has placed, or when ComfyUI's backup covers
+    the new stack (``covered``, from ``backup_covers``).
     """
     if not held or stored.base_baked:
         return True
@@ -233,5 +272,5 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
     return result
 
 
-__all__ = ["TRIED", "fresh_load_probe", "held_bytes", "is_bare_stock", "loads_fresh", "must_reload",
+__all__ = ["TRIED", "backup_covers", "fresh_load_probe", "held_bytes", "is_bare_stock", "loads_fresh", "must_reload",
            "permission", "permitted", "quote_snapshot", "route", "take"]

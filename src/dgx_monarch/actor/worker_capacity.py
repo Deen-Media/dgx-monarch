@@ -15,7 +15,7 @@ import socket
 from dataclasses import replace
 from typing import Any
 
-from .. import capacity_classic_bake, capacity_lora_bake
+from .. import capacity_classic_bake
 from ..log import get_logger
 from ..transfer_utils import failure_summary
 from . import actor_footprint, capacity_quote, in_place_fallback, resident_ledger, store_fsdp
@@ -343,10 +343,11 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
                  and base_key and base_key[0] == unet_name)
     request_key = _request_key(snapshot, slot, spec, unet_name)
     other = store.current if slot == capacity_quote.SLOT_UNCOND else store.uncond
-    # The held stack's backup covers this change (a strength, an order, a LoRA removed): the
-    # classic hot swap re-applies in place and no fresh load, so no classic bake, follows.
-    covered = capacity_lora_bake.held_backup_credit(
-        snapshot.get(slot), request_key, os.path.getsize(path) if os.path.exists(path) else 0) > 0
+    # ComfyUI's backup on this slot holds every weight the new stack patches: the classic hot
+    # swap then re-applies in place, and no fresh load, so no classic bake, follows. Read from
+    # the slot's own backup, the fact the store acts on, so it holds for every format.
+    covered = stored is not None and in_place_fallback.backup_covers(
+        stored, path, spec.get("loras"), capacity_quote.default_resolve_lora_path)
     return capacity_quote.price(
         path=path,
         unet_name=unet_name,

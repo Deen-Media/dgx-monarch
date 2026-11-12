@@ -155,6 +155,20 @@ def test_stamp_sets_true_only_when_proven_and_removes_anything_a_request_arrived
     assert IN_PLACE_BAKE_PROVEN not in request  # and a stale True from an earlier stamp goes too
 
 
+def test_stamp_reads_a_dual_model_renders_own_keys(gate):
+    """``stamp`` hands the request's second model to the lookup: the pair's PASS grants, the model's alone does not."""
+    dual = {"uncond_model": UNCOND}
+    _record(gate, SINGLE, "PASS", ON)
+    permission.stamp(dual, MODEL, HANDLE)
+    assert IN_PLACE_BAKE_PROVEN not in dual
+    _record(gate, PAIR, "PASS", ON)
+    permission.stamp(dual, MODEL, HANDLE)
+    assert dual[IN_PLACE_BAKE_PROVEN] is True
+    single = {"uncond_model": None}
+    permission.stamp(single, MODEL, HANDLE)
+    assert single[IN_PLACE_BAKE_PROVEN] is True
+
+
 class _ReachedSetup(Exception):
     """Raised by the setup stub once the submit has stamped the request."""
 

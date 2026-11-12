@@ -32,8 +32,11 @@ What is measured and what is not:
   with no cell behind it priced a recovery that worked on hardware (clear and
   retry on that template, 2026-11-05) as a refusal. ``GUARDED_BY_BYTES`` is
   the one place to change when those cells are read.
-- A stack or a checkpoint whose header cannot be read is charged the line for
-  ``UNREADABLE_STACK_WEIGHTS``, the largest count measured.
+- A stack whose LoRA file cannot be read or mapped is charged for every weight
+  of its checkpoint. A checkpoint whose own header cannot be read gives no
+  weights to count, so its stack is charged the line for
+  ``UNREADABLE_STACK_WEIGHTS``, the largest count measured. That is a stand-in
+  and not a bound: a larger model may patch more.
 
 The stack's own files are charged on every classic price: the Worker reads
 them into host memory for the bake, and a clone that read them earlier has
@@ -81,8 +84,9 @@ GUARDED_BY_BYTES: tuple[str, ...] = (FP8_QUANTIZED,)
 # format with no row here is always guarded. The FP8 row is read from the LTX 2.3 scaled FP8
 # file's header (2026-11-12): the largest weight either measured stack patches is 64.0 MiB.
 MEASURED_LARGEST_WEIGHT_BYTES = {FP8_QUANTIZED: 64 * MIB}
-# What a stack is counted as when its files or its checkpoint's header cannot be read: the
-# largest count of patched weights measured (LTX 2.3's own stack).
+# What a stack is counted as when its checkpoint's header cannot be read: the largest count
+# of patched weights measured (LTX 2.3's own stack). A stand-in, not a bound: a larger model
+# whose header cannot be read may patch more.
 UNREADABLE_STACK_WEIGHTS = 1660
 # The bake's working memory beside the stack's own bytes (1.9 and 1.2 GiB measured).
 IN_PLACE_BAKE_FIXED_BYTES = 2 * GIB
