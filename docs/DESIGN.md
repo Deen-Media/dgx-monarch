@@ -2646,10 +2646,14 @@ bake with the classic latent on a held base, on an empty slot and on the
 pair, the classic bake admitted at its price, and the fleet's own refusal
 where neither fits. The charge by format and by reading is built on the
 second table, whose rows are that day's three hardware blocks. What no row
-holds: an INT8 ConvRot or plain FP8 stack priced on a held base with a low
-read after it, a full-precision stack with a low read on a held base, a
-scaled FP8 file with weights over 64 MiB, and a second INT8 ConvRot model
-loaded whole with many patched keys.
+holds: a whole INT8 Wan-Animate 2 load at a reserve other than 8 GiB or at
+a clip other than the template's; any other INT8 ConvRot model's whole load
+read against ComfyUI's condition, or a second one loaded whole with many
+patched keys; the second plain FP8 stack's whole load at its price's edge
+(ComfyUI placed it partly at a reading 3.0 GiB above the price, so its one
+whole load on record is on a roomy box); a full-precision stack with a low
+read on a held base; a scaled FP8 file with weights over 64 MiB; and a
+pair's rank loading the INT8 template whole on a tight box.
 
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a

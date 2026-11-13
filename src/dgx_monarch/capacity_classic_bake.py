@@ -287,12 +287,12 @@ def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True,
         return line
     guarded = 0
     for kind in GUARDED_BY_BYTES:
-        sizes = by_class.get(kind)
-        if not sizes:
+        of_kind = by_class.get(kind)
+        if not of_kind:
             continue
         measured = MEASURED_LARGEST_WEIGHT_BYTES.get(kind)
-        if measured is None or max(sizes) > measured:
-            guarded += sum(sizes)
+        if measured is None or max(of_kind) > measured:
+            guarded += sum(of_kind)
     return max(line, int(CLASSIC_BAKE_GUARD_RATIO * guarded))
 
 
