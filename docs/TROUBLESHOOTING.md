@@ -3396,7 +3396,7 @@ and the next render brought the Workers back by itself. In the tests of
 2026-11-12 and 13, six of twelve such renders stopped while status was being
 polled, and none of six did with every status poller stopped.
 
-**Why.** ComfyUI's dynamic loader (comfy-aimdo 0.6.0) hands each of its log
+**Why.** ComfyUI's dynamic loader (comfy-aimdo) hands each of its log
 lines to a Python callback, and its own log level starts at "everything".
 ComfyUI's process lowers it to INFO at start; a Worker left it alone. So once
 the loader's hooks were in, every device allocation and free called Python,

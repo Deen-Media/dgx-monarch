@@ -18,8 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
-pytest.importorskip("torch")
+import torch.distributed  # noqa: F401  (must be there: a skip would hide the exchange in CI)
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 

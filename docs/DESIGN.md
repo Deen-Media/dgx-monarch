@@ -1903,7 +1903,7 @@ refuses; neither can downgrade the running process.
 **The loader's log level, and who may read the allocator.** Before 1.5 a
 comfy-managed render could stop for good inside its first step when a status
 read met it; the stall guard ended it after its budget and the next render
-recovered by itself. The loader (comfy-aimdo 0.6.0) hands every log line to a
+recovered by itself. The loader (comfy-aimdo) hands every log line to a
 Python callback and its native level starts at "everything", so once its hooks
 are in it calls Python at each device allocation and free, from inside the
 call torch makes while it holds its allocator lock. A call into Python needs

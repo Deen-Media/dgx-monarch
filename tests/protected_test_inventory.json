@@ -935,7 +935,7 @@
       "test_the_kill_switch_turns_the_trim_off_too": "01dc006f047e37d6",
       "test_the_refusal_entries_the_unload_names_exist": "bafe4c0de7e1b7f5",
       "test_the_render_proceeds_when_the_unload_makes_room": "82bf4bd31246b68d",
-      "test_the_rescue_reaches_a_worker_only_to_release_its_cache": "971d45e4870a3690",
+      "test_the_rescue_reaches_a_worker_only_to_release_its_cache": "d38c699ee6ca80d1",
       "test_the_trim_never_runs_when_the_unload_makes_room": "ffc761148ec14f4e",
       "test_the_trim_runs_alone_when_comfy_holds_nothing": "b204acb814016520",
       "test_the_trim_runs_once_from_the_step_that_still_refuses": "3e681429ae62c5e8",
