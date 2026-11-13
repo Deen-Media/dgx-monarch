@@ -847,7 +847,9 @@ you may see:
   change on that model reloads it from disk. On a pair the ranks do the same together: any rank short, and
   every rank frees; a rank that cannot free keeps the whole fleet as it is; and where a rank would still be
   short of what the sampler needs the render is refused before its first step, naming the rank and the
-  figures. A load ComfyUI placed only partly
+  figures. The refusal leads with the words of the rank that was short, or whose model was wrong after
+  the free, and names its box, whichever box's error reaches the driver; that box's Worker journal logs
+  the same refusal at WARNING. A load ComfyUI placed only partly
   whose bake could not be finished for room is still as above. If a pair's
   render is refused with `pair_backup_room` after the ranks freed their
   backups, the same queue is refused again until memory is back: clear the

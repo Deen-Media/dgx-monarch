@@ -39,8 +39,8 @@ dist.init_process_group("gloo", rank=rank, world_size=2)
 from dgx_monarch.actor import backup_agreement, lora_partial_load, partial_load_guard
 
 GIB = 2 ** 30
-made = {"collectives": 0, "freed": 0}
-real_all_reduce = dist.all_reduce
+made = {"collectives": 0, "freed": 0, "gathers": 0}
+real_all_reduce, real_all_gather = dist.all_reduce, dist.all_gather
 
 
 def counted(*args, **kwargs):
@@ -48,7 +48,12 @@ def counted(*args, **kwargs):
     return real_all_reduce(*args, **kwargs)
 
 
-dist.all_reduce = counted
+def gathered(*args, **kwargs):
+    made["gathers"] += 1
+    return real_all_gather(*args, **kwargs)
+
+
+dist.all_reduce, dist.all_gather = counted, gathered
 room = {"now": mine["room"]}
 
 
@@ -82,15 +87,15 @@ lora_partial_load._host_room = host_room
 lora_partial_load._sampling_ask = lambda patcher, shape, conds: int(18.6 * GIB)
 backup_agreement._single_estimate = lambda patcher, shape, conds: int(6.2 * GIB)
 lora_partial_load._free_backup = free
-lora_partial_load._what_is_wrong_after_the_route = lambda patcher, was: None
+lora_partial_load._what_is_wrong_after_the_route = lambda patcher, was: mine.get("wrong")
 
-outcome = "ran"
+outcome, text = "ran", ""
 try:
     wrapper = partial_load_guard.make_prepare_sampling_guard(whole_model=True)
     wrapper(lambda *args, **kwargs: ("real model", "conds", []), patcher, (1, 16, 22, 104, 60), {"positive": []})
 except Exception as exc:
-    outcome = type(exc).__name__
-print(json.dumps({"rank": rank, "outcome": outcome, **made}))
+    outcome, text = type(exc).__name__, str(exc)
+print(json.dumps({"rank": rank, "outcome": outcome, "text": text, **made}))
 dist.destroy_process_group()
 """
 
@@ -124,9 +129,8 @@ def _free_port() -> str:
         return str(probe.getsockname()[1])
 
 
-@pytest.mark.parametrize("name", sorted(SCENARIOS))
-def test_both_ranks_make_the_same_collectives_and_neither_waits(name):
-    scenario, collectives, freed, outcome = SCENARIOS[name]
+def _run(scenario: dict) -> list[dict]:
+    """Both ranks of ``scenario``, each in its own process; what each reported, rank 0 first."""
     port = _free_port()
     env = {**os.environ, "PYTHONPATH": str(SRC), "OMP_NUM_THREADS": "1"}
     env.pop("DGXM_DISABLE_BACKUP_FREE", None)
@@ -143,9 +147,46 @@ def test_both_ranks_make_the_same_collectives_and_neither_waits(name):
         for process in ranks:
             if process.poll() is None:
                 process.kill()
+    return reports
+
+
+@pytest.mark.parametrize("name", sorted(SCENARIOS))
+def test_both_ranks_make_the_same_collectives_and_neither_waits(name):
+    scenario, collectives, freed, outcome = SCENARIOS[name]
+    reports = _run(scenario)
     assert [report["collectives"] for report in reports] == [collectives, collectives], reports
+    # A render that samples crosses no words; a refusal crosses them once on each rank.
+    gathers = 0 if outcome == "ran" else 1
+    assert [report["gathers"] for report in reports] == [gathers, gathers], reports
     assert [report["outcome"] for report in reports] == [outcome, outcome], reports
     if freed is not None:
         assert [report["freed"] for report in reports] == [freed, freed], reports
     else:  # rank 1 (no stack, or a device with memory of its own) frees nothing and still makes the second exchange
         assert [report["freed"] for report in reports] == [1, 0], reports
+
+
+def test_the_wrong_ranks_own_words_reach_the_error_on_both_ranks():
+    """Rank 1 finds its model wrong after the free: both ranks refuse with rank 1's cause first.
+
+    The driver receives one rank's error for the fleet, whichever arrives first, so each must carry it.
+    """
+    cause = "ComfyUI holds its weights as unpatched"
+    reports = _run({"0": {"room": 40.0}, "1": {"room": 9.0, "room_after": 24.0, "wrong": cause}})
+    assert [report["outcome"] for report in reports] == ["PeerLoadFailureError", "OffloadedInputQuantError"]
+    assert [report["collectives"] for report in reports] == [2, 2]
+    assert [report["gathers"] for report in reports] == [1, 1]
+    healthy, wrong = reports[0]["text"], reports[1]["text"]
+    assert cause in wrong and "after rank 1 freed its weight backup" in wrong
+    assert healthy.index("rank 1 found its model is not as a full load leaves it") < healthy.index(cause)
+    assert healthy.index(cause) < healthy.index("a peer rank could not load or verify")
+    assert "The model on rank 0 was right" in healthy and healthy.rstrip().endswith("[dgxm:rank 1]")
+
+
+def test_a_room_refusal_gives_the_short_ranks_figures_on_both_ranks():
+    reports = _run({"0": {"room": 2.0, "room_after": 6.0}, "1": {"room": 40.0}})
+    assert [report["outcome"] for report in reports] == ["PairBackupRoomError"] * 2
+    for report in reports:
+        text = report["text"]
+        assert "rank 0 is" in text and "Rank 0 read 6.0 GiB of room" in text
+        assert text.index("Rank 0 read") < text.index("rank 1 read 40.0 GiB of room")
+        assert text.rstrip().endswith("[dgxm:rank 0]")

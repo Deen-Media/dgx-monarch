@@ -129,6 +129,39 @@ def _all_ranks_min(values: list[int]) -> list[int]:
     return [int(value) for value in sent.tolist()]
 
 
+# The most one rank's words may take in ``_all_ranks_texts``: a refusal's
+# figures as one JSON line, cut there, never more.
+TEXT_BYTES = 1024
+
+
+def _all_ranks_texts(text: str) -> list[str]:
+    """Gather one short text from every rank, in rank order, in ONE collective.
+
+    MIN carries agreement and not identity, so a refusal decided from it cannot
+    say which rank was short or wrong, or why. Only a refusal path that every
+    rank takes alike, from the same MIN answer, calls this
+    (``backup_agreement.settle``), so a render that samples makes no collective
+    more. Every rank sends ``TEXT_BYTES`` bytes of UTF-8, the same count on
+    every rank, zero-padded.
+    """
+    import torch
+    import torch.distributed as dist
+
+    device: str | torch.device = "cpu"
+    try:
+        if dist.get_backend() == "nccl" and torch.cuda.is_available():
+            device = torch.device("cuda", torch.cuda.current_device())
+    except Exception:
+        device = "cpu"
+    data = list(text.encode("utf-8")[:TEXT_BYTES])
+    sent = torch.zeros(TEXT_BYTES, dtype=torch.uint8, device=device)
+    if data:
+        sent[:len(data)] = torch.tensor(data, dtype=torch.uint8, device=device)
+    got = [torch.zeros_like(sent) for _ in range(int(dist.get_world_size()))]
+    dist.all_gather(got, sent)
+    return [bytes(item.tolist()).rstrip(b"\0").decode("utf-8", "ignore") for item in got]
+
+
 def all_ranks_true(local_flag: bool) -> bool:
     """MIN-reduce one boolean over the default group; True only if every rank is True.
 
@@ -185,7 +218,7 @@ def check(model: Any, additional: tuple = (), agree: tuple[tuple, tuple[Any, Any
         mine = backup_agreement.vote(agree[0], agree[1], _rank())
         answer = _all_ranks_min([1 if local_full else 0, *mine.elements])
         if answer[0] == 1:
-            backup_agreement.settle(mine, answer[1:], _all_ranks_min)
+            backup_agreement.settle(mine, answer[1:], _all_ranks_min, _all_ranks_texts)
             return
     raise PartialLoadDivergenceError(refusal(
         RefusalClass.CAPACITY, REFUSAL_TEXT, guard=GUARD, waivable=False,

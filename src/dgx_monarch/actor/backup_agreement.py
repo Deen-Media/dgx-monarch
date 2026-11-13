@@ -62,6 +62,16 @@ This module makes no collective itself: ``partial_load_guard`` owns them and
 hands ``settle`` its exchange. A render that does not free makes exactly the
 one collective it made before, with more elements in it.
 
+MIN carries agreement and not identity, and the driver receives one rank's
+error for the whole fleet, whichever arrives first. So where the fleet
+refuses, the ranks make one gather more (``partial_load_guard._all_ranks_texts``)
+of each rank's own facts: its model's fault in its own words, its room and its
+need. Every rank's refusal then leads with the short or wrong rank's cause and
+figures, the others' after, and carries that rank's mark, so the driver names
+its box; the rank that is short or wrong also logs its refusal at WARNING.
+Only a refusal path that every rank reaches from the same MIN answer makes the
+gather, so a render that samples makes none.
+
 For a proof cell on real ranks, ``DGXM_FAULT_BACKUP_RANK=<rank>`` with
 ``DGXM_ACCEPTANCE=1`` (the switches of ``load_fault``) makes that rank vote
 short at any reading and read its model as wrong after the free, so the
@@ -70,13 +80,14 @@ WARNING wherever it acts.
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Any
 
 from .. import mesh_safety
 from ..log import get_logger
-from ..refusal import RefusalClass, refusal
+from ..refusal import RefusalClass, mark_rank, refusal
 from . import load_fault, lora_partial_load
 
 log = get_logger(__name__)
@@ -220,7 +231,59 @@ def vote(patchers: tuple, sampling: tuple[Any, Any], rank: int) -> Vote:
     return found
 
 
-def _refuse_room(margin_gib: float, rank: int, mine: Vote, state: str) -> None:
+def _facts(mine: Vote, wrong: str | None) -> str:
+    """This rank's own words for a fleet refusal, as one short JSON line; never raises."""
+    try:
+        # The cause is cut well inside the gather's 1024 bytes, so the line always parses.
+        return json.dumps({"rank": int(mine.rank), "wrong": (wrong or "")[:600], "own": bool(mine.own_memory),
+                           "room": int(max(0, mine.room + mine.pool)),
+                           "need": -1 if mine.need is None else int(mine.need)})
+    except Exception:
+        return "{}"
+
+
+def _fleet(mine: Vote, wrong: str | None, gather: Any) -> list[dict] | None:
+    """Every rank's own words, in rank order, from one gather; None where there is no gather or it failed.
+
+    Called only on a refusal path that every rank takes alike, from the same
+    MIN answer, so every rank makes the gather or none does.
+    """
+    if gather is None:
+        return None
+    try:
+        texts = list(gather(_facts(mine, wrong)))
+    except Exception as exc:
+        log.warning("pair backup: the ranks' own words could not be crossed (%s: %s); this rank's refusal "
+                    "gives its own figures only", type(exc).__name__, exc)
+        return None
+    fleet: list[dict] = []
+    for text in texts:
+        try:
+            value = json.loads(text)
+        except Exception:
+            value = {}
+        fleet.append(value if isinstance(value, dict) else {})
+    return fleet
+
+
+def _fact(fleet: list[dict], rank: int) -> dict | None:
+    return next((fact for fact in fleet if fact.get("rank") == rank), None)
+
+
+def _figures(fact: dict) -> str:
+    """One rank's room and need in words, from its own facts."""
+    rank = fact.get("rank")
+    if fact.get("own"):
+        return f"rank {rank}'s device has memory of its own, so it took no part in the reading"
+    need = int(fact.get("need", -1))
+    if need < 0:
+        return f"rank {rank} could not work out what its sampler needs"
+    return (f"rank {rank} read {int(fact.get('room', 0)) / _GIB:.1f} GiB of room (its idle device pool "
+            f"counted) against {need / _GIB:.1f} GiB needed")
+
+
+def _refuse_room(margin_gib: float, rank: int, mine: Vote, state: str,
+                 fleet: list[dict] | None = None) -> None:
     if state == "kept":
         after = "every rank kept its weight backup"
         fits = ("a shorter clip or a smaller latent; lora_low_rss on, which keeps no weight backup; more "
@@ -232,23 +295,44 @@ def _refuse_room(margin_gib: float, rank: int, mine: Vote, state: str) -> None:
                 "retry where the panel offers it, or Reset attached mesh); a shorter clip or a smaller "
                 "latent; or more free memory on that box. Turning lora_low_rss on does not help a model "
                 "whose stack is already baked in")
-    if mine.own_memory:
+    short = _fact(fleet, rank) if fleet else None
+    if short is not None:
+        # Every rank's own figures crossed: the short rank's first, the others' after, the same
+        # words on every rank, so the user reads them whichever rank's error the driver receives.
+        others = [_figures(fact) for fact in fleet or () if fact and fact.get("rank") != rank]
+        first = _figures(short)
+        own = (f"{first[:1].upper()}{first[1:]} (1.15 times ComfyUI's estimate for the latent plus 1 GiB)"
+               + (f"; {'; '.join(others)}" if others else ""))
+    elif mine.own_memory:
         own = "This rank's device has memory of its own, so it took no part in the reading"
     else:
         own = (f"This rank read {max(0, mine.room + mine.pool) / _GIB:.1f} GiB of room (its idle device pool "
                f"counted) against {(mine.need or 0) / _GIB:.1f} GiB needed (1.15 times ComfyUI's estimate for "
                "the latent plus 1 GiB)")
+    if mine.rank == rank:
+        log.warning("pair backup: this rank is the one short, so the fleet refuses (pair_backup_room): rank %d is "
+                    "%.1f GiB short after the ranks' decision (%s). %s", rank, abs(margin_gib), after, own)
+    else:
+        log.info("pair backup: rank %d is short, so the fleet refuses", rank)
+    # The short rank's mark, so the driver names its box ahead of the words (worker_box).
+    mark = mark_rank("", rank) if short is not None else ""
     raise PairBackupRoomError(refusal(
         RefusalClass.CAPACITY,
         "a LoRA stack is on a model the ranks loaded whole with lora_low_rss off, and after the ranks' "
         f"decision ({after}) rank {rank} is {abs(margin_gib):.1f} GiB short of what sampling this latent "
         f"still needs above the 5 GiB host floor. {own}; each Worker's journal gives its own "
         f"figures. Nothing was sampled and no rank went on. What would fit: {fits}.",
-        guard="pair_backup_room", waivable=False, troubleshooting=TROUBLESHOOTING))
+        guard="pair_backup_room", waivable=False, troubleshooting=TROUBLESHOOTING) + mark)
 
 
-def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
-    """Act on the fleet's answer to the votes; ``exchange`` is the guard's MIN exchange, used once more on a free."""
+def settle(mine: Vote, answer: list[int], exchange: Any, gather: Any = None) -> None:
+    """Act on the fleet's answer to the votes.
+
+    ``exchange`` is the guard's MIN exchange, used once more on a free.
+    ``gather`` crosses each rank's own words (``partial_load_guard._all_ranks_texts``), only on a
+    refusal path every rank reaches alike, so the refusal every rank raises leads with the short or
+    wrong rank's own cause and figures and carries that rank's mark; without it each rank gives its own.
+    """
     not_short, can, switch_off, margin, not_freed = (int(value) for value in answer)
     if switch_off == 0:
         if mine.short or mine.switch:
@@ -262,7 +346,7 @@ def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
             # weighed again at every render on those slots.
             margin_gib, rank = _read_margin(margin)
             if margin_gib < 0:
-                _refuse_room(margin_gib, rank, mine, "freed before")
+                _refuse_room(margin_gib, rank, mine, "freed before", _fleet(mine, None, gather))
         return
     if can == 0:
         if mine.own_memory:
@@ -271,7 +355,7 @@ def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
                      "part in the reading")
             margin_gib, rank = _read_margin(margin)
             if margin_gib < 0:
-                _refuse_room(margin_gib, rank, mine, "kept")
+                _refuse_room(margin_gib, rank, mine, "kept", _fleet(mine, None, gather))
             return
         standing = sum(len(getattr(patcher, "backup", None) or ()) for patcher, _stored in mine.freeable)
         log.info("pair backup: a rank is short of room for the sampler and a rank cannot free its backup (%s), "
@@ -280,7 +364,7 @@ def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
                  standing, max(0, mine.room) / _GIB)
         margin_gib, rank = _read_margin(margin)
         if margin_gib < 0:
-            _refuse_room(margin_gib, rank, mine, "kept")
+            _refuse_room(margin_gib, rank, mine, "kept", _fleet(mine, None, gather))
         return
     wrong: str | None = None
     returned = "it held no backup"
@@ -296,7 +380,7 @@ def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
         if wrong is None and _fault_here(mine.rank):
             log.warning("pair backup: acceptance fault (%s names this rank): its model is read as wrong",
                         FAULT_RANK_ENV)
-            wrong = f"the acceptance fault {FAULT_RANK_ENV} names this rank (nothing is wrong with the model)"
+            wrong = f"the acceptance fault {FAULT_RANK_ENV} names rank {mine.rank} (nothing is wrong with the model)"
     except Exception as exc:
         wrong = f"freeing its backup failed ({type(exc).__name__}: {exc})"
     if mine.own_memory:
@@ -311,21 +395,33 @@ def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
                  returned, max(0, mine.room) / _GIB, (mine.need or 0) / _GIB)
     ok, after = (int(value) for value in exchange(
         [0 if wrong else 1, _margin(mine.room + mine.pool, mine.need, mine.rank)]))
+    margin_gib, rank = _read_margin(after)
+    # Both come from the same MIN on every rank, so every rank gathers the fleet's words or none does.
+    fleet = _fleet(mine, wrong, gather) if ok == 0 or margin_gib < 0 else None
     if wrong is not None:
+        log.warning("pair backup: this rank refuses for the fleet (partial_load_divergence): after rank %d freed "
+                    "its weight backup the model is not as a full load leaves it: %s", mine.rank, wrong)
         raise lora_partial_load.OffloadedInputQuantError(refusal(
             RefusalClass.CAPACITY,
-            "a LoRA stack is on a model ComfyUI loaded whole, and after this rank freed its weight backup "
-            f"for the sampler the model is not as a full load leaves it: {wrong}. Sampling it could run "
+            f"a LoRA stack is on a model ComfyUI loaded whole, and after rank {mine.rank} freed its weight "
+            f"backup for the sampler the model is not as a full load leaves it: {wrong}. Sampling it could run "
             "without its LoRA, so nothing was sampled on any rank. Reset the attached mesh so the model "
             "loads again, and turn lora_low_rss on (the default on a DGX Spark), which bakes at load time.",
             guard="partial_load_divergence", waivable=False, troubleshooting=lora_partial_load.TROUBLESHOOTING))
     if ok == 0:
         from . import rank_readiness
 
-        rank_readiness.peer_failed()  # its own model is right; a peer's is not
-    margin_gib, rank = _read_margin(after)
+        # Its own model is right; a peer's is not. Lead with that rank's own words where they crossed.
+        wrong_rank = next((fact for fact in fleet or () if fact.get("wrong")), None)
+        if wrong_rank is None:
+            rank_readiness.peer_failed()
+        who = wrong_rank.get("rank") if isinstance(wrong_rank.get("rank"), int) else None
+        log.info("pair backup: rank %s refuses for the fleet: %s", who, wrong_rank["wrong"])
+        rank_readiness.peer_failed(
+            f"rank {who} found its model is not as a full load leaves it after the ranks "
+            f"freed their weight backup: {wrong_rank['wrong']}", rank=who, own=mine.rank)
     if margin_gib < 0:
-        _refuse_room(margin_gib, rank, mine, "freed")
+        _refuse_room(margin_gib, rank, mine, "freed", fleet)
 
 
 __all__ = ["ELEMENTS", "FAULT_RANK_ENV", "FREED_FLAG", "GUARD", "PairBackupRoomError", "Vote", "settle", "vote"]

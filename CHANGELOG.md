@@ -4,6 +4,17 @@
 
 ### Everyday use
 
+- On a pair, a render that the ranks' weight-backup agreement refuses now says
+  why in the words of the rank that caused it. The driver receives one rank's
+  error for the fleet, and before this it was often the healthy rank's, which
+  could only say "a peer rank could not load or verify the model", while the
+  rank at fault logged nothing in its own journal. Now the ranks cross their
+  own facts once more on that path, so every rank's refusal leads with the
+  short or wrong rank's cause and figures, names its box, and gives the other
+  ranks' figures after; that rank also logs the refusal at WARNING. A render
+  that samples makes no new collective. Not yet run on hardware
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+
 - A MiniMax H3 graph with Add Guide no longer pays at the loader for its guide
   encode and its render activations at once, where the graph shows the guide
   encodes before every sampler. ComfyUI with DynamicVRAM, its default, returns

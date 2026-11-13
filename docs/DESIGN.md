@@ -1124,7 +1124,14 @@ turns the rule off for the fleet. After a free the ranks make one more
 exchange, of each rank's model as read and its margin as read: a model that
 is not what a full load leaves, or a tightest margin under zero, refuses on
 every rank before the first forward, class C under the guard
-`pair_backup_room`, naming the rank and the figures. The margin is also
+`pair_backup_room`, naming the rank and the figures. MIN carries agreement
+and not identity, and the driver receives one rank's error for the fleet,
+whichever arrives first, so where the fleet refuses the ranks make one gather
+more of each rank's own facts (its model's fault in its own words, its room,
+its need). Every rank's error then leads with the short or wrong rank's cause
+and figures, the others' after, and carries that rank's mark, so the driver
+names its box; that rank also logs its refusal at WARNING. A render that
+samples makes no such gather. The margin is also
 checked where a short fleet kept its backups, and at every later render on
 slots the agreement freed: a fleet that freed and was refused has no backup
 left to be short of, and is refused again until the Sparks are cleared or
