@@ -4731,7 +4731,7 @@ same driver, a queue that changes only the guide's file, the canvas or the
 length runs no loader, and its new encode would run with no charge before it.
 Since 1.5.0 the driver prices that encode at Add Guide (MiniMax H3) itself,
 where the loader did not charge it: on the canvas and frame count the node
-holds, at the charge above, a clip with 6 GiB more, against MemAvailable after
+holds, at the charge above, a clip with 1 GiB more, against MemAvailable after
 ComfyUI's models are unloaded and the Workers' idle caches released. The
 refusal is `[dgxm:C guard=driver_footprint_preflight waivable=0]`, starts
 `Add Guide (MiniMax H3) for this 5-frame clip at 448x256 needs ... GiB on the

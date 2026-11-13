@@ -11,10 +11,18 @@ where no held-model credit took them. CPU only.
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
-from dgx_monarch import driver_spend_marks, driver_spend_price, h3_activation, mesh_safety
+from dgx_monarch import (
+    driver_spend_marks,
+    driver_spend_price,
+    driver_unload,
+    h3_activation,
+    mesh_safety,
+    vae_decode_relief,
+)
 from dgx_monarch.nodes import graph_load_price, loader_graph, loader_preflight
 from test_guide_alternative_charge import _still_graph, pool_reset  # noqa: F401  (pool_reset: the fixture)
 from test_loader_site_preflight import (  # noqa: F401  (_rig is the autouse rig)
@@ -94,8 +102,9 @@ def test_the_loads_are_marked_per_node_where_no_credit_took_them(pool_reset, adm
     admitted(graph)
     loads = {key.split("\x00")[-1]: figure for key, figure in driver_spend_marks._CHARGED.items()
              if "\x00node\x00" in key}
-    expected = {node_id: driver_spend_price.load_bytes(node["inputs"]) for node_id, node in graph.items()
-                if not node["class_type"].startswith("DGXMonarch") and driver_spend_price.load_bytes(node["inputs"])}
+    expected = {node_id: driver_spend_price.load_bytes(node["inputs"], node["class_type"])
+                for node_id, node in graph.items() if not node["class_type"].startswith("DGXMonarch")
+                and driver_spend_price.load_bytes(node["inputs"], node["class_type"])}
     assert loads == expected and expected, "the graph's text encoder must be marked at the loader's charge"
 
 
@@ -106,3 +115,50 @@ def test_a_sampler_site_price_marks_nothing(pool_reset, monkeypatch):  # noqa: F
                                                     sp_degree=2), resolved=True)
     graph_load_price.note_admitted(terms, graph_load_price.SITE_SAMPLER, _still_graph())
     assert driver_spend_marks._CHARGED == {}
+
+
+def _loader_refuses(graph: dict, preset: str) -> bool:
+    loader_preflight.reset_memos()
+    try:
+        loader_preflight.preflight_loader_footprint(_Mesh(topology_preset=preset), REF2VA_INT8_PRUNED, {}, graph)
+    except Exception:
+        return True
+    return False
+
+
+def _latent(width: int, height: int):
+    return {"samples": SimpleNamespace(tensors=[SimpleNamespace(shape=(1, 24, 31, height // 16, width // 16))])}
+
+
+@pytest.mark.parametrize("preset", ["auto", "uly2"])
+def test_spends_first_and_the_loader_last_in_one_prompt(pool_reset, monkeypatch, tmp_path, preset):  # noqa: F811
+    """P2a's order on a fresh driver (2026-11-13): the text encoder loads and Add Guide encodes, both priced
+    live and unmarked, then the loader node runs LAST and prices the whole graph. At every reading a live
+    refusal at either spend is one the loader makes of the same graph at that reading, with nothing held."""
+    _write_image(tmp_path, "clip5.png", 5)
+    graph = _still_graph(width=448, height=256, image_file="clip5.png")
+    monkeypatch.setattr(driver_spend_marks, "_CHARGED", {})
+    monkeypatch.setattr(graph_load_price, "executing_prompt_id", lambda: PROMPT)
+    monkeypatch.setattr(driver_spend_price, "_pool_free_bytes", lambda: 0)
+    monkeypatch.setattr(driver_unload, "comfy_model_management", lambda: None)
+    monkeypatch.setattr(driver_unload, "busy_reason", lambda handle: "")
+    monkeypatch.setattr(vae_decode_relief, "_serving", lambda: (None, vae_decode_relief.NO_FLEET))
+    te_name = next(node["inputs"]["clip_name"] for node in graph.values() if node["class_type"] == "CLIPLoader")
+    te = driver_spend_price._load_spend({"clip_name": te_name}, "CLIPLoader")(graph, "3")
+    guide = driver_spend_price._guide_spend(
+        {"image": SimpleNamespace(shape=(5, 32, 32, 3)), "latent": _latent(448, 256)})(graph, "10")
+    assert te is not None and guide is not None
+    assert guide.own == 17 * GIB + driver_spend_price.CLIP_MARGIN_BYTES
+    refused = []
+    for gib in (10, 15, 20, 22, 25, 30, 35, 40, 45, 50, 60, 70, 80, 100):
+        monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda value=gib * GIB: value)
+        live = False
+        for spend in (te, guide):
+            try:
+                driver_spend_price.check(spend, PROMPT)
+            except driver_spend_price.DriverSpendCapacityError:
+                live = True
+        if live:
+            refused.append(gib)
+            assert _loader_refuses(graph, preset), f"at {gib} GiB a spend refuses that the loader admits"
+    assert refused, "the sweep must read the refusing side"

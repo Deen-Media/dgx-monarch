@@ -280,7 +280,7 @@ def test_a_clip_short_of_room_refuses_before_anything_encodes(rig, reached):
         _guide(5, width=448, height=256)
     text = _refused(exc_info)
     assert _Guide.calls == []
-    assert ("Add Guide (MiniMax H3) for this 5-frame clip at 448x256 needs 23.0 GiB on the driver's box, "
+    assert ("Add Guide (MiniMax H3) for this 5-frame clip at 448x256 needs 18.0 GiB on the driver's box, "
             "and the box has 15.0 GiB above its 5.0 GiB floor") in text
     if reached:
         assert "The UNET Loader priced this prompt but did not charge this at its size" in text
@@ -313,7 +313,7 @@ def test_the_line_is_the_floor_after_the_rescues(rig, monkeypatch):
 
 def test_a_clip_whose_activations_do_not_resolve_carries_no_margin(rig):
     rig.activations["bytes"] = 0
-    rig.box.value = 22 * GIB  # 17 GiB plus the floor fits; 23 would not
+    rig.box.value = 22 * GIB  # 17 GiB plus the floor fits; 18 would not
     _guide(5, width=448, height=256)
     assert len(_Guide.calls) == 1
 
@@ -334,16 +334,27 @@ def test_a_rescue_runs_before_the_refusal_and_its_room_admits(rig, monkeypatch):
     assert unloaded == [["the text encoder"]] and len(_Guide.calls) == 1
 
 
-def test_a_vae_the_rescue_unloaded_is_charged_again(rig, monkeypatch):
+def test_a_vae_is_charged_again_only_after_a_rescue_unloaded_it(rig, monkeypatch):
+    """Before any rescue the VAE costs the encode nothing more: on 2026-11-13 a fresh driver's first encode,
+    which loads the VAE, raised the driver's figure 0.60 GiB. After the unload rescue, a VAE it took loads again."""
     patcher = SimpleNamespace(model_size=lambda: 3 * GIB)
+    vae = SimpleNamespace(patcher=patcher)
     monkeypatch.setitem(sys.modules, "comfy.model_management", SimpleNamespace(current_loaded_models=[]))
-    rig.box.value = 21 * GIB  # 14 plus the floor fits; 17 does not
+    rig.box.value = 19 * GIB  # 14 plus the floor: fits before any rescue, though the VAE is not loaded
+    _guide(1, vae=vae)
+    assert len(_Guide.calls) == 1
+
+    def unload(mm, held):
+        before, rig.box.value = rig.box.value, rig.box.value + 2 * GIB
+        return driver_unload.Unloaded(("the VAE",), before, rig.box.value)
+
+    monkeypatch.setattr(driver_unload, "comfy_model_management", lambda: object())
+    monkeypatch.setattr(driver_unload, "held_models", lambda mm: [(object(), "the VAE")])
+    monkeypatch.setattr(driver_unload, "unload", unload)
+    rig.box.value = 18 * GIB  # short; the unload frees 2 GiB (16 above the floor), and the VAE's 3 come back
     with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
-        _guide(1, vae=SimpleNamespace(patcher=patcher))
-    assert "needs 17.0 GiB" in _refused(exc_info)
-    monkeypatch.setitem(sys.modules, "comfy.model_management",
-                        SimpleNamespace(current_loaded_models=[SimpleNamespace(model=patcher)]))
-    _guide(1, vae=SimpleNamespace(patcher=patcher))
+        _guide(1, vae=vae)
+    assert "needs 17.0 GiB" in _refused(exc_info) and len(_Guide.calls) == 1
 
 
 def test_a_reference_video_is_charged_the_loaders_figure(rig):

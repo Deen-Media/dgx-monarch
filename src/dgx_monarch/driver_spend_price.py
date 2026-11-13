@@ -79,11 +79,12 @@ LOADER_CLASSES = ("CLIPLoader", "DualCLIPLoader", "TripleCLIPLoader", "Quadruple
 TROUBLESHOOTING_ENCODE = 82
 TROUBLESHOOTING_LOAD = 56
 _GIB = 2 ** 30
-# Above a clip's measured charge: the 2026-08-14 probe read every clip 2.8 to
-# 5.45 GiB over its charge when the encode returned. Inside the loader's charge
-# for a clip, which adds H3's activations (an 11 GiB floor) to it. Set again
-# from the hardware's figures for a clip encoded with the DiT resident.
-CLIP_MARGIN_BYTES = 6 * _GIB
+# Above a clip's measured charge, at the floor of the proof's formula
+# (ceil(reading - 17) + 1, at least 1): on 2026-11-13 a 5-frame clip at 448x256,
+# DiT resident, DynamicVRAM on, raised the driver's per-process figure 1.16 GiB
+# and took the box down 1.23 GiB against its 17.0 charge. Inside the loader's
+# charge for a clip, which adds H3's activations (an 11 GiB floor) to it.
+CLIP_MARGIN_BYTES = 1 * _GIB
 
 # What this process did, for doctor and the tests.
 INSTALLED = "installed"
@@ -112,7 +113,7 @@ class Spend(NamedTuple):
     what: str
     term: str
     own: int
-    charge: Callable[[], int]
+    charge: Callable[[bool], int]  # True once a rescue has run: a VAE it unloaded loads again
     verb: str
     remedy: str
     troubleshooting: int
@@ -226,20 +227,22 @@ def _refusal_text(spend: Spend, needed: int, room: int, floor: int, reached: boo
 
 
 def check(spend: Spend, prompt_id: str | None = None) -> None:
-    """Admit ``spend.charge()`` bytes now, or refuse after the driver's rescues; log what admitted it."""
+    """Admit ``spend.charge(rescued)`` bytes now, or refuse after the driver's rescues; log what admitted it."""
     from . import driver_footprint, driver_unload, vae_decode_relief
     from .nodes import graph_load_price
 
     floor = driver_footprint.reserve_bytes(None)
     reached = prompt_id is not None and graph_load_price.priced_any_this_prompt(prompt_id)
     seen: list[tuple[int, int, int]] = []
+    runs = [0]  # check_with_unload runs the step again only after a rescue
 
     def step() -> None:
+        runs[0] += 1
         avail = mesh_safety.mem_available_bytes()
         if avail is None:
             return  # off Linux: MemAvailable bounds nothing here
         pool = _pool_free_bytes()
-        needed = spend.charge()
+        needed = spend.charge(runs[0] > 1)
         if avail + pool - floor >= needed:
             seen.append((needed, avail, pool))
             return
@@ -327,7 +330,8 @@ def _guide_spend(arguments: Mapping[str, Any]) -> Callable[[Mapping[str, Any], s
         kind = f"this {frames}-frame clip" if clip else "this still"
         vae = arguments.get("vae")
         return Spend(f"Add Guide (MiniMax H3) for {kind} at {width}x{height}", GUIDE_TERM, base,
-                     lambda: base + _vae_reload_bytes(vae), "encoded", ENCODE_REMEDY, TROUBLESHOOTING_ENCODE)
+                     lambda rescued: base + (_vae_reload_bytes(vae) if rescued else 0), "encoded", ENCODE_REMEDY,
+                     TROUBLESHOOTING_ENCODE)
     return spend_of
 
 
@@ -340,7 +344,7 @@ def _reference_spend(arguments: Mapping[str, Any]) -> Callable[[Mapping[str, Any
             return None
         figure = loader_graph.REF_VIDEO_ENCODE_BYTES
         return Spend("Reference to Video (MiniMax H3) for its reference video", REFERENCE_TERM, figure,
-                     lambda: figure, "encoded", ENCODE_REMEDY, TROUBLESHOOTING_ENCODE)
+                     lambda rescued: figure, "encoded", ENCODE_REMEDY, TROUBLESHOOTING_ENCODE)
     return spend_of
 
 
@@ -352,7 +356,7 @@ def _load_spend(arguments: Mapping[str, Any], name: str) -> Callable[[Mapping[st
         files = ", ".join(os.path.basename(str(value)) for key, value in arguments.items()
                           if isinstance(key, str) and isinstance(value, str) and value
                           and (key.startswith(("clip_name", "text_encoder")) or key in ("ckpt_name", "unet_name")))
-        return Spend(f"{name} loading {files}", node_term(node), size, lambda: size, "loaded", LOAD_REMEDY,
+        return Spend(f"{name} loading {files}", node_term(node), size, lambda rescued: size, "loaded", LOAD_REMEDY,
                      TROUBLESHOOTING_LOAD)
     return spend_of
 

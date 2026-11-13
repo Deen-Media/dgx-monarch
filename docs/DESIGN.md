@@ -2272,7 +2272,7 @@ more, which takes the host down (TROUBLESHOOTING #83), and ComfyUI does not
 promise to run the loader before such a node on a first queue either. So the
 driver prices the spend at the node that makes it (`driver_spend_price.py`):
 - **What it prices.** Add Guide (MiniMax H3)'s encode, on the canvas and frame
-  count it holds, at the loader's guide charge, a clip with 6 GiB more where the
+  count it holds, at the loader's guide charge, a clip with 1 GiB more where the
   graph's activation term resolves; Reference to Video (MiniMax H3) with a
   reference video, at the loader's 40 GiB; and the stock loader nodes whose
   inputs the loader charges (Load CLIP, the dual, triple and quadruple CLIP
@@ -2309,6 +2309,16 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
   ComfyUI runs before the loader can be refused where the loader-first order
   would have admitted it, for example under an explicit preset with another
   model still in the Worker's slot; the refusal is still true of the box.
+  That order is the common one: on 2026-11-13, on a first queue of the shipped
+  guide graph in a fresh driver, ComfyUI loaded and ran the text encoder, ran
+  Add Guide, brought the mesh up, and ran the UNET Loader last. So on a first
+  queue the spends are priced live, unmarked, and the loader then prices the
+  whole graph after them, charging the guide it can no longer prevent, as it
+  did before. With nothing held, the loader's charge holds every one of those
+  spends beside the DiT, the activations and the floor, so a live refusal there
+  is one the loader would make at the same reading. A VAE is charged again only
+  after a rescue unloaded it: before that, a fresh driver's first encode, which
+  loads the VAE, raised the driver's figure 0.60 GiB.
 - **The refusal.** Class C under `driver_footprint_preflight`, the driver-host
   guard of the frozen vocabulary, with no card, as its own type, so no consent
   card matching the stock-load family offers a slab load for an encode. It
