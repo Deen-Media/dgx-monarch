@@ -2516,7 +2516,14 @@ covers the whole load by itself. Three rules follow.
     - The rule leans on ComfyUI's code, which is not pinned, so a canary
       seam (`whole load condition`, `tests/canary/comfy_seam_contracts.py`)
       turns the daily lane red if the condition, its gate, the estimate for
-      this model or the Worker's own free reading changes.
+      this model or the Worker's own free reading changes. It did so on its
+      first run: ComfyUI commit c5751c8 (2026-11-11, "Remove directml
+      support") had deleted `lowvram_available`, a flag the gate and the
+      price both read, and the seam caught it in CI against ComfyUI master
+      before any box met it. The gate is otherwise unchanged, so the rule
+      holds there; `worker_reserve` and the seam now read the gate with or
+      without that flag, and both hold on ComfyUI 4d64a8bc and on master at
+      c1eece6.
   - **Plain FP8** (an FP8 weight with no marker): the fixed 2 GiB, no share.
     Two stacks on one model took 2.7 to 5.0 GiB less than that allows. Its
     price covers its recorded whole load by itself, so it does not lean on
