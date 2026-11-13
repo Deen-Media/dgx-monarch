@@ -1,9 +1,10 @@
 """A guide encode against the samplers: what proves its length, and whether it comes first.
 
 ``loader_graph`` prices a MiniMax H3 guide encode and the render activations.
-They are a sum unless this module proves the guide encodes, and ComfyUI
-returns its memory, before any sampler runs; then they are alternatives and
-the larger one is charged (issue #187). ComfyUI with DynamicVRAM empties its
+They are a sum unless this module proves every guide is a still, from its
+file, that encodes, and ComfyUI returns its memory, before any sampler runs;
+then they are alternatives and the larger one is charged (issue #187). A clip
+keeps the sum: no reading backs its charge alone. ComfyUI with DynamicVRAM empties its
 device pool after every node: the executor's ``finally`` calls
 ``reset_cast_buffers``, which ends in ``soft_empty_cache``
 (tests/canary/comfy_seam_contracts.py holds both). An order that cannot be
@@ -40,12 +41,18 @@ _OVERLAPPING_SAMPLERS = {
     "DGXMonarchFleetKSampler": ("the fleet sampler's renders can overlap, which this "
                                 "price does not read"),
 }
-GUIDE_FIRST = "it encodes and ComfyUI returns its memory before any sampler runs"
+GUIDE_FIRST = ("it is a still its file proves, and it encodes and ComfyUI returns its "
+               "memory before any sampler runs")
 NO_POOL_RESET = ("ComfyUI here runs without DynamicVRAM, so it keeps the encode's "
                  "memory until the decode")
 MODEL_BEFORE_GUIDE = "a node that uses a model runs before a guide encodes"
 SAMPLER_BEFORE_GUIDE = "a sampler in this graph can run before a guide encodes"
 ORDER_UNREAD = "the graph does not show where the guide encodes"
+# Only a still has a reading beside the render: no hardware cell reads a clip
+# encode's peak against its charge with the DiT resident, where the clip charge
+# alone would hold the floor (issue #187, filed with the cell that would read it).
+NOT_A_PROVEN_STILL = ("a guide here is a clip, or its file does not prove it is a still, and only "
+                      "a still is charged as the alternative to the render")
 
 
 def _gib(value: float) -> str:
@@ -135,17 +142,20 @@ def _may_sample(node: Mapping) -> bool:
     return not outputs or not set(outputs) <= _NO_RENDER_OUTPUTS
 
 
-def proved(prompt: Mapping, live: frozenset[str], guides: tuple[str, ...]) -> tuple[bool, str]:
-    """Whether every guide encodes, and returns its memory, before any sampler
-    runs; the words for either answer.
+def proved(prompt: Mapping, live: frozenset[str], guides: tuple[str, ...],
+           stills: bool = False) -> tuple[bool, str]:
+    """Whether every guide is a still that encodes, and returns its memory,
+    before any sampler runs; the words for either answer.
 
-    Four things must hold. ComfyUI here returns its pool after every node. No
+    Five things must hold. ComfyUI here returns its pool after every node. No
     sampler that overlaps other driver work is in the graph. No guide has a
     node that uses a model among its ancestors (a second pass, a guide image
     decoded from a render), read with both branches of an undecided switch.
-    And every node that may sample has every guide among the nodes ComfyUI is
-    certain to run before it, so no sampler can run first. Any doubt, and any
-    fault, keeps the sum.
+    Every node that may sample has every guide among the nodes ComfyUI is
+    certain to run before it, so no sampler can run first. And ``stills``:
+    every guide's file proves it a still, as the price proves it for the still
+    charge (``named_file_frames``); a clip, a declared length or an unread one
+    keeps the sum. Any doubt, and any fault, keeps the sum.
     """
     try:
         if not comfy_returns_pool_after_each_node():
@@ -166,6 +176,8 @@ def proved(prompt: Mapping, live: frozenset[str], guides: tuple[str, ...]) -> tu
             ran_first = live_nodes(nodes, roots=[key], sure=True)
             if not all(guide in ran_first for guide in guides):
                 return False, SAMPLER_BEFORE_GUIDE
+        if not stills:
+            return False, NOT_A_PROVEN_STILL
         return True, GUIDE_FIRST
     except Exception:  # an unread order keeps the sum
         return False, ORDER_UNREAD
@@ -197,5 +209,6 @@ def budget_words(guide_bytes: int, activation_bytes: int, first: bool,
     return guide_bytes, activation_bytes, (f"; both are charged because {order_note}" if order_note else "")
 
 
-__all__ = ["GUIDE_FIRST", "MODEL_BEFORE_GUIDE", "NO_POOL_RESET", "ORDER_UNREAD", "SAMPLER_BEFORE_GUIDE",
-           "budget_words", "charged_note", "comfy_returns_pool_after_each_node", "named_file_frames", "proved"]
+__all__ = ["GUIDE_FIRST", "MODEL_BEFORE_GUIDE", "NOT_A_PROVEN_STILL", "NO_POOL_RESET", "ORDER_UNREAD",
+           "SAMPLER_BEFORE_GUIDE", "budget_words", "charged_note", "comfy_returns_pool_after_each_node",
+           "named_file_frames", "proved"]

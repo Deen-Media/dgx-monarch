@@ -4660,14 +4660,16 @@ weight, text encoder, VAE, reference and activation charges with it.
 
 **The guide and the render activations.** Add Guide's encode ends before the
 sampler it feeds starts, and ComfyUI with DynamicVRAM, its default, returns a
-node's memory when the node finishes. So where the graph shows that every guide
-encodes before every sampler, the check charges the larger of the guide encode
-and the render activations, not both, and the refusal's budget says which it
-charged. It charges both, and says why, when ComfyUI runs without DynamicVRAM
-(`--disable-dynamic-vram`, `--highvram`, `--gpu-only`, `--novram` or `--cpu`),
-when a node that uses a model runs before a guide (a second pass, or a guide
-image decoded from a render), when a sampler can run before a guide, and with
-the pipeline or fleet sampler.
+node's memory when the node finishes. So where every guide is a still whose
+file proves it (a Load Image node naming a one-frame file straight into the
+guide) and the graph shows that every guide encodes before every sampler, the
+check charges the larger of the guide encode and the render activations, not
+both, and the refusal's budget says which it charged. It charges both, and
+says why, for a clip and for a guide whose length is only declared or unread,
+when ComfyUI runs without DynamicVRAM (`--disable-dynamic-vram`, `--highvram`,
+`--gpu-only`, `--novram` or `--cpu`), when a node that uses a model runs before
+a guide (a second pass, or a guide image decoded from a render), when a sampler
+can run before a guide, and with the pipeline or fleet sampler.
 
 ## 83. A multi-frame guide clip at 1344x768 takes the whole host down
 

@@ -9,10 +9,11 @@ Graph and path parse failures omit a charge instead of raising. This preserves
 the class C failure direction: uncertain evidence cannot create a false
 capacity refusal.
 
-The guide encode and the render activations are a sum unless the graph proves
-the guide encodes, and ComfyUI returns its memory, before any sampler runs;
-then they are alternatives and the larger one is charged (``guide_order.py``,
-issue #187). An order that cannot be read keeps the sum.
+The guide encode and the render activations are a sum unless every guide's
+file proves it a still and the graph proves it encodes, and ComfyUI returns its
+memory, before any sampler runs; then they are alternatives and the larger one
+is charged (``guide_order.py``, issue #187). A clip, or an order that cannot be
+read, keeps the sum.
 """
 from __future__ import annotations
 
@@ -368,7 +369,10 @@ def driver_stack_terms(prompt: object, *, family: str = "",
         prompt, tuple(guide_latents), family=family)
     guide_first, order_note = False, ""
     if guide_bytes and activation_bytes:
-        guide_first, order_note = guide_order.proved(prompt, live, tuple(guide_nodes))
+        # A still as the price proves one: a file of fewer frames than a clip, which Add Guide
+        # anchors as its first image alone. A declared or unread length is no proof.
+        stills = all(0 < frames < h3_activation.H3_GUIDE_CLIP_FLOOR_FRAMES for _, frames in guide_latents)
+        guide_first, order_note = guide_order.proved(prompt, live, tuple(guide_nodes), stills)
         guide_note = guide_order.charged_note(guide_note, guide_bytes, activation_bytes,
                                               guide_first, order_note)
     return DriverStackTerms(

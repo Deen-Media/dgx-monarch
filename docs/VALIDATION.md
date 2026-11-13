@@ -4027,9 +4027,9 @@ GiB through the text and guide encodes and 92.1 to 93.0 GiB until the deferred
 DiT load began: what the model loads alone left, so no encode memory was held
 into the load or into sampling. The still's encode did not show at 5 Hz at
 all, so that recorder cannot read the encode's peak, and these runs do not
-re-read the guide charges. The loader's charge of a guide encode and the render
-activations as alternatives rests on this run and on ComfyUI's per-node pool
-reset (issue #187).
+re-read the guide charges. The loader's charge of a still guide's encode and
+the render activations as alternatives rests on this run and on ComfyUI's
+per-node pool reset (issue #187); a clip guide keeps the sum.
 
 ### The 15 second render, measured (2026-10-29)
 

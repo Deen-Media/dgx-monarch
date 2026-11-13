@@ -40,14 +40,16 @@
   that samples makes no new collective. Not yet run on hardware
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 
-- A MiniMax H3 graph with Add Guide no longer pays at the loader for its guide
-  encode and its render activations at once, where the graph shows the guide
-  encodes before every sampler. ComfyUI with DynamicVRAM, its default, returns
-  a node's memory when the node finishes, so the encode's memory is back before
-  the Workers sample, and the loader's resident window now charges the larger
-  of the two. On 2026-10-29 the shipped guide template, run through the driver,
-  held no encode memory into the model load or into sampling. Both are still
-  charged, and the refusal says why, where ComfyUI runs without DynamicVRAM,
+- A MiniMax H3 graph with a still guide no longer pays at the loader for its
+  guide encode and its render activations at once, where the guide's file
+  proves it a still and the graph shows the guide encodes before every sampler.
+  ComfyUI with DynamicVRAM, its default, returns a node's memory when the node
+  finishes, so the encode's memory is back before the Workers sample, and the
+  loader's resident window now charges the larger of the two. On 2026-10-29 the
+  shipped guide template, run through the driver, held no encode memory into
+  the model load or into sampling. Both are still charged, and the refusal says
+  why, for a clip and for a guide whose length no file proves (no reading yet
+  backs a clip's charge on its own), where ComfyUI runs without DynamicVRAM,
   where a node that uses a model runs before a guide (a second pass, or a guide
   image decoded from a render), where a sampler can run before a guide, and
   with the pipeline or fleet sampler. The graph of issue #187 (896x1152, 362

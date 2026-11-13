@@ -3,10 +3,12 @@
 Issue #187. ComfyUI with DynamicVRAM empties its device pool after every node
 (execution.py, the ``finally`` around each node; the seam contract "per-node
 pool reset" holds it), so a guide that encodes before every sampler has given
-its memory back when rank 0 samples. Where the graph proves that order, the
-loader charges the larger of the two; anywhere it cannot, it keeps the sum and
-says why. CPU only: the pool reset and ComfyUI's node registry are stubbed at
-the two functions that read them, and the rig is the loader-site suite's.
+its memory back when rank 0 samples. Where the graph proves that order and
+every guide's file proves it a still, the loader charges the larger of the two;
+a clip, and a guide whose length no file proves, keep the sum, as does every
+order it cannot prove, and the words say why. CPU only: the pool reset and
+ComfyUI's node registry are stubbed at the two functions that read them, and
+the rig is the loader-site suite's.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ from test_loader_site_preflight import (  # noqa: F401  (_rig is the autouse rig
     _Mesh,
     _refuse,
     _rig,
+    _write_image,
 )
 
 _GIB = 2 ** 30
@@ -45,16 +48,21 @@ _OUTPUTS = {
 
 
 @pytest.fixture
-def pool_reset(monkeypatch):
-    """A driver whose ComfyUI returns the pool after every node, and a registry."""
+def pool_reset(monkeypatch, tmp_path):
+    """A driver whose ComfyUI returns the pool after every node, a registry, and a still
+    on disk for Load Image to name: its file proves one frame, the 14 GiB still charge."""
     monkeypatch.setattr(guide_order, "comfy_returns_pool_after_each_node", lambda: True)
     monkeypatch.setattr(guide_order, "_class_outputs", lambda cls: _OUTPUTS.get(cls))
-    monkeypatch.setenv(h3_activation.GUIDE_FRAMES_ENV, "1")      # a still, 14 GiB
+    monkeypatch.delenv(h3_activation.GUIDE_FRAMES_ENV, raising=False)
+    _write_image(tmp_path, "still.png", 1)
     yield
 
 
-def _still_graph(length: int = 5, width: int = 1344, height: int = 768) -> dict:
-    graph = _graph(dit=REF2VA_INT8_PRUNED, refs="guide", width=width, height=height)
+def _still_graph(length: int = 5, width: int = 1344, height: int = 768,
+                 image_file: str = "still.png") -> dict:
+    """Load Image wired straight into Add Guide, so the named file proves the length."""
+    graph = _graph(dit=REF2VA_INT8_PRUNED, refs="guide_file", width=width, height=height,
+                   image_file=image_file)
     graph["8"]["inputs"]["length"] = length
     return graph
 
@@ -125,8 +133,42 @@ def test_one_guide_feeding_the_one_sampler_is_charged_as_an_alternative(pool_res
     assert terms.guide_order_note == guide_order.GUIDE_FIRST
     assert terms.total == terms.models_bytes + max(terms.guide_bytes, terms.activation_bytes)
     assert ("only the larger of this and the render activations is charged, here this "
-            "guide encode, since it encodes and ComfyUI returns its memory before any "
-            "sampler runs") in terms.guide_note
+            "guide encode, since it is a still its file proves, and it encodes and ComfyUI "
+            "returns its memory before any sampler runs") in terms.guide_note
+
+
+def test_a_still_whose_length_is_only_declared_keeps_the_sum(pool_reset, monkeypatch):
+    """A scaler between the loader and the guide hides the file; the declaration prices a
+    still, but nothing proves one, so both terms are charged."""
+    monkeypatch.setenv(h3_activation.GUIDE_FRAMES_ENV, "1")
+    graph = _graph(dit=REF2VA_INT8_PRUNED, refs="guide", width=1344, height=768)
+    terms = _terms(graph)
+    assert terms.guide_bytes == 14 * _GIB and not terms.guide_first
+    assert terms.guide_order_note == guide_order.NOT_A_PROVEN_STILL
+    assert terms.total == terms.models_bytes + terms.guide_bytes + terms.activation_bytes
+
+
+def test_a_clip_keeps_the_sum_and_says_so(pool_reset, tmp_path):
+    _write_image(tmp_path, "clip.png", 6)
+    terms = _terms(_still_graph(width=448, height=256, image_file="clip.png"))
+    assert not terms.guide_first and terms.guide_order_note == guide_order.NOT_A_PROVEN_STILL
+    assert terms.total == terms.models_bytes + terms.guide_bytes + terms.activation_bytes
+    assert ("charged beside the render activations because a guide here is a clip, or its file "
+            "does not prove it is a still") in terms.guide_note
+    assert "both are charged because a guide here is a clip" in terms.budget_clause
+
+
+def test_the_binding_clip_with_the_dit_resident_is_refused_as_before(pool_reset, tmp_path):
+    """The review's case: 39 proven frames at 448x256, charged 48 GiB against about 11 of
+    activations, the DiT already resident. Taken as the larger alone it would leave the floor
+    resting on the clip charge, which no cell has read beside the render; the sum refuses it."""
+    _write_image(tmp_path, "clip39.png", 39)
+    terms = _terms(_still_graph(width=448, height=256, image_file="clip39.png"))
+    assert terms.guide_bytes == 48 * _GIB and terms.activation_bytes < 12 * _GIB
+    assert not terms.guide_first and terms.guide_order_note == guide_order.NOT_A_PROVEN_STILL
+    held = replace(terms, te_bytes=0, vae_bytes=0, credited=True)
+    assert not _settled_fits(held, available_gib=55.0, place_gib=0)
+    assert _settled_fits(replace(held, guide_first=True), available_gib=55.0, place_gib=0)
 
 
 def test_the_guide_line_names_the_activations_when_they_are_the_charged_term(pool_reset):
@@ -334,13 +376,21 @@ def test_the_budget_clause_says_why_both_are_charged():
         "before a guide encodes")
 
 
-def test_a_guide_bound_refusal_names_the_alternative_charge(pool_reset, monkeypatch):
-    """A clip at 1344x768 is charged 94 GiB and still refuses as the larger term."""
-    monkeypatch.delenv(h3_activation.GUIDE_FRAMES_ENV)
-    graph = _still_graph()
+def test_a_still_bound_refusal_names_the_alternative_charge(pool_reset, monkeypatch):
+    """A proven still at 1344x768, 14 GiB against 11.3 of activations, on a box too short for it."""
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 50 * _GIB)
+    message = _refuse(_Mesh(), REF2VA_INT8_PRUNED, prompt=_still_graph())
+    assert "guide encode 14.0 GiB" in message
+    assert "of driver stack and guide encode this graph has not spent yet" in message
+    assert "its 11.3 GiB of render activations come after ComfyUI returns the encode's memory" in message
+    assert "guide encode runs first" not in message
+    assert "is charged, here this guide encode, since it is a still its file proves" in message
+
+
+def test_a_clip_bound_refusal_says_both_are_charged_and_why(pool_reset):
+    """A guide at 1344x768 whose length no file proves is priced as a clip, 94 GiB, and kept summed."""
+    graph = _graph(dit=REF2VA_INT8_PRUNED, refs="guide", width=1344, height=768)
     message = _refuse(_Mesh(), REF2VA_INT8_PRUNED, prompt=graph)
     assert "guide encode 94.0 GiB" in message
-    assert "of driver stack and guide encode this graph has not spent yet" in message
-    assert "of render activations come after ComfyUI returns the encode's memory" in message
-    assert "guide encode runs first" not in message
-    assert "is charged, here this guide encode" in message
+    assert "of driver stack and guide encode and render activations this graph has not spent yet" in message
+    assert "both are charged because a guide here is a clip, or its file does not prove it is a still" in message

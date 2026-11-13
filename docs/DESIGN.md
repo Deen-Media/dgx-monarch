@@ -2120,21 +2120,28 @@ coexist. The settled window covers weights at 1.0x plus the driver models and
 other memory the graph still needs to allocate. Slab removes the host copy
 and its transient peak; it does not reduce the settled graph requirement.
 
-**A guide encode and the render activations are alternatives where the order
-is proved.** Add Guide encodes in the driver before the sampler it feeds, and
-ComfyUI with DynamicVRAM empties its device pool after every node (the
-executor's `finally` calls `reset_cast_buffers`, which ends in
+**A still guide's encode and the render activations are alternatives where
+the order is proved.** Add Guide encodes in the driver before the sampler it
+feeds, and ComfyUI with DynamicVRAM empties its device pool after every node
+(the executor's `finally` calls `reset_cast_buffers`, which ends in
 `soft_empty_cache`), so the encode's memory is back before rank 0 samples. The
-settled window then charges the larger of the two, not both. The graph must
-prove the order: ComfyUI in the driver returns the pool after every node; no
-node that uses a model is upstream of a guide; every node that may sample has
-every guide among the nodes ComfyUI is certain to run before it; and no
-pipeline or fleet sampler is in the graph. Anything else keeps the sum, and the
-budget clause says why (`nodes/guide_order.py`). A seam contract
-holds ComfyUI to the per-node reset. Where the DiT is already resident while a
-guide encodes and the guide charge is the larger term, no activation charge
-pads the guide's any more, so the guide charges must hold for the real
-driver's encode (issue #187).
+settled window then charges the larger of the two, not both, but only for
+guides whose files prove them stills (fewer frames than a clip, as the still
+charge itself is proved). The graph must also prove the order: ComfyUI in the
+driver returns the pool after every node; no node that uses a model is
+upstream of a guide; every node that may sample has every guide among the
+nodes ComfyUI is certain to run before it; and no pipeline or fleet sampler is
+in the graph. Anything else keeps the sum, and the budget clause and the
+guide's line say which was charged and why (`nodes/guide_order.py`). A seam
+contract holds ComfyUI to the per-node reset. Where the DiT is already resident
+while a guide encodes and the guide charge is the larger term, no activation
+charge pads the guide's, so the alternative rests on the guide charge alone.
+A still's charge (14 GiB) is read against the real driver's encode by the
+release's proof; a clip's (34 to 94 GiB) is not, so every clip, and every guide
+whose length is declared or unread, keeps the sum. Filed for a later release
+with the cell that would read it: a binding clip guide (448x256, 39 frames,
+charged 48 GiB) encoded with the DiT resident, its peak read on the box against
+the charge (issue #187).
 
 **A deferred load meets the driver's models.** An explicit preset loads at the
 loader node, before ComfyUI builds the text encoders, the VAEs and the encodes,
