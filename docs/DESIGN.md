@@ -2423,11 +2423,13 @@ recovers by itself, and the context's main buffer does not.
   (`worker_env.setup_impl` calls the bootstrap ahead of
   `dist.init_process_group`), and the driver has its error at once. But its
   peer is by then waiting on the group's store, which rank 0 opens only after
-  its own bootstrap, or on the peers a store waits for; that wait holds the
-  peer's GPU lock for the setup's limit (600 s), the rollback's
-  `teardown_group` call queues behind it, and the driver raises the refusal
-  only when the rollback ends. On 2026-11-12 the raw error took 610 s to show
-  that way. Ending the wait at the first rank's failure is a change to the
+  its own bootstrap, or on the peers a store waits for. That wait holds the
+  peer's GPU lock (the connect has a 600 s limit and then tries again), the
+  rollback's `teardown_group` call queues behind it on that lock, and the
+  driver raises the refusal only when the rollback reaches its own limit
+  (`rollback_cleanup_s`, 600 s, and a 10 s margin). On 2026-11-12 the raw
+  error took 610 s to show that way, and the driver logged that the
+  rollback had timed out. Ending the wait at the first rank's failure is a change to the
   setup protocol and is not in this rule. The remedy it names is a reset of the attached
   mesh after memory is freed: no record shows a second try in the same process
   making a context, and a setup that failed leaves the Worker marked as not

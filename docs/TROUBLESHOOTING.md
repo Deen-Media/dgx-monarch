@@ -744,8 +744,9 @@ and then makes its context straight away. What you may see:
   drop the page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`). On a pair
   the refusal opens with the box it came from, "On the sibling, ...", and it
   can take up to ten minutes to show: the Worker that failed answers at
-  once, but the other one waits for it to join the group and gives up only
-  at its own limit, and the driver reports after that. A render that sits
+  once, but the other one goes on waiting for it to join the group, the
+  driver's clean-up of the failed setup waits behind that, and the driver
+  reports only when the clean-up reaches its own limit. A render that sits
   with no progress right after a reset or a restart, on a box that is short
   of free memory, is this wait.
 
