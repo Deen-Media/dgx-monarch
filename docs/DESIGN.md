@@ -2321,8 +2321,12 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
 - **The figures, and DynamicVRAM.** On 2026-11-13 a fresh driver's first
   encode, which loads the VAE, raised the driver's figure 0.60 GiB, and a
   5-frame clip at 448x256 with the DiT resident raised it 1.16 GiB against a
-  17.0 GiB charge. Both readings were taken with DynamicVRAM on, where a VAE
-  pages in inside the encode. There a clip carries 1 GiB more, and the
+  17.0 GiB charge; the same clip on a cached loader raised it 0.44 GiB at most
+  and took the box down 0.58 GiB across Add Guide's 0.47 s. Each is a net
+  change in a device total read a few times inside the node, so it sets a
+  floor on what the encode held at once, not a measure of what it allocated.
+  All three were taken with DynamicVRAM on, where a VAE pages in inside the
+  encode. There a clip carries 1 GiB more, and the
   encode's charge leaves out a VAE ComfyUI did not hold at the first check: it
   adds the VAE only where ComfyUI held it then and a rescue unloaded it, so a
   trim that frees room for the first figure admits. Without DynamicVRAM the
