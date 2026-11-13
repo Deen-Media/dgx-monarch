@@ -54,8 +54,9 @@ from .refusal import RefusalClass, refusal
 log = get_logger(__name__)
 
 DISABLE_ENV = "DGXM_DISABLE_DRIVER_SPEND_PRICE"
-# A Worker's process carries one of these (cli/process_inspector.ACTOR_ENV_MARKERS).
-WORKER_ENV_MARKERS = ("HYPERACTOR_MESH_BOOTSTRAP_MODE", "DGXM_PYTHONPATH")
+# Only an actor carries this (cli/proc_identity.BOOTSTRAP_ENV_MARKER); not DGXM_PYTHONPATH,
+# which the driver sets at every bring-up and a ComfyUI-Manager restart re-execs with.
+WORKER_ENV_MARKERS = ("HYPERACTOR_MESH_BOOTSTRAP_MODE",)
 GUARD = "driver_footprint_preflight"
 GUIDE_CLASS = "MiniMaxH3AddGuide"
 REFERENCE_CLASS = "MiniMaxH3ReferenceToVideo"
@@ -98,10 +99,11 @@ class DriverSpendCapacityError(RuntimeError):
 
 
 class Spend(NamedTuple):
-    """One node's spend: what the words call it, its term in the mark, its charge, and how it is said."""
+    """One spend: its words, its mark term, the figure the mark is held to, its live charge, how it is said."""
 
     what: str
     term: str
+    own: int
     charge: Callable[[], int]
     verb: str
     remedy: str
@@ -276,11 +278,11 @@ def _price(name: str, spend_of: Callable[[Mapping[str, Any], str], Spend | None]
         spend = spend_of(graph, node)
         if spend is None:
             return
-        own, held = spend.charge(), charged(prompt_id, spend.term)
-        if held and held >= own:
+        held = charged(prompt_id, spend.term)  # held to the encode alone: the loader charges the VAE as a model
+        if held and held >= spend.own:
             if not _told(prompt_id, node):
                 log.info("driver spend price: the loader priced this prompt; nothing priced here (%s, node %s: "
-                         "%s GiB charged, %s GiB needed)", name, node, _gib(held), _gib(own))
+                         "%s GiB charged, %s GiB needed)", name, node, _gib(held), _gib(spend.own))
             return
     except Exception as exc:
         log.debug("driver spend price stepped aside for %s (%r)", name, exc)
@@ -330,7 +332,7 @@ def _guide_spend(arguments: Mapping[str, Any]) -> Callable[[Mapping[str, Any], s
             base += CLIP_MARGIN_BYTES
         kind = f"this {frames}-frame clip" if clip else "this still"
         vae = arguments.get("vae")
-        return Spend(f"Add Guide (MiniMax H3) for {kind} at {width}x{height}", GUIDE_TERM,
+        return Spend(f"Add Guide (MiniMax H3) for {kind} at {width}x{height}", GUIDE_TERM, base,
                      lambda: base + _vae_reload_bytes(vae), "encoded", ENCODE_REMEDY, TROUBLESHOOTING_ENCODE)
     return spend_of
 
@@ -342,9 +344,9 @@ def _reference_spend(arguments: Mapping[str, Any]) -> Callable[[Mapping[str, Any
         videos = arguments.get("ref_videos")
         if not (isinstance(videos, Mapping) and any(value is not None for value in videos.values())):
             return None
-        return Spend("Reference to Video (MiniMax H3) for its reference video", REFERENCE_TERM,
-                     lambda: loader_graph.REF_VIDEO_ENCODE_BYTES, "encoded", ENCODE_REMEDY,
-                     TROUBLESHOOTING_ENCODE)
+        figure = loader_graph.REF_VIDEO_ENCODE_BYTES
+        return Spend("Reference to Video (MiniMax H3) for its reference video", REFERENCE_TERM, figure,
+                     lambda: figure, "encoded", ENCODE_REMEDY, TROUBLESHOOTING_ENCODE)
     return spend_of
 
 
@@ -356,7 +358,7 @@ def _load_spend(arguments: Mapping[str, Any], name: str) -> Callable[[Mapping[st
         files = ", ".join(os.path.basename(str(value)) for key, value in arguments.items()
                           if isinstance(key, str) and isinstance(value, str) and value
                           and (key.startswith(("clip_name", "text_encoder")) or key in ("ckpt_name", "unet_name")))
-        return Spend(f"{name} loading {files}", node_term(node), lambda: size, "loaded", LOAD_REMEDY,
+        return Spend(f"{name} loading {files}", node_term(node), size, lambda: size, "loaded", LOAD_REMEDY,
                      TROUBLESHOOTING_LOAD)
     return spend_of
 
@@ -468,6 +470,8 @@ def warn_if_unwrapped() -> None:
 def install_driver() -> str:
     """The ComfyUI process's hook, at node import. Never raises; returns what it did, kept for ``state``."""
     if any(os.environ.get(marker) for marker in WORKER_ENV_MARKERS):
+        log.info("this process is a Worker's actor (%s is set): the driver spend price is not installed here",
+                 ", ".join(WORKER_ENV_MARKERS))
         return _set(WORKER)
     if os.environ.get(DISABLE_ENV) == "1":
         log.info("%s=1: nothing prices a node's spend on the driver where the loader did not", DISABLE_ENV)

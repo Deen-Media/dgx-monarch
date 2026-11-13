@@ -196,6 +196,17 @@ def test_a_guide_the_loader_charged_at_its_size_is_priced_nowhere_and_says_so_on
     assert caplog.text.count("the loader priced this prompt; nothing priced here") == 1
 
 
+def test_a_marked_guide_steps_aside_before_comfy_has_loaded_its_vae(rig, monkeypatch):
+    """The loader charges the VAE among the models, not in the guide's mark: before Add Guide's first
+    encode ComfyUI has not loaded the VAE, and the mark is held to the encode alone."""
+    patcher = SimpleNamespace(model_size=lambda: 5 * GIB)
+    monkeypatch.setitem(sys.modules, "comfy.model_management", SimpleNamespace(current_loaded_models=[]))
+    _mark(driver_spend_price.GUIDE_TERM, int(15.9 * GIB))  # P1's shape: max(14, 15.9) of activations
+    rig.box.value = 1 * GIB
+    _guide(1, vae=SimpleNamespace(patcher=patcher))
+    assert len(_Guide.calls) == 1 and rig.box.reads == 0
+
+
 def test_a_guide_the_loader_charged_below_its_size_is_priced_live(rig):
     """A still's mark does not cover the clip queued after it: the mark is per term and per figure."""
     _mark(driver_spend_price.GUIDE_TERM, 14 * GIB)
@@ -441,12 +452,32 @@ def test_a_second_install_wraps_nothing_more(rig):
 
 
 @pytest.mark.parametrize("marker", driver_spend_price.WORKER_ENV_MARKERS)
-def test_a_worker_installs_nothing(monkeypatch, marker):
+def test_a_worker_installs_nothing_and_says_so(monkeypatch, caplog, marker):
     monkeypatch.setattr(driver_spend_price, "_STATE", {"state": driver_spend_price.UNSET, "warned": ""})
     monkeypatch.setenv(marker, "1")
     installs: list = []
     monkeypatch.setattr(driver_spend_price, "install", lambda: installs.append(1) or [])
-    assert driver_spend_price.install_driver() == driver_spend_price.WORKER and installs == []
+    with caplog.at_level(logging.INFO, logger="dgx_monarch.driver_spend_price"):
+        assert driver_spend_price.install_driver() == driver_spend_price.WORKER and installs == []
+    assert "this process is a Worker's actor" in caplog.text
+
+
+def test_the_drivers_own_pythonpath_marker_does_not_make_it_a_worker(monkeypatch):
+    """The driver sets DGXM_PYTHONPATH at every bring-up, and a ComfyUI-Manager restart re-execs it with it."""
+    from dgx_monarch import driver_uma_memory
+
+    monkeypatch.setattr(driver_spend_price, "_STATE", {"state": driver_spend_price.UNSET, "warned": ""})
+    for marker in driver_spend_price.WORKER_ENV_MARKERS:
+        monkeypatch.delenv(marker, raising=False)
+    monkeypatch.delenv(driver_spend_price.DISABLE_ENV, raising=False)
+    monkeypatch.setenv("DGXM_PYTHONPATH", "/somewhere/src")
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    def no_comfy():
+        raise ImportError("no ComfyUI in this test")
+
+    monkeypatch.setattr(driver_uma_memory, "comfy_modules", no_comfy)
+    assert driver_spend_price.install_driver() == driver_spend_price.NO_COMFY
 
 
 def test_a_class_another_pack_registered_over_a_wrapped_name_is_named_once(rig, caplog):
