@@ -32,7 +32,12 @@ os.environ["MASTER_ADDR"], os.environ["MASTER_PORT"] = "127.0.0.1", port
 if mine.get("switch"):
     os.environ["DGXM_DISABLE_BACKUP_FREE"] = "1"
 
+import torch
 import torch.distributed as dist
+
+if mine.get("own_memory"):
+    # A discrete card on any box: torch would answer for the box's own GPU, integrated on a Spark.
+    torch.cuda.get_device_properties = lambda device=None: SimpleNamespace(is_integrated=0)
 
 dist.init_process_group("gloo", rank=rank, world_size=2)
 

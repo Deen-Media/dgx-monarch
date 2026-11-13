@@ -235,9 +235,9 @@
       "test_the_switch_on_any_rank_turns_the_rule_off_for_the_fleet": "a6b7c7d3c0cc13e2"
     },
     "tests/test_backup_agreement_two_ranks.py": {
-      "test_a_room_refusal_gives_the_short_ranks_figures_on_both_ranks": "02a3edf791cfa825",
-      "test_both_ranks_make_the_same_collectives_and_neither_waits": "6f54f215495a3f9d",
-      "test_the_wrong_ranks_own_words_reach_the_error_on_both_ranks": "3d98f924d3d6cf45"
+      "test_a_room_refusal_gives_the_short_ranks_figures_on_both_ranks": "eb3ac94f12986186",
+      "test_both_ranks_make_the_same_collectives_and_neither_waits": "c9e644fe8a8ee8ad",
+      "test_the_wrong_ranks_own_words_reach_the_error_on_both_ranks": "5f0599bfcd6ead95"
     },
     "tests/test_boogu_adapter.py": {
       "test_boogu_28_7_gqa_expands_kv_before_uly2": "bea5326e49273477",
