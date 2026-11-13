@@ -19,7 +19,6 @@ from typing import Any
 
 from .refusal import RefusalClass, refusal
 
-GUARD = "fleet_two_builds"
 SOURCE_FIELD = "source"
 _DIGEST_CHARS = 16
 
@@ -63,7 +62,7 @@ def refuse_two_builds(handle: Any) -> None:
         "render exchange messages whose count follows the code, so two builds would leave one rank "
         "waiting on the other until the group's timeout. Nothing was dispatched. Update every box to the "
         "same release (dgxm update on each), restart its Worker, and reset the attached mesh.",
-        guard=GUARD, waivable=False))
+        waivable=False))
 
 
-__all__ = ["FleetTwoBuildsError", "GUARD", "SOURCE_FIELD", "builds", "refuse_two_builds", "source_digest"]
+__all__ = ["FleetTwoBuildsError", "SOURCE_FIELD", "builds", "refuse_two_builds", "source_digest"]

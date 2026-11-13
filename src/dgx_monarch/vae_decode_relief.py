@@ -201,8 +201,8 @@ def serving_now() -> Any:
     return fleet if driver_unload.trimmable(fleet) else None
 
 
-def release_worker_pools() -> str:
-    """Ask the serving fleet's actors for their idle device pools; the clause this adds to the relief's line.
+def release_worker_pools() -> tuple[str, bool]:
+    """Ask the serving fleet's actors for their idle device pools: (the relief's clause, whether they released).
 
     One call of the trim the driver unload already makes
     (``driver_unload.trim_actors``: every actor's ``clear_vram`` at ``soft``,
@@ -213,19 +213,19 @@ def release_worker_pools() -> str:
     mesh's render session fails within seconds where a pipelined render owns
     it: the decode then runs as before. It does not ask
     ``driver_unload.busy_reason``, for the reason this module's text gives.
-    Never raises; an empty string where there is no live fleet to ask.
+    Never raises; an empty clause where there is no live fleet to ask.
     """
     from . import driver_unload
 
     try:
         fleet = serving_now()
         if fleet is None:
-            return ""
+            return "", False
         trimmed = driver_unload.trim_actors(fleet)
     except Exception as exc:
-        return f"; the Workers were not asked for their idle device pools ({type(exc).__name__}: {exc})"
+        return f"; the Workers were not asked for their idle device pools ({type(exc).__name__}: {exc})", False
     return (f"; {trimmed.actors} Worker actor(s) then released their idle device pools: MemAvailable read "
-            f"{_gib(trimmed.before)} GiB before that and {_gib(trimmed.after)} GiB after it")
+            f"{_gib(trimmed.before)} GiB before that and {_gib(trimmed.after)} GiB after it"), True
 
 
 def decode_price(vae: Any, samples: Any) -> int:
@@ -322,14 +322,15 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
         return False
     keep, idle = kept_and_idle(mm, vae)
     if not idle:
-        workers = release_worker_pools()  # nothing of the driver's to free: the Workers' idle pools are still there
-        if workers:
+        # Nothing of the driver's to free: the Workers' idle pools are still there.
+        workers, released = release_worker_pools()
+        if released:
             log.info("decode relief: %s; ComfyUI held no text encoder here to free from%s", priced, workers)
             return True
         if "nothing idle" not in told:
             told.add("nothing idle")
-            log.info("decode relief: %s; ComfyUI held no text encoder here to free from, so the decode "
-                     "runs as ComfyUI runs it", priced)
+            log.info("decode relief: %s; ComfyUI held no text encoder here to free from%s, so the decode "
+                     "runs as ComfyUI runs it", priced, workers)
         return False
     before = int(mesh_safety.mem_available_bytes() or 0)
     # ComfyUI's classic loader's own call for this requirement: it frees in its own order until the
@@ -344,8 +345,8 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
     if after < need:
         # Still priced above the reading: the Workers beside this driver hold device pools their last
         # step left reserved and unused. One call of the trim the driver unload already makes.
-        workers = release_worker_pools()
-        if workers:
+        workers, released = release_worker_pools()
+        if released:
             time.sleep(_SETTLE_S)
             after = int(mm.get_free_memory(device))
     tail = (f"the decode starts with {_gib(after)} GiB free" if after >= need else

@@ -56,7 +56,7 @@ from . import lora_partial_load
 
 log = get_logger(__name__)
 
-GUARD = "pair_backup_room"
+GUARD = lora_partial_load.GUARD  # the frozen vocabulary's cross-rank agreement after placement (refusal.GUARDS)
 TROUBLESHOOTING = 145
 _MIB = 2 ** 20
 _GIB = 2 ** 30

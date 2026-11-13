@@ -30,6 +30,14 @@ class _Fleet:
         raise AssertionError("the tests record the trim; nothing is sent")
 
 
+@pytest.fixture(autouse=True)
+def _no_note_outlives_a_test():
+    """The note is process state: a fake fleet left in it would reach the relief's other tests."""
+    vae_decode_relief.note_serving(None)
+    yield
+    vae_decode_relief.note_serving(None)
+
+
 @pytest.fixture
 def trims(monkeypatch):
     asked: list = []
@@ -39,8 +47,7 @@ def trims(monkeypatch):
         return driver_unload.Trimmed(2, 7 * 2 ** 30, 13 * 2 ** 30)
 
     monkeypatch.setattr(driver_unload, "trim_actors", trim)
-    yield asked
-    vae_decode_relief.note_serving(None)
+    return asked
 
 
 def test_the_note_never_keeps_a_fleet_alive(trims):
@@ -50,7 +57,7 @@ def test_the_note_never_keeps_a_fleet_alive(trims):
     del fleet
     gc.collect()
     assert vae_decode_relief.serving_now() is None
-    assert vae_decode_relief.release_worker_pools() == "" and trims == []
+    assert vae_decode_relief.release_worker_pools() == ("", False) and trims == []
 
 
 def test_a_reset_fleet_is_never_called_and_the_one_attached_in_its_place_is(trims, monkeypatch):
@@ -59,14 +66,14 @@ def test_a_reset_fleet_is_never_called_and_the_one_attached_in_its_place_is(trim
     vae_decode_relief.note_serving(retired)
     monkeypatch.setattr(recycle_drain, "attached_fleet", lambda handle: fresh if handle is retired else None)
     assert vae_decode_relief.serving_now() is fresh
-    clause = vae_decode_relief.release_worker_pools()
-    assert trims == [fresh]
+    clause, released = vae_decode_relief.release_worker_pools()
+    assert trims == [fresh] and released is True
     assert "2 Worker actor(s) then released their idle device pools" in clause
     assert "MemAvailable read 7.0 GiB before that and 13.0 GiB after it" in clause
     # No fleet attached in its place: nobody is called.
     trims.clear()
     monkeypatch.setattr(recycle_drain, "attached_fleet", lambda handle: None)
-    assert vae_decode_relief.serving_now() is None and vae_decode_relief.release_worker_pools() == ""
+    assert vae_decode_relief.serving_now() is None and vae_decode_relief.release_worker_pools() == ("", False)
     assert trims == []
 
 
@@ -75,7 +82,7 @@ def test_a_reset_fleet_is_never_called_and_the_one_attached_in_its_place_is(trim
 def test_a_fleet_that_is_not_ready_gets_no_call(trims, state):
     fleet = _Fleet("unready", **state)
     vae_decode_relief.note_serving(fleet)
-    assert vae_decode_relief.serving_now() is None and vae_decode_relief.release_worker_pools() == ""
+    assert vae_decode_relief.serving_now() is None and vae_decode_relief.release_worker_pools() == ("", False)
     assert trims == []
 
 
@@ -87,7 +94,6 @@ def test_a_claim_that_fails_is_said_and_the_decode_goes_on(monkeypatch):
         raise TimeoutError("another render session owns this mesh")
 
     monkeypatch.setattr(driver_unload, "trim_actors", owned)
-    clause = vae_decode_relief.release_worker_pools()
+    clause, released = vae_decode_relief.release_worker_pools()
     assert "the Workers were not asked for their idle device pools" in clause
-    assert "TimeoutError: another render session owns this mesh" in clause
-    vae_decode_relief.note_serving(None)
+    assert "TimeoutError: another render session owns this mesh" in clause and released is False
