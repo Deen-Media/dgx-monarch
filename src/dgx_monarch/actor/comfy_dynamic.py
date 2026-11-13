@@ -218,8 +218,40 @@ def set_native_log_level(ctl: Any) -> bool:
                   "Python, a comfy-managed render can stop inside its first step "
                   "(docs/TROUBLESHOOTING.md #%d)", residency_mode.TROUBLESHOOTING)
         return False
+    if getattr(ctl, "lib", None) is None:
+        # The library did not load. ``init_devices`` then reports no working
+        # install and ``stage_b`` refuses in words; a setter called here would
+        # raise an AttributeError in that refusal's place.
+        return False
     setter()
     return True
+
+
+_NATIVE_LOG_INFO = 4  # comfy-aimdo's own number for INFO
+
+
+def native_log_level(ctl: Any, symbol: str = "log_level") -> int | None:
+    """The loader's native log level as its library holds it now, or None.
+
+    Read from the library and not from what the bring-up asked for: nothing in
+    the library but its eight level setters writes this value, so one read
+    after ``init_devices`` holds for the life of the process.
+    """
+    try:
+        import ctypes
+
+        return int(ctypes.c_int.in_dll(ctl.lib, symbol).value)
+    except Exception:
+        return None
+
+
+def native_log_words(level: int | None) -> str:
+    """What the bring-up's line says of the level it read back."""
+    if level == _NATIVE_LOG_INFO:
+        return "native log level INFO (read back as 4)"
+    if level is None:
+        return "native log level not readable"
+    return f"native log level {level}, NOT the INFO (4) the bring-up set"
 
 
 def stage_b(enabled: bool, *, reserve_vram_gb: float | None = None) -> bool:
@@ -292,10 +324,17 @@ def stage_b(enabled: bool, *, reserve_vram_gb: float | None = None) -> bool:
     _ACTIVE = True
     _STAGE_B_DONE = True
     os.environ[residency_mode.ENV_ACTIVE] = "1"
+    level = native_log_level(ctl)  # after the hooks are in: what the library holds
     log.info("comfy-managed residency ACTIVE: comfy-aimdo %s, device %d, "
-             "simple_vram_headroom %s, patcher ModelPatcherDynamic",
+             "simple_vram_headroom %s, patcher ModelPatcherDynamic, %s",
              _aimdo_version(), index,
-             "unset" if headroom is None else f"{headroom / 2 ** 30:.1f} GiB")
+             "unset" if headroom is None else f"{headroom / 2 ** 30:.1f} GiB",
+             native_log_words(level))
+    if level not in (None, _NATIVE_LOG_INFO):
+        safe_call(log.warning,
+                  "the loader logs through Python at level %d; a render can stop "
+                  "inside its first step (docs/TROUBLESHOOTING.md #%d)",
+                  level, residency_mode.TROUBLESHOOTING)
     return True
 
 

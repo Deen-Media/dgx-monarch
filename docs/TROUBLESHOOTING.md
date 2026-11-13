@@ -3392,8 +3392,9 @@ Worker's GPU figure stopped rising, the GPU sat idle, and the Worker no longer
 answered status. Memory had no part in it. After its budget the stall guard
 ended the render in words
 ([#86](#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)),
-and the next render brought the Workers back by itself. In testing, three of
-six such renders stopped.
+and the next render brought the Workers back by itself. In the tests of
+2026-11-12 and 13, six of twelve such renders stopped while status was being
+polled, and none of six did with every status poller stopped.
 
 **Why.** ComfyUI's dynamic loader (comfy-aimdo 0.6.0) hands each of its log
 lines to a Python callback, and its own log level starts at "everything".
@@ -3413,7 +3414,9 @@ seconds, so a first step of 45 s met one often.
 - The Worker sets the loader's log level to INFO, as ComfyUI does, before the
   loader's hooks go in. The per-allocation lines are dropped inside the
   library and never call Python. The loader's warnings and errors still reach
-  the Worker's log.
+  the Worker's log. The Worker reads the level back from the library after
+  the hooks are in, and its bring-up line ends with
+  `native log level INFO (read back as 4)`.
 - A status read touches the device only while the Worker's GPU thread is
   free. While a load or a sample runs, status answers at once with the
   figures it last read, marked `"stale": true` with `age_s`, their age in
@@ -3426,9 +3429,24 @@ credits nothing from a stale figure.
 
 **What is still the loader's to change.** The root is a Python callback run
 under torch's allocator lock. With the level at INFO the loader can still do
-that in two places: a warning or error line from inside a hook, and its
-page-out callback when it evicts pages to make room. Neither can meet a
-status read any more.
+that in two places: an error line from inside a hook, on a failure path, and
+its page-out callback when it evicts pages to make room. ComfyUI hands it
+that callback only for a model it marks writable, and among the shipped
+families that is Qwen Image 2.1. Neither can meet a status read any more.
+
+One route stays open, possible by mechanism and seen in no record. Python's
+garbage collector, or a finalizer, can free a device tensor on the Worker's
+event-loop thread while that thread holds the interpreter lock, and the free
+takes torch's allocator lock. If the GPU thread is at that moment inside one
+of the two calls above, the two wait on each other as before. Before 1.5
+every device allocation opened that window; now only an error line or Qwen
+Image 2.1's page-out under a memory deficit does. The stall guard ends such
+a render in words and the next one recovers.
+
+The driver's ComfyUI is safe at its default log level, which is INFO. Do not
+start it with `--verbose DEBUG` while DynamicVRAM is on: that level lets the
+loader's budget lines call Python from inside the same hooks, and ComfyUI's
+own `/system_stats` route reads torch's figures on another thread.
 
 **If a render still ends this way.** The error reads `render stalled: the
 fleet reported no progress` with `comfy_managed` on and memory to spare.

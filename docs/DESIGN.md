@@ -1916,20 +1916,37 @@ second, and the status read the reverse. Two rules follow, and both ship:
   process does, after the library loads and before its hooks go in
   (`actor/comfy_dynamic.set_native_log_level`). The per-allocation lines are
   dropped inside the library; its warnings and errors still reach the log.
-- On a Worker only the GPU thread, under the GPU lock, may read or change
-  torch's device allocator while a job runs. Every load, sample, decode,
-  unload, clear (the decode relief's pool level included), setup, teardown
-  and gate cycle already runs that way, the readiness exchange and the
-  backup agreement inside the sample. The calls that stay off the lock
+  The bring-up reads the level back from the library after the hooks are in
+  and says it in its line (`... native log level INFO (read back as 4)`).
+  Nothing in the library but its level setters writes that value, so the one
+  read holds for the life of the process.
+- No code of the pack reads or changes torch's device allocator on a Worker
+  off the GPU thread while a job runs. Every load, sample, decode, unload,
+  clear (the decode relief's pool level included), setup, teardown and gate
+  cycle runs on the GPU thread under the GPU lock, the readiness exchange and
+  the backup agreement inside the sample. The calls that stay off the lock
   (`capacity_quote`, `artifact_identity`, `renew_client_lease`,
-  `cancel_sample`) read files and the kernel's figures and never the device.
-  `status()` was the one exception, and now reads the device only while the
-  lock is free (`actor/worker_status.device_figures`).
+  `cancel_sample`, `ack_latent_handoff`) read files and the kernel's figures
+  and never the device. `status()` was the one exception, and now reads the
+  device only while the lock is free (`actor/worker_status.device_figures`).
 
 The root is the loader's: a Python callback run under torch's allocator lock.
-With the level at INFO it can still do that in two places, a warning or error
-line from inside a hook and its page-out callback when it evicts pages, and
-the second rule is what keeps either from meeting a status read.
+With the level at INFO it can still do that in two places: an error line from
+inside a hook, on a failure path, and its page-out callback when it evicts
+pages, which ComfyUI hands it only for a model it marks writable (among the
+shipped families, Qwen Image 2.1). Neither can meet a status read any more.
+
+**What the second rule cannot promise.** It binds the pack's own code, not
+Python's. A garbage collection or a finalizer can free a device tensor on the
+actor's event-loop thread while that thread holds the interpreter lock (a dead
+cycle that still held one, ComfyUI's own model finalizer), and the free takes
+torch's allocator lock. If the GPU thread is at that moment inside one of the
+two calls above, the same two-way wait results. It is possible by mechanism
+and no record shows it: before the level was set every device allocation
+opened that window, and now only an error line or Qwen Image 2.1's page-out
+under a memory deficit does. The stall guard still ends such a render in
+words and the next render recovers. Closing it for good is the loader's
+change: no call into Python from under the allocator lock.
 
 **A class-K guard that blocks the ceremony answers first.** Gate proof renders
 ignore accuracy waivers. A class-K refusal therefore blocks every proof
