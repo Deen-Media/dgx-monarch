@@ -848,7 +848,14 @@ you may see:
   every rank frees; a rank that cannot free keeps the whole fleet as it is; and where a rank would still be
   short of what the sampler needs the render is refused before its first step, naming the rank and the
   figures. A load ComfyUI placed only partly
-  whose bake could not be finished for room is still as above.
+  whose bake could not be finished for room is still as above. If a pair's
+  render is refused with `pair_backup_room` after the ranks freed their
+  backups, the same queue is refused again until memory is back: clear the
+  Sparks (Clear and retry where the panel offers it, or Reset attached mesh)
+  and queue again, shorten the clip, or free memory on the box the refusal
+  names; turning `lora_low_rss` on does not help a model whose stack is
+  already baked in. A Worker gives a dropped model's host memory back at the
+  drop and at a hard clear; a soft clear returns its device pool only.
   `DGXM_DISABLE_BACKUP_FREE=1` in the Worker's environment (a drop-in for the
   Worker's unit, then a Worker restart; on a local mesh, the environment ComfyUI
   starts in) turns that step off, for diagnosis; the Worker then logs what it

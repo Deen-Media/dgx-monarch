@@ -41,6 +41,8 @@ COPY_FREE_DROP_DISABLE_ENV = "DGXM_DISABLE_COPY_FREE_DROP"
 # ComfyUI's own spelling of "load all of it": LoadedModel.model_load turns a
 # lowvram budget of 0 into this before it calls partially_load.
 FULL_LOAD_EXTRA = 1e32
+# A host trim after a drop is said only where it returned this much.
+_TRIM_WORTH_A_LINE = 256 * 2**20
 
 
 def skip_reason(patcher: Any) -> str | None:
@@ -261,15 +263,30 @@ def collect_dropped() -> None:
 
 
 def flush_dropped(mm: Any, slot: str) -> None:
-    """Return a dropped model's cached device blocks to the host, best effort.
+    """Return a dropped model's cached device blocks, and its freed host memory, to the box, best effort.
 
     The unload (``unload_dropped``) flushes while the store still holds the weights.
     After those references are cleared, flush again so ``MemAvailable`` and the
     next capacity quote reflect the released memory. The model is already
     dropped; a flush failure only leaves capacity quotes pessimistic.
+
+    Then one host trim (``host_trim``): from a Worker's second load of a file
+    on, the C library keeps the freed pages of its smaller weights, and a
+    dropped model's memory would not reach the box (on record a hard clear
+    left a Worker at 10.35 GiB with no model, and a load that fit was then
+    refused 0.5 GiB short). Every drop of a slot ends here, and the Worker's
+    hard clear is a drop of every slot. A reuse makes no drop, so this is no
+    step of an ordinary render.
     """
     try:
         mm.soft_empty_cache()
     except Exception as exc:
         log.warning("model store [%s]: cache flush after the drop failed (%s); capacity "
                     "quotes may count the dropped weights until the next flush", slot, failure_summary(exc))
+    from . import host_trim
+
+    ran, seconds, before, after = host_trim.trim()
+    if ran and after - before >= _TRIM_WORTH_A_LINE:
+        log.info("model store [%s]: the host trim after the drop returned %.1f GiB to the box "
+                 "(MemAvailable %.1f to %.1f GiB, %.2f s)", slot, (after - before) / 2**30,
+                 before / 2**30, after / 2**30, seconds)

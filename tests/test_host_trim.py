@@ -4,7 +4,9 @@
 mechanism itself, in a fresh interpreter so no earlier allocation of this
 test run has moved glibc's threshold: free one mapped block just under 32 MiB,
 after which blocks of that size and smaller come from the heap; allocate and
-free about 2 GiB of them beneath a small live block; the pages stay; a trim
+free about 2 GiB of them beneath a small live block, on a thread that is not
+the main one, as the Worker loads (a thread's arena is a chain of 64 MiB
+heaps, where the kept memory was found); the pages stay; a trim
 returns them. glibc raises its threshold only to the size of a freed mapped
 block of 32 MiB or less, so the first block is 31 MiB, not larger.
 """
@@ -19,7 +21,7 @@ import pytest
 from dgx_monarch.actor import host_trim
 
 _MECHANISM = r"""
-import ctypes, sys
+import ctypes, sys, threading
 
 MIB = 2 ** 20
 
@@ -37,16 +39,25 @@ def touched(size):
 
 libc = ctypes.CDLL(None)
 libc.gnu_get_libc_version.restype = ctypes.c_char_p
-first = touched(31 * MIB)
-del first                                   # a mapped block of 32 MiB or less, freed: the threshold moves up to it
-held = [touched(24 * MIB) for _ in range(80)]   # 1.9 GiB of blocks under the threshold
-top = touched(1 * MIB)                      # a small live block above them: the heap's top is not free
-before = rss()
-del held
-freed = rss()
 libc.malloc_trim.argtypes, libc.malloc_trim.restype = [ctypes.c_size_t], ctypes.c_int
-libc.malloc_trim(0)
-print(before, freed, rss(), len(top))
+seen = {}
+
+
+def loader():
+    first = touched(31 * MIB)
+    del first                                    # a mapped block of 32 MiB or less, freed: the threshold moves up to it
+    held = [touched(24 * MIB) for _ in range(80)]    # 1.9 GiB, now from this thread's arena heaps
+    seen["top"] = touched(1 * MIB)               # a small live block in the chain's last heap
+    seen["before"] = rss()
+    del held
+    seen["freed"] = rss()
+
+
+thread = threading.Thread(target=loader)         # not the main thread: its arena is a chain of 64 MiB heaps
+thread.start()
+thread.join()
+libc.malloc_trim(0)                              # from the main thread: it walks every arena
+print(seen["before"], seen["freed"], rss(), len(seen["top"]))
 """
 
 

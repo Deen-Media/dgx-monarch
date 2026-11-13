@@ -1076,38 +1076,56 @@ where the INT8 ConvRot Wan-Animate 2 file was loaded a second time in the same
 process (2026-11-12). What stayed, 9.5 to 9.8 GiB, equals that file's tensors
 under 32 MiB (9.78 GiB; its tensors of 32 MiB and more are 5.70). glibc raises
 its threshold for giving a block its own mapping to the size of any mapped
-block the process frees, up to 32 MiB, and a block under the threshold comes
-from the heap, whose freed pages stay with the process. So the free is
-followed by one `malloc_trim(0)` (`actor/host_trim.py`), in the one-GPU step,
-in the pair's act and in the route's tail, and the line that reports the free
-gives MemAvailable before and after. A hardware probe of that reading was
-ordered on 2026-11-13 and is not yet read; neither is a whole load's own free.
+block the process frees, up to 32 MiB; a block under it comes from an arena,
+and the Worker's loading thread has one made of 64 MiB heaps, whose freed
+pages stay with the process. A probe read it on 2026-11-13: after the free the
+Worker held 9.95 GiB in 243 mappings of 50 to 55 MiB at 64 MiB-aligned
+addresses; a soft and a hard clear returned none of it; and the next load of
+the file went into it (a peak of 17.20 GiB, not 25). So the free is followed
+by one `malloc_trim(0)` (`actor/host_trim.py`), which walks every arena: in
+the one-GPU step, in the pair's act and in the route's tail, where the line
+that reports the free gives MemAvailable before the free, after it and after
+the trim; and after the store drops a slot, which the Worker's hard clear
+does for every slot (`resident_ledger.flush_dropped`). A load's placement and
+a soft clear are not followed by a trim in this release. The trim's return
+and its time have no hardware reading yet; neither has a whole load's own
+free.
 
 On a pair the ranks free together or not at all
 (`actor/backup_agreement.py`). After the cross-rank guard has found every rank
-whole, each rank adds four integers to the guard's own exchange: whether it is
+whole, each rank adds five integers to the guard's own exchange: whether it is
 short (it holds a backup and its room is under the same ask), whether it can
-free, whether its switch is set, and its margin, its room less ComfyUI's
-single-batch estimate plus 1 GiB, with its rank in the low bits. Every
-decision is made from the MIN that comes back, so no rank decides alone. Any
-rank short and none unable: every rank frees, the roomy one too, so the slots
-stay alike and the next stack change reloads on all of them. A rank that
-cannot free (a patched model outside its store): every rank keeps its backup
-and says what it left standing. A switch set on any rank turns the rule off
-for the fleet. After a free the ranks make one more exchange, of each rank's
-model as read and its margin as read: a model that is not what a full load
-leaves, or a tightest margin under zero, refuses on every rank before the
-first forward, class C, naming the rank and the figures. The margin is also
-checked where a short fleet kept its backups. The margin weighs the sampler's
-need alone, on every rank: it carries NO term for the driver's decode, because
-the driver cannot price a decode before sampling (the VAE is a later node).
-The decode beside the driver is the decode relief's to cover, by the Workers'
-release of their idle device pools (`vae_decode_relief`, in the section on the driver's decode). A render that does not free
-makes the one collective it made before, with more integers in it; both
-Workers must therefore run one build, and a fleet whose Workers report two
-source digests at setup is refused before dispatch (`mesh_builds.py`). The
-shared memory a rank maps for its process groups (5.5 GiB on record) has no
-price term in this release. `DGXM_DISABLE_BACKUP_FREE=1` in the
+free, whether its switch is set, its margin with its rank in the low bits, and
+whether it holds a slot this agreement freed before. The margin is its room
+less 1.15 times ComfyUI's single-batch estimate plus 1 GiB (a rank added
+6.4 GiB where the estimate was 6.2; one GPU added 20.0 at 241 frames where it
+was 17.4). Every decision is made from the MIN that comes back, so no rank
+decides alone. Any rank short and none unable: every rank frees, the roomy
+one too, so the slots stay alike and the next stack change reloads on all of
+them. A rank that cannot free (a patched model outside its store): every rank
+keeps its backup and says what it left standing. A switch set on any rank
+turns the rule off for the fleet. After a free the ranks make one more
+exchange, of each rank's model as read and its margin as read: a model that
+is not what a full load leaves, or a tightest margin under zero, refuses on
+every rank before the first forward, class C under the guard
+`pair_backup_room`, naming the rank and the figures. The margin is also
+checked where a short fleet kept its backups, and at every later render on
+slots the agreement freed: a fleet that freed and was refused has no backup
+left to be short of, and is refused again until the Sparks are cleared or
+the room is back. The margin weighs the sampler's need alone, on every rank:
+it carries NO term for the driver's decode, because the driver cannot price a
+decode before sampling (the VAE is a later node). The decode beside the driver
+is the decode relief's to cover, by the Workers' release of their idle device
+pools (`vae_decode_relief`, in the section on the driver's decode). A render
+that does not free makes the one collective it made before, with more
+integers in it; both Workers must therefore run one build, and a fleet whose
+Workers state two builds at setup, or of which one states none because it
+predates the check, is refused before its first load or render
+(`mesh_builds.py`; a Fleet's world-1 actors share no collective and are not
+compared). The shared memory a rank maps for its process groups (5.5 GiB on
+record) has no price term in this release. For a proof on real ranks,
+`DGXM_FAULT_BACKUP_RANK` with `DGXM_ACCEPTANCE=1` makes the named rank vote
+short and read its model as wrong after the free. `DGXM_DISABLE_BACKUP_FREE=1` in the
 Worker's environment keeps the backup however little room is left, for
 diagnosis and to read one build with and without the step; the Worker then
 logs what the step would have weighed, and the worker loop's environment
@@ -2376,7 +2394,7 @@ up pages without being unloaded where that is enough. Then ComfyUI's decode
 runs. Where the decode is still priced above the reading after that, the
 driver asks the Workers for memory they hold idle: one call of the trim the
 driver unload already makes (`driver_unload.trim_actors`, every actor's
-`clear_vram` at `soft`), which empties each Worker's device pool and unloads
+`clear_vram` at `pool`), which empties each Worker's device pool and collects, and drops
 nothing. A Worker keeps the pool its sampler grew reserved after the last
 step, 6.4 GiB on record beside a driver whose decode then took 2.4 to 4.4
 (a pair, 2026-11-13, the first Spark under its clock cap, max 2100 MHz: the
@@ -2942,9 +2960,16 @@ cluster actor inherits, the driver's launch does the same for a local actor
 driver inherits stands, and the unit `dgxm update` installs starts from an
 empty environment), and `scripts/comfy-driver.sh` exports the same for the
 driver, so a free on the thread that allocated the memory gives it back at
-once. That setting is for torch's own allocator. A weight the loader hands over as it read it lies in the C
-library's memory, where from a process's second load on the freed pages of blocks under 32 MiB come back only
-at a trim (section 5.5 names the three places that trim). A small block freed from another thread still waits for that thread's
+once. That setting is for torch's own allocator. The weights of a quantized
+file are the loader's own tensors, and a probe found them in the C library's
+per-thread arenas (2026-11-13, section 5.5): there, from a process's second
+load of a file on, the freed pages of blocks under 32 MiB come back only at a
+trim. The code trims after the free of a backup for a sampler and after the
+store drops a slot (the hard clear among them), and nowhere else in this
+release: a load's placement, a released LoRA stack and a soft clear are not
+followed by one, so a Worker's anonymous memory can rest about 10 GiB above a
+fresh Worker's after its second load of the INT8 Wan-Animate 2 file, until a
+drop, a hard clear or a recycle. A small block freed from another thread still waits for that thread's
 next allocations. The cost is about 20 percent on a loop that does nothing but
 allocate and free host memory (0.44 s against 0.36 s for ten rounds of 16
 blocks of 128 MiB); the release test on this setting measures what renders pay.

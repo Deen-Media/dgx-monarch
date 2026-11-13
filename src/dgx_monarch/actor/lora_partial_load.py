@@ -294,10 +294,12 @@ def _free_backup(patcher: Any, stored: Any) -> str:
     if active is not None and active is not patcher:
         active.patches.clear()  # the same stack on the store's own patcher: it is baked in now
     stored.base_baked, stored.unbake = True, None
-    ran, seconds, _at_trim, after = host_trim.trim()
-    trimmed = f"host trim {seconds:.2f} s" if ran else "no host trim on this C library"
-    return (f"MemAvailable read {before / _GIB:.1f} GiB before the free and {after / _GIB:.1f} GiB "
-            f"after it ({trimmed})")
+    ran, seconds, at_trim, after = host_trim.trim()
+    if not ran:
+        return (f"MemAvailable read {before / _GIB:.1f} GiB before the free and {at_trim / _GIB:.1f} GiB "
+                "after it (no host trim on this C library)")
+    return (f"MemAvailable read {before / _GIB:.1f} GiB before the free, {at_trim / _GIB:.1f} GiB after it "
+            f"and {after / _GIB:.1f} GiB after the host trim ({seconds:.2f} s)")
 
 
 # ComfyUI runs cond and uncond in one call when this many times its full estimate is free

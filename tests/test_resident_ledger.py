@@ -563,3 +563,45 @@ def test_mark_after_drop_says_what_the_drop_did_to_the_other_slot():
     assert store._gpu_evicted == set()
     resident_ledger.mark_after_drop(store, "cond", False)
     assert store._gpu_evicted == {"uncond"}
+
+
+def test_a_drop_ends_in_one_host_trim_and_says_what_came_back(monkeypatch, caplog):
+    """A dropped model's host memory must reach the box: the flush after a drop trims the C library's arenas.
+
+    ``flush_dropped`` is the last step of every drop of a slot, the hard clear's among them. The trim is
+    replaced here by a recorder, so the test needs no glibc.
+    """
+    from dgx_monarch.actor import host_trim
+
+    order: list[str] = []
+    returned = {"bytes": 10 * 2**30}
+
+    def trim():
+        order.append("trim")
+        return True, 0.31, 20 * 2**30, 20 * 2**30 + returned["bytes"]
+
+    monkeypatch.setattr(host_trim, "trim", trim)
+    mm = type("Mm", (), {"soft_empty_cache": staticmethod(lambda: order.append("flush"))})
+    with caplog.at_level(logging.INFO):
+        resident_ledger.flush_dropped(mm, "cond")
+    assert order == ["flush", "trim"]
+    assert "the host trim after the drop returned 10.0 GiB to the box" in caplog.text
+    assert "(MemAvailable 20.0 to 30.0 GiB, 0.31 s)" in caplog.text
+    # A trim that returned little says nothing, and a cache flush that raised is still followed by the trim.
+    caplog.clear()
+    order.clear()
+    returned["bytes"] = 64 * 2**20
+
+    def broken():
+        order.append("flush")
+        raise RuntimeError("CUDA is gone")
+
+    with caplog.at_level(logging.INFO):
+        resident_ledger.flush_dropped(type("Mm", (), {"soft_empty_cache": staticmethod(broken)}), "cond")
+    assert order == ["flush", "trim"] and "host trim" not in caplog.text
+    # A C library with no trim: nothing is said here (host_trim says so once itself).
+    monkeypatch.setattr(host_trim, "trim", lambda: (False, 0.0, 20 * 2**30, 20 * 2**30))
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        resident_ledger.flush_dropped(mm, "cond")
+    assert "host trim" not in caplog.text
