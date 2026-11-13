@@ -545,8 +545,9 @@ def test_the_walls_and_the_route_hand_the_price_the_same_reserve(monkeypatch):
     """The quote and ``take`` price by ``route``'s arguments and the walls by ``fresh_load_probe``: one reserve."""
     seen = []
     monkeypatch.setattr(fallback, "worker_reserve", lambda: 3 * GIB)
-    monkeypatch.setattr(price, "probe", lambda stack, resolve, **kwargs: seen.append(kwargs["comfy_reserve_bytes"]))
-    fallback.fresh_load_probe(_store(), "main", STACK)
+    monkeypatch.setattr(price, "probe", lambda stack, resolve, **kwargs: (
+        lambda _path, _options: seen.append(kwargs["comfy_reserve_bytes"])))
+    fallback.fresh_load_probe(_store(), "main", STACK)("/models/m", {})  # the probe prices at the wall
     assert seen == [3 * GIB] == [fallback.route(_store(), None, False, True)["comfy_reserve_bytes"]]
 
 
@@ -826,35 +827,87 @@ def test_the_fresh_loads_probe_charges_the_classic_bake_and_never_prices_in_plac
     assert again.in_place_bytes == 0 and again.in_place_note == "; " + fallback.TRIED
 
 
-def test_after_a_declined_hot_swap_the_walls_charge_none_of_the_stacks_files_and_only_once(worker_side, ltx):
-    """The swap read the stack before it declined; the fresh load prices against a box those bytes have left."""
+# The stack's tensors as the declined swap's build read them: patches that reference all of the file's bytes.
+HELD_STACK = {"blocks.0.attn.weight": [(1.0, types.SimpleNamespace(nbytes=LTX_OWN_STACK))]}
+
+
+def test_while_the_store_holds_the_stack_the_walls_charge_none_of_its_files(worker_side, ltx):
+    """The swap read the stack before it declined, and the store holds it: the reading has already left those bytes."""
     term = ltx - LTX_OWN_STACK
     store = _store(_stored())
+    probe = fallback.fresh_load_probe(store, "cond", STACK)  # built before the swap's stack is held or let go
     assert not fallback.stack_on_host(store, "cond", STACK)
-    assert fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {}).bake_bytes == ltx  # an empty slot
-    fallback.note_stack_read(store, "cond", STACK)
+    assert probe("/models/m", {}).bake_bytes == ltx  # an empty slot: the files are still to be read
+    fallback.note_stack_read(store, "cond", STACK, HELD_STACK)
     assert fallback.stack_on_host(store, "cond", STACK)
     assert not fallback.stack_on_host(store, "uncond", STACK)  # another slot's stack
     assert not fallback.stack_on_host(store, "cond", [{"name": "other.safetensors", "strength": 0.8}])
     assert not fallback.stack_on_host(store, "cond", None)
-    assert fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {}).bake_bytes == term
-    # The probe read the note once: the next fresh load of this stack is charged its file again.
-    assert not fallback.stack_on_host(store, "cond", STACK)
-    assert fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {}).bake_bytes == ltx
-    # A probe for another stack, or on the default, clears a note it does not use.
-    fallback.note_stack_read(store, "cond", STACK)
-    assert fallback.fresh_load_probe(store, "cond", None) is None
-    assert not fallback.stack_on_host(store, "cond", STACK)
+    # Each wall asks at the moment it reads, and asking lets nothing go: both walls see the held stack.
+    assert probe("/models/m", {}).bake_bytes == term
+    assert probe("/models/m", {}).bake_bytes == term and fallback.stack_on_host(store, "cond", STACK)
 
 
-def test_a_note_holds_only_the_slot_and_the_stack_and_does_not_age(worker_side, ltx):
-    """The note binds to one ``ensure`` call, which clears it on entry (the store-order tests drive that)."""
+def test_a_stack_let_go_before_a_wall_reads_is_charged_its_files(worker_side, ltx):
+    """Whatever lets the stack go (the fresh load before it reads the files again, a failed call): files charged."""
+    term = ltx - LTX_OWN_STACK
     store = _store(_stored())
-    fallback.note_stack_read(store, "cond", STACK)
-    assert getattr(store, fallback._STACK_READ) == ("cond", fallback._stack_signature(STACK))
-    fallback.forget_stack_read(store)
+    probe = fallback.fresh_load_probe(store, "cond", STACK)
+    fallback.note_stack_read(store, "cond", STACK, HELD_STACK)
+    assert probe("/models/m", {}).bake_bytes == term
+    fallback.forget_stack_read(store)  # its bytes go back to the box: the next reading holds them
     assert not fallback.stack_on_host(store, "cond", STACK)
-    assert fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {}).bake_bytes == ltx
+    assert probe("/models/m", {}).bake_bytes == ltx
+    # A swap with nothing to hold (no patches came of the build) leaves no claim that the files were read.
+    for nothing in (None, {}):
+        fallback.note_stack_read(store, "cond", STACK, nothing)
+        assert not fallback.stack_on_host(store, "cond", STACK)
+        assert probe("/models/m", {}).bake_bytes == ltx
+
+
+def test_the_note_keeps_the_stacks_tensors_alive_and_forgetting_lets_them_go(worker_side):
+    import gc
+    import weakref
+
+    class Tensor:
+        nbytes = LTX_OWN_STACK
+
+    tensor = Tensor()
+    alive = weakref.ref(tensor)
+    store = _store(_stored())
+    fallback.note_stack_read(store, "cond", STACK, {"blocks.0.attn.weight": [(1.0, tensor)]})
+    del tensor
+    gc.collect()
+    assert alive() is not None and fallback.stack_on_host(store, "cond", STACK)  # held: on the host by construction
+    assert getattr(store, fallback._STACK_READ)[:2] == ("cond", fallback._stack_signature(STACK))
+    fallback.forget_stack_read(store)
+    gc.collect()
+    assert alive() is None and not fallback.stack_on_host(store, "cond", STACK)
+
+
+def test_a_stack_held_only_in_part_is_charged_its_files(worker_side, ltx):
+    """A LoRA with tensors the model does not patch: the patches hold less than the file, so the file is charged."""
+    term = ltx - LTX_OWN_STACK
+    store = _store(_stored())
+    probe = fallback.fresh_load_probe(store, "cond", STACK)
+
+    def held(share):
+        return {"blocks.0.attn.weight": [(1.0, types.SimpleNamespace(nbytes=int(share * LTX_OWN_STACK)))]}
+
+    for share, charged in ((1.0, term), (0.99, term), (0.97, ltx), (0.5, ltx)):
+        fallback.note_stack_read(store, "cond", STACK, held(share))
+        assert fallback.stack_on_host(store, "cond", STACK) is (charged == term), share
+        assert probe("/models/m", {}).bake_bytes == charged, share
+    assert fallback.HELD_SHARE_OF_FILES == 0.98
+
+
+def test_what_is_held_is_counted_by_its_distinct_tensors_at_any_depth():
+    one = types.SimpleNamespace(nbytes=100)
+    two = types.SimpleNamespace(nbytes=11)
+    adapter = types.SimpleNamespace(weights=(one, two, None, 4.0), loaded_keys={"a"})  # ComfyUI's weight adapters
+    patches = {"w1": [(1.0, adapter, 1.0, None, None)], "w2": [(0.4, ("diff", (one,)), 1.0, None, None)]}
+    assert fallback._tensor_bytes(patches) == 111  # the shared tensor once
+    assert fallback._tensor_bytes({}) == 0 and fallback._tensor_bytes({"w": [(1.0, "no tensor")]}) == 0
 
 
 def test_the_fallback_reads_the_same_note_and_keeps_the_classic_bake_where_it_then_fits(worker_side):
@@ -864,7 +917,7 @@ def test_the_fallback_reads_the_same_note_and_keeps_the_classic_bake_where_it_th
         assert _take(plain) == ("patcher", "hot-swap")  # no note: the file is charged, so the bake goes in place
     worker_side.baked.clear()
     noted = _store(_stored())
-    fallback.note_stack_read(noted, "cond", STACK)
+    fallback.note_stack_read(noted, "cond", STACK, HELD_STACK)
     with fallback.permission(ALLOW):
         assert _take(noted) is None  # the classic bake fits the reading the file has already left
     assert worker_side.baked == [] and fallback.stack_on_host(noted, "cond", STACK)  # kept for the fresh load

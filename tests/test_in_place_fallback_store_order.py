@@ -76,47 +76,119 @@ def test_a_fallback_that_declines_is_followed_by_the_fresh_load(classic):
     assert transition == "load" and calls.load == 2 and store.current is not bare
 
 
-def test_a_declined_hot_swap_notes_the_stack_it_read_for_the_fresh_load_that_follows(classic, monkeypatch):
-    """The real swap reads the stack to count what it would copy; the walls then charge none of its files."""
+class _Tensor:
+    """Stands for a LoRA file's tensor: weak-referenceable, so a test can see whether it is still alive."""
+
+    nbytes = 1 << 20
+
+
+@pytest.fixture
+def stack(classic, monkeypatch):
+    """Every build of the stack reads fresh tensors, as ``_build_active`` reads the files; the builds are recorded."""
+    import weakref
+
+    builds = types.SimpleNamespace(tensors=[], alive_at_each_build=[])
+
+    def build(self, base, stack_):
+        builds.alive_at_each_build.append([ref() is not None for ref in builds.tensors])
+        tensor = _Tensor()
+        builds.tensors.append(weakref.ref(tensor))
+        return types.SimpleNamespace(tag="ACTIVE", model=base.model,
+                                     patches={key: [(1.0, tensor)] for key in ("w1", "w2")} if stack_ else {})
+
+    monkeypatch.setattr(ms.ModelStore, "_build_active", build)
+    return builds
+
+
+def test_the_declined_swaps_stack_is_held_through_both_walls_and_let_go_before_the_files_are_read_again(
+        classic, stack, monkeypatch):
+    """Held through: the walls charge none of the files, by what the store holds and not by timing."""
+    from dgx_monarch.actor import store_residency
+
     store, _calls, _asked, _answer = classic
     seen: dict = {}
-    real_probe = in_place_fallback.fresh_load_probe
+    real_resolve, real_check = store_residency.resolve, store_residency.preload_capacity_check
+    real_drop = store._drop
 
     def take(store_, slot, unet_name, options, lora_stack, *_rest):
         seen["at take"] = in_place_fallback.stack_on_host(store_, slot, lora_stack)
         return None
 
-    def probe(store_, slot, lora_stack):
-        seen["at the walls"] = in_place_fallback.stack_on_host(store_, slot, lora_stack)
-        return real_probe(store_, slot, lora_stack)
+    def drop(slot, *args, **kwargs):  # the fresh load drops the old slot and collects before either wall
+        real_drop(slot, *args, **kwargs)
+        seen.setdefault("after the drop", stack.tensors[0]() is not None)
+
+    def resolve(*args, **kwargs):
+        seen["at the first wall"] = (in_place_fallback.stack_on_host(store, "cond", STACK),
+                                     stack.tensors[0]() is not None)
+        return real_resolve(*args, **kwargs)
+
+    def check(*args, **kwargs):
+        seen["at the second wall"] = (in_place_fallback.stack_on_host(store, "cond", STACK),
+                                      stack.tensors[0]() is not None)
+        return real_check(*args, **kwargs)
 
     monkeypatch.setattr(in_place_fallback, "take", take)
-    monkeypatch.setattr(in_place_fallback, "fresh_load_probe", probe)
+    monkeypatch.setattr(store, "_drop", drop)
+    monkeypatch.setattr(store_residency, "resolve", resolve)
+    monkeypatch.setattr(store_residency, "preload_capacity_check", check)
     _patcher, transition = store.ensure(BASE, {}, STACK)
-    assert transition == "load" and seen == {"at take": True, "at the walls": True}
-    assert not in_place_fallback.stack_on_host(store, "cond", STACK)  # read once
+    assert transition == "load"
+    assert seen == {"at take": True, "after the drop": True,
+                    "at the first wall": (True, True), "at the second wall": (True, True)}
+    # Two builds: the swap's and the fresh load's. The swap's tensors were gone before the second read.
+    assert stack.alive_at_each_build == [[], [False]]
+    assert not in_place_fallback.stack_on_host(store, "cond", STACK)
     # The same stack into a slot the store holds nothing in: no swap ran, so nothing was read first.
+    monkeypatch.setattr(store, "_drop", real_drop)
     store._drop("cond")
     seen.clear()
+    monkeypatch.setattr(store_residency, "resolve", lambda *a, **k: (
+        seen.__setitem__("at the first wall", in_place_fallback.stack_on_host(store, "cond", STACK)),
+        real_resolve(*a, **k))[1])
     store.ensure(BASE, {}, STACK)
-    assert seen == {"at take": False, "at the walls": False}
+    assert seen == {"at take": False, "at the first wall": False, "at the second wall": (False, False)}
 
 
-def test_a_hot_swap_that_stays_in_place_leaves_no_note(classic):
+def test_a_stack_released_before_the_walls_read_is_charged_its_files(classic, stack, monkeypatch):
+    """Released before the check: nothing holds the files' bytes, so the walls are told they are still to read."""
+    from dgx_monarch.actor import store_residency
+
     store, _calls, _asked, _answer = classic
-    in_place_fallback.note_stack_read(store, "cond", STACK)  # a note an earlier call left behind
+    seen: dict = {}
+    real_resolve = store_residency.resolve
+
+    def take(store_, slot, unet_name, options, lora_stack, *_rest):
+        in_place_fallback.forget_stack_read(store_)  # as the in-place path does before it drops or loads
+        return None
+
+    def resolve(*args, **kwargs):
+        seen["at the first wall"] = (in_place_fallback.stack_on_host(store, "cond", STACK),
+                                     stack.tensors[0]() is not None)
+        return real_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(in_place_fallback, "take", take)
+    monkeypatch.setattr(store_residency, "resolve", resolve)
+    store.ensure(BASE, {}, STACK)
+    assert seen == {"at the first wall": (False, False)}
+
+
+def test_a_hot_swap_that_stays_in_place_holds_nothing(classic):
+    store, _calls, _asked, _answer = classic
     store.current.base_patcher.backup = {"w1": object(), "w2": object()}  # ComfyUI's backup covers the stack
     _patcher, transition = store.ensure(BASE, {}, STACK)
     assert transition == "hot-swap" and not in_place_fallback.stack_on_host(store, "cond", STACK)
+    assert getattr(store, in_place_fallback._STACK_READ, None) is None
 
 
-def test_a_fresh_load_that_raised_leaves_no_note_for_the_requeue(classic, monkeypatch):
-    """The note binds to one ``ensure`` call: a requeue of the same stack is charged its files.
+def test_a_fresh_load_that_raised_holds_nothing_for_the_requeue(classic, stack, monkeypatch):
+    """The held stack never outlives its ``ensure`` call: a requeue of the same stack is charged its files.
 
-    The swap declines and leaves its note; the fresh load raises before its
-    walls price, with the slot emptied. The same request again finds an empty
-    slot, runs no swap and reads nothing first, so nothing may be believed
-    read. ``ensure`` clears the note on entry.
+    The swap declines and the store holds its stack; the fresh load raises
+    before its walls price, with the slot emptied. ``ensure`` lets the stack
+    go on the way out, so its bytes are back in the box before any quote or
+    load reads it again, and the same request finds an empty slot, runs no
+    swap and reads nothing first.
     """
     from dgx_monarch.actor import store_load
 
@@ -125,6 +197,7 @@ def test_a_fresh_load_that_raised_leaves_no_note_for_the_requeue(classic, monkey
     real_probe = in_place_fallback.fresh_load_probe
 
     def failing_load(store_, slot, *_args, **_kwargs):
+        seen["held when the load failed"] = in_place_fallback.stack_on_host(store_, slot, STACK)
         store_._drop(slot)
         raise RuntimeError("the load failed before its walls priced")
 
@@ -132,8 +205,13 @@ def test_a_fresh_load_that_raised_leaves_no_note_for_the_requeue(classic, monkey
         patch.setattr(store_load, "fresh_load", failing_load)
         with pytest.raises(RuntimeError, match="before its walls priced"):
             store.ensure(BASE, {}, STACK)
-    assert store.current is None
-    assert in_place_fallback.stack_on_host(store, "cond", STACK)  # what the failed call left on the store
+    assert store.current is None and seen == {"held when the load failed": True}
+    assert not in_place_fallback.stack_on_host(store, "cond", STACK)  # let go on the way out
+    assert getattr(store, in_place_fallback._STACK_READ, None) is None
+    import gc
+
+    gc.collect()
+    assert stack.tensors[0]() is None  # and its tensors with it
 
     def take(store_, slot, unet_name, options, lora_stack, *_rest):
         seen["at take"] = in_place_fallback.stack_on_host(store_, slot, lora_stack)
@@ -146,14 +224,7 @@ def test_a_fresh_load_that_raised_leaves_no_note_for_the_requeue(classic, monkey
     monkeypatch.setattr(in_place_fallback, "take", take)
     monkeypatch.setattr(in_place_fallback, "fresh_load_probe", probe)
     _patcher, transition = store.ensure(BASE, {}, STACK)  # the requeue
-    assert transition == "load" and seen == {"at take": False, "at the walls": False}
-
-
-def test_every_ensure_call_starts_with_no_note(classic):
-    store, _calls, _asked, _answer = classic
-    in_place_fallback.note_stack_read(store, "uncond", STACK)  # left by a call that never reached its fresh load
-    store.ensure(BASE, {}, None)  # a reuse: no swap, no fresh load
-    assert not in_place_fallback.stack_on_host(store, "uncond", STACK)
+    assert transition == "load" and seen["at take"] is False and seen["at the walls"] is False
 
 
 def test_a_change_the_hot_swap_makes_in_place_never_asks_the_fallback(classic):

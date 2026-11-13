@@ -2445,12 +2445,23 @@ covers the whole load by itself. Three rules follow.
   format, and the stack's files where the price is read before them:
   - **The files.** Each file as often as the stack lists it, on a reading
     taken before the Worker reads them; none on a reading taken after
-    (`stack_on_host`). Only the Worker knows it has read them: the declined
-    hot swap leaves a note for the fresh load that follows in the same call
-    (`in_place_fallback.note_stack_read`), which reads it once. A quote is
-    always before. So the quote charges the files against its reading and
-    the wall charges none against a reading the files have left, and the two
-    give one verdict.
+    (`stack_on_host`). "After" is a fact the store holds, not a matter of
+    when freed memory returns to the box: the declined hot swap hands the
+    store the stack it read (its patches, which reference the files' tensors
+    and nothing of the model; `in_place_fallback.note_stack_read`), and the
+    store keeps them alive through the drop of the old model and both walls
+    of the fresh load that follows in the same call. Each wall asks at the
+    moment it reads. The fresh load lets them go just before it reads the
+    files again, so the two copies never stand together, and
+    `ModelStore.ensure` lets them go on every way out, so a refused or
+    failed load leaves the box as it found it. A stack let go before a wall
+    reads is charged its files, and so is one held only in part: what is
+    held must be the files' own bytes (at least 0.98 of them), which it is
+    for every recorded stack and is not for a LoRA with tensors the model
+    does not patch, such as text-encoder keys. A quote is always before. So
+    the quote
+    charges the files against its reading and the wall charges none against
+    a reading the files have left, and the two give one verdict.
   - **Scaled FP8** (an FP8 weight with its scale or ComfyUI's quant record
     beside it): the line. It leaves 3.7 to 5.0 GiB above take plus floor on
     the four LTX rows and on three more runs of them, whole loads all, so

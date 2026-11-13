@@ -30,13 +30,14 @@ and ``tests/test_classic_bake_records.py`` holds each record against it:
   load into an empty slot, and every quote) charges the files, each as many
   times as the stack lists it. A price read AFTER them charges none: when the
   store tries its hot swap on a held base it reads the stack first, and if
-  the swap then declines, the fresh load's walls read a box those bytes have
-  already left (``stack_on_host``). LTX's own stack shows both: from an empty
-  Worker the load took 62.5 GiB; held against the reading after the file was
-  read, 55.1 to 55.6. The same 7.08 GiB file listed twice took 69.5 from an
-  empty Worker, 7 more. The first version charged the files on both readings
-  and refused held-base states that had rendered; the second charged them on
-  neither and came up 2.4 and 4.7 GiB short on the empty Worker.
+  the swap then declines the store holds that stack through the fresh load's
+  walls, which read a box its bytes have left (``stack_on_host``). LTX's own
+  stack shows both: from an empty Worker the load took 62.5 GiB; held against
+  the reading after the file was read, 55.1 to 55.6. The same 7.08 GiB file
+  listed twice took 69.5 from an empty Worker, 7 more. The first version
+  charged the files on both readings and refused held-base states that had
+  rendered; the second charged them on neither and came up 2.4 and 4.7 GiB
+  short on the empty Worker.
 - **Scaled FP8** (an FP8 weight with its scale or ComfyUI's quant record):
   the line. It leaves 3.7 to 5.0 GiB above take plus floor on seven recorded
   loads over both stack sizes and both readings.

@@ -236,7 +236,6 @@ class ModelStore:
         precision_evidence) runs exactly once per fresh base load at the adapter
         injection point.
         """
-        in_place_fallback.forget_stack_read(self)  # a declined swap's note lives for one ensure call
         if slab_lifetime.cleanup_pending():
             raise RuntimeError(
                 "a previous model load could not be cleaned up; explicitly unload "
@@ -337,25 +336,26 @@ class ModelStore:
             if result is not None:
                 return result
 
-        # Release ensure's local pin before dropping the old slot: USP injection
-        # creates a model reference cycle, so a live local would defeat _drop's
-        # gc.collect() and briefly retain two full DiTs.
-        set_aside, stored = stored is None and self._stored(slot) is not None, None
-        # A fresh load would follow, and nothing is dropped yet: where the classic bake's price
-        # misses and the gate allows it, the stack is baked in place (actor/in_place_fallback.py).
-        # Not on a slot this call set aside above (an identity that drifted, a slab retry).
-        result = None if fsdp_launch or set_aside else in_place_fallback.take(
-            self, slot, unet_name, options, lora_stack, base_key, requested_identity, log,
-            request_artifact_identity, lambda: self.ensure(
-                unet_name, options, None, slot, on_base_loaded, fsdp_launch, rescue_consent))
-        if result is not None:
-            return result
-        return store_load.fresh_load(
-            self, slot, unet_name, options, lora_stack, quant_kind, requested_identity,
-            base_key, on_base_loaded, fsdp_launch, fsdp_preflight_path,
-            fsdp_checkpoint_proof, authoritative_slab_retry, rescue_consent,
-            request_artifact_identity=request_artifact_identity,
-            resolve_model_path=resolve_model_path, logger=log)
+        try:  # a stack the declined swap left held (in_place_fallback.note_stack_read) never outlives this call
+            # Release ensure's local pin before dropping the old slot: USP injection creates a model
+            # reference cycle, so a live local would defeat _drop's gc.collect() and keep two full DiTs.
+            set_aside, stored = stored is None and self._stored(slot) is not None, None
+            # A fresh load would follow, and nothing is dropped yet: where the classic bake's price misses
+            # and the gate allows it, the stack is baked in place (actor/in_place_fallback.py). Not on a
+            # slot this call set aside above (an identity that drifted, a slab retry).
+            result = None if fsdp_launch or set_aside else in_place_fallback.take(
+                self, slot, unet_name, options, lora_stack, base_key, requested_identity, log,
+                request_artifact_identity, lambda: self.ensure(
+                    unet_name, options, None, slot, on_base_loaded, fsdp_launch, rescue_consent))
+            if result is not None:
+                return result
+            return store_load.fresh_load(
+                self, slot, unet_name, options, lora_stack, quant_kind, requested_identity, base_key,
+                on_base_loaded, fsdp_launch, fsdp_preflight_path, fsdp_checkpoint_proof,
+                authoritative_slab_retry, rescue_consent, request_artifact_identity=request_artifact_identity,
+                resolve_model_path=resolve_model_path, logger=log)
+        finally:
+            in_place_fallback.forget_stack_read(self)
 
     def _lazy_swap(self, stored, active, unet_name: str):
         if getattr(stored.base_patcher, "_dgxm_fsdp", False):

@@ -465,7 +465,6 @@ def hot_swap_transition(
     from .model_store import _is_quantized_kind, lora_signature
 
     t0 = time.perf_counter()
-    in_place_fallback.forget_stack_read(store)
     active = store._build_active(stored.base_patcher, lora_stack)
     uncovered, patched = copies_off_the_gpu(store, stored, slot, active)
     if uncovered:
@@ -473,7 +472,8 @@ def hot_swap_transition(
             "model store [%s]: a LoRA change on %s would copy the model off the GPU first "
             "(no host copy of %d of the %d weights the new stack patches), so it is not "
             "hot-swapped: base and stack load fresh, or bake in place", slot, unet_name, uncovered, patched)
-        in_place_fallback.note_stack_read(store, slot, lora_stack)  # its files have left the box's reading
+        # The store holds what this build read (the patches, not the model) so the fresh load's walls price a fact.
+        in_place_fallback.note_stack_read(store, slot, lora_stack, getattr(active, "patches", None))
         return None
     store_identity.assert_stable_identity(
         request_artifact_identity(unet_name, lora_stack), requested_identity,

@@ -309,10 +309,15 @@ def quote_snapshot(store: Any, stored: Any, snapshot: dict, slot: str, allowed: 
     return snapshot
 
 
-# On the store: the slot and stack a hot swap of THIS ``ensure`` call read and declined.
-# ``ModelStore.ensure`` clears it on entry, so a call that raised before its fresh load priced
-# leaves nothing for the next one (a requeue of the same stack into the slot it emptied).
+# On the store: the slot, the stack and the stack's loaded tensors that a hot swap of THIS
+# ``ensure`` call read and declined. Holding the tensors is what makes "already read" a fact
+# and not a matter of when freed memory returns to the box. ``ModelStore.ensure`` lets them go
+# on every way out, and the fresh load lets them go before it reads the files again.
 _STACK_READ = "_dgxm_stack_read"
+# What is held must be the files: a LoRA file is its tensors, a header and a few scalars. A
+# stack with tensors the model does not patch (text-encoder keys) is held only in part, falls
+# under this share of its files' bytes, and is charged its files.
+HELD_SHARE_OF_FILES = 0.98
 
 
 def _stack_signature(lora_stack: list | None) -> tuple:
@@ -321,41 +326,60 @@ def _stack_signature(lora_stack: list | None) -> tuple:
     return lora_signature(lora_stack)
 
 
-def note_stack_read(store: Any, slot: str, lora_stack: list | None) -> None:
-    """Record that the store has just read this stack's files into host memory for ``slot``.
+def _tensor_bytes(held: Any, seen: set[int] | None = None) -> int:
+    """The bytes of the distinct tensors a patches dict references, at any depth (ComfyUI's adapters keep ``weights``)."""
+    seen = set() if seen is None else seen
+    if id(held) in seen:
+        return 0
+    seen.add(id(held))
+    size = getattr(held, "nbytes", None)
+    if isinstance(size, int):
+        return size
+    parts = held.values() if isinstance(held, dict) else held if isinstance(held, list | tuple) else (
+        getattr(held, "weights", None) or ())
+    return sum(_tensor_bytes(part, seen) for part in parts)
+
+
+def note_stack_read(store: Any, slot: str, lora_stack: list | None, held: Any) -> None:
+    """Keep the stack a declined hot swap has just read for ``slot`` alive on the store.
 
     ``store_bake.hot_swap_transition`` calls it when it declines: it built the
     stack (``ModelStore._build_active`` reads every LoRA file) to count what
-    the swap would copy, and those bytes have left the box's reading by the
-    time the fresh load prices. On 2026-11-12 the reading at the stack's price
-    line sat 7.1 GiB under the base's, the size of the 7.08 GiB file, and the
-    load took the same total from there as from an empty Worker less that
-    file. The store holds those bytes for the slot's life with the switch off.
+    the swap would copy. ``held`` is that build's patches, which reference the
+    files' tensors and nothing of the model. While the store holds them their
+    bytes are on the host and out of the box's reading, whatever the allocator
+    does with freed memory, so the fresh load's walls may charge none of the
+    files (on 2026-11-12 the reading at the stack's price line sat 7.1 GiB
+    under the base's for a 7.08 GiB file). With nothing to hold, nothing is
+    noted and the files are charged.
     """
-    setattr(store, _STACK_READ, (slot, _stack_signature(lora_stack)))
+    setattr(store, _STACK_READ, (slot, _stack_signature(lora_stack), held, _tensor_bytes(held)) if held else None)
 
 
 def forget_stack_read(store: Any) -> None:
+    """Let the held stack go: its bytes return to the box, and a price read after this charges the files."""
     if getattr(store, _STACK_READ, None) is not None:
         setattr(store, _STACK_READ, None)
 
 
-def stack_on_host(store: Any, slot: str, lora_stack: list | None, *, consume: bool = False) -> bool:
-    """Whether the reading a classic price is about to be held against was taken after this stack was read.
+def stack_on_host(store: Any, slot: str, lora_stack: list | None) -> bool:
+    """Whether this stack's files are held on the host now, so a reading taken now has already left them.
 
-    True only for the slot and the stack ``note_stack_read`` named in this
-    ``ensure`` call. ``consume`` clears the note: the fresh load's probe reads
-    it once, and the next ``ensure`` call starts with none, so a later load of
-    the same stack into an empty slot is charged its files.
+    True only while the store holds what ``note_stack_read`` was given for
+    this slot and this stack in this ``ensure`` call, and what it holds is
+    the files: tensors of at least ``HELD_SHARE_OF_FILES`` of their bytes.
+    It is asked at the moment a price reads the box, not earlier.
     """
     noted = getattr(store, _STACK_READ, None)
-    if consume:
-        forget_stack_read(store)
     if not noted or not lora_stack:
         return False
     try:
-        noted_slot, signature = noted
-        return bool(noted_slot == slot and signature == _stack_signature(lora_stack))
+        from .capacity_quote import default_resolve_lora_path
+
+        noted_slot, signature, held, held_bytes = noted
+        files = capacity_classic_bake.stack_bytes(lora_stack, default_resolve_lora_path)
+        return (bool(held) and noted_slot == slot and signature == _stack_signature(lora_stack)
+                and held_bytes >= HELD_SHARE_OF_FILES * files)
     except Exception:
         return False
 
@@ -367,17 +391,25 @@ def fresh_load_probe(store: Any, slot: str, lora_stack: list | None) -> Callable
     price. A fresh load never bakes in place and has already been handed the
     slot to drop, so nothing is credited and the reason the in-place bake was
     not taken rides along for the refusal. Where this load follows a hot swap
-    that read the stack and declined, the price charges none of the stack's
-    files (``stack_on_host``); a load into an empty slot charges them all.
+    that read the stack and declined, and the store still holds that stack
+    when a wall reads the box (``stack_on_host``, asked at each wall), the
+    price charges none of the stack's files; otherwise it charges them all.
+    ``store_load.fresh_load`` lets the held stack go after its walls, before
+    it reads the files again, so the two copies never stand together.
     """
-    on_host = stack_on_host(store, slot, lora_stack, consume=True)  # one fresh load reads it, once
     if store.lora_low_rss or not lora_stack:
         return None
     from .capacity_quote import default_resolve_lora_path
 
-    return capacity_classic_bake.probe(
-        lora_stack, default_resolve_lora_path, stack_on_host=on_host, comfy_reserve_bytes=worker_reserve(),
-        in_place=TRIED if permitted() else capacity_classic_bake.GATE_HAS_NOT_PASSED)
+    reserve = worker_reserve()
+    in_place = TRIED if permitted() else capacity_classic_bake.GATE_HAS_NOT_PASSED
+
+    def at_the_wall(path: str, model_options: dict) -> Any:
+        return capacity_classic_bake.probe(
+            lora_stack, default_resolve_lora_path, stack_on_host=stack_on_host(store, slot, lora_stack),
+            comfy_reserve_bytes=reserve, in_place=in_place)(path, model_options)
+
+    return at_the_wall
 
 
 def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack: list | None,
