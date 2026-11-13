@@ -460,7 +460,7 @@ class ModelStore:
             slab_lifetime.close_or_retain_after_explicit_unload(stored, "model-store resources")
         self._drop_failed.discard(slot)
         resident_ledger.mark_after_drop(self, slot, alone)
-        resident_ledger.flush_dropped(mm, slot)
+        resident_ledger.flush_dropped(mm, slot, everything)
 
     def cleanup_active(self) -> None:
         for stored in (self.current, self.uncond):

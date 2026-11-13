@@ -262,7 +262,7 @@ def collect_dropped() -> None:
     gc.collect()
 
 
-def flush_dropped(mm: Any, slot: str) -> None:
+def flush_dropped(mm: Any, slot: str, everything: bool = False) -> None:
     """Return a dropped model's cached device blocks, and its freed host memory, to the box, best effort.
 
     The unload (``unload_dropped``) flushes while the store still holds the weights.
@@ -270,19 +270,22 @@ def flush_dropped(mm: Any, slot: str) -> None:
     next capacity quote reflect the released memory. The model is already
     dropped; a flush failure only leaves capacity quotes pessimistic.
 
-    Then one host trim (``host_trim``): from a Worker's second load of a file
-    on, the C library keeps the freed pages of its smaller weights, and a
-    dropped model's memory would not reach the box (on record a hard clear
-    left a Worker at 10.35 GiB with no model, and a load that fit was then
-    refused 0.5 GiB short). Every drop of a slot ends here, and the Worker's
-    hard clear is a drop of every slot. A reuse makes no drop, so this is no
-    step of an ordinary render.
+    Then, at a store-wide drop only (``everything``: the Worker's hard clear,
+    its unload and a releasing teardown), one host trim (``host_trim``). From
+    a Worker's second load of a file on, the C library keeps the freed pages
+    of its smaller weights, and memory a user cleared would not reach the box
+    (on record a hard clear left a Worker at 10.35 GiB with no model, and a
+    load that fit was then refused 0.5 GiB short). The drop of one slot before
+    a fresh load is NOT trimmed: one shipped template drops once a render, and
+    the load that follows reuses the kept pages.
     """
     try:
         mm.soft_empty_cache()
     except Exception as exc:
         log.warning("model store [%s]: cache flush after the drop failed (%s); capacity "
                     "quotes may count the dropped weights until the next flush", slot, failure_summary(exc))
+    if not everything:
+        return
     from . import host_trim
 
     ran, seconds, before, after = host_trim.trim()

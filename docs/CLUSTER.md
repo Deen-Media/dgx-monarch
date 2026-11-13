@@ -482,6 +482,15 @@ list, so a unit drop-in reaches the actor; neither carries a credential, and
 together they can only make one rank refuse a load. Never set either on a box
 that is rendering.
 
+`DGXM_FAULT_BACKUP_RANK` is a second debug-only worker environment variable of
+the same kind, also off unless `DGXM_ACCEPTANCE=1` is set on the same worker.
+On a pair whose render carries a LoRA stack with `lora_low_rss` off it makes
+the rank it names vote short of room at any reading, so every rank frees
+ComfyUI's weight backup, and then read its own model as wrong, so the fleet's
+refusal goes through the ranks' second exchange and every rank stops before
+its first step. It exists to show on hardware that no rank waits on the other
+there. Unset both and restart the worker to render.
+
 ```toml
 [worker_args]
 disable_pinned_memory = true

@@ -41,7 +41,7 @@ def _patcher(backup=True, stored=True):
 @pytest.fixture
 def rig(monkeypatch):
     """Room, ask and estimate set by the test; the free recorded, not run."""
-    state = SimpleNamespace(room=20.0, ask=18.6, estimate=6.2, freed=[], wrong=None, room_after=None)
+    state = SimpleNamespace(room=20.0, ask=18.6, estimate=6.2, freed=[], wrong=None, room_after=None, pool=0.0)
 
     def free(patcher, stored):
         state.freed.append(patcher)
@@ -58,6 +58,7 @@ def rig(monkeypatch):
     monkeypatch.setattr(backup_agreement, "_single_estimate",
                         lambda patcher, shape, conds: None if state.estimate is None else int(state.estimate * GIB))
     monkeypatch.setattr(lora_partial_load, "_free_backup", free)
+    monkeypatch.setattr(backup_agreement, "_idle_pool", lambda patcher: int(state.pool * GIB))
     monkeypatch.setattr(lora_partial_load, "_what_is_wrong_after_the_route", lambda patcher, was: state.wrong)
     return state
 
@@ -347,3 +348,21 @@ def test_a_worker_from_before_the_check_is_refused_beside_one_that_reports():
     assert "Worker(s) 1 run a build from before this check" in message and "Worker(s) 0 run aaaa" in message
     # Two Workers that both predate the check state one build between them: nothing to refuse here.
     mesh_builds.refuse_two_builds(SimpleNamespace(worker_capabilities=[{"world": 2}, {"world": 2}]))
+
+
+def test_a_warm_workers_next_render_is_weighed_with_the_pool_it_already_holds(rig):
+    """After a render the Worker keeps its sampler's device pool reserved, and MemAvailable does not show it.
+
+    Without that term a queue that has just rendered on freed slots would be refused at the same state.
+    """
+    patcher = _patcher(backup=False)
+    setattr(patcher.slot, backup_agreement.FREED_FLAG, True)
+    rig.room, rig.pool = 6.0, 6.4  # under the 8.1 needed by the box's reading alone, over it with the pool
+    again = backup_agreement.vote((patcher,), SAMPLING, 0)
+    assert again.freed_before is True and backup_agreement._read_margin(again.elements[3])[0] > 0
+    backup_agreement.settle(again, _answer(again.elements, _peer(not_freed=0)), lambda values: values)
+    rig.pool = 0.0  # a Worker that holds no pool is weighed by the box alone, and refused
+    cold = backup_agreement.vote((patcher,), SAMPLING, 0)
+    with pytest.raises(backup_agreement.PairBackupRoomError) as raised:
+        backup_agreement.settle(cold, _answer(cold.elements, _peer(not_freed=0)), lambda values: values)
+    assert "its idle device pool counted" in str(raised.value)

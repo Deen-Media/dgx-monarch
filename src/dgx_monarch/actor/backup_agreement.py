@@ -44,7 +44,9 @@ under its clock cap, max 2100 MHz) a rank of a pair added 6.4 GiB from this
 point to the end of sampling where the estimate was 6.2, and one GPU added
 20.0 at 241 frames where it was 17.4. It carries no term for the driver's
 decode, which the driver cannot price before sampling; the decode relief
-covers that (``vae_decode_relief``). The room is the reading taken after the
+covers that (``vae_decode_relief``). The room counts the device pool the
+Worker holds reserved and unused, which its sampler takes first and
+MemAvailable does not show, and is the reading taken after the
 free and the host trim, because a free does not always return the whole copy
 (``host_trim``).
 
@@ -100,6 +102,7 @@ class Vote:
     switch: bool = False
     freed_before: bool = False
     room: int = 0
+    pool: int = 0  # device memory reserved and unused on this Worker: the sampler takes it first
     need: int | None = None
     ask: int | None = None
     why_not: str = ""
@@ -108,7 +111,7 @@ class Vote:
     @property
     def elements(self) -> list[int]:
         return [0 if self.short else 1, 1 if self.can else 0, 0 if self.switch else 1,
-                _margin(self.room, self.need, self.rank), 0 if self.freed_before else 1]
+                _margin(self.room + self.pool, self.need, self.rank), 0 if self.freed_before else 1]
 
 
 def _margin(room: int, need: int | None, rank: int) -> int:
@@ -129,6 +132,25 @@ def _single_estimate(patcher: Any, noise_shape: Any, conds: Any) -> int | None:
         return None if figures is None else int(figures[1])
     except Exception:
         return None
+
+
+def _idle_pool(patcher: Any) -> int:
+    """Device memory this Worker holds reserved and unused, which its sampler takes before the box gives more.
+
+    The term ComfyUI's own free reading adds on a Worker (``comfy_bridge._uma_free_memory``). A Worker
+    keeps the pool its last sampler grew, and MemAvailable does not count it: without it a second
+    render on a warm Worker would be weighed as if it started cold. Zero off a CUDA device, or unread.
+    """
+    try:
+        device = getattr(patcher, "load_device", None)
+        if getattr(device, "type", None) != "cuda":
+            return 0
+        import torch
+
+        stats = torch.cuda.memory_stats(device)
+        return max(0, int(stats["reserved_bytes.all.current"]) - int(stats["active_bytes.all.current"]))
+    except Exception:
+        return 0
 
 
 def _fault_here(rank: int) -> bool:
@@ -164,6 +186,7 @@ def vote(patchers: tuple, sampling: tuple[Any, Any], rank: int) -> Vote:
                 found.freeable.append((patcher, stored))
         found.room = lora_partial_load._host_room()
         first = patchers[0] if patchers else None
+        found.pool = 0 if first is None else _idle_pool(first)
         estimate = None if first is None else _single_estimate(first, *sampling)
         found.need = (None if estimate is None
                       else int(NEED_SHARE_OF_ESTIMATE * estimate) + NEED_OVER_ESTIMATE_BYTES)
@@ -197,7 +220,8 @@ def _refuse_room(margin_gib: float, rank: int, mine: Vote, state: str) -> None:
         "a LoRA stack is on a model the ranks loaded whole with lora_low_rss off, and after the ranks' "
         f"decision ({after}) rank {rank} is {abs(margin_gib):.1f} GiB short of what sampling this latent "
         "still needs above the 5 GiB host floor. This rank read "
-        f"{max(0, mine.room) / _GIB:.1f} GiB of room against {(mine.need or 0) / _GIB:.1f} GiB needed "
+        f"{max(0, mine.room + mine.pool) / _GIB:.1f} GiB of room (its idle device pool counted) against "
+        f"{(mine.need or 0) / _GIB:.1f} GiB needed "
         "(1.15 times ComfyUI's estimate for the latent plus 1 GiB); each Worker's journal gives its own "
         f"figures. Nothing was sampled and no rank went on. What would fit: {fits}.",
         guard="pair_backup_room", waivable=False, troubleshooting=TROUBLESHOOTING))
@@ -239,6 +263,8 @@ def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
         for patcher, _stored in mine.freeable:
             wrong = wrong or lora_partial_load._what_is_wrong_after_the_route(patcher, False)
         mine.room = lora_partial_load._host_room()
+        if mine.freeable:
+            mine.pool = _idle_pool(mine.freeable[0][0])
         if wrong is None and _fault_here(mine.rank):
             log.warning("pair backup: acceptance fault (%s names this rank): its model is read as wrong",
                         FAULT_RANK_ENV)
@@ -250,7 +276,8 @@ def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
              "of room above the floor against %.1f GiB the sampler still needs",
              "this rank was short of room for the sampler" if mine.short else "a peer was short of room",
              returned, max(0, mine.room) / _GIB, (mine.need or 0) / _GIB)
-    ok, after = (int(value) for value in exchange([0 if wrong else 1, _margin(mine.room, mine.need, mine.rank)]))
+    ok, after = (int(value) for value in exchange(
+        [0 if wrong else 1, _margin(mine.room + mine.pool, mine.need, mine.rank)]))
     if wrong is not None:
         raise lora_partial_load.OffloadedInputQuantError(refusal(
             RefusalClass.CAPACITY,
@@ -262,7 +289,7 @@ def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
     if ok == 0:
         from . import rank_readiness
 
-        raise rank_readiness.PeerLoadFailureError(refusal(RefusalClass.PHYSICS, rank_readiness.PEER_LOAD_TEXT))
+        rank_readiness.peer_failed()  # its own model is right; a peer's is not
     margin_gib, rank = _read_margin(after)
     if margin_gib < 0:
         _refuse_room(margin_gib, rank, mine, "freed")

@@ -565,10 +565,11 @@ def test_mark_after_drop_says_what_the_drop_did_to_the_other_slot():
     assert store._gpu_evicted == {"uncond"}
 
 
-def test_a_drop_ends_in_one_host_trim_and_says_what_came_back(monkeypatch, caplog):
-    """A dropped model's host memory must reach the box: the flush after a drop trims the C library's arenas.
+def test_a_store_wide_drop_ends_in_one_host_trim_and_says_what_came_back(monkeypatch, caplog):
+    """Memory a user cleared must reach the box: the flush after a store-wide drop trims the C library's arenas.
 
-    ``flush_dropped`` is the last step of every drop of a slot, the hard clear's among them. The trim is
+    ``flush_dropped`` is the last step of every drop; the hard clear's is store-wide. The drop of one slot
+    before a fresh load is not trimmed (one shipped template drops once a render). The trim is
     replaced here by a recorder, so the test needs no glibc.
     """
     from dgx_monarch.actor import host_trim
@@ -583,7 +584,7 @@ def test_a_drop_ends_in_one_host_trim_and_says_what_came_back(monkeypatch, caplo
     monkeypatch.setattr(host_trim, "trim", trim)
     mm = type("Mm", (), {"soft_empty_cache": staticmethod(lambda: order.append("flush"))})
     with caplog.at_level(logging.INFO):
-        resident_ledger.flush_dropped(mm, "cond")
+        resident_ledger.flush_dropped(mm, "cond", True)
     assert order == ["flush", "trim"]
     assert "the host trim after the drop returned 10.0 GiB to the box" in caplog.text
     assert "(MemAvailable 20.0 to 30.0 GiB, 0.31 s)" in caplog.text
@@ -597,11 +598,16 @@ def test_a_drop_ends_in_one_host_trim_and_says_what_came_back(monkeypatch, caplo
         raise RuntimeError("CUDA is gone")
 
     with caplog.at_level(logging.INFO):
-        resident_ledger.flush_dropped(type("Mm", (), {"soft_empty_cache": staticmethod(broken)}), "cond")
+        resident_ledger.flush_dropped(type("Mm", (), {"soft_empty_cache": staticmethod(broken)}), "cond", True)
     assert order == ["flush", "trim"] and "host trim" not in caplog.text
     # A C library with no trim: nothing is said here (host_trim says so once itself).
     monkeypatch.setattr(host_trim, "trim", lambda: (False, 0.0, 20 * 2**30, 20 * 2**30))
     caplog.clear()
     with caplog.at_level(logging.INFO):
-        resident_ledger.flush_dropped(mm, "cond")
+        resident_ledger.flush_dropped(mm, "cond", True)
     assert "host trim" not in caplog.text
+    # The drop of one slot before a fresh load: the cache is flushed, nothing is trimmed.
+    order.clear()
+    monkeypatch.setattr(host_trim, "trim", lambda: order.append("trim") or (True, 0.1, 0, 2**34))
+    resident_ledger.flush_dropped(mm, "cond")
+    assert order == ["flush"]
