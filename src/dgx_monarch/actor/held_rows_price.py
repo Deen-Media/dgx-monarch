@@ -295,6 +295,40 @@ def _minimum(patcher: Any, noise_shape: Any, conds: Any) -> float:
     return float(sampler_helpers.estimate_memory(patcher, noise_shape, conds)[1])
 
 
+def estimates(patcher: Any, noise_shape: Any, conds: Any) -> tuple[int, int] | None:
+    """ComfyUI's two sample-time figures for this render (the doubled batch; one cond's call), as the load was priced.
+
+    For a caller that weighs the sampler's memory AFTER the load: the backup
+    step and the pair's agreement run in a wrapper outside this module's, when
+    the model has its own two methods back, and stock's figure for a masked
+    render counts rows the forward never holds (81 GiB where the call held 37
+    on record). Stock's figures, or the kept-row figures where the wrapper
+    would have priced them and they are not above stock's. ``None`` when
+    ComfyUI gives no estimate; never raises.
+    """
+    try:
+        import comfy.sampler_helpers as sampler_helpers
+
+        stock = sampler_helpers.estimate_memory(patcher, noise_shape, conds)
+        full, single = int(stock[0]), int(stock[1])
+    except Exception:
+        return None
+    base_model = getattr(patcher, "model", None)
+    saved = None
+    try:
+        held = held_cells(base_model, noise_shape, conds)
+        if held is not None:
+            saved = _shadow(base_model, noise_shape, held)
+            priced = sampler_helpers.estimate_memory(patcher, noise_shape, conds)
+            full, single = min(full, int(priced[0])), min(single, int(priced[1]))
+    except Exception as exc:
+        log.debug("held-rows price: the estimate after the load stays ComfyUI's own (%s)", failure_summary(exc))
+    finally:
+        if saved is not None:
+            _restore(base_model, saved)
+    return full, single
+
+
 def make_wrapper():
     """Build the ``PREPARE_SAMPLING`` wrapper that prices the kept rows."""
 

@@ -13,7 +13,10 @@ On record (2026-11-12, one GPU of a DGX Spark under its clock cap, max
 one load line into a fresh Worker, five times, and 5.4 to 5.8 GiB where the
 INT8 ConvRot Wan-Animate 2 file was loaded a second time in the process, three
 times. That file holds 5.70 GiB in tensors of 32 MiB and more and 9.78 GiB in
-tensors under it, and 9.5 to 9.8 GiB stayed.
+tensors under it, and 9.5 to 9.8 GiB stayed. That the heap is what kept them
+is a reading of those sizes, not yet confirmed on hardware (a probe was
+ordered on 2026-11-13); if something still holds those weights instead, this
+call returns nothing and does no harm.
 
 ``trim`` calls glibc's ``malloc_trim(0)``, which returns the free pages of
 its heaps wherever they lie. It is called after the three frees of a host copy

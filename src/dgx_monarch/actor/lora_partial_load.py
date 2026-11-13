@@ -319,10 +319,10 @@ def _sampling_ask(patcher: Any, noise_shape: Any, conds: Any) -> int | None:
     next stack change.
     """
     try:
-        import comfy.sampler_helpers
+        from . import held_rows_price
 
-        full, _minimum = comfy.sampler_helpers.estimate_memory(patcher, noise_shape, conds)
-        return int(ASK_SHARE_OF_FULL_ESTIMATE * full)
+        figures = held_rows_price.estimates(patcher, noise_shape, conds)  # the kept rows where masks drop tokens
+        return None if figures is None else int(ASK_SHARE_OF_FULL_ESTIMATE * figures[0])
     except Exception:
         return None
 

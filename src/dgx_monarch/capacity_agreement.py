@@ -515,6 +515,9 @@ def agree_load(handle: Any, unet_name: str, options: dict | None,
     ``keep`` names the checkpoints the same graph loads, so a model the graph's
     other loader placed seconds earlier is never offered as an old model.
     """
+    from . import mesh_builds
+
+    mesh_builds.refuse_two_builds(handle)  # a fleet on two builds is refused before its first load
     agree_or_refuse(
         handle,
         quote_request([{"unet_name": unet_name, "options": options,

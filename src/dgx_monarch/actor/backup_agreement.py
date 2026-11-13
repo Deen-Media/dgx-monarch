@@ -104,10 +104,10 @@ def _read_margin(value: int) -> tuple[float, int]:
 
 def _single_estimate(patcher: Any, noise_shape: Any, conds: Any) -> int | None:
     try:
-        import comfy.sampler_helpers
+        from . import held_rows_price
 
-        _full, minimum = comfy.sampler_helpers.estimate_memory(patcher, noise_shape, conds)
-        return int(minimum)
+        figures = held_rows_price.estimates(patcher, noise_shape, conds)  # as the load was priced
+        return None if figures is None else int(figures[1])
     except Exception:
         return None
 
