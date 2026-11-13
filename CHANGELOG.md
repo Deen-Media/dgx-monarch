@@ -28,15 +28,18 @@
   guide's is; a first queue of a video-reference graph right after another
   graph was admitted without it. Not yet run on hardware.
 
-- A graph that loads its text encoder through Load LTXV Audio Text Encoder
-  (`LTXAVTextEncoderLoader`) is now charged at the loader for what that node
-  loads: the text encoder file at the text-encoder ratio, and of the LTX
-  checkpoint it names only the text projection ComfyUI keeps, read from the
-  file's header. It was charged the whole checkpoint (27 to 43 GiB on this rig)
-  and no text encoder, so such a graph could be refused up to about 33 GiB
-  short of its real need, or admitted without its text encoder. The shipped
-  LTX templates load theirs through Dual CLIP Loader and are unchanged. Not
-  yet run on hardware.
+- The loader no longer charges the whole LTX checkpoint for Load LTXV Audio
+  Text Encoder (`LTXAVTextEncoderLoader`). That node keeps only the
+  checkpoint's text projection (ComfyUI's `LTXAVTEModel.load_sd`), and with
+  DynamicVRAM, ComfyUI's default, it maps the file and reads nothing else of
+  it. The loader charged the whole checkpoint and no text encoder: 43.0 GiB
+  with the LTX 2.3 bf16 checkpoint, 27.5 with the distilled fp8 and 27.1 with
+  the dev fp8. It now charges the text encoder file at the text-encoder ratio
+  and the projection read from the checkpoint's header, 2.2 GiB for LTX 2.3:
+  28.3 GiB with Gemma 3 12B bf16 (22.7 on disk) and 12.3 with its fp4 file
+  (8.8 on disk). Without DynamicVRAM, or where the header cannot be read, the
+  whole checkpoint is still charged. The shipped LTX templates load their
+  encoder through Dual CLIP Loader and are unchanged. Not yet run on hardware.
 
 - The decode relief now asks the Workers for the device memory they hold idle
   whenever it acts. It asked them only where freeing the driver's text

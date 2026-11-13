@@ -512,15 +512,30 @@ def test_a_reused_prompt_id_does_not_carry_an_earlier_queues_marks(rig, monkeypa
     assert len(_Guide.calls) == 1
 
 
-@pytest.mark.parametrize("fault", ["_active", "_context", "charged"])
+@pytest.mark.parametrize("fault", ["_active", "_context", "charged", "spend_of"])
 def test_a_fault_in_the_price_steps_aside_and_runs_stock_once(rig, monkeypatch, fault):
     def broken(*_args):
         raise RuntimeError(f"{fault} is broken")
 
-    monkeypatch.setattr(driver_spend_price, fault, broken)
+    if fault == "spend_of":
+        monkeypatch.setattr(driver_spend_price, "_spend_for", lambda name, arguments: broken)
+    else:
+        monkeypatch.setattr(driver_spend_price, fault, broken)
     rig.box.value = 1 * GIB
     assert _guide(5, width=448, height=256)[0][0] == "guided"
     assert len(_Guide.calls) == 1
+
+
+def test_a_v1_instance_made_before_the_install_reaches_the_wrap(rig, monkeypatch):
+    """ComfyUI may hold a v1 node's instance from before this pack loaded: the method is the class's."""
+    monkeypatch.setattr(_ClipLoader, "load_clip", _ClipLoader.load_clip.__wrapped__)
+    made_before = _ClipLoader()
+    assert driver_spend_price.install() == ["CLIPLoader"]
+    rig.context["node"] = "3"
+    rig.box.value = 1 * GIB
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError):
+        made_before.load_clip("te.safetensors")
+    assert _ClipLoader.calls == []
 
 
 def test_the_refusal_is_one_the_driver_rescues_and_not_the_stock_load_family():

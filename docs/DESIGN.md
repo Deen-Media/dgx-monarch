@@ -2338,10 +2338,13 @@ first queue of a video-reference graph with ComfyUI's models held is charged
 its 40 GiB. LTX's audio-video text encoder loader (`LTXAVTextEncoderLoader`) is
 charged for what it loads: its `text_encoder` file as a text encoder, and of
 the LTX checkpoint it names only the text projection ComfyUI keeps, read from
-the file's header (`nodes/driver_model_charge.py`), since ComfyUI maps the
-checkpoint and drops the rest. It was charged the whole checkpoint and no text
-encoder; with `--disable-mmap` and DynamicVRAM off, where ComfyUI copies every
-tensor first, the whole checkpoint is still the charge.
+the file's header (`nodes/driver_model_charge.py`, cached by path), since with
+DynamicVRAM ComfyUI maps the checkpoint and reads nothing else of it (the
+embeddings connectors are kept only in ComfyUI's compat mode, which the header
+also shows). It was charged the whole checkpoint and no text encoder. Without
+DynamicVRAM the safetensors library decides what each tensor holds, which
+ComfyUI's code does not show, so there, and where the header cannot be read,
+the whole checkpoint is still the charge.
 
 **A prompt expander that cannot see the request refuses before the render.** The
 MiniMax-H3-Image templates wire ComfyUI's expander chain, Replace Text into
