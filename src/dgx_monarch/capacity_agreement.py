@@ -490,7 +490,10 @@ def quote_request(specs: list[dict], rescue_consent: dict | None = None,
 
 def agree_sample(handle: Any, request: dict) -> None:
     """Agree the render's checkpoints before parity and dispatch."""
+    from . import mesh_builds
     from .actor.worker_authorization import sample_rescue_consent
+
+    mesh_builds.refuse_two_builds(handle)  # before any rank loads or waits on a peer
 
     model = request.get("model")
     if not isinstance(model, dict):

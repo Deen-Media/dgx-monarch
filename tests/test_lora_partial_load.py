@@ -16,11 +16,17 @@ import sys
 import weakref
 from types import SimpleNamespace
 
+import psutil
 import pytest
 
 from dgx_monarch.actor import lora_partial_load
 from dgx_monarch.refusal import RefusalClass, RefusalTag, parse_leading_refusal_tag
 from module_location_helpers import from_checkout
+
+# The route's tests read the real MemAvailable: the route runs only with room above the 5 GiB host floor.
+pytestmark = pytest.mark.skipif(
+    psutil.virtual_memory().available < 10 * 2 ** 30,
+    reason="the partial-load route needs room above the 5 GiB host floor, and under 10 GiB is available here")
 
 OUT, IN, RANK = 64, 512, 4
 LAYOUTS = {"float8_e4m3fn": "TensorCoreFP8E4M3Layout", "int8_tensorwise": "TensorWiseINT8Layout"}

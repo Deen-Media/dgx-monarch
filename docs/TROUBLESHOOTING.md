@@ -844,8 +844,11 @@ you may see:
   the Worker now frees that copy by itself before the first step when a whole
   load leaves less room than the sampler is estimated to need; it logs a line
   that starts `LoRA bake: ComfyUI loaded this model whole`, and the next LoRA
-  change on that model reloads it from disk. A load ComfyUI placed only partly
-  whose bake could not be finished for room, and a pair, are still as above.
+  change on that model reloads it from disk. On a pair the ranks do the same together: any rank short, and
+  every rank frees; a rank that cannot free keeps the whole fleet as it is; and where a rank would still be
+  short of what the sampler needs the render is refused before its first step, naming the rank and the
+  figures. A load ComfyUI placed only partly
+  whose bake could not be finished for room is still as above.
   `DGXM_DISABLE_BACKUP_FREE=1` in the Worker's environment (a drop-in for the
   Worker's unit, then a Worker restart; on a local mesh, the environment ComfyUI
   starts in) turns that step off, for diagnosis; the Worker then logs what it

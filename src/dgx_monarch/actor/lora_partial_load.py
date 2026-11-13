@@ -260,18 +260,26 @@ def make_whole(patcher: Any) -> str | None:
     # this sampling loaded (a dual-model guider's other checkpoint) is unloaded. Then the tail of
     # store_bake._merge_and_free: the backup and the patches go.
     patcher.partially_load(patcher.load_device, extra_memory=1e32)
-    _free_backup(patcher, stored)
+    returned = _free_backup(patcher, stored)
     log.info("LoRA bake: ComfyUI loaded this model partly with a LoRA stack and lora_low_rss off, so the "
              "Worker took the low-RSS route for this load: baked %d more patched layer(s) under a full "
              "load and freed ComfyUI's backup (%.1f GiB of room was needed while baking). A stack "
-             "change on this model reloads it from disk", len(pending), need / _GIB)
+             "change on this model reloads it from disk. %s", len(pending), need / _GIB, returned)
     return None
 
 
-def _free_backup(patcher: Any, stored: Any) -> None:
-    """The tail of ``store_bake._merge_and_free`` on a model that is whole and baked: the backup and the patches go."""
+def _free_backup(patcher: Any, stored: Any) -> str:
+    """The tail of ``store_bake._merge_and_free`` on a model that is whole and baked: the backup and the patches go.
+
+    Returns what the box got back, for the caller's line: MemAvailable before the free, and after it
+    and the host trim (``host_trim``: without one, weights under the C library's mapping threshold
+    stay in its heap once freed, from a process's second load of them on).
+    """
     import gc
 
+    from . import host_trim
+
+    before = _host_room() + ABSOLUTE_HOST_FLOOR_BYTES
     patcher.backup.clear()
     patcher.backup_buffers.clear()
     patcher.patches.clear()
@@ -286,6 +294,10 @@ def _free_backup(patcher: Any, stored: Any) -> None:
     if active is not None and active is not patcher:
         active.patches.clear()  # the same stack on the store's own patcher: it is baked in now
     stored.base_baked, stored.unbake = True, None
+    ran, seconds, _at_trim, after = host_trim.trim()
+    trimmed = f"host trim {seconds:.2f} s" if ran else "no host trim on this C library"
+    return (f"MemAvailable read {before / _GIB:.1f} GiB before the free and {after / _GIB:.1f} GiB "
+            f"after it ({trimmed})")
 
 
 # ComfyUI runs cond and uncond in one call when this many times its full estimate is free
@@ -351,10 +363,10 @@ def free_backup_for_sampling(patcher: Any, noise_shape: Any, conds: Any) -> bool
                 f"is off ({BACKUP_FREE_DISABLE_ENV}=1 on the Worker)")
         log.info(kept, *figures)
         return False
-    _free_backup(patcher, stored)
+    returned = _free_backup(patcher, stored)
     freed = (f"{weighed}, so the Worker freed ComfyUI's weight backup before the first step (the weights "
              "on the device are the baked ones; none moved). A stack change on this model reloads it "
-             "from disk")
+             f"from disk. {returned}")
     log.info(freed, *figures)
     return True
 

@@ -1071,10 +1071,39 @@ and the float order of that render then differs from the same render with the
 step off. No shipped template that reaches the step is such a graph (the three
 below run at cfg 1.0), and no hardware cell reads one.
 On hardware the free has run only as the route's last step: it gave back
-15.3 GiB within 2 s after one load line into a fresh Worker, and 5.7 GiB where
-the Worker had held the bare base before the stack (block D, 2026-11-12; what
-kept the rest is not known). A whole load's own free is not yet read.
-One GPU only, as the route is. `DGXM_DISABLE_BACKUP_FREE=1` in the
+15.3 GiB within 2 s after one load line into a fresh Worker, and 5.4 to 5.8 GiB
+where the INT8 ConvRot Wan-Animate 2 file was loaded a second time in the same
+process (2026-11-12). What stayed, 9.5 to 9.8 GiB, equals that file's tensors
+under 32 MiB (9.78 GiB; its tensors of 32 MiB and more are 5.70). glibc raises
+its threshold for giving a block its own mapping to the size of any mapped
+block the process frees, up to 32 MiB, and a block under the threshold comes
+from the heap, whose freed pages stay with the process. So the free is
+followed by one `malloc_trim(0)` (`actor/host_trim.py`), in the one-GPU step,
+in the pair's act and in the route's tail, and the line that reports the free
+gives MemAvailable before and after. A hardware probe of that reading was
+ordered on 2026-11-13 and is not yet read; neither is a whole load's own free.
+
+On a pair the ranks free together or not at all
+(`actor/backup_agreement.py`). After the cross-rank guard has found every rank
+whole, each rank adds four integers to the guard's own exchange: whether it is
+short (it holds a backup and its room is under the same ask), whether it can
+free, whether its switch is set, and its margin, its room less ComfyUI's
+single-batch estimate plus 1 GiB, with its rank in the low bits. Every
+decision is made from the MIN that comes back, so no rank decides alone. Any
+rank short and none unable: every rank frees, the roomy one too, so the slots
+stay alike and the next stack change reloads on all of them. A rank that
+cannot free (a patched model outside its store): every rank keeps its backup
+and says what it left standing. A switch set on any rank turns the rule off
+for the fleet. After a free the ranks make one more exchange, of each rank's
+model as read and its margin as read: a model that is not what a full load
+leaves, or a tightest margin under zero, refuses on every rank before the
+first forward, class C, naming the rank and the figures. The margin is also
+checked where a short fleet kept its backups. A render that does not free
+makes the one collective it made before, with more integers in it; both
+Workers must therefore run one build, and a fleet whose Workers report two
+source digests at setup is refused before dispatch (`mesh_builds.py`). The
+shared memory a rank maps for its process groups (5.5 GiB on record) has no
+price term in this release. `DGXM_DISABLE_BACKUP_FREE=1` in the
 Worker's environment keeps the backup however little room is left, for
 diagnosis and to read one build with and without the step; the Worker then
 logs what the step would have weighed, and the worker loop's environment
@@ -1105,7 +1134,7 @@ admitted BF16 load is a whole load and its tightest reading is the price
 itself. One such load, on the second Spark of a pair, took 77.4 GiB, 1.35 more
 than that price leaves above the floor (the recorded shortfall of section
 5.9). On one GPU, with the backup freed before the first step, that shortfall
-should go; on a pair the step does not run, and the shortfall stands. No
+should go, and on a pair the ranks now free together (above). No
 hardware reading of the BF16 templates at their edge exists yet, on one GPU or
 on a pair, before or after.
 
@@ -2864,13 +2893,17 @@ the clip: about 6 to 7 GiB at the shipped 81 frames and about 4.4 projected at
 takes 39. Three shipped templates run this path as shipped (the Wan-Animate 2
 template and its BF16 and memory-saver variants, with `lora_low_rss` off and a
 LoRA), all at 81 frames. `lora_low_rss` on keeps no backup and is not on it.
-The same is so on the last release, which priced this load lower. On one GPU
-the Worker now gives that backup up before the first step where a whole
-load leaves less room than the sampler is estimated to need
-(`lora_partial_load.free_backup_for_sampling`, section 5.5), which takes the
-projected low at the 241-frame edge from 4.4 to about 10 by the route's record of
-the same step (5.8 GiB returned; not yet read on hardware for a whole load). What stays as
-above: a load placed partly whose route could not run, and a pair's rank.
+The same is so on the last release, which priced this load lower. The Worker
+now gives that backup up before the first step where a whole load leaves less
+room than the sampler may ask (`lora_partial_load.free_backup_for_sampling` on
+one GPU; on a pair the ranks together, `backup_agreement`; section 5.5), which
+takes the projected low at the 241-frame edge from 4.4 to about 10 by the
+route's record of the same step (5.8 GiB returned before the trim was added;
+not yet read on hardware for a whole load). A pair's rank at its whole-load
+edge read 4.29 GiB on the first Spark on 2026-11-13 with the backup kept; the
+pair's agreement and its room check are the answer to that reading and have no
+hardware reading of their own yet. What stays as above: a load placed partly
+whose route could not run.
 
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a
@@ -2891,7 +2924,9 @@ cluster actor inherits, the driver's launch does the same for a local actor
 driver inherits stands, and the unit `dgxm update` installs starts from an
 empty environment), and `scripts/comfy-driver.sh` exports the same for the
 driver, so a free on the thread that allocated the memory gives it back at
-once. A small block freed from another thread still waits for that thread's
+once. That setting is for torch's own allocator. A weight the loader hands over as it read it lies in the C
+library's memory, where from a process's second load on the freed pages of blocks under 32 MiB come back only
+at a trim (section 5.5 names the three places that trim). A small block freed from another thread still waits for that thread's
 next allocations. The cost is about 20 percent on a loop that does nothing but
 allocate and free host memory (0.44 s against 0.36 s for ten rounds of 16
 blocks of 128 MiB); the release test on this setting measures what renders pay.
