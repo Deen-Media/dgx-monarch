@@ -478,15 +478,87 @@ args reach every rank, so they cannot name one, and they ride inside every
 render's capability context, where a debug knob would re-prove every PASS in
 the ledger. The worker reads both variables at setup and logs them at WARNING,
 armed or ignored. Both names are on the worker loop's reviewed inheritance
-list, so a unit drop-in reaches the actor; neither carries a credential, and
-together they can only make one rank refuse a load. Never set either on a box
-that is rendering.
+list and among the six a Worker reads from its `worker.env`, which is the way
+to set them ([Setting a Worker-side variable](#setting-a-worker-side-variable));
+neither carries a credential, and together they can only make one rank refuse
+a load. Never set either on a box that is rendering.
+
+`DGXM_FAULT_BACKUP_RANK` is a second debug-only worker environment variable of
+the same kind, also off unless `DGXM_ACCEPTANCE=1` is set on the same worker.
+On a pair whose render carries a LoRA stack with `lora_low_rss` off it makes
+the rank it names vote short of room at any reading, so every rank frees
+ComfyUI's weight backup, and then read its own model as wrong, so the fleet's
+refusal goes through the ranks' second exchange and every rank stops before
+its first step. It exists to show on hardware that no rank waits on the other
+there. It is set the same way; take both out and recycle to render.
 
 ```toml
 [worker_args]
 disable_pinned_memory = true
 reserve_vram_gb = 8.0
 ```
+
+## Setting a Worker-side variable
+
+A few diagnostic switches are read by a Worker, not by the driver:
+`DGXM_DISABLE_CONTEXT_ROOM`, `DGXM_DISABLE_COPY_FREE_DROP`,
+`DGXM_DISABLE_BACKUP_FREE`, and the debug faults `DGXM_FAULT_LOAD_RANK` and
+`DGXM_FAULT_BACKUP_RANK` with `DGXM_ACCEPTANCE`. They are environment
+variables because a worker argument reaches every rank and rides in every
+render's capability context. No render needs one.
+
+**The way that works on every Worker: one file.** On the box whose Worker
+should take the switch, as the Worker's user, write
+`~/.config/dgx-monarch/worker.env`:
+
+```
+DGXM_DISABLE_BACKUP_FREE=1
+```
+
+Make it `chmod 600`, then **Reset attached mesh** (or any other recycle). Each
+actor reads the file as it starts, so no service restarts and no unit is
+touched. To undo it, remove the line or the file and recycle again.
+
+- Only those six names are read. Any other line is ignored, and the Worker's
+  log names it once: the name, never its value.
+- The file must be a regular file owned by the Worker's user and not writable
+  by group or others. A symbolic link is not followed. A file that fails this
+  is ignored, and the Worker's log says why.
+- A value is plain: letters, digits and `_ . : -`, at most 64 of them.
+- It is never silent. Each actor logs one WARNING as it starts,
+  `Worker switches set on this box: NAME=value (worker.env), ...`. The
+  driver's log repeats it at every setup as `Worker switches set on <host>:
+  ...`, and the Worker's status carries the list as `worker_switches`.
+  `dgxm doctor` has no row for it yet. A switch left on turns a safety step
+  off, so take it out when the diagnosis is done.
+
+**Why not a unit drop-in.** A Worker unit has one of three forms
+(`systemctl --user cat dgxm-worker.service` shows yours), and a drop-in's
+`Environment=` line does not reach all of them:
+
+| the unit was written by | its start line | an `Environment=` drop-in |
+|---|---|---|
+| `dgxm setup` | python, beside `Environment=PYTHONPATH=...` | reaches the Worker |
+| `dgxm install-service` with no dependency path of its own | the same | reaches the Worker |
+| a verified update, or an install that names its dependency path | `/usr/bin/env -i ...`, which clears the environment on purpose | is cleared and does nothing |
+
+Where a drop-in does reach the Worker, `dgxm install-service`,
+`dgxm uninstall` and the verified update refuse while it exists
+([TROUBLESHOOTING #90](TROUBLESHOOTING.md#90-install-service-or-uninstall-refuses-an-existing-worker-unit)),
+and it needs a Worker restart. The file needs neither, so use it there too.
+
+**Precedence.** A name already set in the actor's environment wins over the
+file: from a drop-in on a unit that passes it on, or, on a local mesh, from
+the environment ComfyUI starts in. The Worker's line says where each switch
+came from, `(environment)` or `(worker.env)`.
+
+**Other Worker variables.** The file is for the six switches alone. The
+worker loop passes on a short reviewed list of other names
+([INSTALL.md](INSTALL.md), "Both launch modes"), such as
+`TORCHINDUCTOR_CACHE_DIR`; those reach a Worker only from a unit that does
+not clear its environment (the first two rows) or, on a local mesh, from
+ComfyUI's environment. On a unit that starts through `/usr/bin/env -i` the
+Worker runs with its own defaults for them.
 
 ## `[[hosts]]`
 

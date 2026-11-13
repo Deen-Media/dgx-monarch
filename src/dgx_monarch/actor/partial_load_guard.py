@@ -107,6 +107,28 @@ def _all_ranks_full(local_full: bool) -> bool:
     return bool(int(flag.item()))
 
 
+def _all_ranks_min(values: list[int]) -> list[int]:
+    """MIN-reduce a few integers over the default group in ONE collective; every rank gets the same list.
+
+    The guard's own flag rides first and the pair's backup agreement after it
+    (``backup_agreement``), so agreeing costs no collective a render did not
+    already make. Every rank must send the same count, which the callers fix
+    from the topology and the call's shape, never from a rank's own state.
+    """
+    import torch
+    import torch.distributed as dist
+
+    device: str | torch.device = "cpu"
+    try:
+        if dist.get_backend() == "nccl" and torch.cuda.is_available():
+            device = torch.device("cuda", torch.cuda.current_device())
+    except Exception:
+        device = "cpu"
+    sent = torch.tensor([int(value) for value in values], dtype=torch.int32, device=device)
+    dist.all_reduce(sent, op=dist.ReduceOp.MIN)
+    return [int(value) for value in sent.tolist()]
+
+
 def all_ranks_true(local_flag: bool) -> bool:
     """MIN-reduce one boolean over the default group; True only if every rank is True.
 
@@ -120,7 +142,16 @@ def all_ranks_true(local_flag: bool) -> bool:
     return _all_ranks_full(local_flag)
 
 
-def check(model: Any, additional: tuple = ()) -> None:
+def _rank() -> int:
+    try:
+        import torch.distributed as dist
+
+        return int(dist.get_rank())
+    except Exception:
+        return 0
+
+
+def check(model: Any, additional: tuple = (), agree: tuple[tuple, tuple[Any, Any]] | None = None) -> None:
     """Exchange this rank's load completeness, then raise on every rank or none.
 
     Single-rank runs never raise: one rank cannot disagree with itself, and a
@@ -128,6 +159,13 @@ def check(model: Any, additional: tuple = ()) -> None:
     covers every other model the same prepare loaded (dual-model guidance
     passes the uncond checkpoint through here): a partially held second model
     diverges the ranks exactly like a partially held first.
+
+    ``agree`` is (the patchers this prepare loaded, its latent shape and
+    conds) on a topology where every rank holds the whole model. The same
+    exchange then carries the pair's backup agreement (``backup_agreement``):
+    the ranks free ComfyUI's weight backup together or not at all. Whether it
+    is given is fixed by the topology and the call's shape, the same on every
+    rank, so every rank sends the same count of integers.
     """
     world = _distributed_world()
     if world <= 1:
@@ -138,16 +176,29 @@ def check(model: Any, additional: tuple = ()) -> None:
     # short, so the journals are the only place that fact survives, and only
     # this line tells a render that passed from a guard that never ran.
     log.info("partial-load guard: local full_load=%s world=%d", local_full, world)
-    if _all_ranks_full(local_full):
-        return
+    if agree is None:
+        if _all_ranks_full(local_full):
+            return
+    else:
+        from . import backup_agreement
+
+        mine = backup_agreement.vote(agree[0], agree[1], _rank())
+        answer = _all_ranks_min([1 if local_full else 0, *mine.elements])
+        if answer[0] == 1:
+            backup_agreement.settle(mine, answer[1:], _all_ranks_min)
+            return
     raise PartialLoadDivergenceError(refusal(
         RefusalClass.CAPACITY, REFUSAL_TEXT, guard=GUARD, waivable=False,
         troubleshooting=TROUBLESHOOTING,
     ))
 
 
-def make_prepare_sampling_guard():
-    """Build the ``PREPARE_SAMPLING`` wrapper that runs the check after the load."""
+def make_prepare_sampling_guard(whole_model: bool = False):
+    """Build the ``PREPARE_SAMPLING`` wrapper that runs the check after the load.
+
+    ``whole_model`` (every rank holds the whole checkpoint: not FSDP) adds the
+    pair's backup agreement to the same exchange.
+    """
 
     def wrapper(executor, *args, **kwargs):
         result = executor(*args, **kwargs)
@@ -157,7 +208,17 @@ def make_prepare_sampling_guard():
         additional = (
             tuple(result[2]) if isinstance(result, tuple) and len(result) > 2
             and isinstance(result[2], (list, tuple)) else ())
-        check(model, additional=additional)
+        agree = None
+        if whole_model:
+            patcher = args[0] if args else kwargs.get("model")
+            shape = args[1] if len(args) > 1 else kwargs.get("noise_shape")
+            conds = args[2] if len(args) > 2 else kwargs.get("conds")
+            if patcher is not None and shape is not None and conds is not None:
+                agree = ((patcher, *additional), (shape, conds))
+        if agree is None:
+            check(model, additional=additional)  # the call dev made, for a caller that wraps it
+        else:
+            check(model, additional=additional, agree=agree)
         return result
 
     return wrapper
@@ -190,7 +251,10 @@ def install(base_patcher: Any, world: int | None, topology: Any = None) -> None:
         pe.WrappersMP.PREPARE_SAMPLING, WRAPPER_KEY, options, is_model_options=True
     ):
         return
+    # Every rank of a topology that is not FSDP holds the whole checkpoint; there the pair's backup
+    # agreement rides the guard's exchange. Read from the topology alone, so every rank reads it alike.
+    fsdp = bool(topology.get("fsdp")) if isinstance(topology, dict) else False
     pe.add_wrapper_with_key(
-        pe.WrappersMP.PREPARE_SAMPLING, WRAPPER_KEY, make_prepare_sampling_guard(),
+        pe.WrappersMP.PREPARE_SAMPLING, WRAPPER_KEY, make_prepare_sampling_guard(whole_model=not fsdp),
         options, is_model_options=True,
     )

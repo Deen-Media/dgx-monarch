@@ -121,3 +121,13 @@ def not_ready(local_error: Exception) -> NoReturn:
             "readiness flag not crossed (%r); the peer will wait on the group "
             "timeout", exc)
     raise local_error
+
+
+def peer_failed() -> NoReturn:
+    """Raise the healthy rank's refusal about a peer, for an exchange made outside this module.
+
+    The pair's backup agreement crosses each rank's model after a free on the
+    partial-load guard's exchange (``backup_agreement.settle``); a rank whose
+    own model is right raises this where a peer's is not.
+    """
+    raise PeerLoadFailureError(refusal(RefusalClass.PHYSICS, PEER_LOAD_TEXT))

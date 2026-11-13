@@ -170,6 +170,21 @@ def test_the_resident_shows_in_status_and_clear_vram_and_unload_release_it(monke
     assert actor._vae_resident is None
 
 
+def test_the_pool_level_empties_the_device_pool_and_keeps_the_decode_vae(monkeypatch):
+    """The decode relief asks the Workers at ``pool``: a Worker that may decode next keeps its VAE."""
+    from dgx_monarch.actor import worker as worker_mod
+
+    monkeypatch.setattr(vae_decode, "_empty_cache", lambda: None)
+    actor = worker_mod.GPUWorker.__new__(worker_mod.GPUWorker)
+    actor._setup_key = None
+    actor.store = SimpleNamespace(unload_all=lambda: None, snapshot=lambda: {})
+    held = actor._vae_resident = _held()
+    actor._clear_vram_impl("pool")
+    assert actor._vae_resident is held
+    actor._clear_vram_impl("soft")
+    assert actor._vae_resident is None
+
+
 def test_a_teardown_that_releases_models_drops_the_decode_vae(monkeypatch):
     """teardown_group(release_models=True) frees every model, the decode VAE included.
 

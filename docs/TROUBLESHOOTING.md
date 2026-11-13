@@ -756,9 +756,9 @@ and then makes its context straight away. What you may see:
   with no progress right after a reset or a restart, on a box that is short
   of free memory, is this wait.
 
-`DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment (a drop-in for the
-Worker's unit, then a Worker restart) turns the make-room step off, for
-diagnosis; the refusal stays. The Worker's status (`context_room`) gives the
+`DGXM_DISABLE_CONTEXT_ROOM=1` on the Worker (in its `worker.env`, then a
+recycle: [CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)) turns the
+make-room step off, for diagnosis; the refusal stays. The Worker's status (`context_room`) gives the
 GiB touched, the seconds, and free memory before the step, after the release
 and at the context. Under comfy-managed residency the Worker makes the room
 and leaves the context to ComfyUI's own start a moment later, so memory
@@ -827,6 +827,40 @@ you may see:
   until a whole load of its own has been measured. (On a pair, a rank that
   ComfyUI loads only partly is refused with the `partial_load_divergence`
   text whatever the reserve; that is #79, not this rule.)
+
+  **A clip much longer than the shipped ones, with `lora_low_rss` off.** Three
+  shipped templates run with the switch off and a LoRA: `dgx-monarch-wan-animate2`,
+  `dgx-monarch-wan-animate2-bfloat16-warm` and `dgx-monarch-wan-animate2-memory-saver`,
+  each at 81 frames. With the switch off ComfyUI's classic bake keeps a host
+  copy of every weight the LoRA patches for the whole render, and the
+  sampler's memory grows with the clip faster than ComfyUI's own estimate of
+  it. No price knows the clip's length. At 81 frames the tightest reading
+  that still loads the model whole leaves about 6 to 7 GiB. At 241 frames it
+  would leave about 4.4 GiB, under the 5 GiB floor (projected from a roomy
+  241-frame render that took 52.4 GiB where 81 frames takes 39, one GPU,
+  2026-11-12, the Spark under its clock cap, max 2100 MHz). If you lengthen a
+  clip well past the shipped length on a box with little memory to spare, turn
+  `lora_low_rss` on, which keeps no such copy, or free memory first. On one GPU
+  the Worker now frees that copy by itself before the first step when a whole
+  load leaves less room than the sampler is estimated to need; it logs a line
+  that starts `LoRA bake: ComfyUI loaded this model whole`, and the next LoRA
+  change on that model reloads it from disk. On a pair the ranks do the same together: any rank short, and
+  every rank frees; a rank that cannot free keeps the whole fleet as it is; and where a rank would still be
+  short of what the sampler needs the render is refused before its first step, naming the rank and the
+  figures. A load ComfyUI placed only partly
+  whose bake could not be finished for room is still as above. If a pair's
+  render is refused with `pair_backup_room` after the ranks freed their
+  backups, the same queue is refused again until memory is back: clear the
+  Sparks (Clear and retry where the panel offers it, or Reset attached mesh)
+  and queue again, shorten the clip, or free memory on the box the refusal
+  names; turning `lora_low_rss` on does not help a model whose stack is
+  already baked in. A Worker gives a dropped model's host memory back at the
+  drop and at a hard clear; a soft clear returns its device pool only.
+  `DGXM_DISABLE_BACKUP_FREE=1` on the Worker (in its `worker.env`, then a
+  recycle; on a local mesh the environment ComfyUI starts in serves too:
+  [CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)) turns that step off,
+  for diagnosis; the Worker then logs what it would have weighed and keeps the
+  copy.
 
   The stack's own LoRA files are added, each as often as the stack lists it,
   when the price is read before the Worker has read them: a load into a
@@ -898,7 +932,9 @@ new torch build does. Torch's own default sits under `TMPDIR`, which the
 Worker usually puts on tmpfs. To place the cache elsewhere, set
 `TORCHINDUCTOR_CACHE_DIR` in the environment the Worker service starts with;
 the directory must be private to the account, because inductor loads the code
-it generates from there. If the Worker cannot make the default directory, it
+it generates from there. A unit that a verified update wrote clears its
+environment, so a drop-in does not reach it and the Worker keeps the default
+there ([CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)). If the Worker cannot make the default directory, it
 says so at start and torch keeps its default. After a torch upgrade the old
 version's directory is unused and safe to delete. Local mode, with no
 `cluster.toml`, does not move `TMPDIR`, so its actors keep torch's default
@@ -2474,12 +2510,13 @@ comfy-managed model in the other slot, which ComfyUI may still move to the
 host, and a Worker started with `DGXM_DISABLE_COPY_FREE_DROP=1`, which drops
 through ComfyUI's global unload as before; there the card's clear is the safe
 way to replace the model. That variable is read by the Worker, not the
-driver. Set it on each box with a drop-in for the Worker's unit
-(`systemctl --user edit dgxm-worker.service`, with
-`Environment=DGXM_DISABLE_COPY_FREE_DROP=1` under `[Service]`), then restart
-the Worker; the name is on the Worker loop's reviewed inheritance list, so it
-reaches the actors. Remove the drop-in afterwards: `install-service` refuses a unit
-with one ([#90](#90-install-service-or-uninstall-refuses-an-existing-worker-unit)). A check that reads the new model as already loaded
+driver. Set it on each box in the Worker's `worker.env`
+(`DGXM_DISABLE_COPY_FREE_DROP=1` in `~/.config/dgx-monarch/worker.env`), then
+recycle; each actor reads that file as it starts. A unit drop-in does not
+reach a Worker whose unit clears its environment, which a verified update's
+unit does ([CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)). Take the
+line out afterwards: the Worker and the driver both log the switch while it is
+set. A check that reads the new model as already loaded
 charges no load and counts no drop. Under `auto` the graph's own driver models load before the
 old model is dropped, so they must fit beside it. Under an explicit preset the
 load may wait for the first render too (an identity ceremony or a
@@ -3350,6 +3387,76 @@ mesh, which gives this box its ordinary stock or slab residency back.*
    and every policy push into this actor refuses until you reset the Attached
    mesh. Look further back in the same worker's log for the first refusal: that
    one says what went wrong.
+
+### A render that stopped inside its first step
+
+**What happened before 1.5.** A render with `comfy_managed` on could stop for
+good inside its first step, on a roomy box as well as a tight one. The
+Worker's GPU figure stopped rising, the GPU sat idle, and the Worker no longer
+answered status. Memory had no part in it. After its budget the stall guard
+ended the render in words
+([#86](#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)),
+and the next render brought the Workers back by itself. In the tests of
+2026-11-12 and 13, six of twelve such renders stopped while status was being
+polled, and none of six did with every status poller stopped.
+
+**Why.** ComfyUI's dynamic loader (comfy-aimdo) hands each of its log
+lines to a Python callback, and its own log level starts at "everything".
+ComfyUI's process lowers it to INFO at start; a Worker left it alone. So once
+the loader's hooks were in, every device allocation and free called Python,
+from inside the call torch makes while it holds its allocator lock. A call
+into Python needs the interpreter lock. The Worker's status read asks torch
+for its allocated and reserved figures, which takes the same allocator lock
+without giving up the interpreter lock. When the two met, the GPU thread held
+the allocator lock and waited for the interpreter lock, and the status read
+held the interpreter lock and waited for the allocator lock. Neither could
+ever go on. The panel, `dgxm top` and any scraper ask for status every few
+seconds, so a first step of 45 s met one often.
+
+**What 1.5 does.**
+
+- The Worker sets the loader's log level to INFO, as ComfyUI does, before the
+  loader's hooks go in. The per-allocation lines are dropped inside the
+  library and never call Python. The loader's warnings and errors still reach
+  the Worker's log. The Worker reads the level back from the library after
+  the hooks are in, and its bring-up line ends with
+  `native log level INFO (read back as 4)`.
+- A status read touches the device only while the Worker's GPU thread is
+  free. While a load or a sample runs, status answers at once with the
+  figures it last read, marked `"stale": true` with `age_s`, their age in
+  seconds. If none were read yet, `vram` is `null` and `note` says why. The
+  rest of the reply is live either way.
+
+A stale mark means a busy Worker, never a dead one. The panel and `dgxm top`
+keep showing the Worker with its last figures, and the FSDP reload price
+credits nothing from a stale figure.
+
+**What is still the loader's to change.** The root is a Python callback run
+under torch's allocator lock. With the level at INFO the loader can still do
+that in two places: an error line from inside a hook, on a failure path, and
+its page-out callback when it evicts pages to make room. ComfyUI hands it
+that callback only for a model it marks writable, and among the shipped
+families that is Qwen Image 2.1. Neither can meet a status read any more.
+
+One route stays open, possible by mechanism and seen in no record. Python's
+garbage collector, or a finalizer, can free a device tensor on the Worker's
+event-loop thread while that thread holds the interpreter lock, and the free
+takes torch's allocator lock. If the GPU thread is at that moment inside one
+of the two calls above, the two wait on each other as before. Before 1.5
+every device allocation opened that window; now only an error line or Qwen
+Image 2.1's page-out under a memory deficit does. The stall guard ends such
+a render in words and the next one recovers.
+
+The driver's ComfyUI is safe at its default log level, which is INFO. Do not
+start it with `--verbose DEBUG` while DynamicVRAM is on: that level lets the
+loader's budget lines call Python from inside the same hooks, and ComfyUI's
+own `/system_stats` route reads torch's figures on another thread.
+
+**If a render still ends this way.** The error reads `render stalled: the
+fleet reported no progress` with `comfy_managed` on and memory to spare.
+Queue the render again (the Workers come back by themselves), or turn the
+widget off for that graph, and report it with the Worker's log
+([#4](#4-supervisionerror--process-exited-with-non-zero-code)).
 
 ### Why a change needs an Attached mesh reset
 

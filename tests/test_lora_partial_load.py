@@ -16,6 +16,7 @@ import sys
 import weakref
 from types import SimpleNamespace
 
+import psutil
 import pytest
 
 from dgx_monarch.actor import lora_partial_load
@@ -173,6 +174,18 @@ def _comfyui_forgets_the_models_of_each_test():
     management = sys.modules.get("comfy.model_management")
     if management is not None:
         management.current_loaded_models.clear()
+
+
+@pytest.fixture(autouse=True)
+def _room_for_the_real_route(request):
+    """The ComfyUI tests here take the real route, which runs only with room above the 5 GiB host floor.
+
+    They read the real MemAvailable, so on a machine with little memory free they would decline the
+    route and fail for the machine's reason. The file's pure tests ask for no ComfyUI and always run.
+    """
+    if "installed" in request.fixturenames and psutil.virtual_memory().available < 10 * 2 ** 30:
+        pytest.skip("the partial-load route needs room above the 5 GiB host floor, and under 10 GiB of "
+                    "memory is available here")
 
 
 def test_which_layers_quantize_their_input(comfy_cpu):
@@ -336,6 +349,288 @@ def test_a_whole_load_a_dynamic_patcher_and_a_model_with_no_stack_are_left_alone
     patcher.patches.clear()
     lora_partial_load.check(patcher)  # no stack, as after a low-RSS bake
     assert slot.base_baked is False
+
+
+# A WHOLE load: ComfyUI's backup of every patched weight stands through the render. Where the room
+# left is under 1.5 times ComfyUI's own full estimate for sampling the latent, the Worker frees it (the route's
+# last step alone). On hardware (2026-11-12, one GPU of a DGX Spark under its clock cap, max 2100 MHz)
+# a 241-frame Wan-Animate 2 render took 52.4 GiB where 81 frames takes 39, the Worker holding 17.7 GiB of host memory.
+
+GIB = 2 ** 30
+SAMPLING = ((1, 16, 62, 104, 60), {"positive": [], "negative": []})
+
+
+def _whole(build, cpu):
+    """A patched model ComfyUI loaded whole, in a store slot, with the store's own clone of the stack."""
+    root, patcher = build()
+    active = patcher.clone()
+    slot = _slot(patcher, active)
+    patcher.load(cpu, full_load=True)
+    assert root.model_lowvram is False and patcher.backup  # the classic bake kept the originals
+    return root, patcher, active, slot
+
+
+def _asks(monkeypatch, ask_gib, room_gib):
+    seen = []
+
+    def ask(patcher, noise_shape, conds):
+        seen.append((noise_shape, conds))
+        return None if ask_gib is None else int(ask_gib * GIB)
+
+    monkeypatch.delenv(lora_partial_load.BACKUP_FREE_DISABLE_ENV, raising=False)
+    monkeypatch.setattr(lora_partial_load, "_sampling_ask", ask)
+    monkeypatch.setattr(lora_partial_load, "_host_room", lambda: int(room_gib * GIB))
+    return seen
+
+
+@pytest.mark.parametrize("formats", [("float8_e4m3fn",), ("int8_tensorwise",), ("int8_tensorwise", "float8_e4m3fn")],
+                         ids=["fp8", "int8", "int8 and fp8"])
+def test_a_whole_load_gives_up_its_backup_where_the_sampler_needs_the_room(installed, monkeypatch, formats, caplog):
+    import torch
+
+    build, outputs, cpu = _rig(formats)
+    expected = _full_load(build, outputs, cpu)
+    root, patcher, active, slot = _whole(build, cpu)
+    seen = _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)  # the 241-frame clip at ComfyUI's whole-load edge
+    with caplog.at_level("INFO"):
+        lora_partial_load.check(patcher, SAMPLING)
+    assert seen == [SAMPLING]
+    assert patcher.backup == {} and patcher.patches == {} and active.patches == {}
+    assert slot.base_baked is True and slot.unbake is None  # a stack change now reloads from disk
+    assert root.model_lowvram is False  # no weight moved
+    for module in root.diffusion_model.children():
+        assert module.weight_function == [] and module.comfy_patched_weights is True
+    assert "freed ComfyUI's weight backup before the first step" in caplog.text
+    assert "20.4 GiB is available above the 5 GiB floor where the sampler may ask 34.8 GiB" in caplog.text
+    for got, want in zip(outputs(root), expected, strict=True):
+        assert torch.equal(got, want)
+    # ComfyUI may still move a layer off the device under pressure: it moves a baked weight with no patch.
+    patcher.partially_unload(cpu, memory_to_free=1e12)
+    for got, want in zip(outputs(root), expected, strict=True):
+        assert torch.equal(got, want)
+    seen.clear()
+    lora_partial_load.check(patcher, SAMPLING)  # no stack is left to weigh
+    assert seen == []
+
+
+@pytest.mark.parametrize("why", ["room enough", "room exactly the ask", "no estimate", "no latent given",
+                                 "a GPU of its own", "not a store model", "no backup held"])
+def test_a_whole_load_keeps_its_backup_wherever_the_step_does_not_apply(installed, monkeypatch, why, caplog):
+    """With room for the sampler the backup stays, and a stack change swaps in place as before."""
+    build, _outputs, cpu = _rig()
+    root, patcher, active, slot = _whole(build, cpu)
+    held, stack = dict(patcher.backup), dict(patcher.patches)
+    _asks(monkeypatch, ask_gib=None if why == "no estimate" else 12.4,
+          room_gib={"room enough": 40.0, "room exactly the ask": 12.4}.get(why, 1.0))
+    if why == "a GPU of its own":
+        monkeypatch.setattr(lora_partial_load, "shares_host_memory", lambda patcher: False)
+    elif why == "not a store model":
+        delattr(root, lora_partial_load.STORED)
+    elif why == "no backup held":
+        held = {}
+        patcher.backup.clear()
+    with caplog.at_level("INFO"):
+        lora_partial_load.check(patcher, None if why == "no latent given" else SAMPLING)
+    assert dict(patcher.backup) == held and dict(patcher.patches) == stack and active.patches
+    assert slot.base_baked is False and slot.unbake == "a record from an earlier stack"
+    assert "freed ComfyUI's weight backup" not in caplog.text
+
+
+def test_the_ask_is_comfyuis_batching_threshold_for_the_latent(installed, monkeypatch):
+    """1.5 times the first of estimate_memory's two figures (the doubled batch), the free memory from
+    which ComfyUI runs cond and uncond in one call; no figure when ComfyUI gives none."""
+    import comfy.sampler_helpers
+
+    build, _outputs, cpu = _rig()
+    _root, patcher, _active, _slot = _whole(build, cpu)
+    asked = []
+
+    def estimate(model, noise_shape, conds):
+        asked.append((model, noise_shape, conds))
+        return 34.8 * GIB, 17.4 * GIB
+
+    monkeypatch.setattr(comfy.sampler_helpers, "estimate_memory", estimate)
+    assert lora_partial_load.ASK_SHARE_OF_FULL_ESTIMATE == 1.5
+    assert lora_partial_load._sampling_ask(patcher, *SAMPLING) == int(1.5 * 34.8 * GIB)
+    assert asked == [(patcher, *SAMPLING)]
+
+    def fails(model, noise_shape, conds):
+        raise RuntimeError("this model has no estimate")
+
+    monkeypatch.setattr(comfy.sampler_helpers, "estimate_memory", fails)
+    assert lora_partial_load._sampling_ask(patcher, *SAMPLING) is None
+
+
+def test_no_clone_between_the_stores_patcher_and_the_samplers_keeps_the_stack(installed, monkeypatch):
+    """The render clone and a sampling-shift node's clone copy the stack; once it is baked in none may keep it."""
+    import torch
+
+    build, outputs, cpu = _rig(("int8_tensorwise",))
+    expected = _full_load(build, outputs, cpu)
+    root, patcher, active, slot = _whole(build, cpu)
+    render = patcher.clone()
+    sampler = render.clone()
+    assert sampler.parent is render and render.parent is patcher  # ComfyUI's own chain
+    assert sampler.patches and render.patches and sampler.backup is patcher.backup
+    _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)
+    lora_partial_load.check(sampler, SAMPLING)
+    assert slot.base_baked is True and patcher.backup == {}
+    for held in (sampler, render, patcher, active):
+        assert held.patches == {}
+    # A clone made for the next render of the same stack: ComfyUI finds nothing to patch again.
+    later = active.clone()
+    later.partially_load(cpu, extra_memory=1e32)
+    assert later.patches == {} and later.backup == {}
+    for got, want in zip(outputs(root), expected, strict=True):
+        assert torch.equal(got, want)
+
+
+def test_comfyuis_own_unload_of_a_freed_model_neither_loses_nor_doubles_the_stack(installed, monkeypatch):
+    """ComfyUI's unload restores from the backup, which is empty now: the baked weights must come back as they are."""
+    import comfy.model_management as mm
+    import torch
+
+    build, outputs, cpu = _rig(("int8_tensorwise", "float8_e4m3fn"))
+    expected = _full_load(build, outputs, cpu)
+    root, patcher, active, slot = _whole(build, cpu)
+    _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)
+    lora_partial_load.check(patcher, SAMPLING)
+    assert slot.base_baked is True
+    record = mm.LoadedModel(patcher)
+    record.real_model = weakref.ref(root)
+    record.model_finalizer = weakref.finalize(root, mm.cleanup_models)
+    record.model_finalizer.atexit = False
+    record.model_unload()  # detach(True): an unpatch with an empty backup, then the model moved off the device
+    assert root.current_weight_patches_uuid is None
+    later = active.clone()
+    later.load(cpu, full_load=True)
+    assert later.patches == {} and later.backup == {}
+    for got, want in zip(outputs(root), expected, strict=True):
+        assert torch.equal(got, want)
+
+
+def test_a_dual_model_sampling_weighs_each_model_once(installed, monkeypatch):
+    """The uncond model's prepare lists the cond model as loaded too, and the cond's own prepare follows:
+    the first weighs both, the second finds no stack left to weigh."""
+    import comfy.patcher_extension as pe
+
+    from dgx_monarch.actor import partial_load_guard
+
+    build, _outputs, cpu = _rig()
+    _root, cond, _cond_active, cond_slot = _whole(build, cpu)
+    _other_root, uncond, _uncond_active, uncond_slot = _whole(build, cpu)
+    seen = _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)
+    for patcher in (cond, uncond):
+        partial_load_guard.install(patcher, 1)
+    wrappers = [pe.get_wrappers_with_key(pe.WrappersMP.PREPARE_SAMPLING, lora_partial_load.WRAPPER_KEY,
+                                         patcher.model_options, is_model_options=True)[0]
+                for patcher in (uncond, cond)]
+    shape, conds = SAMPLING
+    wrappers[0](lambda *args, **kwargs: ("real model", "conds", [cond]), uncond, shape, {"negative": []})
+    assert cond_slot.base_baked is True and uncond_slot.base_baked is True and len(seen) == 2
+    wrappers[1](lambda *args, **kwargs: ("real model", "conds", []), cond, shape, conds)
+    assert len(seen) == 2  # nothing was weighed a second time
+
+
+def test_a_backup_freed_on_a_whole_load_is_checked_against_the_model_itself(installed, monkeypatch):
+    """The same second wall as after the route: anything short of a full load's state refuses."""
+    build, _outputs, cpu = _rig(("int8_tensorwise",))
+    root, patcher, _active, slot = _whole(build, cpu)
+    _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)
+    free = lora_partial_load.free_backup_for_sampling
+
+    def freed_and_then_unpatched(patcher, noise_shape, conds):
+        assert free(patcher, noise_shape, conds) is True
+        root.current_weight_patches_uuid = None
+        return True
+
+    monkeypatch.setattr(lora_partial_load, "free_backup_for_sampling", freed_and_then_unpatched)
+    with pytest.raises(lora_partial_load.OffloadedInputQuantError) as raised:
+        lora_partial_load.check(patcher, SAMPLING)
+    message = str(raised.value)
+    _class_c(message)
+    assert "ComfyUI loaded whole, and after the Worker freed its weight backup for the sampler" in message
+    assert "ComfyUI holds its weights as unpatched" in message and "Reset the attached mesh" in message
+    assert slot.base_baked is True
+
+
+def test_the_wrapper_hands_the_check_the_latent_and_the_conds_of_the_sampling(installed, monkeypatch):
+    import comfy.patcher_extension as pe
+
+    from dgx_monarch.actor import partial_load_guard
+
+    build, _outputs, cpu = _rig()
+    root, patcher, _active, slot = _whole(build, cpu)
+    other_root, other, _other_active, other_slot = _whole(build, cpu)
+    seen = _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)
+    partial_load_guard.install(patcher, 1)
+    (wrapper,) = pe.get_wrappers_with_key(
+        pe.WrappersMP.PREPARE_SAMPLING, lora_partial_load.WRAPPER_KEY, patcher.model_options, is_model_options=True)
+    shape, conds = SAMPLING
+    wrapper(lambda *args, **kwargs: ("real model", "conds", [other]), patcher, shape, conds)
+    assert seen == [SAMPLING, SAMPLING]  # the model and the other model the same sampling loaded
+    assert slot.base_baked is True and other_slot.base_baked is True
+    assert root.model_lowvram is False and other_root.model_lowvram is False
+    # Called by keyword, as ComfyUI may: the same two arguments.
+    third_root, third, _third_active, third_slot = _whole(build, cpu)
+    partial_load_guard.install(third, 1)
+    (third_wrapper,) = pe.get_wrappers_with_key(
+        pe.WrappersMP.PREPARE_SAMPLING, lora_partial_load.WRAPPER_KEY, third.model_options, is_model_options=True)
+    third_wrapper(lambda *args, **kwargs: ("real model", "conds", []), third, noise_shape=shape, conds=conds)
+    assert third_slot.base_baked is True and third_root.model_lowvram is False
+
+
+def test_the_switch_keeps_the_backup_and_says_what_the_step_weighed(installed, monkeypatch, caplog):
+    """DGXM_DISABLE_BACKUP_FREE=1 on the Worker: the render is as it was before the step, and one line says so."""
+    build, _outputs, cpu = _rig()
+    _root, patcher, active, slot = _whole(build, cpu)
+    held, stack = dict(patcher.backup), dict(patcher.patches)
+    _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)
+    monkeypatch.setenv(lora_partial_load.BACKUP_FREE_DISABLE_ENV, "1")
+    with caplog.at_level("INFO"):
+        lora_partial_load.check(patcher, SAMPLING)
+    assert dict(patcher.backup) == held and dict(patcher.patches) == stack and active.patches
+    assert slot.base_baked is False and slot.unbake == "a record from an earlier stack"
+    assert "ComfyUI's weight backup is kept through the render" in caplog.text
+    assert "DGXM_DISABLE_BACKUP_FREE=1 on the Worker" in caplog.text
+    assert "20.4 GiB is available above the 5 GiB floor where the sampler may ask 34.8 GiB" in caplog.text
+    assert "freed ComfyUI's weight backup" not in caplog.text
+    # With room for the sampler the switch has nothing to say.
+    caplog.clear()
+    _asks(monkeypatch, ask_gib=12.4, room_gib=40.0)
+    monkeypatch.setenv(lora_partial_load.BACKUP_FREE_DISABLE_ENV, "1")
+    with caplog.at_level("INFO"):
+        lora_partial_load.check(patcher, SAMPLING)
+    assert "weight backup" not in caplog.text
+    # Only an explicit on value is on: with "0" the step runs.
+    _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)
+    monkeypatch.setenv(lora_partial_load.BACKUP_FREE_DISABLE_ENV, "0")
+    lora_partial_load.check(patcher, SAMPLING)
+    assert patcher.backup == {} and slot.base_baked is True
+
+
+def test_the_switch_leaves_the_partial_load_route_alone(installed, monkeypatch):
+    import torch
+
+    build, outputs, cpu = _rig(("int8_tensorwise",))
+    (expected,) = _full_load(build, outputs, cpu)
+    root, patcher = build()
+    slot = _slot(patcher)
+    patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    monkeypatch.setenv(lora_partial_load.BACKUP_FREE_DISABLE_ENV, "1")
+    lora_partial_load.check(patcher, SAMPLING)
+    assert root.model_lowvram is False and slot.base_baked is True
+    assert torch.equal(outputs(root)[0], expected)
+
+
+def test_the_backup_switch_reaches_the_actor_through_the_worker_loops_filter():
+    """The worker loop deletes every name outside its list before actors inherit it."""
+    from dgx_monarch.cli import worker_process_env
+
+    assert lora_partial_load.BACKUP_FREE_DISABLE_ENV == "DGXM_DISABLE_BACKUP_FREE"
+    environment = {"PATH": "/usr/bin", lora_partial_load.BACKUP_FREE_DISABLE_ENV: "1"}
+    assert worker_process_env.filter_worker_environment(environment) == 0
+    assert environment[lora_partial_load.BACKUP_FREE_DISABLE_ENV] == "1"
 
 
 def test_the_single_rank_check_rides_prepare_sampling_once(installed, monkeypatch):
@@ -570,6 +865,36 @@ def test_the_room_rule_counts_every_moved_layer_when_the_weights_are_file_pages(
     why_not = lora_partial_load.make_whole(patcher)
     assert why_not is not None and "is available above the 5 GiB floor" in why_not
     assert root.model_lowvram is True and slot.base_baked is False
+
+
+def test_a_pending_layer_is_classed_by_its_own_format_for_the_routes_room(installed):
+    """The live modules, read as the classic bake's price reads the header: INT8 ConvRot, scaled FP8, the rest."""
+    import torch
+
+    from dgx_monarch import capacity_classic_bake as price
+    from dgx_monarch.actor import lora_cast_time
+
+    build, _outputs, cpu = _rig(("int8_tensorwise", "float8_e4m3fn"))
+    root, patcher = build()
+    _slot(patcher)
+    int8, fp8 = root.diffusion_model.q0, root.diffusion_model.q1
+    assert lora_partial_load._layer_class(int8) == (price.INT8_QUANTIZED, lora_cast_time._module_bytes(int8))
+    assert lora_partial_load._layer_class(fp8) == (price.FP8_QUANTIZED, lora_cast_time._module_bytes(fp8))
+    plain = torch.nn.Linear(8, 8, bias=False)
+    assert lora_partial_load._layer_class(plain) == (price.FULL_PRECISION, 8 * 8 * 4)
+    assert lora_partial_load._layer_class(plain.to(torch.bfloat16)) == (price.FULL_PRECISION, 8 * 8 * 2)
+    assert lora_partial_load._layer_class(SimpleNamespace()) == (price.OTHER, 0)  # unreadable: the line
+    # Both layers off the device, asked by the price's own rule from the classes read above.
+    patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    pending = lora_partial_load._patched_off_device(patcher)
+    assert len(pending) == 2
+    asked = lora_partial_load._bake_room(pending)
+    assert asked == price.term_from_weights(
+        [lora_partial_load._layer_class(module) for _key, module in pending], guard=False)
+    # The rig's layers are small keys (32 KiB each, under the price's 1 MiB) and the INT8 one holds
+    # more than half the stack's bytes (its per-channel scale), so the price reads the stack as INT8
+    # led and charges both keys the INT8 share: the FP8 key does not take the line's 7.5 MiB here.
+    assert asked == price.CLASSIC_BAKE_FIXED_BYTES + 2 * price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]
 
 
 def test_the_pread_loader_is_told_from_the_mmap_loader_by_its_own_mark(monkeypatch):

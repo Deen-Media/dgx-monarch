@@ -44,7 +44,7 @@ from ..log import get_logger
 from ..model_sampling import normalize_model_sampling
 from ..runtime_timing import MeasuredAsyncLock, run_gpu_phase
 from ..transfer import LatentReturn
-from . import sample_protocol, store_fsdp, store_identity, worker_env, worker_status
+from . import sample_protocol, store_fsdp, store_identity, worker_env, worker_status, worker_switches
 from .cancellation import CancellableSampleMixin
 from .failure import cleanup_on_failure
 from .gate_fsdp_cycle import FsdpGateCycleMixin
@@ -84,6 +84,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Va
         self._gpu_exec = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="dgxm-gpu")
         self._init_cancellation()
+        self._switches = worker_switches.apply()  # worker.env, read as each actor starts: never silent
 
     async def _on_gpu(self, fn, *args):
         """Run a blocking GPU, CUDA or NCCL body on the GPU thread, in this actor's context.
@@ -467,12 +468,13 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Va
 
     @concurrent_endpoint
     async def clear_vram(self, level: str = "soft") -> dict:
-        """soft: free allocator cache; hard: also unload every resident model."""
+        """soft: free allocator cache; hard: also unload every resident model; pool: the device pool alone."""
         async with self._gpu_lock:
             return await self._on_gpu(self._clear_vram_impl, level)
 
     def _clear_vram_impl(self, level: str = "soft") -> dict:
-        drop_resident(self)  # a decode VAE is reloadable cache at either level
+        if level != "pool":  # the decode relief's ask: the device pool alone, the decode VAE kept
+            drop_resident(self)  # a decode VAE is reloadable cache at soft and hard
         if self._setup_key is None:
             # Before setup there is no allocator to clear, and touching CUDA here
             # would bind the wrong device (worker_status.status_impl).

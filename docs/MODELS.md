@@ -1853,6 +1853,11 @@ For ordinary iteration, choose the
 [BF16 warm workflow](../example_workflows/dgx-monarch-wan-animate2-bfloat16-warm.json).
 The BF16 workflow runs a soft Clear VRAM before full decode. This releases
 unused allocator buffers while keeping actors, weights and LoRA backups.
+A load that left less room than the sampler is estimated to need (on a pair, on any rank)
+has already given up its LoRA backup before the first step
+([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma));
+the weights stay, an unchanged queue is as warm as before, and the next LoRA
+change reloads the model from disk.
 Keep `slab_weights` and `lora_low_rss` off for the tested warm workflow.
 Changing either setting selects a configuration outside those tests.
 

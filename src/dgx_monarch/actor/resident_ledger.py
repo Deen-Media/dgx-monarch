@@ -260,16 +260,37 @@ def collect_dropped() -> None:
     gc.collect()
 
 
-def flush_dropped(mm: Any, slot: str) -> None:
-    """Return a dropped model's cached device blocks to the host, best effort.
+def flush_dropped(mm: Any, slot: str, everything: bool = False) -> None:
+    """Return a dropped model's cached device blocks, and its freed host memory, to the box, best effort.
 
     The unload (``unload_dropped``) flushes while the store still holds the weights.
     After those references are cleared, flush again so ``MemAvailable`` and the
     next capacity quote reflect the released memory. The model is already
     dropped; a flush failure only leaves capacity quotes pessimistic.
+
+    Then one host trim (``host_trim``), at every drop: of one slot, and of
+    every slot at the Worker's hard clear, its unload and a releasing
+    teardown. From a Worker's second load of a file on, the C library keeps
+    the freed pages of its smaller weights, and a dropped model's memory would
+    not reach the box (on record a hard clear left a Worker at 10.35 GiB with
+    no model, a load that fit was then refused 0.5 GiB short, and a placement
+    alone left 10.8 GiB in the arenas, so a stack change's fresh load can be
+    refused the same way). A reuse makes no drop. One shipped template, the
+    memory-saver, drops once a render by its design; the line below times the
+    trim there. If a proof block reads it over 0.3 s a render on that
+    template, the trim moves to the store-wide drop alone: ``everything`` is
+    passed for that.
     """
     try:
         mm.soft_empty_cache()
     except Exception as exc:
         log.warning("model store [%s]: cache flush after the drop failed (%s); capacity "
                     "quotes may count the dropped weights until the next flush", slot, failure_summary(exc))
+    from . import host_trim
+
+    ran, seconds, before, after = host_trim.trim()
+    if ran:
+        log.info("model store [%s]: the host trim after %s returned %.1f GiB to the box "
+                 "(MemAvailable %.1f to %.1f GiB, %.2f s)", slot,
+                 "the store-wide drop" if everything else "the drop of this slot",
+                 (after - before) / 2**30, before / 2**30, after / 2**30, seconds)

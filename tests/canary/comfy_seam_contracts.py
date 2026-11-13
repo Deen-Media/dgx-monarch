@@ -1342,6 +1342,15 @@ def _assert_cond_dispatch_seam() -> None:
             "so the seam the per-cond dispatch installs on is gone or has moved"
         )
 
+    # ComfyUI runs cond and uncond in one call from 1.5 times its estimate of free memory. The backup
+    # step's ask mirrors that share (actor/lora_partial_load.ASK_SHARE_OF_FULL_ESTIMATE), and the cond
+    # batch agreement pins the reading it is compared with (actor/cond_batch_agreement.py).
+    batching = inspect.getsource(comfy.samplers._calc_cond_batch)
+    assert "cond_shapes=cond_shapes) * 1.5 < free_memory" in batching, (
+        "cond dispatch seam: _calc_cond_batch no longer batches conds where memory_required * 1.5 is under "
+        "free memory, so the backup step's ask (1.5 times ComfyUI's full estimate) no longer mirrors it"
+    )
+
     for name in ("calc_cond_batch", "_calc_cond_batch"):
         parameters = list(inspect.signature(
             getattr(comfy.samplers, name)).parameters)
@@ -6985,6 +6994,20 @@ def _assert_whole_load_condition_seam() -> None:
                 comfy.sampler_helpers.estimate_memory), (
         "whole load condition seam: the minimum the sampler hands the load is no longer the "
         "single-batch estimate"
+    )
+    # The Worker weighs a whole patched load by the same function's first figure, the doubled
+    # batch (actor/lora_partial_load.free_backup_for_sampling), and calls it as comfy does.
+    estimate_source = squeezed(comfy.sampler_helpers.estimate_memory)
+    assert list(inspect.signature(comfy.sampler_helpers.estimate_memory).parameters) == [
+        "model", "noise_shape", "conds"], (
+        "whole load condition seam: estimate_memory no longer takes (model, noise_shape, conds), "
+        "the call lora_partial_load makes"
+    )
+    assert ("memory_required=model.model.memory_required([noise_shape[0]*2]+"
+            "list(noise_shape[1:]),cond_shapes=cond_shapes)") in estimate_source and (
+            "returnmemory_required,minimum_memory_required") in estimate_source, (
+        "whole load condition seam: estimate_memory no longer returns the doubled-batch estimate "
+        "first and the single-batch one second"
     )
 
     # The free reading both sides weigh is the pack's own on unified memory.
