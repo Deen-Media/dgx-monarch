@@ -90,4 +90,4 @@ def refuse_two_builds(handle: Any) -> None:
         waivable=False))
 
 
-__all__ = ["FleetTwoBuildsError", "OLDER_BUILD", "SOURCE_FIELD", "builds", "refuse_two_builds", "source_digest"]
+__all__ = ["OLDER_BUILD", "SOURCE_FIELD", "FleetTwoBuildsError", "builds", "refuse_two_builds", "source_digest"]

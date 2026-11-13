@@ -442,7 +442,7 @@ def test_the_ask_is_comfyuis_batching_threshold_for_the_latent(installed, monkey
     import comfy.sampler_helpers
 
     build, _outputs, cpu = _rig()
-    _root, patcher, _active, _slot_ = _whole(build, cpu)
+    _root, patcher, _active, _slot = _whole(build, cpu)
     asked = []
 
     def estimate(model, noise_shape, conds):
