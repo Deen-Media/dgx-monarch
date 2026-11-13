@@ -650,15 +650,24 @@
   past the price, and the Worker's GPU figure ended 12.3 GiB above the same
   model's load with no stack (5.0 GiB for a 0.3 GiB stack on the same file,
   1.2 GiB on an INT8 file, 0.8 GiB on a plain FP8 file). The price now adds
-  a charge sized by format from what each measured load took: for scaled FP8,
-  2 GiB plus 7.5 MiB for each weight the stack patches, and never less than
-  the stack's files plus 4.7 GiB (several LoRAs on the same weights hold
-  more than the count shows); for INT8 ConvRot
-  (the shipped Wan-Animate 2 template's file) and plain FP8, 2 GiB and the
-  stack's files, whatever the number of patched weights; for BF16 and FP16,
-  2 GiB plus 7.5 MiB a patched weight and the stack's files. Plain FP8 rests
-  on one measured stack. A test holds the price against every recorded load:
-  it must admit each one and cover what the load took plus the 5 GiB floor.
+  a charge sized by format from what each measured load took: for scaled
+  FP8, BF16 and FP16, 2 GiB plus 7.5 MiB for each weight the stack patches;
+  for INT8 ConvRot, 2 GiB plus 4 MiB a patched weight, with one recorded
+  exception: the shipped Wan-Animate 2 template's INT8 file is charged the
+  2 GiB alone while the Worker's reserve (the Init node's
+  `reserve_vram_gb`) is the default 8 GiB or more, because on that model at
+  that reserve ComfyUI's own rule for placing a model whole was measured to
+  keep the floor under the load; under 8, and for every other INT8 ConvRot
+  model, the price covers the whole load itself; for plain FP8, 2 GiB. The
+  stack's own LoRA files
+  are added, each as often as the stack lists it, when the price is read
+  before the Worker has read them (a load into a Worker that holds no model,
+  and every fleet quote), and not when it is read after (a LoRA change on a
+  held model). A test holds the price against every recorded load, on the
+  reading it was priced at: it must admit each one and cover what the load
+  took plus the 5 GiB floor (for the Wan-Animate 2 INT8 stack's whole load
+  at the default reserve it shows instead that ComfyUI's rule leaves the
+  floor, and that the price covers it at a lowered reserve).
   A load that fitted the old price and does not fit the
   new one is refused with the new figure, where before it was admitted and
   took the box under its floor. Where the classic bake does not fit and

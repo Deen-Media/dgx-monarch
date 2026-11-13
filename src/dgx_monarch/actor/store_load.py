@@ -244,6 +244,9 @@ def fresh_load(
 
             fsdp_streaming.release_materialize_window(base, load_path)
         lora_quant_guard.assert_lora_quant_supported(family, detected_quant, lora_stack)  # #129
+        # Both walls have read. A stack a declined hot swap left held goes now, before its files
+        # are read again, so the two copies never stand together (in_place_fallback.note_stack_read).
+        in_place_fallback.forget_stack_read(store)
         active = store._build_active(base, lora_stack)
         unbake_record = None
         base_baked = bool(store.lora_low_rss and lora_stack)

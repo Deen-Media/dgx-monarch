@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import sys
 from collections.abc import Callable, Iterator
 from typing import Any, TypeGuard
 
@@ -78,6 +79,30 @@ def permission(request: Any) -> Iterator[None]:
 
 def permitted() -> bool:
     return _PERMITTED.get() is True
+
+
+def worker_reserve() -> int | None:
+    """This process's ComfyUI reserve in bytes, the R of ComfyUI's whole-load condition; ``None`` if unread.
+
+    Read from ComfyUI's own ``extra_reserved_memory``, the figure
+    ``load_models_gpu`` adds, so it is what the load will meet whatever set
+    it (the unified-memory default, Init's ``reserve_vram_gb``,
+    ``[worker_args]``). ``None`` too where this ComfyUI does not budget its
+    loads at all: ``load_models_gpu`` weighs the free reading only when the
+    state is NORMAL or LOW (and, on a ComfyUI that still has the flag,
+    ``lowvram_available``; ComfyUI c5751c8 removed it with DirectML), and
+    in any other state every load goes whole at any reading. Never imports ComfyUI: a
+    process without it is told nothing. On ``None`` the classic price
+    charges as if no reserve kept the floor
+    (``capacity_classic_bake.reserve_keeps_floor``).
+    """
+    try:
+        mm = sys.modules["comfy.model_management"]
+        budgeted = (bool(getattr(mm, "lowvram_available", True))
+                    and mm.vram_state in (mm.VRAMState.NORMAL_VRAM, mm.VRAMState.LOW_VRAM))
+        return int(mm.extra_reserved_memory()) if budgeted else None
+    except Exception:
+        return None
 
 
 def must_reload(store: Any, stored: Any, allowed: bool | None = None) -> bool:
@@ -244,7 +269,8 @@ def route(store: Any, stored: Any, held: bool, allowed: bool | str) -> dict[str,
     if store.lora_low_rss or getattr(store, "slab_weights", False) is True:
         return None
     return {"held_bytes": held_bytes(stored), "bare_load": not (held and is_bare_stock(stored)),
-            "in_place": True if allowed is True else (allowed or capacity_classic_bake.GATE_HAS_NOT_PASSED)}
+            "in_place": True if allowed is True else (allowed or capacity_classic_bake.GATE_HAS_NOT_PASSED),
+            "comfy_reserve_bytes": worker_reserve()}
 
 
 def stack_files_moved(stored: Any, lora_stack: list | None, resolve_lora_path: Callable[[str], str]) -> bool:
@@ -283,21 +309,107 @@ def quote_snapshot(store: Any, stored: Any, snapshot: dict, slot: str, allowed: 
     return snapshot
 
 
+# On the store: the slot, the stack and the stack's loaded tensors that a hot swap of THIS
+# ``ensure`` call read and declined. Holding the tensors is what makes "already read" a fact
+# and not a matter of when freed memory returns to the box. ``ModelStore.ensure`` lets them go
+# on every way out, and the fresh load lets them go before it reads the files again.
+_STACK_READ = "_dgxm_stack_read"
+# What is held must be the files: a LoRA file is its tensors, a header and a few scalars. A
+# stack with tensors the model does not patch (text-encoder keys) is held only in part, falls
+# under this share of its files' bytes, and is charged its files.
+HELD_SHARE_OF_FILES = 0.98
+
+
+def _stack_signature(lora_stack: list | None) -> tuple:
+    from .model_store import lora_signature
+
+    return lora_signature(lora_stack)
+
+
+def _tensor_bytes(held: Any, seen: set[int] | None = None) -> int:
+    """The bytes of the distinct tensors a patches dict references, at any depth (ComfyUI's adapters keep ``weights``)."""
+    seen = set() if seen is None else seen
+    if id(held) in seen:
+        return 0
+    seen.add(id(held))
+    size = getattr(held, "nbytes", None)
+    if isinstance(size, int):
+        return size
+    parts = held.values() if isinstance(held, dict) else held if isinstance(held, list | tuple) else (
+        getattr(held, "weights", None) or ())
+    return sum(_tensor_bytes(part, seen) for part in parts)
+
+
+def note_stack_read(store: Any, slot: str, lora_stack: list | None, held: Any) -> None:
+    """Keep the stack a declined hot swap has just read for ``slot`` alive on the store.
+
+    ``store_bake.hot_swap_transition`` calls it when it declines: it built the
+    stack (``ModelStore._build_active`` reads every LoRA file) to count what
+    the swap would copy. ``held`` is that build's patches, which reference the
+    files' tensors and nothing of the model. While the store holds them their
+    bytes are on the host and out of the box's reading, whatever the allocator
+    does with freed memory, so the fresh load's walls may charge none of the
+    files (on 2026-11-12 the reading at the stack's price line sat 7.1 GiB
+    under the base's for a 7.08 GiB file). With nothing to hold, nothing is
+    noted and the files are charged.
+    """
+    setattr(store, _STACK_READ, (slot, _stack_signature(lora_stack), held, _tensor_bytes(held)) if held else None)
+
+
+def forget_stack_read(store: Any) -> None:
+    """Let the held stack go: its bytes return to the box, and a price read after this charges the files."""
+    if getattr(store, _STACK_READ, None) is not None:
+        setattr(store, _STACK_READ, None)
+
+
+def stack_on_host(store: Any, slot: str, lora_stack: list | None) -> bool:
+    """Whether this stack's files are held on the host now, so a reading taken now has already left them.
+
+    True only while the store holds what ``note_stack_read`` was given for
+    this slot and this stack in this ``ensure`` call, and what it holds is
+    the files: tensors of at least ``HELD_SHARE_OF_FILES`` of their bytes.
+    It is asked at the moment a price reads the box, not earlier.
+    """
+    noted = getattr(store, _STACK_READ, None)
+    if not noted or not lora_stack:
+        return False
+    try:
+        from .capacity_quote import default_resolve_lora_path
+
+        noted_slot, signature, held, held_bytes = noted
+        files = capacity_classic_bake.stack_bytes(lora_stack, default_resolve_lora_path)
+        return (bool(held) and noted_slot == slot and signature == _stack_signature(lora_stack)
+                and held_bytes >= HELD_SHARE_OF_FILES * files)
+    except Exception:
+        return False
+
+
 def fresh_load_probe(store: Any, slot: str, lora_stack: list | None) -> Callable[[str, dict], Any] | None:
     """The stock probe the Worker's own walls price a fresh load with.
 
     ``None`` on the default and with no stack: nothing is added to the stock
     price. A fresh load never bakes in place and has already been handed the
     slot to drop, so nothing is credited and the reason the in-place bake was
-    not taken rides along for the refusal.
+    not taken rides along for the refusal. Where this load follows a hot swap
+    that read the stack and declined, and the store still holds that stack
+    when a wall reads the box (``stack_on_host``, asked at each wall), the
+    price charges none of the stack's files; otherwise it charges them all.
+    ``store_load.fresh_load`` lets the held stack go after its walls, before
+    it reads the files again, so the two copies never stand together.
     """
     if store.lora_low_rss or not lora_stack:
         return None
     from .capacity_quote import default_resolve_lora_path
 
-    return capacity_classic_bake.probe(
-        lora_stack, default_resolve_lora_path,
-        in_place=TRIED if permitted() else capacity_classic_bake.GATE_HAS_NOT_PASSED)
+    reserve = worker_reserve()
+    in_place = TRIED if permitted() else capacity_classic_bake.GATE_HAS_NOT_PASSED
+
+    def at_the_wall(path: str, model_options: dict) -> Any:
+        return capacity_classic_bake.probe(
+            lora_stack, default_resolve_lora_path, stack_on_host=stack_on_host(store, slot, lora_stack),
+            comfy_reserve_bytes=reserve, in_place=in_place)(path, model_options)
+
+    return at_the_wall
 
 
 def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack: list | None,
@@ -329,7 +441,9 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
     path = str(resolve_model_path("diffusion_models", unet_name))
     fit = capacity_classic_bake.priced(
         capacity_fit.stock_load_fit(path, _to_comfy_model_options(options)), path, lora_stack,
-        default_resolve_lora_path, **args)
+        default_resolve_lora_path, stack_on_host=stack_on_host(store, slot, lora_stack), **args)
+    if getattr(fit, "in_place_bytes", 0):
+        forget_stack_read(store)  # the bake drops, loads or bakes: the box is no longer as the swap left it
     if not getattr(fit, "in_place_bytes", 0):
         note = str(getattr(fit, "in_place_note", "") or "")
         if note:  # the classic price missed and so did the in-place one: the walls refuse, this says why
@@ -367,6 +481,6 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
     return result
 
 
-__all__ = ["SET_ASIDE", "TRIED", "backup_covers", "checkpoint_moved", "fresh_load_probe", "held_bytes", "holds_base",
-           "is_bare_stock", "loads_fresh", "must_reload", "permission", "permitted", "quote_snapshot", "route",
-           "stack_files_moved", "take"]
+__all__ = ["SET_ASIDE", "TRIED", "backup_covers", "checkpoint_moved", "forget_stack_read", "fresh_load_probe",
+           "held_bytes", "holds_base", "is_bare_stock", "loads_fresh", "must_reload", "note_stack_read", "permission",
+           "permitted", "quote_snapshot", "route", "stack_files_moved", "stack_on_host", "take", "worker_reserve"]
