@@ -2782,6 +2782,19 @@ whole load on record is on a roomy box); a full-precision stack with a low
 read on a held base; a scaled FP8 file with weights over 64 MiB; and a
 pair's rank loading the INT8 template whole on a tight box.
 
+**No price knows the clip.** Every figure above is worked at the loader, before
+a latent exists. With a classic bake's backup held, what a render takes grows
+with the clip: the sampler's memory follows the latent, and it outruns
+ComfyUI's own estimate by more as the latent grows (0.5 GiB at 81 frames, 2.6
+at 241). ComfyUI's whole-load condition leaves only its reserve for that, so
+the low at the tightest reading that still loads the model whole falls with
+the clip: about 6 to 7 GiB at the shipped 81 frames and about 4.4 projected at
+241, from one roomy render of 2026-11-12 that took 52.4 GiB where 81 frames
+takes 39. Three shipped templates run this path as shipped (the Wan-Animate 2
+template and its BF16 and memory-saver variants, with `lora_low_rss` off and a
+LoRA), all at 81 frames. `lora_low_rss` on keeps no backup and is not on it.
+The same is so on the last release, which priced this load lower.
+
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a
 purge, and a purge runs only when the thread that owns them allocates again

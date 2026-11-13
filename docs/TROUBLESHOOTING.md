@@ -828,6 +828,20 @@ you may see:
   ComfyUI loads only partly is refused with the `partial_load_divergence`
   text whatever the reserve; that is #79, not this rule.)
 
+  **A clip much longer than the shipped ones, with `lora_low_rss` off.** Three
+  shipped templates run with the switch off and a LoRA: `dgx-monarch-wan-animate2`,
+  `dgx-monarch-wan-animate2-bfloat16-warm` and `dgx-monarch-wan-animate2-memory-saver`,
+  each at 81 frames. With the switch off ComfyUI's classic bake keeps a host
+  copy of every weight the LoRA patches for the whole render, and the
+  sampler's memory grows with the clip faster than ComfyUI's own estimate of
+  it. No price knows the clip's length. At 81 frames the tightest reading
+  that still loads the model whole leaves about 6 to 7 GiB. At 241 frames it
+  would leave about 4.4 GiB, under the 5 GiB floor (projected from a roomy
+  241-frame render that took 52.4 GiB where 81 frames takes 39, one GPU,
+  2026-11-12, the Spark under its clock cap, max 2100 MHz). If you lengthen a
+  clip well past the shipped length on a box with little memory to spare, turn
+  `lora_low_rss` on, which keeps no such copy, or free memory first.
+
   The stack's own LoRA files are added, each as often as the stack lists it,
   when the price is read before the Worker has read them: a load into a
   Worker that holds no model, and every fleet quote. A LoRA change on a model
