@@ -376,7 +376,7 @@ def graph_guide_encode_bytes(prompt: Any, guides: tuple[tuple[Any, int], ...],
     topology divides it, unlike the packed rows the same guide later adds.
     ComfyUI with DynamicVRAM returns it after Add Guide's node, so where the
     graph proves every guide encodes before every sampler the loader charges it
-    as the alternative to the render activations (``loader_graph.guide_order``).
+    as the alternative to the render activations (``nodes/guide_order.py``).
     Never raises, like every other loader-site charge helper.
     """
     try:

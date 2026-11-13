@@ -16,7 +16,7 @@ import pytest
 
 from dgx_monarch import driver_footprint, h3_activation, h3_rows, mesh_safety
 from dgx_monarch.constants import GUIDER_TYPE, MODEL_TYPE
-from dgx_monarch.nodes import graph_load_price, loader_graph, loader_preflight
+from dgx_monarch.nodes import graph_load_price, guide_order, loader_graph, loader_preflight
 from test_loader_site_preflight import (  # noqa: F401  (_rig is the autouse rig)
     H3,
     REF2VA_INT8_PRUNED,
@@ -47,8 +47,8 @@ _OUTPUTS = {
 @pytest.fixture
 def pool_reset(monkeypatch):
     """A driver whose ComfyUI returns the pool after every node, and a registry."""
-    monkeypatch.setattr(loader_graph, "comfy_returns_pool_after_each_node", lambda: True)
-    monkeypatch.setattr(loader_graph, "_class_outputs", lambda cls: _OUTPUTS.get(cls))
+    monkeypatch.setattr(guide_order, "comfy_returns_pool_after_each_node", lambda: True)
+    monkeypatch.setattr(guide_order, "_class_outputs", lambda cls: _OUTPUTS.get(cls))
     monkeypatch.setenv(h3_activation.GUIDE_FRAMES_ENV, "1")      # a still, 14 GiB
     yield
 
@@ -122,7 +122,7 @@ def test_the_reported_graph_is_priced_on_this_release_fit_and_admitted_as_a_sum(
 def test_one_guide_feeding_the_one_sampler_is_charged_as_an_alternative(pool_reset):
     terms = _terms(_still_graph())
     assert terms.guide_first
-    assert terms.guide_order_note == loader_graph.GUIDE_FIRST
+    assert terms.guide_order_note == guide_order.GUIDE_FIRST
     assert terms.total == terms.models_bytes + max(terms.guide_bytes, terms.activation_bytes)
     assert ("only the larger of this and the render activations is charged, here this "
             "guide encode, since it encodes and ComfyUI returns its memory before any "
@@ -136,10 +136,10 @@ def test_the_guide_line_names_the_activations_when_they_are_the_charged_term(poo
 
 
 def test_a_driver_without_dynamic_vram_keeps_the_sum(pool_reset, monkeypatch):
-    monkeypatch.setattr(loader_graph, "comfy_returns_pool_after_each_node", lambda: False)
+    monkeypatch.setattr(guide_order, "comfy_returns_pool_after_each_node", lambda: False)
     terms = _terms(_still_graph())
     assert not terms.guide_first
-    assert terms.guide_order_note == loader_graph.NO_POOL_RESET
+    assert terms.guide_order_note == guide_order.NO_POOL_RESET
     assert terms.total == terms.models_bytes + terms.guide_bytes + terms.activation_bytes
     assert "charged beside the render activations because" in terms.guide_note
 
@@ -148,7 +148,7 @@ def test_with_no_comfyui_in_the_process_the_pool_reset_reads_as_absent(monkeypat
     import sys
 
     monkeypatch.setitem(sys.modules, "comfy.memory_management", None)
-    assert loader_graph.comfy_returns_pool_after_each_node() is False
+    assert guide_order.comfy_returns_pool_after_each_node() is False
 
 
 def _first_pass(graph: dict) -> dict:
@@ -164,7 +164,7 @@ def test_a_guide_anchored_into_a_first_pass_latent_keeps_the_sum(pool_reset):
     graph["10"]["inputs"]["latent"] = ["40", 0]
     terms = _terms(graph)
     assert not terms.guide_first
-    assert terms.guide_order_note == loader_graph.MODEL_BEFORE_GUIDE
+    assert terms.guide_order_note == guide_order.MODEL_BEFORE_GUIDE
 
 
 def test_a_guide_image_decoded_from_a_first_pass_keeps_the_sum(pool_reset):
@@ -173,7 +173,7 @@ def test_a_guide_image_decoded_from_a_first_pass_keeps_the_sum(pool_reset):
     graph["10"]["inputs"]["image"] = ["41", 0]
     terms = _terms(graph)
     assert not terms.guide_first
-    assert terms.guide_order_note == loader_graph.MODEL_BEFORE_GUIDE
+    assert terms.guide_order_note == guide_order.MODEL_BEFORE_GUIDE
 
 
 def test_a_second_sampler_the_guide_does_not_feed_keeps_the_sum(pool_reset):
@@ -181,7 +181,7 @@ def test_a_second_sampler_the_guide_does_not_feed_keeps_the_sum(pool_reset):
     sampler may run first, and the guide then encodes beside its pool."""
     terms = _terms(_first_pass(_still_graph()))
     assert not terms.guide_first
-    assert terms.guide_order_note == loader_graph.SAMPLER_BEFORE_GUIDE
+    assert terms.guide_order_note == guide_order.SAMPLER_BEFORE_GUIDE
 
 
 def _custom_sampler(graph: dict, guider: dict) -> dict:
@@ -228,7 +228,7 @@ def test_a_class_the_registry_cannot_place_counts_as_a_sampler(pool_reset):
     graph["9"]["inputs"]["model"] = ["49", 0]
     terms = _terms(graph)
     assert not terms.guide_first
-    assert terms.guide_order_note == loader_graph.SAMPLER_BEFORE_GUIDE
+    assert terms.guide_order_note == guide_order.SAMPLER_BEFORE_GUIDE
 
 
 def test_an_identity_gate_the_guide_does_not_feed_keeps_the_sum(pool_reset):
@@ -238,7 +238,7 @@ def test_an_identity_gate_the_guide_does_not_feed_keeps_the_sum(pool_reset):
                    "inputs": {"model": ["2", 0], "positive": ["6", 0], "latent_image": ["8", 0]}}
     terms = _terms(graph)
     assert not terms.guide_first
-    assert terms.guide_order_note == loader_graph.SAMPLER_BEFORE_GUIDE
+    assert terms.guide_order_note == guide_order.SAMPLER_BEFORE_GUIDE
 
 
 @pytest.mark.parametrize("cls,first", [
@@ -258,7 +258,7 @@ def test_an_admitted_alternative_charge_logs_what_the_sum_would_have_said(
     import logging
 
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 66 * _GIB)
-    with caplog.at_level(logging.INFO, logger="dgx_monarch.nodes.loader_preflight"):
+    with caplog.at_level(logging.INFO, logger="dgx_monarch.nodes.graph_load_price"):
         assert loader_preflight.preflight_loader_footprint(
             _Mesh(), REF2VA_INT8_PRUNED, {}, _still_graph()) is None
     line = "\n".join(record.getMessage() for record in caplog.records)
@@ -274,7 +274,7 @@ def test_a_guide_behind_an_undecided_switch_keeps_the_sum(pool_reset):
     graph["9"]["inputs"]["positive"] = ["51", 0]
     terms = _terms(graph)
     assert not terms.guide_first
-    assert terms.guide_order_note == loader_graph.SAMPLER_BEFORE_GUIDE
+    assert terms.guide_order_note == guide_order.SAMPLER_BEFORE_GUIDE
 
 
 @pytest.mark.parametrize("sampler", ["DGXMonarchKSamplerPipeline", "DGXMonarchFleetKSampler"])
@@ -283,17 +283,17 @@ def test_samplers_whose_renders_overlap_keep_the_sum(pool_reset, sampler):
     graph["9"]["class_type"] = sampler
     terms = _terms(graph)
     assert not terms.guide_first
-    assert terms.guide_order_note == loader_graph._OVERLAPPING_SAMPLERS[sampler]
+    assert terms.guide_order_note == guide_order._OVERLAPPING_SAMPLERS[sampler]
 
 
 def test_an_order_the_proof_cannot_read_keeps_the_sum(pool_reset, monkeypatch):
     def broken(_cls):
         raise RuntimeError("registry fault")
 
-    monkeypatch.setattr(loader_graph, "_class_outputs", broken)
+    monkeypatch.setattr(guide_order, "_class_outputs", broken)
     terms = _terms(_still_graph())
     assert not terms.guide_first
-    assert terms.guide_order_note == loader_graph.ORDER_UNREAD
+    assert terms.guide_order_note == guide_order.ORDER_UNREAD
 
 
 def test_with_no_activation_charge_the_order_is_not_read(pool_reset, monkeypatch):
@@ -310,7 +310,7 @@ def test_with_no_activation_charge_the_order_is_not_read(pool_reset, monkeypatch
 def test_the_budget_clause_names_the_larger_term_and_the_order_that_allows_it():
     terms = loader_graph.DriverStackTerms(
         guide_bytes=14 * _GIB, activation_bytes=int(25.04 * _GIB), resolved=True,
-        guide_first=True, guide_order_note=loader_graph.GUIDE_FIRST)
+        guide_first=True, guide_order_note=guide_order.GUIDE_FIRST)
     assert terms.budget_clause == (
         "25.0 GiB of render activations this graph has not spent yet; its 14.0 GiB "
         "guide encode runs first and ComfyUI returns that memory before sampling, so "
@@ -326,7 +326,7 @@ def test_the_budget_clause_says_why_both_are_charged():
     terms = loader_graph.DriverStackTerms(
         guide_bytes=14 * _GIB, activation_bytes=25 * _GIB, resolved=True, credited=True,
         credit_reason="comfy already holds loaded models",
-        guide_order_note=loader_graph.SAMPLER_BEFORE_GUIDE)
+        guide_order_note=guide_order.SAMPLER_BEFORE_GUIDE)
     assert terms.budget_clause == (
         "39.0 GiB of guide encode and render activations this graph has not spent yet, "
         "with the text encoder, VAE and reference encode charges credited (comfy already "

@@ -2078,7 +2078,7 @@ def _assert_minimax_h3_guide_inputs_seam() -> None:
     from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide
 
     from dgx_monarch import h3_activation
-    from dgx_monarch.nodes import loader_graph
+    from dgx_monarch.nodes import guide_order, loader_graph
 
     schema = MiniMaxH3AddGuide.define_schema()
     assert schema.node_id in loader_graph._GUIDE_NODE_CLASSES, (
@@ -2112,10 +2112,10 @@ def _assert_minimax_h3_guide_inputs_seam() -> None:
         if isinstance(section, dict) for name, spec in section.items()
         if isinstance(spec, tuple) and isinstance(spec[0], (list, tuple))
     }
-    assert set(loader_graph._GUIDE_FILE_KEYS) & file_widgets, (
+    assert set(guide_order._GUIDE_FILE_KEYS) & file_widgets, (
         f"minimax h3 guide inputs seam: LoadImage names its file on "
         f"{sorted(file_widgets)}, none of which the wall reads "
-        f"({loader_graph._GUIDE_FILE_KEYS}), so no guide length can be proved"
+        f"({guide_order._GUIDE_FILE_KEYS}), so no guide length can be proved"
     )
 
     # And the wall charges through those names, on the geometry the
@@ -7088,7 +7088,7 @@ def _assert_per_node_pool_reset_seam() -> None:
 
     The loader charges a guide encode and the render activations as
     alternatives only where ComfyUI gives the encode's memory back before any
-    sampler runs (``nodes/loader_graph.guide_order``). That rests on what
+    sampler runs (``nodes/guide_order.proved``). That rests on what
     comfy does: the executor's ``finally`` around each node's
     ``get_output_data`` calls ``comfy.model_management.reset_cast_buffers()``
     when ``comfy.memory_management.aimdo_enabled``; ``reset_cast_buffers``
@@ -7102,16 +7102,16 @@ def _assert_per_node_pool_reset_seam() -> None:
     import comfy.memory_management
     import comfy.model_management as mm
 
-    from dgx_monarch.nodes import loader_graph
+    from dgx_monarch.nodes import guide_order
 
     assert isinstance(getattr(comfy.memory_management, "aimdo_enabled", None), bool), (
         "per-node pool reset seam: comfy.memory_management.aimdo_enabled is gone, so "
-        "loader_graph.comfy_returns_pool_after_each_node can no longer read DynamicVRAM")
+        "guide_order.comfy_returns_pool_after_each_node can no longer read DynamicVRAM")
     saved = comfy.memory_management.aimdo_enabled
     try:
         for flag in (True, False):
             comfy.memory_management.aimdo_enabled = flag
-            assert loader_graph.comfy_returns_pool_after_each_node() is flag, (
+            assert guide_order.comfy_returns_pool_after_each_node() is flag, (
                 f"per-node pool reset seam: with aimdo_enabled={flag} the pack reads "
                 f"{not flag}")
     finally:

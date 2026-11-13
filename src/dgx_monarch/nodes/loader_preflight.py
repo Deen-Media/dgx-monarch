@@ -454,19 +454,10 @@ def preflight_loader_footprint(
                     "MemAvailable %.1f GiB", unet_name, fsdp_world,
                     settled.weight_share, settled.weight_bytes / _GIB,
                     transient.usable / _GIB, settled.usable / _GIB, avail / _GIB)
-            if terms.guide_first and terms.guide_bytes and terms.activation_bytes:
-                # The admitting path prints no card, so the journal says what the
-                # alternative charge changed against the sum (issue #187).
-                summed = replace(shape, stack_bytes=shape.stack_bytes + min(
-                    terms.guide_bytes, terms.activation_bytes))
-                log.info(
-                    "loader footprint preflight: %s admitted with its %.1f GiB guide encode "
-                    "and %.1f GiB of render activations charged as alternatives (%s); "
-                    "charged together they would %s; MemAvailable %.1f GiB", unet_name,
-                    terms.guide_bytes / _GIB, terms.activation_bytes / _GIB,
-                    terms.guide_order_note,
-                    "fit too" if all(map(fits_box, _windows(summed, slab=effective_slab)))
-                    else "have refused it", avail / _GIB)
+            if terms.guide_first and terms.guide_bytes and terms.activation_bytes:  # the sum's verdict beside it
+                graph_load_price.log_alternatives(terms, unet_name, avail, all(map(fits_box, _windows(replace(
+                    shape, stack_bytes=shape.stack_bytes + min(terms.guide_bytes, terms.activation_bytes)),
+                    slab=effective_slab))))
             return None
 
         # The window short by the most, the one the Old model card prices too.

@@ -2123,7 +2123,7 @@ prove the order: ComfyUI in the driver returns the pool after every node; no
 node that uses a model is upstream of a guide; every node that may sample has
 every guide among the nodes ComfyUI is certain to run before it; and no
 pipeline or fleet sampler is in the graph. Anything else keeps the sum, and the
-budget clause says why (`nodes/loader_graph.guide_order`). A seam contract
+budget clause says why (`nodes/guide_order.py`). A seam contract
 holds ComfyUI to the per-node reset. Where the DiT is already resident while a
 guide encodes and the guide charge is the larger term, no activation charge
 pads the guide's any more, so the guide charges must hold for the real
