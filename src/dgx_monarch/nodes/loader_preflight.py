@@ -454,6 +454,10 @@ def preflight_loader_footprint(
                     "MemAvailable %.1f GiB", unet_name, fsdp_world,
                     settled.weight_share, settled.weight_bytes / _GIB,
                     transient.usable / _GIB, settled.usable / _GIB, avail / _GIB)
+            if terms.guide_bytes and terms.activation_bytes:  # the rule that ran; as alternatives, the sum's verdict
+                graph_load_price.log_alternatives(terms, unet_name, avail, not terms.guide_first or all(map(
+                    fits_box, _windows(replace(shape, stack_bytes=shape.stack_bytes + min(
+                        terms.guide_bytes, terms.activation_bytes)), slab=effective_slab))))
             return None
 
         # The window short by the most, the one the Old model card prices too.

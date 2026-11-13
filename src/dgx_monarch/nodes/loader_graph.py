@@ -8,6 +8,12 @@ applies policy.
 Graph and path parse failures omit a charge instead of raising. This preserves
 the class C failure direction: uncertain evidence cannot create a false
 capacity refusal.
+
+The guide encode and the render activations are a sum unless every guide's
+file proves it a still and the graph proves it encodes, and ComfyUI returns its
+memory, before any sampler runs; then they are alternatives and the larger one
+is charged (``guide_order.py``, issue #187). A clip, or an order that cannot be
+read, keeps the sum.
 """
 from __future__ import annotations
 
@@ -17,6 +23,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from .. import driver_footprint, h3_activation, ltx25_activation
+from . import guide_order
 from .graph_live import is_link as _is_link
 from .graph_live import live_nodes
 
@@ -123,9 +130,6 @@ _GUIDE_NODE_CLASSES = ("MiniMaxH3AddGuide",)
 _GUIDE_IMAGE_KEYS = ("image",)
 # The canvas a guide is resized to before it encodes, named by a link.
 _GUIDE_LATENT_KEYS = ("latent",)
-# The widget a loader carries its filename on, so a guide's length can be
-# proved from the file rather than trusted from a node name or an extension.
-_GUIDE_FILE_KEYS = ("image",)
 # Priced at zero like an image reference: audio encodes through the small VAE.
 _GUIDE_AUDIO_KEYS = ("audio",)
 
@@ -198,11 +202,23 @@ class DriverStackTerms:
     # This text reaches class C refusals when headless calls omit ``prompt``.
     # Keep it nonempty so the activation clause remains actionable.
     activation_note: str = "no graph available at the loader node"
+    # Every guide encodes, and ComfyUI returns its memory, before any sampler
+    # runs (``guide_order``): the guide and the activations are then
+    # alternatives. ``guide_order_note`` says why, either way.
+    guide_first: bool = False
+    guide_order_note: str = ""
+
+    @property
+    def encode_and_render_bytes(self) -> int:
+        """The guide encode and the render activations: the larger of the two
+        when ``guide_first``, both otherwise."""
+        if self.guide_first:
+            return max(self.guide_bytes, self.activation_bytes)
+        return self.guide_bytes + self.activation_bytes
 
     @property
     def total(self) -> int:
-        return (self.models_bytes + self.ref_bytes
-                + self.guide_bytes + self.activation_bytes)
+        return self.models_bytes + self.ref_bytes + self.encode_and_render_bytes
 
     @property
     def models_bytes(self) -> int:
@@ -220,20 +236,24 @@ class DriverStackTerms:
         Credit clears the text encoder, VAE and reference encode charges
         (``credited_terms``). It never clears render activations or a guide
         encode, so a credited result names what survives and keeps its
-        ``credit_reason`` either way.
+        ``credit_reason`` either way. With both a guide and activations, the
+        clause says whether they are charged as alternatives or together, and
+        why (``guide_order_note``).
         """
         total = self.total
         if not total:
             return (f"no driver stack charged ({self.credit_reason})"
                     if self.credited else "no driver stack charged")
+        guide, renders, order = guide_order.budget_words(
+            self.guide_bytes, self.activation_bytes, self.guide_first, self.guide_order_note)
         carried = " and ".join(name for name, charged in (
             ("driver stack", self.models_bytes + self.ref_bytes),
-            ("guide encode", self.guide_bytes),
-            ("render activations", self.activation_bytes)) if charged)
+            ("guide encode", guide),
+            ("render activations", renders)) if charged)
         credit = (f", with the text encoder, VAE and reference encode charges "
                   f"credited ({self.credit_reason})" if self.credited else "")
         return (f"{_gib(total)} GiB of {carried} this graph has not spent "
-                f"yet{credit}")
+                f"yet{credit}{order}")
 
 
 def _links_under(value: object) -> int:
@@ -270,45 +290,6 @@ def _artifact_bytes(folders: tuple[str, ...], name: str) -> int:
     return 0
 
 
-def named_file_frames(prompt: object, node_id: object) -> int:
-    """Frames in the file this node names, or 0 when nothing proves a count.
-
-    The file is opened and its frames counted, so an animated PNG or WebP
-    cannot pass as a still behind an image extension, and a video that no
-    image decoder opens reads unreadable rather than cheap. Missing files,
-    unreadable files and sources that name no file all return 0, which the
-    guide price reads as the declared length or else the worst case.
-
-    A file replaced between this preflight read and execution is charged on
-    the proof taken, the same window every other pre-execution read here has.
-    """
-    if not isinstance(prompt, Mapping) or node_id is None:
-        return 0
-    node = prompt.get(node_id)
-    if node is None:
-        node = prompt.get(str(node_id))
-    inputs = node.get("inputs") if isinstance(node, Mapping) else None
-    if not isinstance(inputs, Mapping):
-        return 0
-    for key in _GUIDE_FILE_KEYS:
-        name = inputs.get(key)
-        if not isinstance(name, str) or not name:
-            continue
-        try:
-            import folder_paths
-            from PIL import Image
-
-            path = folder_paths.get_annotated_filepath(name)
-            if not path or not os.path.isfile(path):
-                return 0
-            with Image.open(path) as image:
-                frames = getattr(image, "n_frames", 1)
-            return int(frames) if isinstance(frames, int) and frames > 0 else 0
-        except Exception:  # unreadable evidence charges the worst case
-            return 0
-    return 0
-
-
 def driver_stack_terms(prompt: object, *, family: str = "",
                        sp_degree: int = 1) -> DriverStackTerms:
     """Price unresolved driver-stack and render-activation memory.
@@ -320,7 +301,9 @@ def driver_stack_terms(prompt: object, *, family: str = "",
     checks catch that permissive under-count later.
 
     ``family`` prevents unrelated canvas nodes from inheriting another model
-    family's activation charge. An unknown family charges none.
+    family's activation charge. An unknown family charges none. With both a
+    guide and activations charged, ``guide_order`` decides whether they are
+    alternatives, and the guide's note says which and why.
     """
     if not isinstance(prompt, Mapping) or not prompt:
         return DriverStackTerms()
@@ -332,11 +315,13 @@ def driver_stack_terms(prompt: object, *, family: str = "",
     model_names: list[str] = []
     video_refs = image_refs = 0
     guide_latents: list[tuple[object, int]] = []
+    guide_nodes: list[str] = []
     live = live_nodes(prompt)
     for key, node in prompt.items():
         inputs = node.get("inputs") if isinstance(node, Mapping) else None
         if not isinstance(inputs, Mapping) or str(key) not in live:
             continue
+        node_key = str(key)
         on_driver = not str(node.get("class_type", "")).startswith(_WORKER_LOADER_PREFIX)
         guide_node = (isinstance(node, Mapping)
                       and node.get("class_type") in _GUIDE_NODE_CLASSES)
@@ -348,9 +333,12 @@ def driver_stack_terms(prompt: object, *, family: str = "",
                 if not isinstance(key, str) or not key.startswith(_GUIDE_IMAGE_KEYS):
                     continue
                 source = value[0] if isinstance(value, (list, tuple)) else None
+                links = _links_under(value)
+                if links and node_key not in guide_nodes:
+                    guide_nodes.append(node_key)
                 guide_latents.extend(
-                    (canvas, named_file_frames(prompt, source))
-                    for _ in range(_links_under(value)))
+                    (canvas, guide_order.named_file_frames(prompt, source))
+                    for _ in range(links))
         for key, value in inputs.items():
             if not isinstance(key, str):
                 continue
@@ -379,6 +367,14 @@ def driver_stack_terms(prompt: object, *, family: str = "",
                 image_refs += _links_under(value)
     guide_bytes, guide_note = graph_guide_encode_bytes(
         prompt, tuple(guide_latents), family=family)
+    guide_first, order_note = False, ""
+    if guide_bytes and activation_bytes:
+        # A still as the price proves one: a file of fewer frames than a clip, which Add Guide
+        # anchors as its first image alone. A declared or unread length is no proof.
+        stills = all(0 < frames < h3_activation.H3_GUIDE_CLIP_FLOOR_FRAMES for _, frames in guide_latents)
+        guide_first, order_note = guide_order.proved(prompt, live, tuple(guide_nodes), stills)
+        guide_note = guide_order.charged_note(guide_note, guide_bytes, activation_bytes,
+                                              guide_first, order_note)
     return DriverStackTerms(
         te_bytes=int(te_bytes * TE_RESIDENT_RATIO),
         vae_bytes=vae_bytes,
@@ -390,6 +386,7 @@ def driver_stack_terms(prompt: object, *, family: str = "",
         guide_refs=len(guide_latents), guide_bytes=guide_bytes,
         guide_note=guide_note,
         activation_bytes=activation_bytes, activation_note=activation_note,
+        guide_first=guide_first, guide_order_note=order_note,
     )
 
 

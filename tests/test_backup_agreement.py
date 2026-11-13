@@ -368,8 +368,17 @@ def test_a_warm_workers_next_render_is_weighed_with_the_pool_it_already_holds(ri
     assert "its idle device pool counted" in str(raised.value)
 
 
-def _own_memory_patcher():
-    """A patched whole load on a device with memory of its own: a CUDA device that is not integrated."""
+def _own_memory_patcher(monkeypatch):
+    """A patched whole load on a device with memory of its own: a CUDA device that is not integrated.
+
+    torch's answer for the device is given here, so the stand-in reads as a
+    discrete card whatever GPU the box running the test has: on a DGX Spark
+    torch would answer for its own integrated GB10.
+    """
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "get_device_properties",
+                        lambda device=None: SimpleNamespace(is_integrated=0))
     patcher = _patcher()
     patcher.load_device = SimpleNamespace(type="cuda")
     assert not lora_partial_load.shares_host_memory(patcher)
@@ -379,12 +388,12 @@ def _own_memory_patcher():
 NEUTRAL = [1, 1, 1, backup_agreement._margin(0, None, 0), 1]
 
 
-def test_a_rank_on_a_device_with_its_own_memory_votes_neutral_whatever_its_host_reads(rig):
+def test_a_rank_on_a_device_with_its_own_memory_votes_neutral_whatever_its_host_reads(rig, monkeypatch):
     """The sampler there draws on the device: host memory is no reading of its room, and the backup
     it keeps takes nothing from it. A host nearly out of memory must not make the rank short,
     unable, or the tightest."""
     rig.room = 0.5
-    mine = backup_agreement.vote((_own_memory_patcher(),), SAMPLING, 0)
+    mine = backup_agreement.vote((_own_memory_patcher(monkeypatch),), SAMPLING, 0)
     assert mine.own_memory and not mine.short and mine.can and mine.need is None and mine.freeable == []
     assert mine.elements == NEUTRAL and len(mine.elements) == backup_agreement.ELEMENTS
     # The widest margin there is: a MIN over the ranks never picks it over a real reading.
@@ -398,7 +407,7 @@ def test_a_pair_of_dedicated_gpus_low_on_host_memory_samples_and_makes_one_colle
     """Before this a pair of dedicated GPUs was refused through ``pair_backup_room`` on its host's
     memory, which its sampler does not use."""
     rig.room = 0.5
-    patcher = _own_memory_patcher()
+    patcher = _own_memory_patcher(monkeypatch)
     sent, flags = _guard(monkeypatch, [1, *NEUTRAL[:3], backup_agreement._margin(0, None, 1), 1])
     wrapper = partial_load_guard.make_prepare_sampling_guard(whole_model=True)
     result = wrapper(lambda *args, **kwargs: ("real model", "conds", []), patcher, *SAMPLING)
@@ -407,12 +416,13 @@ def test_a_pair_of_dedicated_gpus_low_on_host_memory_samples_and_makes_one_colle
     assert rig.freed == [] and patcher.backup and not patcher.slot.base_baked
 
 
-def test_in_a_mixed_fleet_the_rank_with_its_own_memory_keeps_its_backup_and_follows_the_fleet(rig, caplog):
+def test_in_a_mixed_fleet_the_rank_with_its_own_memory_keeps_its_backup_and_follows_the_fleet(
+        rig, caplog, monkeypatch):
     """The shared peer is short and able: it frees, by its own figures. This rank keeps its backup,
     makes the second exchange with a neutral margin, and refuses with the fleet where the peer's
     free left too little."""
     rig.room = 0.5
-    patcher = _own_memory_patcher()
+    patcher = _own_memory_patcher(monkeypatch)
     mine = backup_agreement.vote((patcher,), SAMPLING, 0)
     calls = []
     wide = backup_agreement._margin(60 * GIB, 7 * GIB, 1)
@@ -455,11 +465,11 @@ def test_in_a_mixed_fleet_the_shared_rank_is_weighed_by_its_own_figures(rig):
     assert "rank 0 is" in str(refused.value) and "This rank read 6.0 GiB of room" in str(refused.value)
 
 
-def test_a_kept_fleet_is_not_refused_on_the_host_of_a_rank_with_its_own_memory(rig, caplog):
+def test_a_kept_fleet_is_not_refused_on_the_host_of_a_rank_with_its_own_memory(rig, caplog, monkeypatch):
     """A peer cannot free and another is short, so every rank keeps its backup: the margin that is
     checked is the fleet's, and this rank's host is not in it."""
     rig.room = 0.5
-    mine = backup_agreement.vote((_own_memory_patcher(),), SAMPLING, 0)
+    mine = backup_agreement.vote((_own_memory_patcher(monkeypatch),), SAMPLING, 0)
     with caplog.at_level("INFO"):
         backup_agreement.settle(mine, _answer(mine.elements, _peer(not_short=0, can=0)), lambda values: 1 / 0)
     assert "it takes no part in the reading" in caplog.text
