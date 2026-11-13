@@ -49,7 +49,7 @@ def test_int8_convrot_and_plain_fp8_take_their_own_share_which_covers_their_meas
     """MiniMax H3 INT8 ConvRot (208 patched weights) and Qwen Image plain FP8 (720): two reads each, 2026-11-12."""
     charged = price.term_from_weights(_weights(count, kind))
     assert charged == price.CLASSIC_BAKE_FIXED_BYTES + count * price.LIGHT_SHARE_BYTES[kind] >= measured_gib * GIB
-    assert price.LIGHT_SHARE_BYTES == {price.INT8_QUANTIZED: int(3.4 * MIB), price.PLAIN_FP8: 0}
+    assert price.LIGHT_SHARE_BYTES == {price.INT8_QUANTIZED: 4 * MIB, price.PLAIN_FP8: 0}
     assert price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED] < price.CLASSIC_BAKE_BYTES_PER_WEIGHT
 
 
@@ -248,7 +248,7 @@ def test_a_stack_it_cannot_map_or_read_charges_every_weight(tmp_path):
 
     assert price.patched_weights(tensors, STACK, missing) == every
     # Every weight is priced by its own class. This header has an INT8 ConvRot weight and a plain FP8
-    # one, which take their own shares (3.4 MiB and nothing). Most of its bytes are the scaled FP8
+    # one, which take their own shares (4 MiB and nothing). Most of its bytes are the scaled FP8
     # weight, so the rest is counted as that format is: the scaled FP8 weight, the BF16 weight and the
     # bias each carry the line's share.
     assert len(every) == 5

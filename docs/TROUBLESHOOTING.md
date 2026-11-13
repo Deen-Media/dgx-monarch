@@ -740,7 +740,7 @@ you may see:
   what loads took on hardware on 2026-11-12:
   - scaled FP8 (LTX 2.3's file), BF16 and FP16: 2 GiB plus 7.5 MiB for each
     weight the stack patches;
-  - INT8 ConvRot (the shipped Wan-Animate 2 template's file): 2 GiB plus 3.4
+  - INT8 ConvRot (the shipped Wan-Animate 2 template's file): 2 GiB plus 4
     MiB for each patched weight;
   - plain FP8: 2 GiB.
 

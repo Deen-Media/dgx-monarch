@@ -40,7 +40,7 @@ and ``tests/test_classic_bake_records.py`` holds each record against it:
 - **Scaled FP8** (an FP8 weight with its scale or ComfyUI's quant record):
   the line. It leaves 3.7 to 5.0 GiB above take plus floor on seven recorded
   loads over both stack sizes and both readings.
-- **INT8 ConvRot**: the fixed 2 GiB and 3.4 MiB a patched key
+- **INT8 ConvRot**: the fixed 2 GiB and 4 MiB a patched key
   (``LIGHT_SHARE_BYTES``). Three records: with 1261 patched keys a load that
   ComfyUI placed partly, and the partial-load route then baked whole, took
   1.0 GiB over the stock price; the same stack loaded WHOLE took 6.8 over,
@@ -52,7 +52,9 @@ and ``tests/test_classic_bake_records.py`` holds each record against it:
   charge the second 5 GiB it does not take. It is a fit through the whole
   load of the larger stack, with almost no spare there, and it must still
   admit the same stack at the reading where the shipped template's own cell
-  runs (44.6 GiB): the two bounds are 0.2 GiB apart.
+  ran (44.6 GiB, after its file was read): the two bounds are 0.2 GiB apart.
+  Read before the file, the same price is 0.7 GiB more, above the 44.8 and
+  45.0 at which two earlier runs of that stack were read: those are refused.
 - **Plain FP8** (an FP8 weight with no marker): the fixed 2 GiB, no share.
   Two stacks on one model (720 and 240 patched keys) took 5.0 to 2.7 GiB
   LESS than that price allows.
@@ -114,15 +116,15 @@ PLAIN_FP8 = "plain_fp8"
 FULL_PRECISION = "full_precision"
 OTHER = "other"
 # The classes with a per-weight share of their own in place of the line's, in bytes a
-# patched key. INT8 ConvRot, 3.4 MiB: with 1261 patched keys a whole classic load took 6.8 GiB
+# patched key. INT8 ConvRot, 4 MiB: with 1261 patched keys a whole classic load took 6.8 GiB
 # over the stock price (39.4 against a promise of 32.6; block C, 2026-11-12), and the same
 # stack must still be admitted at a reading of 44.6, where the shipped Wan-Animate 2
-# template's own cell runs: 2 GiB, 3.4 MiB for each of 1254 keys, 7 large weights on the line
-# and the 0.69 GiB file come to 6.90, between the two bounds of 6.84 and 6.98. With 208 keys
-# the charge is 4.5 against a take of 1.3 to 2.2. Plain FP8, nothing: two stacks (720 and 240
-# keys) took less than the fixed part and the file allow. A class a later measurement puts
-# here is one entry.
-LIGHT_SHARE_BYTES: dict[str, int] = {INT8_QUANTIZED: int(3.4 * MIB), PLAIN_FP8: 0}
+# template's own cell ran. Both were priced after the stack's file was read, so no file is
+# in either: 2 GiB, 4 MiB for each of 1254 keys and 7 large weights on the line come to 6.95,
+# between the two bounds of 6.83 and 7.03 (3.9 to 4.07 MiB a key). With 208 keys the term is
+# 2.84 against a take of 1.3 to 2.2. Plain FP8, nothing: two stacks (720 and 240 keys) took
+# less than the fixed part allows. A class a later measurement puts here is one entry.
+LIGHT_SHARE_BYTES: dict[str, int] = {INT8_QUANTIZED: 4 * MIB, PLAIN_FP8: 0}
 # In a stack whose patched bytes are mostly weights of those classes, a patched key smaller
 # than this takes that class's share and not the line's. The records are of whole stacks, and
 # most of a stack's keys there are the biases and norm weights of the same blocks (774 of

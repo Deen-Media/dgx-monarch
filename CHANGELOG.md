@@ -653,7 +653,7 @@
   a charge sized by format from what each measured load took: for scaled
   FP8, BF16 and FP16, 2 GiB plus 7.5 MiB for each weight the stack patches;
   for INT8 ConvRot (the shipped Wan-Animate 2 template's file), 2 GiB plus
-  3.4 MiB a patched weight; for plain FP8, 2 GiB. The stack's own LoRA files
+  4 MiB a patched weight; for plain FP8, 2 GiB. The stack's own LoRA files
   are added, each as often as the stack lists it, when the price is read
   before the Worker has read them (a load into a Worker that holds no model,
   and every fleet quote), and not when it is read after (a LoRA change on a

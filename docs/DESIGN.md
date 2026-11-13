@@ -2387,11 +2387,12 @@ is true for:
 
 | checkpoint, patched keys, how it loaded | the price is read | reading | low | took | the stock price promised | short by | now charged |
 |---|---|---:|---:|---:|---:|---:|---:|
-| Wan-Animate 2 INT8 ConvRot, 1261, loaded partly and baked whole by the partial-load route | before the file | 44.6 | 10.97 | 33.6 | 32.6 | 1.0 | 6.9 |
-| the same stack, loaded whole | before | 46.7 | 7.29 | 39.4 | 32.6 | 6.8 | 6.9 |
-| MiniMax H3 INT8 ConvRot, 208, whole | before | 50.9 | 7.73 | 43.2 | 41.0 | 2.2 | 4.5 |
+| Wan-Animate 2 INT8 ConvRot, 1261, loaded partly and baked whole by the partial-load route | after the file | 44.6 | 10.97 | 33.6 | 32.6 | 1.0 | 6.95 |
+| the same stack, loaded whole | after | 46.7 | 7.29 | 39.4 | 32.6 | 6.8 | 6.95 |
+| MiniMax H3 INT8 ConvRot, 208, whole | before the file | 50.9 | 7.73 | 43.2 | 41.0 | 2.2 | 4.7 |
+| the same, the base held | after | 51.5 | 9.25 | 42.3 | 41.0 | 1.3 | 2.8 |
 | Qwen Image plain FP8, 720, whole | before | 49.1 | 10.19 | 38.9 | 40.0 | none (1.1 to spare) | 2.8 |
-| the same model, a second stack of 240, partly and the route | before | 50.0 | 10.74 | 39.3 | 40.0 | none | 2.1 |
+| the same model, a second stack of 240, partly and the route | after | 50.0 | 10.74 | 39.3 | 40.0 | none | 2.0 |
 | LTX 2.3 scaled FP8, 1660, whole, the base held | after the file | 75.9 | 20.32 | 55.6 | 45.9 | 9.7 | 14.2 |
 | the same stack into an empty Worker | before | 74.2 | 11.7 | 62.5 | 45.9 | 16.6 | 21.2 |
 | the same 7.08 GiB file listed twice, empty Worker | before | 82.4 | 12.87 | 69.5 | 45.9 | 23.6 | 28.3 |
@@ -2405,14 +2406,18 @@ those reads (a load into an empty slot, and every quote) must charge the
 files; a price read after them must not. The second happens when the slot
 holds the base: the store tries its hot swap, which reads the stack to count
 what it would copy, declines, and the fresh load's walls then read a box
-those bytes have already left. LTX's rows show both, 7 GiB apart, and the
-file listed twice took 7 more.
+those bytes have already left. Both happen in ordinary graphs: the records
+hold graphs that load the base bare and then change the stack in one
+prompt, and graphs that load base and stack in one step; each run's own log
+says which (one load line, or a bare load and the declined swap ahead of the
+stack's price line). LTX's rows show both, 7 GiB apart, and the file listed
+twice took 7 more.
 
 The charge went through two versions that this table refutes. The first
 charged the line and the files for every format on both readings, and
-refused five of these rows, among them the shipped Wan-Animate 2 template's
+refused six of these loads, among them the shipped Wan-Animate 2 template's
 own pair (INT8 ConvRot with its LoRA, `lora_low_rss` off) at a reading of
-44.8 against a price of 49.5, and the LTX load at 68.5 against 72.1. The
+44.6 against a price of 49.5, and the LTX load at 68.5 against 72.1. The
 second took the per-weight share off INT8 and the files off scaled FP8 on
 both readings, and came up short on three: the whole INT8 load by 4.1 GiB,
 and the two LTX loads into an empty Worker by 2.4 and 4.7. A test holds
@@ -2440,7 +2445,7 @@ and each earlier version fails it by name. Three rules follow.
   - **Scaled FP8** (an FP8 weight with its scale or ComfyUI's quant record
     beside it): the line. It leaves 3.7 to 5.0 GiB above take plus floor on
     the four LTX rows and on three more runs of them.
-  - **INT8 ConvRot**: the fixed 2 GiB and 3.4 MiB a patched key. Loaded
+  - **INT8 ConvRot**: the fixed 2 GiB and 4 MiB a patched key. Loaded
     whole, ComfyUI's classic bake keeps the host copy of every patched
     weight as its backup (17.8 GiB of the Worker's memory against 1.5 after
     the bare load) under the model's working memory on the GPU, and the
@@ -2451,7 +2456,12 @@ and each earlier version fails it by name. Three rules follow.
     patched bytes that covers the larger would charge the smaller 5 GiB it
     does not take). It is a fit and not a mechanism, and a tight one: the
     price must cover the whole load (44.4 GiB) and still admit the same
-    stack at 44.6, where the shipped template's own cell runs. It is 44.47.
+    stack at 44.6, where the shipped template's own cell ran; both readings
+    were taken after the file was read. It is 44.52. Read before the file
+    the same price is 45.2, which refuses two earlier runs of that stack at
+    44.8 and 45.0: there ComfyUI placed the load partly and the route baked
+    it for 33.1 GiB, and a price that covers the whole load cannot admit
+    them.
   - **Plain FP8** (an FP8 weight with no marker): the fixed 2 GiB, no share.
     Two stacks on one model took 2.7 to 5.0 GiB less than that allows.
   - **Small keys beside such weights.** In a stack whose patched bytes are
