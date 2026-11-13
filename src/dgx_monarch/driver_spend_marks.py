@@ -56,6 +56,8 @@ def running_item(prompt_id: str | None) -> Any:
     try:
         server = sys.modules.get("server")
         queue = getattr(getattr(getattr(server, "PromptServer", None), "instance", None), "prompt_queue", None)
+        if queue is None:
+            return None
         running, _queued = queue.get_current_queue_volatile()
         return next((item for item in running if len(item) > 2 and item[1] == prompt_id), None)
     except Exception:

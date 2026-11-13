@@ -263,7 +263,7 @@ def _price(name: str, spend_of: Callable[[Mapping[str, Any], str], Spend | None]
         prompt_id, node = _context()
         graph = running_graph(prompt_id)
         spend = None if prompt_id is None or graph is None else spend_of(graph, node)
-        if spend is None:
+        if spend is None or prompt_id is None or graph is None:
             return
         held = charged(prompt_id, spend.term)  # held to the encode alone: the loader charges the VAE as a model
         if held and held >= spend.own:
