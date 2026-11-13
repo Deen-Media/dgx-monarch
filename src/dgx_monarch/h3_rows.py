@@ -233,6 +233,136 @@ def rows_from_request(request: Any, latent: Any, *,
         resolved=True)
 
 
+# The exact count below is for divisibility, not capacity. The capacity count
+# above takes the largest entry and undercounts what it cannot read; this one
+# counts one model call as stock's ``PackedLayout.seq_len`` does, or returns
+# None, so a caller that refuses on it refuses only what it read. The canary
+# (tests/canary/comfy_seam_contracts.py) holds it to the installed ComfyUI.
+
+
+def _whole(value: object) -> int | None:
+    """A non-negative integer, or None."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _positive_dims(value: object, least: int) -> list[int] | None:
+    """A tensor's shape with at least ``least`` positive dimensions, or None."""
+    dims = _dims(getattr(value, "shape", None))
+    if dims is None or len(dims) < least or min(dims) <= 0:
+        return None
+    return dims
+
+
+def exact_geometry(latent: Any, *, video_shape: Any = None,
+                   image: bool = False) -> tuple[int, int, int] | None:
+    """(latent_t, rows per frame, audio_t) of the grid the workers sample, or None.
+
+    ``video_shape`` is that grid with size tags applied, as in
+    ``rows_from_request``. The audio length comes from the nested latent's
+    audio tensor only; MiniMax-H3-Image has none.
+    """
+    if not isinstance(latent, Mapping):
+        return None
+    samples = latent.get("samples")
+    dims = _dims(video_shape if video_shape is not None
+                 else getattr(samples, "shape", None))
+    if dims is None or len(dims) < 5 or min(dims[2:5]) <= 0:
+        return None
+    audio_t = 0
+    if not image:
+        tensors = getattr(samples, "tensors", None)
+        if not isinstance(tensors, (list, tuple)) or len(tensors) < 2:
+            return None
+        audio = _positive_dims(tensors[1], 1)
+        if audio is None:
+            return None
+        audio_t = audio[-1]
+    return dims[2], frame_rows(dims[3], dims[4]), audio_t
+
+
+def _exact_keyframe_rows(block: object, rows_per_frame: int) -> int | None:
+    """One anchored guide's rows as stock packs them: its video latent's frames
+    on the target grid, two per audio latent frame; None when unreadable."""
+    if not isinstance(block, Mapping):
+        return None
+    rows = 0
+    if block.get("latent") is not None:
+        video = _positive_dims(block["latent"], 3)
+        if video is None:
+            return None
+        rows += video[2] * rows_per_frame
+    if block.get("audio_latent") is not None:
+        audio = _positive_dims(block["audio_latent"], 1)
+        if audio is None:
+            return None
+        rows += 2 * audio[-1]
+    return rows
+
+
+def _exact_ref_rows(block: object) -> int | None:
+    """One reference block's rows as stock packs them, or None.
+
+    Stock packs nothing for a kind it does not name, and a newer ComfyUI may
+    name more, so an unknown kind returns None rather than zero.
+    """
+    if not isinstance(block, Mapping):
+        return None
+    kind = block.get("kind")
+    if kind == "image":
+        lat_h, lat_w = _whole(block.get("latent_h")), _whole(block.get("latent_w"))
+        if lat_h is None or lat_w is None:
+            return None
+        return ref_frame_rows(lat_h, lat_w)
+    if kind == "audio":
+        audio_t = _whole(block.get("ref_audio_t"))
+        return None if audio_t is None else 2 * audio_t
+    if kind in ("video", "video_audio"):
+        values = [_whole(block.get(key))
+                  for key in ("ref_audio_t", "latent_t", "latent_h", "latent_w")]
+        if any(value is None for value in values):
+            return None
+        audio_t, latent_t, lat_h, lat_w = (int(value or 0) for value in values)
+        return 2 * audio_t + latent_t * ref_frame_rows(lat_h, lat_w)
+    return None
+
+
+def exact_call_total(entry: object, geometry: tuple[int, int, int], *,
+                     image: bool = False) -> int | None:
+    """One model call's packed length, as stock's ``PackedLayout.seq_len``, or None.
+
+    ``entry`` is one ``[text, extras]`` conditioning entry. Each entry is its
+    own model call with its own layout, so each pads or not on its own.
+    ``geometry`` is ``exact_geometry``'s answer. MiniMax-H3-Image packs text,
+    references and its one frame: stock hands its layout no guides and no audio.
+    """
+    if not isinstance(entry, (list, tuple)) or not entry:
+        return None
+    text = _positive_dims(entry[0], 2)
+    if text is None:
+        return None
+    extra = entry[1] if len(entry) > 1 else {}
+    if not isinstance(extra, Mapping):
+        return None
+    latent_t, rows_per_frame, audio_t = geometry
+    total = text[1] + latent_t * rows_per_frame + (0 if image else 2 * audio_t)
+    keys = (REFS_KEY,) if image else (KEYFRAMES_KEY, REFS_KEY)
+    for key in keys:
+        blocks = extra.get(key)
+        if blocks is None:
+            continue
+        if not isinstance(blocks, (list, tuple)):
+            return None
+        for block in blocks:
+            rows = (_exact_keyframe_rows(block, rows_per_frame) if key == KEYFRAMES_KEY
+                    else _exact_ref_rows(block))
+            if rows is None:
+                return None
+            total += rows
+    return total
+
+
 def _canvas_node(node: object) -> Mapping[str, Any] | None:
     """A node's inputs when it is one of this family's canvas-bearing nodes."""
     if not isinstance(node, Mapping):

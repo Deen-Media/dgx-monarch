@@ -441,10 +441,9 @@ and historical ownership and cleanup receipts were not recorded. Individual
 results below do not remove those limitations or replace the original verdicts.
 See [Campaign results](CAMPAIGN_RESULTS.md) for retained measurements.
 
-**2026-10-27, external reproduction.** A four-Spark owner reran the cells of
-the published one-GPU and two-node campaign tables on their own Sparks, with
-no clock cap, and reported the results on the NVIDIA Developer Forums
-([post 17](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/17)).
+**2026-10-27, external reproduction.** Community four-Spark users reran the
+cells of the published one-GPU and two-node campaign tables on their own
+Sparks, with no clock cap, and reported the results publicly.
 They compared 109 of the 117 published cells
 ([Benchmarks](BENCHMARKS.md#campaign-render-times-stills-2026-09-12-to-2026-09-28-head-capped)):
 108 PASS and 1 CHECK, LTX 2.5 two-stage on `auto` at one-step NRMS 0.120
@@ -2380,6 +2379,18 @@ Packed DP, including `single` at world 2, refuses. Auto chooses Ulysses;
 a true one-GPU reference uses local mode with one GPU. Padded ring2
 requires an explicit accuracy waiver; accepting it does not establish accurate output.
 
+**uly4 at world 4 (issue #188, 2026-11-13).** No run here: this project has
+two Sparks. `auto` folds H3 at world 4 into uly4 on what community
+four-Spark users reported: one graph whose latent was bit-identical to their
+pair's uly2, and three rows within the 0.10 one-step limit of one GPU
+([community results](BENCHMARKS.md#community-four-node-results-2026-10-27)).
+On CPU, `tests/test_usp_degree4_oracle.py` shards a stream four ways across
+H3's 56 heads with yunchang's own all-to-all, drops one, two and three pad
+rows, and matches attention over the real rows alone in float64; canary
+seam 62 holds the driver's packed-total count to ComfyUI's `PackedLayout`
+for every segment kind. Neither says anything about a GPU kernel's
+accumulation order or about one GPU.
+
 BF16 Ulysses+FSDP rendered in 141.8 seconds after the text preprocessing
 modules stayed replicated: 31.6 GiB weights per rank, 19 auxiliary parameters
 and 12 replicated FP32 islands. The render completed, but no reference
@@ -2874,8 +2885,8 @@ rows up it is at or above CUTLASS on every shape but one reading
 (Ideogram4 adaln at 8192 rows, 0.96), and from 6144 rows up CUTLASS falls to 37
 to 55 percent of its peak while the Triton kernel holds about 175 TOPS. The
 small-M losses sit on calls that are a small share of a render, and no measured
-render came out slower, so no M threshold or family gate is needed for speed. The head ran its 2100 MHz clock cap throughout; kan11 reports the same
-18 percent H3 gain uncapped.
+render came out slower, so no M threshold or family gate is needed for speed. The head ran its 2100 MHz clock cap throughout; the kernel's upstream notes
+report the same 18 percent H3 gain uncapped.
 
 **What this does not cover.** The kernel ran as a process-wide patch, not yet
 as a Monarch option; the option's wiring, its gate and its documentation are

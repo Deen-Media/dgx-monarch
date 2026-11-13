@@ -329,7 +329,7 @@ copied from historical evidence.
    enforces this at
    [`gate_ledger.py:259-342`](../src/dgx_monarch/gate_ledger.py#L259-L342 "anchor:lookup_with_integrity"), and
    the automatic path accepts `fail` as terminal at
-   [`auto_gate.py:285-493`](../src/dgx_monarch/nodes/auto_gate.py#L285-L493 "anchor:maybe_auto_gate").
+   [`auto_gate.py:286-495`](../src/dgx_monarch/nodes/auto_gate.py#L286-L495 "anchor:maybe_auto_gate").
    Coverage is
    [`test_gate_ledger.py:364-369`](../tests/test_gate_ledger.py#L364-L369 "anchor:test_fail_quarantine_is_sticky_across_commit_uncertainty"),
    [`test_gate_ledger.py:1047-1089`](../tests/test_gate_ledger.py#L1047-L1089 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
@@ -556,10 +556,10 @@ copied from historical evidence.
    `slab_weights` remains risky even without a LoRA stack, and the sequential
    and pipeline paths prove or quarantine before submission. Risk selection and
    ordering are
-   [`auto_gate.py:72-201`](../src/dgx_monarch/nodes/auto_gate.py#L72-L201 "anchor:auto_gate_context"),
+   [`auto_gate.py:73-202`](../src/dgx_monarch/nodes/auto_gate.py#L73-L202 "anchor:auto_gate_context"),
    [`gate_proof_request.py:25-50`](../src/dgx_monarch/nodes/gate_proof_request.py#L25-L50 "anchor:proof_request"),
-   [`auto_gate.py:282-490`](../src/dgx_monarch/nodes/auto_gate.py#L282-L490 "anchor:maybe_auto_gate"), and
-   [`pipeline.py:282-368`](../src/dgx_monarch/nodes/pipeline.py#L282-L368 "anchor:_push_bound").
+   [`auto_gate.py:283-492`](../src/dgx_monarch/nodes/auto_gate.py#L283-L492 "anchor:maybe_auto_gate"), and
+   [`pipeline.py:282-373`](../src/dgx_monarch/nodes/pipeline.py#L282-L373 "anchor:_push_bound").
    LoRA-less slab gating and submit ordering are covered by
    [`test_gate_orchestration.py:1083-1130`](../tests/test_gate_orchestration.py#L1083-L1130 "anchor:test_low_rss_off_does_not_suppress_slab_gate"),
    [`test_first_use_custom_gate.py:54-96`](../tests/test_first_use_custom_gate.py#L54-L96 "anchor:test_each_custom_graph_gates_on_first_use_then_renders_and_skips_after"),
@@ -648,8 +648,8 @@ copied from historical evidence.
     precedence are
     [`gate_process_verdicts.py:16-41`](../src/dgx_monarch/nodes/gate_process_verdicts.py#L16-L41 "anchor:record_process_gate_verdicts"),
     [`gate_process_verdicts.py:54-55`](../src/dgx_monarch/nodes/gate_process_verdicts.py#L54-L55 "anchor:process_gate_verdict_locked"),
-    [`auto_gate.py:214-278`](../src/dgx_monarch/nodes/auto_gate.py#L214-L278 "anchor:auto_gate_required"),
-    [`auto_gate.py:285-493`](../src/dgx_monarch/nodes/auto_gate.py#L285-L493 "anchor:maybe_auto_gate"), and
+    [`auto_gate.py:215-279`](../src/dgx_monarch/nodes/auto_gate.py#L215-L279 "anchor:auto_gate_required"),
+    [`auto_gate.py:286-495`](../src/dgx_monarch/nodes/auto_gate.py#L286-L495 "anchor:maybe_auto_gate"), and
     [`fleet_policy.py:26-155`](../src/dgx_monarch/nodes/fleet_policy.py#L26-L155 "anchor:_fleet_worker_policy").
     Damage-triggered cache refusal/reproof, unconsumable-PASS denial, Fleet
     refusal, bounded positive-cache eviction, and non-evicting denial are covered by
@@ -813,9 +813,9 @@ copied from historical evidence.
    still needs its class-K accuracy waiver. The skip is
    [`sol_attention.py:177-183`](../src/dgx_monarch/adapters/sol_attention.py#L177-L183 "anchor:sol_ceremony_skip_reason"),
    the automatic path is
-   [`auto_gate.py:146-151`](../src/dgx_monarch/nodes/auto_gate.py#L146-L151 "anchor:auto_gate_context"),
+   [`auto_gate.py:147-152`](../src/dgx_monarch/nodes/auto_gate.py#L147-L152 "anchor:auto_gate_context"),
    and the node's NOT RUN branch is
-   [`gate_node.py:112-125`](../src/dgx_monarch/nodes/gate_node.py#L112-L125 "anchor:gate"),
+   [`gate_node.py:113-130`](../src/dgx_monarch/nodes/gate_node.py#L113-L130 "anchor:gate"),
    covered by `tests/test_accuracy_waivers.py` and `tests/test_sol_attention.py`.
 
 ## Grant paths
@@ -853,7 +853,7 @@ copied from historical evidence.
 - For automatic first use, `unknown`, `stale`, or uncached `inconclusive` starts
   the canonical ceremony before the full render. A returned PASS is discarded
   if the artifact/context token changed during that ceremony. This is enforced
-  at [`auto_gate.py:285-493`](../src/dgx_monarch/nodes/auto_gate.py#L285-L493 "anchor:maybe_auto_gate") and
+  at [`auto_gate.py:286-495`](../src/dgx_monarch/nodes/auto_gate.py#L286-L495 "anchor:maybe_auto_gate") and
   covered by
   [`test_gate_orchestration.py:754-778`](../tests/test_gate_orchestration.py#L754-L778 "anchor:test_inconclusive_auto_gate_retries_only_after_context_changes")
   and [`test_gate_orchestration.py:804-832`](../tests/test_gate_orchestration.py#L804-L832 "anchor:test_auto_gate_discards_pass_when_ceremony_snapshot_changed").
@@ -865,7 +865,7 @@ copied from historical evidence.
   after durable revocation, the process publishes an operational denial and
   uses stock residency rather than contradicting that revocation. This is
   enforced at
-  [`auto_gate.py:285-493`](../src/dgx_monarch/nodes/auto_gate.py#L285-L493 "anchor:maybe_auto_gate") and, for the best-effort append,
+  [`auto_gate.py:286-495`](../src/dgx_monarch/nodes/auto_gate.py#L286-L495 "anchor:maybe_auto_gate") and, for the best-effort append,
   [`gate_verdict.py:232-270`](../src/dgx_monarch/nodes/gate_verdict.py#L232-L270 "anchor:publish_ceremony_verdict"), covered by
   [`test_gate_ledger.py:491-526`](../tests/test_gate_ledger.py#L491-L526 "anchor:test_retest_guard_atomically_denies_every_context_until_exact_finals"),
   [`test_gate_ledger.py:1017-1044`](../tests/test_gate_ledger.py#L1017-L1044 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"),
@@ -943,9 +943,9 @@ copied from historical evidence.
   ([`gate_inconclusive.py:265-265`](../src/dgx_monarch/nodes/gate_inconclusive.py#L265-L265 "anchor:remember_kind")).
   This is enforced at
   [`common.py:307-385`](../src/dgx_monarch/nodes/common.py#L307-L385 "anchor:run_render"),
-  [`auto_gate.py:211-279`](../src/dgx_monarch/nodes/auto_gate.py#L211-L279 "anchor:auto_gate_required"),
-  [`auto_gate.py:282-490`](../src/dgx_monarch/nodes/auto_gate.py#L282-L490 "anchor:maybe_auto_gate"), and
-  [`pipeline.py:282-368`](../src/dgx_monarch/nodes/pipeline.py#L282-L368 "anchor:_push_bound"), with
+  [`auto_gate.py:212-280`](../src/dgx_monarch/nodes/auto_gate.py#L212-L280 "anchor:auto_gate_required"),
+  [`auto_gate.py:283-492`](../src/dgx_monarch/nodes/auto_gate.py#L283-L492 "anchor:maybe_auto_gate"), and
+  [`pipeline.py:282-373`](../src/dgx_monarch/nodes/pipeline.py#L282-L373 "anchor:_push_bound"), with
   coverage in
   [`test_gate_orchestration.py:754-778`](../tests/test_gate_orchestration.py#L754-L778 "anchor:test_inconclusive_auto_gate_retries_only_after_context_changes"),
   [`test_gate_orchestration.py:956-980`](../tests/test_gate_orchestration.py#L956-L980 "anchor:test_full_render_is_submitted_only_after_unproven_paths_are_quarantined"),
@@ -985,7 +985,7 @@ copied from historical evidence.
   [`gate_session.py:20-179`](../src/dgx_monarch/nodes/gate_session.py#L20-L179 "anchor:run_identity_ceremony"),
   [`gate_fsdp.py:179-235`](../src/dgx_monarch/nodes/gate_fsdp.py#L179-L235 "anchor:cleanup_aborted_fsdp_proof"),
   [`gate_fsdp.py:241-264`](../src/dgx_monarch/nodes/gate_fsdp.py#L241-L264 "anchor:cleanup_rejected_fsdp_pass"), and
-  [`auto_gate.py:285-493`](../src/dgx_monarch/nodes/auto_gate.py#L285-L493 "anchor:maybe_auto_gate"), covered by
+  [`auto_gate.py:286-495`](../src/dgx_monarch/nodes/auto_gate.py#L286-L495 "anchor:maybe_auto_gate"), covered by
   [`test_gate_orchestration.py:2385-2421`](../tests/test_gate_orchestration.py#L2385-L2421 "anchor:test_aborted_fsdp_gate_unloads_every_rank_before_refusing"),
   [`test_gate_orchestration.py:2424-2452`](../tests/test_gate_orchestration.py#L2424-L2452 "anchor:test_aborted_fsdp_gate_latches_dirty_when_all_rank_unload_fails"),
   [`test_gate_orchestration.py:2455-2480`](../tests/test_gate_orchestration.py#L2455-L2480 "anchor:test_fsdp_terminal_fail_latches_dirty_when_final_unload_fails"),

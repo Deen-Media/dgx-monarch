@@ -195,6 +195,62 @@ return path. [Selected-rail qualification](docs/VALIDATION.md#native-rdma)
 covers only its recorded scope, not untested cancellation or fabric-failure
 recovery. Do not generalize one passing configuration to another workload.
 
+### Reports from clusters larger than ours
+
+The project runs two DGX Sparks. A cluster of three to eight Sparks, and any
+other hardware DESIGN 2.2 lists in that tier, sits in the "designed for, needs community
+validation" tier of [DESIGN section 2.2](docs/DESIGN.md#22-hardware-targets),
+and it stays there whatever a report shows. Use the
+[larger-cluster report form](.github/ISSUE_TEMPLATE/larger-cluster-report.yml)
+to send one.
+
+For the project to act on a report, it must carry:
+
+- the versions: dgx-monarch, ComfyUI, torch, NCCL, torchmonarch and xFuser;
+- the graph's shape: the family, quantization, canvas, frame count, steps,
+  cfg, the LoRA count and strengths, and every Init node switch that differs
+  from its default;
+- the driver's own topology line, `render topology: ... (preset|auto: ...)`,
+  and the full text of the refusal if there was one;
+- the latent's sha256 from the rank stats, both on the layout under report
+  and on a layout this project has validated, for the same graph and seed: a
+  two-Spark pair on its `auto` layout, or one GPU with `mode=local`;
+- the rank identity line (`cross-rank latent identity: ...`);
+- at least two shapes or lengths, one of which needs a divisibility pad row
+  where the family has that guard.
+
+Timings are welcome, with the box's clock state and whether the render was
+cold or warm.
+
+What the project does with a report:
+
+1. A crash, a stall, or a refusal that should not happen is fixed where a
+   reading of the code finds the fault, and the fix is held by CPU tests.
+2. An `auto` row or fold changes only where the layout is exact by
+   construction, which means it computes what a validated layout computes
+   (for example a higher Ulysses degree whose heads tile and whose pad
+   exclusion is the same), and at least two independent reports show a latent
+   identical to a validated layout's. Such a row says in its note and in the
+   docs that it rests on community runs and was not run on the project's own
+   hardware.
+3. Speed figures are recorded as reported, never as validated, and no
+   default is chosen on speed alone.
+4. A layout that changes the arithmetic, such as a cfg composite no row
+   names, ring or hybrid attention on a padded sequence, or data parallelism
+   on a packed family, never becomes a default on reports alone.
+
+One row does not meet rule 2: MiniMax H3 folds into
+`uly4` at four Sparks (issue #188) on one report of a latent identical to a
+pair's `uly2` and one report of one-step checks within 0.10 of one GPU, which
+is closeness, not an identical latent. The maintainer allowed it as an
+exception for that case, and its note and the docs say so.
+
+Reports name nobody: the docs say "community four-Spark users" and state what
+was read. A person is named only to credit an enhancement in the code. The
+identity gate's first-use check compares renders on the reader's own mesh and
+layout only; it never tests a layout against a validated one, so a report's
+two hashes are the only check of that kind.
+
 ### Changelog entries
 
 Give each change a user can see one bullet under `## [Unreleased]` in

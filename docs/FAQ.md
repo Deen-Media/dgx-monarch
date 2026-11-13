@@ -67,7 +67,10 @@ published a full four-node matrix, reported and not reproduced here
 ([community results](BENCHMARKS.md#community-four-node-results-2026-10-27)).
 In short, uly2+cfg2 ran fastest for models that use CFG and uly4 for MiniMax
 H3 and LTX. `auto` refused many rows and beat the explicit layouts only on
-Ideogram4, so they advise against it at world 4. Small or fast models gained
+Ideogram4, so they advise against it at world 4. Since 1.5.0 `auto` takes uly4
+for MiniMax H3 at world 4, on community reports: their passing one-step
+checks and a later report of a latent identical to a pair's `uly2` (issue
+#188), not on runs of this project's own. Small or fast models gained
 nothing. On Wan SCAIL2, every four-Spark layout but uly4 failed the one-step
 quality check, with no warning.
 

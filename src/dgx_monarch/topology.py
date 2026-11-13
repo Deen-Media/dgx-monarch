@@ -128,10 +128,36 @@ def topology_from_preset(preset: str, world: int) -> Topology:
 
 
 # Family -> {target Ulysses degree: every sharded query and KV head count that
-# degree must divide}. Empty: the evidence validates the degree-2 rows but no
-# fold of data-parallel ranks into a larger Ulysses degree. Add one entry per
-# family and degree a campaign validates.
-VALIDATED_ULYSSES_FOLDS: dict[str, dict[int, tuple[int, ...]]] = {}
+# degree must divide}. The project's own evidence validates the degree-2 rows
+# and no fold of data-parallel ranks into a larger Ulysses degree; add one
+# entry per family and degree a campaign validates.
+#
+# One entry rests on community reports instead (issue #188, 2026-11-13), as
+# an exception the maintainer allowed (CONTRIBUTING.md, reports from clusters
+# larger than ours). Without it, MiniMax H3 at world 4 and batch 1 folds into
+# uly2+ring2, a fold no record shows rendering, where the adapter refuses
+# every packed total that does not divide 4 inside the first model call; it
+# also checks the live head count at injection. Community four-Spark users
+# reported uly4: in one report a ref2v graph
+# whose latent was bit-identical to their pair's uly2; in another, three rows
+# within the 0.10 one-step limit of one GPU, a closeness check rather than an
+# identical latent (docs/BENCHMARKS.md, 2026-10-27). uly4 runs the same Ulysses
+# code and pad exclusion as uly2, and 56 heads, the only count H3's one sharded
+# attention has, split four ways. This
+# project's two Sparks have not run it. The grant is keyed by family, so
+# p-h3-image, which reads as minimax_h3, takes it too with no reading of its
+# own; MiniMax-H3-Image is a family of its own and keeps the ring fold.
+VALIDATED_ULYSSES_FOLDS: dict[str, dict[int, tuple[int, ...]]] = {
+    "minimax_h3": {4: (56,)},
+}
+# What a fold that rests on anything but the project's own runs adds to the
+# logged reason, only where the fold runs, so a pair's line speaks of the pair.
+VALIDATED_ULYSSES_FOLD_NOTES: dict[tuple[str, int], str] = {
+    ("minimax_h3", 4): (
+        "uly4 rests on what community four-Spark users reported (one latent "
+        "bit-identical to a pair's uly2, and one-step checks within 0.10 of one "
+        "GPU), which this project's two Sparks have not reproduced"),
+}
 
 
 def _presets_tiling(world: int) -> list[str]:
@@ -333,6 +359,9 @@ def choose_auto_topology(
             topo = replace(topo, ulysses=target_uly, dp=1)
             note = (f"{note}; batch {batch_size} cannot split dp; folded into "
                     f"ulysses{target_uly} (heads tile; keeps exact pad exclusion)")
+            standing = VALIDATED_ULYSSES_FOLD_NOTES.get((family, target_uly))
+            if standing:
+                note = f"{note}; {standing}"
         elif topo.cfg > 1:
             # A ring fold fails the same way a Ulysses fold does: either builds
             # a cfg-plus-sequence composite no row names, so auto refuses rather

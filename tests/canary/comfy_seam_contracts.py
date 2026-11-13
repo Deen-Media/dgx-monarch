@@ -220,6 +220,10 @@ before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
                               node under DynamicVRAM, which lets the loader charge
                               a guide encode and the render activations as
                               alternatives
+ 63. minimax h3 packed total  the length one model call packs, text, guides,
+                              references, audio and video, for H3 and
+                              MiniMax-H3-Image, which the driver's ring-pad
+                              check counts to refuse before the load
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -2062,6 +2066,85 @@ def _assert_minimax_h3_guide_layout_seam() -> None:
             f"minimax h3 guide layout seam: {name} prices {priced.cond} guide "
             f"rows against the {charged} comfy packs"
         )
+
+
+def _assert_minimax_h3_packed_total_seam() -> None:
+    """The length one MiniMax H3 model call packs, against the layout comfy builds.
+
+    nodes/h3_ring_pad.py refuses a padded ring on the driver, before the gate,
+    setup and the load, when a call's packed total does not divide the
+    sequence-parallel degree, and it counts that total with
+    h3_rows.exact_call_total. A count one row off either way would refuse a
+    render that runs, or pass one the Worker then refuses after the load, so
+    every segment kind comfy packs is checked here against
+    PackedLayout.seq_len: text, guide video and audio, image, audio and video
+    references, target audio, an odd latent grid, and MiniMax-H3-Image's text,
+    references and one frame.
+    """
+    import torch
+    from comfy.ldm.minimax.model import PackedLayout
+
+    from dgx_monarch import h3_rows
+
+    def guide(frame, grid, video=None, audio=None):
+        block = {"resolved_frame_index": frame}
+        if video is not None:
+            block["latent"] = torch.zeros(1, 24, video, *grid)
+        if audio is not None:
+            block["audio_latent"] = torch.zeros(1, 32, 2, audio)
+        return block
+
+    refs = (
+        {"kind": "image", "latent_h": 36, "latent_w": 64},
+        {"kind": "image", "latent_h": 35, "latent_w": 63},
+        {"kind": "audio", "ref_audio_t": 7},
+        {"kind": "audio", "ref_audio_t": 0},
+        {"kind": "video", "ref_audio_t": 0, "latent_t": 3, "latent_h": 24, "latent_w": 40},
+        {"kind": "video_audio", "ref_audio_t": 5, "latent_t": 2, "latent_h": 24, "latent_w": 40},
+    )
+    # (text rows, latent frames, latent height, latent width, audio frames)
+    shapes = ((9, 2, 48, 84, 5), (10, 7, 72, 56, 405), (13, 3, 45, 81, 11), (1, 2, 2, 2, 1))
+    for text_len, latent_t, lat_h, lat_w, audio_t in shapes:
+        grid = (lat_h, lat_w)
+        cases = (
+            ("text and target", None, None),
+            ("a still guide", [guide(0, grid, video=1)], None),
+            ("a guide clip with audio", [guide(1, grid, video=3, audio=2)], None),
+            ("an audio-only guide", [guide(2, grid, audio=4)], None),
+            ("every reference kind", None, list(refs)),
+            ("guides and references", [guide(0, grid, video=1), guide(3, grid, video=2, audio=1)],
+             [refs[0], refs[5]]),
+        )
+        for name, keyframes, ref_blocks in cases:
+            stock = PackedLayout(text_len, latent_t, (lat_h + 1) // 2 * 2, (lat_w + 1) // 2 * 2,
+                                 audio_t, keyframes=keyframes, refs=ref_blocks).seq_len
+            extras = {}
+            if keyframes is not None:
+                extras[h3_rows.KEYFRAMES_KEY] = keyframes
+            if ref_blocks is not None:
+                extras[h3_rows.REFS_KEY] = ref_blocks
+            latent = {"samples": _H3Nested(torch.zeros(1, 24, latent_t, lat_h, lat_w),
+                                           torch.zeros(1, 32, 2, audio_t))}
+            geometry = h3_rows.exact_geometry(latent)
+            assert geometry is not None, f"minimax h3 packed total seam: {name} read no grid"
+            counted = h3_rows.exact_call_total(
+                [torch.zeros(1, text_len, 8), extras], geometry)
+            assert counted == stock, (
+                f"minimax h3 packed total seam: {name} at {text_len} text rows and a "
+                f"{latent_t}x{lat_h}x{lat_w} latent packs {stock} rows; the driver's "
+                f"ring-pad check counts {counted}")
+            # MiniMax-H3-Image: extra_conds builds this layout from the noise
+            # shape with no audio and the references only.
+            image = PackedLayout(text_len, 1, (lat_h + 1) // 2 * 2, (lat_w + 1) // 2 * 2, 0,
+                                 refs=ref_blocks).seq_len
+            image_geometry = h3_rows.exact_geometry(
+                {"samples": torch.zeros(1, 16, 1, lat_h, lat_w)}, image=True)
+            assert image_geometry is not None
+            counted = h3_rows.exact_call_total(
+                [torch.zeros(1, text_len, 8), extras], image_geometry, image=True)
+            assert counted == image, (
+                f"minimax h3 packed total seam: MiniMax-H3-Image with {name} packs "
+                f"{image} rows; the driver's ring-pad check counts {counted}")
 
 
 def _assert_minimax_h3_guide_inputs_seam() -> None:
@@ -7213,6 +7296,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("copy-free drop", _assert_copy_free_drop_seam),
     ("whole load condition", _assert_whole_load_condition_seam),
     ("per-node pool reset", _assert_per_node_pool_reset_seam),
+    ("minimax h3 packed total", _assert_minimax_h3_packed_total_seam),
 )
 
 

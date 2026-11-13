@@ -936,9 +936,9 @@ successful pass logs `DiT: N blocks compiled`, and a block that cannot be
 wrapped stays eager (log `DiT block compile skipped (...); running eager`).
 Wrapping is all that log covers: dynamo traces each block on its first
 forward, inside the render, and a failure there fails that render instead of
-falling back to eager. One such failure is reported upstream for MiniMax H3
-INT8, whose MLP takes ComfyUI's `linear_input_act` path into comfy-kitchen
-(kanthai/gb10-comfyui-tuning, doc 03); it has not been reproduced here. Turn
+falling back to eager. Community GB10 tuning notes report one such failure
+for MiniMax H3 INT8, whose MLP takes ComfyUI's `linear_input_act` path into
+comfy-kitchen; it has not been reproduced here. Turn
 the widget off to skip warmup entirely (the compile flag is cleared on the
 next setup).
 
@@ -1191,7 +1191,9 @@ negative prompt even at cfg 1.0 (an empty negative is 5 tokens).
 levels; [MODELS.md](MODELS.md) states which are hardware-tested.
 At world 4 with batch 1, `auto` folds a uly2 row's spare ranks into ring
 (uly2+ring2) until uly4 passes a 4-rank acceptance gate; the explicit `uly4`
-preset is available as an operator choice there.
+preset is available as an operator choice there. MiniMax H3 is the one
+exception: since 1.5.0 its fold at world 4 takes uly4, on community runs this
+project has not reproduced ([#49](#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence)).
 Fixes, any one of: use a `uly*` or `single` topology at this resolution; pick
 a resolution whose token grid divides the SP degree; adjust prompt/negative
 lengths to divisible counts. On MiniMax H3 the `single` preset is not one of
@@ -2074,7 +2076,11 @@ batched call.
 **Symptom:** `ring2`, or any hybrid preset carrying ring degree, raises a
 divisibility-padding refusal (the H3-worded one, same cause as [#21](#21-sequence-length-needs-divisibility-padding--ulysses-only-on-ringhybrid)) on a graph
 that runs fine on `uly2`. Editing one word of the prompt can flip the same
-graph between refusing and running.
+graph between refusing and running. Since 1.5.0 the driver counts the packed
+total itself and refuses at the sampler node, before the first-use check,
+setup and, under `auto`, the model load, and the refusal names the total, the
+pad rows and the preset that fits. Its card grants the same waiver the
+Worker's did. MiniMax-H3-Image refuses the same way, class P, with no waiver.
 
 **Cause:** H3 denoises one packed sequence, and its length is
 
@@ -2092,17 +2098,36 @@ row stops being zero. The adapter therefore passes the pad rows as explicit
 drop coordinates, and that exclusion exists on the pure-Ulysses path only, so
 ring refuses instead of attending to invented rows.
 
-Observed in hardware testing: on the first use of a model/context
-combination, this refusal fires inside the auto-gate check (the check's
-own proof render hits it before your render would), the check aborts, and
-the fleet then refuses further queues until a Recycle (the sidebar's **Reset
-attached mesh**, or a Worker service restart when no driver is up). One Recycle was enough in the test. At world 2
-`auto` never routes H3 onto ring, so only an explicit ring preset on an odd
-total reaches it there. At an odd world `auto` falls back to pure ring, and at
-an even world above 2 it folds the spare data-parallel ranks into ring; both
-refuse a padded sequence the same way.
+Observed in hardware testing before 1.5.0: on the first use of a model/context
+combination, this refusal fired inside the auto-gate check (the check's
+own proof render hit it before your render would), the check aborted, and
+the fleet then refused further queues until a Recycle (the sidebar's **Reset
+attached mesh**, or a Worker service restart when no driver is up). One Recycle was enough in the test.
+Since 1.5.0 the driver's count refuses before the check runs, the automatic
+check and the Identity Gate node's alike. The Worker
+guard stays as the backstop where the driver cannot count: under MiniMax H3
+Context Windows (each window packs its own total, with the guides stock crops
+to it), and for a conditioning or latent it cannot read; the Recycle advice
+above applies there.
 
-**Fix:** use `uly2`. If you need ring for a capacity or comparison reason,
+Where `auto` puts H3 on ring: at world 2 never, so only an explicit ring
+preset on an odd total reaches this there. At world 4 with batch 1, since
+1.5.0, `auto` folds the spare ranks into `uly4`, which drops the pad rows
+exactly, so it never refuses here (issue #188). That fold rests on what
+community four-Spark users reported: one graph whose latent on `uly4` was
+bit-identical to their pair's `uly2`, and three rows on `uly4` within the
+0.10 one-step limit of one GPU, a closeness check rather than an identical
+latent ([community results](BENCHMARKS.md#community-four-node-results-2026-10-27));
+this project has two Sparks and has not run it. At an odd world `auto` falls
+back to pure ring, because no shipped Ulysses preset fills an odd world and
+`single` derives dp, and at worlds 6 and 8 it folds into uly2+ring3 and
+uly2+ring4; all of them refuse a padded sequence the same way.
+
+**Fix:** use the Ulysses preset the refusal names: `uly2` on two Sparks,
+`uly4` on four, `uly8` on eight (exact by construction; no run of it is on
+record). At worlds 3, 5, 6 and 7 no Ulysses preset fits,
+so render on two or four Sparks, or make the total divide, or take a one-GPU
+reference. If you need ring for a capacity or comparison reason,
 make the packed total divide the degree: pick a canvas where `(width // 32) *
 (height // 32)` is even (1344x768 gives 42 * 24 = 1008), which makes the
 video, audio and keyframe terms all even, and then only the prompt's token
@@ -2113,9 +2138,10 @@ on, and every `_cfg_pp` sampler turns it off, so it runs even at cfg 1.0 (an
 empty negative is still a few tokens). H3 builds a separate packed layout per
 conditioning, so cond and uncond each pad or do not pad on their own. For a
 ring leg, either pin a non-cfg_pp sampler (both committed H3 example graphs
-pin `res_multistep`) or land both prompts on an even total. There is no
-supported way to read the packed total from the UI, so treat ring on H3 as an
-expert path and `uly2` as the default. Do not force ring past the refusal: it
+pin `res_multistep`) or land both prompts on an even total. The driver's
+refusal states the first padded call's total and its pad rows, which is the only
+place the UI shows the total, so treat ring on H3 as an expert path and the
+Ulysses preset as the default. Do not force ring past the refusal: it
 keeps a padded ring render from producing wrong math that nothing flags.
 
 The refusal opens with `[dgxm:K guard=ring_pad:minimax_h3 waivable=1]`
@@ -2752,7 +2778,10 @@ variable and restart the driver. Prefer the panel for narrowly scoped grants.
 resolved topology, and world size, bound to file identity. A different degree
 asks again. An explicit pad waiver also covers `auto` if it resolves to that
 same topology: world 3 can resolve `ring3`; a world-4 batch-1 `uly2` row can
-resolve `uly2+ring2`. The panel and ledger name the resolved topology.
+resolve `uly2+ring2` (MiniMax H3's resolves `uly4` since 1.5.0). The panel and
+ledger name the resolved topology. The driver's MiniMax H3 ring-pad count
+([#49](#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence)) reads the
+same memo: a render it covers goes on to the Workers, whose guard spends it.
 
 The driver resolves consent at every dispatch and puts it on that request;
 resident models retain no authorization. Revoke in "Consents and waivers"
@@ -7899,7 +7928,11 @@ refuses class P on the Worker before the model is mutated, with a message
 that opens "wan_scail cfg-parallel renders wrong". A ring topology at a
 sequence-parallel world above two, so ring3 at world 3, ring4, or `auto`'s
 uly2+ring2 fold at world 4, refuses class P at injection with a message that
-opens "wan_scail ring attention". uly2 and ring2 at world 2, and the Ulysses
+opens "wan_scail ring attention". Since 1.5.0 the driver refuses `auto`'s ring
+layouts at once, at the sampler node before the first-use check, setup and
+the load, with a message that opens "wan_scail: `auto` resolved" and names the
+Ulysses preset that fills the world (`uly4` at four Sparks); a typed ring
+preset still refuses at its eager load. uly2 and ring2 at world 2, and the Ulysses
 preset at a larger world, are not refused. The sweep matrix labels the same
 cells `refuse:P`, so a sweep expects the refusal.
 

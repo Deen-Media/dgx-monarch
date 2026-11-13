@@ -619,6 +619,36 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   render there leaves a spare data-parallel rank, and auto refuses it
   (class K) rather than fold the rank into a cfg-plus-sequence composite.
   Every cfg row's evidence was measured at world 2;
+- spare data-parallel ranks a batch cannot split fold into a larger Ulysses
+  degree only where `topology.VALIDATED_ULYSSES_FOLDS` grants that family and
+  degree, and into ring otherwise. The one grant, MiniMax H3 at world 4
+  (uly4, issue #188), bends the measured-rows rule: it rests on what
+  community four-Spark users reported, not on this project's two Sparks. One
+  report showed a graph whose latent on uly4 was bit-identical to their
+  pair's uly2; another showed three rows on uly4 within the 0.10 one-step
+  limit of one GPU, a closeness check rather than an identical latent. That
+  falls short of the rule in CONTRIBUTING.md for reports from larger clusters,
+  which asks for two independent reports of a latent identical to a validated
+  layout's, so the row stands as an exception the maintainer allowed for this
+  case. p-h3-image takes the same fold: it reads as `minimax_h3` and runs
+  H3's DiT attention, and the table-wide test names it. It replaced
+  uly2+ring2, a fold no record shows rendering, where the adapter refuses
+  about three prompts in four after setup and the load; uly4 runs the same
+  Ulysses code and pad exclusion as uly2, and 56, the one head count H3
+  shards, splits four ways. The adapter checks the live head count at
+  injection and refuses in words a degree that does not divide it. Where the
+  fold runs, the logged reason adds where it stands; on a pair the line
+  speaks only of the pair.
+  Where H3 or MiniMax-H3-Image still lands on ring (a typed ring preset, an
+  odd world, worlds 6 and 8), the driver counts each model call's packed
+  total before the first-use check, setup and the load, and refuses a padded
+  one with the Worker's own card (`nodes/h3_ring_pad.py`). The auto decision
+  itself never reads the conditioning, because several sites resolve a
+  render's topology and must agree. The same check refuses at once Wan
+  SCAIL's ring layouts above a sequence-parallel world of two, which its
+  adapter refuses whatever the sequence: at four Sparks `auto` folds SCAIL's
+  uly2 row into one of them, and SCAIL gets no uly4 grant, because no report
+  shows its uly4 latent identical to a validated layout's;
 - ideogram4: auto takes Ulysses2, never cfg2; explicit Ring2 stays for
   diagnosis, and explicit cfg2 runs the dual-model split (MODELS.md);
 - flux3 earns no cfg2 row. Measured by Campaign K's method on 2026-10-15 and
@@ -1756,6 +1786,18 @@ Two related boundaries:
 * **`auto` never substitutes known-wrong math.** A waiver is an expert choice
   about a topology the operator typed, so the auto-resolution refusals carry
   class K with no guard and say in one sentence why no card will appear.
+
+**A client that sends the same graph again gets the same refusal.** A typed
+refusal names what must change before the render can run, and every attempt
+pays the bring-up again and, where the refusal comes after it, the model load.
+So a script or API client reads the tag that opens the error
+(`[dgxm:<class> ...]`) before it decides. Class P is never worth a retry
+without the change the message names, to the graph, the topology or the
+software. Class K is worth one only after the waiver its card names is granted
+or the change it names is made. Class C is worth one after its card is
+accepted, after memory on the box is freed, or with the residency it names. No
+site raises class U this release. An error with no class tag (a transport
+fault, a Worker restart, a timeout) is not a refusal, and a retry can succeed.
 
 #### The tag rides in the message
 

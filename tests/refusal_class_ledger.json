@@ -1264,6 +1264,24 @@
       "waivable": false
     },
     {
+      "site": "nodes/h3_ring_pad.py::preflight::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/h3_ring_pad.py::preflight::UnsupportedModelError#1",
+      "class": "K",
+      "guard": "ring_pad:minimax_h3",
+      "waivable": true
+    },
+    {
+      "site": "nodes/h3_ring_pad.py::refuse_scail_ring::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "nodes/loader_preflight.py::preflight_comfy_managed_topology::ComfyManagedResidencyError#0",
       "class": "P",
       "guard": null,

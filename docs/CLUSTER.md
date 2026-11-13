@@ -702,9 +702,9 @@ Fabric environment settings apply only inside worker actor processes.
 ### Switched fabrics
 
 The shipped `dgx-spark-pair` profile assumes two Sparks joined by a direct
-cable. One owner of four Sparks on a switched 100GbE RoCE fabric reported
+cable. Community four-Spark users on a switched 100GbE RoCE fabric reported
 needing this override
-([forum post by barichardson](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/17)).
+([community results](BENCHMARKS.md#community-four-node-results-2026-10-27)).
 It is quoted as reported; the maintainer has not reproduced it:
 
 ```toml

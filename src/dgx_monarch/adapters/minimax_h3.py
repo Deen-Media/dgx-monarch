@@ -52,6 +52,7 @@ from .minimax_h3_packing import (
     head_form,
     head_schedule,
     pad_row_index,
+    refuse_indivisible_dit_heads,
     row_runs,
     splice_condition_rows,
 )
@@ -316,6 +317,8 @@ class MiniMaxH3Adapter(Adapter):
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         attn = ctx.usp_attention
+        # The world-4 fold trusts the table's 56 heads; the file's own count decides here.
+        refuse_indivisible_dit_heads(diffusion_model, self.family)
         # The head's form decides the last argument; read once, refused here.
         form = head_form(diffusion_model.final_layer)
 

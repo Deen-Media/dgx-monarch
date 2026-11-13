@@ -180,8 +180,11 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "into one batched call, and the DiT caps batch at 1; cfg2 and dp "
              "both typed-refuse on the driver before dispatch. Ring only when "
              "the packed total needs no divisibility pad: pad-row exclusion is "
-             "ulysses-only, so the odd-world fallback and the world-4 fold "
+             "ulysses-only, so the odd-world fallback and a ring fold "
              "refuse a padded sequence instead of rendering it"),
+    # The world-4 fold into uly4 says where it stands in the logged reason
+    # only where it runs (topology.VALIDATED_ULYSSES_FOLD_NOTES), so a pair's
+    # line keeps speaking of the pair.
     # --- minimax_h3_image (H3's DiT, no audio, one latent frame) ----------
     AutoRule(55, "minimax_h3_image", (), 0.0, _INF, 2, {"ulysses": 2}, False,
              "packed text, reference pictures and target in one sequence: USP always "

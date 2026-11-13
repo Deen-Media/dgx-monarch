@@ -578,6 +578,38 @@
 
 ### Rendering
 
+- MiniMax H3 on four Sparks renders on `auto` (issue #188). At world 4 and
+  batch 1, `auto` folded the spare ranks into uly2+ring2, where the H3
+  adapter refuses every packed total four does not divide, about three
+  prompts in four, at the first sampler call, after setup and the model load.
+  `auto` now folds them into `uly4`, which drops the pad rows exactly. That
+  fold rests on what community four-Spark users reported: in one report, an
+  INT8 ConvRot ref2v graph whose latent on `uly4` was bit-identical to their
+  pair's `uly2` latent, sampling 1.93 times faster; in another, three H3 rows
+  on `uly4` within the 0.10 one-step limit of one GPU, a closeness check
+  rather than an identical latent. This project has two Sparks and has not run
+  `uly4`; the auto table, the docs and the four-Spark log line say so, and a
+  pair's log line still speaks only of the pair. Every other row at every
+  world, and every row at world 2, decides as before. The adapter now reads
+  the checkpoint's own head count at injection and refuses in words a Ulysses
+  degree that does not divide it. Where H3 or MiniMax-H3-Image still lands on ring
+  (an explicit ring preset, `auto` at an odd world, or at six or eight
+  Sparks), the driver now counts each model call's packed total and refuses a
+  padded one at the sampler node, or at the Identity Gate node, before any
+  proof render, setup and the `auto` load, with the Worker's own card and
+  waiver, naming the total, the pad rows and the Ulysses preset that fits.
+  That holds on a pair as well: an explicit `ring2` on a padded H3 or
+  MiniMax-H3-Image sequence now refuses on the driver at the sampler, before
+  the gate, where it used to refuse inside the first model call or the gate's
+  proof render. Under MiniMax H3 Context Windows
+  the Workers' guard still decides. Wan SCAIL's ring layouts above world 2,
+  which its adapter refuses whatever the sequence, now refuse on the driver at
+  the same point, naming `uly4` at four Sparks, where `auto`'s fold used to
+  reach the refusal after setup and the load. DESIGN section 5.9 now says
+  which refusal classes a script or API client should retry, and after what.
+  Not yet run on hardware
+  ([TROUBLESHOOTING #49](docs/TROUBLESHOOTING.md#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence),
+  [BENCHMARKS](docs/BENCHMARKS.md#a-second-report-minimax-h3-on-uly4-issue-188)).
 - An UltraTex render is priced at the rows its forward holds. ComfyUI's
   sample-time estimate counts every token of every view, of the normal atlas
   and of the reference, while its Flux forward drops the background tokens:
@@ -1244,6 +1276,22 @@
 
 ### Development
 
+- CONTRIBUTING.md says what a report from a cluster larger than two Sparks
+  must carry (the versions, the graph's shape, the driver's topology line and
+  refusal, the latent's sha256 on that layout and on a validated one for the
+  same graph and seed, the rank identity line, and a second shape that needs a
+  pad row), and what the project does with it: a fix where a reading of the
+  code finds the fault, held by CPU tests, an `auto` change only for a layout
+  exact by construction with two
+  independent reports of an identical latent, speed recorded as reported, and
+  never a default that changes the arithmetic on reports alone. A second issue
+  form asks for exactly that. The MiniMax H3 fold at four Sparks does not meet
+  that bar, one identical latent and one set of passing one-step checks, and
+  stands as an exception the maintainer allowed. Reports name nobody; a person
+  is named only to credit an enhancement in the code. The identity gate's
+  first-use check compares renders on the reader's own mesh and layout only,
+  so a report's two hashes are the only test of a layout against a validated
+  one.
 - `scripts/test_cpu.sh` runs the gate checks CI runs beside the suite before
   it: the protected test inventory first, then the refusal ledger, the TRUST
   citations, the leak check, ruff, mypy, compileall, the generator and artifact

@@ -367,15 +367,21 @@ def test_minimax_h3_auto_never_emits_cfg_or_dp(world):
     decision.topology.validate()
 
 
-def test_minimax_h3_auto_fold_grows_ring_not_ulysses():
-    """H3 has no exact family-and-degree Ulysses fold grant. World 4 batch 1
-    therefore folds to uly2+ring2, and a divisibility-padded packed sequence
-    refuses there rather than rendering.
+def test_minimax_h3_auto_fold_takes_uly4_at_world_4_and_ring_above():
+    """H3's one fold grant is degree 4 (issue #188, community runs, not
+    reproduced here). World 4 batch 1 therefore folds to uly4, which drops
+    pad rows exactly; world 8 has no grant and still folds into ring, where
+    the driver refuses a padded packed sequence before setup
+    (nodes/h3_ring_pad.py).
     """
     decision = choose_auto_topology(
         "minimax_h3", "bf16", 1.0, 4, cfg_value=4.0, batch_size=1)
-    assert (decision.topology.ulysses, decision.topology.ring) == (2, 2)
-    assert "folded into ring2" in decision.reason
+    assert (decision.topology.ulysses, decision.topology.ring) == (4, 1)
+    assert "folded into ulysses4" in decision.reason
+    decision = choose_auto_topology(
+        "minimax_h3", "bf16", 1.0, 8, cfg_value=4.0, batch_size=1)
+    assert (decision.topology.ulysses, decision.topology.ring) == (2, 4)
+    assert "folded into ring4" in decision.reason
 
 
 def test_minimax_h3_auto_reason_carries_the_refusal_provenance():
