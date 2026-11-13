@@ -188,6 +188,17 @@ def _the_decode_reliefs_note_of_a_fleet_ends_with_the_test():
 
 
 @pytest.fixture(autouse=True)
+def _no_test_takes_the_switches_left_on_this_box(monkeypatch):
+    """A Worker reads ``~/.config/dgx-monarch/worker.env`` as it starts (``actor/worker_switches.py``).
+
+    A test that builds a Worker must not take the diagnostic switches a person left on this box.
+    """
+    from dgx_monarch.actor import worker_switches
+
+    monkeypatch.setattr(worker_switches, "FILE", Path("/nonexistent-dgxm-test") / "worker.env")
+
+
+@pytest.fixture(autouse=True)
 def _source_only_imports_end_with_the_test():
     """Restore import flags and environment after source-only worker tests.
 

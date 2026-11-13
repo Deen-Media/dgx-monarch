@@ -446,6 +446,7 @@ def setup_info(worker) -> dict:
         "sol_attn": sol_attn_available(),
         "runtime": gate_runtime.runtime_build_identity(),  # Gate authority needs the driver's (worker_runtime.py)
         mesh_builds.SOURCE_FIELD: mesh_builds.source_digest(),  # one build a fleet: mesh_builds.refuse_two_builds
+        "switches": list(getattr(worker, "_switches", ())),  # diagnostic switches set here (worker_switches.py)
         "sp_rank": get_sequence_parallel_rank(),
         "cfg_rank": get_classifier_free_guidance_rank(),
         "dp_rank": get_data_parallel_rank(),

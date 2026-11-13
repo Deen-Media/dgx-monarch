@@ -1146,6 +1146,14 @@ Worker's environment keeps the backup however little room is left, for
 diagnosis and to read one build with and without the step; the Worker then
 logs what the step would have weighed, and the worker loop's environment
 filter lets the name through to the actors (`cli/worker_process_env.py`).
+A Worker-side switch is set in the one file each actor reads as it starts,
+`~/.config/dgx-monarch/worker.env` (`actor/worker_switches.py`): the unit a
+verified update writes clears its environment, so a unit drop-in does not
+reach the Worker there. The file admits six diagnostic names and no other,
+must belong to the Worker's user alone, yields to a name already in the
+environment, and is never silent: the actor logs every switch at WARNING as
+it starts, the driver repeats it at each setup, and status lists it
+([CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)).
 
 Three shipped templates reach this as shipped: `dgx-monarch-wan-animate2` (the
 INT8 ConvRot file), `dgx-monarch-wan-animate2-bfloat16-warm` and

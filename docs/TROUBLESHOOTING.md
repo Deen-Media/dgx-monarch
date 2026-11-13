@@ -756,9 +756,9 @@ and then makes its context straight away. What you may see:
   with no progress right after a reset or a restart, on a box that is short
   of free memory, is this wait.
 
-`DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment (a drop-in for the
-Worker's unit, then a Worker restart) turns the make-room step off, for
-diagnosis; the refusal stays. The Worker's status (`context_room`) gives the
+`DGXM_DISABLE_CONTEXT_ROOM=1` on the Worker (in its `worker.env`, then a
+recycle: [CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)) turns the
+make-room step off, for diagnosis; the refusal stays. The Worker's status (`context_room`) gives the
 GiB touched, the seconds, and free memory before the step, after the release
 and at the context. Under comfy-managed residency the Worker makes the room
 and leaves the context to ComfyUI's own start a moment later, so memory
@@ -856,10 +856,11 @@ you may see:
   names; turning `lora_low_rss` on does not help a model whose stack is
   already baked in. A Worker gives a dropped model's host memory back at the
   drop and at a hard clear; a soft clear returns its device pool only.
-  `DGXM_DISABLE_BACKUP_FREE=1` in the Worker's environment (a drop-in for the
-  Worker's unit, then a Worker restart; on a local mesh, the environment ComfyUI
-  starts in) turns that step off, for diagnosis; the Worker then logs what it
-  would have weighed and keeps the copy.
+  `DGXM_DISABLE_BACKUP_FREE=1` on the Worker (in its `worker.env`, then a
+  recycle; on a local mesh the environment ComfyUI starts in serves too:
+  [CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)) turns that step off,
+  for diagnosis; the Worker then logs what it would have weighed and keeps the
+  copy.
 
   The stack's own LoRA files are added, each as often as the stack lists it,
   when the price is read before the Worker has read them: a load into a
@@ -931,7 +932,9 @@ new torch build does. Torch's own default sits under `TMPDIR`, which the
 Worker usually puts on tmpfs. To place the cache elsewhere, set
 `TORCHINDUCTOR_CACHE_DIR` in the environment the Worker service starts with;
 the directory must be private to the account, because inductor loads the code
-it generates from there. If the Worker cannot make the default directory, it
+it generates from there. A unit that a verified update wrote clears its
+environment, so a drop-in does not reach it and the Worker keeps the default
+there ([CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)). If the Worker cannot make the default directory, it
 says so at start and torch keeps its default. After a torch upgrade the old
 version's directory is unused and safe to delete. Local mode, with no
 `cluster.toml`, does not move `TMPDIR`, so its actors keep torch's default
@@ -2507,12 +2510,13 @@ comfy-managed model in the other slot, which ComfyUI may still move to the
 host, and a Worker started with `DGXM_DISABLE_COPY_FREE_DROP=1`, which drops
 through ComfyUI's global unload as before; there the card's clear is the safe
 way to replace the model. That variable is read by the Worker, not the
-driver. Set it on each box with a drop-in for the Worker's unit
-(`systemctl --user edit dgxm-worker.service`, with
-`Environment=DGXM_DISABLE_COPY_FREE_DROP=1` under `[Service]`), then restart
-the Worker; the name is on the Worker loop's reviewed inheritance list, so it
-reaches the actors. Remove the drop-in afterwards: `install-service` refuses a unit
-with one ([#90](#90-install-service-or-uninstall-refuses-an-existing-worker-unit)). A check that reads the new model as already loaded
+driver. Set it on each box in the Worker's `worker.env`
+(`DGXM_DISABLE_COPY_FREE_DROP=1` in `~/.config/dgx-monarch/worker.env`), then
+recycle; each actor reads that file as it starts. A unit drop-in does not
+reach a Worker whose unit clears its environment, which a verified update's
+unit does ([CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)). Take the
+line out afterwards: the Worker and the driver both log the switch while it is
+set. A check that reads the new model as already loaded
 charges no load and counts no drop. Under `auto` the graph's own driver models load before the
 old model is dropped, so they must fit beside it. Under an explicit preset the
 load may wait for the first render too (an identity ceremony or a

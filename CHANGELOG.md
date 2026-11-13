@@ -1066,6 +1066,20 @@
 
 ### Operations
 
+- A Worker's diagnostic switches can now be set on any Worker unit, from one
+  file: `~/.config/dgx-monarch/worker.env` on that box, `NAME=value` lines,
+  then a recycle. The unit a verified update writes starts its loop through
+  `/usr/bin/env -i`, which clears every variable a unit drop-in sets, so the
+  drop-in the docs named for `DGXM_DISABLE_CONTEXT_ROOM`,
+  `DGXM_DISABLE_COPY_FREE_DROP` and the debug faults never reached such a
+  Worker. Each actor reads the file as it starts and takes six names and
+  nothing else (those three with `DGXM_DISABLE_BACKUP_FREE`,
+  `DGXM_FAULT_BACKUP_RANK` and `DGXM_ACCEPTANCE`). The file must belong to the
+  Worker's user and be writable by no one else, a name already in the
+  environment wins, and it is never silent: the Worker logs
+  `Worker switches set on this box: ...` at each start, the driver repeats it
+  at every setup, and the Worker's status lists it as `worker_switches`
+  ([CLUSTER.md](docs/CLUSTER.md#setting-a-worker-side-variable)).
 - A Worker logs one line when it accepts an identity gate grant, naming the model
   slots the grant covers, for example `identity gate grant accepted on rank 1: the
   gate PASS covers both model slots, [cond] ideogram4_fp8_scaled.safetensors with 1

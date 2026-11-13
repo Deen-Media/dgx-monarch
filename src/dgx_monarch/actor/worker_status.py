@@ -174,6 +174,9 @@ def status_impl(worker) -> dict:
         # What the Worker did to have free memory for its CUDA context (actor/context_room.py).
         "context_room": context_room.status_block(),
         "nccl": False,
+        # Every diagnostic switch set in this actor, from its worker.env or its environment
+        # (actor/worker_switches.py): a forgotten off switch turns a safety rule off.
+        "worker_switches": list(getattr(worker, "_switches", ())),
         # A failed setup/teardown rollback is a persistent dirty-state latch.
         # Publish only its boolean verdict: the exception detail stays in the
         # worker log, while telemetry can still refuse to call the fleet ready.
