@@ -60,7 +60,8 @@ slot = Slot()
 model = SimpleNamespace(current_weight_patches_uuid="stack", model_lowvram=False)
 setattr(model, lora_partial_load.STORED, weakref.ref(slot))
 patcher = SimpleNamespace(model=model, backup={"w": object()} if mine.get("stack", True) else {},
-                          patches={"w": [1]}, load_device=SimpleNamespace(type="cpu"), is_dynamic=lambda: False)
+                          patches={"w": [1]}, is_dynamic=lambda: False,
+                          load_device=SimpleNamespace(type="cuda" if mine.get("own_memory") else "cpu"))
 
 
 def host_room():
@@ -103,6 +104,15 @@ SCENARIOS = {
         {"0": {"room": 9.0, "room_after": 24.0}, "1": {"room": 40.0}}, 2, 1, "ran"),
     "a rank with no stack": (
         {"0": {"room": 9.0, "room_after": 24.0}, "1": {"room": 40.0, "stack": False}}, 2, None, "ran"),
+    # A device with memory of its own (a stand-in CUDA device that is not integrated): the rank takes
+    # no part, whatever its host reads, and makes the same exchanges as its peer.
+    "a pair of dedicated GPUs low on host memory": (
+        {"0": {"room": 1.0, "own_memory": True}, "1": {"room": 1.0, "own_memory": True}}, 1, 0, "ran"),
+    "a mixed fleet goes by its shared rank": (
+        {"0": {"room": 9.0, "room_after": 24.0}, "1": {"room": 1.0, "own_memory": True}}, 2, None, "ran"),
+    "a mixed fleet refuses on its shared rank": (
+        {"0": {"room": 2.0, "room_after": 6.0}, "1": {"room": 1.0, "own_memory": True}},
+        2, None, "PairBackupRoomError"),
     "a free and a refusal": (
         {"0": {"room": 2.0, "room_after": 6.0}, "1": {"room": 40.0}}, 2, 1, "PairBackupRoomError"),
 }
@@ -137,5 +147,5 @@ def test_both_ranks_make_the_same_collectives_and_neither_waits(name):
     assert [report["outcome"] for report in reports] == [outcome, outcome], reports
     if freed is not None:
         assert [report["freed"] for report in reports] == [freed, freed], reports
-    else:  # the rank with no stack frees nothing and still makes the second exchange
+    else:  # rank 1 (no stack, or a device with memory of its own) frees nothing and still makes the second exchange
         assert [report["freed"] for report in reports] == [1, 0], reports

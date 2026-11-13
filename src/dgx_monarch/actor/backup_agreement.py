@@ -17,12 +17,20 @@ MIN over the ranks brings back, never from a rank's own value:
 1. 0 if this rank is short: it holds a backup and its room above the host
    floor is under the ask (1.5 times ComfyUI's full estimate, as on one GPU);
 2. 0 if this rank cannot free (a patched model that is not a stock slot of
-   this Worker's store, or not on unified memory);
+   this Worker's store, or one ComfyUI's dynamic loader holds);
 3. 0 if ``DGXM_DISABLE_BACKUP_FREE`` is set on this rank;
 4. this rank's margin, its room less what the sampler still needs, in MiB,
    with its rank number in the low bits so the answer names the tightest rank;
 5. 0 if this rank holds a slot whose backup this agreement freed before.
 
+- A rank whose load device has memory of its own (a GPU that does not share
+  the host's memory) takes no part. Its sampler draws on the device, not on
+  the host, and the backup it keeps costs that sampler nothing. It is never
+  short, never the rank that cannot free, and it claims no margin, so it
+  can never be the tightest; it keeps its backup whatever the fleet does.
+  It sends the same five integers and makes the same exchanges as any rank.
+  A fleet of such ranks never frees and never refuses here; a mixed fleet
+  goes by the figures of its ranks on unified memory.
 - Any rank's switch set: the rule is off for the fleet, the refusal too. That
   is dev's behaviour, for diagnosis and for reading one build both ways.
 - No rank short and no slot freed before: nothing happens, nothing is logged.
@@ -106,6 +114,7 @@ class Vote:
     need: int | None = None
     ask: int | None = None
     why_not: str = ""
+    own_memory: bool = False  # the load device has memory of its own: this rank takes no part
     freeable: list[tuple[Any, Any]] = field(default_factory=list)
 
     @property
@@ -166,6 +175,10 @@ def vote(patchers: tuple, sampling: tuple[Any, Any], rank: int) -> Vote:
         found.switch = mesh_safety.env_enabled(lora_partial_load.BACKUP_FREE_DISABLE_ENV)
         seen: set[int] = set()
         held = False
+        # A device with memory of its own: the sampler's room is the device's, which no host figure
+        # reads and no backup takes from. Such a rank sends the neutral values a Vote starts with.
+        found.own_memory = bool(patchers) and not any(
+            lora_partial_load.shares_host_memory(patcher) for patcher in patchers)
         for patcher in patchers:
             model = getattr(patcher, "model", None)
             if model is None or id(model) in seen:
@@ -177,13 +190,17 @@ def vote(patchers: tuple, sampling: tuple[Any, Any], rank: int) -> Vote:
                 found.freed_before = True
             if not getattr(patcher, "backup", None) or getattr(model, "current_weight_patches_uuid", None) is None:
                 continue
+            if not lora_partial_load.shares_host_memory(patcher):
+                continue  # its backup is kept: neither held against the host's room nor a cause to keep the fleet
             held = True
             if stored is None:
                 found.can, found.why_not = False, "a patched model here is not one this Worker's store holds"
-            elif patcher.is_dynamic() or not lora_partial_load.shares_host_memory(patcher):
+            elif patcher.is_dynamic():
                 found.can, found.why_not = False, "a patched model here is not a stock load on unified memory"
             else:
                 found.freeable.append((patcher, stored))
+        if found.own_memory:
+            return found  # not short, able, no margin claimed (need is None), nothing to free
         found.room = lora_partial_load._host_room()
         first = patchers[0] if patchers else None
         found.pool = 0 if first is None else _idle_pool(first)
@@ -215,14 +232,17 @@ def _refuse_room(margin_gib: float, rank: int, mine: Vote, state: str) -> None:
                 "retry where the panel offers it, or Reset attached mesh); a shorter clip or a smaller "
                 "latent; or more free memory on that box. Turning lora_low_rss on does not help a model "
                 "whose stack is already baked in")
+    if mine.own_memory:
+        own = "This rank's device has memory of its own, so it took no part in the reading"
+    else:
+        own = (f"This rank read {max(0, mine.room + mine.pool) / _GIB:.1f} GiB of room (its idle device pool "
+               f"counted) against {(mine.need or 0) / _GIB:.1f} GiB needed (1.15 times ComfyUI's estimate for "
+               "the latent plus 1 GiB)")
     raise PairBackupRoomError(refusal(
         RefusalClass.CAPACITY,
         "a LoRA stack is on a model the ranks loaded whole with lora_low_rss off, and after the ranks' "
         f"decision ({after}) rank {rank} is {abs(margin_gib):.1f} GiB short of what sampling this latent "
-        "still needs above the 5 GiB host floor. This rank read "
-        f"{max(0, mine.room + mine.pool) / _GIB:.1f} GiB of room (its idle device pool counted) against "
-        f"{(mine.need or 0) / _GIB:.1f} GiB needed "
-        "(1.15 times ComfyUI's estimate for the latent plus 1 GiB); each Worker's journal gives its own "
+        f"still needs above the 5 GiB host floor. {own}; each Worker's journal gives its own "
         f"figures. Nothing was sampled and no rank went on. What would fit: {fits}.",
         guard="pair_backup_room", waivable=False, troubleshooting=TROUBLESHOOTING))
 
@@ -245,6 +265,14 @@ def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
                 _refuse_room(margin_gib, rank, mine, "freed before")
         return
     if can == 0:
+        if mine.own_memory:
+            log.info("pair backup: a rank is short of room for the sampler and a rank cannot free its backup, "
+                     "so every rank keeps its own. This rank's device has memory of its own: it takes no "
+                     "part in the reading")
+            margin_gib, rank = _read_margin(margin)
+            if margin_gib < 0:
+                _refuse_room(margin_gib, rank, mine, "kept")
+            return
         standing = sum(len(getattr(patcher, "backup", None) or ()) for patcher, _stored in mine.freeable)
         log.info("pair backup: a rank is short of room for the sampler and a rank cannot free its backup (%s), "
                  "so every rank keeps its own: this rank left the backup of %d weight(s) standing with "
@@ -271,11 +299,16 @@ def settle(mine: Vote, answer: list[int], exchange: Any) -> None:
             wrong = f"the acceptance fault {FAULT_RANK_ENV} names this rank (nothing is wrong with the model)"
     except Exception as exc:
         wrong = f"freeing its backup failed ({type(exc).__name__}: {exc})"
-    log.info("pair backup: %s, so every rank freed ComfyUI's weight backup before the first step (no weight "
-             "moved; a stack change on this model now reloads it on every rank). This rank: %s; %.1f GiB "
-             "of room above the floor against %.1f GiB the sampler still needs",
-             "this rank was short of room for the sampler" if mine.short else "a peer was short of room",
-             returned, max(0, mine.room) / _GIB, (mine.need or 0) / _GIB)
+    if mine.own_memory:
+        log.info("pair backup: a peer was short of room for the sampler, so the ranks on unified memory freed "
+                 "ComfyUI's weight backup before the first step. This rank's device has memory of its own: "
+                 "it keeps its backup, and a stack change on this model still swaps in place here")
+    else:
+        log.info("pair backup: %s, so every rank freed ComfyUI's weight backup before the first step (no weight "
+                 "moved; a stack change on this model now reloads it on every rank). This rank: %s; %.1f GiB "
+                 "of room above the floor against %.1f GiB the sampler still needs",
+                 "this rank was short of room for the sampler" if mine.short else "a peer was short of room",
+                 returned, max(0, mine.room) / _GIB, (mine.need or 0) / _GIB)
     ok, after = (int(value) for value in exchange(
         [0 if wrong else 1, _margin(mine.room + mine.pool, mine.need, mine.rank)]))
     if wrong is not None:

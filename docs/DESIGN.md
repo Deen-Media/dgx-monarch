@@ -1113,7 +1113,13 @@ was 17.4). Every decision is made from the MIN that comes back, so no rank
 decides alone. Any rank short and none unable: every rank frees, the roomy
 one too, so the slots stay alike and the next stack change reloads on all of
 them. A rank that cannot free (a patched model outside its store): every rank
-keeps its backup and says what it left standing. A switch set on any rank
+keeps its backup and says what it left standing. A rank whose load device has
+memory of its own (a GPU that does not share the host's) takes no part: its
+sampler does not draw on the host, so it is never short, never the rank that
+cannot free and never the tightest margin, it keeps its backup, and it sends
+the same five integers and makes the same exchanges; a fleet of such ranks
+never frees and never refuses here, and a mixed fleet goes by its ranks on
+unified memory. A switch set on any rank
 turns the rule off for the fleet. After a free the ranks make one more
 exchange, of each rank's model as read and its margin as read: a model that
 is not what a full load leaves, or a tightest margin under zero, refuses on

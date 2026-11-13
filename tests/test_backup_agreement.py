@@ -366,3 +366,104 @@ def test_a_warm_workers_next_render_is_weighed_with_the_pool_it_already_holds(ri
     with pytest.raises(backup_agreement.PairBackupRoomError) as raised:
         backup_agreement.settle(cold, _answer(cold.elements, _peer(not_freed=0)), lambda values: values)
     assert "its idle device pool counted" in str(raised.value)
+
+
+def _own_memory_patcher():
+    """A patched whole load on a device with memory of its own: a CUDA device that is not integrated."""
+    patcher = _patcher()
+    patcher.load_device = SimpleNamespace(type="cuda")
+    assert not lora_partial_load.shares_host_memory(patcher)
+    return patcher
+
+
+NEUTRAL = [1, 1, 1, backup_agreement._margin(0, None, 0), 1]
+
+
+def test_a_rank_on_a_device_with_its_own_memory_votes_neutral_whatever_its_host_reads(rig):
+    """The sampler there draws on the device: host memory is no reading of its room, and the backup
+    it keeps takes nothing from it. A host nearly out of memory must not make the rank short,
+    unable, or the tightest."""
+    rig.room = 0.5
+    mine = backup_agreement.vote((_own_memory_patcher(),), SAMPLING, 0)
+    assert mine.own_memory and not mine.short and mine.can and mine.need is None and mine.freeable == []
+    assert mine.elements == NEUTRAL and len(mine.elements) == backup_agreement.ELEMENTS
+    # The widest margin there is: a MIN over the ranks never picks it over a real reading.
+    assert mine.elements[3] > backup_agreement._margin(200 * GIB, 0, 63)
+    # The switch is still the fleet's.
+    shared = backup_agreement.vote((_patcher(),), SAMPLING, 0)
+    assert not shared.own_memory and shared.short and shared.freeable
+
+
+def test_a_pair_of_dedicated_gpus_low_on_host_memory_samples_and_makes_one_collective(rig, monkeypatch):
+    """Before this a pair of dedicated GPUs was refused through ``pair_backup_room`` on its host's
+    memory, which its sampler does not use."""
+    rig.room = 0.5
+    patcher = _own_memory_patcher()
+    sent, flags = _guard(monkeypatch, [1, *NEUTRAL[:3], backup_agreement._margin(0, None, 1), 1])
+    wrapper = partial_load_guard.make_prepare_sampling_guard(whole_model=True)
+    result = wrapper(lambda *args, **kwargs: ("real model", "conds", []), patcher, *SAMPLING)
+    assert result == ("real model", "conds", [])
+    assert len(sent) == 1 and sent[0] == [1, *NEUTRAL] and flags == []
+    assert rig.freed == [] and patcher.backup and not patcher.slot.base_baked
+
+
+def test_in_a_mixed_fleet_the_rank_with_its_own_memory_keeps_its_backup_and_follows_the_fleet(rig, caplog):
+    """The shared peer is short and able: it frees, by its own figures. This rank keeps its backup,
+    makes the second exchange with a neutral margin, and refuses with the fleet where the peer's
+    free left too little."""
+    rig.room = 0.5
+    patcher = _own_memory_patcher()
+    mine = backup_agreement.vote((patcher,), SAMPLING, 0)
+    calls = []
+    wide = backup_agreement._margin(60 * GIB, 7 * GIB, 1)
+
+    def exchange(values):
+        calls.append(list(values))
+        return [min(values[0], 1), min(values[1], wide)]
+
+    with caplog.at_level("INFO"):
+        backup_agreement.settle(mine, _answer(mine.elements, _peer(not_short=0)), exchange)
+    assert rig.freed == [] and patcher.backup and not patcher.slot.base_baked
+    assert calls == [[1, NEUTRAL[3]]]
+    assert "This rank's device has memory of its own" in caplog.text and "keeps its backup" in caplog.text
+    # The peer's free left it 2 GiB short: every rank refuses, this one saying it took no part.
+    short = backup_agreement._margin(6 * GIB, 8 * GIB, 1)
+    with pytest.raises(backup_agreement.PairBackupRoomError) as refused:
+        backup_agreement.settle(mine, _answer(mine.elements, _peer(not_short=0)),
+                                lambda values: [1, min(values[1], short)])
+    assert "rank 1 is 2.0 GiB short" in str(refused.value)
+    assert "took no part in the reading" in str(refused.value)
+
+
+def test_in_a_mixed_fleet_the_shared_rank_is_weighed_by_its_own_figures(rig):
+    """A neutral peer changes nothing for a rank on unified memory: it frees where it is short and
+    is refused on its own margin."""
+    patcher = _patcher()
+    rig.room, rig.room_after = 9.0, 24.0
+    mine = backup_agreement.vote((patcher,), SAMPLING, 0)
+    neutral_peer = [1, 1, 1, backup_agreement._margin(0, None, 1), 1]
+    calls = []
+    backup_agreement.settle(mine, _answer(mine.elements, neutral_peer),
+                            lambda values: calls.append(list(values)) or [values[0], min(values[1], neutral_peer[3])])
+    assert rig.freed == [patcher] and len(calls) == 1
+    other = _patcher()
+    rig.room, rig.room_after = 2.0, 6.0
+    mine = backup_agreement.vote((other,), SAMPLING, 0)
+    with pytest.raises(backup_agreement.PairBackupRoomError) as refused:
+        backup_agreement.settle(mine, _answer(mine.elements, neutral_peer),
+                                lambda values: [values[0], min(values[1], neutral_peer[3])])
+    assert "rank 0 is" in str(refused.value) and "This rank read 6.0 GiB of room" in str(refused.value)
+
+
+def test_a_kept_fleet_is_not_refused_on_the_host_of_a_rank_with_its_own_memory(rig, caplog):
+    """A peer cannot free and another is short, so every rank keeps its backup: the margin that is
+    checked is the fleet's, and this rank's host is not in it."""
+    rig.room = 0.5
+    mine = backup_agreement.vote((_own_memory_patcher(),), SAMPLING, 0)
+    with caplog.at_level("INFO"):
+        backup_agreement.settle(mine, _answer(mine.elements, _peer(not_short=0, can=0)), lambda values: 1 / 0)
+    assert "it takes no part in the reading" in caplog.text
+    tight = _peer(not_short=0, can=0, margin=backup_agreement._margin(6 * GIB, 8 * GIB, 1))
+    with pytest.raises(backup_agreement.PairBackupRoomError) as refused:
+        backup_agreement.settle(mine, _answer(mine.elements, tight), lambda values: 1 / 0)
+    assert "every rank kept its weight backup" in str(refused.value) and "rank 1 is 2.0 GiB short" in str(refused.value)
