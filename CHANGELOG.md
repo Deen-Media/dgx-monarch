@@ -640,6 +640,34 @@
   `dgxm doctor`'s `driver memory reading` row says so when it is not working.
   Not yet run on hardware
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- On a DGX Spark a Worker now makes room for its GPU context before it
+  creates one. A Worker makes its CUDA context at its setup (the first
+  render, or the UNET loader under an explicit topology), and the NVIDIA
+  driver needs free memory for it, which the page cache does not count as:
+  on 2026-11-12 three Worker starts with 1.52, 4.61 and 8.85 GiB free and
+  44.7, 47.4 and 50.8 GiB available ended in a raw `CUDA error: out of
+  memory` from `cuDevicePrimaryCtxRetain`, each while a test held tens of
+  GiB; one start worked with 8.87 GiB free and every other on record with
+  10.6 or more. Before its first CUDA call a Worker now reads the box's
+  memory. If less than 16 GiB is free while 21 GiB or more is available, it
+  writes to up to 16 GiB of memory in steps of 1 GiB and
+  releases it at once, so that the system gives that much page cache back,
+  never leaving under 5 GiB available, then makes its context straight away
+  and logs one line. A start with 16 GiB free does nothing. If the context
+  still cannot be made, the render refuses in plain words (class C) with
+  the box it came from, that box's free and available memory, what the
+  Worker did first and what to do, where it used to show a traceback. On a
+  pair it shows only after about ten minutes, and only where the head's
+  Worker failed; where the sibling's failed, the start still ends in a
+  timeout after about ten minutes, without the refusal. Any other error a
+  Worker raises at its setup and the driver reads now opens with its box as
+  well ("On the head, ..."), as a load error does. Nothing to set.
+  `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment turns the
+  make-room step off for diagnosis, a fault in the step leaves
+  the start as it was, and the Worker's status says what the step did.
+  Under comfy-managed residency the Worker leaves the context to ComfyUI's
+  own start, a moment after the room is made. Not yet run on hardware
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On a DGX Spark, a LoRA stack loaded with `lora_low_rss` off is now priced
   at what its bake takes, and where that does not fit the Worker bakes the
   stack in place when the identity gate has passed the combination. This

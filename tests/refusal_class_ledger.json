@@ -106,6 +106,12 @@
       "waivable": false
     },
     {
+      "site": "actor/context_room.py::refuse_unmade_context::ContextMemoryError#0",
+      "class": "C",
+      "guard": "gpu_context_memory",
+      "waivable": false
+    },
+    {
       "site": "actor/context_windows_render.py::apply::UnsupportedModelError#0",
       "class": "P",
       "guard": null,

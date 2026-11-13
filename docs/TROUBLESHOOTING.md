@@ -610,7 +610,8 @@ into the worker python (`python` in cluster.toml) on every host (e.g.
 
 **Symptom:** a large or bf16 model never finishes loading; the Worker service
 log shows comfy sizing it at ~0 MB and offloading, and it recurs on every
-render rather than being a one-off OOM.
+render rather than being a one-off OOM. Or a refusal that says `this Worker
+could not start on its GPU` (its paragraph is further down this entry).
 
 **Cause:** comfy's `get_free_memory` reads `torch.cuda.mem_get_info`, which
 under-reports free memory on GB10 unified memory (measured: about
@@ -709,6 +710,63 @@ models it freed from, and what MemAvailable read on each side. What to know:
   a clause only when it is off, stepped aside or not installed
   ([DESIGN](DESIGN.md), "Before a decode priced above free memory, the driver
   frees what the decode needs").
+
+**A refusal that says `this Worker could not start on its GPU`, or a Worker
+that makes room for its GPU context.** A Worker makes its CUDA
+context at its setup (the first render, or the UNET loader under an explicit
+topology), and on a Spark the NVIDIA driver needs free memory for it: memory
+the page cache holds does not count, although the system would give it back.
+On 2026-11-12 three Worker starts with 1.52, 4.61 and 8.85 GiB free and
+44.7, 47.4 and 50.8 GiB available ended in `Actor call dgxm_worker.setup
+failed` and `CUDA error: out of memory ... from cuDevicePrimaryCtxRetain`;
+one start worked with 8.87 GiB free and every other on record with 10.6 or
+more. Each failure came while another program held tens of GiB. Reading
+large files is not enough to cause it: 260 GiB of model files read with
+nothing held left 26 to 28 GiB free. So before its first CUDA
+call a Worker now reads the box's memory, and if less than 16 GiB is free
+while 21 GiB or more is available it writes to up to 16 GiB of memory and
+releases it at once, which makes the system give that much page cache back,
+and then makes its context straight away. What you may see:
+
+- **In the Worker's journal, `free memory was N GiB with M GiB available, so
+  the Worker made room for its GPU context: X GiB touched and released in S
+  seconds`.** Nothing to do. It took a few seconds, and files read earlier
+  are read from disk again when next used.
+- **`the Worker made no room for its GPU context: ...`** in the same place.
+  Free memory was short and the step did not run; the line says why (too
+  little available to do it safely, or a GPU with memory of its own).
+- **A refusal that says `this Worker could not start on its GPU: the NVIDIA
+  driver could not get memory for a new CUDA context`.** The context could
+  not be made even so. The text gives the free and available memory of the
+  Worker's box and what the Worker did first. Close a program that holds
+  memory, or wait for a large download or file copy to end, then click Reset
+  attached mesh and queue again. If nothing can be closed, a root shell can
+  drop the page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`). On a pair
+  it takes about ten minutes to show, and it shows only when the head's
+  Worker is the one that failed: it then opens "On the head, ...". The
+  Worker that failed answers at once, but the sibling goes on waiting for
+  the head to open the group, the driver's clean-up of the failed setup
+  waits behind that, and the driver reports only when the clean-up reaches
+  its own limit. When the sibling's Worker is the one that failed, the head
+  waits for it to join until the setup's limit, and what shows after about
+  ten minutes is a timeout with no word of memory, not this refusal. If a
+  pair's start ends that way, read the free memory on the sibling (`grep
+  MemFree /proc/meminfo`) and the make-room line in the sibling Worker's
+  journal. A render that sits
+  with no progress right after a reset or a restart, on a box that is short
+  of free memory, is this wait.
+
+`DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment (a drop-in for the
+Worker's unit, then a Worker restart) turns the make-room step off, for
+diagnosis; the refusal stays. The Worker's status (`context_room`) gives the
+GiB touched, the seconds, and free memory before the step, after the release
+and at the context. Under comfy-managed residency the Worker makes the room
+and leaves the context to ComfyUI's own start a moment later, so memory
+freed can be taken again in between; its status then reads "left to the
+bootstrap", and a second journal line gives what was free when the context
+was asked for. Not yet run on hardware
+([DESIGN](DESIGN.md), "A Worker makes room for its CUDA context before it
+creates one").
 
 **A LoRA stack with `lora_low_rss` off is refused, or baked in place.** With
 the switch off a Worker bakes a stack ComfyUI's classic way, and that bake

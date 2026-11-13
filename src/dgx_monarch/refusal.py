@@ -127,6 +127,15 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         "because slab is already the residency and the ladder already admitted "
         "the load the bake runs on",
     ),
+    "gpu_context_memory": GuardSpec(
+        RefusalClass.CAPACITY,
+        False,
+        "rescue-slab",
+        "a Worker's own start: the NVIDIA driver could not get memory for a new "
+        "CUDA context after the Worker made what room it could "
+        "(actor/context_room.py); no card, because no consent makes memory free. "
+        "rescue-slab is only the audit kind it is filed under: slab is no remedy here",
+    ),
     "first_load_stock_memo": GuardSpec(
         RefusalClass.UNPROVEN,
         False,
