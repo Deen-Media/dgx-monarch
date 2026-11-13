@@ -4,6 +4,30 @@
 
 ### Everyday use
 
+- A re-queue in the same driver can no longer encode or load on the driver
+  with nothing priced before it. ComfyUI keeps the UNET Loader's output while
+  nothing upstream of it changes, so a queue that changed only a guide's file,
+  its canvas or its length, a reference video, or a text encoder or upsampler
+  ran no loader price, and its spend came before the sampler's re-queue price:
+  a still swapped for a clip at 1344x768 encodes for 94 GiB or more, which takes
+  the host down. The driver now prices such a spend where it happens, at Add
+  Guide (MiniMax H3), at Reference to Video (MiniMax H3) for a reference video,
+  and at the stock loader nodes of a text encoder, checkpoint or model, at what
+  the loader charges for it, and refuses before anything is spent where the
+  spend would take the box under its floor after ComfyUI's models are unloaded
+  and the Workers' idle caches released. That is a new refusal for a queue that
+  today renders only by dipping under the floor. Nothing the loader charged at
+  its size in the same prompt is priced again, and nothing in a graph of a
+  family the loader does not price. The same holds where ComfyUI runs such a
+  node before the loader on a first queue. Not yet run on hardware
+  ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
+
+- The loader now charges a reference video's 40 GiB encode on a first queue
+  where ComfyUI already holds models. Its held-model credit took that encode
+  with the models, though the encode is a transient that has not run, as a
+  guide's is; a first queue of a video-reference graph right after another
+  graph was admitted without it. Not yet run on hardware.
+
 - The decode relief now asks the Workers for the device memory they hold idle
   whenever it acts. It asked them only where freeing the driver's text
   encoders still left the decode priced above ComfyUI's free reading, and on

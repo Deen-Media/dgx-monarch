@@ -2948,6 +2948,24 @@ the actors could not be asked, the log has a WARNING and the refusal says so.
 Like the unload, the release runs only after a refusal, never while a render is
 live, and `DGXM_DISABLE_DRIVER_UNLOAD=1` turns it off too.
 
+**A load on the driver that the loader did not charge.** On a re-queue whose
+UNET Loader ComfyUI kept, a text encoder, upsampler, checkpoint or diffusion
+model the queue newly loads through a stock loader node (a changed file, or a
+branch a switch newly selects) loads before the sampler, where nothing priced
+it until 1.5.0. Since then the driver prices it at the loader node: what the
+loader charges for its inputs, a text encoder's file at 1.15, a model's whole,
+several files summed, against MemAvailable, after the same unload and release
+as above. The refusal starts `CLIPLoader loading <file> needs ... GiB on the
+driver's box` (or the node it is), under this guard's driver-host twin
+`driver_footprint_preflight`, and nothing was loaded; pick a smaller file, or
+free memory on the box. It prices only a graph whose DGX Monarch UNET Loader is
+of a family the loader prices a driver stack for, and nothing the loader
+charged at its size in this prompt
+([#82](#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode) covers
+the encodes). Other packs' loaders and ComfyUI's internal reloads are not
+priced. `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns this pricing
+off, for diagnosis.
+
 **The identity gate checks before its proof render.** A first-use ceremony
 runs this guard, with the render site's other capacity checks, for the whole
 request before it writes its `RETESTING` row, priced for the slab path it would
@@ -4707,6 +4725,30 @@ can run before a guide, and with the pipeline or fleet sampler. A load that
 fits says the same in the driver's log: its `loader footprint preflight` line
 reads "charged as alternatives" or "charged together, because" and the reason.
 
+**A refusal at Add Guide itself, on a re-queue.** ComfyUI keeps the UNET
+Loader's output while nothing upstream of it changes, so after a render in the
+same driver, a queue that changes only the guide's file, the canvas or the
+length runs no loader, and its new encode would run with no charge before it.
+Since 1.5.0 the driver prices that encode at Add Guide (MiniMax H3) itself,
+where the loader did not charge it: on the canvas and frame count the node
+holds, at the charge above, a clip with 6 GiB more, against MemAvailable after
+ComfyUI's models are unloaded and the Workers' idle caches released. The
+refusal is `[dgxm:C guard=driver_footprint_preflight waivable=0]`, starts
+`Add Guide (MiniMax H3) for this 5-frame clip at 448x256 needs ... GiB on the
+driver's box`, says whether this prompt reached the loader, and nothing was
+encoded. Use a shorter clip or a smaller canvas, or free memory on the box.
+Clearing the Sparks (Reset attached mesh) frees what the Workers hold there,
+and the next queue then runs the loader, whose refusal itemises the whole
+graph. The same check prices Reference to Video (MiniMax H3)'s reference video
+at 40 GiB, and the stock loader nodes' files
+([#56](#56-minimax-h3-render-refused-activation-footprint-preflight)). Where
+the loader charged a spend at its size in this prompt, nothing is priced, and
+the driver log reads `the loader priced this prompt; nothing priced here`; it
+prices nothing either in a graph whose DGX Monarch UNET Loader is not of a
+family the loader prices. A spend it admits logs one `driver spend price:` line
+with its charge and the room it found. This is a new refusal for a queue that
+today renders only by taking the box under its floor.
+
 ## 83. A multi-frame guide clip at 1344x768 takes the whole host down
 
 **Symptom:** a guide clip at the full H3 canvas does not raise, does not
@@ -4726,9 +4768,11 @@ degrading.
 **Fix:** respect this measured hardware limit. Anchor a
 still at this canvas, or move a real clip to 448x256. Entry 82 covers the
 charge that refuses the clip before it starts, on a render queued from the
-browser. A script that imports the loader node and calls it directly hands the
-wall no graph, so that charge never runs and the host thrashes as above.
-Entry 85 covers that caller.
+browser, and, since 1.5.0, the same charge at Add Guide itself on a re-queue
+whose UNET Loader ComfyUI kept, so swapping a still for a clip and queuing
+again in the same driver is refused before it encodes. A script that imports
+the loader node and calls it directly hands the wall no graph, so that charge
+never runs and the host thrashes as above. Entry 85 covers that caller.
 
 ## The Spark failure catalog
 

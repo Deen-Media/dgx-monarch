@@ -1799,7 +1799,10 @@ So a script or API client reads the tag that opens the error
 without the change the message names, to the graph, the topology or the
 software. Class K is worth one only after the waiver its card names is granted
 or the change it names is made. Class C is worth one after its card is
-accepted, after memory on the box is freed, or with the residency it names. No
+accepted, after memory on the box is freed, or with the residency it names; a
+driver spend refusal (`DriverSpendCapacityError` at the node that would spend,
+class C, no card) is worth one only after memory on the box is freed or the
+spend is made smaller, since the same graph gets the same refusal until then. No
 site raises class U this release. An error with no class tag (a transport
 fault, a Worker restart, a timeout) is not a refusal, and a retry can succeed.
 
@@ -2256,11 +2259,81 @@ reference-to-video graph the box had just rendered. Its refusal is the
 loader's, cards included, and says which node priced the graph and that the
 Workers loaded nothing (`nodes/requeue_price.py`). The cross-rank agreement is
 not that place: it does nothing at world 1, where that re-queue ran, and it
-prices Worker rows, not a graph. Nothing prices a re-queue before its own
-upstream nodes run: an upsampler loads before the sampler, so a box short for
-that load beside a held DiT is not caught here, and freeing the encoders at the
-sampler waits for a walk that knows which models the rest of the prompt loads
-again.
+prices Worker rows, not a graph. This price comes after the re-queue's own
+upstream nodes have run, so what they spend is priced where they spend it,
+below.
+
+**What a node spends on the driver before the sampler is priced where it
+spends, where the loader did not price it.** A re-queue's upstream nodes run
+before the sampler: a text encoder or upsampler a changed file or a switch newly
+selects loads there, and a guide or reference video ComfyUI no longer keeps
+encodes there. A still swapped for a clip at 1344x768 encodes for 94 GiB or
+more, which takes the host down (TROUBLESHOOTING #83), and ComfyUI does not
+promise to run the loader before such a node on a first queue either. So the
+driver prices the spend at the node that makes it (`driver_spend_price.py`):
+- **What it prices.** Add Guide (MiniMax H3)'s encode, on the canvas and frame
+  count it holds, at the loader's guide charge, a clip with 6 GiB more where the
+  graph's activation term resolves; Reference to Video (MiniMax H3) with a
+  reference video, at the loader's 40 GiB; and the stock loader nodes whose
+  inputs the loader charges (Load CLIP, the dual, triple and quadruple CLIP
+  loaders, LTX's audio-video text encoder loader, the checkpoint loaders and
+  Load Diffusion Model), at what the loader charges for those inputs: a text
+  encoder's file at 1.15, a model's whole, several files summed. It wraps those
+  classes' node methods on the class objects in ComfyUI's node mapping, so
+  ComfyUI's own internal reloads, other packs' loaders and every Worker path
+  are out by construction; a Worker, by its environment marker, installs
+  nothing.
+- **The mark, per term.** Where the loader admits a prompt at the loader site on
+  a graph it read, it records what it charged for each spend: the guide at the
+  room it held for the encode's window (the larger of the guide and the
+  activations, or both), the reference encode, and each driver load node's
+  files where no held-model credit took them. A wrap steps aside where its own
+  spend was charged at a figure at least its own, and logs that once per node.
+  A spend the loader charged at 0, such as a guide on a checkpoint whose family
+  it could not read, another family's loader in a mixed graph, or a load the
+  held-model credit took, is priced live.
+- **When it prices nothing.** Without the running prompt's graph in hand: the
+  executing context gives the prompt and node id, and the prompt queue's
+  running item with that id carries the graph. And in a graph whose DGX Monarch
+  UNET Loader is not of a family the loader prices a driver stack for.
+- **The promise.** A marked spend is never refused. An unmarked spend is refused
+  only where it would take the box under its floor
+  (`driver_footprint.reserve_bytes`) after every rescue: the room is
+  MemAvailable plus what this process's torch pool holds unallocated, and before
+  it refuses it unloads what ComfyUI holds and trims the Workers' idle caches,
+  as the render-site checks do. That is a new refusal for a queue that today
+  renders only by dipping under the floor. The loader's held-model credit and
+  its credits for a model a later load drops are not this room's, so a spend
+  ComfyUI runs before the loader can be refused where the loader-first order
+  would have admitted it, for example under an explicit preset with another
+  model still in the Worker's slot; the refusal is still true of the box.
+- **The refusal.** Class C under `driver_footprint_preflight`, the driver-host
+  guard of the frozen vocabulary, with no card, as its own type, so no consent
+  card matching the stock-load family offers a slab load for an encode. It
+  names the spend, its charge and the room above the floor, says whether this
+  prompt reached the loader (the loader priced it but did not charge this spend
+  at its size, or it has not priced this prompt at all), and that nothing was
+  spent. Its remedies are a shorter clip, a smaller canvas or file, and memory
+  freed on the box; clearing the Sparks frees what the Workers hold there, and
+  the next queue then runs the loader, whose refusal itemises the whole graph.
+  A spend it admits logs one line with its charge and room.
+  `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for
+  diagnosis. A class another pack registers over one of these names is not
+  wrapped, and the first loader price in the process logs a WARNING naming it.
+- **Not priced.** VAEs, 6 GiB at most here, under the floor's margin; image
+  references and frame anchors, which the loader charges 0 on every queue by an
+  earlier ruling, so a re-queue is no worse than a first queue there (filed for
+  a loader charge with its own measurement); LTX's guide and image-to-video
+  encodes, CLIP vision, ControlNet and IP-adapter loads, and the prompt
+  expander's generation, none of them charged at the loader either; and a text
+  encoder ComfyUI faults back into a CLIP it already built, which returns the
+  box to the state the last render held. The render activations stay with the
+  render-site checks.
+
+The loader's reference encode survives its held-model credit, as the guide's
+does: it is a transient, and a held model does not show that it has run. A
+first queue of a video-reference graph with ComfyUI's models held is charged
+its 40 GiB.
 
 **A prompt expander that cannot see the request refuses before the render.** The
 MiniMax-H3-Image templates wire ComfyUI's expander chain, Replace Text into

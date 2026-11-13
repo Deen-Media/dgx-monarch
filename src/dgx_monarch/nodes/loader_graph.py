@@ -233,9 +233,9 @@ class DriverStackTerms:
     def budget_clause(self) -> str:
         """Describe the settled budget without claiming absent charges.
 
-        Credit clears the text encoder, VAE and reference encode charges
-        (``credited_terms``). It never clears render activations or a guide
-        encode, so a credited result names what survives and keeps its
+        Credit clears the text encoder and VAE charges (``credited_terms``). It
+        never clears render activations, a guide or a reference encode, so a
+        credited result names what survives and keeps its
         ``credit_reason`` either way. With both a guide and activations, the
         clause says whether they are charged as alternatives or together, and
         why (``guide_order_note``).
@@ -250,7 +250,7 @@ class DriverStackTerms:
             ("driver stack", self.models_bytes + self.ref_bytes),
             ("guide encode", guide),
             ("render activations", renders)) if charged)
-        credit = (f", with the text encoder, VAE and reference encode charges "
+        credit = (f", with the text encoder and VAE charges "
                   f"credited ({self.credit_reason})" if self.credited else "")
         return (f"{_gib(total)} GiB of {carried} this graph has not spent "
                 f"yet{credit}{order}")
@@ -464,11 +464,11 @@ def _credit_held(terms: DriverStackTerms, held: int, ratio: float = 1.0) -> Driv
 def credited_terms(terms: DriverStackTerms, ratio: float = 1.0) -> DriverStackTerms:
     """Apply the residency credits: comfy's loaded models, then earlier charges.
 
-    A guide encode survives both credits, like render activations. The first
-    credit fires on any loaded model. It credits the whole stack only where
-    what ComfyUI holds covers it (MemAvailable already counts that much), and
-    otherwise only the bytes held; a loaded model does not show that Add Guide
-    has run.
+    A guide or reference encode survives both credits, like render activations:
+    each is a transient, and a held model does not show that it has run. The
+    first credit fires on any loaded model. It credits the whole stack only
+    where what ComfyUI holds covers it (MemAvailable already counts that much),
+    and otherwise only the bytes held.
     """
     if not terms.resolved:
         return terms
@@ -476,13 +476,13 @@ def credited_terms(terms: DriverStackTerms, ratio: float = 1.0) -> DriverStackTe
         held = _comfy_held_bytes()
         if held is not None and held < terms.models_bytes:
             return _credit_held(terms, held, ratio)
-        return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0, ref_bytes=0,
+        return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0,
                        credited=True,
                        credit_reason="comfy already holds loaded models, so "
                                      "the preflight assumes MemAvailable counts this stack")
     named = terms.models
     if named and all(name in _CHARGED_STACK_ARTIFACTS for name in named):
-        return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0, ref_bytes=0,
+        return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0,
                        credited=True,
                        credit_reason="an earlier loader node charged "
                                      "this stack")
