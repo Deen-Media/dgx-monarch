@@ -1098,7 +1098,11 @@ for the fleet. After a free the ranks make one more exchange, of each rank's
 model as read and its margin as read: a model that is not what a full load
 leaves, or a tightest margin under zero, refuses on every rank before the
 first forward, class C, naming the rank and the figures. The margin is also
-checked where a short fleet kept its backups. A render that does not free
+checked where a short fleet kept its backups. The margin weighs the sampler's
+need alone, on every rank: it carries NO term for the driver's decode, because
+the driver cannot price a decode before sampling (the VAE is a later node).
+The decode beside the driver is the decode relief's to cover, by the Workers'
+release of their idle device pools (`vae_decode_relief`, in the section on the driver's decode). A render that does not free
 makes the one collective it made before, with more integers in it; both
 Workers must therefore run one build, and a fleet whose Workers report two
 source digests at setup is refused before dispatch (`mesh_builds.py`). The
@@ -2369,7 +2373,21 @@ that requirement, as ComfyUI's classic loader does there, keeping every model
 loaded except the text encoders. ComfyUI frees just what the call needs from
 the text encoders it holds, in its own order, and a DynamicVRAM model gives
 up pages without being unloaded where that is enough. Then ComfyUI's decode
-runs. Eight things bound it:
+runs. Where the decode is still priced above the reading after that, the
+driver asks the Workers for memory they hold idle: one call of the trim the
+driver unload already makes (`driver_unload.trim_actors`, every actor's
+`clear_vram` at `soft`), which empties each Worker's device pool and unloads
+nothing. A Worker keeps the pool its sampler grew reserved after the last
+step, 6.4 GiB on record beside a driver whose decode then took 2.4 to 4.4
+(a pair, 2026-11-13, the first Spark under its clock cap, max 2100 MHz: the
+box read 4.29 GiB at that decode). The call goes to the fleet attached NOW:
+the driver keeps only a weak note of the fleet it last submitted to, and
+reads the one attached in its place if a reset retired it
+(`vae_decode_relief.serving_now`). It never runs under a sample: the relief
+does nothing while one of the driver's samplers runs, the Worker takes the
+call under its GPU lock, and the claim on the mesh's render session fails
+within seconds where a pipelined render owns it, after which the decode runs
+as before. It has no hardware reading yet. Eight things bound the relief:
 
 - **Only text encoders are freed.** By an allow-list, not a deny-list: a text
   encoder is the one kind of model ComfyUI marks for certain (`is_clip` on its

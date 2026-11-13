@@ -21,7 +21,7 @@ from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
-from .. import mesh_setup, restart_reattach, runtime_observer
+from .. import mesh_setup, restart_reattach, runtime_observer, vae_decode_relief
 from ..adoption_evidence import (
     CONTEXT_REQUEST_KEY as _ADOPTION_CONTEXT_REQUEST_KEY,
 )
@@ -291,6 +291,7 @@ def _submit_render_guarded(
     handle = (bound_handle if bound_handle is not None
               else ensure_live(spec.handle))
     guard.handle = handle
+    vae_decode_relief.note_serving(handle)  # a decode priced above its reading asks this fleet for idle pools
     if isinstance(handle, MeshHandle) and handoff is None:
         raise ValueError(
             "real render submission requires a caller-owned "
