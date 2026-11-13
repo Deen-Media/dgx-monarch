@@ -125,7 +125,7 @@ _SAMPLING_LOCK = threading.Lock()
 _SAMPLING = {"depth": 0}
 # The fleet this driver last submitted a render to, held weakly: never what keeps a mesh alive, and
 # never used as it is (``serving_now`` reads the fleet attached now in its place).
-_SERVING = {"handle": None}  # proc lifetime: one weak reference, replaced at every submit
+_SERVING: dict[str, weakref.ref[Any] | None] = {"handle": None}  # proc lifetime: replaced at every submit
 
 # How much ComfyUI is asked to free. False: the decode's own requirement and no more, so the
 # driver holds its floor through the decode with the least taken (decided 2026-11-12). True:
@@ -205,8 +205,9 @@ def release_worker_pools() -> tuple[str, bool]:
     """Ask the serving fleet's actors for their idle device pools: (the relief's clause, whether they released).
 
     One call of the trim the driver unload already makes
-    (``driver_unload.trim_actors``: every actor's ``clear_vram`` at ``soft``,
-    which empties its device pool and unloads nothing). A Worker keeps the
+    (``driver_unload.trim_actors``: every actor's ``clear_vram`` at ``pool``,
+    which empties its device pool and collects, and drops nothing: not a
+    model, and not the Worker's own decode VAE). A Worker keeps the
     pool its sampler grew reserved after the last step, 6.4 GiB on record,
     beside a driver whose decode then asks for 2.4 to 4.4. The Worker runs the
     call under its GPU lock, so never under a sample, and the claim on the
@@ -221,7 +222,7 @@ def release_worker_pools() -> tuple[str, bool]:
         fleet = serving_now()
         if fleet is None:
             return "", False
-        trimmed = driver_unload.trim_actors(fleet)
+        trimmed = driver_unload.trim_actors(fleet, driver_unload.POOL_LEVEL)
     except Exception as exc:
         return f"; the Workers were not asked for their idle device pools ({type(exc).__name__}: {exc})", False
     return (f"; {trimmed.actors} Worker actor(s) then released their idle device pools: MemAvailable read "

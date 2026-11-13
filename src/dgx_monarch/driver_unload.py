@@ -66,6 +66,7 @@ _SETTLE_S = 0.05
 # frees the allocator cache, where ``hard`` would also unload every resident.
 TRIM_ENDPOINT = "clear_vram"
 TRIM_LEVEL = "soft"
+POOL_LEVEL = "pool"  # the device pool alone: the Worker keeps its resident decode VAE (the decode relief's ask)
 
 # Another render session that owns the mesh (an idle pipeline, say) fails the
 # trim's claim this fast instead of after the default claim wait.
@@ -301,7 +302,7 @@ def trimmable(handle: Any) -> bool:
         return False
 
 
-def trim_actors(handle: Any) -> Trimmed:
+def trim_actors(handle: Any, level: str = TRIM_LEVEL) -> Trimmed:
     """Ask every actor of ``handle`` to release its allocator cache.
 
     The call claims the mesh's render session, or joins the one active here
@@ -312,7 +313,7 @@ def trim_actors(handle: Any) -> Trimmed:
 
     before = mesh_safety.mem_available_bytes() or 0
     with mutation_render_session(handle, timeout_s=_TRIM_CLAIM_S):
-        answers = handle.call_all(TRIM_ENDPOINT, TRIM_LEVEL, timeout_s=_TRIM_TIMEOUT_S)
+        answers = handle.call_all(TRIM_ENDPOINT, level, timeout_s=_TRIM_TIMEOUT_S)
     time.sleep(_SETTLE_S)
     after = mesh_safety.mem_available_bytes() or 0
     return Trimmed(len(list(answers or ())), before, after)

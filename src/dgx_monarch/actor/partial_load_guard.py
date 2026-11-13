@@ -215,7 +215,10 @@ def make_prepare_sampling_guard(whole_model: bool = False):
             conds = args[2] if len(args) > 2 else kwargs.get("conds")
             if patcher is not None and shape is not None and conds is not None:
                 agree = ((patcher, *additional), (shape, conds))
-        check(model, additional=additional, agree=agree)
+        if agree is None:
+            check(model, additional=additional)  # the call dev made, for a caller that wraps it
+        else:
+            check(model, additional=additional, agree=agree)
         return result
 
     return wrapper

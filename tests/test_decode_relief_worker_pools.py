@@ -42,7 +42,8 @@ def _no_note_outlives_a_test():
 def trims(monkeypatch):
     asked: list = []
 
-    def trim(fleet):
+    def trim(fleet, level):
+        assert level == driver_unload.POOL_LEVEL == "pool"  # never soft: that drops the Worker's decode VAE
         asked.append(fleet)
         return driver_unload.Trimmed(2, 7 * 2 ** 30, 13 * 2 ** 30)
 
@@ -90,7 +91,7 @@ def test_a_claim_that_fails_is_said_and_the_decode_goes_on(monkeypatch):
     fleet = _Fleet("busy")
     vae_decode_relief.note_serving(fleet)
 
-    def owned(handle):
+    def owned(handle, level):
         raise TimeoutError("another render session owns this mesh")
 
     monkeypatch.setattr(driver_unload, "trim_actors", owned)

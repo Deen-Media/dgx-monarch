@@ -1342,6 +1342,15 @@ def _assert_cond_dispatch_seam() -> None:
             "so the seam the per-cond dispatch installs on is gone or has moved"
         )
 
+    # ComfyUI runs cond and uncond in one call from 1.5 times its estimate of free memory. The backup
+    # step's ask mirrors that share (actor/lora_partial_load.ASK_SHARE_OF_FULL_ESTIMATE), and the cond
+    # batch agreement pins the reading it is compared with (actor/cond_batch_agreement.py).
+    batching = inspect.getsource(comfy.samplers._calc_cond_batch)
+    assert "cond_shapes=cond_shapes) * 1.5 < free_memory" in batching, (
+        "cond dispatch seam: _calc_cond_batch no longer batches conds where memory_required * 1.5 is under "
+        "free memory, so the backup step's ask (1.5 times ComfyUI's full estimate) no longer mirrors it"
+    )
+
     for name in ("calc_cond_batch", "_calc_cond_batch"):
         parameters = list(inspect.signature(
             getattr(comfy.samplers, name)).parameters)

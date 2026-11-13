@@ -108,6 +108,14 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         "worker-side slab residency wall: no card, because slab is the rescue "
         "itself and no grant makes unified memory appear",
     ),
+    "pair_backup_room": GuardSpec(
+        RefusalClass.CAPACITY,
+        False,
+        "rescue-slab",
+        "cross-rank room agreement, read after every rank has loaded whole and the ranks "
+        "have freed or kept ComfyUI's weight backup together: no consent card, because no "
+        "consent gives a rank the room its sampler needs above the host floor",
+    ),
     "cross_rank_capacity": GuardSpec(
         RefusalClass.CAPACITY,
         False,

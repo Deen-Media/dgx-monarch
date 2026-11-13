@@ -23,11 +23,6 @@ from dgx_monarch.actor import lora_partial_load
 from dgx_monarch.refusal import RefusalClass, RefusalTag, parse_leading_refusal_tag
 from module_location_helpers import from_checkout
 
-# The route's tests read the real MemAvailable: the route runs only with room above the 5 GiB host floor.
-pytestmark = pytest.mark.skipif(
-    psutil.virtual_memory().available < 10 * 2 ** 30,
-    reason="the partial-load route needs room above the 5 GiB host floor, and under 10 GiB is available here")
-
 OUT, IN, RANK = 64, 512, 4
 LAYOUTS = {"float8_e4m3fn": "TensorCoreFP8E4M3Layout", "int8_tensorwise": "TensorWiseINT8Layout"}
 
@@ -179,6 +174,18 @@ def _comfyui_forgets_the_models_of_each_test():
     management = sys.modules.get("comfy.model_management")
     if management is not None:
         management.current_loaded_models.clear()
+
+
+@pytest.fixture(autouse=True)
+def _room_for_the_real_route(request):
+    """The ComfyUI tests here take the real route, which runs only with room above the 5 GiB host floor.
+
+    They read the real MemAvailable, so on a machine with little memory free they would decline the
+    route and fail for the machine's reason. The file's pure tests ask for no ComfyUI and always run.
+    """
+    if "installed" in request.fixturenames and psutil.virtual_memory().available < 10 * 2 ** 30:
+        pytest.skip("the partial-load route needs room above the 5 GiB host floor, and under 10 GiB of "
+                    "memory is available here")
 
 
 def test_which_layers_quantize_their_input(comfy_cpu):

@@ -467,12 +467,13 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Va
 
     @concurrent_endpoint
     async def clear_vram(self, level: str = "soft") -> dict:
-        """soft: free allocator cache; hard: also unload every resident model."""
+        """soft: free allocator cache; hard: also unload every resident model; pool: the device pool alone."""
         async with self._gpu_lock:
             return await self._on_gpu(self._clear_vram_impl, level)
 
     def _clear_vram_impl(self, level: str = "soft") -> dict:
-        drop_resident(self)  # a decode VAE is reloadable cache at either level
+        if level != "pool":  # the decode relief's ask: the device pool alone, the decode VAE kept
+            drop_resident(self)  # a decode VAE is reloadable cache at soft and hard
         if self._setup_key is None:
             # Before setup there is no allocator to clear, and touching CUDA here
             # would bind the wrong device (worker_status.status_impl).
