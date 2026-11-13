@@ -260,6 +260,11 @@ endpoints:
 - `sample(request, progress_port)`: the denoise loop; streams progress (§5.8);
   leader returns latents, peers return None.
 - `status()`: VRAM/UMA snapshot, resident model key, topology, NCCL initialized.
+  It runs inline on the actor's event loop and never waits on the GPU thread:
+  it reads torch's device figures only while the GPU lock is free, and while a
+  load or a sample holds the lock it answers with the figures it last read,
+  marked `stale` with their age (`age_s`). A stale mark means a busy Worker,
+  not a dead one.
 - `provenance_baseline(setup_generation, artifact_manifest=None)`: Gate's
   setup-token-bound rank/world/package-source queue barrier for the exact READY
   generation. With a manifest it also returns strict saved pre-READY setup and
@@ -1894,6 +1899,37 @@ otherwise return early and run classic residency under a comfy-managed policy.
 That fallback could bind a durable PASS to a policy the worker never honored.
 A persisted quarantine or a Fleet call without an exact PASS therefore also
 refuses; neither can downgrade the running process.
+
+**The loader's log level, and who may read the allocator.** Before 1.5 a
+comfy-managed render could stop for good inside its first step when a status
+read met it; the stall guard ended it after its budget and the next render
+recovered by itself. The loader (comfy-aimdo 0.6.0) hands every log line to a
+Python callback and its native level starts at "everything", so once its hooks
+are in it calls Python at each device allocation and free, from inside the
+call torch makes while it holds its allocator lock. A call into Python needs
+the interpreter lock. The Worker's status read asked torch for its allocated
+and reserved figures, which takes that allocator lock without giving up the
+interpreter lock. The GPU thread then held the first and waited for the
+second, and the status read the reverse. Two rules follow, and both ship:
+
+- The bring-up sets the loader's native log level to INFO, as ComfyUI's own
+  process does, after the library loads and before its hooks go in
+  (`actor/comfy_dynamic.set_native_log_level`). The per-allocation lines are
+  dropped inside the library; its warnings and errors still reach the log.
+- On a Worker only the GPU thread, under the GPU lock, may read or change
+  torch's device allocator while a job runs. Every load, sample, decode,
+  unload, clear (the decode relief's pool level included), setup, teardown
+  and gate cycle already runs that way, the readiness exchange and the
+  backup agreement inside the sample. The calls that stay off the lock
+  (`capacity_quote`, `artifact_identity`, `renew_client_lease`,
+  `cancel_sample`) read files and the kernel's figures and never the device.
+  `status()` was the one exception, and now reads the device only while the
+  lock is free (`actor/worker_status.device_figures`).
+
+The root is the loader's: a Python callback run under torch's allocator lock.
+With the level at INFO it can still do that in two places, a warning or error
+line from inside a hook and its page-out callback when it evicts pages, and
+the second rule is what keeps either from meeting a status read.
 
 **A class-K guard that blocks the ceremony answers first.** Gate proof renders
 ignore accuracy waivers. A class-K refusal therefore blocks every proof

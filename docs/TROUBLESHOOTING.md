@@ -3384,6 +3384,58 @@ mesh, which gives this box its ordinary stock or slab residency back.*
    mesh. Look further back in the same worker's log for the first refusal: that
    one says what went wrong.
 
+### A render that stopped inside its first step
+
+**What happened before 1.5.** A render with `comfy_managed` on could stop for
+good inside its first step, on a roomy box as well as a tight one. The
+Worker's GPU figure stopped rising, the GPU sat idle, and the Worker no longer
+answered status. Memory had no part in it. After its budget the stall guard
+ended the render in words
+([#86](#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)),
+and the next render brought the Workers back by itself. In testing, three of
+six such renders stopped.
+
+**Why.** ComfyUI's dynamic loader (comfy-aimdo 0.6.0) hands each of its log
+lines to a Python callback, and its own log level starts at "everything".
+ComfyUI's process lowers it to INFO at start; a Worker left it alone. So once
+the loader's hooks were in, every device allocation and free called Python,
+from inside the call torch makes while it holds its allocator lock. A call
+into Python needs the interpreter lock. The Worker's status read asks torch
+for its allocated and reserved figures, which takes the same allocator lock
+without giving up the interpreter lock. When the two met, the GPU thread held
+the allocator lock and waited for the interpreter lock, and the status read
+held the interpreter lock and waited for the allocator lock. Neither could
+ever go on. The panel, `dgxm top` and any scraper ask for status every few
+seconds, so a first step of 45 s met one often.
+
+**What 1.5 does.**
+
+- The Worker sets the loader's log level to INFO, as ComfyUI does, before the
+  loader's hooks go in. The per-allocation lines are dropped inside the
+  library and never call Python. The loader's warnings and errors still reach
+  the Worker's log.
+- A status read touches the device only while the Worker's GPU thread is
+  free. While a load or a sample runs, status answers at once with the
+  figures it last read, marked `"stale": true` with `age_s`, their age in
+  seconds. If none were read yet, `vram` is `null` and `note` says why. The
+  rest of the reply is live either way.
+
+A stale mark means a busy Worker, never a dead one. The panel and `dgxm top`
+keep showing the Worker with its last figures, and the FSDP reload price
+credits nothing from a stale figure.
+
+**What is still the loader's to change.** The root is a Python callback run
+under torch's allocator lock. With the level at INFO the loader can still do
+that in two places: a warning or error line from inside a hook, and its
+page-out callback when it evicts pages to make room. Neither can meet a
+status read any more.
+
+**If a render still ends this way.** The error reads `render stalled: the
+fleet reported no progress` with `comfy_managed` on and memory to spare.
+Queue the render again (the Workers come back by themselves), or turn the
+widget off for that graph, and report it with the Worker's log
+([#4](#4-supervisionerror--process-exited-with-non-zero-code)).
+
 ### Why a change needs an Attached mesh reset
 
 Changing this policy requires **Reset attached mesh**. It patches the loaded

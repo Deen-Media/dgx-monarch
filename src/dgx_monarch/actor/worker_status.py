@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import os
 import socket
+import time
+from collections.abc import Callable
 from typing import Any
 
 from .. import residency_mode
@@ -103,6 +105,55 @@ def _latent_signature(t) -> dict:
     }
 
 
+_NO_DEVICE_FIGURES_YET = (
+    "the GPU thread is busy and no device figures were read before its job began; "
+    "the first status after the job carries them")
+
+
+def _read_device_figures() -> dict[str, float]:
+    """CUDA's free and total, and torch's allocated and reserved, in GiB."""
+    import torch
+
+    free, total = torch.cuda.mem_get_info()
+    return {
+        "free_gib": round(free / 2**30, 1),
+        "total_gib": round(total / 2**30, 1),
+        "allocated_gib": round(torch.cuda.memory_allocated() / 2**30, 1),
+        "reserved_gib": round(torch.cuda.memory_reserved() / 2**30, 1),
+    }
+
+
+def device_figures(
+    worker,
+    read: Callable[[], dict[str, float]] | None = None,
+    now: Callable[[], float] = time.monotonic,
+) -> dict[str, Any] | None:
+    """The status reply's device block, never waiting on the GPU thread.
+
+    Torch reads its allocated and reserved figures under its allocator lock,
+    and the reading thread keeps the interpreter lock while it waits. The GPU
+    thread holds that allocator lock at every device allocation, and under
+    comfy-managed residency the loader's hooks can call Python from inside it.
+    Each then waits on the other and the Worker stops for good
+    (docs/TROUBLESHOOTING.md #62). So the figures are read only while the GPU
+    lock is free. Status runs to its end on the actor's event loop, the one
+    thread that hands work to the GPU thread, so a lock found free stays free
+    for the whole read. While the lock is held the reply carries the last
+    figures read, marked ``stale`` with their age in seconds; before any were
+    read it carries none. A fresh reply has the four figures and no mark.
+    """
+    lock = getattr(worker, "_gpu_lock", None)
+    if lock is None or not lock.locked():
+        figures = dict((read or _read_device_figures)())
+        worker._device_figures = (figures, now())
+        return dict(figures)
+    last = getattr(worker, "_device_figures", None)
+    if last is None:
+        return None
+    figures, read_at = last
+    return {**figures, "stale": True, "age_s": round(max(0.0, now() - read_at), 1)}
+
+
 def status_impl(worker) -> dict:
     # Read the event sequence and tail atomically so they describe one snapshot.
     from .. import monarch_policy, return_diagnostics, runtime_diagnostics
@@ -150,17 +201,13 @@ def status_impl(worker) -> dict:
         info["note"] = "not set up yet (VRAM stats available after the Init node runs)"
         return info
     try:
-        import torch
         import torch.distributed as dist
 
         info["nccl"] = bool(dist.is_initialized())
-        free, total = torch.cuda.mem_get_info()
-        info["vram"] = {
-            "free_gib": round(free / 2**30, 1),
-            "total_gib": round(total / 2**30, 1),
-            "allocated_gib": round(torch.cuda.memory_allocated() / 2**30, 1),
-            "reserved_gib": round(torch.cuda.memory_reserved() / 2**30, 1),
-        }
+        # Never the allocator while the GPU thread works: see device_figures.
+        info["vram"] = device_figures(worker)
+        if info["vram"] is None:
+            info["note"] = _NO_DEVICE_FIGURES_YET
         # Report live ComfyUI memory posture so status can detect drift from the
         # validated unified-memory baseline.
         import comfy.model_management as _mm

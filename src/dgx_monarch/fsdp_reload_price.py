@@ -183,9 +183,14 @@ def _rank_credit_bytes(row: Any, share_bytes: int) -> int:
     """The resident shard pool this rank's next unload drops, in bytes.
 
     Torch reserved less the rounding margin, capped at one share. A missing,
-    None, boolean, negative or non-numeric reading credits 0.
+    None, boolean, negative or non-numeric reading credits 0, and so does a
+    stale one: a Worker whose GPU thread was busy answers with the figures of
+    an earlier moment (actor/worker_status.device_figures), which may name a
+    pool it has since given back.
     """
     vram = row.get("vram") if isinstance(row, Mapping) else None
+    if isinstance(vram, Mapping) and vram.get("stale"):
+        return 0
     value = vram.get("reserved_gib") if isinstance(vram, Mapping) else None
     if share_bytes <= 0 or isinstance(value, bool) or not isinstance(value, int | float):
         return 0
