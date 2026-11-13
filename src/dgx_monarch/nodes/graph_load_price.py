@@ -81,12 +81,20 @@ def site_terms(terms: DriverStackTerms, site: str) -> DriverStackTerms:
 
 
 def log_alternatives(terms: DriverStackTerms, unet_name: str, avail: int, sum_fits: bool) -> None:
-    """The one line an admitted load that took the alternative charge leaves (issue #187).
+    """The one line an admitted load charged a guide encode and render activations leaves (issue #187).
 
-    The admitting path prints no card, so the journal says what charging the
-    guide encode and the render activations as alternatives changed: what the
-    sum would have said of the same load at the same reading.
+    The admitting path prints no card, so the journal says which rule ran. As
+    alternatives, the larger of the two, because every guide is a still its
+    file proves: the line also says what the sum would have said of the same
+    load at the same reading. Otherwise both, and why (a clip, a length no file
+    proves, or an order the graph does not prove); ``sum_fits`` is then moot.
     """
+    if not terms.guide_first:
+        log.info("loader footprint preflight: %s admitted with its %s GiB guide encode and %s GiB of render "
+                 "activations charged together, because %s; MemAvailable %s GiB", unet_name,
+                 _gib(terms.guide_bytes), _gib(terms.activation_bytes),
+                 terms.guide_order_note or "the graph does not show where the guide encodes", _gib(avail))
+        return
     log.info("loader footprint preflight: %s admitted with its %s GiB guide encode and %s GiB of render "
              "activations charged as alternatives (%s); charged together they would %s; MemAvailable %s GiB",
              unet_name, _gib(terms.guide_bytes), _gib(terms.activation_bytes), terms.guide_order_note,

@@ -2137,7 +2137,10 @@ driver returns the pool after every node; no node that uses a model is
 upstream of a guide; every node that may sample has every guide among the
 nodes ComfyUI is certain to run before it; and no pipeline or fleet sampler is
 in the graph. Anything else keeps the sum, and the budget clause and the
-guide's line say which was charged and why (`nodes/guide_order.py`). A seam
+guide's line say which was charged and why (`nodes/guide_order.py`). The
+admitting path prints no card, so an admitted load logs one line at INFO that
+names the rule that ran: the two as alternatives, with what the sum would have
+said at the same reading, or both charged together and why. A seam
 contract holds ComfyUI to the per-node reset. Where the DiT is already resident
 while a guide encodes and the guide charge is the larger term, no activation
 charge pads the guide's, so the alternative rests on the guide charge alone.

@@ -54,7 +54,8 @@
   backs a clip's charge on its own), where ComfyUI runs without DynamicVRAM,
   where a node that uses a model runs before a guide (a second pass, or a guide
   image decoded from a render), where a sampler can run before a guide, and
-  with the pipeline or fleet sampler. The graph of issue #187 (896x1152, 362
+  with the pipeline or fleet sampler. A load that fits logs which rule ran and
+  why. The graph of issue #187 (896x1152, 362
   frames, one reference image and a still guide on a pair) fits on this
   release either way: its activations are priced at 25.0 GiB here, where 1.3.0
   charged 59.9. Not yet run on hardware

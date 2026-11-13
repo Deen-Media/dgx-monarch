@@ -4670,7 +4670,9 @@ says why, for a clip and for a guide whose length is only declared or unread,
 when ComfyUI runs without DynamicVRAM (`--disable-dynamic-vram`, `--highvram`,
 `--gpu-only`, `--novram` or `--cpu`), when a node that uses a model runs before
 a guide (a second pass, or a guide image decoded from a render), when a sampler
-can run before a guide, and with the pipeline or fleet sampler.
+can run before a guide, and with the pipeline or fleet sampler. A load that
+fits says the same in the driver's log: its `loader footprint preflight` line
+reads "charged as alternatives" or "charged together, because" and the reason.
 
 ## 83. A multi-frame guide clip at 1344x768 takes the whole host down
 

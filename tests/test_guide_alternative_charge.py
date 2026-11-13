@@ -308,6 +308,41 @@ def test_an_admitted_alternative_charge_logs_what_the_sum_would_have_said(
     assert "charged together they would have refused it" in line
 
 
+def _admission_line(graph: dict, monkeypatch, caplog) -> str:
+    """What the journal says of a load that fits either way, at 110 GiB."""
+    import logging
+
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 110 * _GIB)
+    with caplog.at_level(logging.INFO, logger="dgx_monarch.nodes.graph_load_price"):
+        assert loader_preflight.preflight_loader_footprint(_Mesh(), REF2VA_INT8_PRUNED, {}, graph) is None
+    return "\n".join(record.getMessage() for record in caplog.records)
+
+
+def test_an_admitted_still_keeps_its_alternative_line(pool_reset, monkeypatch, caplog):
+    line = _admission_line(_still_graph(), monkeypatch, caplog)
+    assert (f"admitted with its 14.0 GiB guide encode and 11.3 GiB of render activations charged as "
+            f"alternatives ({guide_order.GUIDE_FIRST}); charged together they would fit too") in line
+    assert "charged together, because" not in line
+
+
+@pytest.mark.parametrize("guide", ["clip", "declared still"])
+def test_an_admitted_sum_logs_that_both_were_charged_and_why(pool_reset, monkeypatch, caplog, tmp_path, guide):
+    """A load that fits either way still says which rule ran, so a user and the proof can read it."""
+    if guide == "clip":
+        _write_image(tmp_path, "clip.png", 6)
+        graph = _still_graph(width=448, height=256, image_file="clip.png")
+    else:  # a scaler hides the file, so only the declaration says still
+        monkeypatch.setenv(h3_activation.GUIDE_FRAMES_ENV, "1")
+        graph = _graph(dit=REF2VA_INT8_PRUNED, refs="guide", width=1344, height=768)
+    terms = _terms(graph)
+    assert terms.guide_bytes and terms.activation_bytes and not terms.guide_first
+    line = _admission_line(graph, monkeypatch, caplog)
+    assert (f"admitted with its {terms.guide_bytes / _GIB:.1f} GiB guide encode and "
+            f"{terms.activation_bytes / _GIB:.1f} GiB of render activations charged together, because "
+            f"{guide_order.NOT_A_PROVEN_STILL}; MemAvailable 110.0 GiB") in line
+    assert "charged as alternatives" not in line
+
+
 def test_a_guide_behind_an_undecided_switch_keeps_the_sum(pool_reset):
     graph = _still_graph()
     graph["50"] = {"class_type": "PrimitiveBoolean", "inputs": {"value": True}}
