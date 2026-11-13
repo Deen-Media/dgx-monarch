@@ -46,7 +46,6 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import sys
-import time
 from collections.abc import Callable, Iterator
 from typing import Any, TypeGuard
 
@@ -88,12 +87,18 @@ def worker_reserve() -> int | None:
     Read from ComfyUI's own ``extra_reserved_memory``, the figure
     ``load_models_gpu`` adds, so it is what the load will meet whatever set
     it (the unified-memory default, Init's ``reserve_vram_gb``,
-    ``[worker_args]``). Never imports ComfyUI: a process without it is told
-    nothing, and the classic price then charges as if no reserve kept the
-    floor (``capacity_classic_bake.reserve_keeps_floor``).
+    ``[worker_args]``). ``None`` too where this ComfyUI does not budget its
+    loads at all: ``load_models_gpu`` weighs the free reading only when
+    ``lowvram_available`` and the state is NORMAL or LOW, and in any other
+    state every load goes whole at any reading. Never imports ComfyUI: a
+    process without it is told nothing. On ``None`` the classic price
+    charges as if no reserve kept the floor
+    (``capacity_classic_bake.reserve_keeps_floor``).
     """
     try:
-        return int(sys.modules["comfy.model_management"].extra_reserved_memory())
+        mm = sys.modules["comfy.model_management"]
+        budgeted = bool(mm.lowvram_available) and mm.vram_state in (mm.VRAMState.NORMAL_VRAM, mm.VRAMState.LOW_VRAM)
+        return int(mm.extra_reserved_memory()) if budgeted else None
     except Exception:
         return None
 
@@ -302,11 +307,10 @@ def quote_snapshot(store: Any, stored: Any, snapshot: dict, slot: str, allowed: 
     return snapshot
 
 
+# On the store: the slot and stack a hot swap of THIS ``ensure`` call read and declined.
+# ``ModelStore.ensure`` clears it on entry, so a call that raised before its fresh load priced
+# leaves nothing for the next one (a requeue of the same stack into the slot it emptied).
 _STACK_READ = "_dgxm_stack_read"
-# How long a note that the stack was read stands. The fresh load follows the declined swap in
-# the same ``ensure`` call, within seconds; a note older than this is from a call that never
-# reached its fresh load, and is not believed.
-_STACK_READ_MAX_AGE_S = 120.0
 
 
 def _stack_signature(lora_stack: list | None) -> tuple:
@@ -324,9 +328,9 @@ def note_stack_read(store: Any, slot: str, lora_stack: list | None) -> None:
     time the fresh load prices. On 2026-11-12 the reading at the stack's price
     line sat 7.1 GiB under the base's, the size of the 7.08 GiB file, and the
     load took the same total from there as from an empty Worker less that
-    file.
+    file. The store holds those bytes for the slot's life with the switch off.
     """
-    setattr(store, _STACK_READ, (slot, _stack_signature(lora_stack), time.monotonic()))
+    setattr(store, _STACK_READ, (slot, _stack_signature(lora_stack)))
 
 
 def forget_stack_read(store: Any) -> None:
@@ -337,10 +341,10 @@ def forget_stack_read(store: Any) -> None:
 def stack_on_host(store: Any, slot: str, lora_stack: list | None, *, consume: bool = False) -> bool:
     """Whether the reading a classic price is about to be held against was taken after this stack was read.
 
-    True only for the slot and the stack ``note_stack_read`` named, and only
-    while the note is fresh. ``consume`` clears the note: the fresh load's
-    probe reads it once, so a later load of the same stack into an empty slot
-    is charged its files.
+    True only for the slot and the stack ``note_stack_read`` named in this
+    ``ensure`` call. ``consume`` clears the note: the fresh load's probe reads
+    it once, and the next ``ensure`` call starts with none, so a later load of
+    the same stack into an empty slot is charged its files.
     """
     noted = getattr(store, _STACK_READ, None)
     if consume:
@@ -348,9 +352,8 @@ def stack_on_host(store: Any, slot: str, lora_stack: list | None, *, consume: bo
     if not noted or not lora_stack:
         return False
     try:
-        noted_slot, signature, at = noted
-        return bool(noted_slot == slot and signature == _stack_signature(lora_stack)
-                    and time.monotonic() - at <= _STACK_READ_MAX_AGE_S)
+        noted_slot, signature = noted
+        return bool(noted_slot == slot and signature == _stack_signature(lora_stack))
     except Exception:
         return False
 

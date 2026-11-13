@@ -503,17 +503,35 @@ def test_the_route_is_the_same_arguments_for_every_caller(monkeypatch):
     assert fallback.route(_store(low_rss=True), bare, True, True) is None  # the default: no classic bake
 
 
+def _comfy_mm(reserve=3 * GIB, state="NORMAL_VRAM", lowvram_available=True):
+    states = types.SimpleNamespace(DISABLED=0, NO_VRAM=1, LOW_VRAM=2, NORMAL_VRAM=3, HIGH_VRAM=4, SHARED=5)
+    return types.SimpleNamespace(extra_reserved_memory=lambda: reserve, VRAMState=states,
+                                 vram_state=getattr(states, state), lowvram_available=lowvram_available)
+
+
 def test_the_workers_reserve_is_comfyuis_own_figure_and_nothing_when_comfyui_is_not_loaded(monkeypatch):
     import sys
 
-    monkeypatch.setitem(sys.modules, "comfy.model_management",
-                        types.SimpleNamespace(extra_reserved_memory=lambda: 3 * GIB))
+    monkeypatch.setitem(sys.modules, "comfy.model_management", _comfy_mm())
+    assert fallback.worker_reserve() == 3 * GIB
+    monkeypatch.setitem(sys.modules, "comfy.model_management", _comfy_mm(state="LOW_VRAM"))
     assert fallback.worker_reserve() == 3 * GIB
     monkeypatch.setitem(sys.modules, "comfy.model_management", types.SimpleNamespace())  # a renamed function
     assert fallback.worker_reserve() is None
     monkeypatch.delitem(sys.modules, "comfy.model_management")
     assert fallback.worker_reserve() is None  # and it is not imported to find out
     assert "comfy.model_management" not in sys.modules
+
+
+@pytest.mark.parametrize("state", ["HIGH_VRAM", "SHARED", "NO_VRAM", "DISABLED"])
+def test_a_comfyui_that_does_not_budget_its_loads_gives_the_price_no_reserve(monkeypatch, state):
+    """``load_models_gpu`` weighs the free reading only in NORMAL or LOW; elsewhere every load goes whole."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "comfy.model_management", _comfy_mm(8 * GIB, state))
+    assert fallback.worker_reserve() is None
+    monkeypatch.setitem(sys.modules, "comfy.model_management", _comfy_mm(8 * GIB, lowvram_available=False))
+    assert fallback.worker_reserve() is None
 
 
 def test_the_walls_and_the_route_hand_the_price_the_same_reserve(monkeypatch):
@@ -534,68 +552,99 @@ WAN_COVERING = WAN_BASE + 1254 * price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]  
 
 
 @pytest.mark.parametrize("reserve_gib, covering", [
-    (64, False), (8, False), (7.5, False), (7.3, False),   # the reserve keeps the floor: R - 2.3 >= 5
-    (7.0, True), (5, True), (3, True), (0.5, True), (0, True)])
-def test_the_int8_share_is_charged_only_where_the_reserve_does_not_keep_the_floor(reserve_gib, covering):
+    (64, False), (8.5, False), (8, False),                  # the recorded reserve or more
+    (7.9, True), (7.5, True), (7.3, True), (7.0, True), (5, True), (3, True), (0.5, True), (0, True)])
+def test_on_the_recorded_model_the_int8_share_is_charged_under_the_recorded_reserve(reserve_gib, covering):
     reserve = int(reserve_gib * GIB)
-    assert price.reserve_keeps_floor(reserve, 1254) is not covering
-    assert price.term_from_weights(WAN_INT8, comfy_reserve_bytes=reserve) == (WAN_COVERING if covering else WAN_BASE)
-    # What a whole load leaves at ComfyUI's own lowest whole-load reading is the reserve less 2.3 GiB.
-    assert (reserve - price.WHOLE_LOAD_BEYOND_COMFYUI_BYTES >= FLOOR) is not covering
+    assert price.reserve_keeps_floor(reserve, True) is not covering
+    assert price.term_from_weights(WAN_INT8, comfy_reserve_bytes=reserve, recorded_model=True) == (
+        WAN_COVERING if covering else WAN_BASE)
 
 
-def test_the_edge_of_the_reserve_rule_is_the_floor_and_the_recorded_extra():
-    edge = FLOOR + price.WHOLE_LOAD_BEYOND_COMFYUI_BYTES
-    assert price.WHOLE_LOAD_BEYOND_COMFYUI_BYTES == int(2.3 * GIB) and edge == int(7.3 * GIB)
-    assert price.reserve_keeps_floor(edge, 0) and not price.reserve_keeps_floor(edge - 1, 0)
-    # The default reserve on unified memory (8 GiB) leaves 0.7 GiB over the edge for a larger clip's gap.
-    assert 0.69 * GIB < 8 * GIB - edge < 0.71 * GIB
+def test_the_edge_is_the_reserve_on_record_and_not_what_the_arithmetic_allows():
+    """A whole load leaves the reserve less 2.3 GiB: 5.0 at 7.3. The edge is the 8 it was read at, 0.7 above."""
+    edge = price.RECORDED_WHOLE_LOAD_RESERVE_BYTES
+    assert edge == 8 * GIB and price.WHOLE_LOAD_BEYOND_COMFYUI_BYTES == int(2.3 * GIB)
+    assert price.reserve_keeps_floor(edge, True) and not price.reserve_keeps_floor(edge - 1, True)
+    assert 0.69 * GIB < edge - price.WHOLE_LOAD_BEYOND_COMFYUI_BYTES - FLOOR < 0.71 * GIB
+    assert not price.reserve_keeps_floor(FLOOR + price.WHOLE_LOAD_BEYOND_COMFYUI_BYTES, True)  # 7.3: no margin
 
 
 def test_a_price_that_is_not_told_the_reserve_charges_the_share():
-    assert not price.reserve_keeps_floor(None, 0)
-    assert price.term_from_weights(WAN_INT8) == price.term_from_weights(WAN_INT8, comfy_reserve_bytes=None) == WAN_COVERING
+    assert not price.reserve_keeps_floor(None, True)
+    assert price.term_from_weights(WAN_INT8, recorded_model=True) == WAN_COVERING
+    assert price.term_from_weights(WAN_INT8) == WAN_COVERING
 
 
-def test_a_stack_with_more_share_keys_than_the_recorded_one_pays_the_share_at_any_reserve():
-    assert price.RECORDED_WHOLE_LOAD_SHARE_KEYS == 1254
-    assert price.reserve_keeps_floor(8 * GIB, 1254) and not price.reserve_keeps_floor(64 * GIB, 1255)
-    larger = WAN_INT8 + _weights(1, price.INT8_QUANTIZED, 32 * MIB)
+def test_any_stack_on_the_recorded_model_is_in_the_exception_and_no_other_int8_model_is():
+    """The backup cannot pass the model, which ComfyUI's condition counts; the rest is read on one model only."""
     share = price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]
-    assert price.term_from_weights(larger, comfy_reserve_bytes=64 * GIB) == WAN_BASE + 1255 * share
-    # The smaller recorded INT8 stack (MiniMax H3: 200 INT8 weights, 8 large full-precision ones).
-    h3 = _weights(200, price.INT8_QUANTIZED, 90 * MIB) + _weights(8, price.FULL_PRECISION, 8 * MIB)
-    base = price.CLASSIC_BAKE_FIXED_BYTES + 8 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
-    assert price.term_from_weights(h3, comfy_reserve_bytes=8 * GIB) == base
-    assert price.term_from_weights(h3, comfy_reserve_bytes=3 * GIB) == base + 200 * share
+    larger = WAN_INT8 + _weights(40, price.INT8_QUANTIZED, 32 * MIB) + _weights(60, price.FULL_PRECISION, 2048)
+    smaller = _weights(40, price.INT8_QUANTIZED, 32 * MIB)
+    for reserve in (8 * GIB, 64 * GIB):
+        assert price.term_from_weights(larger, comfy_reserve_bytes=reserve, recorded_model=True) == WAN_BASE
+        assert price.term_from_weights(smaller, comfy_reserve_bytes=reserve, recorded_model=True) == (
+            price.CLASSIC_BAKE_FIXED_BYTES)
+        # Another INT8 ConvRot model (MiniMax H3's shape: 200 INT8 weights, 8 large full-precision ones).
+        h3 = _weights(200, price.INT8_QUANTIZED, 90 * MIB) + _weights(8, price.FULL_PRECISION, 8 * MIB)
+        assert not price.reserve_keeps_floor(reserve, False)
+        assert price.term_from_weights(h3, comfy_reserve_bytes=reserve) == (
+            price.CLASSIC_BAKE_FIXED_BYTES + 8 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT + 200 * share)
+        assert price.term_from_weights(WAN_INT8, comfy_reserve_bytes=reserve, recorded_model=False) == WAN_COVERING
 
 
 @pytest.mark.parametrize("kind", [price.PLAIN_FP8, price.FP8_QUANTIZED, price.FULL_PRECISION, price.OTHER])
 def test_the_reserve_changes_no_other_formats_charge(kind):
     """Their charges cover their recorded whole loads by themselves, so none leans on ComfyUI's condition."""
     weights = _weights(720, kind, 26 * MIB) + _weights(40, kind, 2048)
-    assert len({price.term_from_weights(weights, comfy_reserve_bytes=reserve)
-                for reserve in (None, 0, 3 * GIB, 8 * GIB, 64 * GIB)}) == 1
+    assert len({price.term_from_weights(weights, comfy_reserve_bytes=reserve, recorded_model=recorded)
+                for reserve in (None, 0, 3 * GIB, 8 * GIB, 64 * GIB) for recorded in (False, True)}) == 1
 
 
-def test_the_reserve_reaches_the_price_through_every_entry(tmp_path):
-    """``classic_charge``, ``priced`` and ``probe`` hand ``term_from_weights`` the reserve they were given."""
-    path, _tensors = _checkpoint(tmp_path)
+def _animate2_checkpoint(tmp_path, family_config: dict | None):
+    """``_checkpoint``'s header, with the config metadata the pack's header read names Wan-Animate 2 by."""
+    import json
+
+    tensors = {"blocks.0.int.weight": ("I8", [1024, 1024]), "blocks.0.int.weight_scale": ("F32", [1]),
+               "blocks.0.mlp.bias": ("BF16", [1024])}
+    path = tmp_path / ("recorded.safetensors" if family_config else "other.safetensors")
+    _write_safetensors(path, tensors, {"config": json.dumps(family_config)} if family_config else None)
+    return str(path)
+
+
+def test_the_recorded_model_is_read_from_the_checkpoints_header_by_the_packs_own_family_read(tmp_path):
+    recorded = _animate2_checkpoint(tmp_path, {"transformer": {"model_type": "animate2"}})
+    other = _animate2_checkpoint(tmp_path, None)
+    animate1 = tmp_path / "animate.safetensors"
+    _write_safetensors(animate1, {"blocks.0.int.weight": ("I8", [8, 8])},
+                       {"config": '{"transformer": {"model_type": "animate"}}'})
+    assert price.RECORDED_WHOLE_LOAD_FAMILY == "wan_animate2"
+    assert price.whole_load_recorded(recorded)
+    assert not price.whole_load_recorded(other) and not price.whole_load_recorded(str(animate1))
+    assert not price.whole_load_recorded(str(tmp_path / "missing.safetensors"))  # unreadable: not the record
+
+
+def test_the_reserve_and_the_model_reach_the_price_through_every_entry(tmp_path):
+    """``classic_charge``, ``priced`` and ``probe`` read the family and hand on the reserve they were given."""
+    recorded = _animate2_checkpoint(tmp_path, {"transformer": {"model_type": "animate2"}})
+    other = _animate2_checkpoint(tmp_path, None)
     resolve = _resolver({"stack.safetensors": _lora(tmp_path, ["blocks.0.int"])})  # one INT8 ConvRot weight
     files = price.stack_bytes(STACK, resolve)
     share = price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]
     fixed = price.CLASSIC_BAKE_FIXED_BYTES
     assert files > 0
-    assert price.classic_charge(path, STACK, resolve, comfy_reserve_bytes=8 * GIB) == fixed + files
-    assert price.classic_charge(path, STACK, resolve, comfy_reserve_bytes=3 * GIB) == fixed + share + files
-    assert price.classic_charge(path, STACK, resolve) == fixed + share + files
-    assert price.classic_charge(path, STACK, resolve, comfy_reserve_bytes=8 * GIB, stack_on_host=True) == fixed
+    assert price.classic_charge(recorded, STACK, resolve, comfy_reserve_bytes=8 * GIB) == fixed + files
+    assert price.classic_charge(recorded, STACK, resolve, comfy_reserve_bytes=7 * GIB) == fixed + share + files
+    assert price.classic_charge(recorded, STACK, resolve) == fixed + share + files
+    assert price.classic_charge(recorded, STACK, resolve, comfy_reserve_bytes=8 * GIB, stack_on_host=True) == fixed
+    assert price.classic_charge(other, STACK, resolve, comfy_reserve_bytes=8 * GIB) == fixed + share + files
     fit = _fit(64.0, 10 * GIB)
-    at_default = price.priced(fit, path, STACK, resolve, comfy_reserve_bytes=8 * GIB)
-    lowered = price.priced(fit, path, STACK, resolve, comfy_reserve_bytes=3 * GIB)
+    at_default = price.priced(fit, recorded, STACK, resolve, comfy_reserve_bytes=8 * GIB)
+    lowered = price.priced(fit, recorded, STACK, resolve, comfy_reserve_bytes=3 * GIB)
     assert at_default.bake_bytes == fixed + files and lowered.bake_bytes == fixed + share + files
     probed = price.probe(STACK, resolve, comfy_reserve_bytes=3 * GIB, stock_load_fit=lambda _path, _options: fit)
-    assert probed(path, {}).bake_bytes == lowered.bake_bytes
+    assert probed(recorded, {}).bake_bytes == lowered.bake_bytes
+    assert price.priced(fit, other, STACK, resolve, comfy_reserve_bytes=8 * GIB).bake_bytes == lowered.bake_bytes
 
 
 def test_the_quote_does_not_read_a_slot_the_store_will_reload_as_a_reuse():
@@ -791,11 +840,12 @@ def test_after_a_declined_hot_swap_the_walls_charge_none_of_the_stacks_files_and
     assert not fallback.stack_on_host(store, "cond", STACK)
 
 
-def test_a_note_too_old_to_be_this_calls_is_not_believed(worker_side, ltx, monkeypatch):
+def test_a_note_holds_only_the_slot_and_the_stack_and_does_not_age(worker_side, ltx):
+    """The note binds to one ``ensure`` call, which clears it on entry (the store-order tests drive that)."""
     store = _store(_stored())
     fallback.note_stack_read(store, "cond", STACK)
-    assert fallback.stack_on_host(store, "cond", STACK) and fallback._STACK_READ_MAX_AGE_S >= 60
-    monkeypatch.setattr(fallback, "_STACK_READ_MAX_AGE_S", -1.0)  # every note is now older than allowed
+    assert getattr(store, fallback._STACK_READ) == ("cond", fallback._stack_signature(STACK))
+    fallback.forget_stack_read(store)
     assert not fallback.stack_on_host(store, "cond", STACK)
     assert fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {}).bake_bytes == ltx
 

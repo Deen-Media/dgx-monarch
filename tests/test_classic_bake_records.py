@@ -24,14 +24,16 @@ constant or a rule in ``capacity_classic_bake``:
 - the price less the 5 GiB floor is no less than what the load took, so an
   admitted load does not take the box under the floor.
 
-One row holds the second by another rule, and says so (``whole_from_gib``):
-the INT8 Wan-Animate 2 stack loaded WHOLE takes 39.4 GiB against a price of
-39.6. Every row ran at the Worker's default ComfyUI reserve, 8 GiB, and at
-that reserve ComfyUI itself places this model whole only from a reading of
-45.1 (under it the load is placed partly and the partial-load route carries
-it, which the price does cover), so the lowest whole load leaves 5.7. That
-row asserts exactly that, and that with a reserve too low for it the price
-carries the share and covers the whole load by itself.
+Two rows hold the second by another rule, and say so (``whole_from_gib``):
+the INT8 Wan-Animate 2 stack loaded WHOLE takes 39.4 GiB (37.9 on a roomy
+box) against a price of 39.6. Every row ran at the Worker's default ComfyUI
+reserve, 8 GiB, and at that reserve ComfyUI itself places this model whole
+only from a reading of 45.1 (under it the load is placed partly and the
+partial-load route carries it, which the price does cover), so the lowest
+whole load leaves 5.7. Those rows assert exactly that, and that with a
+reserve under the recorded one the price carries the share and covers the
+whole load by itself. That exception is for the one model it was read on
+(``recorded_model``); every other INT8 ConvRot row pays the share.
 
 Two earlier versions of the charge fail rows of this table: the line and the
 files for every format on both readings; then no per-weight share for INT8
@@ -70,10 +72,12 @@ class Record:
     short_gib: float = 0.0              # a shortfall on record that the price is known not to cover
     reserve_gib: float = 8.0            # the Worker's ComfyUI reserve the load ran at: the default, every row
     whole_from_gib: float | None = None  # ComfyUI's lowest whole-load reading at that reserve, where a row leans on it
+    recorded_model: bool = False        # the one model a whole INT8 load was read on (Wan-Animate 2's INT8 file)
 
     def charge_at(self, reserve_gib: float | None) -> int:
         return price.charge_from_weights(self.weights, _gib(self.files_gib), stack_on_host=self.basis == AFTER,
-                                         comfy_reserve_bytes=None if reserve_gib is None else _gib(reserve_gib))
+                                         comfy_reserve_bytes=None if reserve_gib is None else _gib(reserve_gib),
+                                         recorded_model=self.recorded_model)
 
     def price_at(self, reserve_gib: float | None) -> int:
         return _gib(self.stock_gib) + self.charge_at(reserve_gib)
@@ -105,17 +109,23 @@ RECORDS = (
     # INT8 ConvRot Wan-Animate 2, 1261 patched keys, the base held (block C). At a reading of 44.6
     # ComfyUI placed it partly and the partial-load route baked it whole: it took 33.6.
     Record("int8 wan-animate 2, base held, partial load and the route", 37.57, WAN_INT8, 0.687, AFTER,
-           (44.6,), took_gib=33.6),
+           (44.6,), took_gib=33.6, recorded_model=True),
     # The same stack at 46.7, placed WHOLE (low 7.29): ComfyUI's classic bake keeps the host copy of
     # the patched weights, and it took 39.4. At the reserve of 8 it ran at, ComfyUI places this model
     # whole only from a reading of 45.1 (cells 1 and 2 and block A's 45.0, all placed partly under it).
     Record("int8 wan-animate 2, base held, whole", 37.57, WAN_INT8, 0.687, AFTER, (46.7,), took_gib=39.4,
-           whole_from_gib=45.1),
+           whole_from_gib=45.1, recorded_model=True),
+    # The same whole load on a roomy box (block C's cell 0 with its stack): 37.9 from 95.7, low 57.80.
+    # It binds nothing the row above does not; it is the second whole INT8 record at the default reserve.
+    Record("int8 wan-animate 2, base held, whole, roomy", 37.57, WAN_INT8, 0.687, AFTER, (95.7,), took_gib=37.9,
+           whole_from_gib=45.1, recorded_model=True),
     # The same stack into an empty slot, one load (blocks A and B): partly, with the route, at a reading
     # of 45.0, where it took 33.1; 44.8 is the same state, refused at 49.5 by the first version.
     Record("int8 wan-animate 2, empty slot, partial load and the route", 37.57, WAN_INT8, 0.687, BEFORE,
-           (45.0, 44.8), took_gib=33.1),
-    # INT8 ConvRot MiniMax H3, 208 patched keys, whole. The base held (block C): 42.3 from 51.5.
+           (45.0, 44.8), took_gib=33.1, recorded_model=True),
+    # INT8 ConvRot MiniMax H3, 208 patched keys, whole. Another model than the recorded one: it pays the
+    # share at every reserve (48.8 and 50.7), and both readings still admit it. The base held (block C):
+    # 42.3 from 51.5.
     Record("int8 minimax h3, base held, whole", 46.0, H3_INT8, 1.822, AFTER, (51.5,), took_gib=42.3),
     # Into an empty slot (block A): 43.2 from 50.9.
     Record("int8 minimax h3, empty slot, whole", 46.0, H3_INT8, 1.822, BEFORE, (50.9,), took_gib=43.2),
@@ -129,6 +139,9 @@ RECORDS = (
     # The same model with a second stack, 240 patched keys, the base held, partly with the route.
     Record("plain fp8 qwen image, 240 keys, base held", 44.96, _of(240, price.PLAIN_FP8, 26 * MIB), 0.088, AFTER,
            (50.0,), took_gib=39.3),
+    # That stack's one WHOLE classic load, on a roomy box (block C's cell 9a): 38.4 from 98.6, low 60.19.
+    Record("plain fp8 qwen image, 240 keys, base held, whole, roomy", 44.96, _of(240, price.PLAIN_FP8, 26 * MIB),
+           0.088, AFTER, (98.6,), took_gib=38.4),
     # Scaled FP8 LTX 2.3 with its own 7.08 GiB stack, the base held: 55.6 (block B, 75.9), 55.5 (67.9)
     # and 55.1 (66.8) in block C. 68.5 is the state whose decode relief was proven the same day,
     # refused at 72.1 by the first version; block C rebuilt that state (another model first, the text
@@ -186,10 +199,18 @@ def test_the_price_covers_what_the_recorded_load_took_and_the_floor(record):
         f"and the floor is {FLOOR / GIB:.0f}")
 
 
-def test_every_row_ran_at_the_default_reserve_and_one_leans_on_comfyuis_condition():
+def test_every_row_ran_at_the_default_reserve_and_one_models_whole_loads_lean_on_comfyuis_condition():
     assert {record.reserve_gib for record in RECORDS} == {8.0}
-    assert [record.name for record in TAKEN if record.whole_from_gib is not None] == [
-        "int8 wan-animate 2, base held, whole"]
+    assert _gib(8.0) == price.RECORDED_WHOLE_LOAD_RESERVE_BYTES
+    leaning = [record for record in TAKEN if record.whole_from_gib is not None]
+    assert [record.name for record in leaning] == [
+        "int8 wan-animate 2, base held, whole", "int8 wan-animate 2, base held, whole, roomy"]
+    for record in leaning:
+        assert record.recorded_model
+        assert record.price_bytes < _gib(record.took_gib) + FLOOR               # the price alone does not cover it
+        assert _gib(record.whole_from_gib) - _gib(record.took_gib) >= FLOOR     # ComfyUI's own condition does
+    assert [record.name for record in RECORDS if record.recorded_model] == [
+        record.name for record in RECORDS if record.weights is WAN_INT8]
 
 
 def test_the_whole_int8_load_keeps_the_floor_by_comfyuis_own_condition_at_the_default_reserve():
@@ -209,10 +230,11 @@ def test_the_whole_int8_load_keeps_the_floor_by_comfyuis_own_condition_at_the_de
     assert lowest_whole_low >= FLOOR                                             # 5.7 GiB
     beyond = _gib(whole.reserve_gib) - lowest_whole_low
     assert beyond == pytest.approx(price.WHOLE_LOAD_BEYOND_COMFYUI_BYTES, abs=_gib(0.01))
-    share_keys = sum(1 for kind, nbytes in whole.weights
-                     if kind == price.INT8_QUANTIZED or nbytes < price.SMALL_KEY_BYTES)
-    assert share_keys == price.RECORDED_WHOLE_LOAD_SHARE_KEYS
-    assert price.reserve_keeps_floor(_gib(whole.reserve_gib), share_keys)
+    # The margin at the recorded reserve is 0.7 GiB, under the 0.5 to 1.0 by which one load's take
+    # varies between runs on record: the hardware block reads this cell three times (addendum 5).
+    assert lowest_whole_low - FLOOR == pytest.approx(_gib(0.7), abs=_gib(0.01))
+    assert whole.recorded_model and price.reserve_keeps_floor(_gib(whole.reserve_gib), True)
+    assert not price.reserve_keeps_floor(_gib(whole.reserve_gib) - 1, True)
     # Under 45.1 the same stack is placed partly and the route carries it: the price covers that take.
     for name in ("int8 wan-animate 2, base held, partial load and the route",
                  "int8 wan-animate 2, empty slot, partial load and the route"):
@@ -222,8 +244,8 @@ def test_the_whole_int8_load_keeps_the_floor_by_comfyuis_own_condition_at_the_de
                    for reading in route.readings_gib)
 
 
-@pytest.mark.parametrize("reserve_gib", [7.0, 3.0, 0.0, None])
-def test_with_a_reserve_that_does_not_keep_the_floor_the_int8_price_covers_every_take_by_itself(reserve_gib):
+@pytest.mark.parametrize("reserve_gib", [7.9, 7.3, 7.0, 3.0, 0.0, None])
+def test_under_the_recorded_reserve_the_int8_price_covers_every_take_by_itself(reserve_gib):
     """A lower reserve lets ComfyUI place the model whole at lower readings, so the price carries the share."""
     for record in INT8:
         assert record.price_at(reserve_gib) >= _gib(record.took_gib) + FLOOR, record.name
@@ -236,8 +258,8 @@ def test_with_a_reserve_that_does_not_keep_the_floor_the_int8_price_covers_every
     assert all(_gib(reading) < empty.price_at(reserve_gib) <= _gib(reading + 0.45) for reading in empty.readings_gib)
 
 
-@pytest.mark.parametrize("reserve_gib", [7.3, 8.0, 16.0])
-def test_with_a_reserve_that_keeps_the_floor_the_int8_rows_are_priced_as_at_the_default(reserve_gib):
+@pytest.mark.parametrize("reserve_gib", [8.0, 16.0, 64.0])
+def test_at_the_recorded_reserve_or_more_the_int8_rows_are_priced_as_at_the_default(reserve_gib):
     for record in INT8:
         assert record.price_at(reserve_gib) == record.price_bytes, record.name
 
@@ -248,12 +270,14 @@ def test_what_each_recorded_stack_is_charged():
     assert charged == {
         "int8 wan-animate 2, base held, partial load and the route": 2.05,
         "int8 wan-animate 2, base held, whole": 2.05,
+        "int8 wan-animate 2, base held, whole, roomy": 2.05,
         "int8 wan-animate 2, empty slot, partial load and the route": 2.74,
-        "int8 minimax h3, base held, whole": 2.06,
-        "int8 minimax h3, empty slot, whole": 3.88,
+        "int8 minimax h3, base held, whole": 2.84,
+        "int8 minimax h3, empty slot, whole": 4.66,
         "plain fp8 qwen image, 720 keys, base held": 2.0,
         "plain fp8 qwen image, 720 keys, empty slot": 2.79,
         "plain fp8 qwen image, 240 keys, base held": 2.0,
+        "plain fp8 qwen image, 240 keys, base held, whole, roomy": 2.0,
         "scaled fp8 ltx 2.3, own stack, base held": 14.16,
         "scaled fp8 ltx 2.3, own stack, empty worker": 21.24,
         "scaled fp8 ltx 2.3, own stack twice, empty worker": 28.32,
@@ -280,13 +304,14 @@ def test_the_first_version_refused_seven_of_these_rows():
                        "scaled fp8 ltx 2.3, own stack, base held"]
 
 
-def test_the_second_version_came_up_short_on_three_recorded_loads():
+def test_the_second_version_came_up_short_on_four_recorded_loads():
     """No per-weight share for INT8, and no files for scaled FP8 on either reading (the afternoon's build).
 
-    Its price came up short of take plus floor on these three. The two scaled
-    FP8 rows are covered now by the files. The INT8 row is still short by its
-    price at the default reserve: ComfyUI's own whole-load condition keeps
-    the floor there, and under that reserve the share does
+    Its price came up short of take plus floor on these four. The two scaled
+    FP8 rows are covered now by the files. The two whole INT8 rows are still
+    short by price at the default reserve: on that one model ComfyUI's own
+    whole-load condition keeps the floor there, and under that reserve the
+    share does
     (``test_the_whole_int8_load_keeps_the_floor_by_comfyuis_own_condition_at_the_default_reserve``).
     """
     light = (price.INT8_QUANTIZED, price.PLAIN_FP8)
@@ -305,7 +330,8 @@ def test_the_second_version_came_up_short_on_three_recorded_loads():
 
     short = [record.name for record in TAKEN
              if second(record) + _gib(record.short_gib) < _gib(record.took_gib) + FLOOR]
-    assert short == ["int8 wan-animate 2, base held, whole", "scaled fp8 ltx 2.3, own stack, empty worker",
+    assert short == ["int8 wan-animate 2, base held, whole", "int8 wan-animate 2, base held, whole, roomy",
+                     "scaled fp8 ltx 2.3, own stack, empty worker",
                      "scaled fp8 ltx 2.3, own stack twice, empty worker"]
 
 

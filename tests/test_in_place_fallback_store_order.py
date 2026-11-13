@@ -110,6 +110,52 @@ def test_a_hot_swap_that_stays_in_place_leaves_no_note(classic):
     assert transition == "hot-swap" and not in_place_fallback.stack_on_host(store, "cond", STACK)
 
 
+def test_a_fresh_load_that_raised_leaves_no_note_for_the_requeue(classic, monkeypatch):
+    """The note binds to one ``ensure`` call: a requeue of the same stack is charged its files.
+
+    The swap declines and leaves its note; the fresh load raises before its
+    walls price, with the slot emptied. The same request again finds an empty
+    slot, runs no swap and reads nothing first, so nothing may be believed
+    read. ``ensure`` clears the note on entry.
+    """
+    from dgx_monarch.actor import store_load
+
+    store, _calls, _asked, _answer = classic
+    seen: dict = {}
+    real_probe = in_place_fallback.fresh_load_probe
+
+    def failing_load(store_, slot, *_args, **_kwargs):
+        store_._drop(slot)
+        raise RuntimeError("the load failed before its walls priced")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store_load, "fresh_load", failing_load)
+        with pytest.raises(RuntimeError, match="before its walls priced"):
+            store.ensure(BASE, {}, STACK)
+    assert store.current is None
+    assert in_place_fallback.stack_on_host(store, "cond", STACK)  # what the failed call left on the store
+
+    def take(store_, slot, unet_name, options, lora_stack, *_rest):
+        seen["at take"] = in_place_fallback.stack_on_host(store_, slot, lora_stack)
+        return None
+
+    def probe(store_, slot, lora_stack):
+        seen["at the walls"] = in_place_fallback.stack_on_host(store_, slot, lora_stack)
+        return real_probe(store_, slot, lora_stack)
+
+    monkeypatch.setattr(in_place_fallback, "take", take)
+    monkeypatch.setattr(in_place_fallback, "fresh_load_probe", probe)
+    _patcher, transition = store.ensure(BASE, {}, STACK)  # the requeue
+    assert transition == "load" and seen == {"at take": False, "at the walls": False}
+
+
+def test_every_ensure_call_starts_with_no_note(classic):
+    store, _calls, _asked, _answer = classic
+    in_place_fallback.note_stack_read(store, "uncond", STACK)  # left by a call that never reached its fresh load
+    store.ensure(BASE, {}, None)  # a reuse: no swap, no fresh load
+    assert not in_place_fallback.stack_on_host(store, "uncond", STACK)
+
+
 def test_a_change_the_hot_swap_makes_in_place_never_asks_the_fallback(classic):
     store, calls, asked, _answer = classic
     store.current.base_patcher.backup = {"w1": object(), "w2": object()}  # ComfyUI's backup covers the stack

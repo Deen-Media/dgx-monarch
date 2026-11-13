@@ -740,28 +740,35 @@ you may see:
   what loads took on hardware on 2026-11-12:
   - scaled FP8 (LTX 2.3's file), BF16 and FP16: 2 GiB plus 7.5 MiB for each
     weight the stack patches;
-  - INT8 ConvRot (the shipped Wan-Animate 2 template's file): 2 GiB, and 4
-    MiB more for each patched weight only when the Worker's reserve is under
-    7.3 GiB (see below);
+  - INT8 ConvRot: 2 GiB plus 4 MiB for each patched weight. One recorded
+    exception: the shipped Wan-Animate 2 template's INT8 file is charged 2
+    GiB with no 4 MiB share while the Worker's reserve is the default 8 GiB
+    or more (see below);
   - plain FP8: 2 GiB.
 
-  **An INT8 stack and the Init node's `reserve_vram_gb`.** An INT8 stack's
-  whole classic load takes about 4 GiB more than its price promises and
-  still leaves the 5 GiB floor, because ComfyUI places the model whole only
-  when its free reading covers the model, the Worker's reserve and its own
-  estimate for the latent; under that it places the model partly, and the
-  low-RSS route bakes it for less. That holds while the reserve is at least
-  7.3 GiB; the default on a DGX Spark is 8 (`reserve_vram_gb` at 0, and no
-  `reserve_vram_gb` under `[worker_args]`). If you lower the reserve under
-  7.3, ComfyUI places the model whole on a tighter box, so the price adds 4
-  MiB for each patched weight to cover the whole load itself: the shipped
-  Wan-Animate 2 template is then admitted from about 44.5 GiB (45.2 on an
-  empty Worker) where the default reserve admits it from 39.6 (40.3). A
-  refusal in that band with a lowered reserve is this rule; set
-  `reserve_vram_gb` back to 0 and on one GPU the same load renders. (On a
-  pair, a rank that ComfyUI loads only partly is refused with the
-  `partial_load_divergence` text whatever the reserve; that is #79, not
-  this rule.)
+  A LoRA saved as LoHa, LoKr, GLoRA, OFT or BOFT is not mapped to the
+  weights it patches, so it is charged for every weight of its checkpoint,
+  the dearer side.
+
+  **The Wan-Animate 2 INT8 file and the Init node's `reserve_vram_gb`.** A
+  whole classic load of that model with its LoRA takes about 4 GiB more
+  than the 2 GiB charge promises and still leaves the 5 GiB floor, because
+  ComfyUI places a model whole only when its free reading covers the model,
+  the Worker's reserve and its own estimate for the latent; under that it
+  places the model partly, and the low-RSS route bakes it for less. That was
+  measured on this one model at a reserve of 8 GiB, the default on a DGX
+  Spark (`reserve_vram_gb` at 0, and no `reserve_vram_gb` under
+  `[worker_args]`), so it is granted only there: for that model, at a
+  reserve of 8 or more. If you lower the reserve under 8, ComfyUI places
+  the model whole on a tighter box, so the price adds the 4 MiB share to
+  cover the whole load itself: the shipped template is then admitted from
+  about 44.5 GiB (45.2 on an empty Worker) where the default reserve admits
+  it from 39.6 (40.3). A refusal in that band with a lowered reserve is this
+  rule; set `reserve_vram_gb` back to 0 and on one GPU the same load
+  renders. Every other INT8 ConvRot model pays the share at any reserve
+  until a whole load of its own has been measured. (On a pair, a rank that
+  ComfyUI loads only partly is refused with the `partial_load_divergence`
+  text whatever the reserve; that is #79, not this rule.)
 
   The stack's own LoRA files are added, each as often as the stack lists it,
   when the price is read before the Worker has read them: a load into a

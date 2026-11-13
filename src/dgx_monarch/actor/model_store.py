@@ -236,6 +236,7 @@ class ModelStore:
         precision_evidence) runs exactly once per fresh base load at the adapter
         injection point.
         """
+        in_place_fallback.forget_stack_read(self)  # a declined swap's note lives for one ensure call
         if slab_lifetime.cleanup_pending():
             raise RuntimeError(
                 "a previous model load could not be cleaned up; explicitly unload "
@@ -325,12 +326,11 @@ class ModelStore:
 
         if in_place_fallback.holds_base(stored, base_key) and not self.lora_low_rss \
                 and not stored.base_baked:
-            # Hot-swap (clone the pristine base, re-apply loras), or None when the
-            # swap would copy the model off the GPU first: then a fresh load.
-            # Skipped in low_rss: _merge_and_free consumed the base (baked, backup
-            # freed), so it cannot be re-cloned, even after the policy flips. A
-            # stack change then falls through to a full reload from disk (exact),
-            # the low_rss recovery contract when lazy un-bake is unavailable.
+            # Hot-swap (clone the pristine base, re-apply loras), or None when the swap would
+            # copy the model off the GPU first: then a fresh load. Skipped in low_rss:
+            # _merge_and_free consumed the base (baked, backup freed), so it cannot be
+            # re-cloned, even after the policy flips. A stack change then falls through to a
+            # full reload from disk (exact), the low_rss recovery contract with no lazy un-bake.
             result = store_bake.hot_swap_transition(
                 self, stored, slot, unet_name, lora_stack, base_key, requested_identity,
                 request_artifact_identity=request_artifact_identity, logger=log)
