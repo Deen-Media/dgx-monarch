@@ -133,7 +133,8 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         "rescue-slab",
         "a Worker's own start: the NVIDIA driver could not get memory for a new "
         "CUDA context after the Worker made what room it could "
-        "(actor/context_room.py); no card, because no consent makes memory free",
+        "(actor/context_room.py); no card, because no consent makes memory free. "
+        "rescue-slab is only the audit kind it is filed under: slab is no remedy here",
     ),
     "first_load_stock_memo": GuardSpec(
         RefusalClass.UNPROVEN,

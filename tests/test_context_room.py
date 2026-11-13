@@ -21,9 +21,11 @@ from pathlib import Path
 
 import pytest
 
+import test_worker_box as boxes
+from dgx_monarch import residency_mode, worker_box
 from dgx_monarch.actor import context_room, worker_env
 from dgx_monarch.log import get_logger
-from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
+from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag, read_rank
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "dgx_monarch"
 _GIB = 2 ** 30
@@ -99,7 +101,8 @@ class _Box:
 
     def run(self, **over):
         return context_room.make_room(read=self.read, shares=over.get("shares", self.shares),
-                                      take=self.take, clock=self.clock)
+                                      take=self.take, clock=self.clock,
+                                      preload=over.get("preload", lambda: None))
 
 
 # 1. An ordinary start pays nothing.
@@ -136,8 +139,30 @@ def test_the_worker_writes_up_to_the_mark_holds_it_and_releases_it_together(
     assert line.startswith(f"free memory was {free} GiB with {available} GiB available, so the "
                            "Worker made room for its GPU context: 12.0 GiB touched and released in ")
     assert line.endswith(f"; {box.free / _GIB:.1f} GiB is free now")
-    assert context_room.status_block()["state"] == "made_room"
-    assert context_room.status_block()["touched_gib"] == 12.0
+    block = context_room.status_block()
+    assert block["state"] == "made_room" and block["touched_gib"] == 12.0
+    assert block["free_before_gib"] == free and block["free_after_release_gib"] == 12.0
+    assert block["context"] == "left to the bootstrap"
+    assert block["free_at_context_gib"] is None, "nobody has read it at the context yet"
+
+
+def test_torch_is_imported_before_any_memory_is_freed_and_only_when_room_is_made():
+    """A file read after the release fills free memory with page cache again."""
+    box = _Box(free_gib=1.6, available_gib=45.1)
+    events: list = []
+    inner = box.take
+
+    def take(nbytes):
+        events.append("take")
+        return inner(nbytes)
+
+    box.take = take
+    box.run(preload=lambda: events.append("preload"))
+    assert events[0] == "preload" and events.count("preload") == 1 and events.count("take") == 12
+    roomy = _Box(free_gib=40.0, available_gib=90.0)
+    roomy.run(preload=lambda: pytest.fail("a roomy start imports nothing"))
+    short = _Box(free_gib=1.6, available_gib=16.0)
+    short.run(preload=lambda: pytest.fail("no room is made, so nothing is imported"))
 
 
 def test_the_amount_is_the_mark_and_not_the_mark_less_what_is_free():
@@ -158,7 +183,8 @@ def test_it_stops_before_a_step_that_would_leave_under_the_floor(journal):
         box.reads += 1
         return (box.free, int(17.0 * _GIB)) if box.reads == 1 else (box.free, box.available)
 
-    outcome = context_room.make_room(read=read, shares=box.shares, take=box.take, clock=box.clock)
+    outcome = context_room.make_room(read=read, shares=box.shares, take=box.take, clock=box.clock,
+                                     preload=lambda: None)
     assert outcome.state == "made_room"
     assert box.taken == [_GIB] * 4, "9.5 GiB available allows four steps above a 5 GiB floor"
     assert box.live == 0
@@ -295,9 +321,12 @@ def test_a_missing_driver_library_is_an_unknown_gpu(monkeypatch):
     assert context_room.device_shares_host_memory() is None
 
 
-def test_the_module_asks_torch_and_comfy_nothing():
-    """Before the context exists no torch or ComfyUI call is known to be safe."""
-    tree = ast.parse((SRC / "actor/context_room.py").read_text())
+def test_the_module_imports_torch_and_comfy_only_by_name_at_the_moment_it_needs_them():
+    """Nothing here asks torch about a device before the Worker makes the context: the one
+    CUDA call is the context's own, ``mem_get_info``, the call ComfyUI's import makes first."""
+    source = (SRC / "actor/context_room.py").read_text()
+    assert source.count(".cuda.") == 1 and ".cuda.mem_get_info()" in source
+    tree = ast.parse(source)
     imported = {alias.name.split(".")[0] for node in ast.walk(tree)
                 if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names}
     imported |= {(node.module or "").split(".")[0] for node in ast.walk(tree)
@@ -333,8 +362,202 @@ def test_a_process_that_has_its_context_makes_no_room(monkeypatch):
     events: list = []
     _bridge(monkeypatch, events)
     monkeypatch.setitem(sys.modules, "comfy.model_management", types.ModuleType("mm"))
-    context_room.ensure_comfy("/comfy")
-    assert events == [("ensure_comfy", ("/comfy",), {})]
+    context_room.ensure_comfy("/comfy", rank=(0, 2))
+    assert events == [("ensure_comfy", ("/comfy", None), {})]
+
+
+# 8. Room, then the context at once.
+
+MADE = context_room.Outcome("made_room", int(1.6 * _GIB), int(45.1 * _GIB),
+                            12 * _GIB, 2.0, int(11.8 * _GIB))
+
+
+_MAKE_CONTEXT = context_room.make_context
+
+
+def _made_room(monkeypatch, events: list, create, error: BaseException | None = None):
+    """The bootstrap after a step that made room, with ``create`` as the context's call."""
+    _bridge(monkeypatch, events, error=error)
+    monkeypatch.setattr(context_room, "make_room", lambda: events.append("make_room") or MADE)
+    monkeypatch.setattr(context_room, "make_context",
+                        lambda outcome, rank=None: _MAKE_CONTEXT(outcome, rank, create=create))
+
+
+def test_the_worker_makes_the_context_straight_after_the_release(monkeypatch):
+    events: list = []
+    _made_room(monkeypatch, events, lambda: events.append("context"))
+    context_room.ensure_comfy("/comfy", {}, gpus_per_host=1, rank=(1, 2))
+    assert events == ["make_room", "context", ("ensure_comfy", ("/comfy", {}), {"gpus_per_host": 1})]
+    block = context_room.status_block()
+    assert block["context"] == "made at once" and block["free_at_context_gib"] == 11.8
+
+
+def test_comfy_managed_residency_leaves_the_context_to_the_bootstrap(monkeypatch):
+    """Stage A of that bring-up runs in the bootstrap and stays ahead of the context."""
+    events: list = []
+    _made_room(monkeypatch, events, lambda: pytest.fail("no context ahead of stage A"))
+    managed = {residency_mode.WORKER_ARG: True}
+    assert residency_mode.requested(managed)
+    context_room.ensure_comfy("/comfy", managed)
+    assert events == ["make_room", ("ensure_comfy", ("/comfy", managed), {})]
+
+
+def test_the_bootstrap_reads_free_memory_just_ahead_of_a_context_left_to_it(monkeypatch, journal):
+    """Memory freed can be taken again before the bootstrap's import asks the driver."""
+    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    monkeypatch.setattr(context_room, "_LAST", MADE)
+    context_room.at_bootstrap_context(lambda: (int(3.2 * _GIB), int(44.0 * _GIB)))
+    (record,) = journal
+    assert record.levelno == logging.INFO
+    assert record.getMessage() == "3.2 GiB is free as the bootstrap makes the Worker's GPU context"
+    block = context_room.status_block()
+    assert block["free_after_release_gib"] == 11.8 and block["free_at_context_gib"] == 3.2
+    assert block["context"] == "left to the bootstrap"
+
+
+@pytest.mark.parametrize("last", [
+    context_room.Outcome(), context_room.Outcome("roomy", 43 * _GIB, 98 * _GIB),
+    context_room.Outcome("skipped", why="this GPU has memory of its own"),
+    context_room.Outcome("made_room", _GIB, 45 * _GIB, 12 * _GIB, 2.0, 12 * _GIB,
+                         context_made=True),
+])
+def test_the_bootstrap_reads_nothing_where_no_context_was_left_to_it(monkeypatch, journal, last):
+    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    monkeypatch.setattr(context_room, "_LAST", last)
+    context_room.at_bootstrap_context(lambda: pytest.fail("no reading is wanted here"))
+    assert journal == [] and context_room._LAST is last
+
+
+def test_the_bootstraps_reading_never_raises(monkeypatch, journal):
+    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    monkeypatch.setattr(context_room, "_LAST", MADE)
+
+    def broken():
+        raise OSError("no /proc here")
+
+    context_room.at_bootstrap_context(broken)
+    assert [r.levelno for r in journal] == [logging.WARNING] and context_room._LAST is MADE
+    context_room.at_bootstrap_context(lambda: None)
+    assert context_room._LAST is MADE
+
+
+def test_a_refusal_from_the_bootstrap_carries_what_was_free_when_it_asked(monkeypatch):
+    from dgx_monarch.actor import comfy_bridge
+
+    def bootstrap(*args, **kwargs):
+        context_room.at_bootstrap_context(lambda: (int(3.2 * _GIB), int(44.0 * _GIB)))
+        raise RuntimeError(OOM)
+
+    def made():
+        monkeypatch.setattr(context_room, "_LAST", MADE)
+        return MADE
+
+    monkeypatch.setattr(comfy_bridge, "ensure_comfy", bootstrap)
+    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    monkeypatch.setattr(context_room, "make_room", made)
+    monkeypatch.setattr(context_room, "meminfo", lambda: (int(3.0 * _GIB), int(44.0 * _GIB)))
+    with pytest.raises(context_room.ContextMemoryError) as raised:
+        context_room.ensure_comfy("/comfy", {residency_mode.WORKER_ARG: True})
+    assert ("released it, after which 11.8 GiB was free; 3.2 GiB was free when the context was "
+            "asked for, and the context still could not be made") in str(raised.value)
+
+
+def test_stage_a_reads_it_as_its_last_act_and_the_import_follows_at_once():
+    """Nothing may sit between the reading and the import that makes the context."""
+    dynamic = ast.parse((SRC / "actor" / "comfy_dynamic.py").read_text())
+    stage_a = next(n for n in ast.walk(dynamic)
+                   if isinstance(n, ast.FunctionDef) and n.name == "stage_a")
+    assert ast.unparse(stage_a.body[-2]) == "_context_reading()"
+    assert ast.unparse(stage_a.body[-1]) == "return True"
+    (off,) = (n for n in stage_a.body if isinstance(n, ast.If) and ast.unparse(n.test) == "not want")
+    assert [ast.unparse(n) for n in off.body] == ["_context_reading()", "return False"]
+    reading = next(n for n in ast.walk(dynamic)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_context_reading")
+    assert ast.unparse(reading.body[-1]) == "context_room.at_bootstrap_context()"
+    bridge = ast.parse((SRC / "actor" / "comfy_bridge.py").read_text())
+    ensure = next(n for n in ast.walk(bridge)
+                  if isinstance(n, ast.FunctionDef) and n.name == "ensure_comfy")
+    at = next(i for i, n in enumerate(ensure.body) if "stage_a(" in ast.unparse(n))
+    assert ast.unparse(ensure.body[at + 1]) == "import comfy.model_management"
+
+
+def test_a_context_that_cannot_be_made_after_the_release_refuses_at_once(monkeypatch):
+    events: list = []
+    failure = RuntimeError(OOM)
+
+    def create():
+        raise failure
+
+    _made_room(monkeypatch, events, create)
+    monkeypatch.setattr(context_room, "meminfo", lambda: (int(11.8 * _GIB), int(45.0 * _GIB)))
+    with pytest.raises(context_room.ContextMemoryError) as raised:
+        context_room.ensure_comfy("/comfy", {}, rank=(1, 2))
+    assert raised.value.__cause__ is failure
+    assert events == ["make_room"], "one try at the context: the bootstrap does not run"
+    text, rank = read_rank(str(raised.value))
+    assert rank == 1, "the refusal carries its rank, so the driver can name the box"
+    assert "it wrote to 12.0 GiB of memory and released it, after which 11.8 GiB was free" in text
+
+
+def test_the_driver_names_the_box_of_a_worker_that_could_not_start(monkeypatch):
+    def create():
+        raise RuntimeError(OOM)
+
+    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    monkeypatch.setattr(context_room, "meminfo", lambda: (int(4.6 * _GIB), int(47.4 * _GIB)))
+    with pytest.raises(context_room.ContextMemoryError) as raised:
+        context_room.make_context(MADE, (1, 2), create=create)
+    wrapper = boxes._remote(raised.value)
+    worker_box.name(wrapper, boxes._pair(monkeypatch))
+    inner = str(wrapper.exception)
+    assert inner.startswith("[dgxm:C guard=gpu_context_memory waivable=0] On the sibling, this "
+                            "Worker could not start on its GPU"), inner
+    assert read_rank(inner)[1] is None
+
+
+def test_a_single_rank_marks_nothing(monkeypatch):
+    def create():
+        raise RuntimeError(OOM)
+
+    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    monkeypatch.setattr(context_room, "meminfo", lambda: (int(4.6 * _GIB), int(47.4 * _GIB)))
+    with pytest.raises(context_room.ContextMemoryError) as raised:
+        context_room.make_context(MADE, (0, 1), create=create)
+    assert read_rank(str(raised.value))[1] is None
+
+
+def test_another_fault_in_the_early_context_leaves_it_to_the_bootstrap(monkeypatch, journal):
+    events: list = []
+
+    def create():
+        raise RuntimeError("CUDA error: no CUDA-capable device is detected")
+
+    _made_room(monkeypatch, events, create)
+    context_room.ensure_comfy("/comfy", {})
+    assert events == ["make_room", ("ensure_comfy", ("/comfy", {}), {})]
+    assert [record.levelno for record in journal] == [logging.WARNING]
+    assert "the bootstrap makes it as before" in journal[0].getMessage()
+
+
+def test_an_out_of_memory_in_the_bootstrap_after_the_worker_made_the_context_is_not_this_refusal(
+        monkeypatch):
+    events: list = []
+    failure = RuntimeError(OOM)
+    _made_room(monkeypatch, events, lambda: events.append("context"), error=failure)
+    with pytest.raises(RuntimeError) as raised:
+        context_room.ensure_comfy("/comfy", {})
+    assert raised.value is failure
+
+
+def test_setup_hands_the_bootstrap_its_rank_and_the_driver_names_setup_errors():
+    setup = next(node for node in ast.walk(ast.parse((SRC / "actor/worker_env.py").read_text()))
+                 if isinstance(node, ast.FunctionDef) and node.name == "setup_impl")
+    (call,) = [node for node in ast.walk(setup) if isinstance(node, ast.Call)
+               and getattr(node.func, "id", None) == "ensure_comfy"]
+    assert ast.unparse(next(kw.value for kw in call.keywords if kw.arg == "rank")) == "(rank, world)"
+    transition = (SRC / "mesh_setup_transition.py").read_text()
+    handler = transition[transition.index("except BaseException as setup_exc:"):]
+    assert handler.index("worker_box.name(setup_exc, handle)") < handler.index("setup rollback")
 
 
 def test_a_context_that_still_cannot_be_made_is_refused_in_words(monkeypatch):
@@ -345,8 +568,10 @@ def test_a_context_that_still_cannot_be_made_is_refused_in_words(monkeypatch):
                                 12 * _GIB, 2.0, int(11.8 * _GIB))
     monkeypatch.setattr(context_room, "make_room", lambda: made)
     monkeypatch.setattr(context_room, "meminfo", lambda: (int(11.8 * _GIB), int(45.0 * _GIB)))
+    # Comfy-managed residency: the Worker makes no context of its own, so the
+    # bootstrap's import is the try that fails.
     with pytest.raises(context_room.ContextMemoryError) as raised:
-        context_room.ensure_comfy("/comfy")
+        context_room.ensure_comfy("/comfy", {residency_mode.WORKER_ARG: True})
     assert raised.value.__cause__ is failure
     text = str(raised.value)
     tag = parse_leading_refusal_tag(text)

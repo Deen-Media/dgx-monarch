@@ -256,11 +256,8 @@ def setup_impl(worker, env: dict) -> dict:
     # worker replaces a configured rail only when that interface is absent or down.
     os.environ["CUDA_VISIBLE_DEVICES"] = str(env.get("local_gpu_index", 0))
     os.environ.update(fabric)
-    ensure_comfy(
-        os.path.expanduser(env["comfy_dir"]),
-        env.get("worker_args"),
-        gpus_per_host=int(env.get("gpus_per_host") or 1),
-    )
+    ensure_comfy(os.path.expanduser(env["comfy_dir"]), env.get("worker_args"),
+                 gpus_per_host=int(env.get("gpus_per_host") or 1), rank=(rank, world))
     # Resolve auto low-RSS policy per host; mode changes rebuild residents.
     from .comfy_bridge import _uma_memory_defaults as _uma_defaults
 

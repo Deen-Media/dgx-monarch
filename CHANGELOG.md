@@ -641,24 +641,26 @@
   Not yet run on hardware
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On a DGX Spark a Worker now makes room for its GPU context before it
-  creates one. A Worker makes its CUDA context at the first render after it
-  starts, and the NVIDIA driver needs free memory for it, which the page
-  cache does not count as: on 2026-11-12, with the Spark under its clock cap
-  (max 2100 MHz), two Worker starts with 1.6 and 4.6 GiB free and 45 and 47
+  creates one. A Worker makes its CUDA context at its setup (the first
+  render, or the UNET loader under an explicit topology), and the NVIDIA
+  driver needs free memory for it, which the page cache does not count as:
+  on 2026-11-12 two Worker starts with 1.6 and 4.6 GiB free and 45 and 47
   GiB available ended in a raw `CUDA error: out of memory` from
   `cuDevicePrimaryCtxRetain`, where every start on record with 8.9 GiB free
   or more had worked. Before its first CUDA call a Worker now reads the
   box's memory. If less than 12 GiB is free while 17 GiB or more is
   available, it writes to up to 12 GiB of memory in steps of 1 GiB and
   releases it at once, so that the system gives that much page cache back,
-  never leaving under 5 GiB available, and logs one line. A start with 12
-  GiB free does nothing. If the context still cannot be made, the render
-  refuses in plain words (class C) with the free and available memory of
-  the Worker's box, what the Worker did first and what to do, where it used
-  to show a traceback. Nothing to set. `DGXM_DISABLE_CONTEXT_ROOM=1` in the
-  Worker's environment turns the make-room step off for diagnosis, a fault
-  in the step leaves the start as it was, and the Worker's status says what
-  the step did. Not yet run on hardware
+  never leaving under 5 GiB available, then makes its context straight away
+  and logs one line. A start with 12 GiB free does nothing. If the context
+  still cannot be made, the render refuses in plain words (class C) with
+  the box it came from, that box's free and available memory, what the
+  Worker did first and what to do, where it used to show a traceback.
+  Nothing to set. `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment
+  turns the make-room step off for diagnosis, a fault in the step leaves
+  the start as it was, and the Worker's status says what the step did.
+  Under comfy-managed residency the Worker leaves the context to ComfyUI's
+  own start, a moment after the room is made. Not yet run on hardware
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On a DGX Spark, a LoRA stack loaded with `lora_low_rss` off is now priced
   at what its bake takes, and where that does not fit the Worker bakes the

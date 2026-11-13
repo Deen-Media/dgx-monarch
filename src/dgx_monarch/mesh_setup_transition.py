@@ -212,6 +212,10 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
                 handle, key, wa_key, worker_args, topology, attention,
                 budget.rank_setup_s)
         except BaseException as setup_exc:
+            # A rank's own setup error says which box it came from (worker_box.py).
+            from . import worker_box
+
+            worker_box.name(setup_exc, handle)
             # Some ranks may have completed setup before a peer failed.
             # Tear all of them back to the common uninitialized state;
             # otherwise a retry can mix generations of NCCL groups.

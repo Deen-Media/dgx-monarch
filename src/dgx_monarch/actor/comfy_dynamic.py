@@ -132,6 +132,7 @@ def stage_a(worker_args: Mapping[str, Any] | None) -> bool:
     want = residency_mode.requested(worker_args)
     _latch(want)
     if not want:
+        _context_reading()
         return False
     try:
         import comfy_aimdo.control as ctl
@@ -158,7 +159,19 @@ def stage_a(worker_args: Mapping[str, Any] | None) -> bool:
             "could not load aimdo.so on this host." + _BRINGUP_TAIL,
             troubleshooting=residency_mode.TROUBLESHOOTING))
     _rewire_submodule_lib(ctl)
+    _context_reading()
     return True
+
+
+def _context_reading() -> None:
+    """Read free memory where the Worker made room and left the context to the bootstrap.
+
+    The caller's next statement imports ``comfy.model_management``, which makes
+    the CUDA context, so stage A's end is the last point ahead of it.
+    """
+    from . import context_room
+
+    context_room.at_bootstrap_context()
 
 
 def _rewire_submodule_lib(ctl: Any) -> None:
