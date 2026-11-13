@@ -6912,6 +6912,21 @@ def _assert_whole_load_condition_seam() -> None:
         "whole load condition seam: the budget a model is loaded with is no longer the free "
         "reading less the requirement; capacity_classic_bake.reserve_keeps_floor prices by it"
     )
+    assert "andnotforce_full_load:loaded_memory=loaded_model.model_loaded_memory()" in load, (
+        "whole load condition seam: the budget test is no longer skipped only under "
+        "force_full_load, the one way a load goes whole below the requirement"
+    )
+    import comfy.samplers
+
+    assert "force_full_load=force_full_load" in squeezed(comfy.sampler_helpers._prepare_sampling), (
+        "whole load condition seam: prepare_sampling no longer passes its own force_full_load "
+        "through to the load"
+    )
+    assert ("comfy.sampler_helpers.prepare_sampling(self.model_patcher,noise.shape,self.conds,"
+            "self.model_options)") in squeezed(comfy.samplers.CFGGuider.outer_sample), (
+        "whole load condition seam: the sampler's own prepare_sampling call changed; if it now "
+        "forces a full load, a classic load goes whole at any reading and the reserve rule fails"
+    )
     module = squeezed(mm)
     assert "MIN_WEIGHT_MEMORY_RATIO=0.4ifis_nvidia():MIN_WEIGHT_MEMORY_RATIO=0.0" in module, (
         "whole load condition seam: an NVIDIA device no longer loads with no floor under the "

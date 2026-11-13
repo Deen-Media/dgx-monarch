@@ -263,7 +263,7 @@ def route(store: Any, stored: Any, held: bool, allowed: bool | str) -> dict[str,
         return None
     return {"held_bytes": held_bytes(stored), "bare_load": not (held and is_bare_stock(stored)),
             "in_place": True if allowed is True else (allowed or capacity_classic_bake.GATE_HAS_NOT_PASSED),
-            "reserve_bytes": worker_reserve()}
+            "comfy_reserve_bytes": worker_reserve()}
 
 
 def stack_files_moved(stored: Any, lora_stack: list | None, resolve_lora_path: Callable[[str], str]) -> bool:
@@ -371,7 +371,7 @@ def fresh_load_probe(store: Any, slot: str, lora_stack: list | None) -> Callable
     from .capacity_quote import default_resolve_lora_path
 
     return capacity_classic_bake.probe(
-        lora_stack, default_resolve_lora_path, stack_on_host=on_host, reserve_bytes=worker_reserve(),
+        lora_stack, default_resolve_lora_path, stack_on_host=on_host, comfy_reserve_bytes=worker_reserve(),
         in_place=TRIED if permitted() else capacity_classic_bake.GATE_HAS_NOT_PASSED)
 
 

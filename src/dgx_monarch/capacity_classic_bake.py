@@ -222,7 +222,7 @@ def _light_lead(by_class: Mapping[str, list[int]]) -> str | None:
     return max(sorted(light), key=lambda kind: light[kind])
 
 
-def reserve_keeps_floor(reserve_bytes: int | None, share_keys: int) -> bool:
+def reserve_keeps_floor(comfy_reserve_bytes: int | None, share_keys: int) -> bool:
     """Whether ComfyUI's whole-load condition already keeps the floor under a whole classic load.
 
     ComfyUI places a model whole only with its reserve still free beyond the
@@ -233,13 +233,13 @@ def reserve_keeps_floor(reserve_bytes: int | None, share_keys: int) -> bool:
     the recorded stack's count nothing is on record, and the answer is no.
     ``None`` is a price that was not told the reserve: no.
     """
-    if reserve_bytes is None or share_keys > RECORDED_WHOLE_LOAD_SHARE_KEYS:
+    if comfy_reserve_bytes is None or share_keys > RECORDED_WHOLE_LOAD_SHARE_KEYS:
         return False
-    return int(reserve_bytes) >= ABSOLUTE_HOST_FLOOR_BYTES + WHOLE_LOAD_BEYOND_COMFYUI_BYTES
+    return int(comfy_reserve_bytes) >= ABSOLUTE_HOST_FLOOR_BYTES + WHOLE_LOAD_BEYOND_COMFYUI_BYTES
 
 
 def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True,
-                      reserve_bytes: int | None = None) -> int:
+                      comfy_reserve_bytes: int | None = None) -> int:
     """The classic bake's charge for patched weights given as (class, stored bytes).
 
     The fixed part, and a per-weight share for each key: its own class's
@@ -247,7 +247,7 @@ def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True,
     as a light class (``_light_lead``) a key of another class under
     ``SMALL_KEY_BYTES`` takes that class's share. Every other stack is
     counted whole at the line's share, its biases included, as the line was
-    fitted. ``reserve_bytes`` is the Worker's ComfyUI reserve: where it keeps
+    fitted. ``comfy_reserve_bytes`` is the Worker's ComfyUI reserve: where it keeps
     the floor under a whole load (``reserve_keeps_floor``) the light classes'
     shares are not charged.
 
@@ -273,7 +273,7 @@ def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True,
         share = LIGHT_SHARE_BYTES[lead] if lead is not None else 0
         light, light_keys = light + share * small, light_keys + (small if share else 0)
         shares += CLASSIC_BAKE_BYTES_PER_WEIGHT * (len(sizes) - small)
-    if not reserve_keeps_floor(reserve_bytes, light_keys):
+    if not reserve_keeps_floor(comfy_reserve_bytes, light_keys):
         shares += light
     line = CLASSIC_BAKE_FIXED_BYTES + shares
     if not guard:
@@ -345,7 +345,7 @@ def stack_bytes(lora_stack: list | None, resolve_lora_path: Callable[[str], str]
 
 
 def charge_from_weights(weights: Iterable[tuple[str, int]], stack_files: int, *,
-                        stack_on_host: bool = False, reserve_bytes: int | None = None) -> int:
+                        stack_on_host: bool = False, comfy_reserve_bytes: int | None = None) -> int:
     """What a classic price adds for a stack: the term, and the stack's files unless they are already read.
 
     The Worker reads every LoRA file of the stack into host memory, one read
@@ -357,15 +357,15 @@ def charge_from_weights(weights: Iterable[tuple[str, int]], stack_files: int, *,
     swap read the stack and declined, and the fresh load that follows prices
     against a box those bytes have already left. Then nothing is charged for
     the files. ``tests/test_classic_bake_records.py`` holds both readings
-    against what each recorded load took. ``reserve_bytes`` is the Worker's
+    against what each recorded load took. ``comfy_reserve_bytes`` is the Worker's
     ComfyUI reserve (``term_from_weights``).
     """
-    return (term_from_weights(weights, reserve_bytes=reserve_bytes)
+    return (term_from_weights(weights, comfy_reserve_bytes=comfy_reserve_bytes)
             + (0 if stack_on_host else max(int(stack_files), 0)))
 
 
 def classic_charge(checkpoint_path: str, lora_stack: list | None, resolve_lora_path: Callable[[str], str],
-                   *, stack_on_host: bool = False, reserve_bytes: int | None = None) -> int:
+                   *, stack_on_host: bool = False, comfy_reserve_bytes: int | None = None) -> int:
     """What the classic bake of ``lora_stack`` adds to this checkpoint's stock price (``charge_from_weights``).
 
     The one figure the quote, the Worker's two walls and the in-place choice
@@ -377,7 +377,7 @@ def classic_charge(checkpoint_path: str, lora_stack: list | None, resolve_lora_p
         return 0
     return charge_from_weights(_patched(checkpoint_path, lora_stack, resolve_lora_path),
                                stack_bytes(lora_stack, resolve_lora_path), stack_on_host=stack_on_host,
-                               reserve_bytes=reserve_bytes)
+                               comfy_reserve_bytes=comfy_reserve_bytes)
 
 
 def in_place_bake_bytes(stack_files: int) -> int:
@@ -395,7 +395,7 @@ def _gib(value: int) -> float:
 
 def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora_path: Callable[[str], str],
            *, held_bytes: int = 0, in_place: str | bool = "", bare_load: bool = False, charged: int = 0,
-           stack_on_host: bool = False, reserve_bytes: int | None = None) -> Any:
+           stack_on_host: bool = False, comfy_reserve_bytes: int | None = None) -> Any:
     """``fit`` (a ``capacity_fit.StockFit``) with the classic bake charged, or re-priced as an in-place bake.
 
     Every site that prices one stack change calls this with the same
@@ -423,7 +423,7 @@ def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora
     the stack's files (``charge_from_weights``): the classic price then
     charges none of them. The in-place price charges them either way.
 
-    ``reserve_bytes`` is the Worker's ComfyUI reserve, the R of ComfyUI's
+    ``comfy_reserve_bytes`` is the Worker's ComfyUI reserve, the R of ComfyUI's
     whole-load condition (``reserve_keeps_floor``). The quote, both walls
     and ``take`` run in the Worker and pass the one it runs with
     (``in_place_fallback.worker_reserve``). ``None`` charges as if no
@@ -435,17 +435,18 @@ def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora
     fit = replace(fit, avail_bytes=read - spent)
     return replace(_chosen(fit, checkpoint_path, lora_stack, resolve_lora_path, max(int(held_bytes), 0),
                            in_place, bare_load, "was left beside this request's other model" if spent else "was read",
-                           bool(stack_on_host), reserve_bytes),
+                           bool(stack_on_host), comfy_reserve_bytes),
                    avail_bytes=read)
 
 
 def _chosen(fit: Any, checkpoint_path: str, lora_stack: list, resolve_lora_path: Callable[[str], str],
             held: int, in_place: str | bool, bare_load: bool, reading_words: str,
-            stack_on_host: bool = False, reserve_bytes: int | None = None) -> Any:
+            stack_on_host: bool = False, comfy_reserve_bytes: int | None = None) -> Any:
     """``priced``'s choice between the two bakes, against ``fit.avail_bytes`` as given."""
     files = stack_bytes(lora_stack, resolve_lora_path)
-    classic = replace(fit, bake_bytes=classic_charge(checkpoint_path, lora_stack, resolve_lora_path,
-                                                     stack_on_host=stack_on_host, reserve_bytes=reserve_bytes))
+    classic = replace(fit, bake_bytes=classic_charge(
+        checkpoint_path, lora_stack, resolve_lora_path, stack_on_host=stack_on_host,
+        comfy_reserve_bytes=comfy_reserve_bytes))
     classic = replace(classic, fits=classic.required_bytes <= classic.avail_bytes)
     if classic.required_bytes - held <= classic.avail_bytes or not in_place:
         return classic
@@ -465,7 +466,7 @@ def _chosen(fit: Any, checkpoint_path: str, lora_stack: list, resolve_lora_path:
 
 def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, held_bytes: int = 0,
           in_place: str | bool = "", bare_load: bool = False, charged: int = 0, stack_on_host: bool = False,
-          reserve_bytes: int | None = None,
+          comfy_reserve_bytes: int | None = None,
           stock_load_fit: Callable[[str, dict], Any] | None = None) -> Callable[[str, dict], Any]:
     """A stock probe (``capacity_quote.price``'s ``fit_probe``) that charges this load's classic bake."""
     def fit_probe(path: str, model_options: dict) -> Any:
@@ -473,7 +474,7 @@ def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, h
 
         return priced((stock_load_fit or capacity_fit.stock_load_fit)(path, model_options), path, lora_stack,
                       resolve_lora_path, held_bytes=held_bytes, in_place=in_place, bare_load=bare_load,
-                      charged=charged, stack_on_host=stack_on_host, reserve_bytes=reserve_bytes)
+                      charged=charged, stack_on_host=stack_on_host, comfy_reserve_bytes=comfy_reserve_bytes)
 
     return fit_probe
 

@@ -758,7 +758,10 @@ you may see:
   Wan-Animate 2 template is then admitted from about 44.5 GiB (45.2 on an
   empty Worker) where the default reserve admits it from 39.6 (40.3). A
   refusal in that band with a lowered reserve is this rule; set
-  `reserve_vram_gb` back to 0 and the same load renders.
+  `reserve_vram_gb` back to 0 and on one GPU the same load renders. (On a
+  pair, a rank that ComfyUI loads only partly is refused with the
+  `partial_load_divergence` text whatever the reserve; that is #79, not
+  this rule.)
 
   The stack's own LoRA files are added, each as often as the stack lists it,
   when the price is read before the Worker has read them: a load into a

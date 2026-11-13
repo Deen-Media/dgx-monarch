@@ -298,7 +298,7 @@ def test_this_header_is_two_share_keys_past_the_recorded_stack_so_it_pays_the_sh
     resolve = _resolver({"a.safetensors": stack})
     assert SHARE_KEYS == price.RECORDED_WHOLE_LOAD_SHARE_KEYS + 2
     for told in (None, 3 * GIB, 8 * GIB, 64 * GIB):
-        assert price.classic_charge(checkpoint, STACK, resolve, stack_on_host=True, reserve_bytes=told) == INT8_TERM
+        assert price.classic_charge(checkpoint, STACK, resolve, stack_on_host=True, comfy_reserve_bytes=told) == INT8_TERM
 
 
 @pytest.mark.parametrize("reserve_gib, term", [(8, INT8_BASE), (7.3, INT8_BASE), (7, INT8_TERM), (3, INT8_TERM)])

@@ -73,7 +73,7 @@ class Record:
 
     def charge_at(self, reserve_gib: float | None) -> int:
         return price.charge_from_weights(self.weights, _gib(self.files_gib), stack_on_host=self.basis == AFTER,
-                                         reserve_bytes=None if reserve_gib is None else _gib(reserve_gib))
+                                         comfy_reserve_bytes=None if reserve_gib is None else _gib(reserve_gib))
 
     def price_at(self, reserve_gib: float | None) -> int:
         return _gib(self.stock_gib) + self.charge_at(reserve_gib)

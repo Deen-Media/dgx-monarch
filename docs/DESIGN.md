@@ -2474,10 +2474,14 @@ the price covers the whole load by itself. Three rules follow.
     from a reading of 45.1, so the lowest whole load leaves 5.7. The rule
     (`reserve_keeps_floor`): where the reserve is at least the 5 GiB floor
     and that 2.3, the share is not charged, the price is 39.6 after the
-    file and 40.3 before it, and every reading from there up renders, by
-    the route under 45.1 and whole above it. **A lowered reserve changes
-    that.** The reserve is the Init node's `reserve_vram_gb` widget (or
-    `[worker_args]` in `cluster.toml`; 0 keeps the default 8). Under 7.3
+    file and 40.3 before it, and on one GPU every reading from there up
+    renders, by the route under 45.1 and whole above it. (On a pair a rank
+    that loads partly is refused, typed, with nothing sampled: there the
+    fleet admits from the price and a rank loads this template whole only
+    from about 49.5, as it did before this price existed.) **A lowered
+    reserve changes that.** The reserve is the Init node's
+    `reserve_vram_gb` widget (or `[worker_args]` in `cluster.toml`; 0 keeps
+    the default 8). Under 7.3
     GiB ComfyUI places the model whole at readings where a whole load does
     not leave the floor (at a reserve of 3, from about 40.1, where it would
     leave under 1 GiB), so the price then carries the share and covers the

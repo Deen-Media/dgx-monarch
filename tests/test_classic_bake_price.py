@@ -289,7 +289,7 @@ def ltx(monkeypatch):
     term = price.term_from_weights(_weights(1660, price.FP8_QUANTIZED))
     charge = term + LTX_OWN_STACK
 
-    def classic_charge(_path, stack, _resolve, *, stack_on_host=False, reserve_bytes=None):
+    def classic_charge(_path, stack, _resolve, *, stack_on_host=False, comfy_reserve_bytes=None):
         return 0 if not stack else term if stack_on_host else charge
 
     monkeypatch.setattr(price, "classic_charge", classic_charge)
@@ -492,13 +492,13 @@ def test_the_route_is_the_same_arguments_for_every_caller(monkeypatch):
     monkeypatch.setattr(fallback, "worker_reserve", lambda: reserve)
     bare = _stored()
     assert fallback.route(_store(), bare, True, True) == {
-        "held_bytes": HELD, "bare_load": False, "in_place": True, "reserve_bytes": reserve}
+        "held_bytes": HELD, "bare_load": False, "in_place": True, "comfy_reserve_bytes": reserve}
     assert fallback.route(_store(), bare, True, False)["in_place"] == price.GATE_HAS_NOT_PASSED
     # Nothing held, another model held, or this base with a stack: the base is reloaded bare first.
     assert fallback.route(_store(), None, False, True) == {
-        "held_bytes": 0, "bare_load": True, "in_place": True, "reserve_bytes": reserve}
+        "held_bytes": 0, "bare_load": True, "in_place": True, "comfy_reserve_bytes": reserve}
     assert fallback.route(_store(), bare, False, True) == {
-        "held_bytes": HELD, "bare_load": True, "in_place": True, "reserve_bytes": reserve}
+        "held_bytes": HELD, "bare_load": True, "in_place": True, "comfy_reserve_bytes": reserve}
     assert fallback.route(_store(), _stored(base_baked=True), True, True)["bare_load"] is True
     assert fallback.route(_store(low_rss=True), bare, True, True) is None  # the default: no classic bake
 
@@ -520,9 +520,9 @@ def test_the_walls_and_the_route_hand_the_price_the_same_reserve(monkeypatch):
     """The quote and ``take`` price by ``route``'s arguments and the walls by ``fresh_load_probe``: one reserve."""
     seen = []
     monkeypatch.setattr(fallback, "worker_reserve", lambda: 3 * GIB)
-    monkeypatch.setattr(price, "probe", lambda stack, resolve, **kwargs: seen.append(kwargs["reserve_bytes"]))
+    monkeypatch.setattr(price, "probe", lambda stack, resolve, **kwargs: seen.append(kwargs["comfy_reserve_bytes"]))
     fallback.fresh_load_probe(_store(), "main", STACK)
-    assert seen == [3 * GIB] == [fallback.route(_store(), None, False, True)["reserve_bytes"]]
+    assert seen == [3 * GIB] == [fallback.route(_store(), None, False, True)["comfy_reserve_bytes"]]
 
 
 # ComfyUI's whole-load condition and the INT8 share (docs/DESIGN.md section 5.9). The shipped INT8
@@ -539,7 +539,7 @@ WAN_COVERING = WAN_BASE + 1254 * price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]  
 def test_the_int8_share_is_charged_only_where_the_reserve_does_not_keep_the_floor(reserve_gib, covering):
     reserve = int(reserve_gib * GIB)
     assert price.reserve_keeps_floor(reserve, 1254) is not covering
-    assert price.term_from_weights(WAN_INT8, reserve_bytes=reserve) == (WAN_COVERING if covering else WAN_BASE)
+    assert price.term_from_weights(WAN_INT8, comfy_reserve_bytes=reserve) == (WAN_COVERING if covering else WAN_BASE)
     # What a whole load leaves at ComfyUI's own lowest whole-load reading is the reserve less 2.3 GiB.
     assert (reserve - price.WHOLE_LOAD_BEYOND_COMFYUI_BYTES >= FLOOR) is not covering
 
@@ -554,7 +554,7 @@ def test_the_edge_of_the_reserve_rule_is_the_floor_and_the_recorded_extra():
 
 def test_a_price_that_is_not_told_the_reserve_charges_the_share():
     assert not price.reserve_keeps_floor(None, 0)
-    assert price.term_from_weights(WAN_INT8) == price.term_from_weights(WAN_INT8, reserve_bytes=None) == WAN_COVERING
+    assert price.term_from_weights(WAN_INT8) == price.term_from_weights(WAN_INT8, comfy_reserve_bytes=None) == WAN_COVERING
 
 
 def test_a_stack_with_more_share_keys_than_the_recorded_one_pays_the_share_at_any_reserve():
@@ -562,19 +562,19 @@ def test_a_stack_with_more_share_keys_than_the_recorded_one_pays_the_share_at_an
     assert price.reserve_keeps_floor(8 * GIB, 1254) and not price.reserve_keeps_floor(64 * GIB, 1255)
     larger = WAN_INT8 + _weights(1, price.INT8_QUANTIZED, 32 * MIB)
     share = price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]
-    assert price.term_from_weights(larger, reserve_bytes=64 * GIB) == WAN_BASE + 1255 * share
+    assert price.term_from_weights(larger, comfy_reserve_bytes=64 * GIB) == WAN_BASE + 1255 * share
     # The smaller recorded INT8 stack (MiniMax H3: 200 INT8 weights, 8 large full-precision ones).
     h3 = _weights(200, price.INT8_QUANTIZED, 90 * MIB) + _weights(8, price.FULL_PRECISION, 8 * MIB)
     base = price.CLASSIC_BAKE_FIXED_BYTES + 8 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
-    assert price.term_from_weights(h3, reserve_bytes=8 * GIB) == base
-    assert price.term_from_weights(h3, reserve_bytes=3 * GIB) == base + 200 * share
+    assert price.term_from_weights(h3, comfy_reserve_bytes=8 * GIB) == base
+    assert price.term_from_weights(h3, comfy_reserve_bytes=3 * GIB) == base + 200 * share
 
 
 @pytest.mark.parametrize("kind", [price.PLAIN_FP8, price.FP8_QUANTIZED, price.FULL_PRECISION, price.OTHER])
 def test_the_reserve_changes_no_other_formats_charge(kind):
     """Their charges cover their recorded whole loads by themselves, so none leans on ComfyUI's condition."""
     weights = _weights(720, kind, 26 * MIB) + _weights(40, kind, 2048)
-    assert len({price.term_from_weights(weights, reserve_bytes=reserve)
+    assert len({price.term_from_weights(weights, comfy_reserve_bytes=reserve)
                 for reserve in (None, 0, 3 * GIB, 8 * GIB, 64 * GIB)}) == 1
 
 
@@ -586,15 +586,15 @@ def test_the_reserve_reaches_the_price_through_every_entry(tmp_path):
     share = price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]
     fixed = price.CLASSIC_BAKE_FIXED_BYTES
     assert files > 0
-    assert price.classic_charge(path, STACK, resolve, reserve_bytes=8 * GIB) == fixed + files
-    assert price.classic_charge(path, STACK, resolve, reserve_bytes=3 * GIB) == fixed + share + files
+    assert price.classic_charge(path, STACK, resolve, comfy_reserve_bytes=8 * GIB) == fixed + files
+    assert price.classic_charge(path, STACK, resolve, comfy_reserve_bytes=3 * GIB) == fixed + share + files
     assert price.classic_charge(path, STACK, resolve) == fixed + share + files
-    assert price.classic_charge(path, STACK, resolve, reserve_bytes=8 * GIB, stack_on_host=True) == fixed
+    assert price.classic_charge(path, STACK, resolve, comfy_reserve_bytes=8 * GIB, stack_on_host=True) == fixed
     fit = _fit(64.0, 10 * GIB)
-    at_default = price.priced(fit, path, STACK, resolve, reserve_bytes=8 * GIB)
-    lowered = price.priced(fit, path, STACK, resolve, reserve_bytes=3 * GIB)
+    at_default = price.priced(fit, path, STACK, resolve, comfy_reserve_bytes=8 * GIB)
+    lowered = price.priced(fit, path, STACK, resolve, comfy_reserve_bytes=3 * GIB)
     assert at_default.bake_bytes == fixed + files and lowered.bake_bytes == fixed + share + files
-    probed = price.probe(STACK, resolve, reserve_bytes=3 * GIB, stock_load_fit=lambda _path, _options: fit)
+    probed = price.probe(STACK, resolve, comfy_reserve_bytes=3 * GIB, stock_load_fit=lambda _path, _options: fit)
     assert probed(path, {}).bake_bytes == lowered.bake_bytes
 
 
