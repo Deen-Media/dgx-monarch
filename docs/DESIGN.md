@@ -2703,9 +2703,16 @@ covers the whole load by itself. Three rules follow.
   LoRA was counted as 1933 patched weights where the Worker counts 240).
   `StockFit` carries the term, so the Worker's two walls and the quote the
   driver reads charge one figure by one function, and every refusal prints
-  it. The partial-load route's room rule charges the line for the layers
-  still to bake, without the bytes guard: its BF16 cell ran on hardware
-  under the rule without the term. The default (`lora_low_rss` on) and FSDP,
+  it. The partial-load route's room rule charges the same term for the layers
+  still to bake, by each layer's own format (2 GiB, and for each layer 7.5 MiB
+  where it is scaled FP8 or full precision, 4 MiB where it is INT8 ConvRot,
+  nothing where it is plain FP8), without the bytes guard and without the
+  INT8 exception: its BF16 cell ran on hardware under the rule without the
+  term. Charged by the line for every format, 371 INT8 layers still off the
+  device were asked 8.4 GiB with 8.1 there (2026-11-12), the route was
+  declined, and the render ran from cast-time weights with ComfyUI's backup
+  kept, to a low of 5.97 GiB; by format the ask is 7.2. The default
+  (`lora_low_rss` on) and FSDP,
   which takes no classic bake, are charged nothing new. The loader node's own
   preflight runs before any LoRA node and cannot know the stack.
 - **The fallback** (`actor/in_place_fallback.py`). Baking in place on the

@@ -1008,7 +1008,7 @@ def test_the_ladders_row_gives_the_wall_back_its_bake_term(ltx):
     assert capacity_quote.RankPrice is not None
 
 
-def test_the_partial_load_route_charges_the_line_for_the_layers_still_to_bake():
+def test_the_partial_load_route_charges_a_layer_it_cannot_class_by_the_line():
     from dgx_monarch.actor import lora_partial_load
 
     pending = [(f"k{index}", types.SimpleNamespace()) for index in range(148)]
@@ -1016,6 +1016,32 @@ def test_the_partial_load_route_charges_the_line_for_the_layers_still_to_bake():
     assert lora_partial_load._bake_room(pending) == (
         price.CLASSIC_BAKE_FIXED_BYTES + 148 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
     assert lora_partial_load._bake_room([]) == 0
+
+
+def test_the_partial_load_routes_room_follows_each_layers_own_format(monkeypatch):
+    """The declined cell of 2026-11-12: 371 INT8 layers of 3.7 GiB still off the device, 8.1 GiB of room.
+
+    The line for every format asked 2 GiB and 7.5 MiB a layer, 4.7 GiB, so 8.4
+    in all, and the route was declined for 0.3 GiB. By the layers' own format
+    it asks 2 GiB and 4 MiB a layer, 7.2 in all, and the route runs.
+    """
+    from dgx_monarch.actor import lora_partial_load
+
+    pending = [(f"k{index}", types.SimpleNamespace(kind=price.INT8_QUANTIZED)) for index in range(371)]
+    layers, room = int(3.7 * GIB), int(8.1 * GIB)
+    by_the_line = price.CLASSIC_BAKE_FIXED_BYTES + 371 * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+    assert layers + by_the_line > room  # as it was: declined
+    monkeypatch.setattr(lora_partial_load, "_layer_class", lambda module: (module.kind, 10 * MIB))
+    asked = lora_partial_load._bake_room(pending)
+    assert asked == price.CLASSIC_BAKE_FIXED_BYTES + 371 * price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]
+    assert layers + asked <= room and 7.1 * GIB < layers + asked < 7.2 * GIB
+    # Each format by its own share: plain FP8 none, scaled FP8 and full precision the line's.
+    for kind, share in ((price.PLAIN_FP8, 0), (price.FP8_QUANTIZED, price.CLASSIC_BAKE_BYTES_PER_WEIGHT),
+                        (price.FULL_PRECISION, price.CLASSIC_BAKE_BYTES_PER_WEIGHT),
+                        (price.OTHER, price.CLASSIC_BAKE_BYTES_PER_WEIGHT)):
+        some = [(f"k{index}", types.SimpleNamespace(kind=kind)) for index in range(40)]
+        assert lora_partial_load._bake_room(some) == price.CLASSIC_BAKE_FIXED_BYTES + 40 * share, kind
+
 
 
 def test_the_fleets_sentence_names_the_bake_and_the_in_place_bake_not_taken(ltx):

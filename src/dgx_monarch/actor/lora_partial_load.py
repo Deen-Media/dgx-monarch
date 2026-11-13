@@ -169,17 +169,52 @@ def _room_needed(patcher: Any, pending: list[tuple[str, Any]]) -> int:
     return need
 
 
-def _bake_room(pending: list[tuple[str, Any]]) -> int:
-    """What baking the pending layers ComfyUI's classic way adds on the device beside them.
+def _layer_class(module: Any) -> tuple[str, int]:
+    """How the classic bake's price reads one patched layer, from the live module: (class, stored bytes).
 
-    The line the stock price charges a stack (``capacity_classic_bake``: 2 GiB
-    and 7.5 MiB a layer), on the layers still to bake. Not its bytes guard:
-    this route's BF16 cell ran on hardware under the rule without the term,
-    and the guard has no measurement behind it.
+    An INT8 ConvRot layer and a scaled FP8 one are told by ComfyUI's own
+    ``quant_format``; an FP8 weight with no quantization layout is plain FP8;
+    a float weight is full precision. Anything else, and a module that cannot
+    be read, is unclassed and takes the line's share, the dearer side.
     """
     from .. import capacity_classic_bake as price
 
-    return price.term_from_weights(((price.OTHER, 0) for _ in pending), guard=False)
+    try:
+        from . import lora_cast_time
+
+        weight = getattr(module, "weight", None)
+        nbytes = lora_cast_time._module_bytes(module)
+        if lora_cast_time._is_quantized(weight):
+            fmt = str(getattr(module, "quant_format", "") or "")
+            if fmt.startswith("int8"):
+                return price.INT8_QUANTIZED, nbytes
+            return (price.FP8_QUANTIZED if fmt.startswith("float8") else price.OTHER), nbytes
+        dtype = str(getattr(weight, "dtype", ""))
+        if "float8" in dtype:
+            return price.PLAIN_FP8, nbytes
+        if dtype in ("torch.bfloat16", "torch.float16", "torch.float32", "torch.float64"):
+            return price.FULL_PRECISION, nbytes
+        return price.OTHER, nbytes
+    except Exception:
+        return price.OTHER, 0
+
+
+def _bake_room(pending: list[tuple[str, Any]]) -> int:
+    """What baking the pending layers ComfyUI's classic way adds on the device beside them.
+
+    The stock price's own charge for a stack (``capacity_classic_bake``),
+    worked on the layers still to bake and by each layer's own format: 2 GiB,
+    and for each layer 7.5 MiB where it is scaled FP8 or full precision, 4 MiB
+    where it is INT8 ConvRot, nothing where it is plain FP8. The line for
+    every format asked 4.7 GiB for 371 INT8 layers on 2026-11-12 where the
+    bake of such layers adds nothing on record (0.06 GiB for 1261 patched
+    keys), and the route was declined for 0.3 GiB with the backup then kept
+    through the render. Not the price's bytes guard, and not its exception
+    for a reserve: this is the route's room, not a price.
+    """
+    from .. import capacity_classic_bake as price
+
+    return price.term_from_weights((_layer_class(module) for _key, module in pending), guard=False)
 
 
 def _registered(patcher: Any) -> bool:

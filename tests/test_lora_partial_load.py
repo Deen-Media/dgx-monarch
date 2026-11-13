@@ -727,6 +727,32 @@ def test_the_room_rule_counts_every_moved_layer_when_the_weights_are_file_pages(
     assert root.model_lowvram is True and slot.base_baked is False
 
 
+def test_a_pending_layer_is_classed_by_its_own_format_for_the_routes_room(installed):
+    """The live modules, read as the classic bake's price reads the header: INT8 ConvRot, scaled FP8, the rest."""
+    import torch
+
+    from dgx_monarch import capacity_classic_bake as price
+    from dgx_monarch.actor import lora_cast_time
+
+    build, _outputs, cpu = _rig(("int8_tensorwise", "float8_e4m3fn"))
+    root, patcher = build()
+    _slot(patcher)
+    int8, fp8 = root.diffusion_model.q0, root.diffusion_model.q1
+    assert lora_partial_load._layer_class(int8) == (price.INT8_QUANTIZED, lora_cast_time._module_bytes(int8))
+    assert lora_partial_load._layer_class(fp8) == (price.FP8_QUANTIZED, lora_cast_time._module_bytes(fp8))
+    plain = torch.nn.Linear(8, 8, bias=False)
+    assert lora_partial_load._layer_class(plain) == (price.FULL_PRECISION, 8 * 8 * 4)
+    assert lora_partial_load._layer_class(plain.to(torch.bfloat16)) == (price.FULL_PRECISION, 8 * 8 * 2)
+    assert lora_partial_load._layer_class(SimpleNamespace()) == (price.OTHER, 0)  # unreadable: the line
+    # Both layers off the device: one INT8 share and one share of the line beside the fixed part.
+    patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    pending = lora_partial_load._patched_off_device(patcher)
+    assert len(pending) == 2
+    assert lora_partial_load._bake_room(pending) == (
+        price.CLASSIC_BAKE_FIXED_BYTES + price.LIGHT_SHARE_BYTES[price.INT8_QUANTIZED]
+        + price.CLASSIC_BAKE_BYTES_PER_WEIGHT)
+
+
 def test_the_pread_loader_is_told_from_the_mmap_loader_by_its_own_mark(monkeypatch):
     import safetensors
 
