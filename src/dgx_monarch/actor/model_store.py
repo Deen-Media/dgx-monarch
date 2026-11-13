@@ -325,37 +325,37 @@ class ModelStore:
 
         if in_place_fallback.holds_base(stored, base_key) and not self.lora_low_rss \
                 and not stored.base_baked:
-            # Hot-swap (clone the pristine base, re-apply loras), or None when the
-            # swap would copy the model off the GPU first: then a fresh load.
-            # Skipped in low_rss: _merge_and_free consumed the base (baked, backup
-            # freed), so it cannot be re-cloned, even after the policy flips. A
-            # stack change then falls through to a full reload from disk (exact),
-            # the low_rss recovery contract when lazy un-bake is unavailable.
+            # Hot-swap (clone the pristine base, re-apply loras), or None when the swap would
+            # copy the model off the GPU first: then a fresh load. Skipped in low_rss:
+            # _merge_and_free consumed the base (baked, backup freed), so it cannot be
+            # re-cloned, even after the policy flips. A stack change then falls through to a
+            # full reload from disk (exact), the low_rss recovery contract with no lazy un-bake.
             result = store_bake.hot_swap_transition(
                 self, stored, slot, unet_name, lora_stack, base_key, requested_identity,
                 request_artifact_identity=request_artifact_identity, logger=log)
             if result is not None:
                 return result
 
-        # Release ensure's local pin before dropping the old slot: USP injection
-        # creates a model reference cycle, so a live local would defeat _drop's
-        # gc.collect() and briefly retain two full DiTs.
-        set_aside, stored = stored is None and self._stored(slot) is not None, None
-        # A fresh load would follow, and nothing is dropped yet: where the classic bake's price
-        # misses and the gate allows it, the stack is baked in place (actor/in_place_fallback.py).
-        # Not on a slot this call set aside above (an identity that drifted, a slab retry).
-        result = None if fsdp_launch or set_aside else in_place_fallback.take(
-            self, slot, unet_name, options, lora_stack, base_key, requested_identity, log,
-            request_artifact_identity, lambda: self.ensure(
-                unet_name, options, None, slot, on_base_loaded, fsdp_launch, rescue_consent))
-        if result is not None:
-            return result
-        return store_load.fresh_load(
-            self, slot, unet_name, options, lora_stack, quant_kind, requested_identity,
-            base_key, on_base_loaded, fsdp_launch, fsdp_preflight_path,
-            fsdp_checkpoint_proof, authoritative_slab_retry, rescue_consent,
-            request_artifact_identity=request_artifact_identity,
-            resolve_model_path=resolve_model_path, logger=log)
+        try:  # a stack the declined swap left held (in_place_fallback.note_stack_read) never outlives this call
+            # Release ensure's local pin before dropping the old slot: USP injection creates a model
+            # reference cycle, so a live local would defeat _drop's gc.collect() and keep two full DiTs.
+            set_aside, stored = stored is None and self._stored(slot) is not None, None
+            # A fresh load would follow, and nothing is dropped yet: where the classic bake's price misses
+            # and the gate allows it, the stack is baked in place (actor/in_place_fallback.py). Not on a
+            # slot this call set aside above (an identity that drifted, a slab retry).
+            result = None if fsdp_launch or set_aside else in_place_fallback.take(
+                self, slot, unet_name, options, lora_stack, base_key, requested_identity, log,
+                request_artifact_identity, lambda: self.ensure(
+                    unet_name, options, None, slot, on_base_loaded, fsdp_launch, rescue_consent))
+            if result is not None:
+                return result
+            return store_load.fresh_load(
+                self, slot, unet_name, options, lora_stack, quant_kind, requested_identity, base_key,
+                on_base_loaded, fsdp_launch, fsdp_preflight_path, fsdp_checkpoint_proof,
+                authoritative_slab_retry, rescue_consent, request_artifact_identity=request_artifact_identity,
+                resolve_model_path=resolve_model_path, logger=log)
+        finally:
+            in_place_fallback.forget_stack_read(self)
 
     def _lazy_swap(self, stored, active, unet_name: str):
         if getattr(stored.base_patcher, "_dgxm_fsdp", False):

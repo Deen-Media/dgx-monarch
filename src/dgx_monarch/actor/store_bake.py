@@ -461,6 +461,7 @@ def hot_swap_transition(
     Returns ``None`` when the swap would first copy weights off the GPU
     (``copies_off_the_gpu``): the caller then loads base and stack fresh.
     """
+    from . import in_place_fallback
     from .model_store import _is_quantized_kind, lora_signature
 
     t0 = time.perf_counter()
@@ -471,6 +472,8 @@ def hot_swap_transition(
             "model store [%s]: a LoRA change on %s would copy the model off the GPU first "
             "(no host copy of %d of the %d weights the new stack patches), so it is not "
             "hot-swapped: base and stack load fresh, or bake in place", slot, unet_name, uncovered, patched)
+        # The store holds what this build read (the patches, not the model) so the fresh load's walls price a fact.
+        in_place_fallback.note_stack_read(store, slot, lora_stack, getattr(active, "patches", None))
         return None
     store_identity.assert_stable_identity(
         request_artifact_identity(unet_name, lora_stack), requested_identity,

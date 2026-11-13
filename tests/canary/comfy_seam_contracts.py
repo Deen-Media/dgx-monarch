@@ -212,6 +212,10 @@ before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
  60. copy-free drop            a slot's drop taking only its own records out of
                               comfy's loaded list with no weight moved, and a
                               pinned model unloaded and loaded back unchanged
+ 61. whole load condition      load_models_gpu keeping a model whole only with
+                              the reserve free beyond the model and the latent's
+                              estimate, which the INT8 classic bake's price
+                              leans on, and the reserve the price reads back
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -6856,6 +6860,202 @@ def _assert_inference_mode_branches_seam() -> None:
         "inference mode branches seam: the bound Anima output still holds an inference tensor")
 
 
+def _assert_whole_load_condition_seam() -> None:
+    """ComfyUI places a model whole only with its reserve still free (2026-11-12).
+
+    ``capacity_classic_bake.reserve_keeps_floor`` prices an INT8 ConvRot
+    stack's classic bake by ComfyUI's own rule: ``load_models_gpu`` keeps the
+    weights whole only while the free reading is at least the model, the
+    reserve and the sampler's estimate for the latent, so a whole load starts
+    with the reserve free and the pack's host floor is kept by it. The price
+    leans on seven things comfy does, and one the pack does:
+
+    - a load is budgeted at all only when the process's ``vram_state`` is
+      NORMAL or LOW and no full load is forced (the sampler forces none),
+      and ``lowvram_available`` where comfy still has that flag (c5751c8
+      removed it); in any other state every load goes whole;
+    - the sampler's estimate for the recorded model (Wan-Animate 2: the
+      latent's cells x 2 bytes x 0.01 x dim / 2222 MiB, no conds counted) is
+      6.2 GiB for the recorded clip, the figure its whole load was read
+      against;
+    - the free reading is the pack's own on unified memory (the host's
+      available memory over its actors, plus torch's idle pool);
+    - the requirement is max(minimum_inference_memory(), the sampler's
+      minimum + extra_reserved_memory());
+    - the budget a model is loaded with is the free reading less that, with
+      no floor of its own under it on an NVIDIA device;
+    - a budget under the model's size is a partial load, and one above it a
+      whole load;
+    - ``extra_reserved_memory()`` is EXTRA_RESERVED_VRAM, which a Worker sets
+      from its reserve and the price reads back, and
+      ``minimum_inference_memory()`` is 0.8 GiB above it;
+    - ``prepare_sampling`` hands the load the sampler's single-batch estimate
+      as that minimum.
+    """
+    import comfy.model_management as mm
+    import comfy.sampler_helpers
+    from comfy.model_patcher import ModelPatcher
+
+    from dgx_monarch import capacity_classic_bake as price
+    from dgx_monarch.actor import in_place_fallback
+
+    def squeezed(thing) -> str:
+        return "".join(inspect.getsource(thing).split())
+
+    load = squeezed(inspect.unwrap(mm.load_models_gpu))
+    assert "extra_mem=max(inference_memory,memory_required+extra_reserved_memory())" in load, (
+        "whole load condition seam: load_models_gpu no longer requires the sampler's estimate "
+        "and the reserve together (max(inference_memory, memory_required + extra_reserved_memory()))"
+    )
+    assert ("minimum_memory_required=max(inference_memory,"
+            "minimum_memory_required+extra_reserved_memory())") in load, (
+        "whole load condition seam: load_models_gpu no longer adds the reserve to the minimum "
+        "the sampler hands it, so a whole load no longer starts with the reserve free"
+    )
+    assert "current_free_mem=get_free_memory(torch_dev)+loaded_memory" in load, (
+        "whole load condition seam: the budget is no longer read from get_free_memory, the "
+        "reading a Worker patches to the host's available memory"
+    )
+    assert ("lowvram_model_memory=max(0,(current_free_mem-minimum_memory_required),"
+            "min(current_free_mem*MIN_WEIGHT_MEMORY_RATIO,"
+            "current_free_mem-minimum_inference_memory()))") in load, (
+        "whole load condition seam: the budget a model is loaded with is no longer the free "
+        "reading less the requirement; capacity_classic_bake.reserve_keeps_floor prices by it"
+    )
+    # ComfyUI c5751c8 (2026-11-11, "Remove directml support") deleted ``lowvram_available``, the
+    # flag only DirectML cleared. The gate is the same test with or without it; the form must match
+    # whether the flag exists, so a flag that comes back without gating, or a new term, turns this red.
+    flagged = hasattr(mm, "lowvram_available")
+    gate = (("iflowvram_availableand" if flagged else "if")
+            + "(vram_set_state==VRAMState.LOW_VRAMorvram_set_state==VRAMState.NORMAL_VRAM)"
+            "andnotforce_full_load:loaded_memory=loaded_model.model_loaded_memory()")
+    assert gate in load, (
+        "whole load condition seam: the gate on the budget test changed. It must budget a load "
+        "exactly when the state is LOW or NORMAL and no full load is forced (and, where comfy "
+        "still has the flag, lowvram_available); in any other state every load goes whole at any "
+        f"reading. Expected with lowvram_available {'present' if flagged else 'absent'}: "
+        "in_place_fallback.worker_reserve reads the same names"
+    )
+    assert ("ifis_device_cpu(torch_dev):vram_set_state=VRAMState.DISABLEDelse:"
+            "vram_set_state=vram_state") in load, (
+        "whole load condition seam: a GPU load no longer takes the process's vram_state, the "
+        "state the pack's price reads"
+    )
+    for name in ("vram_state", "VRAMState"):
+        assert hasattr(mm, name), f"whole load condition seam: comfy.model_management.{name} is gone"
+    assert {"NORMAL_VRAM", "LOW_VRAM"} <= set(mm.VRAMState.__members__), (
+        "whole load condition seam: VRAMState lost NORMAL_VRAM or LOW_VRAM"
+    )
+
+    # The sampler's estimate for the recorded model. The 2.3 GiB the exception rests on holds the
+    # sampler's real use over this estimate (6.7 against 6.2 for the shipped template's clip), so a
+    # retuned factor or formula moves the margin without moving any line above.
+    import comfy.model_base
+    import comfy.samplers
+    import comfy.supported_models
+
+    factor = comfy.supported_models.WAN_Animate2({"dim": 5120}).memory_usage_factor
+    assert factor == 5120 / 2222, (
+        "whole load condition seam: Wan-Animate 2's memory_usage_factor is no longer dim / 2222 "
+        f"(now {factor}); the recorded whole load was read against that estimate"
+    )
+    assert "memory_usage_factor_conds" not in inspect.getsource(comfy.model_base.WAN_Animate2.__init__), (
+        "whole load condition seam: Wan-Animate 2 now counts conds in its estimate; the record "
+        "was read with the latent alone"
+    )
+    assert ("return(area*comfy.model_management.dtype_size(dtype)*0.01*self.memory_usage_factor)"
+            "*(1024*1024)") in squeezed(comfy.model_base.BaseModel.memory_required), (
+        "whole load condition seam: BaseModel.memory_required's flash-path formula changed"
+    )
+    from comfy_extras.nodes_wan import WanAnimate2ToVideo
+
+    assert ("latent=torch.zeros([batch_size,16,latent_length+trim_latent,latent_height,"
+            "latent_width]") in squeezed(WanAnimate2ToVideo.execute), (
+        "whole load condition seam: the Wan-Animate 2 node no longer samples the clip's latent "
+        "frames plus the reference's, the shape the recorded estimate was worked from"
+    )
+    # The shipped template: 81 frames at 480x832 is 21 latent frames, and the reference image one more.
+    cells = (21 + 1) * 104 * 60
+    estimate = cells * 2 * 0.01 * factor * 1024 * 1024
+    assert 6.1 * 1024 ** 3 < estimate < 6.25 * 1024 ** 3, (
+        "whole load condition seam: the estimate for the recorded clip is no longer 6.2 GiB"
+    )
+    assert ("minimum_memory_required=model.model.memory_required([noise_shape[0]]+"
+            "list(noise_shape[1:]),cond_shapes=cond_shapes_min)") in squeezed(
+                comfy.sampler_helpers.estimate_memory), (
+        "whole load condition seam: the minimum the sampler hands the load is no longer the "
+        "single-batch estimate"
+    )
+
+    # The free reading both sides weigh is the pack's own on unified memory.
+    from dgx_monarch.actor import comfy_bridge
+
+    reading = squeezed(comfy_bridge._patch_uma_free_memory)
+    assert ("host_available=psutil.virtual_memory().available//shares" in reading
+            and "mem_free_total=host_available+mem_free_torch" in reading), (
+        "whole load condition seam: the Worker's free reading is no longer the host's available "
+        "memory over its actors plus torch's idle pool; the recorded whole load was read on that"
+    )
+
+    assert "force_full_load=force_full_load" in squeezed(comfy.sampler_helpers._prepare_sampling), (
+        "whole load condition seam: prepare_sampling no longer passes its own force_full_load "
+        "through to the load"
+    )
+    assert ("comfy.sampler_helpers.prepare_sampling(self.model_patcher,noise.shape,self.conds,"
+            "self.model_options)") in squeezed(comfy.samplers.CFGGuider.outer_sample), (
+        "whole load condition seam: the sampler's own prepare_sampling call changed; if it now "
+        "forces a full load, a classic load goes whole at any reading and the reserve rule fails"
+    )
+    module = squeezed(mm)
+    assert "MIN_WEIGHT_MEMORY_RATIO=0.4ifis_nvidia():MIN_WEIGHT_MEMORY_RATIO=0.0" in module, (
+        "whole load condition seam: an NVIDIA device no longer loads with no floor under the "
+        "budget (MIN_WEIGHT_MEMORY_RATIO 0.0), so a model may go whole below the requirement"
+    )
+    partial = squeezed(ModelPatcher.partially_load)
+    assert ("ifself.model.model_loaded_weight_memory+extra_memory>self.model_size():"
+            "full_load=True") in partial, (
+        "whole load condition seam: ModelPatcher.partially_load no longer loads whole exactly "
+        "when its budget passes the model's size"
+    )
+    prepare = squeezed(comfy.sampler_helpers._prepare_sampling)
+    assert ("estimate_memory(" in prepare
+            and "minimum_memory_required=minimum_memory_required" in prepare), (
+        "whole load condition seam: prepare_sampling no longer hands load_models_gpu the "
+        "sampler's own minimum estimate"
+    )
+
+    gib = 1024 ** 3
+    saved = (mm.EXTRA_RESERVED_VRAM, mm.vram_state)
+    try:
+        mm.EXTRA_RESERVED_VRAM = 3 * gib
+        assert mm.extra_reserved_memory() == 3 * gib, (
+            "whole load condition seam: extra_reserved_memory() no longer returns "
+            "EXTRA_RESERVED_VRAM, the knob a Worker's reserve sets"
+        )
+        assert mm.minimum_inference_memory() == 0.8 * gib + 3 * gib, (
+            "whole load condition seam: minimum_inference_memory() is no longer 0.8 GiB above "
+            "the reserve"
+        )
+        for state in mm.VRAMState:  # this CPU run starts DISABLED; a Worker on a GPU runs NORMAL
+            mm.vram_state = state
+            budgeted = state in (mm.VRAMState.NORMAL_VRAM, mm.VRAMState.LOW_VRAM)
+            assert in_place_fallback.worker_reserve() == (3 * gib if budgeted else None), (
+                f"whole load condition seam: in state {state.name} the pack's price reads the "
+                "reserve wrongly; it must read comfy's own figure only where comfy budgets a load"
+            )
+        mm.vram_state = mm.VRAMState.NORMAL_VRAM
+        assert not price.reserve_keeps_floor(in_place_fallback.worker_reserve(), True), (
+            "whole load condition seam: a 3 GiB reserve reads as keeping the 5 GiB floor"
+        )
+        mm.EXTRA_RESERVED_VRAM = 8 * gib
+        assert price.reserve_keeps_floor(in_place_fallback.worker_reserve(), True), (
+            "whole load condition seam: the unified-memory default reserve of 8 GiB no longer "
+            "reads as keeping the floor under a whole load of the recorded model"
+        )
+    finally:
+        mm.EXTRA_RESERVED_VRAM, mm.vram_state = saved
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -6917,6 +7117,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("minimax h3 image conditioning", _assert_minimax_h3_image_conditioning_seam),
     ("minimax h3 image row calls", _assert_minimax_h3_image_row_calls_seam),
     ("copy-free drop", _assert_copy_free_drop_seam),
+    ("whole load condition", _assert_whole_load_condition_seam),
 )
 
 
