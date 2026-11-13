@@ -6875,7 +6875,7 @@ def _assert_whole_load_condition_seam() -> None:
       (the sampler forces none); in any other state every load goes whole;
     - the sampler's estimate for the recorded model (Wan-Animate 2: the
       latent's cells x 2 bytes x 0.01 x dim / 2222 MiB, no conds counted) is
-      5.9 GiB for the recorded clip, the figure its whole load was read
+      6.2 GiB for the recorded clip, the figure its whole load was read
       against;
     - the free reading is the pack's own on unified memory (the host's
       available memory over its actors, plus torch's idle pool);
@@ -6941,7 +6941,7 @@ def _assert_whole_load_condition_seam() -> None:
     )
 
     # The sampler's estimate for the recorded model. The 2.3 GiB the exception rests on holds the
-    # sampler's real use over this estimate (6.7 against 5.9 for the shipped template's clip), so a
+    # sampler's real use over this estimate (6.7 against 6.2 for the shipped template's clip), so a
     # retuned factor or formula moves the margin without moving any line above.
     import comfy.model_base
     import comfy.samplers
@@ -6960,10 +6960,18 @@ def _assert_whole_load_condition_seam() -> None:
             "*(1024*1024)") in squeezed(comfy.model_base.BaseModel.memory_required), (
         "whole load condition seam: BaseModel.memory_required's flash-path formula changed"
     )
-    cells = 21 * 104 * 60  # the shipped template's latent: 81 frames at 480x832
+    from comfy_extras.nodes_wan import WanAnimate2ToVideo
+
+    assert ("latent=torch.zeros([batch_size,16,latent_length+trim_latent,latent_height,"
+            "latent_width]") in squeezed(WanAnimate2ToVideo.execute), (
+        "whole load condition seam: the Wan-Animate 2 node no longer samples the clip's latent "
+        "frames plus the reference's, the shape the recorded estimate was worked from"
+    )
+    # The shipped template: 81 frames at 480x832 is 21 latent frames, and the reference image one more.
+    cells = (21 + 1) * 104 * 60
     estimate = cells * 2 * 0.01 * factor * 1024 * 1024
-    assert 5.85 * 1024 ** 3 < estimate < 5.95 * 1024 ** 3, (
-        "whole load condition seam: the estimate for the recorded clip is no longer 5.9 GiB"
+    assert 6.1 * 1024 ** 3 < estimate < 6.25 * 1024 ** 3, (
+        "whole load condition seam: the estimate for the recorded clip is no longer 6.2 GiB"
     )
     assert ("minimum_memory_required=model.model.memory_required([noise_shape[0]]+"
             "list(noise_shape[1:]),cond_shapes=cond_shapes_min)") in squeezed(

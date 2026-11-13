@@ -133,8 +133,8 @@ LIGHT_SHARE_BYTES: dict[str, int] = {INT8_QUANTIZED: 4 * MIB, PLAIN_FP8: 0}
 # reserve, A its estimate for the latent). A whole load therefore starts with R free. On
 # the shipped INT8 Wan-Animate 2 stack at R = 8 GiB ComfyUI placed the model whole from a
 # reading of 45.1 and the load took 39.4, so it ended with R less 2.3: 5.7, above the floor
-# by 0.7. The 2.3 is about 1.5 that the load holds beside the model, its backup and the
-# sampler's memory, and about 0.8 by which the sampler's 6.7 passed ComfyUI's estimate (5.9) for
+# by 0.7. The 2.3 is about 1.8 that the load holds beside the model, its backup and the
+# sampler's memory, and about 0.5 by which the sampler's 6.7 passed ComfyUI's estimate (6.2) for
 # that clip. Of those only the backup follows the stack, and it cannot pass the model, which
 # the condition counts (that stack patches its whole model): so the exception holds for any
 # stack on that model. The other two are one reading each, on that model: every other INT8

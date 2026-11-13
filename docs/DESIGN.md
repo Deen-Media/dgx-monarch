@@ -2476,9 +2476,9 @@ covers the whole load by itself. Three rules follow.
     ConvRot file at the default reserve of 8 GiB, ComfyUI placed the shipped
     template whole only from a reading of 45.1, the load took 39.4, and so
     it ended with the reserve less 2.3 GiB: 5.7, above the floor by 0.7.
-    (The 2.3 is about 1.5 that the load holds beside the model, its backup
-    and the sampler's memory, and about 0.8 by which the sampler's 6.7 GiB
-    passed ComfyUI's estimate of 5.9 for that clip.) So for that model, at
+    (The 2.3 is about 1.8 that the load holds beside the model, its backup
+    and the sampler's memory, and about 0.5 by which the sampler's 6.7 GiB
+    passed ComfyUI's estimate of 6.2 for that clip.) So for that model, at
     a Worker reserve of 8 GiB or more, the share is not charged
     (`reserve_keeps_floor`): the price is 39.6 after the file and 40.3
     before it, and on one GPU every reading from there up renders, by the
@@ -2508,8 +2508,8 @@ covers the whole load by itself. Three rules follow.
       states; the price reads that state with the reserve
       (`in_place_fallback.worker_reserve`).
     - **A longer clip is not on record.** The sampler's use over ComfyUI's
-      estimate was read at one clip (0.8 GiB). If it grows with the latent, a clip
-      about twice as long could bring the lowest whole load under
+      estimate was read at one clip (0.5 GiB). If it grows with the latent, a clip
+      about three times as long could bring the lowest whole load under
       the floor at the default reserve. The last hardware block reads that
       whole load three times and once at a longer clip; a low under 5.0
       GiB in any of them removes the exception before the release.
