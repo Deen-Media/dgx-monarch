@@ -1066,7 +1066,14 @@ cond and uncond in one call),
 alone before the first forward: the backup and the patches go, on every clone
 between the store's patcher and the sampler's, no weight moves, the slot is
 marked baked, and one line says so. With more room than that the backup stays
-and a stack change swaps in place as before. It moves no price, and the
+and a stack change swaps in place as before, and nothing is logged. Every
+format holds that backup under the classic bake, the cast-time math included
+(`actor/lora_cast_time.py` records each patched key's original weight as
+stock's method does), so a silent step means room at or above the ask, not a
+missing backup: on 2026-11-13 an LTX 2.3 scaled FP8 render with a 7.08 GiB
+stack had about 5.5 GiB of room, against an ask that ComfyUI's factor for that
+model (0.077) puts well under 1 GiB, and sampled with the box at 10.51 GiB.
+It moves no price, and the
 weights the sampler reads are the ones the classic bake left. What can differ
 is ComfyUI's own choice, made from free memory at every step, to batch cond
 with uncond: on a graph with two conds on one model (a cfg other than 1, one
