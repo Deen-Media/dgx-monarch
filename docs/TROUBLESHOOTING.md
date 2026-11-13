@@ -2107,8 +2107,12 @@ Since 1.5.0 the driver's count refuses before the check runs, the automatic
 check and the Identity Gate node's alike. The Worker
 guard stays as the backstop where the driver cannot count: under MiniMax H3
 Context Windows (each window packs its own total, with the guides stock crops
-to it), and for a conditioning or latent it cannot read; the Recycle advice
-above applies there.
+to it), for a conditioning or latent it cannot read, and for a conditioning
+entry ComfyUI may skip at some steps or call on part of the latent: a step
+window (Conditioning Set Timestep Range, or a hook's schedule), a default
+entry, an area, or a mask set to its bounds. Such an entry may never run on a
+render that samples part of a schedule, so its pad rows are the Worker's to
+refuse if it does. The Recycle advice above applies there.
 
 Where `auto` puts H3 on ring: at world 2 never, so only an explicit ring
 preset on an odd total reaches this there. At world 4 with batch 1, since

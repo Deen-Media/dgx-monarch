@@ -400,6 +400,67 @@ def test_unread_conditioning_leaves_the_check_to_the_worker(h3_checkpoint):
                           topology_from_preset("ring4", 4), 4, 1.0)
 
 
+# What ComfyUI may skip at some steps, or call on part of the latent: calc_cond_batch
+# skips an entry outside its step window, runs a default entry only where the others
+# leave room, and narrows the latent to an area or a mask's bounds.
+_NOT_EVERY_STEP = [
+    pytest.param({"start_percent": 0.0, "end_percent": 0.5}, id="timestep range"),
+    pytest.param({"start_percent": 0.4, "end_percent": 1.0}, id="late start"),
+    pytest.param({"clip_start_percent": 0.0, "clip_end_percent": 0.3}, id="clip hook schedule"),
+    pytest.param({"timestep_start": 0.9}, id="converted sigma"),
+    pytest.param({"default": True}, id="default entry"),
+    pytest.param({"area": (32, 32, 0, 0)}, id="area"),
+    pytest.param({"mask": torch.ones(1, 8, 8), "set_area_to_bounds": True}, id="mask to bounds"),
+    pytest.param({"start_percent": "half"}, id="unreadable window"),
+]
+
+
+@pytest.mark.parametrize("limit", _NOT_EVERY_STEP)
+def test_a_padded_entry_comfy_may_skip_beside_one_that_divides_does_not_refuse(h3_checkpoint, limit):
+    """The bot review's case: the limited entry may never be called, so its pad rows
+    are not the driver's to refuse; the Worker's guard refuses it if it runs."""
+    request = {"kind": "ksampler", "cfg": 1.0,
+               "positive": [_entry(_text_for(0, 4)), _entry(_text_for(1, 4), **limit)]}
+    h3_ring_pad.preflight(_model(4, "ring4"), request, _latent(),
+                          topology_from_preset("ring4", 4), 4, 1.0)
+
+
+@pytest.mark.parametrize("limit", _NOT_EVERY_STEP)
+def test_a_limited_entry_alone_leaves_the_render_to_the_worker(h3_checkpoint, limit):
+    request = {"kind": "ksampler", "cfg": 1.0, "positive": [_entry(_text_for(1, 4), **limit)]}
+    assert h3_ring_pad.model_calls(request, _latent(), 1.0) == []
+    h3_ring_pad.preflight(_model(4, "ring4"), request, _latent(),
+                          topology_from_preset("ring4", 4), 4, 1.0)
+
+
+@pytest.mark.parametrize("whole", [
+    pytest.param({}, id="no window"),
+    pytest.param({"start_percent": 0.0, "end_percent": 1.0}, id="the whole schedule"),
+    pytest.param({"clip_start_percent": 0.0, "clip_end_percent": 1.0, "start_percent": -0.1},
+                 id="whole hook schedule"),
+    pytest.param({"mask": torch.ones(1, 8, 8), "strength": 0.5, "hooks": object(), "control": object()},
+                 id="mask strength hooks control"),
+])
+def test_an_unlimited_padded_entry_still_refuses(h3_checkpoint, whole):
+    """A window over the whole schedule runs at every step, and a mask alone, strength,
+    hooks and control leave the packed total as it is."""
+    request = {"kind": "ksampler", "cfg": 1.0,
+               "positive": [_entry(_text_for(0, 4), start_percent=0.5), _entry(_text_for(1, 4), **whole)]}
+    with pytest.raises(UnsupportedModelError) as exc_info:
+        h3_ring_pad.preflight(_model(4, "ring4"), request, _latent(),
+                              topology_from_preset("ring4", 4), 4, 1.0)
+    assert _refusal(exc_info).refusal_class is RefusalClass.KNOWN_WRONG
+    assert "needs 3 divisibility pad row(s) to split 4 ways" in str(exc_info.value)
+
+
+def test_a_limited_negative_is_left_out_as_a_positive_is(h3_checkpoint):
+    request = {"kind": "ksampler", "cfg": 4.0, "positive": [_entry(_text_for(0, 4))],
+               "negative": [_entry(_text_for(1, 4), end_percent=0.2)]}
+    assert [side for side, _entry_ in h3_ring_pad.model_calls(request, _latent(), 4.0)] == ["positive"]
+    h3_ring_pad.preflight(_model(4, "ring4"), request, _latent(),
+                          topology_from_preset("ring4", 4), 4, 4.0)
+
+
 def test_other_families_are_not_read(monkeypatch):
     monkeypatch.setattr(h3_ring_pad, "_family_and_path", lambda _model: None)
     h3_ring_pad.preflight(_model(4, "ring4"), _request(_text_for(1, 4)), _latent(),

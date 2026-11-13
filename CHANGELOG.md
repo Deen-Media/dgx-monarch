@@ -601,8 +601,10 @@
   That holds on a pair as well: an explicit `ring2` on a padded H3 or
   MiniMax-H3-Image sequence now refuses on the driver at the sampler, before
   the gate, where it used to refuse inside the first model call or the gate's
-  proof render. Under MiniMax H3 Context Windows
-  the Workers' guard still decides. Wan SCAIL's ring layouts above world 2,
+  proof render. Under MiniMax H3 Context Windows, and for a conditioning
+  entry ComfyUI may skip at some steps or call on part of the latent (a step
+  window, a default entry, an area, or a mask set to its bounds), the Workers'
+  guard still decides. Wan SCAIL's ring layouts above world 2,
   which its adapter refuses whatever the sequence, now refuse on the driver at
   the same point, naming `uly4` at four Sparks, where `auto`'s fold used to
   reach the refusal after setup and the load. DESIGN section 5.9 now says

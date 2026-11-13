@@ -19,8 +19,10 @@ It only refuses. The auto decision never reads the conditioning, because
 several sites resolve a render's topology and must agree (nodes/common.py
 ``resolve_topology``). Whatever it cannot read goes on to the Worker's guard:
 MiniMax H3 Context Windows, whose windows each pack their own length with the
-guides stock crops to them; an unreadable conditioning entry; an unreadable
-latent; a checkpoint whose family it cannot name.
+guides stock crops to them; an unreadable conditioning entry; an entry ComfyUI
+may skip at some steps or call on part of the latent (a step window, a default
+entry, an area, or a mask set to its bounds); an unreadable latent; a
+checkpoint whose family it cannot name.
 
 The same two sites also refuse at once the one ring layout an adapter refuses
 whatever the sequence: Wan SCAIL's ring attention above a sequence-parallel
@@ -112,18 +114,59 @@ def _uncond_runs(source: Mapping[str, Any], cfg_value: Any, latent: Mapping[str,
         return False
 
 
+# A step window on an entry, as ComfyUI keys it: Conditioning Set Timestep
+# Range sets ``start_percent`` and ``end_percent``, a CLIP hook schedule the
+# ``clip_`` pair (comfy/sd.py). Only a start at or under 0 and an end at or
+# over 1 mean the whole schedule (``percent_to_sigma`` reads them as its ends).
+_WINDOW_STARTS = ("start_percent", "clip_start_percent")
+_WINDOW_ENDS = ("end_percent", "clip_end_percent")
+# The sigmas ComfyUI converts a window into at sampling, on a copy; present on
+# an entry here only if something else set them, and no value is read as whole.
+_WINDOW_SIGMAS = ("timestep_start", "timestep_end")
+
+
+def _called_whole(entry: Any) -> bool:
+    """Whether ComfyUI calls the model on this entry at every step, on the whole latent.
+
+    ``calc_cond_batch`` (comfy/samplers.py) skips an entry outside its step
+    window, so a window short of the whole schedule may never run on a render
+    that samples part of a schedule, or on custom sigmas. A ``default`` entry
+    runs only where the others leave the latent uncovered, and an ``area``, or a
+    mask set to its bounds, narrows the latent the call packs. The count cannot
+    say whether such an entry runs, or what it packs, so it leaves it to the
+    Worker's guard, as every other doubt here. A mask alone, ``strength``,
+    ``hooks`` and ``control`` change neither.
+    """
+    extra = entry[1] if isinstance(entry, (list, tuple)) and len(entry) > 1 else None
+    if not isinstance(extra, Mapping):
+        return True  # exact_call_total reads it as unreadable and counts nothing
+    if "default" in extra or "area" in extra or any(key in extra for key in _WINDOW_SIGMAS):
+        return False
+    if extra.get("set_area_to_bounds") and "mask" in extra:
+        return False
+    try:
+        starts = [float(extra[key]) for key in _WINDOW_STARTS if key in extra]
+        ends = [float(extra[key]) for key in _WINDOW_ENDS if key in extra]
+    except (TypeError, ValueError):
+        return False
+    return all(value <= 0.0 for value in starts) and all(value >= 1.0 for value in ends)
+
+
 def model_calls(request: Mapping[str, Any], latent: Mapping[str, Any],
                 cfg_value: Any) -> list[tuple[str, Any]]:
-    """Each conditioning entry that becomes a model call, with its side.
+    """Each conditioning entry that becomes a model call at every step, with its side.
 
     KSampler requests carry the pair; Sampler Custom carries it in the guider.
+    An entry ComfyUI may skip at some steps, or call on part of the latent, is
+    left out (``_called_whole``): one that pads beside entries that divide
+    would refuse a render the Worker's guard runs.
     """
     guider = request.get("guider")
     source = guider if isinstance(guider, Mapping) else request
     calls = [("positive", entry) for entry in _entries(source.get("positive"))]
     if _uncond_runs(source, cfg_value, latent):
         calls += [("negative", entry) for entry in _entries(source.get("negative"))]
-    return calls
+    return [(side, entry) for side, entry in calls if _called_whole(entry)]
 
 
 def fitting_presets(world: int, heads: int = H3_HEADS) -> list[str]:

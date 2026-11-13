@@ -642,7 +642,11 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   Where H3 or MiniMax-H3-Image still lands on ring (a typed ring preset, an
   odd world, worlds 6 and 8), the driver counts each model call's packed
   total before the first-use check, setup and the load, and refuses a padded
-  one with the Worker's own card (`nodes/h3_ring_pad.py`). The auto decision
+  one with the Worker's own card (`nodes/h3_ring_pad.py`). It leaves to the
+  Workers' guard what it cannot count: MiniMax H3 Context Windows, an entry it
+  cannot read, and an entry ComfyUI may skip at some steps or call on part of
+  the latent (a step window, a default entry, an area, or a mask set to its
+  bounds). The auto decision
   itself never reads the conditioning, because several sites resolve a
   render's topology and must agree. The same check refuses at once Wan
   SCAIL's ring layouts above a sequence-parallel world of two, which its
