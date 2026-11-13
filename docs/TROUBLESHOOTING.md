@@ -2269,7 +2269,7 @@ admitted DiT load; see [VALIDATION.md](VALIDATION.md).
 | Window | Charge and remedy |
 |---|---|
 | `load` | Stock placement peaks near 2.1x checkpoint size. An explicit preset loads at the loader node, before the driver stack exists, unless the first render runs the identity gate, whose first proof render then loads it (a graph with a BasicScheduler (DGX Monarch) still loads at the loader). Under `auto` the load waits for the first render, when the driver already holds every model the graph loads, so this window charges those models too. Slab avoids the host copy and may offer rescue. |
-| `resident` | Weights plus the graph's future text encoder, VAEs, reference/guide encodes, and declared render activations. If this does not fit, use smaller artifacts or inputs; changing residency cannot remove the stack. |
+| `resident` | Weights plus the graph's future text encoder, VAEs, reference/guide encodes, and declared render activations. A guide encode and the activations count as the larger of the two where the graph shows every guide encodes before every sampler ([#82](#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)). If this does not fit, use smaller artifacts or inputs; changing residency cannot remove the stack. |
 
 Rescue is offered only if slab fits both windows
 ([#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)). With
@@ -4641,6 +4641,17 @@ hardware, which entry 83 covers.
 
 `DGXM_DISABLE_DRIVER_PREFLIGHT=1` also clears the refusal, but it turns off the
 weight, text encoder, VAE, reference and activation charges with it.
+
+**The guide and the render activations.** Add Guide's encode ends before the
+sampler it feeds starts, and ComfyUI with DynamicVRAM, its default, returns a
+node's memory when the node finishes. So where the graph shows that every guide
+encodes before every sampler, the check charges the larger of the guide encode
+and the render activations, not both, and the refusal's budget says which it
+charged. It charges both, and says why, when ComfyUI runs without DynamicVRAM
+(`--disable-dynamic-vram`, `--highvram`, `--gpu-only`, `--novram` or `--cpu`),
+when a node that uses a model runs before a guide (a second pass, or a guide
+image decoded from a render), when a sampler can run before a guide, and with
+the pipeline or fleet sampler.
 
 ## 83. A multi-frame guide clip at 1344x768 takes the whole host down
 

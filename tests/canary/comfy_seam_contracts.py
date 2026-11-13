@@ -216,6 +216,10 @@ before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
                               the reserve free beyond the model and the latent's
                               estimate, which the INT8 classic bake's price
                               leans on, and the reserve the price reads back
+ 62. per-node pool reset       the executor emptying the device pool after every
+                              node under DynamicVRAM, which lets the loader charge
+                              a guide encode and the render activations as
+                              alternatives
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -7079,6 +7083,73 @@ def _assert_whole_load_condition_seam() -> None:
         mm.EXTRA_RESERVED_VRAM, mm.vram_state = saved
 
 
+def _assert_per_node_pool_reset_seam() -> None:
+    """ComfyUI with DynamicVRAM returns its device pool after every node (issue #187).
+
+    The loader charges a guide encode and the render activations as
+    alternatives only where ComfyUI gives the encode's memory back before any
+    sampler runs (``nodes/loader_graph.guide_order``). That rests on what
+    comfy does: the executor's ``finally`` around each node's
+    ``get_output_data`` calls ``comfy.model_management.reset_cast_buffers()``
+    when ``comfy.memory_management.aimdo_enabled``; ``reset_cast_buffers``
+    ends in ``soft_empty_cache()``; and ``soft_empty_cache`` empties torch's
+    CUDA cache. If any of these goes, the alternative charge would leave the
+    encode's memory unpriced while the Workers sample.
+    """
+    import ast
+    import textwrap
+
+    import comfy.memory_management
+    import comfy.model_management as mm
+
+    from dgx_monarch.nodes import loader_graph
+
+    assert isinstance(getattr(comfy.memory_management, "aimdo_enabled", None), bool), (
+        "per-node pool reset seam: comfy.memory_management.aimdo_enabled is gone, so "
+        "loader_graph.comfy_returns_pool_after_each_node can no longer read DynamicVRAM")
+    saved = comfy.memory_management.aimdo_enabled
+    try:
+        for flag in (True, False):
+            comfy.memory_management.aimdo_enabled = flag
+            assert loader_graph.comfy_returns_pool_after_each_node() is flag, (
+                f"per-node pool reset seam: with aimdo_enabled={flag} the pack reads "
+                f"{not flag}")
+    finally:
+        comfy.memory_management.aimdo_enabled = saved
+
+    soft = "".join(inspect.getsource(inspect.unwrap(mm.soft_empty_cache)).split())
+    assert "torch.cuda.empty_cache()" in soft, (
+        "per-node pool reset seam: soft_empty_cache no longer empties torch's CUDA cache")
+    reset = ast.parse(textwrap.dedent(inspect.getsource(inspect.unwrap(mm.reset_cast_buffers))))
+    function = reset.body[0]
+    assert isinstance(function, ast.FunctionDef), (
+        "per-node pool reset seam: reset_cast_buffers is no longer a plain function")
+    last = function.body[-1]
+    assert (isinstance(last, ast.Expr) and isinstance(last.value, ast.Call)
+            and ast.unparse(last.value.func) == "soft_empty_cache"), (
+        "per-node pool reset seam: reset_cast_buffers no longer ends in soft_empty_cache()")
+
+    executor = Path(mm.__file__).resolve().parents[1] / "execution.py"
+    tree = ast.parse(executor.read_text(encoding="utf-8"))
+    found = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        runs_node = any(isinstance(call, ast.Call) and ast.unparse(call.func) == "get_output_data"
+                        for stmt in node.body for call in ast.walk(stmt))
+        for stmt in node.finalbody:
+            if (runs_node and isinstance(stmt, ast.If)
+                    and ast.unparse(stmt.test) == "comfy.memory_management.aimdo_enabled"
+                    and any(isinstance(call, ast.Call) and ast.unparse(call.func)
+                            == "comfy.model_management.reset_cast_buffers"
+                            for inner in stmt.body for call in ast.walk(inner))):
+                found = True
+    assert found, (
+        "per-node pool reset seam: execution.py no longer calls "
+        "comfy.model_management.reset_cast_buffers() in the finally around a node's "
+        "get_output_data when comfy.memory_management.aimdo_enabled")
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -7141,6 +7212,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("minimax h3 image row calls", _assert_minimax_h3_image_row_calls_seam),
     ("copy-free drop", _assert_copy_free_drop_seam),
     ("whole load condition", _assert_whole_load_condition_seam),
+    ("per-node pool reset", _assert_per_node_pool_reset_seam),
 )
 
 

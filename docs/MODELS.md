@@ -2093,7 +2093,9 @@ verify the backend reported in the worker log.
 
 Use the pruned Ref2VA artifacts when full BF16 plus the driver encoders does
 not fit. Declare still-versus-clip guide shape correctly and respect guide
-preflight: clip encoding has a separate large memory peak. Unlisted/chained
+preflight: clip encoding has a separate large memory peak. The loader charges
+that peak or the render's activations, whichever is larger, where the guide
+encodes before every sampler ([TROUBLESHOOTING #82](TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)). Unlisted/chained
 guides, large clips and guide decode quality have no passing reference comparison. Fun ControlNet
 takes a stock MODEL and cannot be wired into this distributed graph.
 

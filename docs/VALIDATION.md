@@ -4018,6 +4018,19 @@ guide as a clip and refuses that high-resolution case. Declaring a still
 through `DGXM_H3_GUIDE_FRAMES` was exercised through the driver API.
 The estimator cannot promise capacity for unmeasured longer clips or canvases.
 
+The probe called the VAE outside ComfyUI's executor, where nothing returns an
+encode's memory. Through the driver none is held into the render. On
+2026-10-29 the shipped H3 guide graph (one still into Add Guide at frame 10,
+1344x768, 29 frames, 4 steps, the pruned INT8 DiT) ran once with a local actor
+and once on uly2, DynamicVRAM on. The head's 5 Hz recorder read 93.1 to 93.8
+GiB through the text and guide encodes and 92.1 to 93.0 GiB until the deferred
+DiT load began: what the model loads alone left, so no encode memory was held
+into the load or into sampling. The still's encode did not show at 5 Hz at
+all, so that recorder cannot read the encode's peak, and these runs do not
+re-read the guide charges. The loader's charge of a guide encode and the render
+activations as alternatives rests on this run and on ComfyUI's per-node pool
+reset (issue #187).
+
 ### The 15 second render, measured (2026-10-29)
 
 The pair rendered 1344x768x362 on uly2 at 20 steps with the pruned INT8

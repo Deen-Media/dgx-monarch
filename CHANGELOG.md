@@ -4,6 +4,21 @@
 
 ### Everyday use
 
+- A MiniMax H3 graph with Add Guide no longer pays at the loader for its guide
+  encode and its render activations at once, where the graph shows the guide
+  encodes before every sampler. ComfyUI with DynamicVRAM, its default, returns
+  a node's memory when the node finishes, so the encode's memory is back before
+  the Workers sample, and the loader's resident window now charges the larger
+  of the two. On 2026-10-29 the shipped guide template, run through the driver,
+  held no encode memory into the model load or into sampling. Both are still
+  charged, and the refusal says why, where ComfyUI runs without DynamicVRAM,
+  where a node that uses a model runs before a guide (a second pass, or a guide
+  image decoded from a render), where a sampler can run before a guide, and
+  with the pipeline or fleet sampler. The graph of issue #187 (896x1152, 362
+  frames, one reference image and a still guide on a pair) fits on this
+  release either way: its activations are priced at 25.0 GiB here, where 1.3.0
+  charged 59.9. Not yet run on hardware
+  ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
 - Changing model in one session no longer meets the Old model in the way card
   when the box has room. A Worker drops the model in a slot before it loads
   another into it, and the driver's own checks did not count that: flux1-dev
