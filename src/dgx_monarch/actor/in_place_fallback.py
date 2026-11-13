@@ -88,16 +88,18 @@ def worker_reserve() -> int | None:
     ``load_models_gpu`` adds, so it is what the load will meet whatever set
     it (the unified-memory default, Init's ``reserve_vram_gb``,
     ``[worker_args]``). ``None`` too where this ComfyUI does not budget its
-    loads at all: ``load_models_gpu`` weighs the free reading only when
-    ``lowvram_available`` and the state is NORMAL or LOW, and in any other
-    state every load goes whole at any reading. Never imports ComfyUI: a
+    loads at all: ``load_models_gpu`` weighs the free reading only when the
+    state is NORMAL or LOW (and, on a ComfyUI that still has the flag,
+    ``lowvram_available``; ComfyUI c5751c8 removed it with DirectML), and
+    in any other state every load goes whole at any reading. Never imports ComfyUI: a
     process without it is told nothing. On ``None`` the classic price
     charges as if no reserve kept the floor
     (``capacity_classic_bake.reserve_keeps_floor``).
     """
     try:
         mm = sys.modules["comfy.model_management"]
-        budgeted = bool(mm.lowvram_available) and mm.vram_state in (mm.VRAMState.NORMAL_VRAM, mm.VRAMState.LOW_VRAM)
+        budgeted = (bool(getattr(mm, "lowvram_available", True))
+                    and mm.vram_state in (mm.VRAMState.NORMAL_VRAM, mm.VRAMState.LOW_VRAM))
         return int(mm.extra_reserved_memory()) if budgeted else None
     except Exception:
         return None

@@ -516,6 +516,13 @@ def test_the_workers_reserve_is_comfyuis_own_figure_and_nothing_when_comfyui_is_
     assert fallback.worker_reserve() == 3 * GIB
     monkeypatch.setitem(sys.modules, "comfy.model_management", _comfy_mm(state="LOW_VRAM"))
     assert fallback.worker_reserve() == 3 * GIB
+    # ComfyUI c5751c8 (2026-11-11) removed ``lowvram_available`` with DirectML: the gate is then the state alone.
+    upstream = _comfy_mm(8 * GIB)
+    del upstream.lowvram_available
+    monkeypatch.setitem(sys.modules, "comfy.model_management", upstream)
+    assert fallback.worker_reserve() == 8 * GIB
+    upstream.vram_state = upstream.VRAMState.HIGH_VRAM
+    assert fallback.worker_reserve() is None
     monkeypatch.setitem(sys.modules, "comfy.model_management", types.SimpleNamespace())  # a renamed function
     assert fallback.worker_reserve() is None
     monkeypatch.delitem(sys.modules, "comfy.model_management")

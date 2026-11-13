@@ -6870,9 +6870,10 @@ def _assert_whole_load_condition_seam() -> None:
     with the reserve free and the pack's host floor is kept by it. The price
     leans on seven things comfy does, and one the pack does:
 
-    - a load is budgeted at all only when ``lowvram_available``, the
-      process's ``vram_state`` is NORMAL or LOW and no full load is forced
-      (the sampler forces none); in any other state every load goes whole;
+    - a load is budgeted at all only when the process's ``vram_state`` is
+      NORMAL or LOW and no full load is forced (the sampler forces none),
+      and ``lowvram_available`` where comfy still has that flag (c5751c8
+      removed it); in any other state every load goes whole;
     - the sampler's estimate for the recorded model (Wan-Animate 2: the
       latent's cells x 2 bytes x 0.01 x dim / 2222 MiB, no conds counted) is
       6.2 GiB for the recorded clip, the figure its whole load was read
@@ -6921,20 +6922,26 @@ def _assert_whole_load_condition_seam() -> None:
         "whole load condition seam: the budget a model is loaded with is no longer the free "
         "reading less the requirement; capacity_classic_bake.reserve_keeps_floor prices by it"
     )
-    assert ("iflowvram_availableand(vram_set_state==VRAMState.LOW_VRAMorvram_set_state=="
-            "VRAMState.NORMAL_VRAM)andnotforce_full_load:"
-            "loaded_memory=loaded_model.model_loaded_memory()") in load, (
+    # ComfyUI c5751c8 (2026-11-11, "Remove directml support") deleted ``lowvram_available``, the
+    # flag only DirectML cleared. The gate is the same test with or without it; the form must match
+    # whether the flag exists, so a flag that comes back without gating, or a new term, turns this red.
+    flagged = hasattr(mm, "lowvram_available")
+    gate = (("iflowvram_availableand" if flagged else "if")
+            + "(vram_set_state==VRAMState.LOW_VRAMorvram_set_state==VRAMState.NORMAL_VRAM)"
+            "andnotforce_full_load:loaded_memory=loaded_model.model_loaded_memory()")
+    assert gate in load, (
         "whole load condition seam: the gate on the budget test changed. It must budget a load "
-        "exactly when lowvram_available, the state is LOW or NORMAL and no full load is forced; in "
-        "any other state every load goes whole at any reading (in_place_fallback.worker_reserve "
-        "reads the same two names)"
+        "exactly when the state is LOW or NORMAL and no full load is forced (and, where comfy "
+        "still has the flag, lowvram_available); in any other state every load goes whole at any "
+        f"reading. Expected with lowvram_available {'present' if flagged else 'absent'}: "
+        "in_place_fallback.worker_reserve reads the same names"
     )
     assert ("ifis_device_cpu(torch_dev):vram_set_state=VRAMState.DISABLEDelse:"
             "vram_set_state=vram_state") in load, (
         "whole load condition seam: a GPU load no longer takes the process's vram_state, the "
         "state the pack's price reads"
     )
-    for name in ("lowvram_available", "vram_state", "VRAMState"):
+    for name in ("vram_state", "VRAMState"):
         assert hasattr(mm, name), f"whole load condition seam: comfy.model_management.{name} is gone"
     assert {"NORMAL_VRAM", "LOW_VRAM"} <= set(mm.VRAMState.__members__), (
         "whole load condition seam: VRAMState lost NORMAL_VRAM or LOW_VRAM"
