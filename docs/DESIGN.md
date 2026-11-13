@@ -2343,7 +2343,8 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
   `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for
   diagnosis. A class another pack registers over one of these names is not
   wrapped, and the first loader price in the process logs a WARNING naming it.
-- **Not priced.** VAEs, 6 GiB at most here, under the floor's margin; image
+- **Not priced.** VAE loader nodes, 6 GiB at most here, under the floor's
+  margin (Add Guide's charge above counts its VAE where it must); image
   references and frame anchors, which the loader charges 0 on every queue by an
   earlier ruling, so a re-queue is no worse than a first queue there (filed for
   a loader charge with its own measurement); LTX's guide and image-to-video

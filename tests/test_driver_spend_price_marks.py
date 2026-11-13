@@ -24,7 +24,7 @@ from dgx_monarch import (
     mesh_safety,
     vae_decode_relief,
 )
-from dgx_monarch.nodes import graph_load_price, loader_graph, loader_preflight
+from dgx_monarch.nodes import graph_load_price, guide_order, loader_graph, loader_preflight
 from test_guide_alternative_charge import _still_graph, pool_reset  # noqa: F401  (pool_reset: the fixture)
 from test_loader_site_preflight import (  # noqa: F401  (_rig is the autouse rig)
     REF2VA_INT8_PRUNED,
@@ -64,8 +64,9 @@ def test_a_still_guide_is_marked_at_the_room_its_encode_window_held(pool_reset, 
 
 
 def _dynamic_vram(monkeypatch, on: bool) -> int:
-    """Set DynamicVRAM on or off; return the clip margin the wrap adds there."""
+    """Set DynamicVRAM on or off for the wrap and the loader; return the clip margin the wrap adds there."""
     monkeypatch.setitem(sys.modules, "comfy.memory_management", SimpleNamespace(aimdo_enabled=on))
+    monkeypatch.setattr(guide_order, "comfy_returns_pool_after_each_node", lambda: on)  # pool_reset set it True
     return driver_spend_price.CLIP_MARGIN_BYTES if on else driver_spend_price.CLIP_MARGIN_STATIC_BYTES
 
 

@@ -78,7 +78,7 @@ _GIB = 2 ** 30
 # and took the box down 1.23 GiB against its 17.0 charge. Inside the loader's
 # charge for a clip, which adds H3's activations (an 11 GiB floor) to it.
 CLIP_MARGIN_BYTES = 1 * _GIB
-# Without DynamicVRAM, where nothing was read: the 2026-08-14 probe read clips 2.8 to 5.45 GiB over their charges.
+# Without DynamicVRAM, where no clip was read: the 2026-08-14 probe read clips 2.8 to 5.45 GiB over their charges.
 CLIP_MARGIN_STATIC_BYTES = 6 * _GIB
 
 # What this process did, for doctor and the tests.
