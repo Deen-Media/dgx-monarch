@@ -40,21 +40,31 @@ and ``tests/test_classic_bake_records.py`` holds each record against it:
 - **Scaled FP8** (an FP8 weight with its scale or ComfyUI's quant record):
   the line. It leaves 3.7 to 5.0 GiB above take plus floor on seven recorded
   loads over both stack sizes and both readings.
-- **INT8 ConvRot**: the fixed 2 GiB and 4 MiB a patched key
-  (``LIGHT_SHARE_BYTES``). Three records: with 1261 patched keys a load that
+- **INT8 ConvRot**: the fixed 2 GiB, and 4 MiB a patched key
+  (``LIGHT_SHARE_BYTES``) only where ComfyUI's own whole-load condition does
+  not already keep the floor. Three records: with 1261 patched keys a load
   ComfyUI placed partly, and the partial-load route then baked whole, took
-  1.0 GiB over the stock price; the same stack loaded WHOLE took 6.8 over,
-  because ComfyUI's classic bake keeps the host copy of every patched weight
-  as its backup (17.8 GiB of the Worker's memory against 1.5 after the bare
-  load) under the model's working memory on the GPU; with 208 patched keys a
-  whole load took 1.3 to 2.2 over. A share for each key is the one form both
-  stacks support: a share of the patched bytes that covers the first would
-  charge the second 5 GiB it does not take. It is a fit through the whole
-  load of the larger stack, with almost no spare there, and it must still
-  admit the same stack at the reading where the shipped template's own cell
-  ran (44.6 GiB, after its file was read): the two bounds are 0.2 GiB apart.
-  Read before the file, the same price is 0.7 GiB more, above the 44.8 and
-  45.0 at which two earlier runs of that stack were read: those are refused.
+  33.6 GiB, 1.0 over the stock price; the same stack loaded WHOLE took 39.4,
+  6.8 over (ComfyUI's backup of the 15.5 GiB the stack patches, the same
+  bytes on the device, 6.7 of sampler memory); with 208 patched keys a whole
+  load took 1.3 to 2.2 over. The fixed part covers the route's take. The
+  whole load's is covered another way. ComfyUI places a model whole only
+  when its free reading is at least the model, the Worker's reserve R and
+  its own estimate for the latent (``load_models_gpu``: model + R + max(0.8
+  GiB, A)); under that it places it partly, and on one GPU the route carries
+  it. So a whole load starts with R still free, and what it then takes
+  beyond ComfyUI's accounting comes out of R: 2.3 GiB on the one stack where
+  both sides were read (whole from a reading of 45.1 at R = 8, 39.4 taken:
+  the lowest whole-load low is 5.7). Where R is at least the floor and that
+  2.3 (``reserve_keeps_floor``), every whole load leaves the floor and the
+  share is not charged. A lower reserve (the Init widget ``reserve_vram_gb``
+  or ``[worker_args]``; the default is 8) lets ComfyUI place the model whole
+  at readings where it does not, so the share is charged and the price
+  itself covers the whole load: 4 MiB a key is a fit through that load, with
+  0.1 GiB to spare. The 2.3 is read on one stack, which patches its whole
+  model (the most a backup can hold) with 1254 keys at the share; a stack
+  with more such keys is past the record and always pays the share. A price
+  given no reserve pays it too.
 - **Plain FP8** (an FP8 weight with no marker): the fixed 2 GiB, no share.
   Two stacks on one model (720 and 240 patched keys) took 5.0 to 2.7 GiB
   LESS than that price allows.
@@ -116,15 +126,28 @@ PLAIN_FP8 = "plain_fp8"
 FULL_PRECISION = "full_precision"
 OTHER = "other"
 # The classes with a per-weight share of their own in place of the line's, in bytes a
-# patched key. INT8 ConvRot, 4 MiB: with 1261 patched keys a whole classic load took 6.8 GiB
-# over the stock price (39.4 against a promise of 32.6; block C, 2026-11-12), and the same
-# stack must still be admitted at a reading of 44.6, where the shipped Wan-Animate 2
-# template's own cell ran. Both were priced after the stack's file was read, so no file is
-# in either: 2 GiB, 4 MiB for each of 1254 keys and 7 large weights on the line come to 6.95,
-# between the two bounds of 6.83 and 7.03 (3.9 to 4.07 MiB a key). With 208 keys the term is
-# 2.84 against a take of 1.3 to 2.2. Plain FP8, nothing: two stacks (720 and 240 keys) took
-# less than the fixed part allows. A class a later measurement puts here is one entry.
+# patched key. INT8 ConvRot, 4 MiB, the share that makes the price cover a WHOLE classic
+# load: with 1261 patched keys one took 6.8 GiB over the stock price (39.4 against a promise
+# of 32.6; block C, 2026-11-12, priced after the stack's file was read). 2 GiB, 4 MiB for
+# each of 1254 keys and 7 large weights on the line come to 6.95, 0.1 over. It is charged
+# only where ``reserve_keeps_floor`` says ComfyUI's own condition does not keep the floor.
+# With 208 keys the term is then 2.84 against a take of 1.3 to 2.2. Plain FP8, nothing: two
+# stacks (720 and 240 keys) took less than the fixed part allows.
 LIGHT_SHARE_BYTES: dict[str, int] = {INT8_QUANTIZED: 4 * MIB, PLAIN_FP8: 0}
+# What a whole classic load takes beyond what ComfyUI's whole-load condition sets aside for
+# it (comfy/model_management.py ``load_models_gpu``: whole only when the free reading is at
+# least model + R + max(0.8 GiB, A), R the Worker's reserve, A its estimate for the latent).
+# A whole load therefore starts with R free and ends with R less this. Read on the shipped
+# INT8 Wan-Animate 2 stack at R = 8 GiB: whole from a reading of 45.1, 39.4 taken, so 2.3
+# (about 1.7 the load holds beside the model, its backup and the sampler's memory, and
+# about 0.5 by which the sampler's 6.7 passed ComfyUI's estimate at that clip). The backup
+# is the one part that follows the stack and it cannot pass the model, which the condition
+# already counts; that stack patches its whole model. No further gap is allowed for: at the
+# default reserve 0.7 GiB is left for a clip whose sampler passes the estimate by more.
+WHOLE_LOAD_BEYOND_COMFYUI_BYTES = int(2.3 * GIB)
+# The keys at a share on that stack (480 INT8 weights and 774 small keys). A stack with
+# more is past the one record the figure above is read from.
+RECORDED_WHOLE_LOAD_SHARE_KEYS = 1254
 # In a stack whose patched bytes are mostly weights of those classes, a patched key smaller
 # than this takes that class's share and not the line's. The records are of whole stacks, and
 # most of a stack's keys there are the biases and norm weights of the same blocks (774 of
@@ -199,7 +222,24 @@ def _light_lead(by_class: Mapping[str, list[int]]) -> str | None:
     return max(sorted(light), key=lambda kind: light[kind])
 
 
-def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True) -> int:
+def reserve_keeps_floor(reserve_bytes: int | None, share_keys: int) -> bool:
+    """Whether ComfyUI's whole-load condition already keeps the floor under a whole classic load.
+
+    ComfyUI places a model whole only with its reserve still free beyond the
+    model and the latent's estimate, and the whole load then takes
+    ``WHOLE_LOAD_BEYOND_COMFYUI_BYTES`` of that reserve. So the floor is kept
+    when the reserve is at least the floor and that figure. ``share_keys`` is
+    how many of the stack's keys sit at a ``LIGHT_SHARE_BYTES`` share: above
+    the recorded stack's count nothing is on record, and the answer is no.
+    ``None`` is a price that was not told the reserve: no.
+    """
+    if reserve_bytes is None or share_keys > RECORDED_WHOLE_LOAD_SHARE_KEYS:
+        return False
+    return int(reserve_bytes) >= ABSOLUTE_HOST_FLOOR_BYTES + WHOLE_LOAD_BEYOND_COMFYUI_BYTES
+
+
+def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True,
+                      reserve_bytes: int | None = None) -> int:
     """The classic bake's charge for patched weights given as (class, stored bytes).
 
     The fixed part, and a per-weight share for each key: its own class's
@@ -207,7 +247,9 @@ def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True)
     as a light class (``_light_lead``) a key of another class under
     ``SMALL_KEY_BYTES`` takes that class's share. Every other stack is
     counted whole at the line's share, its biases included, as the line was
-    fitted.
+    fitted. ``reserve_bytes`` is the Worker's ComfyUI reserve: where it keeps
+    the floor under a whole load (``reserve_keeps_floor``) the light classes'
+    shares are not charged.
 
     ``guard=False`` charges the line whatever ``GUARDED_BY_BYTES`` names. The
     partial-load route asks for that: its BF16 cell ran on hardware under the
@@ -221,14 +263,18 @@ def term_from_weights(weights: Iterable[tuple[str, int]], *, guard: bool = True)
     if not count:
         return 0
     lead = _light_lead(by_class)
-    shares = 0
+    shares = light = light_keys = 0
     for kind, sizes in by_class.items():
-        if kind in LIGHT_SHARE_BYTES:
-            shares += LIGHT_SHARE_BYTES[kind] * len(sizes)
+        share = LIGHT_SHARE_BYTES.get(kind)
+        if share is not None:
+            light, light_keys = light + share * len(sizes), light_keys + (len(sizes) if share else 0)
             continue
         small = sum(1 for size in sizes if size < SMALL_KEY_BYTES) if lead is not None else 0
-        shares += (LIGHT_SHARE_BYTES[lead] if lead is not None else 0) * small
+        share = LIGHT_SHARE_BYTES[lead] if lead is not None else 0
+        light, light_keys = light + share * small, light_keys + (small if share else 0)
         shares += CLASSIC_BAKE_BYTES_PER_WEIGHT * (len(sizes) - small)
+    if not reserve_keeps_floor(reserve_bytes, light_keys):
+        shares += light
     line = CLASSIC_BAKE_FIXED_BYTES + shares
     if not guard:
         return line
@@ -299,7 +345,7 @@ def stack_bytes(lora_stack: list | None, resolve_lora_path: Callable[[str], str]
 
 
 def charge_from_weights(weights: Iterable[tuple[str, int]], stack_files: int, *,
-                        stack_on_host: bool = False) -> int:
+                        stack_on_host: bool = False, reserve_bytes: int | None = None) -> int:
     """What a classic price adds for a stack: the term, and the stack's files unless they are already read.
 
     The Worker reads every LoRA file of the stack into host memory, one read
@@ -311,24 +357,27 @@ def charge_from_weights(weights: Iterable[tuple[str, int]], stack_files: int, *,
     swap read the stack and declined, and the fresh load that follows prices
     against a box those bytes have already left. Then nothing is charged for
     the files. ``tests/test_classic_bake_records.py`` holds both readings
-    against what each recorded load took.
+    against what each recorded load took. ``reserve_bytes`` is the Worker's
+    ComfyUI reserve (``term_from_weights``).
     """
-    return term_from_weights(weights) + (0 if stack_on_host else max(int(stack_files), 0))
+    return (term_from_weights(weights, reserve_bytes=reserve_bytes)
+            + (0 if stack_on_host else max(int(stack_files), 0)))
 
 
-def classic_charge(checkpoint_path: str, lora_stack: list | None,
-                   resolve_lora_path: Callable[[str], str], *, stack_on_host: bool = False) -> int:
+def classic_charge(checkpoint_path: str, lora_stack: list | None, resolve_lora_path: Callable[[str], str],
+                   *, stack_on_host: bool = False, reserve_bytes: int | None = None) -> int:
     """What the classic bake of ``lora_stack`` adds to this checkpoint's stock price (``charge_from_weights``).
 
     The one figure the quote, the Worker's two walls and the in-place choice
     read for a classic bake. Only the site that knows the stack was read
     before its reading passes ``stack_on_host``: the Worker, after a declined
-    hot swap. A quote never does.
+    hot swap. A quote never does. Every site passes the Worker's reserve.
     """
     if not lora_stack:
         return 0
     return charge_from_weights(_patched(checkpoint_path, lora_stack, resolve_lora_path),
-                               stack_bytes(lora_stack, resolve_lora_path), stack_on_host=stack_on_host)
+                               stack_bytes(lora_stack, resolve_lora_path), stack_on_host=stack_on_host,
+                               reserve_bytes=reserve_bytes)
 
 
 def in_place_bake_bytes(stack_files: int) -> int:
@@ -346,7 +395,7 @@ def _gib(value: int) -> float:
 
 def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora_path: Callable[[str], str],
            *, held_bytes: int = 0, in_place: str | bool = "", bare_load: bool = False, charged: int = 0,
-           stack_on_host: bool = False) -> Any:
+           stack_on_host: bool = False, reserve_bytes: int | None = None) -> Any:
     """``fit`` (a ``capacity_fit.StockFit``) with the classic bake charged, or re-priced as an in-place bake.
 
     Every site that prices one stack change calls this with the same
@@ -373,6 +422,12 @@ def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora
     ``stack_on_host`` says the reading was taken after the Worker had read
     the stack's files (``charge_from_weights``): the classic price then
     charges none of them. The in-place price charges them either way.
+
+    ``reserve_bytes`` is the Worker's ComfyUI reserve, the R of ComfyUI's
+    whole-load condition (``reserve_keeps_floor``). The quote, both walls
+    and ``take`` run in the Worker and pass the one it runs with
+    (``in_place_fallback.worker_reserve``). ``None`` charges as if no
+    reserve kept the floor.
     """
     if not lora_stack or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None:
         return fit
@@ -380,17 +435,17 @@ def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora
     fit = replace(fit, avail_bytes=read - spent)
     return replace(_chosen(fit, checkpoint_path, lora_stack, resolve_lora_path, max(int(held_bytes), 0),
                            in_place, bare_load, "was left beside this request's other model" if spent else "was read",
-                           bool(stack_on_host)),
+                           bool(stack_on_host), reserve_bytes),
                    avail_bytes=read)
 
 
 def _chosen(fit: Any, checkpoint_path: str, lora_stack: list, resolve_lora_path: Callable[[str], str],
             held: int, in_place: str | bool, bare_load: bool, reading_words: str,
-            stack_on_host: bool = False) -> Any:
+            stack_on_host: bool = False, reserve_bytes: int | None = None) -> Any:
     """``priced``'s choice between the two bakes, against ``fit.avail_bytes`` as given."""
     files = stack_bytes(lora_stack, resolve_lora_path)
     classic = replace(fit, bake_bytes=classic_charge(checkpoint_path, lora_stack, resolve_lora_path,
-                                                     stack_on_host=stack_on_host))
+                                                     stack_on_host=stack_on_host, reserve_bytes=reserve_bytes))
     classic = replace(classic, fits=classic.required_bytes <= classic.avail_bytes)
     if classic.required_bytes - held <= classic.avail_bytes or not in_place:
         return classic
@@ -410,6 +465,7 @@ def _chosen(fit: Any, checkpoint_path: str, lora_stack: list, resolve_lora_path:
 
 def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, held_bytes: int = 0,
           in_place: str | bool = "", bare_load: bool = False, charged: int = 0, stack_on_host: bool = False,
+          reserve_bytes: int | None = None,
           stock_load_fit: Callable[[str, dict], Any] | None = None) -> Callable[[str, dict], Any]:
     """A stock probe (``capacity_quote.price``'s ``fit_probe``) that charges this load's classic bake."""
     def fit_probe(path: str, model_options: dict) -> Any:
@@ -417,7 +473,7 @@ def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, h
 
         return priced((stock_load_fit or capacity_fit.stock_load_fit)(path, model_options), path, lora_stack,
                       resolve_lora_path, held_bytes=held_bytes, in_place=in_place, bare_load=bare_load,
-                      charged=charged, stack_on_host=stack_on_host)
+                      charged=charged, stack_on_host=stack_on_host, reserve_bytes=reserve_bytes)
 
     return fit_probe
 
@@ -425,6 +481,7 @@ def probe(lora_stack: list | None, resolve_lora_path: Callable[[str], str], *, h
 __all__ = ["CLASSIC_BAKE_BYTES_PER_WEIGHT", "CLASSIC_BAKE_FIXED_BYTES", "CLASSIC_BAKE_GUARD_RATIO",
            "FP8_QUANTIZED", "FULL_PRECISION", "GATE_HAS_NOT_PASSED", "GUARDED_BY_BYTES",
            "INT8_QUANTIZED", "IN_PLACE_BAKE_FIXED_BYTES", "IN_PLACE_BAKE_PROVEN", "LIGHT_SHARE_BYTES",
-           "MEASURED_LARGEST_WEIGHT_BYTES", "OTHER", "PLAIN_FP8", "SMALL_KEY_BYTES", "UNREADABLE_STACK_WEIGHTS",
-           "charge_from_weights", "classic_bake_bytes", "classic_charge", "in_place_bake_bytes", "patched_weights",
-           "priced", "probe", "stack_bytes", "term_from_weights", "weight_class"]
+           "MEASURED_LARGEST_WEIGHT_BYTES", "OTHER", "PLAIN_FP8", "RECORDED_WHOLE_LOAD_SHARE_KEYS", "SMALL_KEY_BYTES",
+           "UNREADABLE_STACK_WEIGHTS", "WHOLE_LOAD_BEYOND_COMFYUI_BYTES", "charge_from_weights",
+           "classic_bake_bytes", "classic_charge", "in_place_bake_bytes", "patched_weights", "priced", "probe",
+           "reserve_keeps_floor", "stack_bytes", "term_from_weights", "weight_class"]

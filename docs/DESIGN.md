@@ -2387,10 +2387,10 @@ is true for:
 
 | checkpoint, patched keys, how it loaded | the price is read | reading | low | took | the stock price promised | short by | now charged |
 |---|---|---:|---:|---:|---:|---:|---:|
-| Wan-Animate 2 INT8 ConvRot, 1261, loaded partly and baked whole by the partial-load route | after the file | 44.6 | 10.97 | 33.6 | 32.6 | 1.0 | 6.95 |
-| the same stack, loaded whole | after | 46.7 | 7.29 | 39.4 | 32.6 | 6.8 | 6.95 |
-| MiniMax H3 INT8 ConvRot, 208, whole | before the file | 50.9 | 7.73 | 43.2 | 41.0 | 2.2 | 4.7 |
-| the same, the base held | after | 51.5 | 9.25 | 42.3 | 41.0 | 1.3 | 2.8 |
+| Wan-Animate 2 INT8 ConvRot, 1261, loaded partly and baked whole by the partial-load route | after the file | 44.6 | 10.97 | 33.6 | 32.6 | 1.0 | 2.05 (6.95 with a reserve under 7.3) |
+| the same stack, loaded whole | after | 46.7 | 7.29 | 39.4 | 32.6 | 6.8 | 2.05 (6.95), see the INT8 rule below |
+| MiniMax H3 INT8 ConvRot, 208, whole | before the file | 50.9 | 7.73 | 43.2 | 41.0 | 2.2 | 3.9 (4.7) |
+| the same, the base held | after | 51.5 | 9.25 | 42.3 | 41.0 | 1.3 | 2.1 (2.8) |
 | Qwen Image plain FP8, 720, whole | before | 49.1 | 10.19 | 38.9 | 40.0 | none (1.1 to spare) | 2.8 |
 | the same model, a second stack of 240, partly and the route | after | 50.0 | 10.74 | 39.3 | 40.0 | none | 2.0 |
 | LTX 2.3 scaled FP8, 1660, whole, the base held | after the file | 75.9 | 20.32 | 55.6 | 45.9 | 9.7 | 14.2 |
@@ -2423,7 +2423,13 @@ both readings, and came up short on three: the whole INT8 load by 4.1 GiB,
 and the two LTX loads into an empty Worker by 2.4 and 4.7. A test holds
 every row against the price (`tests/test_classic_bake_records.py`): it must
 admit each reading on record and cover what the load took plus the floor,
-and each earlier version fails it by name. Three rules follow.
+and each earlier version fails it by name. One row does not assert that
+cover, and says why: the whole INT8 load takes about 4 GiB more than its
+price promises at the default reserve and still leaves the floor, because
+ComfyUI places that model whole only from a reading of 45.1, where 39.4
+taken leaves 5.7, and places it partly under that, where the low-RSS route
+carries it. The row asserts that, and that with a reserve too low for it
+the price covers the whole load by itself. Three rules follow.
 
 - **The term** (`capacity_classic_bake.py`). The line through the two LTX
   rows of the first table is 2 GiB plus 7.5 MiB a patched weight (5.52 and
@@ -2444,26 +2450,53 @@ and each earlier version fails it by name. Three rules follow.
     give one verdict.
   - **Scaled FP8** (an FP8 weight with its scale or ComfyUI's quant record
     beside it): the line. It leaves 3.7 to 5.0 GiB above take plus floor on
-    the four LTX rows and on three more runs of them.
-  - **INT8 ConvRot**: the fixed 2 GiB and 4 MiB a patched key. Loaded
-    whole, ComfyUI's classic bake keeps the host copy of every patched
-    weight as its backup (17.8 GiB of the Worker's memory against 1.5 after
-    the bare load) under the model's working memory on the GPU, and the
-    larger stack took 6.8 GiB over the stock price; placed partly and baked
-    by the partial-load route, which frees that backup, 1.0. The wall cannot
-    know which it will be, so it charges the whole load. A share for each
-    patched key is the one form both INT8 stacks support (a share of the
-    patched bytes that covers the larger would charge the smaller 5 GiB it
-    does not take). It is a fit and not a mechanism, and a tight one: the
-    price must cover the whole load (44.4 GiB) and still admit the same
-    stack at 44.6, where the shipped template's own cell ran; both readings
-    were taken after the file was read. It is 44.52. Read before the file
-    the same price is 45.2, which refuses two earlier runs of that stack at
-    44.8 and 45.0: there ComfyUI placed the load partly and the route baked
-    it for 33.1 GiB, and a price that covers the whole load cannot admit
-    them.
+    the four LTX rows and on three more runs of them, whole loads all, so
+    this price too covers the whole load by itself at any reserve.
+  - **INT8 ConvRot**: the fixed 2 GiB, and 4 MiB a patched key only where
+    ComfyUI's own whole-load condition does not already keep the floor.
+    Loaded whole, ComfyUI's classic bake keeps the host copy of every
+    patched weight as its backup (17.8 GiB of the Worker's memory against
+    1.5 after the bare load) beside the same bytes on the GPU and the
+    sampler's working memory, and the larger stack took 39.4 GiB, 6.8 over
+    the stock price; placed partly and baked by the partial-load route,
+    which frees that backup, 33.6. The fixed part covers the route's take.
+    The whole load is kept above the floor by ComfyUI itself: it places a
+    model whole only when its free reading is at least the model, the
+    Worker's reserve and its own estimate for the latent
+    (`load_models_gpu`: model + reserve + max(0.8 GiB, estimate)), and
+    under that it places the model partly, which on one GPU the route
+    carries. A whole load therefore starts with the reserve still free, and
+    what it then takes beyond ComfyUI's accounting comes out of the
+    reserve: 2.3 GiB on this stack (about 1.7 that the load holds beside
+    the model, its backup and the sampler's memory, and about 0.5 by which
+    the sampler's 6.7 GiB passed ComfyUI's estimate for that clip). At the
+    default reserve of 8 GiB ComfyUI placed the shipped template whole only
+    from a reading of 45.1, so the lowest whole load leaves 5.7. The rule
+    (`reserve_keeps_floor`): where the reserve is at least the 5 GiB floor
+    and that 2.3, the share is not charged, the price is 39.6 after the
+    file and 40.3 before it, and every reading from there up renders, by
+    the route under 45.1 and whole above it. **A lowered reserve changes
+    that.** The reserve is the Init node's `reserve_vram_gb` widget (or
+    `[worker_args]` in `cluster.toml`; 0 keeps the default 8). Under 7.3
+    GiB ComfyUI places the model whole at readings where a whole load does
+    not leave the floor (at a reserve of 3, from about 40.1, where it would
+    leave under 1 GiB), so the price then carries the share and covers the
+    whole load itself: 44.5 after the file, 45.2 before it, and a load
+    under that is refused with the usual sentence, where the default
+    reserve would have rendered it. The share is a fit through that one
+    whole load (0.1 GiB to spare), not a mechanism. Three limits, recorded:
+    the 2.3 is read on one stack at one clip, and the default leaves 0.7
+    GiB for a clip whose sampler passes ComfyUI's estimate by more; the
+    stack that gave it patches its whole model, the most a backup can hold,
+    with 1254 keys at the share, and a stack with more such keys always
+    pays the share; and the rule leans on ComfyUI's code, which is not
+    pinned, so a canary seam (`whole load condition`,
+    `tests/canary/comfy_seam_contracts.py`) turns the daily lane red if
+    that condition changes upstream.
   - **Plain FP8** (an FP8 weight with no marker): the fixed 2 GiB, no share.
-    Two stacks on one model took 2.7 to 5.0 GiB less than that allows.
+    Two stacks on one model took 2.7 to 5.0 GiB less than that allows. Its
+    price covers its recorded whole load by itself, so it does not lean on
+    ComfyUI's whole-load condition and the reserve does not change it.
   - **Small keys beside such weights.** In a stack whose patched bytes are
     mostly INT8 ConvRot or plain FP8 weights, a patched key under 1 MiB (a
     bias, a norm weight) takes that format's share and not the line's, and a
@@ -2486,8 +2519,14 @@ and each earlier version fails it by name. Three rules follow.
     stacks' largest patched weight is 64.0 MiB; a scaled FP8 file with
     larger ones is past the records and unmeasured.
 
-  Two constants hold those choices: `LIGHT_SHARE_BYTES` (a format's own
-  share in place of the line's) and `GUARDED_BY_BYTES`. The mapping from a
+  Four constants hold those choices: `LIGHT_SHARE_BYTES` (a format's own
+  share in place of the line's), `WHOLE_LOAD_BEYOND_COMFYUI_BYTES` and
+  `RECORDED_WHOLE_LOAD_SHARE_KEYS` (the INT8 rule's 2.3 GiB and the stack it
+  was read on) and `GUARDED_BY_BYTES`. The Worker's reserve reaches the one
+  price function at the quote, at both walls and at the in-place choice
+  (`in_place_fallback.worker_reserve`, read from ComfyUI's own
+  `extra_reserved_memory`); a price that is not told it charges the share.
+  The mapping from a
   LoRA's keys to the weights it patches knows ComfyUI's spellings of a LoRA
   pair (`.lora.down.weight` and four more were missing, so one Qwen Image
   LoRA was counted as 1933 patched weights where the Worker counts 240).

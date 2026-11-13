@@ -1,4 +1,4 @@
-"""The classic bake's term for an INT8 ConvRot checkpoint: no per-weight share.
+"""The classic bake's term for an INT8 ConvRot checkpoint: its own share, and when it is charged.
 
 The line (2 GiB and 7.5 MiB a patched weight) is scaled FP8's. Two hardware
 blocks read what an INT8 ConvRot load with its stack took beside the stock
@@ -276,3 +276,66 @@ def test_the_quote_and_the_walls_charge_the_int8_file_one_figure(quote, monkeypa
     walled = fallback.fresh_load_probe(store, "cond", STACK)(checkpoint, {})
     assert walled.bake_bytes == bake and walled.required_bytes == row["measured"]["required_bytes"]
     assert _rows(store, monkeypatch, [spec], stock + bake - GIB)[0]["verdict"] == cq.VERDICT_REFUSE
+
+
+# ComfyUI's whole-load condition and the Worker's reserve (docs/DESIGN.md section 5.9): at every site.
+
+@pytest.fixture(autouse=True)
+def reserve(monkeypatch):
+    """The Worker's ComfyUI reserve as the sites read it. Unread by default, so the INT8 share is charged."""
+    told = types.SimpleNamespace(bytes=None)
+    monkeypatch.setattr(fallback, "worker_reserve", lambda: told.bytes)
+    return told
+
+
+# The fixed part and the line's share for the five large full-precision weights: the charge of #183.
+INT8_BASE = price.CLASSIC_BAKE_FIXED_BYTES + len(EMBEDDINGS) * price.CLASSIC_BAKE_BYTES_PER_WEIGHT
+SHARE_KEYS = PATCHED - len(EMBEDDINGS)  # 1256: this header has two more small keys than the real file's 1254
+
+
+def test_this_header_is_two_share_keys_past_the_recorded_stack_so_it_pays_the_share_at_any_reserve(tmp_path):
+    checkpoint, stack = _files(tmp_path)
+    resolve = _resolver({"a.safetensors": stack})
+    assert SHARE_KEYS == price.RECORDED_WHOLE_LOAD_SHARE_KEYS + 2
+    for told in (None, 3 * GIB, 8 * GIB, 64 * GIB):
+        assert price.classic_charge(checkpoint, STACK, resolve, stack_on_host=True, reserve_bytes=told) == INT8_TERM
+
+
+@pytest.mark.parametrize("reserve_gib, term", [(8, INT8_BASE), (7.3, INT8_BASE), (7, INT8_TERM), (3, INT8_TERM)])
+def test_the_quote_and_the_walls_charge_by_the_workers_reserve_alike(quote, monkeypatch, tmp_path, reserve,
+                                                                      reserve_gib, term):
+    """At a reserve that keeps the floor the charge of #183; under it the share. One figure at both sites."""
+    monkeypatch.setattr(price, "RECORDED_WHOLE_LOAD_SHARE_KEYS", SHARE_KEYS)  # read this header as the recorded stack
+    reserve.bytes = int(reserve_gib * GIB)
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    checkpoint, stack = _files(tmp_path)
+    monkeypatch.setattr(ms, "resolve_model_path", lambda _kind, _name: checkpoint)
+    monkeypatch.setattr(cq, "default_resolve_lora_path", lambda _name: stack)
+    store = ms.ModelStore()
+    store.lora_low_rss = False
+    store.slab_weights = False
+    stock = capacity_fit.stock_required_bytes(os.path.getsize(checkpoint))
+    bake = term + os.path.getsize(stack)
+    spec = {"unet_name": "wan.safetensors", "options": {}, "loras": STACK, "slot": "cond"}
+    row = _rows(store, monkeypatch, [spec], stock + bake + GIB)[0]
+    assert row["verdict"] == cq.VERDICT_FITS and row["measured"]["bake_bytes"] == bake
+    walled = fallback.fresh_load_probe(store, "cond", STACK)(checkpoint, {})
+    assert walled.bake_bytes == bake and walled.required_bytes == row["measured"]["required_bytes"]
+    assert _rows(store, monkeypatch, [spec], stock + bake - GIB)[0]["verdict"] == cq.VERDICT_REFUSE
+
+
+def test_the_real_fresh_load_is_admitted_at_the_charge_of_183_where_the_reserve_keeps_the_floor(int8_load, monkeypatch,
+                                                                                                  reserve):
+    """The walls at the default reserve admit from #183's price up; with a reserve of 3 only from the covering one."""
+    monkeypatch.setattr(price, "RECORDED_WHOLE_LOAD_SHARE_KEYS", SHARE_KEYS)
+    store, calls, box, stock, need = int8_load
+    at_default = need - (INT8_TERM - INT8_BASE)
+    assert need - at_default > 4 * GIB
+    box.available = at_default + MIB
+    reserve.bytes = 3 * GIB
+    with pytest.raises(Exception) as raised:
+        store.ensure("wan.safetensors", {}, STACK)
+    assert BAKE_WORDS in str(raised.value) and calls.load == 0
+    reserve.bytes = 8 * GIB
+    store.ensure("wan.safetensors", {}, STACK)
+    assert calls.load == 1 and store.current.lora_sig == (("a.safetensors", 1.0),)

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import sys
 import time
 from collections.abc import Callable, Iterator
 from typing import Any, TypeGuard
@@ -79,6 +80,22 @@ def permission(request: Any) -> Iterator[None]:
 
 def permitted() -> bool:
     return _PERMITTED.get() is True
+
+
+def worker_reserve() -> int | None:
+    """This process's ComfyUI reserve in bytes, the R of ComfyUI's whole-load condition; ``None`` if unread.
+
+    Read from ComfyUI's own ``extra_reserved_memory``, the figure
+    ``load_models_gpu`` adds, so it is what the load will meet whatever set
+    it (the unified-memory default, Init's ``reserve_vram_gb``,
+    ``[worker_args]``). Never imports ComfyUI: a process without it is told
+    nothing, and the classic price then charges as if no reserve kept the
+    floor (``capacity_classic_bake.reserve_keeps_floor``).
+    """
+    try:
+        return int(sys.modules["comfy.model_management"].extra_reserved_memory())
+    except Exception:
+        return None
 
 
 def must_reload(store: Any, stored: Any, allowed: bool | None = None) -> bool:
@@ -245,7 +262,8 @@ def route(store: Any, stored: Any, held: bool, allowed: bool | str) -> dict[str,
     if store.lora_low_rss or getattr(store, "slab_weights", False) is True:
         return None
     return {"held_bytes": held_bytes(stored), "bare_load": not (held and is_bare_stock(stored)),
-            "in_place": True if allowed is True else (allowed or capacity_classic_bake.GATE_HAS_NOT_PASSED)}
+            "in_place": True if allowed is True else (allowed or capacity_classic_bake.GATE_HAS_NOT_PASSED),
+            "reserve_bytes": worker_reserve()}
 
 
 def stack_files_moved(stored: Any, lora_stack: list | None, resolve_lora_path: Callable[[str], str]) -> bool:
@@ -353,7 +371,7 @@ def fresh_load_probe(store: Any, slot: str, lora_stack: list | None) -> Callable
     from .capacity_quote import default_resolve_lora_path
 
     return capacity_classic_bake.probe(
-        lora_stack, default_resolve_lora_path, stack_on_host=on_host,
+        lora_stack, default_resolve_lora_path, stack_on_host=on_host, reserve_bytes=worker_reserve(),
         in_place=TRIED if permitted() else capacity_classic_bake.GATE_HAS_NOT_PASSED)
 
 
@@ -428,4 +446,4 @@ def take(store: Any, slot: str, unet_name: str, options: dict | None, lora_stack
 
 __all__ = ["SET_ASIDE", "TRIED", "backup_covers", "checkpoint_moved", "forget_stack_read", "fresh_load_probe",
            "held_bytes", "holds_base", "is_bare_stock", "loads_fresh", "must_reload", "note_stack_read", "permission",
-           "permitted", "quote_snapshot", "route", "stack_files_moved", "stack_on_host", "take"]
+           "permitted", "quote_snapshot", "route", "stack_files_moved", "stack_on_host", "take", "worker_reserve"]

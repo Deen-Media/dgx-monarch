@@ -652,14 +652,20 @@
   1.2 GiB on an INT8 file, 0.8 GiB on a plain FP8 file). The price now adds
   a charge sized by format from what each measured load took: for scaled
   FP8, BF16 and FP16, 2 GiB plus 7.5 MiB for each weight the stack patches;
-  for INT8 ConvRot (the shipped Wan-Animate 2 template's file), 2 GiB plus
-  4 MiB a patched weight; for plain FP8, 2 GiB. The stack's own LoRA files
+  for INT8 ConvRot (the shipped Wan-Animate 2 template's file), 2 GiB, and
+  4 MiB more a patched weight only when the Worker's reserve (the Init
+  node's `reserve_vram_gb`, 8 GiB by default) is set under 7.3 GiB: at the
+  default ComfyUI's own rule for placing a model whole keeps the floor
+  under that load, and under 7.3 the price covers it instead; for plain
+  FP8, 2 GiB. The stack's own LoRA files
   are added, each as often as the stack lists it, when the price is read
   before the Worker has read them (a load into a Worker that holds no model,
   and every fleet quote), and not when it is read after (a LoRA change on a
   held model). A test holds the price against every recorded load, on the
   reading it was priced at: it must admit each one and cover what the load
-  took plus the 5 GiB floor.
+  took plus the 5 GiB floor (for the INT8 stack's whole load at the default
+  reserve it shows instead that ComfyUI's rule leaves the floor, and that
+  the price covers it at a lowered reserve).
   A load that fitted the old price and does not fit the
   new one is refused with the new figure, where before it was admitted and
   took the box under its floor. Where the classic bake does not fit and
