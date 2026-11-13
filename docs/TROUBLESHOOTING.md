@@ -840,7 +840,12 @@ you may see:
   241-frame render that took 52.4 GiB where 81 frames takes 39, one GPU,
   2026-11-12, the Spark under its clock cap, max 2100 MHz). If you lengthen a
   clip well past the shipped length on a box with little memory to spare, turn
-  `lora_low_rss` on, which keeps no such copy, or free memory first.
+  `lora_low_rss` on, which keeps no such copy, or free memory first. On one GPU
+  the Worker now frees that copy by itself before the first step when a whole
+  load leaves less room than the sampler is estimated to need; it logs a line
+  that starts `LoRA bake: ComfyUI loaded this model whole`, and the next LoRA
+  change on that model reloads it from disk. A load ComfyUI placed only partly
+  whose bake could not be finished for room, and a pair, are still as above.
 
   The stack's own LoRA files are added, each as often as the stack lists it,
   when the price is read before the Worker has read them: a load into a

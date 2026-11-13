@@ -51,6 +51,18 @@ ComfyUI does when a loaded model may use more memory, and not through
 ``load_models_gpu``: that would free every other model the sampling loaded
 (a dual-model guider's other checkpoint) and unpatch its LoRA. The check
 runs on every model ``prepare_sampling`` loaded.
+
+A WHOLE load keeps ComfyUI's backup too: the host copy of every weight the
+stack patches stands through the whole render (17.7 GiB beside a 15.5 GiB
+model on record). ComfyUI's whole-load condition leaves only its reserve for
+what the sampler takes beyond ComfyUI's own estimate, and that grows with the
+latent, so at the tightest reading that still loads whole a long clip runs
+the host under its floor with the backup standing by unused. So where a
+patched model is loaded whole and the room above the floor is under ComfyUI's
+own full estimate for sampling this latent, ``check`` takes the route's last
+step alone: the backup and the patches go, no weight moves, and the slot is a
+low-RSS slot. With more room than that the backup stays, and a stack change
+swaps in place as before.
 """
 from __future__ import annotations
 
@@ -202,9 +214,19 @@ def make_whole(patcher: Any) -> str | None:
     # loaded model may use more memory (model_use_more_vram): no free_memory pass, so no other model
     # this sampling loaded (a dual-model guider's other checkpoint) is unloaded. Then the tail of
     # store_bake._merge_and_free: the backup and the patches go.
+    patcher.partially_load(patcher.load_device, extra_memory=1e32)
+    _free_backup(patcher, stored)
+    log.info("LoRA bake: ComfyUI loaded this model partly with a LoRA stack and lora_low_rss off, so the "
+             "Worker took the low-RSS route for this load: baked %d more patched layer(s) under a full "
+             "load and freed ComfyUI's backup (%.1f GiB of room was needed while baking). A stack "
+             "change on this model reloads it from disk", len(pending), need / _GIB)
+    return None
+
+
+def _free_backup(patcher: Any, stored: Any) -> None:
+    """The tail of ``store_bake._merge_and_free`` on a model that is whole and baked: the backup and the patches go."""
     import gc
 
-    patcher.partially_load(patcher.load_device, extra_memory=1e32)
     patcher.backup.clear()
     patcher.backup_buffers.clear()
     patcher.patches.clear()
@@ -213,11 +235,60 @@ def make_whole(patcher: Any) -> str | None:
     if active is not None and active is not patcher:
         active.patches.clear()  # the same stack on the store's own patcher: it is baked in now
     stored.base_baked, stored.unbake = True, None
-    log.info("LoRA bake: ComfyUI loaded this model partly with a LoRA stack and lora_low_rss off, so the "
-             "Worker took the low-RSS route for this load: baked %d more patched layer(s) under a full "
-             "load and freed ComfyUI's backup (%.1f GiB of room was needed while baking). A stack "
-             "change on this model reloads it from disk", len(pending), need / _GIB)
-    return None
+
+
+def _sampling_ask(patcher: Any, noise_shape: Any, conds: Any) -> int | None:
+    """ComfyUI's own full estimate of what sampling this latent takes, in bytes; ``None`` if it cannot be had.
+
+    The first of ``comfy.sampler_helpers.estimate_memory``'s two figures, the
+    one worked on the doubled batch (cond and uncond in one call). It is twice
+    the single-batch figure ComfyUI's whole-load condition uses. On record the
+    sampler ran 1.08 and 1.15 times the single figure on one-batch renders
+    (81 and 241 frames of Wan-Animate 2, 2026-11-12), and ComfyUI batches cond
+    with uncond only when 1.5 times the full figure is free, so the full
+    figure covers both.
+    """
+    try:
+        import comfy.sampler_helpers
+
+        full, _minimum = comfy.sampler_helpers.estimate_memory(patcher, noise_shape, conds)
+        return int(full)
+    except Exception:
+        return None
+
+
+def free_backup_for_sampling(patcher: Any, noise_shape: Any, conds: Any) -> bool:
+    """On a whole classic load, free ComfyUI's backup where the room left is under what sampling will ask.
+
+    ``True`` when it freed it. The model must be whole and patched, hold a
+    backup, sit on a device that shares the host's memory and belong to a
+    slot of the Worker's store; the room is the host's available memory above
+    its floor, the ask ``_sampling_ask``. No weight moves: the weights on the
+    device are the baked ones already, and ComfyUI needs the backup only to
+    change the stack in place, which the slot then does by a reload from disk
+    (``StoredModel.base_baked``), as after the partial-load route and as with
+    ``lora_low_rss`` on.
+    """
+    model = patcher.model
+    if not getattr(patcher, "backup", None) or getattr(model, "current_weight_patches_uuid", None) is None:
+        return False
+    slot = getattr(model, STORED, None)
+    stored = slot() if callable(slot) else None
+    if stored is None or not shares_host_memory(patcher):
+        return False
+    ask = _sampling_ask(patcher, noise_shape, conds)
+    if ask is None:
+        return False
+    room = _host_room()
+    if room >= ask:
+        return False
+    _free_backup(patcher, stored)
+    log.info("LoRA bake: ComfyUI loaded this model whole with a LoRA stack and lora_low_rss off, and "
+             "%.1f GiB is available above the %.0f GiB floor where ComfyUI estimates %.1f GiB for "
+             "sampling this latent, so the Worker freed ComfyUI's weight backup before the first step "
+             "(the weights on the device are the baked ones; none moved). A stack change on this model "
+             "reloads it from disk", max(0, room) / _GIB, ABSOLUTE_HOST_FLOOR_BYTES / _GIB, ask / _GIB)
+    return True
 
 
 def _what_is_wrong_after_the_route(patcher: Any, was_registered: bool) -> str | None:
@@ -234,33 +305,47 @@ def _what_is_wrong_after_the_route(patcher: Any, was_registered: bool) -> str | 
     return None
 
 
-def check(patcher: Any) -> None:
-    """After ComfyUI's load and before the first forward: make a partial load whole, or refuse what would differ."""
+def check(patcher: Any, sampling: tuple[Any, Any] | None = None) -> None:
+    """After ComfyUI's load and before the first forward: make a partial load whole, or refuse what would differ.
+
+    ``sampling`` is ``prepare_sampling``'s latent shape and its conds. With
+    them a WHOLE load is weighed too, and gives up ComfyUI's backup where the
+    sampler will need the room (``free_backup_for_sampling``). Without them a
+    whole load is left as it is.
+    """
     model = getattr(patcher, "model", None)
-    if (model is None or not getattr(model, "model_lowvram", False) or patcher.is_dynamic()
-            or not getattr(patcher, "patches", None)):
+    if model is None or patcher.is_dynamic() or not getattr(patcher, "patches", None):
+        return
+    partly = bool(getattr(model, "model_lowvram", False))
+    if not partly and sampling is None:
         return
     was_registered = _registered(patcher)
-    try:
-        why_not = make_whole(patcher)
-    except Exception as exc:
-        # ComfyUI undoes a load that fails (ModelPatcher.partially_load calls detach()): the model is
-        # no longer the partial load prepare_sampling left, and sampling it would run without its LoRA.
-        raise OffloadedInputQuantError(refusal(
-            RefusalClass.CAPACITY,
-            "a LoRA stack is on a model ComfyUI loaded only partly, and the full load the Worker ran "
-                f"to bake it whole failed ({type(exc).__name__}: {exc}). ComfyUI unloads a model whose "
-                "load fails, so nothing was sampled. What would fit: lora_low_rss on (the default on a "
-                "DGX Spark), which bakes at load time before anything else holds the memory; more free "
-                "memory on this box; or the render without the LoRA.",
-            guard=GUARD, waivable=False, troubleshooting=TROUBLESHOOTING)) from exc
+    if not partly:
+        if sampling is None or not free_backup_for_sampling(patcher, *sampling):
+            return
+        why_not = None  # whole and baked, its backup gone: the state the route ends in
+    else:
+        try:
+            why_not = make_whole(patcher)
+        except Exception as exc:
+            # ComfyUI undoes a load that fails (ModelPatcher.partially_load calls detach()): the model is
+            # no longer the partial load prepare_sampling left, and sampling it would run without its LoRA.
+            raise OffloadedInputQuantError(refusal(
+                RefusalClass.CAPACITY,
+                "a LoRA stack is on a model ComfyUI loaded only partly, and the full load the Worker ran "
+                    f"to bake it whole failed ({type(exc).__name__}: {exc}). ComfyUI unloads a model whose "
+                    "load fails, so nothing was sampled. What would fit: lora_low_rss on (the default on a "
+                    "DGX Spark), which bakes at load time before anything else holds the memory; more free "
+                    "memory on this box; or the render without the LoRA.",
+                guard=GUARD, waivable=False, troubleshooting=TROUBLESHOOTING)) from exc
     if why_not is None:
         wrong = _what_is_wrong_after_the_route(patcher, was_registered)
         if wrong is not None:
+            did = ("ComfyUI loaded only partly, and after the Worker loaded the rest to bake it whole" if partly
+                   else "ComfyUI loaded whole, and after the Worker freed its weight backup for the sampler")
             raise OffloadedInputQuantError(refusal(
                 RefusalClass.CAPACITY,
-                "a LoRA stack is on a model ComfyUI loaded only partly, and after the Worker loaded "
-                    f"the rest to bake it whole the model is not as a full load leaves it: {wrong}. "
+                f"a LoRA stack is on a model {did} the model is not as a full load leaves it: {wrong}. "
                     "Sampling it could run without its LoRA, so nothing was sampled. Reset the attached "
                     "mesh so the model loads again, and turn lora_low_rss on (the default on a DGX Spark), "
                     "which bakes at load time.",
@@ -309,16 +394,20 @@ def install_guard(base_patcher: Any) -> None:
         loaded = [args[0] if args else kwargs.get("model")]
         if isinstance(result, tuple) and len(result) > 2 and isinstance(result[2], list | tuple):
             loaded.extend(result[2])
+        # The latent's shape and the conds, as prepare_sampling got them: what a whole load is weighed by.
+        shape = args[1] if len(args) > 1 else kwargs.get("noise_shape")
+        conds = args[2] if len(args) > 2 else kwargs.get("conds")
+        sampling = (shape, conds) if shape is not None and conds is not None else None
         seen: set[int] = set()
         for patcher in loaded:
             if id(patcher) in seen or not (hasattr(patcher, "is_dynamic") and hasattr(patcher, "model")):
                 continue
             seen.add(id(patcher))
-            check(patcher)
+            check(patcher, sampling)
         return result
 
     pe.add_wrapper_with_key(pe.WrappersMP.PREPARE_SAMPLING, WRAPPER_KEY, wrapper, options, is_model_options=True)
 
 
-__all__ = ["STORED", "OffloadedInputQuantError", "check", "inexact", "install_guard", "make_whole",
-           "quantizes_input", "shares_host_memory"]
+__all__ = ["STORED", "OffloadedInputQuantError", "check", "free_backup_for_sampling", "inexact", "install_guard",
+           "make_whole", "quantizes_input", "shares_host_memory"]

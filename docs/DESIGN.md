@@ -1045,7 +1045,24 @@ input-quantizing layer off the device is refused, class C, before its first
 forward (`partial_load_divergence`, raised at one rank by
 `lora_partial_load.check`), saying what was tried. `lora_low_rss` on, the Spark
 default, bakes at load time and never reaches this. Comfy-managed residency
-runs ComfyUI's own patcher and is not touched. The bake-equivalence canary compares the bake with comfy.ops' own
+runs ComfyUI's own patcher and is not touched.
+
+A whole load is weighed by the same check. ComfyUI's classic bake keeps the
+host copy of every patched weight as its backup for the whole render (17.7 GiB
+beside a 15.5 GiB model on record), and its whole-load condition leaves only
+its reserve for what the sampler takes beyond ComfyUI's own estimate, which
+grows with the latent. So where a patched model is loaded whole on a device
+that shares the host's memory, and the room above the 5 GiB floor is under
+ComfyUI's own full estimate for sampling this latent (`estimate_memory`'s
+doubled-batch figure, twice what the whole-load condition used),
+`lora_partial_load.free_backup_for_sampling` takes the route's last step
+alone before the first forward: the backup and the patches go, no weight
+moves, the slot is marked baked, and one line says so. With more room than
+that the backup stays and a stack change swaps in place as before. It moves
+no price, and the weights the sampler reads are the ones the classic bake
+left. One GPU only, as the route is.
+
+The bake-equivalence canary compares the bake with comfy.ops' own
 cast on INT8 ConvRot and BF16 layers, and the keys it bakes at cast time with
 the keys stock's own `ModelPatcherDynamic.load` chooses on both sides of the
 16 KiB cut-off, against ComfyUI master every day.
@@ -2793,7 +2810,13 @@ the clip: about 6 to 7 GiB at the shipped 81 frames and about 4.4 projected at
 takes 39. Three shipped templates run this path as shipped (the Wan-Animate 2
 template and its BF16 and memory-saver variants, with `lora_low_rss` off and a
 LoRA), all at 81 frames. `lora_low_rss` on keeps no backup and is not on it.
-The same is so on the last release, which priced this load lower.
+The same is so on the last release, which priced this load lower. On one GPU
+the Worker now gives that backup up before the first step where a whole
+load leaves less room than the sampler is estimated to need
+(`lora_partial_load.free_backup_for_sampling`, section 5.5), which takes the
+projected low at the 241-frame edge from 4.4 to about 10 by the route's record of
+the same step (5.8 GiB returned; not yet read on hardware for a whole load). What stays as
+above: a load placed partly whose route could not run, and a pair's rank.
 
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a

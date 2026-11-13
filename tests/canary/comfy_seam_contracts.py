@@ -6986,6 +6986,20 @@ def _assert_whole_load_condition_seam() -> None:
         "whole load condition seam: the minimum the sampler hands the load is no longer the "
         "single-batch estimate"
     )
+    # The Worker weighs a whole patched load by the same function's first figure, the doubled
+    # batch (actor/lora_partial_load.free_backup_for_sampling), and calls it as comfy does.
+    estimate_source = squeezed(comfy.sampler_helpers.estimate_memory)
+    assert list(inspect.signature(comfy.sampler_helpers.estimate_memory).parameters) == [
+        "model", "noise_shape", "conds"], (
+        "whole load condition seam: estimate_memory no longer takes (model, noise_shape, conds), "
+        "the call lora_partial_load makes"
+    )
+    assert ("memory_required=model.model.memory_required([noise_shape[0]*2]+"
+            "list(noise_shape[1:]),cond_shapes=cond_shapes)") in estimate_source and (
+            "returnmemory_required,minimum_memory_required") in estimate_source, (
+        "whole load condition seam: estimate_memory no longer returns the doubled-batch estimate "
+        "first and the single-batch one second"
+    )
 
     # The free reading both sides weigh is the pack's own on unified memory.
     from dgx_monarch.actor import comfy_bridge
