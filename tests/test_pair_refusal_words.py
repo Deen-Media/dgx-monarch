@@ -32,7 +32,7 @@ def _second(peer_ok: int, peer_margin: int):
     return exchange
 
 
-def test_the_wrong_rank_logs_its_own_refusal_and_its_peer_leads_with_it(rig, caplog):
+def test_the_wrong_rank_logs_its_own_refusal_and_its_peer_leads_with_it(rig, caplog):  # noqa: F811
     cause = "ComfyUI holds its weights as unpatched"
     # Rank 1: short, frees, and finds its model wrong.
     rig.room, rig.room_after, rig.wrong = 9.0, 24.0, cause
@@ -61,7 +61,7 @@ def test_the_wrong_rank_logs_its_own_refusal_and_its_peer_leads_with_it(rig, cap
     assert len(calls) == 1
 
 
-def test_a_room_refusal_gives_the_short_ranks_figures_whichever_rank_raises(rig, caplog):
+def test_a_room_refusal_gives_the_short_ranks_figures_whichever_rank_raises(rig, caplog):  # noqa: F811
     """Rank 0 is roomy and raises for the fleet: the words are rank 1's, then its own."""
     rig.room = 40.0
     roomy = backup_agreement.vote((_patcher(),), SAMPLING, 0)
@@ -78,7 +78,7 @@ def test_a_room_refusal_gives_the_short_ranks_figures_whichever_rank_raises(rig,
     assert "This rank read" not in text and "rank 1 is short, so the fleet refuses" in caplog.text
 
 
-def test_the_short_rank_logs_its_refusal_at_warning(rig, caplog):
+def test_the_short_rank_logs_its_refusal_at_warning(rig, caplog):  # noqa: F811
     rig.room, rig.room_after = 2.0, 6.0
     mine = backup_agreement.vote((_patcher(),), SAMPLING, 0)
     roomy = {"rank": 1, "wrong": "", "room": 40 * GIB, "need": 7 * GIB}
@@ -89,7 +89,7 @@ def test_the_short_rank_logs_its_refusal_at_warning(rig, caplog):
     assert "this rank is the one short, so the fleet refuses" in caplog.text and "Rank 0 read 6.0" in caplog.text
 
 
-def test_a_render_that_samples_crosses_no_words(rig):
+def test_a_render_that_samples_crosses_no_words(rig):  # noqa: F811
     rig.room, rig.room_after = 9.0, 24.0
     mine = backup_agreement.vote((_patcher(),), SAMPLING, 0)
     calls: list = []
@@ -101,7 +101,7 @@ def test_a_render_that_samples_crosses_no_words(rig):
     assert calls == []
 
 
-def test_a_gather_that_fails_leaves_each_rank_its_own_words(rig, caplog):
+def test_a_gather_that_fails_leaves_each_rank_its_own_words(rig, caplog):  # noqa: F811
     rig.room, rig.room_after = 2.0, 6.0
     mine = backup_agreement.vote((_patcher(),), SAMPLING, 0)
 

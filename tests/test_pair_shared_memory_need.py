@@ -36,26 +36,26 @@ def _cuda_rank(monkeypatch, mapped_gib: float | None):
     (7.0, 0.0),      # never under zero
     (None, 5.6),     # /proc cannot say: the whole figure
 ])
-def test_the_need_and_the_ask_carry_what_the_rank_has_yet_to_map(rig, monkeypatch, mapped, unmapped):
+def test_the_need_and_the_ask_carry_what_the_rank_has_yet_to_map(rig, monkeypatch, mapped, unmapped):  # noqa: F811
     vote = backup_agreement.vote((_cuda_rank(monkeypatch, mapped),), SAMPLING, 0)
     assert vote.unmapped == pytest.approx(unmapped * GIB, abs=GIB / 1000)
     assert vote.need == BASE_NEED + vote.unmapped
     assert vote.ask == int(18.6 * GIB) + vote.unmapped
 
 
-def test_a_fresh_rank_is_short_where_a_warm_one_is_not(rig, monkeypatch):
+def test_a_fresh_rank_is_short_where_a_warm_one_is_not(rig, monkeypatch):  # noqa: F811
     rig.room = 20.0  # above the 18.6 GiB ask, under 18.6 + 2.7
     assert backup_agreement.vote((_cuda_rank(monkeypatch, 2.9),), SAMPLING, 0).short is True
     assert backup_agreement.vote((_cuda_rank(monkeypatch, 5.6),), SAMPLING, 0).short is False
 
 
-def test_a_rank_off_a_cuda_device_carries_no_term(rig, monkeypatch):
+def test_a_rank_off_a_cuda_device_carries_no_term(rig, monkeypatch):  # noqa: F811
     monkeypatch.setattr(backup_agreement, "_mapped_shared_bytes", lambda: 0)
     vote = backup_agreement.vote((_patcher(),), SAMPLING, 0)
     assert vote.unmapped == 0 and vote.need == BASE_NEED
 
 
-def test_the_margin_after_a_free_weighs_the_term(rig, monkeypatch):
+def test_the_margin_after_a_free_weighs_the_term(rig, monkeypatch):  # noqa: F811
     """Freed to 12 GiB of room: enough for 8.1 GiB, not for 8.1 plus the 5.6 a fresh Worker has yet to map."""
     rig.room, rig.room_after = 9.0, 12.0
     mine = backup_agreement.vote((_cuda_rank(monkeypatch, 0.0),), SAMPLING, 0)
@@ -67,14 +67,14 @@ def test_the_margin_after_a_free_weighs_the_term(rig, monkeypatch):
     assert "and 5.6 GiB of shared memory the rank had yet to map, which ComfyUI's estimate does not count" in message
 
 
-def test_a_warm_rank_passes_the_same_margin(rig, monkeypatch):
+def test_a_warm_rank_passes_the_same_margin(rig, monkeypatch):  # noqa: F811
     rig.room, rig.room_after = 9.0, 12.0
     mine = backup_agreement.vote((_cuda_rank(monkeypatch, 5.6),), SAMPLING, 0)
     backup_agreement.settle(mine, _answer(mine.elements, _peer()),
                             lambda values: _answer(values, [1, backup_agreement._margin(40 * GIB, 7 * GIB, 1)]))
 
 
-def test_the_crossed_figures_name_the_term(rig, monkeypatch):
+def test_the_crossed_figures_name_the_term(rig, monkeypatch):  # noqa: F811
     import json
 
     rig.room = 40.0
