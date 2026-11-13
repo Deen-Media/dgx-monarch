@@ -2407,11 +2407,13 @@ recovers by itself, and the context's main buffer does not.
   makes memory free) that says what
   failed, what is free and what is available on its box, what the make-room
   step did or why it did nothing, and what to do. It carries the Worker's
-  rank, and the driver names the box at setup as it does at a load
-  (`worker_box.name` in `mesh_setup_transition.ensure_setup`), so on a pair
-  it opens "On the sibling, this Worker could not start on its GPU". Any
-  other error passes on as it was raised. The remedy it names is a reset of the attached mesh
-  after memory is freed: no record shows a second try in the same process
+  rank, and the driver names the box of any error a Worker raises at setup,
+  as it does at a load (`worker_box.name` in
+  `mesh_setup_transition.ensure_setup`, from the rank whose answer it was
+  awaiting, which covers a Fleet's actors too), so on a pair it opens "On
+  the sibling, this Worker could not start on its GPU". Any other error
+  passes on as it was raised. The remedy it names is a reset of the attached
+  mesh after memory is freed: no record shows a second try in the same process
   making a context, and a setup that failed leaves the Worker marked as not
   torn down until a reset or a teardown settles it.
 - **It fails open, and it has one switch.** A fault anywhere in the step is

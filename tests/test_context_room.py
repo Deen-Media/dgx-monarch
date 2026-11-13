@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 import test_worker_box as boxes
-from dgx_monarch import residency_mode, worker_box
+from dgx_monarch import box_names, residency_mode, worker_box
 from dgx_monarch.actor import context_room, worker_env
 from dgx_monarch.log import get_logger
 from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag, read_rank
@@ -325,8 +325,11 @@ def test_the_module_imports_torch_and_comfy_only_by_name_at_the_moment_it_needs_
     """Nothing here asks torch about a device before the Worker makes the context: the one
     CUDA call is the context's own, ``mem_get_info``, the call ComfyUI's import makes first."""
     source = (SRC / "actor/context_room.py").read_text()
-    assert source.count(".cuda.") == 1 and ".cuda.mem_get_info()" in source
     tree = ast.parse(source)
+    cuda = [ast.unparse(node) for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "cuda"]
+    assert cuda == ["importlib.import_module('torch').cuda.mem_get_info"]
     imported = {alias.name.split(".")[0] for node in ast.walk(tree)
                 if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names}
     imported |= {(node.module or "").split(".")[0] for node in ast.walk(tree)
@@ -557,7 +560,45 @@ def test_setup_hands_the_bootstrap_its_rank_and_the_driver_names_setup_errors():
     assert ast.unparse(next(kw.value for kw in call.keywords if kw.arg == "rank")) == "(rank, world)"
     transition = (SRC / "mesh_setup_transition.py").read_text()
     handler = transition[transition.index("except BaseException as setup_exc:"):]
-    assert handler.index("worker_box.name(setup_exc, handle)") < handler.index("setup rollback")
+    assert handler.index("worker_box.name(setup_exc, handle,") < handler.index("setup rollback")
+
+
+def test_setup_names_the_box_of_the_rank_whose_answer_it_awaited(monkeypatch):
+    """Setup goes out a rank at a time, so the driver knows whose error it holds.
+
+    A Fleet actor is rank 0 of its own world and marks nothing; the driver
+    names its box all the same.
+    """
+    from topology_transition_helpers import _acks, _Future, _handle, _Workers
+
+    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    monkeypatch.setattr(context_room, "meminfo", lambda: (int(4.6 * _GIB), int(47.4 * _GIB)))
+    with pytest.raises(context_room.ContextMemoryError) as raised:
+        context_room.refuse_unmade_context(RuntimeError(OOM), MADE, (0, 1))
+    assert read_rank(str(raised.value))[1] is None
+    wrapper = boxes._remote(raised.value, "setup")
+    workers = _Workers([_Future(_acks()), _Future(_acks())],
+                       setup_futures=[_Future({"rank": 0}), _Future(error=wrapper)])
+    handle, _old, new = _handle(workers)
+    with pytest.raises(type(wrapper)) as failed:
+        handle.ensure_setup(new, "TORCH_FLASH")
+    words = box_names.on_box(box_names.fleet_labels(handle, 2)[1])
+    assert words.startswith("On GPU 1 on "), words
+    inner = str(failed.value.exception)
+    assert inner.startswith("[dgxm:C guard=gpu_context_memory waivable=0] " + words
+                            + "this Worker could not start on its GPU"), inner
+    assert len(workers.teardown_group.calls) == 2, "the rollback still runs"
+
+
+def test_a_driver_side_setup_error_is_left_as_it_is():
+    from topology_transition_helpers import _acks, _Future, _handle, _Workers
+
+    workers = _Workers([_Future(_acks()), _Future(_acks())],
+                       setup_futures=[_Future({"rank": 0}), RuntimeError("dispatch failed")])
+    handle, _old, new = _handle(workers)
+    with pytest.raises(RuntimeError) as failed:
+        handle.ensure_setup(new, "TORCH_FLASH")
+    assert str(failed.value) == "dispatch failed"
 
 
 def test_a_context_that_still_cannot_be_made_is_refused_in_words(monkeypatch):

@@ -655,8 +655,9 @@
   and logs one line. A start with 12 GiB free does nothing. If the context
   still cannot be made, the render refuses in plain words (class C) with
   the box it came from, that box's free and available memory, what the
-  Worker did first and what to do, where it used to show a traceback.
-  Nothing to set. `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment
+  Worker did first and what to do, where it used to show a traceback. Any
+  other error a Worker raises at its setup now opens with its box as well
+  ("On the sibling, ..."), as a load error does. Nothing to set. `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment
   turns the make-room step off for diagnosis, a fault in the step leaves
   the start as it was, and the Worker's status says what the step did.
   Under comfy-managed residency the Worker leaves the context to ComfyUI's

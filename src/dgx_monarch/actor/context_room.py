@@ -359,18 +359,20 @@ def refuse_unmade_context(exc: BaseException, outcome: Outcome,
         reading = meminfo()
     except Exception:
         reading = None
-    refused = ContextMemoryError(refusal(
-        RefusalClass.CAPACITY,
-        "this Worker could not start on its GPU: the NVIDIA driver could not get memory for "
-        f"a new CUDA context. {_figures(reading)} {outcome.sentence()} Nothing was loaded. "
-        "Close a program that holds memory, or wait for a large download or file copy to "
-        "end, then click Reset attached mesh and queue again.",
-        guard=GUARD, troubleshooting=12))
-    if rank is not None:
-        from .failure import mark_rank
+    try:
+        raise ContextMemoryError(refusal(
+            RefusalClass.CAPACITY,
+            "this Worker could not start on its GPU: the NVIDIA driver could not get memory "
+            f"for a new CUDA context. {_figures(reading)} {outcome.sentence()} Nothing was "
+            "loaded. Close a program that holds memory, or wait for a large download or file "
+            "copy to end, then click Reset attached mesh and queue again.",
+            guard=GUARD, troubleshooting=12)) from exc
+    except ContextMemoryError as refused:
+        if rank is not None:
+            from .failure import mark_rank
 
-        mark_rank(SimpleNamespace(rank=rank[0], world=rank[1]), refused)
-    raise refused from exc
+            mark_rank(SimpleNamespace(rank=rank[0], world=rank[1]), refused)
+        raise
 
 
 def make_context(outcome: Outcome, rank: tuple[Any, Any] | None = None, *,
