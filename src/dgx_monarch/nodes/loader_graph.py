@@ -23,7 +23,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from .. import driver_footprint, h3_activation, ltx25_activation
-from . import guide_order
+from . import driver_model_charge, guide_order
 from .graph_live import is_link as _is_link
 from .graph_live import live_nodes
 
@@ -107,7 +107,7 @@ IMAGE_REF_BYTES = 0
 # Graph vocabulary, matched on input key rather than class_type, so a custom or
 # renamed loader node that keeps comfy's input names still prices correctly.
 # CLIP Vision files resolve in their own folder and are priced as encoders.
-_TE_NAME_KEYS = ("clip_name", "text_encoder_name")
+_TE_NAME_KEYS = ("clip_name", "text_encoder")  # text_encoder: LTXAVTextEncoderLoader's file, the one stock use
 _VAE_NAME_KEYS = ("vae_name",)
 _TE_FOLDERS = ("text_encoders", "clip", "clip_vision")
 _VAE_FOLDERS = ("vae",)
@@ -354,7 +354,7 @@ def driver_stack_terms(prompt: object, *, family: str = "",
                         vae_bytes += size
                         vae_names.append(os.path.basename(value))
                 elif key in _DRIVER_MODEL_KEYS and on_driver:
-                    size = _artifact_bytes(_DRIVER_MODEL_KEYS[key], value)
+                    size = driver_model_charge.driver_model_bytes(str(node.get("class_type", "")), key, value)
                     if size:
                         model_bytes += size
                         model_names.append(os.path.basename(value))

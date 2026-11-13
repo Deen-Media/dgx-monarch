@@ -28,6 +28,16 @@
   guide's is; a first queue of a video-reference graph right after another
   graph was admitted without it. Not yet run on hardware.
 
+- A graph that loads its text encoder through Load LTXV Audio Text Encoder
+  (`LTXAVTextEncoderLoader`) is now charged at the loader for what that node
+  loads: the text encoder file at the text-encoder ratio, and of the LTX
+  checkpoint it names only the text projection ComfyUI keeps, read from the
+  file's header. It was charged the whole checkpoint (27 to 43 GiB on this rig)
+  and no text encoder, so such a graph could be refused up to about 33 GiB
+  short of its real need, or admitted without its text encoder. The shipped
+  LTX templates load theirs through Dual CLIP Loader and are unchanged. Not
+  yet run on hardware.
+
 - The decode relief now asks the Workers for the device memory they hold idle
   whenever it acts. It asked them only where freeing the driver's text
   encoders still left the decode priced above ComfyUI's free reading, and on

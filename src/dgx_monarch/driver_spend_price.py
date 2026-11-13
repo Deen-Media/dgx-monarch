@@ -47,7 +47,15 @@ from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
 from . import mesh_safety
-from .driver_spend_marks import GUIDE_TERM, REFERENCE_TERM, charged, load_bytes, node_term, remember
+from .driver_spend_marks import (
+    GUIDE_TERM,
+    REFERENCE_TERM,
+    charged,
+    load_bytes,
+    node_term,
+    remember,
+    running_item,
+)
 from .log import get_logger
 from .refusal import RefusalClass, refusal
 
@@ -135,23 +143,9 @@ def guide_frames(image_frames: int) -> int:
 
 
 def running_graph(prompt_id: str | None) -> Mapping[str, Any] | None:
-    """The API-format graph of the prompt ComfyUI is running now, by its id; None where none is in hand.
-
-    ``PromptQueue.get`` puts the item in ``currently_running`` before the executor runs it, and
-    only ``task_done`` takes it out; the item is (number, prompt id, prompt, ...).
-    """
-    if not prompt_id:
-        return None
-    try:
-        server = sys.modules.get("server")
-        queue = getattr(getattr(getattr(server, "PromptServer", None), "instance", None), "prompt_queue", None)
-        running, _queued = queue.get_current_queue_volatile()
-        for item in running:
-            if len(item) > 2 and item[1] == prompt_id and isinstance(item[2], Mapping):
-                return item[2]
-    except Exception:
-        return None
-    return None
+    """The API-format graph of the prompt ComfyUI is running now, by its id; None where none is in hand."""
+    item = running_item(prompt_id)
+    return item[2] if item is not None and isinstance(item[2], Mapping) else None
 
 
 def priced_family(graph: Mapping[str, Any]) -> str | None:
@@ -267,15 +261,12 @@ def check(spend: Spend, prompt_id: str | None = None) -> None:
 
 def _price(name: str, spend_of: Callable[[Mapping[str, Any], str], Spend | None]) -> None:
     """Price this node's spend where the loader did not charge it; any fault but the refusal steps aside."""
-    if not _active():
-        return
     try:
+        if not _active():
+            return
         prompt_id, node = _context()
         graph = running_graph(prompt_id)
-        if prompt_id is None or graph is None or priced_family(graph) is None:
-            log.debug("driver spend price: no graph of a priced family in hand; %s is not priced", name)
-            return
-        spend = spend_of(graph, node)
+        spend = None if prompt_id is None or graph is None else spend_of(graph, node)
         if spend is None:
             return
         held = charged(prompt_id, spend.term)  # held to the encode alone: the loader charges the VAE as a model
@@ -283,6 +274,9 @@ def _price(name: str, spend_of: Callable[[Mapping[str, Any], str], Spend | None]
             if not _told(prompt_id, node):
                 log.info("driver spend price: the loader priced this prompt; nothing priced here (%s, node %s: "
                          "%s GiB charged, %s GiB needed)", name, node, _gib(held), _gib(spend.own))
+            return
+        if priced_family(graph) is None:
+            log.debug("driver spend price: not a graph of a family the loader prices; %s is not priced", name)
             return
     except Exception as exc:
         log.debug("driver spend price stepped aside for %s (%r)", name, exc)
@@ -352,7 +346,7 @@ def _reference_spend(arguments: Mapping[str, Any]) -> Callable[[Mapping[str, Any
 
 def _load_spend(arguments: Mapping[str, Any], name: str) -> Callable[[Mapping[str, Any], str], Spend | None]:
     def spend_of(graph: Mapping[str, Any], node: str) -> Spend | None:
-        size = load_bytes(arguments)
+        size = load_bytes(arguments, name)
         if not size:
             return None
         files = ", ".join(os.path.basename(str(value)) for key, value in arguments.items()
@@ -457,14 +451,16 @@ def warn_if_unwrapped() -> None:
         return
     try:
         mapping = getattr(sys.modules.get("nodes"), "NODE_CLASS_MAPPINGS", None) or {}
-        missed = [name for name in WRAPPED_CLASSES if name in mapping and _wrapped(mapping[name]) is not True]
+        found = {name: _wrapped(mapping[name]) for name in WRAPPED_CLASSES if name in mapping}
     except Exception:
         return
     _STATE["warned"] = "checked"
-    if missed:
-        log.warning("driver spend price: %s in ComfyUI's node mapping is not the class this pack wrapped "
-                    "(another pack registered over it, or a node replacement), so its spend on the driver is not "
-                    "priced where the loader did not charge it", ", ".join(missed))
+    for state_of, why in ((False, "another pack registered over it, or a node replacement"),
+                          (None, "its node method is inherited, so this pack could not wrap it")):
+        missed = [name for name, wrapped in found.items() if wrapped is state_of]
+        if missed:
+            log.warning("driver spend price: %s in ComfyUI's node mapping is not wrapped (%s), so its spend on "
+                        "the driver is not priced where the loader did not charge it", ", ".join(missed), why)
 
 
 def install_driver() -> str:

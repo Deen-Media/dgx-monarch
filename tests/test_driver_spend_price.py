@@ -486,11 +486,41 @@ def test_a_class_another_pack_registered_over_a_wrapped_name_is_named_once(rig, 
         def execute(cls, **kwargs):
             return None
 
+    class Inherits(_ClipLoader):
+        pass
+
     sys.modules["nodes"].NODE_CLASS_MAPPINGS[driver_spend_price.GUIDE_CLASS] = Other
+    sys.modules["nodes"].NODE_CLASS_MAPPINGS["UNETLoader"] = Inherits
     with caplog.at_level(logging.WARNING, logger="dgx_monarch.driver_spend_price"):
         driver_spend_price.warn_if_unwrapped()
         driver_spend_price.warn_if_unwrapped()
-    assert caplog.text.count("MiniMaxH3AddGuide in ComfyUI's node mapping is not the class this pack wrapped") == 1
+    assert caplog.text.count("MiniMaxH3AddGuide in ComfyUI's node mapping is not wrapped (another pack") == 1
+    assert caplog.text.count("UNETLoader in ComfyUI's node mapping is not wrapped (its node method is "
+                             "inherited") == 1
+
+
+def test_a_reused_prompt_id_does_not_carry_an_earlier_queues_marks(rig, monkeypatch):
+    """ComfyUI takes a client's own prompt id: a mark is keyed by the running item's queue number too."""
+    item = {"number": 1}
+    monkeypatch.setattr(driver_spend_marks, "running_item", lambda prompt_id: (item["number"], prompt_id, GRAPH))
+    _mark(driver_spend_price.GUIDE_TERM, 100 * GIB)
+    rig.box.value = 1 * GIB
+    _guide(1)  # the same queue: marked, steps aside
+    item["number"] = 2  # the same id sent again, a new queue whose loader ComfyUI kept
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError):
+        _guide(1)
+    assert len(_Guide.calls) == 1
+
+
+@pytest.mark.parametrize("fault", ["_active", "_context", "charged"])
+def test_a_fault_in_the_price_steps_aside_and_runs_stock_once(rig, monkeypatch, fault):
+    def broken(*_args):
+        raise RuntimeError(f"{fault} is broken")
+
+    monkeypatch.setattr(driver_spend_price, fault, broken)
+    rig.box.value = 1 * GIB
+    assert _guide(5, width=448, height=256)[0][0] == "guided"
+    assert len(_Guide.calls) == 1
 
 
 def test_the_refusal_is_one_the_driver_rescues_and_not_the_stock_load_family():

@@ -2291,7 +2291,9 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
   spend was charged at a figure at least its own, and logs that once per node.
   A spend the loader charged at 0, such as a guide on a checkpoint whose family
   it could not read, another family's loader in a mixed graph, or a load the
-  held-model credit took, is priced live.
+  held-model credit took, is priced live. A mark is keyed by the running queue
+  item's number as well as the prompt id: ComfyUI takes a client's own prompt
+  id, checking only its form, so an id sent again finds no earlier marks.
 - **When it prices nothing.** Without the running prompt's graph in hand: the
   executing context gives the prompt and node id, and the prompt queue's
   running item with that id carries the graph. And in a graph whose DGX Monarch
@@ -2333,7 +2335,13 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
 The loader's reference encode survives its held-model credit, as the guide's
 does: it is a transient, and a held model does not show that it has run. A
 first queue of a video-reference graph with ComfyUI's models held is charged
-its 40 GiB.
+its 40 GiB. LTX's audio-video text encoder loader (`LTXAVTextEncoderLoader`) is
+charged for what it loads: its `text_encoder` file as a text encoder, and of
+the LTX checkpoint it names only the text projection ComfyUI keeps, read from
+the file's header (`nodes/driver_model_charge.py`), since ComfyUI maps the
+checkpoint and drops the rest. It was charged the whole checkpoint and no text
+encoder; with `--disable-mmap` and DynamicVRAM off, where ComfyUI copies every
+tensor first, the whole checkpoint is still the charge.
 
 **A prompt expander that cannot see the request refuses before the render.** The
 MiniMax-H3-Image templates wire ComfyUI's expander chain, Replace Text into
