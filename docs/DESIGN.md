@@ -1048,19 +1048,33 @@ default, bakes at load time and never reaches this. Comfy-managed residency
 runs ComfyUI's own patcher and is not touched.
 
 A whole load is weighed by the same check. ComfyUI's classic bake keeps the
-host copy of every patched weight as its backup for the whole render (17.7 GiB
-beside a 15.5 GiB model on record), and its whole-load condition leaves only
-its reserve for what the sampler takes beyond ComfyUI's own estimate, which
-grows with the latent. So where a patched model is loaded whole on a device
-that shares the host's memory, and the room above the 5 GiB floor is under
-ComfyUI's own full estimate for sampling this latent (`estimate_memory`'s
-doubled-batch figure, twice what the whole-load condition used),
+host copy of every patched weight as its backup for the whole render (the
+Worker held 17.7 GiB of anonymous memory beside a 15.5 GiB model on record,
+most of it that backup), and its whole-load condition leaves only its reserve
+for what the sampler takes beyond ComfyUI's own estimate, which grows with the
+latent. So where a patched model is loaded whole on a device that shares the
+host's memory, and the room above the 5 GiB floor is under 1.5 times ComfyUI's
+full estimate for sampling this latent (`estimate_memory`'s first figure, the
+doubled batch; 1.5 is the share of free memory from which ComfyUI itself runs
+cond and uncond in one call),
 `lora_partial_load.free_backup_for_sampling` takes the route's last step
-alone before the first forward: the backup and the patches go, no weight
-moves, the slot is marked baked, and one line says so. With more room than
-that the backup stays and a stack change swaps in place as before. It moves
-no price, and the weights the sampler reads are the ones the classic bake
-left. One GPU only, as the route is. `DGXM_DISABLE_BACKUP_FREE=1` in the
+alone before the first forward: the backup and the patches go, on every clone
+between the store's patcher and the sampler's, no weight moves, the slot is
+marked baked, and one line says so. With more room than that the backup stays
+and a stack change swaps in place as before. It moves no price, and the
+weights the sampler reads are the ones the classic bake left. What can differ
+is ComfyUI's own choice, made from free memory at every step, to batch cond
+with uncond: on a graph with two conds on one model (a cfg other than 1, one
+checkpoint) and a large estimate, the memory given back can turn two calls a
+step into one, as it would with the same memory free under `lora_low_rss` on,
+and the float order of that render then differs from the same render with the
+step off. No shipped template that reaches the step is such a graph (the three
+below run at cfg 1.0), and no hardware cell reads one.
+On hardware the free has run only as the route's last step: it gave back
+15.3 GiB within 2 s after one load line into a fresh Worker, and 5.7 GiB where
+the Worker had held the bare base before the stack (block D, 2026-11-12; what
+kept the rest is not known). A whole load's own free is not yet read.
+One GPU only, as the route is. `DGXM_DISABLE_BACKUP_FREE=1` in the
 Worker's environment keeps the backup however little room is left, for
 diagnosis and to read one build with and without the step; the Worker then
 logs what the step would have weighed, and the worker loop's environment
@@ -1082,20 +1096,18 @@ later stack change in place would have read. The low-RSS bake at load time
 stays unproven for this family, and the templates stay as they are.
 
 On the BF16 file the same step matters at the shipped 81 frames. The stack
-patches every weight, so the backup is the whole model, 30.5 GiB (the Worker
-held about 34 GiB of anonymous memory after that load). The BF16 price is the
-stock price, the line and the files (69.1 + 11.2 + 0.7 = 81.1 GiB before the
-file is read), and it sits ABOVE the reading from which ComfyUI would load the
-model whole (about 75 by its own condition; not read), so every admitted BF16
-load is a whole load and its
-tightest reading is the price itself. One such load, on the second Spark of a
-pair, took 77.4 GiB, 1.35 more
+patches most of the model's weights, so the backup is most of a 30.5 GiB model
+(the Worker held about 34 GiB of anonymous memory after that load). The BF16
+price is the stock price, the line and the files (69.1 + 11.2 + 0.7 = 81.1 GiB
+before the file is read), and it sits ABOVE the reading from which ComfyUI
+would load the model whole (about 75 by its own condition; not read), so every
+admitted BF16 load is a whole load and its tightest reading is the price
+itself. One such load, on the second Spark of a pair, took 77.4 GiB, 1.35 more
 than that price leaves above the floor (the recorded shortfall of section
 5.9). On one GPU, with the backup freed before the first step, that shortfall
 should go; on a pair the step does not run, and the shortfall stands. No
 hardware reading of the BF16 templates at their edge exists yet, on one GPU or
-on a pair, before or
-after.
+on a pair, before or after.
 
 The bake-equivalence canary compares the bake with comfy.ops' own
 cast on INT8 ConvRot and BF16 layers, and the keys it bakes at cast time with

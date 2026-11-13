@@ -28,6 +28,7 @@ on:
       - "tests/conftest.py"
       - "tests/test_bake_equivalence.py"
       - "tests/test_lora_cast_time.py"
+      - "tests/test_lora_partial_load.py"
       - "tests/test_comfy_seam_contracts.py"
       - "tests/test_int8_linear_layout.py"
       - "tests/test_slab_hook_canary.py"
@@ -198,7 +199,7 @@ jobs:
       - name: Cast-time LoRA bake vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
-        run: pytest -q tests/test_lora_cast_time.py
+        run: pytest -q tests/test_lora_cast_time.py tests/test_lora_partial_load.py
       - name: Slab hook surfaces vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
@@ -535,6 +536,7 @@ jobs:
           tests/test_comfy_seam_contracts.py
           tests/test_bake_equivalence.py
           tests/test_lora_cast_time.py
+          tests/test_lora_partial_load.py
           tests/test_slab_hook_canary.py
           tests/test_lens_comfy_exactness.py
           tests/test_lens_text_projections.py

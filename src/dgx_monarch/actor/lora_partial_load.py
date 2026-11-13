@@ -53,16 +53,21 @@ ComfyUI does when a loaded model may use more memory, and not through
 runs on every model ``prepare_sampling`` loaded.
 
 A WHOLE load keeps ComfyUI's backup too: the host copy of every weight the
-stack patches stands through the whole render (17.7 GiB beside a 15.5 GiB
-model on record). ComfyUI's whole-load condition leaves only its reserve for
-what the sampler takes beyond ComfyUI's own estimate, and that grows with the
-latent, so at the tightest reading that still loads whole a long clip runs
-the host under its floor with the backup standing by unused. So where a
-patched model is loaded whole and the room above the floor is under ComfyUI's
-own full estimate for sampling this latent, ``check`` takes the route's last
-step alone: the backup and the patches go, no weight moves, and the slot is a
-low-RSS slot. With more room than that the backup stays, and a stack change
-swaps in place as before.
+stack patches stands through the whole render (the Worker held 17.7 GiB of
+anonymous memory beside a 15.5 GiB model on record, most of it that backup).
+ComfyUI's whole-load condition leaves only its reserve for what the sampler
+takes beyond ComfyUI's own estimate, and that grows with the latent, so at
+the tightest reading that still loads whole a long clip runs the host under
+its floor with the backup standing by unused. So where a patched model is
+loaded whole and the room above the floor is under the ask (``_sampling_ask``,
+1.5 times ComfyUI's full estimate for this latent), ``check`` takes the
+route's last step alone: the backup and the patches go, no weight moves, and
+the slot is a low-RSS slot. With more room than that the backup stays, and a
+stack change swaps in place as before. The weights are the classic bake's
+either way. What can differ is ComfyUI's own choice, made from free memory at
+each step, to run cond and uncond in one call: on a graph with two conds on
+one model the memory given back can turn two calls into one, as it would with
+that memory free for any other reason, and the float order then differs.
 """
 from __future__ import annotations
 
@@ -270,6 +275,12 @@ def _free_backup(patcher: Any, stored: Any) -> None:
     patcher.backup.clear()
     patcher.backup_buffers.clear()
     patcher.patches.clear()
+    # A clone made between the store's patcher and the sampler's (the render clone, a sampling-shift
+    # node's clone) copied the stack: no patcher of this model may keep it once it is baked in.
+    parent = getattr(patcher, "parent", None)
+    while parent is not None and getattr(parent, "model", None) is patcher.model:
+        parent.patches.clear()
+        parent = getattr(parent, "parent", None)
     gc.collect()
     active = getattr(stored, "active_patcher", None)
     if active is not None and active is not patcher:
@@ -277,22 +288,29 @@ def _free_backup(patcher: Any, stored: Any) -> None:
     stored.base_baked, stored.unbake = True, None
 
 
-def _sampling_ask(patcher: Any, noise_shape: Any, conds: Any) -> int | None:
-    """ComfyUI's own full estimate of what sampling this latent takes, in bytes; ``None`` if it cannot be had.
+# ComfyUI runs cond and uncond in one call when this many times its full estimate is free
+# (``comfy/samplers.py`` ``_calc_cond_batch``), and a batched call takes more than the estimate.
+ASK_SHARE_OF_FULL_ESTIMATE = 1.5
 
-    The first of ``comfy.sampler_helpers.estimate_memory``'s two figures, the
-    one worked on the doubled batch (cond and uncond in one call). It is twice
-    the single-batch figure ComfyUI's whole-load condition uses. On record the
-    sampler ran 1.08 and 1.15 times the single figure on one-batch renders
-    (81 and 241 frames of Wan-Animate 2, 2026-11-12), and ComfyUI batches cond
-    with uncond only when 1.5 times the full figure is free, so the full
-    figure covers both.
+
+def _sampling_ask(patcher: Any, noise_shape: Any, conds: Any) -> int | None:
+    """What the sampler may ask for this latent, in bytes; ``None`` if ComfyUI's estimate cannot be had.
+
+    1.5 times the first of ``comfy.sampler_helpers.estimate_memory``'s two
+    figures, the one worked on the doubled batch (cond and uncond in one
+    call). ComfyUI batches from that same 1.5, against free memory and not
+    against the pack's floor: an ask of the full figure alone left a band
+    where the backup was kept, ComfyUI batched, and the batched call (about
+    1.15 times the estimate on the single-batch records, 81 and 241 frames of
+    Wan-Animate 2, 2026-11-12) ran the host under its floor. Asking the
+    threshold itself closes it and errs toward freeing, whose cost is a slower
+    next stack change.
     """
     try:
         import comfy.sampler_helpers
 
         full, _minimum = comfy.sampler_helpers.estimate_memory(patcher, noise_shape, conds)
-        return int(full)
+        return int(ASK_SHARE_OF_FULL_ESTIMATE * full)
     except Exception:
         return None
 
@@ -303,7 +321,8 @@ def free_backup_for_sampling(patcher: Any, noise_shape: Any, conds: Any) -> bool
     ``True`` when it freed it. The model must be whole and patched, hold a
     backup, sit on a device that shares the host's memory and belong to a
     slot of the Worker's store; the room is the host's available memory above
-    its floor, the ask ``_sampling_ask``. No weight moves: the weights on the
+    its floor, the ask ``_sampling_ask`` (1.5 times ComfyUI's full estimate).
+    No weight moves: the weights on the
     device are the baked ones already, and ComfyUI needs the backup only to
     change the stack in place, which the slot then does by a reload from disk
     (``StoredModel.base_baked``), as after the partial-load route and as with
@@ -324,18 +343,19 @@ def free_backup_for_sampling(patcher: Any, noise_shape: Any, conds: Any) -> bool
     if room >= ask:
         return False
     figures = (max(0, room) / _GIB, ABSOLUTE_HOST_FLOOR_BYTES / _GIB, ask / _GIB)
+    weighed = ("LoRA bake: ComfyUI loaded this model whole with a LoRA stack and lora_low_rss off, and "
+               "%.1f GiB is available above the %.0f GiB floor where the sampler may ask %.1f GiB (1.5 "
+               "times ComfyUI's estimate for this latent)")
     if mesh_safety.env_enabled(BACKUP_FREE_DISABLE_ENV):
-        log.info("LoRA bake: ComfyUI loaded this model whole with a LoRA stack and lora_low_rss off, and "
-                 "%.1f GiB is available above the %.0f GiB floor where ComfyUI estimates %.1f GiB for "
-                 "sampling this latent. ComfyUI's weight backup is kept through the render: the step "
-                 "that frees it is off (" + BACKUP_FREE_DISABLE_ENV + "=1 on the Worker)", *figures)
+        kept = (f"{weighed}. ComfyUI's weight backup is kept through the render: the step that frees it "
+                f"is off ({BACKUP_FREE_DISABLE_ENV}=1 on the Worker)")
+        log.info(kept, *figures)
         return False
     _free_backup(patcher, stored)
-    log.info("LoRA bake: ComfyUI loaded this model whole with a LoRA stack and lora_low_rss off, and "
-             "%.1f GiB is available above the %.0f GiB floor where ComfyUI estimates %.1f GiB for "
-             "sampling this latent, so the Worker freed ComfyUI's weight backup before the first step "
-             "(the weights on the device are the baked ones; none moved). A stack change on this model "
-             "reloads it from disk", *figures)
+    freed = (f"{weighed}, so the Worker freed ComfyUI's weight backup before the first step (the weights "
+             "on the device are the baked ones; none moved). A stack change on this model reloads it "
+             "from disk")
+    log.info(freed, *figures)
     return True
 
 
