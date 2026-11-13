@@ -2416,20 +2416,26 @@ recovers by itself, and the context's main buffer does not.
   rank, and the driver names the box of any error a Worker raises at setup,
   as it does at a load (`worker_box.name` in
   `mesh_setup_transition.ensure_setup`, from the rank whose answer it was
-  awaiting, which covers a Fleet's actors too), so on a pair it opens "On
-  the sibling, this Worker could not start on its GPU". Any other error
-  passes on as it was raised. On a pair the refusal is not yet prompt. The
-  rank that cannot make its context raises before it joins the group
-  (`worker_env.setup_impl` calls the bootstrap ahead of
-  `dist.init_process_group`), and the driver has its error at once. But its
-  peer is by then waiting on the group's store, which rank 0 opens only after
-  its own bootstrap, or on the peers a store waits for. That wait holds the
-  peer's GPU lock (the connect has a 600 s limit and then tries again), the
-  rollback's `teardown_group` call queues behind it on that lock, and the
-  driver raises the refusal only when the rollback reaches its own limit
-  (`rollback_cleanup_s`, 600 s, and a 10 s margin). On 2026-11-12 the raw
-  error took 610 s to show that way, and the driver logged that the
-  rollback had timed out. Ending the wait at the first rank's failure is a change to the
+  awaiting, which covers a Fleet's actors too). Any other error passes on
+  as it was raised. On a pair the refusal is not yet prompt, and only the
+  head's reaches the prompt. The rank that cannot make its context raises
+  before it joins the group (`worker_env.setup_impl` calls the bootstrap
+  ahead of `dist.init_process_group`), but the driver awaits the answers in
+  rank order. Where the head (rank 0) failed, the driver has its refusal at
+  once. The sibling is by then waiting to connect to the store the head
+  never opened; that wait holds the sibling's GPU lock (the connect has a
+  600 s limit and then tries again), the rollback's `teardown_group` call
+  queues behind it on that lock, and the driver raises the refusal, opening
+  "On the head, this Worker could not start on its GPU", only when the
+  rollback reaches its own limit (`rollback_cleanup_s`, 600 s, and a 10 s
+  margin). On 2026-11-12 the raw error took 610 s to show that way, and the
+  driver logged that the rollback had timed out. Where the sibling failed,
+  the head has opened its store and waits for the sibling to join, and the
+  driver is awaiting the head: what reaches the prompt about 600 s later is
+  a timeout (the driver's own setup limit, which starts at dispatch, or the
+  head's store's), and the sibling's refusal, returned at once, is never
+  read. Ending the wait at the first rank's failure, and raising the refusal
+  of the rank that failed, is a change to the
   setup protocol and is not in this rule. The remedy it names is a reset of the attached
   mesh after memory is freed: no record shows a second try in the same process
   making a context, and a setup that failed leaves the Worker marked as not

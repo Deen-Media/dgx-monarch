@@ -742,11 +742,17 @@ and then makes its context straight away. What you may see:
   memory, or wait for a large download or file copy to end, then click Reset
   attached mesh and queue again. If nothing can be closed, a root shell can
   drop the page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`). On a pair
-  the refusal opens with the box it came from, "On the sibling, ...", and it
-  can take up to ten minutes to show: the Worker that failed answers at
-  once, but the other one goes on waiting for it to join the group, the
-  driver's clean-up of the failed setup waits behind that, and the driver
-  reports only when the clean-up reaches its own limit. A render that sits
+  it takes about ten minutes to show, and it shows only when the head's
+  Worker is the one that failed: it then opens "On the head, ...". The
+  Worker that failed answers at once, but the sibling goes on waiting for
+  the head to open the group, the driver's clean-up of the failed setup
+  waits behind that, and the driver reports only when the clean-up reaches
+  its own limit. When the sibling's Worker is the one that failed, the head
+  waits for it to join until the setup's limit, and what shows after about
+  ten minutes is a timeout with no word of memory, not this refusal. If a
+  pair's start ends that way, read the free memory on the sibling (`grep
+  MemFree /proc/meminfo`) and the make-room line in the sibling Worker's
+  journal. A render that sits
   with no progress right after a reset or a restart, on a box that is short
   of free memory, is this wait.
 

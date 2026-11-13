@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import ctypes
 import importlib
+import math
 import mmap
 import sys
 import time
@@ -164,6 +165,11 @@ _LAST = Outcome()
 
 def _gib(value: int | float) -> str:
     return f"{value / _GIB:.1f}"
+
+
+def _gib_down(value: int | float) -> str:
+    """Rounded down, so a reading a hair under a need never prints as the need."""
+    return f"{math.floor(value * 10 / _GIB + 1e-6) / 10:.1f}"
 
 
 def _gib_or_none(value: int | None) -> float | None:
@@ -278,7 +284,7 @@ def _decide(read: Callable[[], Reading | None], shares: Callable[[], bool | None
     # Free memory is short from here on, so every way out says why in one line.
     if available < MARK_BYTES + FLOOR_BYTES:
         outcome = Outcome("skipped", free, available, why=(
-            f"{_gib(available)} GiB available is under the "
+            f"{_gib_down(available)} GiB available is under the "
             f"{_gib(MARK_BYTES + FLOOR_BYTES)} GiB it needs to do that safely"))
     else:
         shared = shares()
@@ -300,7 +306,7 @@ def _decide(read: Callable[[], Reading | None], shares: Callable[[], bool | None
                  "an unread amount" if outcome.free_after is None else _gib(outcome.free_after))
     else:
         log.info("free memory is %s GiB with %s GiB available, and the Worker made no room "
-                 "for its GPU context: %s", _gib(free), _gib(available), outcome.why)
+                 "for its GPU context: %s", _gib(free), _gib_down(available), outcome.why)
     return outcome
 
 

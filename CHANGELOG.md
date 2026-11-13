@@ -656,9 +656,12 @@
   and logs one line. A start with 16 GiB free does nothing. If the context
   still cannot be made, the render refuses in plain words (class C) with
   the box it came from, that box's free and available memory, what the
-  Worker did first and what to do, where it used to show a traceback. Any
-  other error a Worker raises at its setup now opens with its box as well
-  ("On the sibling, ..."), as a load error does. Nothing to set.
+  Worker did first and what to do, where it used to show a traceback. On a
+  pair it shows only after about ten minutes, and only where the head's
+  Worker failed; where the sibling's failed, the start still ends in a
+  timeout after about ten minutes, without the refusal. Any other error a
+  Worker raises at its setup and the driver reads now opens with its box as
+  well ("On the head, ..."), as a load error does. Nothing to set.
   `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment turns the
   make-room step off for diagnosis, a fault in the step leaves
   the start as it was, and the Worker's status says what the step did.

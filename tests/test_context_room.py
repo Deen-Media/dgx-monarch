@@ -173,6 +173,18 @@ def test_the_amount_is_the_mark_and_not_the_mark_less_what_is_free():
     assert sum(box.taken) == context_room.MARK_BYTES
 
 
+def test_exactly_the_floor_left_is_allowed():
+    """21 GiB available is the mark and the floor: all sixteen steps, the last leaving 5."""
+    box = _Box(free_gib=0.5, available_gib=21.0)
+    assert box.run().state == "made_room" and box.taken == [_GIB] * 16
+
+
+def test_a_reading_a_hair_under_the_need_never_prints_as_the_need(journal):
+    box = _Box(free_gib=1.6, available_gib=20.999)
+    assert box.run().why == "20.9 GiB available is under the 21.0 GiB it needs to do that safely"
+    assert journal[0].getMessage().startswith("free memory is 1.6 GiB with 20.9 GiB available, ")
+
+
 # 3. It never takes the box under its floor.
 
 def test_it_stops_before_a_step_that_would_leave_under_the_floor(journal):
@@ -405,6 +417,19 @@ def test_comfy_managed_residency_leaves_the_context_to_the_bootstrap(monkeypatch
     assert events == ["make_room", ("ensure_comfy", ("/comfy", managed), {})]
 
 
+@pytest.mark.parametrize("state", ["roomy", "skipped", "off", "not_run", "failed"])
+def test_a_start_that_made_no_room_leaves_the_context_to_the_bootstrap(monkeypatch, state):
+    """The early context follows the room, so the off switch gives back the old start."""
+    events: list = []
+    _bridge(monkeypatch, events)
+    monkeypatch.setattr(context_room, "make_room",
+                        lambda: events.append("make_room") or context_room.Outcome(state))
+    monkeypatch.setattr(context_room, "make_context",
+                        lambda *_a, **_k: pytest.fail("no early context where no room was made"))
+    context_room.ensure_comfy("/comfy", {})
+    assert events == ["make_room", ("ensure_comfy", ("/comfy", {}), {})]
+
+
 def test_the_bootstrap_reads_free_memory_just_ahead_of_a_context_left_to_it(monkeypatch, journal):
     """Memory freed can be taken again before the bootstrap's import asks the driver."""
     monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
@@ -626,6 +651,49 @@ def test_setup_names_the_box_of_the_rank_whose_answer_it_awaited(monkeypatch):
     assert len(workers.teardown_group.calls) == 2, "the rollback still runs"
 
 
+def test_on_a_pair_a_peer_s_refusal_behind_rank_0_s_answer_is_not_read(monkeypatch):
+    """Today's limit (DESIGN, the pair's wait): the driver raises the answer it awaits.
+
+    When the sibling cannot make its context, the head waits at its store, and the
+    driver, awaiting the head, raises the head's answer; the sibling's refusal is
+    never read. The first-failure item turns this test around.
+    """
+    from topology_transition_helpers import _acks, _Future, _handle, _Workers
+
+    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    monkeypatch.setattr(context_room, "meminfo", lambda: (int(4.6 * _GIB), int(47.4 * _GIB)))
+    with pytest.raises(context_room.ContextMemoryError) as raised:
+        context_room.refuse_unmade_context(RuntimeError(OOM), MADE, (1, 2))
+    timeout = boxes._remote(RuntimeError(
+        "Timed out after 600 seconds waiting for clients. 1/2 clients joined."), "setup")
+    workers = _Workers([_Future(_acks()), _Future(_acks())],
+                       setup_futures=[_Future(error=timeout),
+                                      _Future(error=boxes._remote(raised.value, "setup"))])
+    handle, _old, new = _handle(workers)
+    with pytest.raises(type(timeout)) as failed:
+        handle.ensure_setup(new, "TORCH_FLASH")
+    assert failed.value is timeout
+    assert "could not start on its GPU" not in str(failed.value.exception)
+
+
+def test_a_fault_in_the_naming_never_stops_the_setup_rollback(monkeypatch):
+    """ensure_setup words the error before its rollback; the words must never cost the rollback."""
+    from topology_transition_helpers import _acks, _Future, _handle, _Workers
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("the labels could not be read")
+
+    monkeypatch.setattr(worker_box, "_name", broken)
+    wrapper = boxes._remote(RuntimeError("a Worker's own setup error"), "setup")
+    workers = _Workers([_Future(_acks()), _Future(_acks())],
+                       setup_futures=[_Future({"rank": 0}), _Future(error=wrapper)])
+    handle, _old, new = _handle(workers)
+    with pytest.raises(type(wrapper)) as failed:
+        handle.ensure_setup(new, "TORCH_FLASH")
+    assert failed.value is wrapper
+    assert len(workers.teardown_group.calls) == 2, "the rollback still runs"
+
+
 def test_a_driver_side_setup_error_is_left_as_it_is():
     from topology_transition_helpers import _acks, _Future, _handle, _Workers
 
@@ -716,6 +784,7 @@ def test_the_guard_is_in_the_vocabulary_and_offers_no_card():
     FileNotFoundError("ComfyUI not found at '/comfy' on this host."),
     RuntimeError("CUDA error: no CUDA-capable device is detected"),
     ImportError("No module named 'comfy'"),
+    MemoryError("out of memory"),
 ])
 def test_any_other_bootstrap_error_passes_unchanged(monkeypatch, error):
     events: list = []
