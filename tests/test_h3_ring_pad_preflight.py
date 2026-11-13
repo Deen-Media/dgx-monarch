@@ -9,7 +9,7 @@ with the table empty. And where a ring layout remains (a typed ring preset,
 or ``auto`` at an odd world or above 4), the driver counts each model call's
 packed total and refuses a padded one before the gate, setup and the load,
 with the Worker's own card (nodes/h3_ring_pad.py). The count is pinned to
-stock's ``PackedLayout`` by canary seam 62; this file pins it by hand.
+stock's ``PackedLayout`` by canary seam 63; this file pins it by hand.
 """
 from __future__ import annotations
 

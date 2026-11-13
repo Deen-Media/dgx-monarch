@@ -2387,7 +2387,7 @@ pair's uly2, and three rows within the 0.10 one-step limit of one GPU
 On CPU, `tests/test_usp_degree4_oracle.py` shards a stream four ways across
 H3's 56 heads with yunchang's own all-to-all, drops one, two and three pad
 rows, and matches attention over the real rows alone in float64; canary
-seam 62 holds the driver's packed-total count to ComfyUI's `PackedLayout`
+seam 63 holds the driver's packed-total count to ComfyUI's `PackedLayout`
 for every segment kind. Neither says anything about a GPU kernel's
 accumulation order or about one GPU.
 
