@@ -10,6 +10,7 @@ where no held-model credit took them. CPU only.
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -62,11 +63,19 @@ def test_a_still_guide_is_marked_at_the_room_its_encode_window_held(pool_reset, 
     assert marked >= terms.guide_bytes
 
 
-def test_a_clip_is_marked_at_its_sum_which_covers_the_wraps_margin(pool_reset, admitted, tmp_path):  # noqa: F811
+def _dynamic_vram(monkeypatch, on: bool) -> int:
+    """Set DynamicVRAM on or off; return the clip margin the wrap adds there."""
+    monkeypatch.setitem(sys.modules, "comfy.memory_management", SimpleNamespace(aimdo_enabled=on))
+    return driver_spend_price.CLIP_MARGIN_BYTES if on else driver_spend_price.CLIP_MARGIN_STATIC_BYTES
+
+
+@pytest.mark.parametrize("dynamic", [True, False])
+def test_a_clip_is_marked_at_its_sum_which_covers_the_wraps_margin(
+        pool_reset, admitted, tmp_path, monkeypatch, dynamic):  # noqa: F811
+    margin = _dynamic_vram(monkeypatch, dynamic)
     _write_image(tmp_path, "clip.png", 6)
     admitted(_still_graph(width=448, height=256, image_file="clip.png"))
-    own = (h3_activation.guide_encode_bytes(448 * 256, driver_spend_price.guide_frames(6))
-           + driver_spend_price.CLIP_MARGIN_BYTES)
+    own = h3_activation.guide_encode_bytes(448 * 256, driver_spend_price.guide_frames(6)) + margin
     assert driver_spend_price.charged(PROMPT, driver_spend_price.GUIDE_TERM) >= own
 
 
@@ -130,11 +139,14 @@ def _latent(width: int, height: int):
     return {"samples": SimpleNamespace(tensors=[SimpleNamespace(shape=(1, 24, 31, height // 16, width // 16))])}
 
 
+@pytest.mark.parametrize("dynamic", [True, False])
 @pytest.mark.parametrize("preset", ["auto", "uly2"])
-def test_spends_first_and_the_loader_last_in_one_prompt(pool_reset, monkeypatch, tmp_path, preset):  # noqa: F811
+def test_spends_first_and_the_loader_last_in_one_prompt(
+        pool_reset, monkeypatch, tmp_path, preset, dynamic):  # noqa: F811
     """P2a's order on a fresh driver (2026-11-13): the text encoder loads and Add Guide encodes, both priced
     live and unmarked, then the loader node runs LAST and prices the whole graph. At every reading a live
     refusal at either spend is one the loader makes of the same graph at that reading, with nothing held."""
+    margin = _dynamic_vram(monkeypatch, dynamic)
     _write_image(tmp_path, "clip5.png", 5)
     graph = _still_graph(width=448, height=256, image_file="clip5.png")
     monkeypatch.setattr(driver_spend_marks, "_CHARGED", {})
@@ -148,7 +160,7 @@ def test_spends_first_and_the_loader_last_in_one_prompt(pool_reset, monkeypatch,
     guide = driver_spend_price._guide_spend(
         {"image": SimpleNamespace(shape=(5, 32, 32, 3)), "latent": _latent(448, 256)})(graph, "10")
     assert te is not None and guide is not None
-    assert guide.own == 17 * GIB + driver_spend_price.CLIP_MARGIN_BYTES
+    assert guide.own == 17 * GIB + margin
     refused = []
     for gib in (10, 15, 20, 22, 25, 30, 35, 40, 45, 50, 60, 70, 80, 100):
         monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda value=gib * GIB: value)

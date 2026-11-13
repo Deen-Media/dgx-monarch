@@ -4732,8 +4732,9 @@ length runs no loader, and its new encode would run with no charge before it.
 Since 1.5.0 the driver prices that encode at Add Guide (MiniMax H3) itself,
 where the loader did not charge it: on the canvas and frame count the node
 holds, at the charge above, a clip with 1 GiB more, against MemAvailable after
-ComfyUI's models are unloaded and the Workers' idle caches released. The
-refusal is `[dgxm:C guard=driver_footprint_preflight waivable=0]`, starts
+ComfyUI's models are unloaded and the Workers' idle caches released. Where
+ComfyUI runs without DynamicVRAM a clip carries 6 GiB more, and a VAE ComfyUI
+does not hold is charged too. The refusal is `[dgxm:C guard=driver_footprint_preflight waivable=0]`, starts
 `Add Guide (MiniMax H3) for this 5-frame clip at 448x256 needs ... GiB on the
 driver's box`, says whether this prompt reached the loader, and nothing was
 encoded. Use a shorter clip or a smaller canvas, or free memory on the box.

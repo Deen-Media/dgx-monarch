@@ -154,6 +154,8 @@ def rig(monkeypatch):
     monkeypatch.setattr(vae_decode_relief, "_serving", lambda: (None, vae_decode_relief.NO_FLEET))
     monkeypatch.setattr(driver_unload, "comfy_model_management", lambda: None)
     monkeypatch.setattr(driver_unload, "busy_reason", lambda handle: "")
+    # DynamicVRAM on, as for both 2026-11-13 readings; one test turns it off.
+    monkeypatch.setitem(sys.modules, "comfy.memory_management", SimpleNamespace(aimdo_enabled=True))
     assert sorted(driver_spend_price.install()) == sorted(MAPPING)
     return SimpleNamespace(box=box, context=context, graphs=graphs, family=family, activations=activations,
                            floor=driver_footprint.reserve_bytes(None))
@@ -334,17 +336,44 @@ def test_a_rescue_runs_before_the_refusal_and_its_room_admits(rig, monkeypatch):
     assert unloaded == [["the text encoder"]] and len(_Guide.calls) == 1
 
 
-def test_a_vae_is_charged_again_only_after_a_rescue_unloaded_it(rig, monkeypatch):
-    """Before any rescue the VAE costs the encode nothing more: on 2026-11-13 a fresh driver's first encode,
-    which loads the VAE, raised the driver's figure 0.60 GiB. After the unload rescue, a VAE it took loads again."""
+def _vae(monkeypatch, loaded: bool):
+    """A VAE of 3 GiB, held loaded by ComfyUI's model management or not."""
     patcher = SimpleNamespace(model_size=lambda: 3 * GIB)
-    vae = SimpleNamespace(patcher=patcher)
-    monkeypatch.setitem(sys.modules, "comfy.model_management", SimpleNamespace(current_loaded_models=[]))
-    rig.box.value = 19 * GIB  # 14 plus the floor: fits before any rescue, though the VAE is not loaded
+    held = [SimpleNamespace(model=patcher)] if loaded else []
+    monkeypatch.setitem(sys.modules, "comfy.model_management", SimpleNamespace(current_loaded_models=held))
+    return SimpleNamespace(patcher=patcher), held
+
+
+def test_with_dynamic_vram_an_unloaded_vae_costs_the_first_encode_nothing(rig, monkeypatch):
+    """On 2026-11-13 a fresh driver's first encode, which loads the VAE, raised the driver's figure 0.60 GiB."""
+    vae, _held = _vae(monkeypatch, loaded=False)
+    rig.box.value = 19 * GIB  # 14 plus the floor: fits, though the VAE is not loaded
     _guide(1, vae=vae)
     assert len(_Guide.calls) == 1
 
-    def unload(mm, held):
+
+def test_a_trim_that_frees_enough_for_the_first_figure_admits(rig, monkeypatch):
+    """A rescue that did not take the VAE does not raise the bar: the VAE was never loaded, so nothing reloads."""
+    vae, _held = _vae(monkeypatch, loaded=False)
+    fleet = object()
+    monkeypatch.setattr(vae_decode_relief, "_serving", lambda: (fleet, ""))
+    monkeypatch.setattr(driver_unload, "trimmable", lambda handle: handle is fleet)
+
+    def trim(handle, level=driver_unload.TRIM_LEVEL):
+        before, rig.box.value = rig.box.value, rig.box.value + 2 * GIB
+        return driver_unload.Trimmed(2, before, rig.box.value)
+
+    monkeypatch.setattr(driver_unload, "trim_actors", trim)
+    rig.box.value = 18 * GIB  # 13 above the floor, short of 14; the trim frees 2
+    _guide(1, vae=vae)
+    assert len(_Guide.calls) == 1
+
+
+def test_an_unload_that_took_the_vae_charges_it_again(rig, monkeypatch):
+    vae, held = _vae(monkeypatch, loaded=True)
+
+    def unload(mm, models):
+        held.clear()  # the unload took the VAE ComfyUI held
         before, rig.box.value = rig.box.value, rig.box.value + 2 * GIB
         return driver_unload.Unloaded(("the VAE",), before, rig.box.value)
 
@@ -354,7 +383,52 @@ def test_a_vae_is_charged_again_only_after_a_rescue_unloaded_it(rig, monkeypatch
     rig.box.value = 18 * GIB  # short; the unload frees 2 GiB (16 above the floor), and the VAE's 3 come back
     with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
         _guide(1, vae=vae)
-    assert "needs 17.0 GiB" in _refused(exc_info) and len(_Guide.calls) == 1
+    assert "needs 17.0 GiB" in _refused(exc_info) and _Guide.calls == []
+
+
+def test_a_refusal_with_models_held_is_true_of_the_box_after_the_unload_and_the_trim(rig, monkeypatch):
+    """The restated promise where the loader would credit what ComfyUI holds: the driver unloads it and trims
+    the Workers first, and a refusal that stands is true of the box after both."""
+    fleet, rescues = object(), []
+    monkeypatch.setattr(vae_decode_relief, "_serving", lambda: (fleet, ""))
+    monkeypatch.setattr(driver_unload, "trimmable", lambda handle: handle is fleet)
+
+    def unload(mm, models):
+        rescues.append("unload")
+        before, rig.box.value = rig.box.value, rig.box.value + 4 * GIB
+        return driver_unload.Unloaded(("text encoder",), before, rig.box.value)
+
+    def trim(handle, level=driver_unload.TRIM_LEVEL):
+        rescues.append("trim")
+        before, rig.box.value = rig.box.value, rig.box.value + 1 * GIB
+        return driver_unload.Trimmed(2, before, rig.box.value)
+
+    monkeypatch.setattr(driver_unload, "comfy_model_management", lambda: object())
+    monkeypatch.setattr(driver_unload, "held_models", lambda mm: [(object(), "text encoder")])
+    monkeypatch.setattr(driver_unload, "unload", unload)
+    monkeypatch.setattr(driver_unload, "trim_actors", trim)
+    rig.box.value = 8 * GIB
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    text = _refused(exc_info)
+    assert rescues == ["unload", "trim"] and _Guide.calls == []
+    assert 14 * GIB + rig.floor > rig.box.value == 13 * GIB  # the spend and the floor exceed the box after both
+    assert f"has {(rig.box.value - rig.floor) / GIB:.1f} GiB above its {rig.floor / GIB:.1f} GiB floor" in text
+
+
+def test_without_dynamic_vram_the_probes_figures_stand(rig, monkeypatch):
+    """Both 2026-11-13 readings were taken with DynamicVRAM on. Without it an unloaded VAE is charged at the first
+    encode, as load_models_gpu copies it to the device, and a clip carries the 6 GiB margin."""
+    monkeypatch.setitem(sys.modules, "comfy.memory_management", SimpleNamespace(aimdo_enabled=False))
+    vae, _held = _vae(monkeypatch, loaded=False)
+    rig.box.value = 21 * GIB  # 14 plus the floor fits; 14 plus the VAE's 3 does not
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1, vae=vae)
+    assert "needs 17.0 GiB" in _refused(exc_info)
+    rig.box.value = 27 * GIB  # 17 plus 6 plus the floor is 28
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(5, width=448, height=256)
+    assert "needs 23.0 GiB" in _refused(exc_info)
 
 
 def test_a_reference_video_is_charged_the_loaders_figure(rig):

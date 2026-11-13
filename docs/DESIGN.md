@@ -2273,8 +2273,9 @@ promise to run the loader before such a node on a first queue either. So the
 driver prices the spend at the node that makes it (`driver_spend_price.py`):
 - **What it prices.** Add Guide (MiniMax H3)'s encode, on the canvas and frame
   count it holds, at the loader's guide charge, a clip with 1 GiB more where the
-  graph's activation term resolves; Reference to Video (MiniMax H3) with a
-  reference video, at the loader's 40 GiB; and the stock loader nodes whose
+  graph's activation term resolves (6 GiB without DynamicVRAM, below);
+  Reference to Video (MiniMax H3) with a reference video, at the loader's
+  40 GiB; and the stock loader nodes whose
   inputs the loader charges (Load CLIP, the dual, triple and quadruple CLIP
   loaders, LTX's audio-video text encoder loader, the checkpoint loaders and
   Load Diffusion Model), at what the loader charges for those inputs: a text
@@ -2316,9 +2317,19 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
   whole graph after them, charging the guide it can no longer prevent, as it
   did before. With nothing held, the loader's charge holds every one of those
   spends beside the DiT, the activations and the floor, so a live refusal there
-  is one the loader would make at the same reading. A VAE is charged again only
-  after a rescue unloaded it: before that, a fresh driver's first encode, which
-  loads the VAE, raised the driver's figure 0.60 GiB.
+  is one the loader would make at the same reading.
+- **The figures, and DynamicVRAM.** On 2026-11-13 a fresh driver's first
+  encode, which loads the VAE, raised the driver's figure 0.60 GiB, and a
+  5-frame clip at 448x256 with the DiT resident raised it 1.16 GiB against a
+  17.0 GiB charge. Both readings were taken with DynamicVRAM on, where a VAE
+  pages in inside the encode. There a clip carries 1 GiB more, and the
+  encode's charge leaves out a VAE ComfyUI did not hold at the first check: it
+  adds the VAE only where ComfyUI held it then and a rescue unloaded it, so a
+  trim that frees room for the first figure admits. Without DynamicVRAM the
+  encode's `load_models_gpu` copies the VAE to the device, 4.9 to 6 GiB here,
+  so a VAE ComfyUI does not hold is charged at every check, and a clip carries
+  6 GiB more, as the 2026-08-14 probe read clips 2.8 to 5.45 GiB over their
+  charges with the native allocator.
 - **The refusal.** Class C under `driver_footprint_preflight`, the driver-host
   guard of the frozen vocabulary, with no card, as its own type, so no consent
   card matching the stock-load family offers a slab load for an encode. It
