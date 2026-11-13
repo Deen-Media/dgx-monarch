@@ -854,8 +854,8 @@ you may see:
   Sparks (Clear and retry where the panel offers it, or Reset attached mesh)
   and queue again, shorten the clip, or free memory on the box the refusal
   names; turning `lora_low_rss` on does not help a model whose stack is
-  already baked in. A Worker gives its models' freed host memory back at a
-  hard clear; a soft clear returns its device pool only.
+  already baked in. A Worker gives a dropped model's host memory back at the
+  drop and at a hard clear; a soft clear returns its device pool only.
   `DGXM_DISABLE_BACKUP_FREE=1` in the Worker's environment (a drop-in for the
   Worker's unit, then a Worker restart; on a local mesh, the environment ComfyUI
   starts in) turns that step off, for diagnosis; the Worker then logs what it

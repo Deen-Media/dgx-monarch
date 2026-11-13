@@ -41,8 +41,6 @@ COPY_FREE_DROP_DISABLE_ENV = "DGXM_DISABLE_COPY_FREE_DROP"
 # ComfyUI's own spelling of "load all of it": LoadedModel.model_load turns a
 # lowvram budget of 0 into this before it calls partially_load.
 FULL_LOAD_EXTRA = 1e32
-# A host trim after a drop is said only where it returned this much.
-_TRIM_WORTH_A_LINE = 256 * 2**20
 
 
 def skip_reason(patcher: Any) -> str | None:
@@ -270,26 +268,29 @@ def flush_dropped(mm: Any, slot: str, everything: bool = False) -> None:
     next capacity quote reflect the released memory. The model is already
     dropped; a flush failure only leaves capacity quotes pessimistic.
 
-    Then, at a store-wide drop only (``everything``: the Worker's hard clear,
-    its unload and a releasing teardown), one host trim (``host_trim``). From
-    a Worker's second load of a file on, the C library keeps the freed pages
-    of its smaller weights, and memory a user cleared would not reach the box
-    (on record a hard clear left a Worker at 10.35 GiB with no model, and a
-    load that fit was then refused 0.5 GiB short). The drop of one slot before
-    a fresh load is NOT trimmed: one shipped template drops once a render, and
-    the load that follows reuses the kept pages.
+    Then one host trim (``host_trim``), at every drop: of one slot, and of
+    every slot at the Worker's hard clear, its unload and a releasing
+    teardown. From a Worker's second load of a file on, the C library keeps
+    the freed pages of its smaller weights, and a dropped model's memory would
+    not reach the box (on record a hard clear left a Worker at 10.35 GiB with
+    no model, a load that fit was then refused 0.5 GiB short, and a placement
+    alone left 10.8 GiB in the arenas, so a stack change's fresh load can be
+    refused the same way). A reuse makes no drop. One shipped template, the
+    memory-saver, drops once a render by its design; the line below times the
+    trim there. If a proof block reads it over 0.3 s a render on that
+    template, the trim moves to the store-wide drop alone: ``everything`` is
+    passed for that.
     """
     try:
         mm.soft_empty_cache()
     except Exception as exc:
         log.warning("model store [%s]: cache flush after the drop failed (%s); capacity "
                     "quotes may count the dropped weights until the next flush", slot, failure_summary(exc))
-    if not everything:
-        return
     from . import host_trim
 
     ran, seconds, before, after = host_trim.trim()
-    if ran and after - before >= _TRIM_WORTH_A_LINE:
-        log.info("model store [%s]: the host trim after the drop returned %.1f GiB to the box "
-                 "(MemAvailable %.1f to %.1f GiB, %.2f s)", slot, (after - before) / 2**30,
-                 before / 2**30, after / 2**30, seconds)
+    if ran:
+        log.info("model store [%s]: the host trim after %s returned %.1f GiB to the box "
+                 "(MemAvailable %.1f to %.1f GiB, %.2f s)", slot,
+                 "the store-wide drop" if everything else "the drop of this slot",
+                 (after - before) / 2**30, before / 2**30, after / 2**30, seconds)

@@ -1085,9 +1085,13 @@ the file went into it (a peak of 17.20 GiB, not 25). So the free is followed
 by one `malloc_trim(0)` (`actor/host_trim.py`), which walks every arena: in
 the one-GPU step, in the pair's act and in the route's tail, where the line
 that reports the free gives MemAvailable before the free, after it and after
-the trim; and at a store-wide drop, which the Worker's hard clear, its unload
-and a releasing teardown are (`resident_ledger.flush_dropped`). A load's
-placement, the drop of one slot before a fresh load and
+the trim; and after the store drops a slot, which the Worker's hard clear
+does for every slot (`resident_ledger.flush_dropped`): a placement alone left
+10.8 GiB in the arenas in the same probe, so without it a stack change's
+fresh load after a freed render could be refused as that bare load was. One
+shipped template, the memory-saver, drops a slot once a render by its design;
+the drop's line times the trim, and if a proof block reads it over 0.3 s a
+render there it moves to the store-wide drop alone. A load's placement and
 a soft clear are not followed by a trim in this release. The trim's return
 and its time have no hardware reading yet; neither has a whole load's own
 free.
@@ -2965,12 +2969,12 @@ once. That setting is for torch's own allocator. The weights of a quantized
 file are the loader's own tensors, and a probe found them in the C library's
 per-thread arenas (2026-11-13, section 5.5): there, from a process's second
 load of a file on, the freed pages of blocks under 32 MiB come back only at a
-trim. The code trims after the free of a backup for a sampler and at a
-store-wide drop (the hard clear among them), and nowhere else in this
-release: a load's placement, the drop of one slot, a released LoRA stack and a soft clear are not
+trim. The code trims after the free of a backup for a sampler and after the
+store drops a slot (the hard clear among them), and nowhere else in this
+release: a load's placement, a released LoRA stack and a soft clear are not
 followed by one, so a Worker's anonymous memory can rest about 10 GiB above a
 fresh Worker's after its second load of the INT8 Wan-Animate 2 file, until a
-hard clear or a recycle. A small block freed from another thread still waits for that thread's
+drop, a hard clear or a recycle. A small block freed from another thread still waits for that thread's
 next allocations. The cost is about 20 percent on a loop that does nothing but
 allocate and free host memory (0.44 s against 0.36 s for ten rounds of 16
 blocks of 128 MiB); the release test on this setting measures what renders pay.

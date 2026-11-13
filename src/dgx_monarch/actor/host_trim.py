@@ -25,12 +25,11 @@ back the whole free pages it finds inside them. So it does not matter which
 thread calls it. It is called where a host copy is given up: after the free
 of ComfyUI's backup for a sampler (the one-GPU whole-load step, the pair's
 act on every rank and the partial-load route's tail,
-``lora_partial_load._free_backup``), and at a store-wide drop: the Worker's
-hard clear, its unload and a releasing teardown
-(``resident_ledger.flush_dropped``). It is NOT called after a load is placed,
-after the drop of one slot before a fresh load (one shipped template drops
-once a render, and the load that follows reuses the kept pages)
-or after a soft clear. It never raises. On another C library, or where the
+``lora_partial_load._free_backup``), and after the store drops a slot, which
+the Worker's hard clear does for every slot
+(``resident_ledger.flush_dropped``; one shipped template drops a slot once a
+render, and that line times the trim there). It is NOT called after a load is
+placed or after a soft clear. It never raises. On another C library, or where the
 symbol is missing, it says so once and does nothing. It does not reach memory
 held by torch's own bundled allocator, which the worker loop already sets to
 purge at free (``cli/worker_process_env.HOST_ALLOCATOR_PURGE_ENV``).

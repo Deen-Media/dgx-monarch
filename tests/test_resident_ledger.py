@@ -565,12 +565,13 @@ def test_mark_after_drop_says_what_the_drop_did_to_the_other_slot():
     assert store._gpu_evicted == {"uncond"}
 
 
-def test_a_store_wide_drop_ends_in_one_host_trim_and_says_what_came_back(monkeypatch, caplog):
-    """Memory a user cleared must reach the box: the flush after a store-wide drop trims the C library's arenas.
+def test_every_drop_ends_in_one_host_trim_and_says_what_came_back_and_how_long_it_took(monkeypatch, caplog):
+    """A dropped model's host memory must reach the box: the flush after a drop trims the C library's arenas.
 
-    ``flush_dropped`` is the last step of every drop; the hard clear's is store-wide. The drop of one slot
-    before a fresh load is not trimmed (one shipped template drops once a render). The trim is
-    replaced here by a recorder, so the test needs no glibc.
+    ``flush_dropped`` is the last step of every drop: of one slot before a fresh load, and of every slot
+    at the hard clear. Its line gives the seconds each time, because one shipped template drops once a
+    render and the trim's cost there is read from this line. The trim is replaced by a recorder here,
+    so the test needs no glibc.
     """
     from dgx_monarch.actor import host_trim
 
@@ -586,28 +587,29 @@ def test_a_store_wide_drop_ends_in_one_host_trim_and_says_what_came_back(monkeyp
     with caplog.at_level(logging.INFO):
         resident_ledger.flush_dropped(mm, "cond", True)
     assert order == ["flush", "trim"]
-    assert "the host trim after the drop returned 10.0 GiB to the box" in caplog.text
+    assert "the host trim after the store-wide drop returned 10.0 GiB to the box" in caplog.text
     assert "(MemAvailable 20.0 to 30.0 GiB, 0.31 s)" in caplog.text
-    # A trim that returned little says nothing, and a cache flush that raised is still followed by the trim.
+    # The drop of one slot is trimmed too, and timed even where little came back.
     caplog.clear()
     order.clear()
     returned["bytes"] = 64 * 2**20
+    with caplog.at_level(logging.INFO):
+        resident_ledger.flush_dropped(mm, "cond")
+    assert order == ["flush", "trim"]
+    assert "the host trim after the drop of this slot returned 0.1 GiB to the box" in caplog.text
+    assert "0.31 s" in caplog.text
+    # A cache flush that raised is still followed by the trim.
+    order.clear()
 
     def broken():
         order.append("flush")
         raise RuntimeError("CUDA is gone")
 
-    with caplog.at_level(logging.INFO):
-        resident_ledger.flush_dropped(type("Mm", (), {"soft_empty_cache": staticmethod(broken)}), "cond", True)
-    assert order == ["flush", "trim"] and "host trim" not in caplog.text
+    resident_ledger.flush_dropped(type("Mm", (), {"soft_empty_cache": staticmethod(broken)}), "cond", True)
+    assert order == ["flush", "trim"]
     # A C library with no trim: nothing is said here (host_trim says so once itself).
     monkeypatch.setattr(host_trim, "trim", lambda: (False, 0.0, 20 * 2**30, 20 * 2**30))
     caplog.clear()
     with caplog.at_level(logging.INFO):
         resident_ledger.flush_dropped(mm, "cond", True)
     assert "host trim" not in caplog.text
-    # The drop of one slot before a fresh load: the cache is flushed, nothing is trimmed.
-    order.clear()
-    monkeypatch.setattr(host_trim, "trim", lambda: order.append("trim") or (True, 0.1, 0, 2**34))
-    resident_ledger.flush_dropped(mm, "cond")
-    assert order == ["flush"]
