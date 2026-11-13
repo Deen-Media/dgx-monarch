@@ -1122,7 +1122,7 @@ more in the first seconds of its first forward, after the vote, and keeps it
 for the actor's life; ComfyUI's estimate does not count it. The need and the
 ask that makes a rank short therefore add 5.6 GiB less what the Worker's own
 RssShmem reads at the vote, never under zero: about 2.7 GiB on a fresh Worker
-and nothing on a warm one. By its mappings (256 equal anonymous shared buffers
+and about 0.1 GiB on a warm one. By its mappings (256 equal anonymous shared buffers
 of about 21 MiB beside the RDMA devices) it is the transport's registered
 buffers; no library names it, so that owner is read from the shape. One GPU
 maps 0.05 GiB of it, so the term is the pair's alone (a rank on a CUDA device;
@@ -1151,7 +1151,12 @@ whichever arrives first, so where the fleet refuses the ranks make one gather
 more of each rank's own facts (its model's fault in its own words, its room,
 its need). Every rank's error then leads with the short or wrong rank's cause
 and figures, the others' after, and carries that rank's mark, so the driver
-names its box; that rank also logs its refusal at WARNING. A render that
+names its box; that rank also logs its refusal at WARNING. Once the error
+names that box, a healthy rank's text closes with that rank's own remedy, not
+the words for a peer it cannot name. Each rank's facts cross in 1,024 bytes;
+a cause too long for them once escaped keeps as many whole characters as fit
+and ends with a mark that it was cut, so the line always parses and never
+garbles, and that rank's journal has it whole. A render that
 samples makes no such gather. The margin is also
 checked where a short fleet kept its backups, and at every later render on
 slots the agreement freed: a fleet that freed and was refused has no backup

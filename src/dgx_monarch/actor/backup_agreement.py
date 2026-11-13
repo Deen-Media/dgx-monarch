@@ -56,7 +56,7 @@ covers that (``vae_decode_relief``). On a rank on a CUDA device the need, and
 the ask that makes a rank short, also carry the shared memory the rank has yet
 to map (``PAIR_SHARED_MEMORY_BYTES`` less its RssShmem now, never under zero):
 about 2.7 GiB on a fresh Worker, which maps it in the first forward's first
-seconds, and nothing on a warm one. The room counts the device pool the
+seconds, and about 0.1 GiB on a warm one. The room counts the device pool the
 Worker holds reserved and unused, which its sampler takes first and
 MemAvailable does not show, and is the reading taken after the
 free and the host trim, because a free does not always return the whole copy
@@ -92,7 +92,7 @@ from typing import Any
 from .. import mesh_safety
 from ..log import get_logger
 from ..refusal import RefusalClass, mark_rank, refusal
-from . import load_fault, lora_partial_load
+from . import load_fault, lora_partial_load, partial_load_guard
 
 log = get_logger(__name__)
 
@@ -119,6 +119,8 @@ RANK_SLOTS = 64          # the margin's low bits hold the rank: MIN then names t
 NO_CLAIM_MIB = 1 << 20   # a rank that cannot work out its need claims room to spare, not a shortfall
 ELEMENTS = 5             # what ``Vote.elements`` adds to the guard's exchange, the same on every rank
 FREED_FLAG = "freed_for_sampler"  # on a store slot (stored_model.py): this agreement freed its backup
+# What a cause cut to fit the ranks' exchange ends with (``_facts``).
+CUT_MARK = " ... (cut to fit the ranks' exchange; that rank's journal has it whole)"
 
 
 class PairBackupRoomError(RuntimeError):
@@ -205,7 +207,7 @@ def _mapped_shared_bytes() -> int | None:
 def _unmapped_shared(patcher: Any) -> int:
     """The shared memory this rank has yet to map: the pair's whole figure less what it maps now.
 
-    Never under zero, so a warm Worker is asked nothing more and a fresh one about 2.7 GiB. Zero off
+    Never under zero, so a warm Worker is asked about 0.1 GiB more and a fresh one about 2.7. Zero off
     a CUDA device, where no transport registers buffers; the whole figure where /proc cannot say.
     """
     if getattr(getattr(patcher, "load_device", None), "type", None) != "cuda":
@@ -283,12 +285,15 @@ def vote(patchers: tuple, sampling: tuple[Any, Any], rank: int) -> Vote:
 
 
 def _facts(mine: Vote, wrong: str | None) -> str:
-    """This rank's own words for a fleet refusal, as one short JSON line; never raises."""
+    """This rank's own words for a fleet refusal, as one JSON line that fits the gather; never raises.
+
+    A cause too long for it is cut at a character and ends with ``CUT_MARK``; the journal has it whole.
+    """
     try:
-        # The cause is cut well inside the gather's 1024 bytes, so the line always parses.
-        return json.dumps({"rank": int(mine.rank), "wrong": (wrong or "")[:600], "own": bool(mine.own_memory),
-                           "room": int(max(0, mine.room + mine.pool)), "unmapped": int(mine.unmapped),
-                           "need": -1 if mine.need is None else int(mine.need)})
+        return partial_load_guard.fit_line(
+            {"rank": int(mine.rank), "wrong": wrong or "", "own": bool(mine.own_memory),
+             "room": int(max(0, mine.room + mine.pool)), "unmapped": int(mine.unmapped),
+             "need": -1 if mine.need is None else int(mine.need)}, "wrong", CUT_MARK)
     except Exception:
         return "{}"
 

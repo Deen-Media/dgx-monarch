@@ -235,9 +235,10 @@
       "test_the_switch_on_any_rank_turns_the_rule_off_for_the_fleet": "a6b7c7d3c0cc13e2"
     },
     "tests/test_backup_agreement_two_ranks.py": {
+      "test_a_long_cause_crosses_cut_and_stays_whole_on_its_own_rank": "861171f70270d6e5",
       "test_a_room_refusal_gives_the_short_ranks_figures_on_both_ranks": "eb3ac94f12986186",
       "test_both_ranks_make_the_same_collectives_and_neither_waits": "c9e644fe8a8ee8ad",
-      "test_the_wrong_ranks_own_words_reach_the_error_on_both_ranks": "5f0599bfcd6ead95"
+      "test_the_wrong_ranks_own_words_reach_the_error_on_both_ranks": "48fa5e64b0e4baa9"
     },
     "tests/test_boogu_adapter.py": {
       "test_boogu_28_7_gqa_expands_kv_before_uly2": "bea5326e49273477",
@@ -2294,12 +2295,16 @@
       "test_without_the_reduction_the_missing_rank_diverges": "b0882ab640467659"
     },
     "tests/test_pair_refusal_words.py": {
+      "test_a_cut_cause_leads_the_peers_refusal_with_its_mark": "f27a39c0afae38e3",
       "test_a_gather_that_fails_leaves_each_rank_its_own_words": "d3dc990927010231",
+      "test_a_long_cause_is_cut_at_a_character_and_marked": "250cefce1e6d7d75",
       "test_a_peer_with_unreadable_words_still_refuses_in_the_plain_words": "d34dd96865ff0658",
       "test_a_render_that_samples_crosses_no_words": "cbb8279755ba202c",
       "test_a_room_refusal_gives_the_short_ranks_figures_whichever_rank_raises": "4209c192ebbef339",
+      "test_a_short_cause_crosses_whole": "3a51457d0b82544f",
+      "test_the_facts_never_raise": "b1e3d70c1000384d",
       "test_the_short_rank_logs_its_refusal_at_warning": "ed6cdacf41b33fc2",
-      "test_the_wrong_rank_logs_its_own_refusal_and_its_peer_leads_with_it": "6864fc8e388be8fb"
+      "test_the_wrong_rank_logs_its_own_refusal_and_its_peer_leads_with_it": "e463c894dcf34ba1"
     },
     "tests/test_partial_load_divergence.py": {
       "test_a_tagged_refusal_retires_its_lease_as_consumed": "1f68afe5524b2c2a",

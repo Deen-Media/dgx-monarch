@@ -855,8 +855,9 @@ you may see:
   short of what the sampler needs the render is refused before its first step, naming the rank and the
   figures. The refusal leads with the words of the rank that was short, or whose model was wrong after
   the free, and names its box, whichever box's error reaches the driver; that box's Worker journal logs
-  the same refusal at WARNING. What a rank needs counts, beside ComfyUI's estimate, the shared memory a
-  fresh Worker still maps in its first forward, about 2.7 GiB (none on a warm Worker); the figures say
+  the same refusal at WARNING, and has its cause whole where the refusal's copy ends "cut to fit the
+  ranks' exchange". What a rank needs counts, beside ComfyUI's estimate, the shared memory a
+  fresh Worker still maps in its first forward, about 2.7 GiB (about 0.1 on a warm Worker); the figures say
   how much of the need it is. Where a Spark is short enough that the Workers free the backup, the
   kernel can spend up to about a minute compacting that box's freed memory during the first forward,
   and that box's GPU can run at reduced power meanwhile; on a pair the other Spark waits for it. The

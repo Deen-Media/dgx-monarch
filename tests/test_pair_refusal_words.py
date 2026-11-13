@@ -14,6 +14,7 @@ import json
 import pytest
 
 from dgx_monarch.actor import backup_agreement, lora_partial_load, rank_readiness
+from dgx_monarch.actor.partial_load_guard import TEXT_BYTES
 from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag, read_rank
 from test_backup_agreement import GIB, SAMPLING, _answer, _patcher, _peer, rig  # noqa: F401  (rig: the fixture)
 
@@ -57,7 +58,10 @@ def test_the_wrong_rank_logs_its_own_refusal_and_its_peer_leads_with_it(rig, cap
     tag = parse_leading_refusal_tag(text)
     assert marked == 1 and tag is not None and tag.refusal_class is RefusalClass.PHYSICS
     assert text.index("rank 1 found its model is not as a full load leaves it") < text.index(cause)
-    assert text.index("The model on rank 0 was right") < text.index("a peer rank could not load or verify")
+    assert text.index("The model on rank 0 was right") < text.index("Nothing was sampled and no rank went on")
+    # Once the failing box is named, the close is that box's remedy, not the words for a box it cannot name.
+    assert text.rstrip().endswith(rank_readiness.PEER_CAUSE_TAIL)
+    assert "a peer rank could not load or verify" not in text and "Fix the cause on that box" not in text
     assert len(calls) == 1
 
 
@@ -120,3 +124,69 @@ def test_a_peer_with_unreadable_words_still_refuses_in_the_plain_words():
         rank_readiness.peer_failed()
     assert read_rank(str(raised.value))[1] is None and str(raised.value).endswith(
         rank_readiness.PEER_LOAD_TEXT)
+
+
+def _wire(line: str) -> str:
+    """The line as the gather returns it: UTF-8, cut at ``TEXT_BYTES``, zero padding gone."""
+    sent = line.encode("utf-8")[:TEXT_BYTES]
+    return (sent + b"\0" * (TEXT_BYTES - len(sent))).rstrip(b"\0").decode("utf-8", "ignore")
+
+
+def _kept(line: str, cause: str) -> str:
+    """What of ``cause`` the gathered line keeps, checked whole: it fits, parses and is a prefix."""
+    assert len(line.encode("utf-8")) <= TEXT_BYTES and _wire(line) == line
+    wrong = json.loads(_wire(line))["wrong"]
+    assert wrong.endswith(backup_agreement.CUT_MARK)
+    kept = wrong[:-len(backup_agreement.CUT_MARK)]
+    assert cause.startswith(kept)
+    return kept
+
+
+def test_a_short_cause_crosses_whole():
+    mine = backup_agreement.Vote(rank=1, room=9 * GIB, need=7 * GIB)
+    facts = json.loads(backup_agreement._facts(mine, "ComfyUI holds its weights as unpatched"))
+    assert facts["wrong"] == "ComfyUI holds its weights as unpatched" and facts["rank"] == 1
+
+
+@pytest.mark.parametrize(("cause", "last"), [
+    ('the key "blocks.0\\to_q" is short\n' * 60, None),  # quotes, backslashes and newlines grow when escaped
+    ("é漢🙂" * 400, None),  # two, three and four bytes a character; the emoji escapes to twelve characters
+    ("a" * 800 + "🙂" * 40, "🙂"),  # the cut falls among the four-byte characters
+], ids=["escapes", "multi-byte", "cut-among-emoji"])
+def test_a_long_cause_is_cut_at_a_character_and_marked(cause, last):
+    mine = backup_agreement.Vote(rank=1, room=9 * GIB, need=7 * GIB, unmapped=2 * GIB)
+    line = backup_agreement._facts(mine, cause)
+    kept = _kept(line, cause)
+    # As many whole characters as fit: the next one would not.
+    assert kept and len(line) + len(json.dumps(cause[len(kept)])) - 2 > TEXT_BYTES
+    assert last is None or kept.endswith(last)
+    facts = json.loads(line)
+    assert (facts["rank"], facts["room"], facts["need"], facts["unmapped"]) == (1, 9 * GIB, 7 * GIB, 2 * GIB)
+
+
+def test_a_cut_cause_leads_the_peers_refusal_with_its_mark(rig):  # noqa: F811
+    cause = "é漢🙂 the key is short; " * 120
+    rig.room = 30.0
+    healthy = backup_agreement.vote((_patcher(),), SAMPLING, 0)
+    peer = json.loads(backup_agreement._facts(backup_agreement.Vote(rank=1, room=24 * GIB, need=7 * GIB), cause))
+
+    def gather(text):
+        return [text, json.dumps(peer)]
+
+    with pytest.raises(rank_readiness.PeerLoadFailureError) as raised:
+        backup_agreement.settle(healthy, _answer(healthy.elements, _peer(not_short=0)),
+                                _second(0, backup_agreement._margin(24 * GIB, 7 * GIB, 1)), gather)
+    text, marked = read_rank(str(raised.value))
+    assert marked == 1 and backup_agreement.CUT_MARK in text
+    start = text.index("freed their weight backup: ") + len("freed their weight backup: ")
+    assert cause.startswith(text[start:text.index(backup_agreement.CUT_MARK)])
+
+
+def test_the_facts_never_raise():
+    class Broken:
+        rank = "not a rank"
+
+    assert backup_agreement._facts(Broken(), "x" * 5000) == "{}"  # type: ignore[arg-type]
+    # A NUL escapes in the line, so the gather's zero padding never eats the cause.
+    mine = backup_agreement.Vote(rank=1, room=9 * GIB, need=7 * GIB)
+    assert _kept(backup_agreement._facts(mine, "\x00" * 5000), "\x00" * 5000)

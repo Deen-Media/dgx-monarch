@@ -20,6 +20,8 @@ from pathlib import Path
 import pytest
 import torch.distributed  # noqa: F401  (must be there: a skip would hide the exchange in CI)
 
+from dgx_monarch.actor import backup_agreement
+
 SRC = Path(__file__).resolve().parents[1] / "src"
 
 _RANK = r"""
@@ -183,8 +185,25 @@ def test_the_wrong_ranks_own_words_reach_the_error_on_both_ranks():
     healthy, wrong = reports[0]["text"], reports[1]["text"]
     assert cause in wrong and "after rank 1 freed its weight backup" in wrong
     assert healthy.index("rank 1 found its model is not as a full load leaves it") < healthy.index(cause)
-    assert healthy.index(cause) < healthy.index("a peer rank could not load or verify")
-    assert "The model on rank 0 was right" in healthy and healthy.rstrip().endswith("[dgxm:rank 1]")
+    assert healthy.index(cause) < healthy.index("The model on rank 0 was right")
+    assert healthy.index("The model on rank 0 was right") < healthy.index("Reset the attached mesh")
+    # Once the failing box is named, the words for a box it cannot name are gone.
+    assert "a peer rank could not load or verify" not in healthy and "Fix the cause on that box" not in healthy
+    assert healthy.rstrip().endswith("[dgxm:rank 1]")
+
+
+def test_a_long_cause_crosses_cut_and_stays_whole_on_its_own_rank():
+    """A cause past the gather's 1024 bytes once escaped reaches the peer cut at a character, never garbled."""
+    cause = 'the key "blocks.0\\to_q" is short; é漢🙂\n' * 60
+    reports = _run({"0": {"room": 40.0}, "1": {"room": 9.0, "room_after": 24.0, "wrong": cause}})
+    assert [report["outcome"] for report in reports] == ["PeerLoadFailureError", "OffloadedInputQuantError"]
+    assert [report["gathers"] for report in reports] == [1, 1]
+    healthy, wrong = reports[0]["text"], reports[1]["text"]
+    assert cause in wrong and backup_agreement.CUT_MARK not in wrong
+    start = healthy.index("freed their weight backup: ") + len("freed their weight backup: ")
+    kept = healthy[start:healthy.index(backup_agreement.CUT_MARK)]
+    assert len(kept) > 100 and cause.startswith(kept)
+    assert healthy.rstrip().endswith("[dgxm:rank 1]")
 
 
 def test_a_room_refusal_gives_the_short_ranks_figures_on_both_ranks():

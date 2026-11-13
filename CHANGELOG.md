@@ -24,7 +24,7 @@
   So a rank that passed the check with room between 8.1 and about 10 GiB could
   sample down to 3 to 5 GiB where the free returns little. The need, and the
   room under which a rank counts as short, now add 5.6 GiB less what the
-  Worker maps at the vote: about 2.7 GiB on a fresh Worker, nothing on a warm
+  Worker maps at the vote: about 2.7 GiB on a fresh Worker, about 0.1 on a warm
   one, nothing on one GPU, which maps 0.05 GiB of it. A refusal's figures name
   the term. Not yet run on hardware
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
@@ -36,8 +36,10 @@
   rank at fault logged nothing in its own journal. Now the ranks cross their
   own facts once more on that path, so every rank's refusal leads with the
   short or wrong rank's cause and figures, names its box, and gives the other
-  ranks' figures after; that rank also logs the refusal at WARNING. A render
-  that samples makes no new collective. Not yet run on hardware
+  ranks' figures after; that rank also logs the refusal at WARNING. The
+  healthy rank's text then closes with that rank's remedy. A cause too long to
+  cross whole is cut at a character and says so; its own journal has it whole.
+  A render that samples makes no new collective. Not yet run on hardware
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 
 - A MiniMax H3 graph with a still guide no longer pays at the loader for its

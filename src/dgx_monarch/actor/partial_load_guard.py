@@ -15,6 +15,8 @@ The guard refuses rather than silently changing the requested residency.
 """
 from __future__ import annotations
 
+import json
+from itertools import accumulate
 from typing import Any
 
 from ..log import get_logger
@@ -130,8 +132,25 @@ def _all_ranks_min(values: list[int]) -> list[int]:
 
 
 # The most one rank's words may take in ``_all_ranks_texts``: a refusal's
-# figures as one JSON line, cut there, never more.
+# figures as one JSON line, which ``fit_line`` keeps inside it.
 TEXT_BYTES = 1024
+
+
+def fit_line(facts: dict, key: str, mark: str) -> str:
+    """``facts`` as one JSON line of at most ``TEXT_BYTES``, its ``key`` text cut to fit; "{}" if none fits.
+
+    ``json.dumps`` escapes to ASCII, one byte a character, so the line's length is its size on the
+    wire and the gather never cuts it: it always parses. A text too long once escaped (quotes,
+    backslashes, newlines and every character outside ASCII grow, an emoji to twelve) keeps as
+    many whole characters as fit and ends with ``mark``. Each character escapes on its own, so the
+    sizes add up, and each takes at least one byte.
+    """
+    text, line = str(facts.get(key, "")), json.dumps(facts)
+    if len(line) > TEXT_BYTES:
+        left = TEXT_BYTES - len(json.dumps({**facts, key: mark}))
+        sizes = accumulate(len(json.dumps(char)) - 2 for char in text[:max(0, left)])
+        line = json.dumps({**facts, key: text[:sum(1 for size in sizes if size <= left)] + mark})
+    return line if len(line) <= TEXT_BYTES else "{}"
 
 
 def _all_ranks_texts(text: str) -> list[str]:
