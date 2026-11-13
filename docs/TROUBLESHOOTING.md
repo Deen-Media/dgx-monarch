@@ -851,7 +851,12 @@ you may see:
   the free, and names its box, whichever box's error reaches the driver; that box's Worker journal logs
   the same refusal at WARNING. What a rank needs counts, beside ComfyUI's estimate, the shared memory a
   fresh Worker still maps in its first forward, about 2.7 GiB (none on a warm Worker); the figures say
-  how much of the need it is. A load ComfyUI placed only partly
+  how much of the need it is. Where a Spark is short enough that the Workers free the backup, the
+  kernel may spend up to about a minute compacting that box's freed memory during the first forward,
+  and its GPU runs at reduced power meanwhile; on a pair the other Spark waits for it. The render and
+  its latent are the same. On 2026-11-13 a held pair sampled one step in 89.5 s on each rank, and the
+  next render in 55.2 s, against 38 s with the backup kept; one GPU showed no such cost. More free
+  memory on that box before the render avoids it. A load ComfyUI placed only partly
   whose bake could not be finished for room is still as above. If a pair's
   render is refused with `pair_backup_room` after the ranks freed their
   backups, the same queue is refused again until memory is back: clear the

@@ -1119,7 +1119,10 @@ and nothing on a warm one. By its mappings (256 equal anonymous shared buffers
 of about 21 MiB beside the RDMA devices) it is the transport's registered
 buffers; no library names it, so that owner is read from the shape. One GPU
 maps 0.05 GiB of it, so the term is the pair's alone (a rank on a CUDA device;
-none off one). The refusal's figures name it. Every decision is made from the
+none off one). The refusal's figures name it. On a held box the kernel's
+memory compaction after a free can slow the first forward for up to about a
+minute, and its peer waits; the render is the same, and this release changes
+no rule for it (TROUBLESHOOTING #12). Every decision is made from the
 MIN that comes back, so no rank
 decides alone. Any rank short and none unable: every rank frees, the roomy
 one too, so the slots stay alike and the next stack change reloads on all of
