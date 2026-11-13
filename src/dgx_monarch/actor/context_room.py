@@ -160,6 +160,10 @@ class Outcome:
         return "The Worker made no room first."
 
 
+# What the step did at this Worker's start, for its status and its refusal.
+# It has process lifetime: make_room writes it at a bootstrap that finds no
+# context yet, make_context and at_bootstrap_context add to it, and a process
+# that has its context never runs the step again, so nothing resets it.
 _LAST = Outcome()
 
 
