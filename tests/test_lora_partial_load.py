@@ -364,6 +364,7 @@ def _asks(monkeypatch, ask_gib, room_gib):
         seen.append((noise_shape, conds))
         return None if ask_gib is None else int(ask_gib * GIB)
 
+    monkeypatch.delenv(lora_partial_load.BACKUP_FREE_DISABLE_ENV, raising=False)
     monkeypatch.setattr(lora_partial_load, "_sampling_ask", ask)
     monkeypatch.setattr(lora_partial_load, "_host_room", lambda: int(room_gib * GIB))
     return seen
@@ -491,6 +492,59 @@ def test_the_wrapper_hands_the_check_the_latent_and_the_conds_of_the_sampling(in
         pe.WrappersMP.PREPARE_SAMPLING, lora_partial_load.WRAPPER_KEY, third.model_options, is_model_options=True)
     third_wrapper(lambda *args, **kwargs: ("real model", "conds", []), third, noise_shape=shape, conds=conds)
     assert third_slot.base_baked is True and third_root.model_lowvram is False
+
+
+def test_the_switch_keeps_the_backup_and_says_what_the_step_weighed(installed, monkeypatch, caplog):
+    """DGXM_DISABLE_BACKUP_FREE=1 on the Worker: the render is as it was before the step, and one line says so."""
+    build, _outputs, cpu = _rig()
+    _root, patcher, active, slot = _whole(build, cpu)
+    held, stack = dict(patcher.backup), dict(patcher.patches)
+    _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)
+    monkeypatch.setenv(lora_partial_load.BACKUP_FREE_DISABLE_ENV, "1")
+    with caplog.at_level("INFO"):
+        lora_partial_load.check(patcher, SAMPLING)
+    assert dict(patcher.backup) == held and dict(patcher.patches) == stack and active.patches
+    assert slot.base_baked is False and slot.unbake == "a record from an earlier stack"
+    assert "ComfyUI's weight backup is kept through the render" in caplog.text
+    assert "DGXM_DISABLE_BACKUP_FREE=1 on the Worker" in caplog.text
+    assert "20.4 GiB is available above the 5 GiB floor where ComfyUI estimates 34.8 GiB" in caplog.text
+    assert "freed ComfyUI's weight backup" not in caplog.text
+    # With room for the sampler the switch has nothing to say.
+    caplog.clear()
+    _asks(monkeypatch, ask_gib=12.4, room_gib=40.0)
+    monkeypatch.setenv(lora_partial_load.BACKUP_FREE_DISABLE_ENV, "1")
+    with caplog.at_level("INFO"):
+        lora_partial_load.check(patcher, SAMPLING)
+    assert "weight backup" not in caplog.text
+    # Only an explicit on value is on: with "0" the step runs.
+    _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)
+    monkeypatch.setenv(lora_partial_load.BACKUP_FREE_DISABLE_ENV, "0")
+    lora_partial_load.check(patcher, SAMPLING)
+    assert patcher.backup == {} and slot.base_baked is True
+
+
+def test_the_switch_leaves_the_partial_load_route_alone(installed, monkeypatch):
+    import torch
+
+    build, outputs, cpu = _rig(("int8_tensorwise",))
+    (expected,) = _full_load(build, outputs, cpu)
+    root, patcher = build()
+    slot = _slot(patcher)
+    patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    monkeypatch.setenv(lora_partial_load.BACKUP_FREE_DISABLE_ENV, "1")
+    lora_partial_load.check(patcher, SAMPLING)
+    assert root.model_lowvram is False and slot.base_baked is True
+    assert torch.equal(outputs(root)[0], expected)
+
+
+def test_the_backup_switch_reaches_the_actor_through_the_worker_loops_filter():
+    """The worker loop deletes every name outside its list before actors inherit it."""
+    from dgx_monarch.cli import worker_process_env
+
+    assert lora_partial_load.BACKUP_FREE_DISABLE_ENV == "DGXM_DISABLE_BACKUP_FREE"
+    environment = {"PATH": "/usr/bin", lora_partial_load.BACKUP_FREE_DISABLE_ENV: "1"}
+    assert worker_process_env.filter_worker_environment(environment) == 0
+    assert environment[lora_partial_load.BACKUP_FREE_DISABLE_ENV] == "1"
 
 
 def test_the_single_rank_check_rides_prepare_sampling_once(installed, monkeypatch):

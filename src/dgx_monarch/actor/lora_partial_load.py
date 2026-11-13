@@ -68,6 +68,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import mesh_safety
 from ..capacity_floor import ABSOLUTE_HOST_FLOOR_BYTES
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
@@ -81,6 +82,10 @@ WRAPPER_KEY = "dgx_monarch_partial_load_with_lora"
 GUARD = "partial_load_divergence"
 TROUBLESHOOTING = 145
 STORED = "_dgxm_stored"  # on a model: a weak reference to the store slot that holds it (stored_model.py)
+# ``DGXM_DISABLE_BACKUP_FREE=1`` on a Worker: a whole classic load keeps ComfyUI's backup through the
+# render however little room is left, as before this step existed (``free_backup_for_sampling``). The
+# partial-load route is not touched by it. For diagnosis, and to read one build with and without.
+BACKUP_FREE_DISABLE_ENV = "DGXM_DISABLE_BACKUP_FREE"
 
 
 class OffloadedInputQuantError(RuntimeError):
@@ -302,7 +307,8 @@ def free_backup_for_sampling(patcher: Any, noise_shape: Any, conds: Any) -> bool
     device are the baked ones already, and ComfyUI needs the backup only to
     change the stack in place, which the slot then does by a reload from disk
     (``StoredModel.base_baked``), as after the partial-load route and as with
-    ``lora_low_rss`` on.
+    ``lora_low_rss`` on. ``BACKUP_FREE_DISABLE_ENV`` set on the Worker keeps the
+    backup and logs what the step would have weighed.
     """
     model = patcher.model
     if not getattr(patcher, "backup", None) or getattr(model, "current_weight_patches_uuid", None) is None:
@@ -317,12 +323,19 @@ def free_backup_for_sampling(patcher: Any, noise_shape: Any, conds: Any) -> bool
     room = _host_room()
     if room >= ask:
         return False
+    figures = (max(0, room) / _GIB, ABSOLUTE_HOST_FLOOR_BYTES / _GIB, ask / _GIB)
+    if mesh_safety.env_enabled(BACKUP_FREE_DISABLE_ENV):
+        log.info("LoRA bake: ComfyUI loaded this model whole with a LoRA stack and lora_low_rss off, and "
+                 "%.1f GiB is available above the %.0f GiB floor where ComfyUI estimates %.1f GiB for "
+                 "sampling this latent. ComfyUI's weight backup is kept through the render: the step "
+                 "that frees it is off (" + BACKUP_FREE_DISABLE_ENV + "=1 on the Worker)", *figures)
+        return False
     _free_backup(patcher, stored)
     log.info("LoRA bake: ComfyUI loaded this model whole with a LoRA stack and lora_low_rss off, and "
              "%.1f GiB is available above the %.0f GiB floor where ComfyUI estimates %.1f GiB for "
              "sampling this latent, so the Worker freed ComfyUI's weight backup before the first step "
              "(the weights on the device are the baked ones; none moved). A stack change on this model "
-             "reloads it from disk", max(0, room) / _GIB, ABSOLUTE_HOST_FLOOR_BYTES / _GIB, ask / _GIB)
+             "reloads it from disk", *figures)
     return True
 
 

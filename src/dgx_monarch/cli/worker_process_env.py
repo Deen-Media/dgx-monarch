@@ -76,6 +76,9 @@ _SAFE_EXACT = frozenset({
     # Turns off the make-room step before a Worker's CUDA context
     # (actor/context_room.py). It can only leave a start as it was before.
     "DGXM_DISABLE_CONTEXT_ROOM",
+    # Keeps ComfyUI's weight backup after a whole classic LoRA bake however little room is
+    # left (actor/lora_partial_load.py). It can only leave a render as it was before.
+    "DGXM_DISABLE_BACKUP_FREE",
 })
 
 # Locale is the only inherited namespace. Fabric settings come from validated

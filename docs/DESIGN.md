@@ -1060,7 +1060,42 @@ alone before the first forward: the backup and the patches go, no weight
 moves, the slot is marked baked, and one line says so. With more room than
 that the backup stays and a stack change swaps in place as before. It moves
 no price, and the weights the sampler reads are the ones the classic bake
-left. One GPU only, as the route is.
+left. One GPU only, as the route is. `DGXM_DISABLE_BACKUP_FREE=1` in the
+Worker's environment keeps the backup however little room is left, for
+diagnosis and to read one build with and without the step; the Worker then
+logs what the step would have weighed, and the worker loop's environment
+filter lets the name through to the actors (`cli/worker_process_env.py`).
+
+Three shipped templates reach this as shipped: `dgx-monarch-wan-animate2` (the
+INT8 ConvRot file), `dgx-monarch-wan-animate2-bfloat16-warm` and
+`dgx-monarch-wan-animate2-memory-saver` (the BF16 file), each with its LoRA at
+81 frames and with `lora_low_rss` and `slab_weights` off. The generator sets
+them so on purpose, and the templates' own notes give the reason: the recipe's
+reference comparison and its warm tests were run with ordinary weight and LoRA
+residency, slab and low-RSS have no passing reference comparison for this
+family, and with both off there is nothing for the first-use gate to prove, so
+the first render skips it (`tools/gen_templates.py`; so since the first public
+commit). That reason still stands with this step in. The step runs after
+ComfyUI's own classic bake and moves no weight, so the weights are the ones
+the reference comparison covered; what it gives up is the backup, which only a
+later stack change in place would have read. The low-RSS bake at load time
+stays unproven for this family, and the templates stay as they are.
+
+On the BF16 file the same step matters at the shipped 81 frames. The stack
+patches every weight, so the backup is the whole model, 30.5 GiB (the Worker
+held about 34 GiB of anonymous memory after that load). The BF16 price is the
+stock price, the line and the files (69.1 + 11.2 + 0.7 = 81.1 GiB before the
+file is read), and it sits ABOVE the reading from which ComfyUI would load the
+model whole (about 75 by its own condition; not read), so every admitted BF16
+load is a whole load and its
+tightest reading is the price itself. One such load, on the second Spark of a
+pair, took 77.4 GiB, 1.35 more
+than that price leaves above the floor (the recorded shortfall of section
+5.9). On one GPU, with the backup freed before the first step, that shortfall
+should go; on a pair the step does not run, and the shortfall stands. No
+hardware reading of the BF16 templates at their edge exists yet, on one GPU or
+on a pair, before or
+after.
 
 The bake-equivalence canary compares the bake with comfy.ops' own
 cast on INT8 ConvRot and BF16 layers, and the keys it bakes at cast time with

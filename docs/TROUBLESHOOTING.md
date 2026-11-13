@@ -846,6 +846,10 @@ you may see:
   that starts `LoRA bake: ComfyUI loaded this model whole`, and the next LoRA
   change on that model reloads it from disk. A load ComfyUI placed only partly
   whose bake could not be finished for room, and a pair, are still as above.
+  `DGXM_DISABLE_BACKUP_FREE=1` in the Worker's environment (a drop-in for the
+  Worker's unit, then a Worker restart; on a local mesh, the environment ComfyUI
+  starts in) turns that step off, for diagnosis; the Worker then logs what it
+  would have weighed and keeps the copy.
 
   The stack's own LoRA files are added, each as often as the stack lists it,
   when the price is read before the Worker has read them: a load into a
