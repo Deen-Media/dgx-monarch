@@ -1044,6 +1044,40 @@ def test_the_partial_load_routes_room_follows_each_layers_own_format(monkeypatch
 
 
 
+def test_no_price_reads_the_routes_room_rule(worker_side, ltx, monkeypatch):
+    """The route's room is asked after every price is paid: sizing it changes no admitted or refused load.
+
+    Neither wall, nor ``take``, nor the quote's probe reaches
+    ``lora_partial_load``; and no pricing module imports it.
+    """
+    import ast
+    import inspect
+
+    from dgx_monarch import capacity_lora_bake
+    from dgx_monarch.actor import capacity_quote, lora_partial_load, store_load, worker_capacity
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("a price read the partial-load route's room rule")
+
+    monkeypatch.setattr(lora_partial_load, "_bake_room", never)
+    monkeypatch.setattr(lora_partial_load, "_layer_class", never)
+    monkeypatch.setattr(lora_partial_load, "_room_needed", never)
+    term = ltx - LTX_OWN_STACK
+    for avail_gib, fits in ((60.0, False), (76.0, True), (120.0, True)):
+        worker_side.avail_gib = avail_gib
+        store = _store(_stored())
+        walled = fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {})
+        assert walled.bake_bytes == ltx and walled.fits is fits, avail_gib  # an empty slot: the file charged
+        fallback.note_stack_read(store, "cond", STACK, HELD_STACK)
+        held = fallback.fresh_load_probe(store, "cond", STACK)("/models/m", {})
+        assert held.bake_bytes == term, avail_gib  # the stack held: the file omitted
+        assert price.priced(_fit(avail_gib), "p", STACK, None).bake_bytes == ltx
+    for module in (price, capacity_fit, capacity_lora_bake, fallback, capacity_quote, worker_capacity, store_load):
+        imported = {alias.name for node in ast.walk(ast.parse(inspect.getsource(module)))
+                    if isinstance(node, ast.Import | ast.ImportFrom) for alias in node.names}
+        assert "lora_partial_load" not in imported, module.__name__
+
+
 def test_the_fleets_sentence_names_the_bake_and_the_in_place_bake_not_taken(ltx):
     from dgx_monarch.actor.capacity_quote import RUNG_EXPLICIT_STOCK, VERDICT_REFUSE, RankPrice
     from dgx_monarch.capacity_agreement import RankAnswer, _priced_sentence
