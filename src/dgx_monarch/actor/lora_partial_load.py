@@ -358,7 +358,7 @@ def check(patcher: Any, sampling: tuple[Any, Any] | None = None) -> None:
     if not partly:
         if sampling is None or not free_backup_for_sampling(patcher, *sampling):
             return
-        why_not = None  # whole and baked, its backup gone: the state the route ends in
+        why_not: str | None = None  # whole and baked, its backup gone: the state the route ends in
     else:
         try:
             why_not = make_whole(patcher)
