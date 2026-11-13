@@ -849,7 +849,9 @@ you may see:
   short of what the sampler needs the render is refused before its first step, naming the rank and the
   figures. The refusal leads with the words of the rank that was short, or whose model was wrong after
   the free, and names its box, whichever box's error reaches the driver; that box's Worker journal logs
-  the same refusal at WARNING. A load ComfyUI placed only partly
+  the same refusal at WARNING. What a rank needs counts, beside ComfyUI's estimate, the shared memory a
+  fresh Worker still maps in its first forward, about 2.7 GiB (none on a warm Worker); the figures say
+  how much of the need it is. A load ComfyUI placed only partly
   whose bake could not be finished for room is still as above. If a pair's
   render is refused with `pair_backup_room` after the ranks freed their
   backups, the same queue is refused again until memory is back: clear the

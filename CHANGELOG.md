@@ -4,6 +4,20 @@
 
 ### Everyday use
 
+- On a pair, the room a rank needs to sample now counts the shared memory a
+  fresh Worker maps in its first forward. Each rank of the proof block took
+  9.4 to 10.1 GiB after the vote against a need of 8.1 (1.15 times ComfyUI's
+  estimate plus 1 GiB): the device 6.5, shared memory 2.7 and 0.3 more. A
+  Worker of a pair maps about 5.5 GiB of shared memory, half of it by its
+  load's end and half in the first seconds of its first forward, and keeps it.
+  So a rank that passed the check with room between 8.1 and about 10 GiB could
+  sample down to 3 to 5 GiB where the free returns little. The need, and the
+  room under which a rank counts as short, now add 5.6 GiB less what the
+  Worker maps at the vote: about 2.7 GiB on a fresh Worker, nothing on a warm
+  one, nothing on one GPU, which maps 0.05 GiB of it. A refusal's figures name
+  the term. Not yet run on hardware
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+
 - On a pair, a render that the ranks' weight-backup agreement refuses now says
   why in the words of the rank that caused it. The driver receives one rank's
   error for the fleet, and before this it was often the healthy rank's, which

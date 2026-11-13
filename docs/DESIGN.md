@@ -1109,7 +1109,18 @@ free, whether its switch is set, its margin with its rank in the low bits, and
 whether it holds a slot this agreement freed before. The margin is its room
 less 1.15 times ComfyUI's single-batch estimate plus 1 GiB (a rank added
 6.4 GiB where the estimate was 6.2; one GPU added 20.0 at 241 frames where it
-was 17.4). Every decision is made from the MIN that comes back, so no rank
+was 17.4), plus the shared memory the rank has yet to map. A Worker of a pair
+maps about 5.5 GiB of shared memory, about 2.7 by its load's end and about 2.7
+more in the first seconds of its first forward, after the vote, and keeps it
+for the actor's life; ComfyUI's estimate does not count it. The need and the
+ask that makes a rank short therefore add 5.6 GiB less what the Worker's own
+RssShmem reads at the vote, never under zero: about 2.7 GiB on a fresh Worker
+and nothing on a warm one. By its mappings (256 equal anonymous shared buffers
+of about 21 MiB beside the RDMA devices) it is the transport's registered
+buffers; no library names it, so that owner is read from the shape. One GPU
+maps 0.05 GiB of it, so the term is the pair's alone (a rank on a CUDA device;
+none off one). The refusal's figures name it. Every decision is made from the
+MIN that comes back, so no rank
 decides alone. Any rank short and none unable: every rank frees, the roomy
 one too, so the slots stay alike and the next stack change reloads on all of
 them. A rank that cannot free (a patched model outside its store): every rank

@@ -52,7 +52,11 @@ under its clock cap, max 2100 MHz) a rank of a pair added 6.4 GiB from this
 point to the end of sampling where the estimate was 6.2, and one GPU added
 20.0 at 241 frames where it was 17.4. It carries no term for the driver's
 decode, which the driver cannot price before sampling; the decode relief
-covers that (``vae_decode_relief``). The room counts the device pool the
+covers that (``vae_decode_relief``). On a rank on a CUDA device the need, and
+the ask that makes a rank short, also carry the shared memory the rank has yet
+to map (``PAIR_SHARED_MEMORY_BYTES`` less its RssShmem now, never under zero):
+about 2.7 GiB on a fresh Worker, which maps it in the first forward's first
+seconds, and nothing on a warm one. The room counts the device pool the
 Worker holds reserved and unused, which its sampler takes first and
 MemAvailable does not show, and is the reading taken after the
 free and the host trim, because a free does not always return the whole copy
@@ -99,6 +103,18 @@ _MIB = 2 ** 20
 _GIB = 2 ** 30
 NEED_SHARE_OF_ESTIMATE = 1.15
 NEED_OVER_ESTIMATE_BYTES = _GIB
+# A Worker of a pair maps about 5.5 GiB of shared memory in two steps: about
+# 2.7 GiB by its load's end and about 2.7 more in the first seconds of its
+# generation's first forward, kept for the actor's life. On record (2026-11-12
+# and 13, DGX Sparks, the first under its clock cap, max 2100 MHz): each rank's
+# Worker held RssShmem 5.48 GiB while sampling and 30 s after; over one render's
+# first forward the boxes' shared memory rose from 3.08 to 5.79 and from 2.80
+# to 5.52 GiB. By its mappings it is 256 equal anonymous shared buffers of
+# about 21 MiB beside the RDMA devices, which points at the transport's
+# registered buffers; no library names it. ComfyUI's estimate does not count
+# it, so the need adds what this rank has yet to map. One GPU read 0.05 GiB:
+# the term is the pair's alone.
+PAIR_SHARED_MEMORY_BYTES = int(5.6 * _GIB)
 RANK_SLOTS = 64          # the margin's low bits hold the rank: MIN then names the tightest one
 NO_CLAIM_MIB = 1 << 20   # a rank that cannot work out its need claims room to spare, not a shortfall
 ELEMENTS = 5             # what ``Vote.elements`` adds to the guard's exchange, the same on every rank
@@ -124,6 +140,7 @@ class Vote:
     pool: int = 0  # device memory reserved and unused on this Worker: the sampler takes it first
     need: int | None = None
     ask: int | None = None
+    unmapped: int = 0  # shared memory this rank has yet to map, inside ``need`` and ``ask`` (``_pair_needs``)
     why_not: str = ""
     own_memory: bool = False  # the load device has memory of its own: this rank takes no part
     freeable: list[tuple[Any, Any]] = field(default_factory=list)
@@ -173,6 +190,42 @@ def _idle_pool(patcher: Any) -> int:
         return 0
 
 
+def _mapped_shared_bytes() -> int | None:
+    """The shared memory this Worker process maps now (RssShmem), or None where /proc does not say."""
+    try:
+        with open("/proc/self/status", encoding="ascii", errors="replace") as status:
+            for line in status:
+                if line.startswith("RssShmem:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _unmapped_shared(patcher: Any) -> int:
+    """The shared memory this rank has yet to map: the pair's whole figure less what it maps now.
+
+    Never under zero, so a warm Worker is asked nothing more and a fresh one about 2.7 GiB. Zero off
+    a CUDA device, where no transport registers buffers; the whole figure where /proc cannot say.
+    """
+    if getattr(getattr(patcher, "load_device", None), "type", None) != "cuda":
+        return 0
+    mapped = _mapped_shared_bytes()
+    return PAIR_SHARED_MEMORY_BYTES if mapped is None else max(0, PAIR_SHARED_MEMORY_BYTES - mapped)
+
+
+def _pair_needs(patcher: Any, sampling: tuple[Any, Any]) -> tuple[int | None, int | None, int]:
+    """(need, ask, unmapped): what this rank's sampler still needs, what makes it short, and the share of both
+    that is shared memory it has yet to map. One function for the vote's "short", the margin after a free and
+    the check at a later render, which all read ``need`` or ``ask`` from here."""
+    unmapped = _unmapped_shared(patcher)
+    estimate = _single_estimate(patcher, *sampling)
+    need = (None if estimate is None
+            else int(NEED_SHARE_OF_ESTIMATE * estimate) + NEED_OVER_ESTIMATE_BYTES + unmapped)
+    ask = lora_partial_load._sampling_ask(patcher, *sampling)
+    return need, None if ask is None else ask + unmapped, unmapped
+
+
 def _fault_here(rank: int) -> bool:
     """Whether the acceptance fault names this rank. Off unless both switches are set."""
     named = os.environ.get(FAULT_RANK_ENV, "").strip()
@@ -215,10 +268,8 @@ def vote(patchers: tuple, sampling: tuple[Any, Any], rank: int) -> Vote:
         found.room = lora_partial_load._host_room()
         first = patchers[0] if patchers else None
         found.pool = 0 if first is None else _idle_pool(first)
-        estimate = None if first is None else _single_estimate(first, *sampling)
-        found.need = (None if estimate is None
-                      else int(NEED_SHARE_OF_ESTIMATE * estimate) + NEED_OVER_ESTIMATE_BYTES)
-        found.ask = None if first is None else lora_partial_load._sampling_ask(first, *sampling)
+        if first is not None:
+            found.need, found.ask, found.unmapped = _pair_needs(first, sampling)
         found.short = bool(held and found.ask is not None and found.room < found.ask)
         if held and found.can and _fault_here(found.rank):
             log.warning("pair backup: acceptance fault (%s names this rank): it votes short at any reading",
@@ -236,7 +287,7 @@ def _facts(mine: Vote, wrong: str | None) -> str:
     try:
         # The cause is cut well inside the gather's 1024 bytes, so the line always parses.
         return json.dumps({"rank": int(mine.rank), "wrong": (wrong or "")[:600], "own": bool(mine.own_memory),
-                           "room": int(max(0, mine.room + mine.pool)),
+                           "room": int(max(0, mine.room + mine.pool)), "unmapped": int(mine.unmapped),
                            "need": -1 if mine.need is None else int(mine.need)})
     except Exception:
         return "{}"
@@ -270,6 +321,13 @@ def _fact(fleet: list[dict], rank: int) -> dict | None:
     return next((fact for fact in fleet if fact.get("rank") == rank), None)
 
 
+def _need_words(unmapped: int) -> str:
+    """What the need is made of, for a refusal's figures."""
+    shared = (f", and {unmapped / _GIB:.1f} GiB of shared memory the rank had yet to map, which ComfyUI's "
+              "estimate does not count" if unmapped > 0 else "")
+    return f"1.15 times ComfyUI's estimate for the latent plus 1 GiB{shared}"
+
+
 def _figures(fact: dict) -> str:
     """One rank's room and need in words, from its own facts."""
     rank = fact.get("rank")
@@ -278,8 +336,10 @@ def _figures(fact: dict) -> str:
     need = int(fact.get("need", -1))
     if need < 0:
         return f"rank {rank} could not work out what its sampler needs"
+    unmapped = int(fact.get("unmapped", 0))
+    shared = f", {unmapped / _GIB:.1f} GiB of it shared memory yet to map" if unmapped > 0 else ""
     return (f"rank {rank} read {int(fact.get('room', 0)) / _GIB:.1f} GiB of room (its idle device pool "
-            f"counted) against {need / _GIB:.1f} GiB needed")
+            f"counted) against {need / _GIB:.1f} GiB needed{shared}")
 
 
 def _refuse_room(margin_gib: float, rank: int, mine: Vote, state: str,
@@ -300,15 +360,14 @@ def _refuse_room(margin_gib: float, rank: int, mine: Vote, state: str,
         # Every rank's own figures crossed: the short rank's first, the others' after, the same
         # words on every rank, so the user reads them whichever rank's error the driver receives.
         others = [_figures(fact) for fact in fleet or () if fact and fact.get("rank") != rank]
-        first = _figures(short)
-        own = (f"{first[:1].upper()}{first[1:]} (1.15 times ComfyUI's estimate for the latent plus 1 GiB)"
+        first = _figures(dict(short, unmapped=0))
+        own = (f"{first[:1].upper()}{first[1:]} ({_need_words(int(short.get('unmapped', 0)))})"
                + (f"; {'; '.join(others)}" if others else ""))
     elif mine.own_memory:
         own = "This rank's device has memory of its own, so it took no part in the reading"
     else:
         own = (f"This rank read {max(0, mine.room + mine.pool) / _GIB:.1f} GiB of room (its idle device pool "
-               f"counted) against {(mine.need or 0) / _GIB:.1f} GiB needed (1.15 times ComfyUI's estimate for "
-               "the latent plus 1 GiB)")
+               f"counted) against {(mine.need or 0) / _GIB:.1f} GiB needed ({_need_words(mine.unmapped)})")
     if mine.rank == rank:
         log.warning("pair backup: this rank is the one short, so the fleet refuses (pair_backup_room): rank %d is "
                     "%.1f GiB short after the ranks' decision (%s). %s", rank, abs(margin_gib), after, own)
@@ -390,9 +449,10 @@ def settle(mine: Vote, answer: list[int], exchange: Any, gather: Any = None) -> 
     else:
         log.info("pair backup: %s, so every rank freed ComfyUI's weight backup before the first step (no weight "
                  "moved; a stack change on this model now reloads it on every rank). This rank: %s; %.1f GiB "
-                 "of room above the floor against %.1f GiB the sampler still needs",
+                 "of room above the floor against %.1f GiB the sampler still needs (%.1f GiB of it shared "
+                 "memory this rank has yet to map)",
                  "this rank was short of room for the sampler" if mine.short else "a peer was short of room",
-                 returned, max(0, mine.room) / _GIB, (mine.need or 0) / _GIB)
+                 returned, max(0, mine.room) / _GIB, (mine.need or 0) / _GIB, mine.unmapped / _GIB)
     ok, after = (int(value) for value in exchange(
         [0 if wrong else 1, _margin(mine.room + mine.pool, mine.need, mine.rank)]))
     margin_gib, rank = _read_margin(after)
