@@ -33,8 +33,25 @@ _LORA_SUFFIXES: tuple[tuple[str, str], ...] = (
     (".lora_up.weight", ".weight"),
     (".lora_A.weight", ".weight"),
     (".lora_B.weight", ".weight"),
+    # ComfyUI's other spellings of the same pair (comfy/weight_adapter/lora.py). A file in
+    # one of them named no suffix this table knew, so its stack was priced as every weight of
+    # the checkpoint: 1933 for a Qwen Image LoRA whose Worker counted 240 (2026-11-12).
+    (".lora.down.weight", ".weight"),
+    (".lora.up.weight", ".weight"),
+    ("_lora.down.weight", ".weight"),
+    ("_lora.up.weight", ".weight"),
+    (".lora_linear_layer.down.weight", ".weight"),
+    (".lora_linear_layer.up.weight", ".weight"),
+    (".lora_A.default.weight", ".weight"),
+    (".lora_B.default.weight", ".weight"),
+    (".lora_A", ".weight"),
+    (".lora_B", ".weight"),
     (".diff", ".weight"),
     (".diff_b", ".bias"),
+    # ComfyUI's norm deltas and its whole-weight replacement (comfy/lora.py).
+    (".w_norm", ".weight"),
+    (".b_norm", ".bias"),
+    (".set_weight", ".weight"),
 )
 
 # A per-block attention pin a LoRA can carry; it patches no weight.
@@ -362,15 +379,28 @@ def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
     or a lower bound of a cast's own, as the quote endpoint reports it in the
     slot's snapshot entry (``actor/worker_capacity._resident_bytes``) when the
     entry still describes the resident those figures were read from; the arena
-    a stock load retains is not. A slab, comfy-managed or FSDP resident, and a slot whose
-    load or cleanup is in flight, are priced as held.
+    a stock load retains is not. A slab, comfy-managed or FSDP resident, a slot whose
+    load or cleanup is in flight are priced as held. So are a resident ComfyUI
+    holds only partly and a slot beside a held other slot, wherever the Worker
+    does not report that its drop copies nothing to the host: the global unload
+    copies a partly loaded model's device weights, and the other slot's model,
+    to the host before it frees anything.
     """
     from dataclasses import replace
 
     held_bytes = held.get("resident_bytes") if isinstance(held, dict) else None
+    # A drop through ComfyUI's global unload moves the other slot's model off the
+    # device (only the dropped slot is pinned), and a partly loaded model's own
+    # device weights with it: host copies made before anything is freed, so the
+    # drop dips the box first. The guard stands unless the Worker says its drop
+    # copies nothing (``drop_copy_free``, actor/resident_ledger.drop_copies_nothing).
+    holds = (context or {}).get("holds_resident") or {}
+    other_held = any(word for name, word in holds.items() if name != (context or {}).get("slot"))
+    copies = isinstance(held, dict) and bool(held.get("resident_partial") or other_held) \
+        and not held.get("drop_copy_free")
     if (getattr(fit, "credit_bytes", 0) > 0 or (context or {}).get("would_load") != "swap"
             or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None
-            or not isinstance(held, dict) or held.get("residency") != "stock"
+            or not isinstance(held, dict) or held.get("residency") != "stock" or copies
             or not isinstance(held_bytes, int) or isinstance(held_bytes, bool) or held_bytes <= 0):
         return fit
     credited = replace(fit, credit_bytes=held_bytes, dropped=str(held.get("resident_name") or "a model"))

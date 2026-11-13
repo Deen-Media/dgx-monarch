@@ -1882,8 +1882,8 @@ def test_the_refusal_points_at_a_troubleshooting_entry_that_exists():
 
 
 def test_h3_modules_are_leaves():
-    """From dgx_monarch, h3_activation may import mesh_safety,
-    driver_footprint, refusal, log, h3_rows and h3_calibration only. h3_rows
+    """From dgx_monarch, h3_activation may import mesh_safety, driver_footprint, refusal, log,
+    h3_rows, h3_calibration and swap_credit (itself a leaf with no project import) only. h3_rows
     and h3_calibration import nothing from dgx_monarch, so they stay testable
     on CPU with hand-built fakes and pull no runtime into the driver's node
     path. None of the three imports torch or comfy."""
@@ -1916,7 +1916,7 @@ def test_h3_modules_are_leaves():
                         f"{relative or imported}")
         if name == "h3_activation.py":
             allowed = {"mesh_safety", "driver_footprint", "refusal", "h3_rows",
-                       "h3_calibration", "log"}
+                       "h3_calibration", "log", "swap_credit"}
             stray = [item for item in relative if item not in allowed]
             if stray:
                 pytest.fail(f"h3_activation may not import {stray}")

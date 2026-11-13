@@ -1,8 +1,8 @@
 {
  "id": "ideogram-4-text-to-image-(dual-model-cfg)",
  "revision": 0,
- "last_node_id": 15,
- "last_link_id": 14,
+ "last_node_id": 16,
+ "last_link_id": 15,
  "nodes": [
   {
    "id": 1,
@@ -40,7 +40,7 @@
     "",
     0,
     0.0,
-    false,
+    true,
     false,
     1,
     false,
@@ -60,7 +60,7 @@
     "config_path": "",
     "gpus_per_host": 0,
     "reserve_vram_gb": 0.0,
-    "sync_ulysses": false,
+    "sync_ulysses": true,
     "compile_dit": false,
     "pipeline_depth": 1,
     "mmap_fallback": false,
@@ -94,7 +94,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Ideogram 4 text to image at 1024x1024, 20 steps at cfg 7.0. Two things set this family apart. First, the unconditional pass is a separate checkpoint, so there is no CFG batch to split: the second loader holds the unconditional model, the Dual Model Guider drives both, and the negative input stays unconnected for the text-free unconditional. Both models are resident at once, so budget memory for the pair. Second, the topology is uly2, the row auto resolves to for this family: on 2026-08-11 uly2 matched the DP2 reference at 1-step NRMS 0.000 on this exact fp8 pair, and on 2026-10-06 this graph's uly2 render matched the single-GPU output exactly on the bf16, fp8 and int8 pairs. Ring2 measured 0.102 against the 0.100 limit and is an explicit diagnostic only, and unlisted quantizations inherit the head-divisible choice with no hardware claim of their own. The prompt is the structured JSON this family expects, not a plain sentence: plain text is accepted but performs worse and raises the safety filter's false-positive rate, and the caption is validated against a schema, so compositional_deconstruction with its background and elements is required and the key order inside style_description is fixed. The official presets drop guidance to 3 for the final polish steps, which the DGX Monarch guider cannot express, so this template runs the vendor's constant-guidance mode at cfg 7.0. Sigmas come from the stock Ideogram 4 Scheduler, so keep its width and height equal to the latent's. sync_ulysses is off in this graph, which changes nothing on the pinned xfuser 0.7.0: its Ulysses all-to-all never receives the setting, so output and speed are the same either way. The 24.0 s against 26.0 s measured with it on (2026-08-25) is one 2-second polling interval, and both settings read 1-step NRMS 0.069 against DP2. A gate verdict covers one sync_ulysses setting, so the first render with it off runs its own identity gate before any pixels. The first render of a new model runs the identity gate, comparing the mesh with a stock single-GPU load before producing pixels. Allow a few minutes for proof renders. Later renders of the same combination skip the gate. Expects ideogram4_fp8_scaled.safetensors plus ideogram4_unconditional_fp8_scaled.safetensors in models/diffusion_models, qwen3vl_8b_fp8_scaled.safetensors in models/text_encoders, and the Flux 2 VAE, flux2-vae.safetensors, in models/vae: this family uses the Flux 2 latent layout and has no VAE of its own, and all four files come from the one repack. The VAE and the decode tail come from the stock node definitions."
+    "Ideogram 4 text to image at 1024x1024, 20 steps at cfg 7.0. Two things set this family apart. First, the unconditional pass is a separate checkpoint, so there is no CFG batch to split: the second loader holds the unconditional model, the Dual Model Guider drives both, and the negative input stays unconnected for the text-free unconditional. Both models are resident at once, so budget memory for the pair. Second, the topology is uly2, the row auto resolves to for this family: on 2026-08-11 uly2 matched the DP2 reference at 1-step NRMS 0.000 on this exact fp8 pair, and on 2026-10-06 this graph's uly2 render matched the single-GPU output exactly on the bf16, fp8 and int8 pairs. Ring2 measured 0.102 against the 0.100 limit and is an explicit diagnostic only, and unlisted quantizations inherit the head-divisible choice with no hardware claim of their own. The prompt is the structured JSON this family expects, not a plain sentence: plain text is accepted but performs worse and raises the safety filter's false-positive rate, and the caption is validated against a schema, so compositional_deconstruction with its background and elements is required and the key order inside style_description is fixed. The JSON sits in Text (Multiline) and reaches CLIP Text Encode through a link: typed into CLIP Text Encode's own box, the browser's dynamic prompt pass would strip its braces on Queue and send broken JSON. The official presets drop guidance to 3 for the final polish steps, which the DGX Monarch guider cannot express, so this template runs the vendor's constant-guidance mode at cfg 7.0. Sigmas come from the stock Ideogram 4 Scheduler, so keep its width and height equal to the latent's. The first render of a new model, LoRA and residency combination runs the identity gate before any pixels, on this graph's mesh and topology: proof renders of at most two steps, from a fresh load before and after the swap or reload under test, must match bit for bit, and with slab residency on, one more render with slab off must match too. Allow a few minutes for these two to four proof renders. Later renders of the same combination skip the gate. The gate proves both models together, and its verdict covers only this pair. It cannot run on cfg2, where each rank holds one of the two models, so a cfg2 render uses stock residency; and with auto_gate on first_use, as shipped, a *+fsdp preset refuses this graph, because the clean-reload proof reloads one model. Expects ideogram4_fp8_scaled.safetensors plus ideogram4_unconditional_fp8_scaled.safetensors in models/diffusion_models, qwen3vl_8b_fp8_scaled.safetensors in models/text_encoders, and the Flux 2 VAE, flux2-vae.safetensors, in models/vae: this family uses the Flux 2 latent layout and has no VAE of its own, and all four files come from the one repack. The VAE and the decode tail come from the stock node definitions."
    ],
    "title": "DGX Monarch | Ideogram 4 text to image (dual model CFG)"
   },
@@ -125,7 +125,7 @@
      "type": "DGXM_MODEL",
      "slot_index": 0,
      "links": [
-      4
+      5
      ]
     }
    ],
@@ -168,7 +168,7 @@
      "type": "DGXM_MODEL",
      "slot_index": 0,
      "links": [
-      6
+      7
      ]
     }
    ],
@@ -220,6 +220,38 @@
   },
   {
    "id": 6,
+   "type": "PrimitiveStringMultiline",
+   "pos": [
+    80,
+    650
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      4
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PrimitiveStringMultiline"
+   },
+   "widgets_values": [
+    "{\"high_level_description\":\"A close-up photograph of a chalkboard menu sign propped on a wooden bakery counter beside a tray of fresh croissants.\",\"style_description\":{\"aesthetics\":\"warm, rustic, inviting\",\"lighting\":\"soft morning window light from the left with gentle falloff\",\"photo\":\"50mm, f/2.8, shallow depth of field, eye level\",\"medium\":\"photograph\",\"color_palette\":[\"#2B2018\",\"#E8D5B7\",\"#C98A3C\",\"#F5EFE6\",\"#6B4A2F\"]},\"compositional_deconstruction\":{\"background\":\"A warm wooden bakery counter with a softly blurred shelf of bread loaves and a copper kettle behind it.\",\"elements\":[{\"type\":\"text\",\"bbox\":[120,180,520,820],\"text\":\"FRESH BAKED DAILY\",\"desc\":\"Hand lettered white chalk capitals on a black chalkboard, set in three stacked centered lines inside a thin chalk border, with a small wheat sprig drawn beneath.\"},{\"type\":\"obj\",\"bbox\":[560,120,940,880],\"desc\":\"A shallow metal tray of golden croissants with flaky layered crusts, dusted lightly with flour, angled toward the camera.\"}]}}"
+   ]
+  },
+  {
+   "id": 7,
    "type": "CLIPTextEncode",
    "pos": [
     420,
@@ -227,16 +259,24 @@
    ],
    "size": [
     315,
-    96
+    118
    ],
    "flags": {},
-   "order": 5,
+   "order": 6,
    "mode": 0,
    "inputs": [
     {
      "name": "clip",
      "type": "CLIP",
      "link": 3
+    },
+    {
+     "name": "text",
+     "type": "STRING",
+     "widget": {
+      "name": "text"
+     },
+     "link": 4
     }
    ],
    "outputs": [
@@ -245,7 +285,7 @@
      "type": "CONDITIONING",
      "slot_index": 0,
      "links": [
-      5
+      6
      ]
     }
    ],
@@ -253,11 +293,11 @@
     "Node name for S&R": "CLIPTextEncode"
    },
    "widgets_values": [
-    "{\"high_level_description\":\"A close-up photograph of a chalkboard menu sign propped on a wooden bakery counter beside a tray of fresh croissants.\",\"style_description\":{\"aesthetics\":\"warm, rustic, inviting\",\"lighting\":\"soft morning window light from the left with gentle falloff\",\"photo\":\"50mm, f/2.8, shallow depth of field, eye level\",\"medium\":\"photograph\",\"color_palette\":[\"#2B2018\",\"#E8D5B7\",\"#C98A3C\",\"#F5EFE6\",\"#6B4A2F\"]},\"compositional_deconstruction\":{\"background\":\"A warm wooden bakery counter with a softly blurred shelf of bread loaves and a copper kettle behind it.\",\"elements\":[{\"type\":\"text\",\"bbox\":[120,180,520,820],\"text\":\"FRESH BAKED DAILY\",\"desc\":\"Hand lettered white chalk capitals on a black chalkboard, set in three stacked centered lines inside a thin chalk border, with a small wheat sprig drawn beneath.\"},{\"type\":\"obj\",\"bbox\":[560,120,940,880],\"desc\":\"A shallow metal tray of golden croissants with flaky layered crusts, dusted lightly with flour, angled toward the camera.\"}]}}"
+    ""
    ]
   },
   {
-   "id": 7,
+   "id": 8,
    "type": "EmptyFlux2LatentImage",
    "pos": [
     760,
@@ -268,7 +308,7 @@
     118
    ],
    "flags": {},
-   "order": 6,
+   "order": 7,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -277,7 +317,7 @@
      "type": "LATENT",
      "slot_index": 0,
      "links": [
-      11
+      12
      ]
     }
    ],
@@ -291,7 +331,7 @@
    ]
   },
   {
-   "id": 8,
+   "id": 9,
    "type": "Ideogram4Scheduler",
    "pos": [
     760,
@@ -302,7 +342,7 @@
     162
    ],
    "flags": {},
-   "order": 7,
+   "order": 8,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -311,7 +351,7 @@
      "type": "SIGMAS",
      "slot_index": 0,
      "links": [
-      10
+      11
      ]
     }
    ],
@@ -327,7 +367,7 @@
    ]
   },
   {
-   "id": 9,
+   "id": 10,
    "type": "KSamplerSelect",
    "pos": [
     420,
@@ -338,7 +378,7 @@
     80
    ],
    "flags": {},
-   "order": 8,
+   "order": 9,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -347,7 +387,7 @@
      "type": "SAMPLER",
      "slot_index": 0,
      "links": [
-      9
+      10
      ]
     }
    ],
@@ -359,7 +399,7 @@
    ]
   },
   {
-   "id": 10,
+   "id": 11,
    "type": "RandomNoise",
    "pos": [
     420,
@@ -370,7 +410,7 @@
     96
    ],
    "flags": {},
-   "order": 9,
+   "order": 10,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -379,7 +419,7 @@
      "type": "NOISE",
      "slot_index": 0,
      "links": [
-      7
+      8
      ]
     }
    ],
@@ -392,7 +432,7 @@
    ]
   },
   {
-   "id": 11,
+   "id": 12,
    "type": "DGXMonarchDualModelGuider",
    "pos": [
     1100,
@@ -403,23 +443,23 @@
     162
    ],
    "flags": {},
-   "order": 10,
+   "order": 11,
    "mode": 0,
    "inputs": [
     {
      "name": "model",
      "type": "DGXM_MODEL",
-     "link": 4
+     "link": 5
     },
     {
      "name": "positive",
      "type": "CONDITIONING",
-     "link": 5
+     "link": 6
     },
     {
      "name": "model_negative",
      "type": "DGXM_MODEL",
-     "link": 6
+     "link": 7
     },
     {
      "name": "negative",
@@ -433,7 +473,7 @@
      "type": "DGXM_GUIDER",
      "slot_index": 0,
      "links": [
-      8
+      9
      ]
     }
    ],
@@ -448,7 +488,7 @@
    }
   },
   {
-   "id": 12,
+   "id": 13,
    "type": "DGXMonarchSamplerCustom",
    "pos": [
     1100,
@@ -459,33 +499,33 @@
     184
    ],
    "flags": {},
-   "order": 11,
+   "order": 12,
    "mode": 0,
    "inputs": [
     {
      "name": "noise",
      "type": "NOISE",
-     "link": 7
+     "link": 8
     },
     {
      "name": "guider",
      "type": "DGXM_GUIDER",
-     "link": 8
+     "link": 9
     },
     {
      "name": "sampler",
      "type": "SAMPLER",
-     "link": 9
+     "link": 10
     },
     {
      "name": "sigmas",
      "type": "SIGMAS",
-     "link": 10
+     "link": 11
     },
     {
      "name": "latent_image",
      "type": "LATENT",
-     "link": 11
+     "link": 12
     }
    ],
    "outputs": [
@@ -494,7 +534,7 @@
      "type": "LATENT",
      "slot_index": 0,
      "links": [
-      12
+      13
      ]
     },
     {
@@ -511,7 +551,7 @@
    "dgxm_widgets": {}
   },
   {
-   "id": 13,
+   "id": 14,
    "type": "VAELoader",
    "pos": [
     1100,
@@ -522,7 +562,7 @@
     80
    ],
    "flags": {},
-   "order": 12,
+   "order": 13,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -531,7 +571,7 @@
      "type": "VAE",
      "slot_index": 0,
      "links": [
-      13
+      14
      ]
     }
    ],
@@ -543,51 +583,10 @@
    ]
   },
   {
-   "id": 14,
+   "id": 15,
    "type": "VAEDecode",
    "pos": [
     1440,
-    270
-   ],
-   "size": [
-    315,
-    96
-   ],
-   "flags": {},
-   "order": 13,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "samples",
-     "type": "LATENT",
-     "link": 12
-    },
-    {
-     "name": "vae",
-     "type": "VAE",
-     "link": 13
-    }
-   ],
-   "outputs": [
-    {
-     "name": "IMAGE",
-     "type": "IMAGE",
-     "slot_index": 0,
-     "links": [
-      14
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "VAEDecode"
-   },
-   "widgets_values": []
-  },
-  {
-   "id": 15,
-   "type": "SaveImage",
-   "pos": [
-    1780,
     270
    ],
    "size": [
@@ -599,9 +598,50 @@
    "mode": 0,
    "inputs": [
     {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 13
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 14
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      15
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 16,
+   "type": "SaveImage",
+   "pos": [
+    1780,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 15,
+   "mode": 0,
+   "inputs": [
+    {
      "name": "images",
      "type": "IMAGE",
-     "link": 14
+     "link": 15
     }
    ],
    "outputs": [
@@ -641,95 +681,103 @@
    3,
    5,
    0,
-   6,
+   7,
    0,
    "CLIP"
   ],
   [
    4,
+   6,
+   0,
+   7,
+   1,
+   "STRING"
+  ],
+  [
+   5,
    3,
    0,
-   11,
+   12,
    0,
    "DGXM_MODEL"
   ],
   [
-   5,
    6,
+   7,
    0,
-   11,
+   12,
    1,
    "CONDITIONING"
   ],
   [
-   6,
+   7,
    4,
    0,
-   11,
+   12,
    2,
    "DGXM_MODEL"
   ],
   [
-   7,
-   10,
+   8,
+   11,
    0,
-   12,
+   13,
    0,
    "NOISE"
   ],
   [
-   8,
-   11,
-   0,
+   9,
    12,
+   0,
+   13,
    1,
    "DGXM_GUIDER"
   ],
   [
-   9,
-   9,
+   10,
+   10,
    0,
-   12,
+   13,
    2,
    "SAMPLER"
   ],
   [
-   10,
-   8,
+   11,
+   9,
    0,
-   12,
+   13,
    3,
    "SIGMAS"
   ],
   [
-   11,
-   7,
-   0,
    12,
+   8,
+   0,
+   13,
    4,
    "LATENT"
   ],
   [
-   12,
-   12,
+   13,
+   13,
    0,
-   14,
+   15,
    0,
    "LATENT"
-  ],
-  [
-   13,
-   13,
-   0,
-   14,
-   1,
-   "VAE"
   ],
   [
    14,
    14,
    0,
    15,
+   1,
+   "VAE"
+  ],
+  [
+   15,
+   15,
+   0,
+   16,
    0,
    "IMAGE"
   ]
@@ -741,38 +789,38 @@
    "inputs": [
     [
      6,
-     "text"
-    ],
-    [
-     10,
-     "noise_seed"
-    ],
-    [
-     7,
-     "width"
-    ],
-    [
-     7,
-     "height"
-    ],
-    [
-     8,
-     "width"
-    ],
-    [
-     8,
-     "height"
-    ],
-    [
-     8,
-     "steps"
+     "value"
     ],
     [
      11,
-     "cfg"
+     "noise_seed"
+    ],
+    [
+     8,
+     "width"
+    ],
+    [
+     8,
+     "height"
     ],
     [
      9,
+     "width"
+    ],
+    [
+     9,
+     "height"
+    ],
+    [
+     9,
+     "steps"
+    ],
+    [
+     12,
+     "cfg"
+    ],
+    [
+     10,
      "sampler_name"
     ],
     [
@@ -785,7 +833,7 @@
     ]
    ],
    "outputs": [
-    15
+    16
    ]
   }
  },

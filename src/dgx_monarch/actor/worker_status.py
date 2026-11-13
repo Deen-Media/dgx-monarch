@@ -108,7 +108,7 @@ def status_impl(worker) -> dict:
     from .. import monarch_policy, return_diagnostics, runtime_diagnostics
     from ..monarch_capabilities import diagnostic_identity
     from ..telemetry import event_snapshot
-    from . import vae_decode
+    from . import context_room, vae_decode
 
     event_seq, events = event_snapshot(32)
     info: dict[str, Any] = {
@@ -120,6 +120,8 @@ def status_impl(worker) -> dict:
         # The decode VAE this actor holds beside the DiT, priced and reported
         # like any resident (actor/vae_decode.py).
         "vae_decode": vae_decode.status_block(worker),
+        # What the Worker did to have free memory for its CUDA context (actor/context_room.py).
+        "context_room": context_room.status_block(),
         "nccl": False,
         # A failed setup/teardown rollback is a persistent dirty-state latch.
         # Publish only its boolean verdict: the exception detail stays in the
@@ -211,6 +213,7 @@ def provenance_baseline_impl(
             or not 0 <= rank < world):
         raise RuntimeError("provenance baseline requires published rank/world metadata")
 
+    from .. import gate_runtime
     from ..telemetry import event_sequence
 
     if artifact_manifest is None:
@@ -220,6 +223,8 @@ def provenance_baseline_impl(
             "topology": dict(worker.topology),
             "setup_generation": actual_generation,
             "source_manifest_sha256": source_manifest_sha256(),
+            # The Gate ceremony holds every rank to the driver's build (worker_runtime.py).
+            "runtime": gate_runtime.runtime_build_identity(),
             "event_seq": event_sequence(),
         }
 
@@ -247,6 +252,7 @@ def provenance_baseline_impl(
         "topology": dict(worker.topology),
         "setup_generation": actual_generation,
         "source_manifest_sha256": dgx_provenance["source_manifest_sha256"],
+        "runtime": gate_runtime.runtime_build_identity(),
         "setup_provenance": stored[1],
         "post_provenance": runtime_provenance,
         # Capture last so earlier GPU-queue work precedes this watermark.

@@ -57,11 +57,15 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     # Memory policy. The globals are hard requirements even where their first
     # read has a fallback: a write to a renamed knob fails silently and leaves
     # workers off the configured memory settings.
-    _call("comfy.model_management", "get_free_memory", "dev", "torch_free_too"),
+    _call("comfy.model_management", "get_free_memory", positional=("dev", "torch_free_too")),
     _call("comfy.model_management", "get_torch_device"),
     _call("comfy.model_management", "load_models_gpu", "force_full_load", positional=("models",)),
     _call("comfy.model_management", "unload_all_models"),
     _call("comfy.model_management", "soft_empty_cache"),
+    # What load_models_gpu requires free for a priced call, and the classic loader's way to free it (vae_decode_relief).
+    _call("comfy.model_management", "minimum_inference_memory"),
+    _call("comfy.model_management", "extra_reserved_memory"),
+    _call("comfy.model_management", "free_memory", "keep_loaded", "for_dynamic", positional=("memory_required", "device")),
     _call("comfy.model_management", "cast_to_device", "copy", positional=("tensor", "device", "dtype")),
     _call("comfy.model_management", "lora_compute_dtype", positional=("device",)),
     _call("comfy.model_management", "cast_to", "dtype", "device", positional=("weight",)),
@@ -78,6 +82,8 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.sd", "load_lora_for_models", positional=("model", "clip", "lora", "strength_model", "strength_clip")),
     _call("comfy.sd", "CLIP.tokenize", positional=("self", "text")),
     _call("comfy.sd", "CLIP.encode_from_tokens_scheduled", positional=("self", "tokens")),
+    _call("comfy.sd", "VAE.encode", positional=("self", "pixel_samples")),  # vae_encode_item wraps it in the driver
+    _call("comfy.sd", "VAE.decode", positional=("self", "samples_in")),  # vae_decode_relief wraps it in the driver
     _call("comfy.model_patcher", "ModelPatcher", positional=("model", "load_device", "offload_device")),
     _call("comfy.model_patcher", "ModelPatcher.clone", positional=("self",)),
     _call("comfy.model_patcher", "ModelPatcher.add_object_patch", positional=("self", "name", "obj")),
@@ -144,6 +150,7 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("folder_paths", "get_folder_paths", positional=("folder_name",)),
     _call("folder_paths", "get_full_path", positional=("folder_name", "filename")),
     _call("folder_paths", "get_output_directory"),
+    _call("folder_paths", "get_input_directory"),
     _attr("folder_paths", "__file__"),
     _attr("server", "PromptServer.instance"),
     _attr("server", "PromptServer.instance.routes"),

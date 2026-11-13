@@ -105,3 +105,32 @@ def test_a_sentinel_never_skips_the_persisted_quarantine(folders, monkeypatch):
     assert not reads, "an unidentified artifact must never reach the ledger"
     assert model.mesh.worker_args["lora_low_rss"] is False
     assert model.mesh.worker_args["slab_weights"] is False
+
+
+@pytest.mark.parametrize("unresolved", ["uncond.safetensors", "uncond_lora.safetensors"])
+def test_a_dual_sentinel_never_reaches_the_ledger_either(folders, monkeypatch, unresolved):
+    """A dual request reads two keys; an unidentified second model or its LoRA refuses both."""
+    for name in ("uncond.safetensors", "uncond_lora.safetensors"):
+        path = folders.tmp_path / name
+        path.write_bytes(b"other" * 64)
+        folders.resolved[name] = str(path)
+    folders.resolved[unresolved] = None
+    model = _model()
+    uncond = {"unet_name": "uncond.safetensors", "options": {},
+              "loras": [{"name": "uncond_lora.safetensors", "strength": 1.0}]}
+    reads: list[str] = []
+
+    class Ledger:
+        def __init__(self, _directory):
+            reads.append("constructed")
+
+        def lookup_with_entry(self, *_args):
+            reads.append("lookup")
+            return "clear", None
+
+    monkeypatch.setattr("dgx_monarch.gate_ledger.GateLedger", Ledger)
+    common._AUTO_GATE_ACTIVE.on = False
+    quarantine_mod._enforce_persisted_quarantine(model, uncond=uncond)
+    assert not reads, "an unidentified artifact must never reach the ledger"
+    assert model.mesh.worker_args["lora_low_rss"] is False
+    assert model.mesh.worker_args["slab_weights"] is False

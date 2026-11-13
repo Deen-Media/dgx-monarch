@@ -5,7 +5,7 @@ import os
 import socket
 import time
 
-from .. import fp8_compute
+from .. import fp8_compute, gate_runtime
 from ..accuracy_waiver import RESULT_KEY as _ACCURACY_WAIVER_RESULT_KEY
 from ..log import get_logger
 from ..transfer import LatentReturn
@@ -17,7 +17,7 @@ from ..transfer_utils import (
 )
 from . import fsdp_checkpoint_pin, load_fault, rendezvous, vae_decode
 from .attention_dispatch import _AttentionDispatch as _AttentionDispatch
-from .comfy_bridge import ensure_comfy
+from .context_room import ensure_comfy  # comfy_bridge's, with room for the CUDA context
 from .worker_authorization import (
     accuracy_waiver_stamps as accuracy_waiver_stamps,
 )
@@ -256,11 +256,8 @@ def setup_impl(worker, env: dict) -> dict:
     # worker replaces a configured rail only when that interface is absent or down.
     os.environ["CUDA_VISIBLE_DEVICES"] = str(env.get("local_gpu_index", 0))
     os.environ.update(fabric)
-    ensure_comfy(
-        os.path.expanduser(env["comfy_dir"]),
-        env.get("worker_args"),
-        gpus_per_host=int(env.get("gpus_per_host") or 1),
-    )
+    ensure_comfy(os.path.expanduser(env["comfy_dir"]), env.get("worker_args"),
+                 gpus_per_host=int(env.get("gpus_per_host") or 1), rank=(rank, world))
     # Resolve auto low-RSS policy per host; mode changes rebuild residents.
     from .comfy_bridge import _uma_memory_defaults as _uma_defaults
 
@@ -447,6 +444,7 @@ def setup_info(worker) -> dict:
         # rank-asymmetric selection before dispatch. A raise inside a
         # collective on one rank only abandons the lease and strands its peers.
         "sol_attn": sol_attn_available(),
+        "runtime": gate_runtime.runtime_build_identity(),  # Gate authority needs the driver's (worker_runtime.py)
         "sp_rank": get_sequence_parallel_rank(),
         "cfg_rank": get_classifier_free_guidance_rank(),
         "dp_rank": get_data_parallel_rank(),

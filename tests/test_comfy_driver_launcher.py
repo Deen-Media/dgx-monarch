@@ -446,8 +446,8 @@ def test_desktop_installer_writes_owned_terminal_entry_and_uninstalls(tmp_path: 
     assert "sudo" not in source
     assert "dgxm up" not in source
     assert str(ICON.resolve()) in source
-    escaped_comfy = str(comfy).replace("$", r"\$").replace("%", "%%")
-    assert escaped_comfy in source
+    argv = _desktop_exec_argv(source)
+    assert argv[argv.index("--comfy-dir") + 1] == str(comfy.resolve())
 
     validator = shutil.which("desktop-file-validate")
     if validator:
@@ -549,8 +549,8 @@ def test_desktop_persists_combined_launch_config(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     source = (xdg / "applications/dgx-monarch.desktop").read_text()
     assert "--with-top" in source
-    assert "--cluster-config" in source
-    assert str(config).replace("$", r"\$") in source
+    argv = _desktop_exec_argv(source)
+    assert argv[argv.index("--cluster-config") + 1] == str(config.resolve())
 
 
 def test_launcher_purges_host_memory_at_free_time() -> None:
@@ -561,3 +561,112 @@ def test_launcher_purges_host_memory_at_free_time() -> None:
 
     text = LAUNCHER.read_text(encoding="utf-8")
     assert f"export {HOST_ALLOCATOR_PURGE_ENV}=${{{HOST_ALLOCATOR_PURGE_ENV}:-{HOST_ALLOCATOR_PURGE_DEFAULT}}}" in text
+
+
+def _desktop_string(raw: str) -> str:
+    """The string value type's escapes (\\s \\n \\t \\r \\\\); any other escape raises."""
+    value, index = [], 0
+    escapes = {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
+    while index < len(raw):
+        char = raw[index]
+        if char == "\\":
+            follower = raw[index + 1]
+            assert follower in escapes, f"undefined string escape \\{follower} in {raw!r}"
+            value.append(escapes[follower])
+            index += 2
+            continue
+        value.append(char)
+        index += 1
+    return "".join(value)
+
+
+def _desktop_exec_argv(source: str) -> list[str]:
+    """Parse the Exec key the way the Desktop Entry specification does, in its two layers.
+
+    First the string value type's escapes (\\s \\n \\t \\r \\\\), then the Exec
+    quoting rules, in which a quoted argument escapes ", `, $ and \\ with a
+    backslash, then the %% field code. Anything the specification leaves
+    undefined raises, so an entry that relies on a lenient reader fails here.
+    """
+    line = next(item for item in source.splitlines() if item.startswith("Exec="))
+    text, argv, current, quoted, index = _desktop_string(line[len("Exec="):]), [], [], False, 0
+    while index < len(text):
+        char = text[index]
+        if quoted and char == "\\":
+            follower = text[index + 1]
+            assert follower in '"`$\\', f"undefined quoted escape \\{follower} in {text!r}"
+            current.append(follower)
+            index += 2
+            continue
+        if char == '"':
+            quoted = not quoted
+        elif char == " " and not quoted:
+            argv.append("".join(current))
+            current = []
+        else:
+            assert quoted or char not in '"`$\\', f"reserved {char!r} outside quotes in {text!r}"
+            current.append(char)
+        index += 1
+    assert not quoted
+    argv.append("".join(current))
+    fields = []
+    for argument in argv:
+        assert "%" not in argument.replace("%%", ""), f"field code in {argument!r}"
+        fields.append(argument.replace("%%", "%"))
+    return fields
+
+
+def test_desktop_exec_round_trips_uncommon_path_characters(tmp_path: Path) -> None:
+    """Every accepted path character must reach the launcher's argv unchanged.
+
+    The literal backslash needs both escape layers: four backslashes in the file.
+    """
+    odd = 'a\\b "q" `t` $HOME 100% it\'s'
+    comfy = _checkout(tmp_path / f"Comfy {odd}")
+    python = _fake_python(tmp_path / f"venv {odd}/bin/python")
+    config = tmp_path / f"cluster {odd}.toml"
+    config.write_text("[cluster]\n")
+    xdg = tmp_path / "xdg"
+    result = subprocess.run(
+        [str(DESKTOP), "install", "--comfy-dir", str(comfy), "--python", str(python),
+         "--with-top", "--cluster-config", str(config)],
+        env={**os.environ, "XDG_DATA_HOME": str(xdg), "DGXM_RECORD": str(tmp_path / "calls")},
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    entry = xdg / "applications/dgx-monarch.desktop"
+    source = entry.read_text()
+    assert _desktop_exec_argv(source) == [
+        str(LAUNCHER.resolve()), "--comfy-dir", str(comfy.resolve()), "--python", str(python.resolve()),
+        "--listen", "127.0.0.1", "--port", "8188", "--with-top", "--cluster-config", str(config.resolve()),
+    ]
+    assert "a\\\\\\\\b" in source
+    validator = shutil.which("desktop-file-validate")
+    if validator:
+        checked = subprocess.run([validator, str(entry)], text=True, capture_output=True, check=False)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_desktop_icon_keeps_a_backslash_in_the_checkout_path(tmp_path: Path) -> None:
+    """Icon is a string-typed key: its value takes the string layer only."""
+    root = tmp_path / "check\\out"
+    (root / "scripts").mkdir(parents=True)
+    (root / "docs/media").mkdir(parents=True)
+    for name in ("dgxm-desktop.sh", "comfy-driver.sh"):
+        shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
+    shutil.copy2(ICON, root / "docs/media/dgx-monarch.svg")
+    comfy = _checkout(tmp_path / "ComfyUI", link_repository=False)
+    (comfy / "custom_nodes/dgx-monarch").symlink_to(root, target_is_directory=True)
+    python = _fake_python(tmp_path / "venv/bin/python")
+    xdg = tmp_path / "xdg"
+    result = subprocess.run(
+        [str(root / "scripts/dgxm-desktop.sh"), "install", "--comfy-dir", str(comfy),
+         "--python", str(python), "--no-browser"],
+        env={**os.environ, "XDG_DATA_HOME": str(xdg), "DGXM_RECORD": str(tmp_path / "calls")},
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    source = (xdg / "applications/dgx-monarch.desktop").read_text()
+    icon = next(line for line in source.splitlines() if line.startswith("Icon="))
+    assert _desktop_string(icon[len("Icon="):]) == str((root / "docs/media/dgx-monarch.svg").resolve())
+    assert _desktop_exec_argv(source)[0] == str((root / "scripts/comfy-driver.sh").resolve())

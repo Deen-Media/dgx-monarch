@@ -9,6 +9,7 @@ from typing import TypeGuard, cast
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from ..topology import Topology, topology_from_preset
+from .graph_live import is_link
 from .latent_outputs import is_direct_nested_tensor
 
 log = get_logger(__name__)
@@ -140,6 +141,28 @@ NO_LITERAL_BATCH_LATENT_CLASSES = frozenset({
 CENSUSED_LATENT_CLASSES = LITERAL_BATCH_LATENT_CLASSES | NO_LITERAL_BATCH_LATENT_CLASSES
 _LATENT_INPUT_KEY = "latent_image"
 
+# Fleet dispatches one world-one job per GPU, so its batch never splits over DP.
+_FLEET_SAMPLER = "DGXMonarchFleetKSampler"
+# The links that tie a sampler to a loader, by the node that holds them: a
+# sampler's `model` or `guider`, each dgx-monarch node that hands its `model`
+# on, and each MODEL a guider runs. Any other node ends the walk with no claim.
+# A census test holds this table to every registered node that returns a model
+# or a guider. Read-only after import.
+_MODEL_LINK_KEYS = {
+    "DGXMonarchLoraLoader": ("model",),
+    "DGXMonarchSkipLayerGuidance": ("model",),
+    "DGXMonarchMiniMaxH3ContextWindows": ("model",),
+    "DGXMonarchModelSamplingSD3": ("model",),
+    "DGXMonarchModelSamplingMiniMaxH3": ("model",),
+    "DGXMonarchQwenImage21Cache": ("model",),
+    "DGXMonarchBasicGuider": ("model",),
+    "DGXMonarchCFGGuider": ("model",),
+    "DGXMonarchDualModelGuider": ("model", "model_negative"),
+}
+_SAMPLER_MODEL_KEYS = ("model", "guider")
+# Longer than any real chain, and short enough that a cyclic graph ends.
+_MODEL_WALK_LIMIT = 32
+
 
 def _node(prompt: Mapping, node_id: object) -> Mapping | None:
     found = prompt.get(node_id)
@@ -148,16 +171,37 @@ def _node(prompt: Mapping, node_id: object) -> Mapping | None:
     return found if isinstance(found, Mapping) else None
 
 
-def _literal_batches(prompt: object) -> list[int]:
-    """Batch sizes this graph states as literals, in graph order.
+def _reaches_loader(prompt: Mapping, link: object, loader_id: str, depth: int = 0) -> bool:
+    """Whether a MODEL or GUIDER link provably leads back to ``loader_id``."""
+    if depth > _MODEL_WALK_LIMIT or not is_link(link):
+        return False
+    source = cast(list, link)[0]
+    if str(source) == loader_id:
+        return True
+    node = _node(prompt, source)
+    if node is None or not isinstance(node.get("inputs"), Mapping):
+        return False
+    inputs = node["inputs"]
+    keys = _MODEL_LINK_KEYS.get(str(node.get("class_type")), ())
+    return any(_reaches_loader(prompt, inputs.get(key), loader_id, depth + 1) for key in keys)
 
-    Only a dgx-monarch sampler's ``latent_image`` link is followed, and only
-    straight into an allowlisted latent output.  A source with a literal
-    positive ``batch_size`` is priced directly; Qwen Image 2.1 is the one
-    native provider whose pinned schema always emits batch one. Everything
-    else is absent from the result.
+
+def _takes_loader(prompt: Mapping, inputs: Mapping, loader_id: str) -> bool:
+    return any(_reaches_loader(prompt, inputs.get(key), loader_id)
+               for key in _SAMPLER_MODEL_KEYS)
+
+
+def _literal_batches(prompt: object, loader_id: str | None = None) -> list[int]:
+    """Batch sizes this graph states as literals for one loader, in graph order.
+
+    Only a dgx-monarch sampler whose model or guider provably comes from
+    ``loader_id`` counts, and Fleet never does. Its ``latent_image`` link is
+    followed only straight into an allowlisted latent output. A source with a
+    literal positive ``batch_size`` is priced directly; Qwen Image 2.1 is the
+    one native provider whose pinned schema always emits batch one. Everything
+    else, and every sampler when no loader is named, is absent from the result.
     """
-    if not isinstance(prompt, Mapping):
+    if not isinstance(prompt, Mapping) or loader_id is None:
         return []
     found: list[int] = []
     for node in prompt.values():
@@ -165,7 +209,9 @@ def _literal_batches(prompt: object) -> list[int]:
         class_type = node.get("class_type") if isinstance(node, Mapping) else None
         if not isinstance(inputs, Mapping) or not isinstance(class_type, str):
             continue
-        if not class_type.startswith("DGXMonarch"):
+        if not class_type.startswith("DGXMonarch") or class_type == _FLEET_SAMPLER:
+            continue
+        if not _takes_loader(prompt, inputs, loader_id):
             continue
         link = inputs.get(_LATENT_INPUT_KEY)
         if not (isinstance(link, (list, tuple)) and len(link) == 2):
@@ -194,13 +240,17 @@ def _literal_batches(prompt: object) -> list[int]:
     return found
 
 
-def preflight_graph_batch_divides_dp(mesh: object, prompt: object) -> None:
+def preflight_graph_batch_divides_dp(mesh: object, prompt: object,
+                                     loader_id: object = None) -> None:
     """Reject a literal batch that cannot divide across explicit DP ranks.
 
     Run before capacity checks: slab rescue cannot repair an indivisible batch.
-    Automatic topology, an unavailable world size, or an unreadable latent chain
-    makes no claim here. ``validate_render_topology`` checks the resolved topology
-    and real tensor again at submission.
+    ``loader_id`` is the calling loader's ComfyUI node id; only samplers that
+    take its model are priced, so a Fleet branch or another loader's branch
+    never refuses this load. Automatic topology, an unavailable world size, an
+    unreadable latent chain or an association the walk cannot prove makes no
+    claim here. ``validate_render_topology`` checks the resolved topology and
+    real tensor again at submission.
     """
     try:
         preset = getattr(mesh, "topology_preset", "auto")
@@ -213,7 +263,7 @@ def preflight_graph_batch_divides_dp(mesh: object, prompt: object) -> None:
         topo = topology_from_preset(preset, world)
         if topo.dp <= 1:
             return
-        batches = _literal_batches(prompt)
+        batches = _literal_batches(prompt, None if loader_id is None else str(loader_id))
     except Exception:  # unreadable evidence answers nothing, here or later
         return
     for batch in batches:

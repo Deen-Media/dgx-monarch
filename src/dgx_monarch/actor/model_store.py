@@ -18,6 +18,7 @@ from ..log import get_logger
 from ..mesh_safety import stock_load_preflight  # noqa: F401 - read by store_load
 from ..transfer_utils import failure_summary
 from . import (
+    in_place_fallback,
     lora_shape_guard,
     resident_ledger,
     slab_lifetime,
@@ -113,8 +114,8 @@ class ModelStore:
     def __init__(self) -> None:
         self.current: StoredModel | None = None
         self.uncond: StoredModel | None = None  # second model slot for the dual-model guider (Ideogram4)
-        # comfy's unload_all_models() is global: dropping or quant-hot-swapping one
-        # slot evicts the other slot's GPU weights too. Instance lifetime, keyed by
+        # comfy's unload_all_models() is global: a quant hot-swap, or the drop of a slab or
+        # shard build, evicts the other slot's GPU weights too. Instance lifetime, keyed by
         # slot name; a reload or reuse of that slot clears it, and the reuse log says so.
         self._gpu_evicted: set[str] = set()
         # A failed global unload can leave comfy's process-wide model state partly
@@ -274,7 +275,7 @@ class ModelStore:
         base_key, request_key = self.make_keys(unet_name, options, lora_stack, quant_kind)
         authoritative_slab_retry = False
 
-        if stored is not None and stored.base_key == base_key and (
+        if in_place_fallback.holds_base(stored, base_key) and (
             store_identity.base_artifact_identity(stored.artifact_identity)
             != store_identity.base_artifact_identity(requested_identity)
             or not store_detect.fsdp_reuse_matches_proof(stored, fsdp_checkpoint_proof)
@@ -286,7 +287,7 @@ class ModelStore:
             )
             stored = None
 
-        if stored is not None and stored.base_key == base_key:
+        if in_place_fallback.holds_base(stored, base_key):
             # Same checkpoint: detection already ran at load time, and the
             # option-derived kind can be weaker (scaled-fp8 checkpoints load
             # through default options). Compare with the detected kind so an
@@ -298,7 +299,8 @@ class ModelStore:
                 stored = None
 
         if stored is not None and stored.request_key == request_key \
-                and stored.artifact_identity == requested_identity:
+                and stored.artifact_identity == requested_identity \
+                and not in_place_fallback.must_reload(self, stored):  # baked in place, no gate PASS sent
             reload_note = ""
             if slot in self._gpu_evicted:
                 self._gpu_evicted.discard(slot)  # this reuse re-materializes it
@@ -306,9 +308,9 @@ class ModelStore:
             log.info("model store [%s]: %s%s -- %s", slot, TRANSITION_REUSE, reload_note, unet_name)
             return stored.active_patcher, TRANSITION_REUSE
 
-        if stored is not None and stored.base_key == base_key:  # before either swap (#129)
+        if in_place_fallback.holds_base(stored, base_key):  # before either swap (#129)
             lora_quant_guard.assert_lora_quant_supported(stored.family, stored.quant_kind, lora_stack)
-        if stored is not None and stored.base_key == base_key and self.lora_low_rss \
+        if in_place_fallback.holds_base(stored, base_key) and self.lora_low_rss \
                 and (stored.unbake is not None or not stored.lora_sig):
             # Low-RSS hot-swap restores verified bytes and re-bakes in place. An
             # ordinary failure drops the slot and falls through to a full load; an
@@ -321,30 +323,39 @@ class ModelStore:
             if result is not None:
                 return result
 
-        if stored is not None and stored.base_key == base_key and not self.lora_low_rss \
+        if in_place_fallback.holds_base(stored, base_key) and not self.lora_low_rss \
                 and not stored.base_baked:
-            # Hot-swap (clone the pristine base, re-apply loras), or None when the
-            # swap would copy the model off the GPU first: then a fresh load.
-            # Skipped in low_rss: _merge_and_free consumed the base (baked, backup
-            # freed), so it cannot be re-cloned, even after the policy flips. A
-            # stack change then falls through to a full reload from disk (exact),
-            # the low_rss recovery contract when lazy un-bake is unavailable.
+            # Hot-swap (clone the pristine base, re-apply loras), or None when the swap would
+            # copy the model off the GPU first: then a fresh load. Skipped in low_rss:
+            # _merge_and_free consumed the base (baked, backup freed), so it cannot be
+            # re-cloned, even after the policy flips. A stack change then falls through to a
+            # full reload from disk (exact), the low_rss recovery contract with no lazy un-bake.
             result = store_bake.hot_swap_transition(
                 self, stored, slot, unet_name, lora_stack, base_key, requested_identity,
                 request_artifact_identity=request_artifact_identity, logger=log)
             if result is not None:
                 return result
 
-        # Release ensure's local pin before dropping the old slot: USP injection
-        # creates a model reference cycle, so a live local would defeat _drop's
-        # gc.collect() and briefly retain two full DiTs.
-        stored = None
-        return store_load.fresh_load(
-            self, slot, unet_name, options, lora_stack, quant_kind, requested_identity,
-            base_key, on_base_loaded, fsdp_launch, fsdp_preflight_path,
-            fsdp_checkpoint_proof, authoritative_slab_retry, rescue_consent,
-            request_artifact_identity=request_artifact_identity,
-            resolve_model_path=resolve_model_path, logger=log)
+        try:  # a stack the declined swap left held (in_place_fallback.note_stack_read) never outlives this call
+            # Release ensure's local pin before dropping the old slot: USP injection creates a model
+            # reference cycle, so a live local would defeat _drop's gc.collect() and keep two full DiTs.
+            set_aside, stored = stored is None and self._stored(slot) is not None, None
+            # A fresh load would follow, and nothing is dropped yet: where the classic bake's price misses
+            # and the gate allows it, the stack is baked in place (actor/in_place_fallback.py). Not on a
+            # slot this call set aside above (an identity that drifted, a slab retry).
+            result = None if fsdp_launch or set_aside else in_place_fallback.take(
+                self, slot, unet_name, options, lora_stack, base_key, requested_identity, log,
+                request_artifact_identity, lambda: self.ensure(
+                    unet_name, options, None, slot, on_base_loaded, fsdp_launch, rescue_consent))
+            if result is not None:
+                return result
+            return store_load.fresh_load(
+                self, slot, unet_name, options, lora_stack, quant_kind, requested_identity, base_key,
+                on_base_loaded, fsdp_launch, fsdp_preflight_path, fsdp_checkpoint_proof,
+                authoritative_slab_retry, rescue_consent, request_artifact_identity=request_artifact_identity,
+                resolve_model_path=resolve_model_path, logger=log)
+        finally:
+            in_place_fallback.forget_stack_read(self)
 
     def _lazy_swap(self, stored, active, unet_name: str):
         if getattr(stored.base_patcher, "_dgxm_fsdp", False):
@@ -402,7 +413,7 @@ class ModelStore:
 
     _invalidate_gpu_weights = staticmethod(store_bake.invalidate_gpu_weights)
 
-    def _drop(self, slot: str) -> None:
+    def _drop(self, slot: str, everything: bool = False) -> None:
         stored = self.uncond if slot == "uncond" else self.current
         if stored is None:
             self._drop_failed.discard(slot)
@@ -419,7 +430,8 @@ class ModelStore:
             fsdp_shard_build.drop_sharded_weights_in_place(
                 (stored.base_patcher, stored.active_patcher),
                 origin=f"model store [{slot}]")
-            resident_ledger.unload_without_offload(mm, (stored.base_patcher, stored.active_patcher))
+            stays = self.current if slot == "uncond" else self.uncond
+            alone = resident_ledger.unload_dropped(mm, stored, stays, everything)
             self._drop_failed.add(slot)
             stored.base_patcher = stored.active_patcher = stored.unbake = None
             resident_ledger.collect_dropped()
@@ -447,7 +459,7 @@ class ModelStore:
         elif owner_kind:
             slab_lifetime.close_or_retain_after_explicit_unload(stored, "model-store resources")
         self._drop_failed.discard(slot)
-        self._mark_other_slot_evicted(slot)
+        resident_ledger.mark_after_drop(self, slot, alone)
         resident_ledger.flush_dropped(mm, slot)
 
     def cleanup_active(self) -> None:
@@ -460,8 +472,8 @@ class ModelStore:
 
     def unload_all(self) -> None:
         resident_ledger.pin_store_for_unload(self.current, self.uncond)
-        self._drop("uncond")
-        self._drop("cond")
+        self._drop("uncond", True)  # store-wide: ComfyUI's global unload, nothing left loaded
+        self._drop("cond", True)
         self.release_retained_cleanup()
 
     def release_retained_cleanup(self) -> None:

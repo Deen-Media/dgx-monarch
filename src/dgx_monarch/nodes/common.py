@@ -61,6 +61,7 @@ log = get_logger(__name__)
 
 LATENT_DOWNSCALE_METADATA_KEY = render_preflight.LATENT_DOWNSCALE_METADATA_KEY
 CFG_KEEPS_UNCOND_METADATA_KEY = render_preflight.CFG_KEEPS_UNCOND_METADATA_KEY
+CFG_PAIR_DIFFERS_METADATA_KEY = render_preflight.CFG_PAIR_DIFFERS_METADATA_KEY
 
 
 @dataclass(frozen=True)
@@ -174,8 +175,8 @@ def _warn_nearest_signature(path: str) -> None:
 
 def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
                      world: int | None = None, *, latent_downscale: int | None = None,
-                     size_tags: tuple = (None, None),
-                     keeps_uncond: bool = False) -> tuple[Topology, bool, str]:
+                     size_tags: tuple = (None, None), keeps_uncond: bool = False,
+                     pair_differs: bool = False, views: bool = False) -> tuple[Topology, bool, str]:
     """Resolve the mesh's topology preset for this render.
 
     Returns (topology, sage, reason). Explicit presets pass through; "auto"
@@ -184,7 +185,9 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     comfy's latent format declares for the checkpoint. ``size_tags`` are the
     latent's own, so auto reads the grid the workers will sample.
     ``keeps_uncond`` says the sampler keeps the uncond pass at CFG 1.0, so a
-    cfg row stays eligible there (topology.sampler_keeps_uncond_at_cfg1).
+    cfg row stays eligible there (topology.sampler_keeps_uncond_at_cfg1),
+    ``pair_differs`` that the prompt pair's text rows differ (cfg_pair), and
+    ``views`` that the pair carries UltraTex view inputs (adapters/flux_views).
     """
     scale_override = (
         None if latent_downscale is None
@@ -232,15 +235,13 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
         _warn_nearest_signature(path)
     weight_dtype = model.options.get("weight_dtype", "default")
     # Keep fp32 in this set (the sniff reports it as itself): the loader casts
-    # every full-precision storage kind to fp8, so the fp8 row describes the
-    # render.
+    # every full-precision storage kind to fp8, so the fp8 row describes it.
     if quant in {"bf16", "fp16", "fp32"} and weight_dtype.startswith("fp8"):
         quant = "fp8"
 
     # Per-frame spatial megapixels of the grid the workers will sample, at the
-    # ratio comfy's latent format declares for this checkpoint (the legacy
-    # 8x/RGB guess when comfy names none). latent_scale holds the one
-    # definition, shared with the sweep matrix.
+    # ratio comfy's latent format declares for this checkpoint (the legacy 8x/RGB
+    # guess when comfy names none); latent_scale's one definition, as the sweep's.
     shape = latent_scale.rendered_latent_shape(path, latent_samples, *size_tags)
     scale = scale_override
     if scale is None:
@@ -248,11 +249,11 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     megapixels = latent_scale.latent_megapixels(shape, scale)
 
     # fits_resident stays at its True default: auto never selects FSDP. The
-    # driver prices its own host through the loader preflight; nothing on the
-    # driver prices a remote worker's pool, which needs worker-side facts.
-    # Capacity runs use the explicit *+fsdp presets (docs/MODELS.md).
-    # The cfg++ flag and the variant ride only when set, so an untagged call keeps its shape.
-    tags: dict[str, Any] = {"keeps_uncond": True} if keeps_uncond else {}
+    # driver prices its own host through the loader preflight, and nothing on
+    # it prices a remote worker's pool; capacity runs use the *+fsdp presets.
+    # The tags and the variant ride only when set, so an untagged call keeps its shape.
+    tags: dict[str, Any] = {name: True for name, on in (
+        ("keeps_uncond", keeps_uncond), ("pair_differs", pair_differs), ("views", views)) if on}
     if variant:
         tags["variant"] = variant
     decision = choose_auto_topology(
@@ -260,7 +261,7 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     # Observed by telemetry only.
     facts = auto_facts(decision, world=world, quant=quant, megapixels=megapixels,
                        family=family, cfg=cfg_value, keeps_uncond=keeps_uncond,
-                       batch=shape[0])
+                       batch=shape[0], pair_differs=pair_differs)
     return ResolvedTopology(decision.topology, decision.sage, decision.reason, facts)
 
 
@@ -277,8 +278,8 @@ def _resolve_topology_for_latent(
             latent[LATENT_DOWNSCALE_METADATA_KEY])
     if latent_size_tags(latent) != (None, None):
         extra["size_tags"] = latent_size_tags(latent)
-    if latent.get(CFG_KEEPS_UNCOND_METADATA_KEY):  # set by the sampler nodes
-        extra["keeps_uncond"] = True
+    extra.update({name: True for key, name in render_preflight.TOPOLOGY_TAGS
+                  if latent.get(key)})  # set by the sampler nodes
     return resolve_topology(model, latent["samples"], cfg_value, world, **extra)
 
 
@@ -328,12 +329,12 @@ def run_render(model: ModelSpec, request: dict, latent: dict, cfg_value: float |
     # user render, not to nested first-use Gate legs before it. An earlier
     # combination's aborted ceremony proved nothing about this one, so this
     # combination starts from the levers the graph asked for.
-    _restore_requested_levers(model)
+    _restore_requested_levers(model, request.get("uncond_model"))
     with _suspend_adoption_context():
         gate_result = _maybe_auto_gate(
             model, request, latent, cfg_value, steps_hint)
     if gate_result not in gate_inconclusive.NO_QUARANTINE_VERDICTS:
-        _quarantine_unproven_paths(model)
+        _quarantine_unproven_paths(model, uncond=request.get("uncond_model"))
     handoff = PendingRenderHandoff()
     try:
         pending = submit_render(
@@ -452,9 +453,10 @@ def _auto_gate_context(
     request_kind: str,
     latent: dict | None = None,
     cfg_value: float | None = None,
+    uncond_model: dict | None = None,
 ) -> tuple[str, tuple[str, ...]] | None:
     return _auto_gate_impl.auto_gate_context(
-        model, request_kind, latent, cfg_value)
+        model, request_kind, latent, cfg_value, uncond_model)
 
 
 def auto_gate_required(
@@ -462,12 +464,13 @@ def auto_gate_required(
     request_kind: str = "ksampler",
     latent: dict | None = None,
     cfg_value: float | None = None,
+    uncond_model: dict | None = None,
 ) -> bool:
     if latent is not None:
         model, _bound_handle = _bind_packed_render_model(
             model, latent, cfg_value)
     return _auto_gate_impl.auto_gate_required(
-        model, request_kind, latent, cfg_value)
+        model, request_kind, latent, cfg_value, uncond_model)
 
 
 def _maybe_auto_gate(model: ModelSpec, request: dict, latent: dict,

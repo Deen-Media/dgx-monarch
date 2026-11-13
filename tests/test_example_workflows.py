@@ -85,6 +85,15 @@ _KNOWN_NODE_TYPES = frozenset({
     "TextGenerateV2",
     "ComfySwitchNode",
     "PreviewAny",
+    # MiniMax-H3-Image: its conditioning node, the edit graph's resize node,
+    # and the two string nodes ComfyUI's expander chain adds to the one above.
+    "MiniMaxH3ImageConditioning",
+    "ResizeImageMaskNode",
+    "StringReplace",
+    "StringTrim",
+    "StringCompare",
+    "RegexExtract",
+    "RegexReplace",
     "TextEncodeMageFlowEdit",
     "TextEncodeQwenImage21",
     "QwenImage21Cache",
@@ -399,6 +408,23 @@ def test_a_monarch_graph_holds_exactly_one_init(path: Path):
     )
 
 
+@pytest.mark.parametrize("path", EVERY_TEMPLATE, ids=_EVERY_ID)
+def test_no_template_turns_sync_ulysses_off(path: Path):
+    # The input changes nothing on the pinned xfuser, but it is part of a
+    # setup's identity (mesh_setup.nccl_setup_key). One template with it off
+    # rebuilt the setup on every move to or from it, which unloads every model
+    # on every Worker: on 2026-11-12 both Ideogram 4 models loaded from disk
+    # again after one render of another template.
+    init = next((node for node in _load(path)["nodes"]
+                 if node["type"] == "DGXMonarchInit"), None)
+    if init is None:
+        pytest.skip("stock-only template")
+    assert init["dgxm_widgets"]["sync_ulysses"] is True, (
+        f"{path.name}: sync_ulysses is off, so this graph's setup differs from "
+        "every other template's"
+    )
+
+
 MODELS = REPO / "docs" / "MODELS.md"
 
 # One entry per support-matrix row in docs/MODELS.md, keyed by the row's model
@@ -465,6 +491,9 @@ TEMPLATE_FOR_ROW: dict[str, str | None] = {
     "Kandinsky5-Video Lite": "dgx-monarch-kandinsky5-video-lite.json",
     "Kandinsky5-Video Pro": "dgx-monarch-kandinsky5-video-pro.json",
     "MiniMax H3 (t2va/fl2va/ref2va AV)": "dgx-monarch-minimax-h3-t2va.json",
+    # The row maps to the text-to-image graph; the edit graph ships beside it
+    # unmapped, as the FLUX.3 edit graphs do.
+    "MiniMax-H3-Image": "dgx-monarch-minimax-h3-image-t2i.json",
 }
 
 # Every row without a template must explicitly state that gap.

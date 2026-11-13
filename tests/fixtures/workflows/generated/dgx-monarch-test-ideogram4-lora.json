@@ -1,8 +1,8 @@
 {
  "id": "ideogram-4-with-a-lora-slot",
  "revision": 0,
- "last_node_id": 16,
- "last_link_id": 15,
+ "last_node_id": 17,
+ "last_link_id": 16,
  "nodes": [
   {
    "id": 1,
@@ -40,7 +40,7 @@
     "",
     0,
     0.0,
-    false,
+    true,
     false,
     1,
     false,
@@ -60,7 +60,7 @@
     "config_path": "",
     "gpus_per_host": 0,
     "reserve_vram_gb": 0.0,
-    "sync_ulysses": false,
+    "sync_ulysses": true,
     "compile_dit": false,
     "pipeline_depth": 1,
     "mmap_fallback": false,
@@ -125,7 +125,7 @@
      "type": "DGXM_MODEL",
      "slot_index": 0,
      "links": [
-      15
+      16
      ]
     }
    ],
@@ -168,7 +168,7 @@
      "type": "DGXM_MODEL",
      "slot_index": 0,
      "links": [
-      6
+      7
      ]
     }
    ],
@@ -220,6 +220,38 @@
   },
   {
    "id": 6,
+   "type": "PrimitiveStringMultiline",
+   "pos": [
+    80,
+    650
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      4
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PrimitiveStringMultiline"
+   },
+   "widgets_values": [
+    "{\"high_level_description\":\"A close-up photograph of a chalkboard menu sign propped on a wooden bakery counter beside a tray of fresh croissants.\",\"style_description\":{\"aesthetics\":\"warm, rustic, inviting\",\"lighting\":\"soft morning window light from the left with gentle falloff\",\"photo\":\"50mm, f/2.8, shallow depth of field, eye level\",\"medium\":\"photograph\",\"color_palette\":[\"#2B2018\",\"#E8D5B7\",\"#C98A3C\",\"#F5EFE6\",\"#6B4A2F\"]},\"compositional_deconstruction\":{\"background\":\"A warm wooden bakery counter with a softly blurred shelf of bread loaves and a copper kettle behind it.\",\"elements\":[{\"type\":\"text\",\"bbox\":[120,180,520,820],\"text\":\"FRESH BAKED DAILY\",\"desc\":\"Hand lettered white chalk capitals on a black chalkboard, set in three stacked centered lines inside a thin chalk border, with a small wheat sprig drawn beneath.\"},{\"type\":\"obj\",\"bbox\":[560,120,940,880],\"desc\":\"A shallow metal tray of golden croissants with flaky layered crusts, dusted lightly with flour, angled toward the camera.\"}]}}"
+   ]
+  },
+  {
+   "id": 7,
    "type": "CLIPTextEncode",
    "pos": [
     420,
@@ -227,16 +259,24 @@
    ],
    "size": [
     315,
-    96
+    118
    ],
    "flags": {},
-   "order": 5,
+   "order": 6,
    "mode": 0,
    "inputs": [
     {
      "name": "clip",
      "type": "CLIP",
      "link": 3
+    },
+    {
+     "name": "text",
+     "type": "STRING",
+     "widget": {
+      "name": "text"
+     },
+     "link": 4
     }
    ],
    "outputs": [
@@ -245,7 +285,7 @@
      "type": "CONDITIONING",
      "slot_index": 0,
      "links": [
-      5
+      6
      ]
     }
    ],
@@ -253,11 +293,11 @@
     "Node name for S&R": "CLIPTextEncode"
    },
    "widgets_values": [
-    "{\"high_level_description\":\"A close-up photograph of a chalkboard menu sign propped on a wooden bakery counter beside a tray of fresh croissants.\",\"style_description\":{\"aesthetics\":\"warm, rustic, inviting\",\"lighting\":\"soft morning window light from the left with gentle falloff\",\"photo\":\"50mm, f/2.8, shallow depth of field, eye level\",\"medium\":\"photograph\",\"color_palette\":[\"#2B2018\",\"#E8D5B7\",\"#C98A3C\",\"#F5EFE6\",\"#6B4A2F\"]},\"compositional_deconstruction\":{\"background\":\"A warm wooden bakery counter with a softly blurred shelf of bread loaves and a copper kettle behind it.\",\"elements\":[{\"type\":\"text\",\"bbox\":[120,180,520,820],\"text\":\"FRESH BAKED DAILY\",\"desc\":\"Hand lettered white chalk capitals on a black chalkboard, set in three stacked centered lines inside a thin chalk border, with a small wheat sprig drawn beneath.\"},{\"type\":\"obj\",\"bbox\":[560,120,940,880],\"desc\":\"A shallow metal tray of golden croissants with flaky layered crusts, dusted lightly with flour, angled toward the camera.\"}]}}"
+    ""
    ]
   },
   {
-   "id": 7,
+   "id": 8,
    "type": "EmptyFlux2LatentImage",
    "pos": [
     760,
@@ -268,7 +308,7 @@
     118
    ],
    "flags": {},
-   "order": 6,
+   "order": 7,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -277,7 +317,7 @@
      "type": "LATENT",
      "slot_index": 0,
      "links": [
-      11
+      12
      ]
     }
    ],
@@ -291,7 +331,7 @@
    ]
   },
   {
-   "id": 8,
+   "id": 9,
    "type": "Ideogram4Scheduler",
    "pos": [
     760,
@@ -302,7 +342,7 @@
     162
    ],
    "flags": {},
-   "order": 7,
+   "order": 8,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -311,7 +351,7 @@
      "type": "SIGMAS",
      "slot_index": 0,
      "links": [
-      10
+      11
      ]
     }
    ],
@@ -327,7 +367,7 @@
    ]
   },
   {
-   "id": 9,
+   "id": 10,
    "type": "KSamplerSelect",
    "pos": [
     420,
@@ -338,7 +378,7 @@
     80
    ],
    "flags": {},
-   "order": 8,
+   "order": 9,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -347,7 +387,7 @@
      "type": "SAMPLER",
      "slot_index": 0,
      "links": [
-      9
+      10
      ]
     }
    ],
@@ -359,7 +399,7 @@
    ]
   },
   {
-   "id": 10,
+   "id": 11,
    "type": "RandomNoise",
    "pos": [
     420,
@@ -370,7 +410,7 @@
     96
    ],
    "flags": {},
-   "order": 9,
+   "order": 10,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -379,7 +419,7 @@
      "type": "NOISE",
      "slot_index": 0,
      "links": [
-      7
+      8
      ]
     }
    ],
@@ -392,7 +432,7 @@
    ]
   },
   {
-   "id": 11,
+   "id": 12,
    "type": "DGXMonarchDualModelGuider",
    "pos": [
     1100,
@@ -403,23 +443,23 @@
     162
    ],
    "flags": {},
-   "order": 10,
+   "order": 11,
    "mode": 0,
    "inputs": [
     {
      "name": "model",
      "type": "DGXM_MODEL",
-     "link": 4
+     "link": 5
     },
     {
      "name": "positive",
      "type": "CONDITIONING",
-     "link": 5
+     "link": 6
     },
     {
      "name": "model_negative",
      "type": "DGXM_MODEL",
-     "link": 6
+     "link": 7
     },
     {
      "name": "negative",
@@ -433,7 +473,7 @@
      "type": "DGXM_GUIDER",
      "slot_index": 0,
      "links": [
-      8
+      9
      ]
     }
    ],
@@ -448,7 +488,7 @@
    }
   },
   {
-   "id": 12,
+   "id": 13,
    "type": "DGXMonarchSamplerCustom",
    "pos": [
     1100,
@@ -459,33 +499,33 @@
     184
    ],
    "flags": {},
-   "order": 11,
+   "order": 12,
    "mode": 0,
    "inputs": [
     {
      "name": "noise",
      "type": "NOISE",
-     "link": 7
+     "link": 8
     },
     {
      "name": "guider",
      "type": "DGXM_GUIDER",
-     "link": 8
+     "link": 9
     },
     {
      "name": "sampler",
      "type": "SAMPLER",
-     "link": 9
+     "link": 10
     },
     {
      "name": "sigmas",
      "type": "SIGMAS",
-     "link": 10
+     "link": 11
     },
     {
      "name": "latent_image",
      "type": "LATENT",
-     "link": 11
+     "link": 12
     }
    ],
    "outputs": [
@@ -494,7 +534,7 @@
      "type": "LATENT",
      "slot_index": 0,
      "links": [
-      12
+      13
      ]
     },
     {
@@ -511,7 +551,7 @@
    "dgxm_widgets": {}
   },
   {
-   "id": 13,
+   "id": 14,
    "type": "VAELoader",
    "pos": [
     1100,
@@ -522,7 +562,7 @@
     80
    ],
    "flags": {},
-   "order": 12,
+   "order": 13,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -531,7 +571,7 @@
      "type": "VAE",
      "slot_index": 0,
      "links": [
-      13
+      14
      ]
     }
    ],
@@ -543,51 +583,10 @@
    ]
   },
   {
-   "id": 14,
+   "id": 15,
    "type": "VAEDecode",
    "pos": [
     1440,
-    270
-   ],
-   "size": [
-    315,
-    96
-   ],
-   "flags": {},
-   "order": 13,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "samples",
-     "type": "LATENT",
-     "link": 12
-    },
-    {
-     "name": "vae",
-     "type": "VAE",
-     "link": 13
-    }
-   ],
-   "outputs": [
-    {
-     "name": "IMAGE",
-     "type": "IMAGE",
-     "slot_index": 0,
-     "links": [
-      14
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "VAEDecode"
-   },
-   "widgets_values": []
-  },
-  {
-   "id": 15,
-   "type": "SaveImage",
-   "pos": [
-    1780,
     270
    ],
    "size": [
@@ -599,9 +598,50 @@
    "mode": 0,
    "inputs": [
     {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 13
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 14
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      15
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 16,
+   "type": "SaveImage",
+   "pos": [
+    1780,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 15,
+   "mode": 0,
+   "inputs": [
+    {
      "name": "images",
      "type": "IMAGE",
-     "link": 14
+     "link": 15
     }
    ],
    "outputs": [
@@ -620,7 +660,7 @@
    ]
   },
   {
-   "id": 16,
+   "id": 17,
    "type": "DGXMonarchLoraLoader",
    "pos": [
     420,
@@ -631,13 +671,13 @@
     118
    ],
    "flags": {},
-   "order": 15,
+   "order": 16,
    "mode": 0,
    "inputs": [
     {
      "name": "model",
      "type": "DGXM_MODEL",
-     "link": 15
+     "link": 16
     }
    ],
    "outputs": [
@@ -646,7 +686,7 @@
      "type": "DGXM_MODEL",
      "slot_index": 0,
      "links": [
-      4
+      5
      ]
     }
    ],
@@ -684,103 +724,111 @@
    3,
    5,
    0,
-   6,
+   7,
    0,
    "CLIP"
   ],
   [
    4,
-   16,
+   6,
    0,
-   11,
+   7,
+   1,
+   "STRING"
+  ],
+  [
+   5,
+   17,
+   0,
+   12,
    0,
    "DGXM_MODEL"
   ],
   [
-   5,
    6,
+   7,
    0,
-   11,
+   12,
    1,
    "CONDITIONING"
   ],
   [
-   6,
+   7,
    4,
    0,
-   11,
+   12,
    2,
    "DGXM_MODEL"
   ],
   [
-   7,
-   10,
+   8,
+   11,
    0,
-   12,
+   13,
    0,
    "NOISE"
   ],
   [
-   8,
-   11,
-   0,
+   9,
    12,
+   0,
+   13,
    1,
    "DGXM_GUIDER"
   ],
   [
-   9,
-   9,
+   10,
+   10,
    0,
-   12,
+   13,
    2,
    "SAMPLER"
   ],
   [
-   10,
-   8,
+   11,
+   9,
    0,
-   12,
+   13,
    3,
    "SIGMAS"
   ],
   [
-   11,
-   7,
-   0,
    12,
+   8,
+   0,
+   13,
    4,
    "LATENT"
   ],
   [
-   12,
-   12,
+   13,
+   13,
    0,
-   14,
+   15,
    0,
    "LATENT"
   ],
   [
-   13,
-   13,
-   0,
    14,
+   14,
+   0,
+   15,
    1,
    "VAE"
   ],
   [
-   14,
-   14,
-   0,
    15,
+   15,
+   0,
+   16,
    0,
    "IMAGE"
   ],
   [
-   15,
+   16,
    3,
    0,
-   16,
+   17,
    0,
    "DGXM_MODEL"
   ]

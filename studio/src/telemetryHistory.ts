@@ -81,7 +81,7 @@ export function appendTelemetry(
     sourceTime = number(sample.t);
   // Bound sample times by the companion's clock at fetch, not the browser's: a remote browser
   // behind the host would drop every sample. The bound keeps one far-future time from blocking
-  // every later point at the order check below.
+  // every later point at the order check below, so each host and rail time takes it too.
   const latest = (number(telemetry.observed_at) ?? Date.now() / 1000) + SAMPLE_CLOCK_MARGIN_S;
   if (sourceTime === null || sourceTime > latest) return history;
   const hosts: Record<string, unknown>[] = [
@@ -104,15 +104,19 @@ export function appendTelemetry(
         time = number(scope.t) ?? sourceTime;
       if (metric.aggregation === 'per_host_per_rail_rate') {
         const rails = record(scope.rails),
-          stamp = number(scope.rails_t);
+          stamp = number(scope.rails_t) ?? time;
+        // A rail clock ahead of the companion is as unknown as a sample from the future.
+        if (stamp > latest) continue;
         for (const [rail, counters] of Object.entries(rails))
           updates.push({
             host: `${host}/${rail}`,
             metric,
-            time: stamp ?? time,
+            time: stamp,
             value: read(counters, metric.source.split('.').at(-1)!),
           });
       } else {
+        // So is a host clock: a future point would hold back every corrected point after it.
+        if (time > latest) continue;
         let value = read(scope, metric.source);
         if (metric.missing === 'slab_rule') {
           // The driver's own box takes its Worker's report when a Worker runs there.

@@ -1,7 +1,9 @@
 # Model files required by the public workflows and generated test fixtures.
 #
 # Model files only. A template also names a demo image, video or audio clip
-# for its input nodes; those are not model files and take no row here.
+# for its input nodes; those are not model files and take no row here. The
+# pack ships them in example_workflows/input and copies the ones ComfyUI's
+# input folder lacks at import (src/dgx_monarch/demo_inputs.py).
 #
 # One [[artifact]] row per distinct file. `dest` is the models subfolder the
 # loader resolves the name against, `url` the vendor or repack address the
@@ -307,6 +309,13 @@ dest = "diffusion_models"
 url = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/e5eb578a89295337b8ff433a035929ce0279e0b6/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"
 size = 20970379616
 sha256 = "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a"
+
+[[artifact]]
+file = "minimax_h3_image_pruned_int8_convrot.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/892de7cb61df49753bf15145a711154803a355cb/diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors"
+size = 20979314802
+sha256 = "83eb140f1ff95c068f8a6886e6d3f3d0d4ab2e07bb2fe6d2ef992a51146ee622"
 
 [[artifact]]
 file = "moss_image_base_bf16.safetensors"
@@ -704,6 +713,20 @@ size = 9748121532
 sha256 = "32e3787472f708fa5f83624acbf5ef23f7fc89c439e05065ea57cfe5a97f025a"
 
 [[artifact]]
+file = "qwen3.5_9b_w4a8_gptq.safetensors"
+dest = "text_encoders"
+url = "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/892de7cb61df49753bf15145a711154803a355cb/text_encoders/qwen3.5_9b_w4a8_gptq.safetensors"
+size = 7343591088
+sha256 = "4cc6a1543ad2061806da46f35f90cadb4801dcba246c44782cf42ec0feb6407c"
+
+[[artifact]]
+file = "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
+dest = "text_encoders"
+url = "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/892de7cb61df49753bf15145a711154803a355cb/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
+size = 27141342152
+sha256 = "bc2ced0fbea64757fa9acddccfc0b3f4819d1dcf1da6c124d690d368be283923"
+
+[[artifact]]
 file = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 dest = "text_encoders"
 url = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/e5eb578a89295337b8ff433a035929ce0279e0b6/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
@@ -893,6 +916,13 @@ dest = "vae"
 url = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/e5eb578a89295337b8ff433a035929ce0279e0b6/vae/minimax_h3_audio_vae_fp32.safetensors"
 size = 605254808
 sha256 = "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48"
+
+[[artifact]]
+file = "minimax_h3_image_vae_fp16.safetensors"
+dest = "vae"
+url = "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/892de7cb61df49753bf15145a711154803a355cb/vae/minimax_h3_image_vae_fp16.safetensors"
+size = 1168505312
+sha256 = "d80e9c2e5cfc9844869961ff5a58c9a9e52182df6bfb30b26018dd7f348721af"
 
 [[artifact]]
 file = "minimax_h3_video_vae_fp16.safetensors"
@@ -1178,6 +1208,18 @@ sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
     "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
     "vae/minimax_h3_audio_vae_fp32.safetensors",
     "vae/minimax_h3_video_vae_fp16.safetensors",
+]
+"dgx-monarch-minimax-h3-image-edit" = [
+    "diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors",
+    "text_encoders/qwen3.5_9b_w4a8_gptq.safetensors",
+    "text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+    "vae/minimax_h3_image_vae_fp16.safetensors",
+]
+"dgx-monarch-minimax-h3-image-t2i" = [
+    "diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors",
+    "text_encoders/qwen3.5_9b_w4a8_gptq.safetensors",
+    "text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+    "vae/minimax_h3_image_vae_fp16.safetensors",
 ]
 "dgx-monarch-minimax-h3-mp4" = [
     "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
@@ -1488,6 +1530,12 @@ sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
     "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
     "vae/minimax_h3_audio_vae_fp32.safetensors",
     "vae/minimax_h3_video_vae_fp16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-minimax-h3-image-grid" = [
+    "diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors",
+    "text_encoders/qwen3.5_9b_w4a8_gptq.safetensors",
+    "text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+    "vae/minimax_h3_image_vae_fp16.safetensors",
 ]
 "tests/fixtures/workflows/generated/dgx-monarch-test-minimax-h3-lora" = [
     "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",

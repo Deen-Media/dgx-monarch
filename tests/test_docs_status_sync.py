@@ -69,6 +69,7 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("image", "MOSS-Image Base"): ("moss_image", "HW"),
     ("image", "Kromoss"): ("moss_image", "HW"),
     ("image", "p-h3-image"): ("minimax_h3", "HW"),
+    ("image", "MiniMax-H3-Image"): ("minimax_h3_image", "impl"),
     ("image", "LongCat-Image"): ("longcat", "HW"),
     ("image", "HunyuanImage 2.1 (+refiner)"): ("hunyuan", "HW"),
     ("image", "Qwen-Image"): ("qwen_image", "HW"),
@@ -711,7 +712,7 @@ def test_auto_markers_and_refusals_match_runtime_contract() -> None:
     zimage = _markdown_cells(
         lines[_row_index(lines, "Z-Image latent")]
     )
-    assert "cfg2 requires equal-token prompts" in zimage[7]
+    assert "cfg2 trims prompts of unequal token counts, but only equal-token prompts were compared" in zimage[7]
 
     ideogram = _markdown_cells(lines[_row_index(lines, "Ideogram4")])
     assert "Explicit cfg2 splits the two checkpoints" in ideogram[7]
@@ -736,6 +737,7 @@ _MODE_COLUMN = {"cfg2": 2, "uly": 3, "ring": 4, "fsdp": 5}
 _AUTO_MARK = "★"
 _PENDING_MARK = "⏳"
 _CONSTRAINED_MARK = "🔒"
+_REFUSED_MARK = "✗"
 
 # Megapixel probes that straddle every crossover boundary in AUTO_TABLE, so a
 # row that only selects cfg2 below 1.2 MP is seen as well as one that only
@@ -780,8 +782,7 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("Krea2 (RAW+Turbo)", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; detail table fp8 uly2; VALIDATION 2026-07-10 turbo fp8 uly2 vs dp2"),
     ("Chroma", "cfg2"): (
-        "granted", "2026-08-11 FP8 cfg2 1024x1024, exact cross-rank; 2026-10-14 BF16 and "
-        "FP8-mixed cfg2 bit-identical to one GPU at 1152 to 1280"),
+        "scoped", "Auto cfg2 covers a prompt and a negative of different text rows"),
     ("Chroma", "uly"): ("granted", "2026-08-21 requalification: fp8 NRMS 0.023 / bf16 0.010 at 1536"),
     ("Ideogram4", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 fp8 dual-model pair, DP2 NRMS 0.000"),
@@ -831,10 +832,12 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("Z-Image latent", "uly"): ("granted", "2026-08-11 DP2 NRMS 0.000, fresh 1536x1536"),
     ("Lens", "uly"): ("granted", "2026-10-06 bit-identical to one GPU; 2026-07-28 DP2 NRMS 0.060-0.061 after the pad-row fix"),
     ("Omnigen2", "ring"): ("granted", "certified DP2 NRMS 0.002; fresh run 2026-08-11"),
-    ("Anima", "cfg2"): (
-        "scoped", "Auto cfg2 covers BF16 below 1.2 MP on the shipped unequal prompt pair"),
-    ("Anima", "uly"): ("granted", "byte-identical to true single GPU 2026-08-11"),
-    ("Boogu", "cfg2"): ("scoped", "Unequal prompts use per-conditioning cfg2 dispatch"),
+    # Withdrawn on 2026-11-10: the 2026-08-11 reference was a Worker's one GPU,
+    # which ran Anima's text off stock's branch (TROUBLESHOOTING #151).
+    ("Anima", "uly"): ("withdrawn", "await a comparison against stock"),
+    ("Boogu", "cfg2"): (
+        "scoped", "Auto cfg2 covers FP8 below 1.2 MP when the prompt and the negative "
+        "encode to different text rows"),
     ("Boogu", "uly"): ("granted", "2026-10-06 bit-identical to dp2; 2026-08-11 DP2 NRMS 0.022"),
     ("PixelDiT / PiD", "uly"): ("granted", "world-2 bf16: uly2 matched dp2 exactly 2026-08-11"),
     ("Kandinsky5-Image", "uly"): (
@@ -929,14 +932,21 @@ def _support_matrix_rows() -> dict[str, list[str]]:
 
 def _auto_selected_modes(family: str, cfg_value: float,
                          variant: str | None = None) -> set[str]:
-    """Every parallel mode `auto` can land on for this family at this CFG."""
+    """Every parallel mode `auto` can land on for this family at this CFG.
+
+    Both prompt pairs count: a row scoped to pairs of different text rows
+    (Boogu 79, Chroma 20 and 19) is one auto takes on the shipped graphs.
+    """
+    from itertools import product
+
     from dgx_monarch.topology import choose_auto_topology
 
     modes: set[str] = set()
-    for quant in ("bf16", "fp8"):
+    for quant, pair_differs in product(("bf16", "fp8"), (False, True)):
         for megapixels in _MP_PROBES:
             topology = choose_auto_topology(
-                family, quant, megapixels, 2, cfg_value=cfg_value, variant=variant
+                family, quant, megapixels, 2, cfg_value=cfg_value, variant=variant,
+                pair_differs=pair_differs,
             ).topology
             if topology.cfg > 1:
                 modes.add("cfg2")
@@ -1044,6 +1054,41 @@ def test_documented_typed_refusals_read_as_constrained_cells() -> None:
         for (model, mode), reason in _TYPED_REFUSAL.items()
         if _CONSTRAINED_MARK not in rows[model][_MODE_COLUMN[mode]]
     ]
+    assert not failures, "\n".join(failures)
+
+
+def test_cfg_parallel_refusing_adapters_read_refused_in_the_matrix() -> None:
+    """A family whose every adapter refuses cfg-parallel shows the refused mark.
+
+    ``cfg_parallel_supported = False`` without the dual-model grant makes the
+    Worker raise class P at any cfg degree above 1, for every artifact, which
+    the legend marks _REFUSED_MARK; ``n/a`` would say the mode runs. Derived
+    from the adapter registry, so a newly refusing family cannot keep ``n/a``.
+    """
+    from dgx_monarch.adapters import ADAPTERS
+
+    by_family: dict[str, list] = {}
+    for adapter in ADAPTERS:
+        by_family.setdefault(adapter.family, []).append(adapter)
+    refusing = {
+        family for family, adapters in by_family.items()
+        if all(not getattr(a, "cfg_parallel_supported", True)
+               and not getattr(a, "dual_model_cfg_supported", False) for a in adapters)
+    }
+    assert refusing, "no adapter refuses cfg-parallel; the check would test nothing"
+    rows = _support_matrix_rows()
+    checked = []
+    failures = []
+    for (_section, model), (family, _status) in _SUPPORT_ROW_CONTRACT.items():
+        if family not in refusing:
+            continue
+        checked.append(model)
+        cell = rows[model][_MODE_COLUMN["cfg2"]]
+        if cell != _REFUSED_MARK:
+            failures.append(
+                f"{model}: family {family!r} refuses cfg-parallel for every artifact, "
+                f"so its cfg2 cell must read {_REFUSED_MARK}, found {cell!r}")
+    assert checked, "no matrix row maps to a cfg-parallel-refusing family"
     assert not failures, "\n".join(failures)
 
 

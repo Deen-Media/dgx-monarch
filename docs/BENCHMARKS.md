@@ -213,7 +213,7 @@ Method:
 
 | Cell | Checkpoint | Size | MP | Steps, CFG, sampler | One GPU | uly2 | cfg2 | cfg2 vs one GPU | cfg2 vs uly2 | Auto SAGE uly2 | cfg2 against one GPU |
 |---|---|--:|--:|---|--:|--:|--:|--:|--:|--:|---|
-| a09-anima-1024 | Anima BF16 | 1024 | 1.05 | 30, 4, `euler` | 19.6 | 12.7 | 10.0 | 1.96x | 1.27x | not run | bit-identical |
+| a09-anima-1024 | Anima BF16 | 1024 | 1.05 | 30, 4, `euler` | 19.6 | 12.7 | 10.0 | 1.96x | 1.27x | not run | bit-identical to the Worker's earlier one GPU; superseded 2026-11-10 ([Anima](VALIDATION.md#anima-text-branch-fix)) |
 | a08-boogu-fp8-1024 | Boogu FP8-scaled | 1024 | 1.05 | 25, 4, `euler` | 48.1 | 34.0 | 24.3 | 1.98x | 1.40x | not run | bit-identical |
 | b-chroma-bf16-1152 | Chroma1-HD BF16 | 1152 | 1.33 | 26, 3.5, `euler` | 77.3 | 51.6 | 39.3 | 1.97x | 1.31x | not run | bit-identical |
 | b-chroma-fp8mixed-1152 | Chroma1-HD FP8-mixed | 1152 | 1.33 | 26, 3.5, `euler` | 58.2 | 39.2 | 29.1 | 2.00x | 1.34x | 38.0 (1-step NRMS 0.078) | bit-identical |
@@ -267,7 +267,13 @@ Reading the table:
 - **New automatic rows.** Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15),
   Chroma BF16, FP8 and INT8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from
   1.2 to 1.77 MP (row 68), Boogu FP8 below 1.2 MP (row 79) and Anima BF16
-  below 1.2 MP (row 47). Each upper band ends at the largest size measured.
+  below 1.2 MP (row 47). Since 2026-11-07 rows 79 and 47, and Chroma's rows
+  20 and 19, take only a prompt pair whose text rows differ, as on the
+  templates
+  ([equal pairs](VALIDATION.md#campaign-k-equal-pairs)). Row 47 was withdrawn
+  on 2026-11-10: its one-GPU reference differed from stock ComfyUI
+  ([Anima](VALIDATION.md#anima-text-branch-fix)). Each upper band ends
+  at the largest size measured.
   The two lower bands follow rows 20 and 28 and rest on one size, 1.05 MP.
   Each grant covers only the precisions that read bit-identical and beat uly2
   at every measured size in its band, so Krea2 RAW INT8 keeps Ulysses (row
@@ -751,9 +757,10 @@ GEMM throughput across M on the families' own linears, same box and cap
 | h3 attn-out (5376 x 5376) | 0.96 | 1.45 | 1.84 | 1.78 | 100.2 | 178.6 |
 | h3 mlp-out (5376 x 14336) | 1.20 | 1.71 | 1.69 | 1.68 | 103.5 | 173.8 |
 
-Below 4096 rows the two routes are within 8 percent of each other either way,
-the worst reading 0.92 on the Ideogram4 qkv linear at 1024 rows; from 4096 rows
-up the kernel is at or above CUTLASS on every shape but one reading (Ideogram4
+At 1024 rows, the only point listed below 4096, the kernel ran at 0.92 to
+1.20 times CUTLASS: 8 percent slower at worst, on the Ideogram4 qkv linear, and
+20 percent faster at best, on the H3 mlp-out linear. From 4096 rows up the
+kernel is at or above CUTLASS on every shape but one reading (Ideogram4
 adaln at 8192 rows, 0.96), and from 6144 rows up CUTLASS loses more than half
 its throughput on the wide linears while the Triton kernel holds about 175 TOPS.
 

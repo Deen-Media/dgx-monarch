@@ -14,8 +14,10 @@ from .. import (
     latent_scale,
     mesh_safety,
     residency_mode,
+    swap_credit,
 )
 from ..adapters.detect import CheckpointSniffError, sniff_checkpoint
+from ..adapters.flux_views import VIEWS_METADATA_KEY
 from ..refusal import RefusalClass, refusal
 from ..sampling_contract import latent_size_tags
 from .latent_outputs import is_direct_nested_tensor
@@ -26,6 +28,12 @@ LATENT_DOWNSCALE_METADATA_KEY = "_dgxm_latent_downscale"
 # Set by the sampler nodes when the sampler keeps the uncond pass at CFG 1.0,
 # so every site that resolves the topology from this latent reads the same.
 CFG_KEEPS_UNCOND_METADATA_KEY = "_dgxm_cfg_keeps_uncond"
+# Set beside it when the prompt pair's text rows differ (cfg_pair); a guider
+# carries the same key for Sampler Custom, which sees no conditioning.
+CFG_PAIR_DIFFERS_METADATA_KEY = "_dgxm_cfg_pair_rows_differ"
+# Each latent tag and the resolve_topology argument it sets; the third marks UltraTex views.
+TOPOLOGY_TAGS = ((CFG_KEEPS_UNCOND_METADATA_KEY, "keeps_uncond"), (CFG_PAIR_DIFFERS_METADATA_KEY, "pair_differs"),
+                 (VIEWS_METADATA_KEY, "views"))
 RESIDENT_ADOPTION_EVIDENCE_KEY = "_dgxm_adoption_evidence"
 
 
@@ -37,21 +45,26 @@ def validate_latent_downscale(value: object) -> int:
     return value
 
 
-def sampler_latent(latent: dict, sampler_name: object) -> dict:
-    """A copy of a sampler node's input latent, tagged for its sampler.
+def sampler_latent(latent: dict, sampler_name: object, pair_differs: bool = False,
+                   views: bool = False) -> dict:
+    """A copy of a sampler node's input latent, tagged for its sampler and pair.
 
-    The tag marks a sampler that keeps the uncond pass at CFG 1.0
-    (topology.sampler_keeps_uncond_at_cfg1). Every site that resolves this
-    render's topology reads it off the latent, so the Gate token and the
-    render agree; an inherited tag is dropped first, so a plain sampler never
-    keeps one. latent_without_topology_metadata strips it before the wire.
+    One tag marks a sampler that keeps the uncond pass at CFG 1.0
+    (topology.sampler_keeps_uncond_at_cfg1), one a prompt pair whose text rows
+    differ (cfg_pair.text_rows_differ), and one a pair that carries UltraTex
+    view inputs (adapters/flux_views). Every site that resolves this render's
+    topology reads them off the latent, so the Gate token and the render
+    agree; inherited tags are dropped first, so a plain sampler never keeps
+    one. latent_without_topology_metadata strips them before the wire.
     """
     from ..topology import sampler_keeps_uncond_at_cfg1
 
     tagged = dict(latent)
-    tagged.pop(CFG_KEEPS_UNCOND_METADATA_KEY, None)
-    if sampler_keeps_uncond_at_cfg1(sampler_name):
-        tagged[CFG_KEEPS_UNCOND_METADATA_KEY] = True
+    for (key, _name), on in zip(TOPOLOGY_TAGS, (
+            sampler_keeps_uncond_at_cfg1(sampler_name), pair_differs, views), strict=True):
+        tagged.pop(key, None)
+        if on:
+            tagged[key] = True
     return tagged
 
 
@@ -64,7 +77,8 @@ def latent_without_topology_metadata(latent: dict) -> dict:
     """
     clean = dict(latent)
     clean.pop(LATENT_DOWNSCALE_METADATA_KEY, None)
-    clean.pop(CFG_KEEPS_UNCOND_METADATA_KEY, None)
+    for key, _name in TOPOLOGY_TAGS:
+        clean.pop(key, None)
     clean.pop(RESIDENT_ADOPTION_EVIDENCE_KEY, None)
     clean.pop(accuracy_waiver.STAMPED_RESULT_KEY, None)
     return clean
@@ -195,17 +209,16 @@ def preflight_krea2_reference_latents(
 
 
 def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
-    """Refuse H3 cfg/dp topology before mesh setup or worker RPC.
+    """Refuse H3 and MiniMax-H3-Image cfg/dp topology before mesh setup or worker RPC.
 
     H3 conditionings remain separate batch-1 calls, so cfg parallel has no
     batch to split. Packed data parallel is refused earlier; this predicate is
     its backstop. Sniff failures leave the earlier and worker-side guards in
     place. ``sniff_checkpoint`` is memoized by path metadata.
     """
-    from ..adapters.minimax_h3 import (
-        MINIMAX_H3_BATCH_CAPPED_MESSAGE,
-        minimax_h3_topology_would_reject,
-    )
+    from ..adapters.minimax_h3 import MINIMAX_H3_BATCH_CAPPED_MESSAGE, minimax_h3_topology_would_reject
+    from ..adapters.minimax_h3_image import FAMILY as H3_IMAGE
+    from ..adapters.minimax_h3_image import MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE
 
     if not minimax_h3_topology_would_reject(
             int(getattr(topo, "cfg", 1)), int(getattr(topo, "dp", 1))):
@@ -222,11 +235,12 @@ def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
             sniff_checkpoint(path)[0], family_select.override_for_model(model))
     except Exception:
         return  # fail open: the packed-DP guard and the stock batch cap remain
-    if family != "minimax_h3":
-        return
     from ..adapters.base import UnsupportedModelError
 
-    raise UnsupportedModelError(MINIMAX_H3_BATCH_CAPPED_MESSAGE)
+    if family == H3_IMAGE:
+        raise UnsupportedModelError(MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE)
+    if family == "minimax_h3":
+        raise UnsupportedModelError(MINIMAX_H3_BATCH_CAPPED_MESSAGE)
 
 
 def _driver_footprint_preflight_for_request(
@@ -269,7 +283,7 @@ def _driver_footprint_preflight_for_request(
             request, profile)
         estimate = driver_footprint.estimate_driver_footprint(
             profile=profile,
-            mem_available=avail,
+            mem_available=avail if weights_resident else swap_credit.credited(avail),
             weight_bytes=driver_footprint.file_size_bytes(path),
             weights_resident=weights_resident,
             co_resident=driver_footprint.rank0_co_resident(mesh),
@@ -348,7 +362,7 @@ def activation_footprint_preflight_for_request(
     if family in mesh_safety.REF_POSE_TOKEN_FAMILIES:
         steps.append(lambda: _ref_pose_activation_preflight(
             family, path, unet_name, request, video_shape))
-    driver_unload.check_with_unload(steps, subject=unet_name, handle=getattr(
+    driver_unload.check_with_unload(steps, subject=unet_name, swap=(model, request), handle=getattr(
         getattr(model, "mesh", None), "handle", None))
 
 

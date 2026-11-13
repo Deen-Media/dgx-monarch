@@ -10,6 +10,13 @@ from typing import Any
 from .monarch_capabilities import capability_blockers
 from .monarch_surface import SNAPSHOT_SCHEMA, TOUCHPOINTS, _manifest_digest
 
+# The identity fields mesh_factory reads to find the ProcMesh it spawned. Each
+# snapshot must observe all three true on its own: the latest-versus-pin step
+# compares two fresh snapshots, so a probe that fails the same way in both
+# would otherwise show no drift and pass.
+OWNERSHIP_PROBE = "mesh_factory_private_ownership"
+OWNERSHIP_FIELDS = ("host_inner_identity", "host_proc_meshes_empty", "proc_host_identity")
+
 
 @dataclass(frozen=True)
 class SnapshotComparison:
@@ -76,6 +83,7 @@ def snapshot_blockers(snapshot: Mapping[str, Any]) -> list[str]:
             "public_future_get_in_asyncio",
             "unhandled_fault_hook_assignment",
             "actor_queue_dispatch_default",
+            OWNERSHIP_PROBE,
         ):
             observation = semantics.get(name)
             if not isinstance(observation, Mapping):
@@ -89,6 +97,14 @@ def snapshot_blockers(snapshot: Mapping[str, Any]) -> list[str]:
         hook = semantics.get("unhandled_fault_hook_assignment")
         if isinstance(hook, Mapping) and hook.get("outcome") != "writable":
             blockers.append("monarch.actor.unhandled_fault_hook is not writable")
+        ownership = semantics.get(OWNERSHIP_PROBE)
+        if isinstance(ownership, Mapping) and ownership.get("outcome") != "probe_error":
+            unproven = [field for field in OWNERSHIP_FIELDS if ownership.get(field) is not True]
+            if ownership.get("outcome") != "observed" or unproven:
+                blockers.append(
+                    f"semantic probe {OWNERSHIP_PROBE}: outcome "
+                    f"{ownership.get('outcome')!r}, not observed true: "
+                    f"{', '.join(unproven) or 'none'}")
     return blockers
 
 

@@ -184,7 +184,7 @@ def test_one_rank_with_the_upsampler_on_refuses_before_any_load_and_names_what_f
             f"graph then does not load {UPSAMPLER}.") in text
     assert ("On a pair of Sparks with the Init node's topology set to uly2+fsdp (auto never "
             "picks it), the head would hold 20.0 GiB of the DiT and the load fits") in text
-    assert "Identity Gate PASS on uly2+fsdp first" in text
+    assert "its first render there runs the identity gate's clean-reload proof" in text
     assert "Refuses p-h3-image_bf16.safetensors at the load window" in text
     assert "35.6 GiB for the driver models this graph loads before its first render" in text
     assert parse_refusal_tag(text) is not None, "exactly one tag, or no reader finds the class"

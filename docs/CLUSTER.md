@@ -287,7 +287,11 @@ says. A value that is missing or not a finite number is left out, not written
 as zero. Phase and return series carry `scope="driver"` for the ComfyUI
 process, or `scope="worker"` and `worker_index` for a Worker actor, its
 position in the telemetry `workers` list counting from 0. Host series carry,
-as `host`, the host name each actor reports.
+as `host`, the host name each actor reports. On a host with more than one GPU
+each rank reports its own GPU, so the GPU series and the Worker actor's own
+counters also carry `worker_index`, and the memory and rail series, which
+describe the whole host, appear once per host, from the first rank with a
+reading for each. No two lines share a series name and label set.
 
 | Series | Labels | Value |
 | --- | --- | --- |
@@ -310,12 +314,12 @@ as `host`, the host name each actor reports.
 | `dgxm_return_poison_owners` | `scope`, `worker_index` | poisoned RDMA registration owners |
 | `dgxm_return_pending_read_jobs` | `scope`, `worker_index` | native reads not yet settled |
 | `dgxm_return_descriptor_total` | `scope`, `worker_index`, `kind`, `reason` | latent returns a Worker actor packed, by path |
-| `dgxm_gpu_util_pct` | `host` | GPU use in percent |
-| `dgxm_gpu_power_w` | `host` | GPU power in watts |
+| `dgxm_gpu_util_pct` | `host`, `worker_index` | GPU use in percent, for the GPU that rank uses |
+| `dgxm_gpu_power_w` | `host`, `worker_index` | GPU power in watts, for the GPU that rank uses |
 | `dgxm_mem_available_gib` | `host` | `MemAvailable` in GiB |
 | `dgxm_rail_rx_bytes_total`, `dgxm_rail_tx_bytes_total` | `host`, `rail` | bytes received and sent on each cabled RDMA port; `rail` is the device name, or `<device>/<port>` on a device with more than one cabled port |
-| `dgxm_swap_verify_failures` | `host` | LoRA swap bakes that did not match ComfyUI's own computation |
-| `dgxm_unbake_file_backed_gib` | `host` | LoRA restore data the Worker reads back from the checkpoint file, in GiB |
+| `dgxm_swap_verify_failures` | `host`, `worker_index` | LoRA swap bakes in that Worker actor that did not match ComfyUI's own computation |
+| `dgxm_unbake_file_backed_gib` | `host`, `worker_index` | LoRA restore data that Worker actor reads back from the checkpoint file, in GiB |
 
 `phase` is one of `attach`, `setup`, `queue_wait`, `compute`, `collect`,
 `rdma_preflight`, `rdma_register`, `rdma_read`, `rdma_drop`, `ack`, `recycle`,
@@ -433,8 +437,9 @@ renders plain FP8 checkpoints as noise
 writing it changes every render's capability context like any key here. ComfyUI picks the path
 when it builds a model, so a changed value drops each actor's resident models,
 and the next render loads them again. The `FP8 matmul (actors)` row of
-`dgxm doctor` shows the value, `dgxm status` prints it when the file sets the
-key, and `dgxm status --json` always carries it.
+`dgxm doctor` shows the value and warns for `"on"` where a host reports a GB10
+GPU, compute capability 12.1. `dgxm status` prints the value when the file sets
+the key, and `dgxm status --json` always carries it.
 
 `worker_vae_decode = "auto"` turns on Worker-assisted VAE decode: the stock VAE
 Decode and VAE Decode (Tiled) nodes split a video decode over the Workers

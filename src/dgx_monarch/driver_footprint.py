@@ -1,10 +1,10 @@
 """Driver-side UMA footprint estimation and capacity refusal.
 
-At render time the driver stack is already reflected in ``MemAvailable``.
-This module therefore charges only a pending DiT load. Explicit-topology
-eager loads are checked earlier by ``nodes.loader_preflight``. The estimator
-is pure, reports its terms and options, and refuses only a complete
-over-budget result. See docs/VALIDATION.md and docs/TROUBLESHOOTING.md #52.
+At render time the driver stack is already reflected in ``MemAvailable``, so this
+module charges only a pending DiT load. Explicit-topology eager loads are checked
+earlier by ``nodes.loader_preflight``. The estimator is pure, reports its terms and
+options, and refuses only a complete over-budget result (docs/VALIDATION.md and
+docs/TROUBLESHOOTING.md #52).
 """
 from __future__ import annotations
 
@@ -33,26 +33,23 @@ DRIVER_PREFLIGHT_DISABLE_ENV = "DGXM_DISABLE_DRIVER_PREFLIGHT"
 # A separate driver floor could admit a load that its local worker refuses.
 _DEFAULT_RESERVE_BYTES = ABSOLUTE_HOST_FLOOR_BYTES
 
-# What a stock load holds above the file while it places the weights (the host
-# copy beside the device copy), shared with the worker's stock price in
-# ``capacity_fit`` so both charge one placement once. Charged only when
-# ``slab_weights`` is explicitly off: under auto and comfy-managed residency
-# this module cannot prove which placement path ran.
+# What a stock load holds above the file while it places the weights (the host copy beside
+# the device copy), shared with the worker's stock price in ``capacity_fit`` so both charge
+# one placement once. Charged only when ``slab_weights`` is explicitly off: under auto and
+# comfy-managed residency this module cannot prove which placement path ran.
 _STOCK_PLACEMENT_RATIO = capacity_fit.STOCK_PLACEMENT_RATIO
 
-# What this host commits while it builds one FSDP shard: 1.05 of the shard
-# (docs/VALIDATION.md, the 2026-09-09 shard-build price). It sits below the
-# worker's ``capacity_fit.fsdp_materialize_factor``, measured on 2026-08-26,
-# before the copy-on-write fix (docs/VALIDATION.md, 2026-09-07), when the build's
-# device copy broke the checkpoint mapping and a rank paid its shard twice.
-# With the bounce copy a rank holds its shard once; the 0.05 covers allocator
-# slack and the fp32 islands a rank replicates (0.1 and 0.045 percent of the
-# file for H3 and LTX 2.5). A family near the admitted 5 percent island cap
-# (Krea2's islands are 4.9 percent of its file) would sit about 3 percent of
-# its shard above this estimate; the worker capacity check can refuse it.
-# This assumes the bounce copy is deployed on every box that loads; without it
-# a rank pays about twice its shard. The worker's walls keep the higher factor,
-# so nothing here admits a 60 GiB-class load a worker would refuse.
+# What this host commits while it builds one FSDP shard: 1.05 of the shard (docs/VALIDATION.md,
+# the 2026-09-09 shard-build price). It sits below the worker's
+# ``capacity_fit.fsdp_materialize_factor``, measured on 2026-08-26, before the copy-on-write fix
+# (docs/VALIDATION.md, 2026-09-07), when the build's device copy broke the checkpoint mapping
+# and a rank paid its shard twice. With the bounce copy a rank holds its shard once; the 0.05
+# covers allocator slack and the fp32 islands a rank replicates (0.1 and 0.045 percent of the
+# file for H3 and LTX 2.5). A family near the admitted 5 percent island cap (Krea2's islands
+# are 4.9 percent of its file) would sit about 3 percent of its shard above this estimate; the
+# worker capacity check can refuse it. This assumes the bounce copy is deployed on every box
+# that loads; without it a rank pays about twice its shard. The worker's walls keep the higher
+# factor, so nothing here admits a 60 GiB-class load a worker would refuse.
 FSDP_SHARD_BUILD_FACTOR = 1.05
 
 # The one pinned bounce buffer a build allocates for the row copy and frees
@@ -120,11 +117,10 @@ class DriverStackProfile:
 
 
 DRIVER_STACK_FAMILIES: dict[str, DriverStackProfile] = {
-    # H3 options omit multi-host splitting: Ulysses and Ring replicate the
-    # weights. FSDP does not, and the loader refusal names a pair's uly2+fsdp
-    # preset, with its Identity Gate step, wherever that price fits
-    # (nodes/graph_load_price); p-h3-image's BF16 uly2+fsdp render matched
-    # resident uly2 pixel for pixel on 2026-11-05.
+    # H3 options omit multi-host splitting: Ulysses and Ring replicate the weights. FSDP does
+    # not, and the loader refusal names a pair's uly2+fsdp preset, whose first render runs the
+    # gate's clean-reload proof, wherever that price fits (nodes/graph_load_price);
+    # p-h3-image's BF16 uly2+fsdp render matched resident uly2 pixel for pixel on 2026-11-05.
     "minimax_h3": DriverStackProfile(
         family="minimax_h3",
         ref_extras_keys=("minimax_refs", "minimax_keyframes"),
@@ -136,9 +132,15 @@ DRIVER_STACK_FAMILIES: dict[str, DriverStackProfile] = {
                  "the int8_convrot DiT is 19.8 GiB and the w4a8 DiT 12.4 GiB against "
                  "bf16's 37.7",
     ),
-    # LTX prices two token streams rather than reference blocks, so it declares
-    # no ref_extras_keys: the row charge arrives from ltx25_activation through
-    # the loader-site driver-stack window.
+    # MiniMax-H3-Image: H3's reference pictures beside a Qwen3-VL 32B text encoder.
+    "minimax_h3_image": DriverStackProfile(
+        family="minimax_h3_image", ref_extras_keys=("minimax_refs",),
+        fitting_options=(SMALLER_TE, PRUNED_DIT, FEWER_REFS, FREE_MEMORY),
+        dit_note="the int8_convrot DiT is 19.5 GiB and the w4a8 DiT 11.7 GiB against bf16's "
+                 "37.5; the Qwen3-VL 32B encoder is 14.6 GiB at nvfp4_awq, 25.3 at int8_convrot"),
+    # LTX prices two token streams rather than reference blocks, so it declares no
+    # ref_extras_keys: the row charge arrives from ltx25_activation through the loader-site
+    # driver-stack window.
     "ltx": DriverStackProfile(
         family="ltx",
         ref_extras_keys=(),
@@ -172,10 +174,9 @@ class DriverFootprintEstimate:
     mem_available: int = 0
     reserve: int = 0
     co_resident: bool = False
-    # The multiple of the file this host commits: 1.0 for a whole-file
-    # placement, one rank's share times the build factor for an FSDP shard
-    # build. dit_ceiling divides by the same number, or it would offer an
-    # artifact size that does not clear the budget.
+    # The multiple of the file this host commits: 1.0 for a whole-file placement, one rank's
+    # share times the build factor for an FSDP shard build. dit_ceiling divides by the same
+    # number, or it would offer an artifact size that does not clear the budget.
     weight_share: float = 1.0
     fsdp_world: int = 0
     notes: Mapping[str, str] = field(default_factory=dict)
@@ -306,10 +307,9 @@ def what_would_fit(estimate: DriverFootprintEstimate,
                 f"{_gib(estimate.usable)} GiB budget, so this load needs "
                 f"{_gib(estimate.shortfall)} GiB more free memory. ")
     dit_note = f" ({profile.dit_note})" if profile.dit_note else ""
-    # A ceiling from a shard price holds only for a shard build: staged as a
-    # whole-file load, an artifact that size refuses. The text names the
-    # charged share (fraction times build factor), not the weights note's
-    # shard fraction, so the two numbers never share a name.
+    # A ceiling from a shard price holds only for a shard build: staged as a whole-file load,
+    # an artifact that size refuses. The text names the charged share (fraction times build
+    # factor), not the weights note's shard fraction, so the two numbers never share a name.
     sharded = (f" charged at {estimate.weight_share:.2f} of the file across "
                f"world {estimate.fsdp_world}"
                if estimate.fsdp_world >= 2 else "")

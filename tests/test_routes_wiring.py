@@ -15,6 +15,17 @@ pytest.importorskip("aiohttp")
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+# The route adds this process's driver rules to every telemetry answer, read at that moment.
+_RULES = {"driver_rules": {"vae_encode_item": "installed", "vae_decode_relief": "installed"}}
+
+
+@pytest.fixture(autouse=True)
+def _the_encode_rule_reads_installed(monkeypatch):
+    from dgx_monarch import vae_decode_relief, vae_encode_item
+
+    monkeypatch.setitem(vae_encode_item._STATE, "state", vae_encode_item.INSTALLED)
+    monkeypatch.setitem(vae_decode_relief._STATE, "state", vae_decode_relief.INSTALLED)
+
 
 async def _build_client(monkeypatch, handle=None):
     """Run register() against a fake PromptServer.instance whose .routes is a real
@@ -60,7 +71,53 @@ def test_telemetry_route_returns_200_json(monkeypatch):
             resp = await client.get("/dgxm/telemetry")
             assert resp.status == 200
             assert resp.content_type == "application/json"
-            assert await resp.json() == {"t": 1.0, "comfy": "abc123", "workers": []}
+            assert await resp.json() == {"t": 1.0, "comfy": "abc123", "workers": [], **_RULES}
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_telemetry_route_reads_the_driver_rules_for_each_answer(monkeypatch):
+    """The snapshot may be the last good one of a failed refresh; the rules beside it are never old.
+
+    Doctor repeats this block. If it came from the snapshot, a rule that
+    stepped aside after the snapshot was taken would still read as on.
+    """
+    from dgx_monarch import vae_decode_relief, vae_encode_item
+    from dgx_monarch.nodes import routes as routes_mod
+
+    stale = {"t": 1.0, "workers": [], "telemetry_error": "OSError",
+             "driver_rules": {"vae_encode_item": "installed"}}  # even a snapshot that carried a copy
+    monkeypatch.setattr(routes_mod, "_telemetry", lambda: dict(stale))
+
+    async def scenario():
+        client = await _build_client(monkeypatch)
+        try:
+            first = await (await client.get("/dgxm/telemetry")).json()
+            assert first["driver_rules"] == {"vae_encode_item": "installed", "vae_decode_relief": "installed"}
+            monkeypatch.setitem(vae_encode_item._STATE, "state", vae_encode_item.STEPPED_ASIDE)
+            second = await (await client.get("/dgxm/telemetry")).json()
+            assert second["driver_rules"] == {"vae_encode_item": "stepped_aside",
+                                              "vae_decode_relief": "installed"}
+            # The decode relief's state is read for each answer in the same way.
+            monkeypatch.setitem(vae_decode_relief._STATE, "state", vae_decode_relief.STEPPED_ASIDE)
+            third = await (await client.get("/dgxm/telemetry")).json()
+            assert third["driver_rules"] == {"vae_encode_item": "stepped_aside",
+                                             "vae_decode_relief": "stepped_aside"}
+            assert second["telemetry_error"] == "OSError" and second["workers"] == []
+
+            # The route's own timeout answer carries the rules too.
+            async def too_slow(_fn, _timeout_s):
+                raise TimeoutError
+
+            monkeypatch.setattr(routes_mod, "_await_bounded", too_slow)
+            resp = await client.get("/dgxm/telemetry")
+            assert resp.status == 503
+            assert await resp.json() == {"t": pytest.approx(time.time(), abs=60), "workers": [],
+                                         "telemetry_error": "TimeoutError",
+                                         "driver_rules": {"vae_encode_item": "stepped_aside",
+                                                          "vae_decode_relief": "stepped_aside"}}
         finally:
             await client.close()
 
@@ -86,6 +143,7 @@ def test_telemetry_route_replaces_nonfinite_numbers_with_json_null(monkeypatch):
             assert await resp.json() == {
                 "t": None,
                 "workers": [{"host": {"gpu": {"power_w": None}}}],
+                **_RULES,
             }
         finally:
             await client.close()
@@ -118,6 +176,7 @@ def test_telemetry_route_serializes_hostile_event_integers(monkeypatch):
                 "events": [{
                     "kind": "verify", "t": 1.0, "checked": None, "of": 4,
                 }],
+                **_RULES,
             }
         finally:
             await client.close()

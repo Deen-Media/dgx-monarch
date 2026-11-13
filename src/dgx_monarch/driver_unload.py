@@ -17,15 +17,22 @@ its allocator cache through the Worker ``clear_vram`` endpoint at ``soft``
 MemAvailable again and runs the checks once more from the one that refused.
 Only the last answer refuses, and its text says what was unloaded and released
 and what MemAvailable read around each step (docs/TROUBLESHOOTING.md #56).
-Both steps are rescues: a check that passes runs neither.
+Both steps are rescues: a check that passes runs neither. Before either, a
+render whose DiT load is still pending counts the model that load replaces
+(``swap_credit.py``). The loader preflight runs the same credit and the same
+unload through ``nodes/loader_relief.py``, with this module's calls.
 
 Three things this path never touches. A render still running in this driver:
-the driver keeps the models and the caches, and the refusal says why. The
+the driver keeps the models and the caches, and the refusal says why
+(``busy_reason`` reads the fleet attached now, not a mesh a reset stopped). The
 Workers' residents: the trim releases cached allocator blocks and unloads no
 model. ComfyUI's node output cache: the current prompt still needs its own
 outputs, and ComfyUI's default cache already drops earlier prompts' outputs
 after every node. ``DGXM_DISABLE_DRIVER_UNLOAD=1`` turns both steps off, and
-the first answer then refuses unchanged.
+the answer after the swap credit then refuses unchanged. The credit is a
+price, what the box will hold at the load, and not a rescue, so that switch
+leaves it on at the loader and here alike; ``DGXM_DISABLE_SWAP_CREDIT=1`` turns
+it off at both.
 """
 from __future__ import annotations
 
@@ -35,7 +42,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
-from . import client_lease, mesh_safety
+from . import client_lease, mesh_safety, swap_credit
 from .log import get_logger
 from .render_memory_price import RenderMemoryPriceError
 
@@ -97,7 +104,15 @@ class Unloaded:
         return self.after - self.before
 
     def readings(self) -> str:
-        """What the unload removed and the two readings, as one clause."""
+        """What the unload removed and the two readings, as one clause.
+
+        With no model named, only the allocator's cached blocks went back
+        (``release_cache``): the driver's ComfyUI keeps more of them since its
+        free-memory reading follows MemAvailable (``driver_uma_memory.py``).
+        """
+        if not self.names:
+            return ("released the allocator cache ComfyUI kept on this host: MemAvailable read "
+                    f"{_gib(self.before)} GiB before that and {_gib(self.after)} GiB after it")
         return (f"unloaded the {_models(self.names)} ComfyUI held on this host: "
                 f"MemAvailable read {_gib(self.before)} GiB before the unload and "
                 f"{_gib(self.after)} GiB after it")
@@ -109,8 +124,9 @@ class Unloaded:
 
     def log_line(self, subject: str) -> str:
         """The one line the driver logs when the unload lets a render through."""
-        return (f"driver unload: {subject} fits after unloading the "
-                f"{_models(self.names)} ComfyUI held on this host; MemAvailable "
+        what = (f"unloading the {_models(self.names)} ComfyUI held" if self.names
+                else "releasing the allocator cache ComfyUI kept")
+        return (f"driver unload: {subject} fits after {what} on this host; MemAvailable "
                 f"went from {_gib(self.before)} GiB to {_gib(self.after)} GiB, "
                 f"a gain of {_gib(self.gain)} GiB")
 
@@ -191,25 +207,60 @@ def _lease_count(handle: Any, attribute: str) -> int:
     return sum(int(count) for count in dict(getattr(handle, attribute, None) or {}).values())
 
 
+def serving_fleet(handle: Any) -> Any:
+    """The mesh that serves this driver's loads now: ``handle``, or the one
+    attached in its place; None when ``handle`` is retired and none is.
+
+    ComfyUI caches the Init node's output, so a loader or a render is handed
+    the mesh that node attached. A reset since then has retired it, and a
+    fresh fleet on the same config serves the loads.
+    """
+    if handle is None or not (getattr(handle, "defunct", False)
+                              or getattr(handle, "teardown_complete", False)):
+        return handle
+    from .nodes import recycle_drain
+
+    return recycle_drain.attached_fleet(handle)
+
+
+def _fleets_at_work(handle: Any) -> list[Any]:
+    """The meshes whose work could still need what the driver holds.
+
+    A mesh with a confirmed stop has no process left, so it is left out: a
+    reset leaves its "recycle group teardown" mark on the handle it retires,
+    which reads as a call in flight for as long as the handle lives. A
+    retired mesh with no confirmed stop is still read, since its Workers may
+    be alive, and so is the fleet attached in a retired mesh's place.
+    """
+    if handle is None:
+        return []
+    fleets = [] if getattr(handle, "teardown_complete", False) else [handle]
+    serving = serving_fleet(handle)
+    if serving is not None and serving is not handle:
+        fleets.append(serving)
+    return fleets
+
+
 def busy_reason(handle: Any) -> str:
     """Why the driver must keep what it holds now, or empty when it may free it.
 
     The driver's progress tracker spans every render this process started,
-    from before dispatch to its cleanup, pipelined submissions included. The
-    handle's leases and in-flight call cover a result or a Worker call that
-    outlives it. State that cannot be read keeps everything.
+    from before dispatch to its cleanup, pipelined submissions included. A
+    mesh's leases and in-flight call cover a result or a Worker call that
+    outlives it (``_fleets_at_work``). A status read and a capacity quote set
+    none of these. State that cannot be read keeps everything.
     """
     try:
         from .telemetry import render_progress
 
         if render_progress.snapshot().get("active"):
             return "a render is still running in this driver"
-        if handle is not None:
-            if _lease_count(handle, "sample_leases"):
+        for fleet in _fleets_at_work(handle):
+            if _lease_count(fleet, "sample_leases"):
                 return "a render result is still held on the mesh"
-            if _lease_count(handle, "abandoned_sample_leases"):
+            if _lease_count(fleet, "abandoned_sample_leases"):
                 return "an abandoned render may still be running on the Workers"
-            if client_lease.dispatch_in_flight(handle):
+            if client_lease.dispatch_in_flight(fleet):
                 return "a call to the Workers is still in flight"
     except Exception:
         return "the driver could not read whether a render is running"
@@ -318,14 +369,32 @@ def _first_refusal(steps: Sequence[Callable[[], object]], start: int,
     return None
 
 
+def _swap_credit(swap: tuple[Any, Any] | None) -> swap_credit.SwapCredit:
+    """What the Worker on this host drops before the render's pending load."""
+    if swap is None:
+        return swap_credit.NONE
+    try:
+        from .nodes import loader_relief
+
+        return loader_relief.render_credit(*swap)
+    except Exception as exc:  # no credit is the price as it was
+        log.info("render preflight read no swap credit (%r)", exc)
+        return swap_credit.NONE
+
+
 def check_with_unload(steps: Sequence[Callable[[], object]], *, handle: Any = None,
                       subject: str = "this render",
                       is_refusal: Callable[[BaseException], bool] = is_capacity_refusal,
-                      ) -> None:
-    """Run ``steps`` in order, freeing what the driver host can get back
-    before one refuses.
+                      swap: tuple[Any, Any] | None = None) -> None:
+    """Run ``steps`` in order, counting and freeing what the driver host can
+    get back before one refuses.
 
-    A capacity refusal stops the run. If nothing is running, the driver
+    A capacity refusal stops the run. ``swap`` is the render's model and
+    request: where its DiT load is still pending and replaces a stock resident
+    in its own slot, the Worker drops that model first, so its copy is counted
+    as available (``swap_credit.py``) and the steps run again from the one that
+    refused, and so does every later run. If one still refuses and nothing is
+    running, the driver
     unloads the models ComfyUI holds in this process and runs the steps again
     from the one that refused: the steps before it passed on a lower reading.
     If one still refuses and ``handle`` is a live mesh that completed setup,
@@ -338,8 +407,29 @@ def check_with_unload(steps: Sequence[Callable[[], object]], *, handle: Any = No
     """
     steps = list(steps)
     first = _first_refusal(steps, 0, is_refusal)
-    if first is not None:
+    if first is None:
+        return
+    credit = _swap_credit(swap)
+    if not credit:
         _after_refusal(steps, *first, handle, subject, is_refusal)
+        return
+    counted = (f"the Worker on {credit.box or 'this host'} drops "
+               f"{credit.dropped or 'the old model'} before this load, which frees at least "
+               f"{credit.gib} GiB{credit.note}")
+    with swap_credit.applying(credit) as applied:
+        again = _first_refusal(steps, first[0], is_refusal)
+        if again is None:
+            if applied.used:  # a price that charges a load took the credit
+                log.info("render preflight: %s fits once %s", subject, counted)
+            return
+        try:
+            _after_refusal(steps, *again, handle, subject, is_refusal)
+        except Exception as exc:
+            if not is_refusal(exc) or not applied.used:
+                raise
+            raw = mesh_safety.mem_available_bytes()
+            read = "" if raw is None else f" The box itself read {raw / 2**30:.1f} GiB of MemAvailable."
+            _raise_amended(exc, f"The figures above already count that {counted}.{read}")
 
 
 def _after_refusal(steps: Sequence[Callable[[], object]], index: int,
@@ -352,6 +442,11 @@ def _after_refusal(steps: Sequence[Callable[[], object]], index: int,
     mm = comfy_model_management()
     held = held_models(mm) if mm is not None else []
     busy = busy_reason(handle)
+    # The trim goes to the fleet attached now, whose actors hold the caches.
+    try:
+        handle = serving_fleet(handle)
+    except Exception:
+        handle = None
     unloaded: Unloaded | None = None
     if held:
         names = tuple(name for _entry, name in held)

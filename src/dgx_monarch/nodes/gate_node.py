@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..adapters.flux_views import conditioning_carries_views
+from ..cfg_pair import text_rows_differ
 from ..constants import MODEL_TYPE, NODE_CATEGORY
 from .refusal_lead import lead_with_refusal
 from .render_preflight import sampler_latent
@@ -29,8 +31,10 @@ class DGXMonarchIdentityGate:
                         "default": 2,
                         "min": 1,
                         "max": 10000,
-                        "tooltip": "Identity does not depend on the step count: 2 steps "
-                        "gate as conclusively as 20 and finish sooner.",
+                        "tooltip": "Steps per proof render. The automatic gate runs 2, "
+                        "which finishes sooner. A PASS shows that these renders matched "
+                        "bit for bit: a finite check of the steps that ran, not of every "
+                        "prompt, size or step count.",
                     },
                 ),
                 "cfg": (
@@ -122,15 +126,17 @@ class DGXMonarchIdentityGate:
                     "DGX Monarch identity gate NOT RUN: " + skip)
             return latent_image, report
         # A re-queue whose UNET Loader output ComfyUI kept is priced here, as at a sampler.
-        from . import graph_load_price, requeue_price
+        from . import expander_prompt, graph_load_price, requeue_price
 
+        expander_prompt.refuse_dead_expander(prompt)
         requeue_price.price_cached_loader(model, prompt, site=graph_load_price.SITE_GATE)
         result = runtime.run_identity_ceremony(
             model,
             request,
             # Tagged as the samplers tag it, so this proof binds the topology
             # a later render of the same sampler resolves.
-            sampler_latent(latent_image, sampler_name),
+            sampler_latent(latent_image, sampler_name, text_rows_differ(positive, negative),
+                           conditioning_carries_views(positive, negative)),
             float(cfg),
             int(steps),
             origin="explicit",

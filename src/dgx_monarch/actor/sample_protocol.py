@@ -249,7 +249,7 @@ def run_sample(
             patcher, transition = store_fsdp.ensure(
                 worker, uspec["unet_name"], uspec.get("options"),
                 uspec.get("loras"), slot="uncond", on_base_loaded=worker._inject_for_topology,
-                rescue_consent=worker_env.sample_rescue_consent(request))
+                rescue_consent=worker_env.sample_rescue_consent(request), sample_request=request)
             worker_env.assert_resident_artifact_identity(
                 worker, "uncond", expected_artifacts[1])
             # The driver keys every grant of a dual-model render on the
@@ -266,7 +266,7 @@ def run_sample(
             patcher, transition = store_fsdp.ensure(
                 worker, model_spec["unet_name"], model_spec.get("options"),
                 model_spec.get("loras"), slot="cond", on_base_loaded=worker._inject_for_topology,
-                rescue_consent=worker_env.sample_rescue_consent(request))
+                rescue_consent=worker_env.sample_rescue_consent(request), sample_request=request)
             worker_env.assert_resident_artifact_identity(
                 worker, "cond", expected_artifacts[0])
             raise_if_sample_cancelled(cancel_event)
@@ -281,7 +281,8 @@ def run_sample(
                 uspec = request["uncond_model"]
                 uncond_patcher, _uncond_transition = store_fsdp.ensure(
                     worker, uspec["unet_name"], uspec.get("options"),
-                    uspec.get("loras"), slot="uncond", on_base_loaded=worker._inject_for_topology)
+                    uspec.get("loras"), slot="uncond", on_base_loaded=worker._inject_for_topology,
+                    sample_request=request)
                 worker_env.assert_resident_artifact_identity(
                     worker, "uncond", expected_artifacts[1])
         # Class K, and the driver retires the sample lease consumed: the bar
@@ -329,6 +330,9 @@ def run_sample(
     # first collective; a readiness exchange, where one runs, every rank has
     # already crossed alike.
     refuse_moss_image_attention_bias(worker, request, getattr(resident, "family", None))
+    # The same rule for UltraTex views on the Flux family (#148), on this rank's topology.
+    from ..adapters.flux_views import refuse_unproven_views
+    refuse_unproven_views(getattr(resident, "family", None), getattr(worker, "topology", {}) or {}, request)
 
     # Opt-in proof only: full-content file identities are stable-read after
     # ModelStore has adopted and checked every requested resident, but before

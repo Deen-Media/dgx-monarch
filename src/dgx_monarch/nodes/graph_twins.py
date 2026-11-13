@@ -125,13 +125,28 @@ def _pins_attention(path: str) -> bool:
         return True
 
 
+def _loras_pin(loras: tuple[str, ...]) -> bool:
+    """Whether a LoRA of the graph carries an attention pin, from its header; unreadable reads as yes."""
+    import folder_paths
+
+    for name in loras:
+        try:
+            path = folder_paths.get_full_path("loras", name)
+            if not path or _pins_attention(str(path)):
+                return True
+        except Exception:  # a LoRA that cannot be read could pin anything
+            return True
+    return False
+
+
 def twin_admitted(path: str, kind: str | None, *, family: str, loras: tuple[str, ...],
                   mesh: Any) -> bool:
     """Whether this graph would run ``path`` in place of its DiT, as far as the
     driver can tell before any load. Each test is a refusal that file would
     otherwise meet: class P for the LoRA route (TROUBLESHOOTING #129), the FSDP
     launch and the upstream gate, class K for a pinned kernel off sequence
-    parallelism (#117)."""
+    parallelism (#117), except the twin's own pins in a world of one GPU, which
+    run as stock runs them while no LoRA of the graph pins."""
     from .. import lora_quant_guard, upstream_gate
     from ..adapters.fsdp import FSDP_ADMITTED_CHECKPOINT_KINDS
     from ..topology import declares_fsdp
@@ -145,9 +160,10 @@ def twin_admitted(path: str, kind: str | None, *, family: str, loras: tuple[str,
         upstream_gate.raise_refusal(path)
     except Exception:
         return False
-    world = getattr(mesh, "world", 1)
+    world = getattr(mesh, "world", None)  # an unknown world is not a world of one GPU
     sequence = preset.startswith(_SEQUENCE_PRESETS) and isinstance(world, int) and world >= 2
-    return sequence or not _pins_attention(path)
+    alone = isinstance(world, int) and world < 2
+    return sequence or not _pins_attention(path) or (alone and not _loras_pin(loras))
 
 
 def dit_twins(shape: Any, fits: Callable[[Any], bool], unet_name: str, family: str,

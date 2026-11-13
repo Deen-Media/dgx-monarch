@@ -4,7 +4,7 @@
 // labels; new consent kinds need no client-side copy.
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { consentPanelModel } from "./dgx_monarch_consent_model.js";
+import { consentPanelModel, consentSignature } from "./dgx_monarch_consent_model.js";
 import { button, el } from "./dgx_monarch_ui.js";
 
 const POLL_MS = 2500;
@@ -308,29 +308,13 @@ function toggleNode(model) {
     return wrap;
 }
 
-function signature(model) {
-    return JSON.stringify([
-        model.rows.map((row) => [row.type, row.key || "", row.detail || "", row.label || "",
-            row.error || "", row.busy ? 1 : 0, (row.card && row.card.occurrences) || 0]),
-        model.active.map((row) => [row.key, row.stale ? 1 : 0, row.busy ? 1 : 0,
-            (busyState[row.key] && busyState[row.key].label) || "",
-            (busyState[row.key] && busyState[row.key].error) || ""]),
-        model.autoRescue, model.autoRescueBusy, model.autoRescueEnv,
-        (busyState[AUTO_KEY] && busyState[AUTO_KEY].label) || "",
-        (busyState[AUTO_KEY] && busyState[AUTO_KEY].error) || "",
-        model.autoClear, model.autoClearBusy, model.autoClearEnv,
-        (busyState[AUTO_CLEAR_KEY] && busyState[AUTO_CLEAR_KEY].label) || "",
-        (busyState[AUTO_CLEAR_KEY] && busyState[AUTO_CLEAR_KEY].error) || "",
-    ]);
-}
-
 function renderZones(force) {
     ensureZones();
     if (consentBusy > 0 && !force) return;
     const model = consentPanelModel(consentState, {
         justAccepted, busy: busyState, now: Date.now(),
     });
-    const current = signature(model);
+    const current = consentSignature(model, busyState);
     // Nothing changed: leave the existing nodes alone so a live button keeps
     // its identity across polls.
     if (!force && current === lastSignature) return;

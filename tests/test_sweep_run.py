@@ -5,6 +5,7 @@ not how it is fetched. run.SessionWatch says why a wedged session must end.
 """
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import re
@@ -380,7 +381,7 @@ def test_a_cold_leg_that_passed_never_survives_a_waived_leg_that_crashed(
     monkeypatch.setattr(run, "frames_for", lambda output_dir, prefix: [])
     monkeypatch.setattr(run, "wait_for_memory", lambda *args, **kwargs: {"cleared": True})
     monkeypatch.setattr(run, "journal_lines", lambda host, since: [])
-    monkeypatch.setattr(run, "free_cache", lambda driver: "freed")
+    monkeypatch.setattr(run, "free_cache", lambda driver: "idle")
     monkeypatch.setattr(run, "grant_pending_consent", lambda driver, cell: {"granted": True})
     config = {"driver": "http://fake", "out_dir": out, "comfy_dir": tmp_path,
               "sibling": "", "mem_floor_gib": 0.0, "reference": {"nrms_floor": 0.10}}
@@ -517,6 +518,274 @@ def test_a_wedged_session_writes_its_reason_and_exits_non_zero(monkeypatch, tmp_
     summary = json.loads((out / "run_summary_cluster.json").read_text())
     assert "not reusable" in summary["wedged"] and summary["ran"] == 0
     assert summary["runnable"] == 1
+
+
+def _session_config(tmp_path, cells: list[dict]) -> Path:
+    """An out dir holding these cells, and a config that names it."""
+    out = tmp_path / "out"
+    (out / "graphs").mkdir(parents=True)
+    (out / "graphs" / "t.json").write_text(json.dumps({}))
+    (out / "cells.jsonl").write_text("\n".join(json.dumps(cell) for cell in cells) + "\n")
+    config = tmp_path / "sweep.toml"
+    config.write_text(f'out_dir = "{out}"\ncomfy_dir = "{tmp_path}"\n')
+    return config
+
+
+def _quiet_rig(monkeypatch) -> None:
+    """Every rig read a session makes around its cells, answered locally."""
+    monkeypatch.setattr(run, "session_pin", lambda config: {})
+    monkeypatch.setattr(run.SessionWatch, "mesh_block", lambda self: {})
+    monkeypatch.setattr(run, "probe_transport", lambda *args, **kwargs: "cluster")
+    monkeypatch.setattr(run, "Sampler", _FakeSampler)
+    monkeypatch.setattr(run, "frames_for", lambda output_dir, prefix: [])
+    monkeypatch.setattr(run, "wait_for_memory", lambda *args, **kwargs: {"cleared": True})
+    monkeypatch.setattr(run, "journal_lines", lambda host, since: [])
+    monkeypatch.setattr(run, "free_cache", lambda driver: "idle")
+    monkeypatch.setattr(run.time, "sleep", lambda seconds: None)
+
+
+@pytest.mark.parametrize(("state", "drained"), [
+    ("timeout", "still busy"),
+    ("poll transport TimeoutError: timed out", "ConnectionRefusedError: [Errno 111] refused"),
+])
+def test_a_waived_retry_whose_queue_would_not_clear_ends_the_session(
+        monkeypatch, tmp_path, state, drained):
+    # The cold leg refuses the class K its waiver admits, the card is granted,
+    # and the waived retry times out or loses its poll, then will not drain.
+    # Every planned leg ends the session on that; the waived retry must too,
+    # before the next cell's reset queues a clear graph behind the stuck one.
+    base = {"template": "t", "session": "cluster", "sampled_out": False, "klass": "image",
+            "mode": "cluster", "attention": "TORCH_FLASH", "levers": {}, "loras": [],
+            "unets": {}, "auto_gate": "first_use", "gpus_per_host": 0, "batch": 1,
+            "batch_toggled": False, "batch_node": "", "capacity_risk": False,
+            "probe": False, "audio": False, "timeout_s": 10,
+            "reference": {"kind": "none", "bar": "reference"}}
+    waived = {**base, "id": "waive1", "preset": "ring2", "label": "refuse:K",
+              "waiver": True, "waiver_guards": ["ring_pad"]}
+    after = {**base, "id": "after2", "preset": "auto", "label": "render",
+             "waiver": False, "waiver_guards": []}
+    config = _session_config(tmp_path, [waived, after])
+    refused = {"status": {"status_str": "error", "messages": [
+        ["execution_error", {"exception_message": "[dgxm:K] ring pad rows"}]]}}
+    answers = iter([(2.0, refused, "", "p1"), (10.0, None, state, "p2")])
+    queued: list[str] = []
+
+    def queue(driver, graph, client_id, timeout_s):
+        answer = next(answers)
+        queued.append(answer[3])
+        return answer
+
+    _quiet_rig(monkeypatch)
+    monkeypatch.setattr(run, "recycle", lambda driver: "ok")
+    monkeypatch.setattr(run, "queue_and_wait", queue)
+    monkeypatch.setattr(run, "drain", lambda driver, prompt_id: drained)
+    monkeypatch.setattr(run, "grant_pending_consent", lambda driver, cell: {"granted": True})
+    monkeypatch.setattr(run, "reset_fleet", lambda *args, **kwargs: pytest.fail(
+        "a reset queued a clear graph behind a queue that would not clear"))
+    assert run.main(["--config", str(config), "--session", "cluster"]) == 1
+    # Nothing queued after the waived retry: no reset, no next cell.
+    assert queued == ["p1", "p2"]
+    out = tmp_path / "out"
+    summary = json.loads((out / "run_summary_cluster.json").read_text())
+    assert summary["wedged"] == (f"[waive1] waive1 waived: the queue would not clear "
+                                 f"({drained})")
+    assert summary["ran"] == 0
+    # The record is on disk with the leg that wedged, so a resume re-runs it.
+    record = json.loads((out / "cells" / "waive1.json").read_text())
+    assert record["legs"]["waived"]["drain"] == drained
+    assert record["verdict"] == "FINDING" and run.wedged_answer(record)
+    assert not (out / "cells" / "after2.json").exists()
+
+
+@pytest.mark.parametrize(("leg", "busted"), [
+    ("waived", "still busy"),
+    ("resident", "still busy"),
+    ("probe", "still busy"),
+    ("probe", "ConnectionRefusedError: [Errno 111] Connection refused"),
+])
+def test_a_cache_reset_that_leaves_the_queue_busy_ends_the_session(
+        monkeypatch, tmp_path, leg, busted):
+    # free_cache waits for the queue to go idle before a waived, resident or
+    # probe leg. One that is still busy, or that the driver did not answer,
+    # leaves work the next leg would queue behind, the same unsettled queue
+    # an undrained leg leaves. The leg must not be queued.
+    out = tmp_path / "out"
+    (out / "graphs").mkdir(parents=True)
+    (out / "graphs" / "t.json").write_text(json.dumps({}))
+    cell = {"id": "abc123", "template": "t", "session": "cluster", "preset": "uly2",
+            "mode": "cluster", "attention": "TORCH_FLASH", "label": "render",
+            "waiver": False, "waiver_guards": [], "levers": {}, "loras": [],
+            "unets": {}, "auto_gate": "first_use", "gpus_per_host": 0, "batch": 1,
+            "batch_toggled": False, "batch_node": "", "capacity_risk": False,
+            "probe": False, "audio": False, "timeout_s": 10,
+            "reference": {"kind": "none", "bar": "reference"}}
+    rendered = {"status": {"completed": True}}
+    answers = [(2.0, rendered, "", "p-cold"), (2.0, rendered, "", "p-warm")]
+    if leg == "waived":
+        cell.update(label="refuse:K", waiver=True, waiver_guards=["ring_pad"], preset="ring2")
+        answers = [(2.0, {"status": {"status_str": "error", "messages": [
+            ["execution_error", {"exception_message": "[dgxm:K] ring pad rows"}]]}}, "", "p-cold")]
+    elif leg == "resident":
+        cell["reference"] = {"kind": "resident-leg", "preset": "uly2", "bar": "bit-identical"}
+    else:
+        cell["probe"] = True
+        cell["reference"] = {"kind": "cell", "cell": "ref456", "bar": "step-nrms",
+                             "probe_steps": 1}
+    answers.append((2.0, rendered, "", f"p-{leg}"))
+    pending = iter(answers)
+    queued: list[str] = []
+
+    def queue(driver, graph, client_id, timeout_s):
+        answer = next(pending)
+        queued.append(answer[3])
+        return answer
+
+    monkeypatch.setattr(run, "Sampler", _FakeSampler)
+    monkeypatch.setattr(run, "queue_and_wait", queue)
+    monkeypatch.setattr(run, "frames_for", lambda output_dir, prefix: [])
+    monkeypatch.setattr(run, "wait_for_memory", lambda *args, **kwargs: {"cleared": True})
+    monkeypatch.setattr(run, "journal_lines", lambda host, since: [])
+    monkeypatch.setattr(run, "free_cache", lambda driver: busted)
+    monkeypatch.setattr(run, "grant_pending_consent", lambda driver, cell: {"granted": True})
+    config = {"driver": "http://fake", "out_dir": out, "comfy_dir": tmp_path,
+              "sibling": "", "mem_floor_gib": 0.0, "reference": {"nrms_floor": 0.10}}
+    args = type("Args", (), {"timeout_s": 0.0})()
+    with pytest.raises(SessionWedged, match=re.escape(
+            f"abc123 {leg}: the cache reset before this leg did not settle ({busted})")):
+        run.run_cell(cell, config, {}, "client", args)
+    assert f"p-{leg}" not in queued
+    # The record is on disk, says which leg went unqueued, and re-runs on resume.
+    record = json.loads((out / "cells" / "abc123.json").read_text())
+    assert record["cache_bust"] == {leg: busted} and leg not in record["legs"]
+    assert record["verdict"] == "FINDING"
+    assert run.wedged_answer(record) == f"the cache reset before the {leg} leg answered {busted}"
+
+
+def _close_failure(kind: str):
+    """A driver.post whose first recycle answers and whose second fails as named."""
+    import urllib.error
+
+    calls: list[str] = []
+
+    def post(url, body, headers=None, timeout=120.0):
+        calls.append(url)
+        if len(calls) == 1:
+            return {}
+        if kind == "503":
+            raise urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None)
+        if kind == "oserror":
+            raise ConnectionRefusedError(111, "Connection refused")
+        if kind == "html":
+            # A 200 whose body is not JSON: post's json.loads raises.
+            return json.loads("<html>")
+        if kind == "truncated":
+            raise http.client.IncompleteRead(b"")
+        raise urllib.error.HTTPError(url, 429, "Too Many Requests", {"Retry-After": "0"}, None)
+
+    return post, calls
+
+
+@pytest.mark.parametrize(("kind", "answer"), [
+    ("503", "http 503"),
+    ("oserror", "ConnectionRefusedError: [Errno 111] Connection refused"),
+    ("429", "SessionWedged: the recycle stayed rate limited over 3 attempts"),
+    ("html", "JSONDecodeError: Expecting value"),
+    ("truncated", "IncompleteRead: IncompleteRead(0 bytes read)"),
+])
+def test_a_failed_session_close_recycle_is_written_and_exits_non_zero(
+        monkeypatch, tmp_path, kind, answer):
+    # The last cell rendered, and the recycle that releases the mesh before
+    # the operator stops the driver did not answer ok. The cell result stands,
+    # and the session says the fleet may still be live.
+    from benchmark.sweep import driver
+
+    cell = {"id": "aaa111", "template": "t", "session": "cluster", "sampled_out": False,
+            "label": "render", "klass": "image", "levers": {}, "preset": "auto",
+            "mode": "cluster", "attention": "TORCH_FLASH", "waiver": False,
+            "waiver_guards": [], "reference": {"kind": "none", "bar": "reference"}}
+    config = _session_config(tmp_path, [cell])
+    out = tmp_path / "out"
+    post, calls = _close_failure(kind)
+
+    def rendered(cell, config, pin, client_id, args, reset=None, watch=None):
+        record = {"cell": cell, "observed": "render", "verdict": "PASS", "findings": [],
+                  "legs": {"cold": {"outcome": "render"}}}
+        run.write_record(out, cell["id"], record)
+        return record
+
+    _quiet_rig(monkeypatch)
+    monkeypatch.setattr(driver, "post", post)
+    monkeypatch.setattr(driver.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(run, "run_cell", rendered)
+    assert run.main(["--config", str(config), "--session", "cluster"]) == 1
+    assert all(url.endswith("/dgxm/recycle") for url in calls)
+    summary = json.loads((out / "run_summary_cluster.json").read_text())
+    assert summary["close_recycle"].startswith(answer)
+    # The cell's own result is kept apart from the cleanup.
+    assert summary["ran"] == 1 and summary["wedged"] == ""
+    record = json.loads((out / "cells" / "aaa111.json").read_text())
+    assert record["verdict"] == "PASS"
+
+
+def test_an_unreadable_session_open_recycle_is_written_and_the_session_goes_on(
+        monkeypatch, tmp_path):
+    # A non-JSON body at the open recycle used to raise out of main before any
+    # summary was written. It is the open recycle's answer now: kept in the
+    # summary, and the transport probe decides whether the session runs.
+    from benchmark.sweep import driver
+
+    cell = {"id": "aaa111", "template": "t", "session": "cluster", "sampled_out": False,
+            "label": "render", "klass": "image", "levers": {}, "preset": "auto",
+            "mode": "cluster", "attention": "TORCH_FLASH", "waiver": False,
+            "waiver_guards": [], "reference": {"kind": "none", "bar": "reference"}}
+    config = _session_config(tmp_path, [cell])
+    calls: list[str] = []
+
+    def post(url, body, headers=None, timeout=120.0):
+        calls.append(url)
+        return json.loads("<html>") if len(calls) == 1 else {}
+
+    _quiet_rig(monkeypatch)
+    monkeypatch.setattr(driver, "post", post)
+    monkeypatch.setattr(run, "run_cell", lambda *args, **kwargs: {
+        "observed": "render", "verdict": "PASS", "findings": [], "legs": {}})
+    assert run.main(["--config", str(config), "--session", "cluster"]) == 0
+    summary = json.loads((tmp_path / "out" / "run_summary_cluster.json").read_text())
+    assert summary["open_recycle"].startswith("JSONDecodeError: Expecting value")
+    assert summary["close_recycle"] == "ok" and summary["ran"] == 1
+
+
+def _cut_short(*args, **kwargs):
+    """A response that ends before its declared length."""
+    raise http.client.IncompleteRead(b"")
+
+
+@pytest.mark.parametrize(("raised", "answer"), [
+    (lambda *args, **kwargs: json.loads("<html>"), "JSONDecodeError: Expecting value"),
+    (_cut_short, "IncompleteRead: IncompleteRead(0 bytes read)"),
+])
+def test_a_recycle_whose_response_cannot_be_read_answers_it(monkeypatch, raised, answer):
+    # Every reset records recycle's answer, so an unreadable response must be
+    # an answer, not an exception that ends the runner from inside a cell.
+    from benchmark.sweep import driver
+
+    monkeypatch.setattr(driver, "post", raised)
+    assert driver.recycle("http://fake").startswith(answer)
+
+
+def test_a_session_close_recycle_that_answers_ok_keeps_exit_zero(monkeypatch, tmp_path):
+    cell = {"id": "aaa111", "template": "t", "session": "cluster", "sampled_out": False,
+            "label": "render", "klass": "image", "levers": {}, "preset": "auto",
+            "mode": "cluster", "attention": "TORCH_FLASH", "waiver": False,
+            "waiver_guards": [], "reference": {"kind": "none", "bar": "reference"}}
+    config = _session_config(tmp_path, [cell])
+    _quiet_rig(monkeypatch)
+    monkeypatch.setattr(run, "recycle", lambda driver: "ok")
+    monkeypatch.setattr(run, "run_cell", lambda *args, **kwargs: {
+        "observed": "render", "verdict": "PASS", "findings": [], "legs": {}})
+    assert run.main(["--config", str(config), "--session", "cluster"]) == 0
+    summary = json.loads((tmp_path / "out" / "run_summary_cluster.json").read_text())
+    assert summary["close_recycle"] == "ok" and summary["ran"] == 1
 
 
 def _fidelity_cell(**over) -> dict:
@@ -1631,7 +1900,7 @@ def test_the_session_still_replaces_the_fleet_where_the_residue_could_answer(
 
 def test_a_cell_scored_against_a_pinned_reference_names_the_reference(monkeypatch, tmp_path):
     # A uly2 cell of a pinned checkpoint runs exact attention against a
-    # reference that renders the pinned kernel under the waiver
+    # reference that renders the pinned kernel, on one GPU as stock does
     # (matrix.known_wrong_reference). Its line names that reference, not this
     # cell's own kernel, which is no approximation.
     monkeypatch.setattr(run, "compare_outputs", lambda *args, **kwargs: {
@@ -1646,8 +1915,8 @@ def test_a_cell_scored_against_a_pinned_reference_names_the_reference(monkeypatc
     assert record["verdict"] == "PASS" and record["findings"] == []
     line = record["waived_render"]
     assert record["notes"] == [line] and line.startswith(f"{matrix.WAIVED_BAR} 0.07 ")
-    assert "sol_attn:checkpoint_pin" in line and "TORCH_FLASH" not in line
-    assert "this cell and its reference" not in line
+    assert "the reference renders the checkpoint's pinned approximate attention kernel" in line
+    assert "TORCH_FLASH" not in line and "this cell renders" not in line
     # A cfg2 or dp2 cell of the same checkpoint runs the pins too, under its own grant.
     held = _fidelity_cell(probe=True, attention="TORCH_FLASH",
                           waiver_guards=["sol_attn:checkpoint_pin"],
@@ -1655,8 +1924,9 @@ def test_a_cell_scored_against_a_pinned_reference_names_the_reference(monkeypatc
                                      "bar": matrix.WAIVED_BAR, "probe_steps": 1})
     record = {"verdict": "PASS", "findings": [], "notes": []}
     run._fidelity(record, held, tmp_path, 0.10)
-    assert record["verdict"] == "PASS" and "this cell and its reference both render" in \
-        record["waived_render"]
+    line = record["waived_render"]
+    assert record["verdict"] == "PASS" and "sol_attn:checkpoint_pin waiver" in line
+    assert "its one-GPU reference renders it as stock ComfyUI does" in line
 
 
 def test_a_card_no_cell_grants_is_dismissed_so_the_next_grant_finds_one(monkeypatch, tmp_path):
@@ -1706,7 +1976,7 @@ def test_a_card_no_cell_grants_is_dismissed_so_the_next_grant_finds_one(monkeypa
     monkeypatch.setattr(run, "frames_for", lambda output_dir, prefix: [])
     monkeypatch.setattr(run, "wait_for_memory", lambda *args, **kwargs: {"cleared": True})
     monkeypatch.setattr(run, "journal_lines", lambda host, since: [])
-    monkeypatch.setattr(run, "free_cache", lambda driver: "freed")
+    monkeypatch.setattr(run, "free_cache", lambda driver: "idle")
     config = {"driver": "http://fake", "out_dir": out, "comfy_dir": tmp_path,
               "sibling": "", "mem_floor_gib": 0.0, "reference": {"nrms_floor": 0.10}}
     args = type("Args", (), {"timeout_s": 0.0})()

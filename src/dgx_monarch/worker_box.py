@@ -6,8 +6,9 @@ driver does, and it knows the actor it dispatched to, except at a collective
 call of more than one rank, where Monarch's wrapper carries no rank; there the
 Worker marks its rank on the error (``actor/failure.mark_rank``). Each point
 that receives a Worker's error (``mesh_rpc.call_all_bound``,
-``mesh_lease.collect_sample``, the Fleet drain, the Fleet parity proof) calls
-``name``. It puts the box ahead of the Worker's sentence in ``box_names``'
+``mesh_lease.collect_sample``, the Fleet drain, the Fleet parity proof, and
+``mesh_setup_transition.ensure_setup`` for the rank whose setup it awaits)
+calls ``name``. It puts the box ahead of the Worker's sentence in ``box_names``'
 words, after the tag when there is one, and removes the mark, so every later
 reader (the #145 lift, the driver unload, the gate report, the consent card,
 Studio) reads "On the sibling, stock residency cannot load X here: ...".

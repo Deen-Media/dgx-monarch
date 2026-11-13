@@ -72,18 +72,20 @@ def test_a_row_cannot_broaden_the_evidence_scope(changed: dict[str, float | int]
         changed.get("world_min", original.world_min),
         original.topology, original.sage, original.note,
     )
-    assert not cfg_row_is_eligible(widened, "bf16")
+    assert cfg_row_is_eligible(original, "bf16", None, True)
+    assert not cfg_row_is_eligible(widened, "bf16", None, True)
 
 
 @pytest.mark.parametrize("changed", [{"topology": {"cfg": 4}}, {"topology": {"cfg": 2, "ulysses": 2}}, {"sage": True}])
 def test_cfg_evidence_cannot_authorize_different_parallel_math(changed) -> None:
     row = next(row for row in AUTO_TABLE if row.row == 20)
-    assert not cfg_row_is_eligible(replace(row, **changed), "bf16")
+    assert cfg_row_is_eligible(row, "bf16", None, True)
+    assert not cfg_row_is_eligible(replace(row, **changed), "bf16", None, True)
 
 
 @pytest.mark.parametrize("quant", ["bf16", "fp8", "int8"])
 def test_chroma_measured_quants_take_the_cfg_grant(quant: str) -> None:
-    decision = choose_auto_topology("chroma", quant, 1.05, 2, cfg_value=3.5)
+    decision = choose_auto_topology("chroma", quant, 1.05, 2, cfg_value=3.5, pair_differs=True)
     assert decision.topology.cfg == 2
     assert "faster than uly2" in decision.reason
     assert "bit-identical to one GPU" in decision.reason
@@ -91,7 +93,7 @@ def test_chroma_measured_quants_take_the_cfg_grant(quant: str) -> None:
 
 @pytest.mark.parametrize("quant", ["fp16", "fp32"])
 def test_chroma_unmeasured_quant_falls_back_to_conservative_ulysses(quant: str) -> None:
-    decision = choose_auto_topology("chroma", quant, 1.05, 2, cfg_value=3.5)
+    decision = choose_auto_topology("chroma", quant, 1.05, 2, cfg_value=3.5, pair_differs=True)
     assert decision.topology.ulysses == 2
     assert decision.topology.cfg == 1
     assert f"no passing {quant} result" in decision.reason
@@ -119,22 +121,103 @@ def test_longcat_still_uses_its_in_band_bf16_cfg_evidence() -> None:
         ("krea2", "fp8", 1.2, 4.5, 15),
         ("krea2", "fp8", 2.359, 4.5, 15),
         ("krea2", "bf16", 1.5, 4.5, 15),
-        ("chroma", "bf16", 1.5, 3.5, 19),
-        ("chroma", "fp8", 1.63, 3.5, 19),
-        ("chroma", "int8", 1.5, 3.5, 19),
         ("qwen_image", "fp8", 1.76, 4.0, 68),
-        ("boogu", "fp8", 1.05, 4.0, 79),
-        ("anima", "bf16", 1.05, 4.0, 47),
     ],
 )
 def test_campaign_k_rows_grant_their_measured_kinds(family, quant, megapixels, cfg, row) -> None:
-    decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=cfg)
+    for pair_differs in (False, True):  # these records grant every prompt pair
+        decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=cfg,
+                                        pair_differs=pair_differs)
+        assert decision.topology.describe() == "cfg2"
+        assert decision.rule.row == row and decision.skipped_cfg is None
+        assert f"table row {row}" in decision.reason
+        assert "bit-identical to one GPU on the shipped prompt pair" in decision.reason
+        assert "Campaign K 2026-10-14" in decision.reason
+        assert "head capped at 2100 MHz" in decision.reason
+
+
+# Issue #52, 2026-11-07: row 79 was measured on the template's pair, whose
+# text rows differ, so one GPU runs it as two calls; two pairs of equal rows
+# read off one GPU (check 10), so the record grants only a pair the sampler
+# tagged as differing.
+# Chroma's rows 20 and 19 take the same scope on their own equal-pair reading
+# (BF16 NRMS 0.034); below 1.2 MP Chroma has no Ulysses row, so the fallback
+# (row 99) catches an equal pair, and from 1.2 MP rows 21 (FP8) and 22 do.
+# Anima's row 47 had the same scope until 2026-11-10, when the text branch fix
+# made one GPU fold every Anima pair, as stock does (TROUBLESHOOTING #151).
+PAIR_SCOPED = (("boogu", "fp8", 79, 78),
+               ("chroma", "bf16", 20, 99), ("chroma", "int8", 20, 99))
+CHROMA_BAND = (("chroma", "bf16", 1.5, 19, 22), ("chroma", "fp8", 1.63, 19, 21),
+               ("chroma", "int8", 1.5, 19, 22))
+
+
+def test_only_the_boogu_and_chroma_rows_are_scoped_to_pairs_of_different_text_rows() -> None:
+    scoped = {row for row, record in CFG2_EVIDENCE.items() if record.pairs != "any"}
+    assert scoped == {19, 20, 79}
+    assert {CFG2_EVIDENCE[row].pairs for row in scoped} == {"unequal"}
+
+
+@pytest.mark.parametrize(("family", "quant", "row", "fallback"), PAIR_SCOPED)
+def test_a_pair_scoped_row_grants_cfg2_when_the_text_rows_differ(family, quant, row, fallback) -> None:
+    decision = choose_auto_topology(family, quant, 1.05, 2, cfg_value=4.0, pair_differs=True)
     assert decision.topology.describe() == "cfg2"
     assert decision.rule.row == row and decision.skipped_cfg is None
-    assert f"table row {row}" in decision.reason
-    assert "bit-identical to one GPU on the shipped prompt pair" in decision.reason
-    assert "Campaign K 2026-10-14" in decision.reason
-    assert "head capped at 2100 MHz" in decision.reason
+    assert "on the shipped prompt pair, whose text rows differ" in decision.reason or (
+        "bit-identical to one GPU on a prompt pair whose text rows differ" in decision.reason)
+    assert "2026-11-07" in decision.reason
+
+
+@pytest.mark.parametrize(("family", "quant", "megapixels", "row", "fallback"), CHROMA_BAND)
+def test_chromas_upper_band_grants_a_differing_pair_and_sends_an_equal_one_to_ulysses(
+        family, quant, megapixels, row, fallback) -> None:
+    granted = choose_auto_topology(family, quant, megapixels, 2, cfg_value=3.5, pair_differs=True)
+    assert granted.topology.describe() == "cfg2" and granted.rule.row == row
+    assert "bit-identical to one GPU on a prompt pair whose text rows differ" in granted.reason
+    assert "Campaign K 2026-10-14" in granted.reason and "head capped at 2100 MHz" in granted.reason
+    equal = choose_auto_topology(family, quant, megapixels, 2, cfg_value=3.5)
+    assert equal.topology.describe() == "uly2" and equal.rule.row == fallback
+    assert equal.skipped_cfg is not None and equal.skipped_cfg.row == row
+
+
+@pytest.mark.parametrize(("family", "quant", "row", "fallback"), PAIR_SCOPED)
+def test_an_equal_or_unread_pair_takes_the_ulysses_row(family, quant, row, fallback) -> None:
+    # The default is the unread answer: a caller that cannot tag the pair
+    # gets the row that costs speed, never the one that costs fidelity.
+    for kwargs in ({}, {"pair_differs": False}):
+        decision = choose_auto_topology(family, quant, 1.05, 2, cfg_value=4.0, **kwargs)
+        assert decision.topology.describe() == "uly2"
+        assert decision.rule.row == fallback
+        assert decision.skipped_cfg is not None and decision.skipped_cfg.row == row
+        assert (f"cfg2 table row {row} was measured on prompt pairs whose text rows differ, "
+                "and this pair's rows are equal or unread") in decision.reason
+    rule = next(rule for rule in AUTO_TABLE if rule.row == row)
+    assert cfg_row_is_eligible(rule, quant, None, True)
+    assert not cfg_row_is_eligible(rule, quant)
+
+
+def test_the_pair_clause_names_only_a_row_the_pair_alone_kept(monkeypatch) -> None:
+    # A quant miss keeps its own reason; an unequal pair does not rescue it.
+    for pair_differs in (False, True):
+        decision = choose_auto_topology("boogu", "bf16", 1.05, 2, cfg_value=4.0,
+                                        pair_differs=pair_differs)
+        assert decision.rule.row == 78 and decision.skipped_cfg.row == 79
+        assert "was measured on prompt pairs whose text rows differ" not in decision.reason
+        assert "has no passing bf16 result" not in decision.reason  # row 78 was chosen
+    # With no Ulysses row behind it, the fallback note names the pair.
+    from dgx_monarch import topology
+
+    row = AutoRule(999, "invented", (), 0.0, 1.2, 2, {"cfg": 2}, False, "")
+    monkeypatch.setattr(topology, "AUTO_TABLE", (row,))
+    monkeypatch.setitem(CFG2_EVIDENCE, 999, CfgEvidence(
+        row=999, family="invented", quants=("bf16",), min_mp=0.0, max_mp=1.2,
+        min_world=2, speedup="2x", fidelity="0.0",
+        faster=True, exact=True, in_band=True, basis="test", pairs="unequal",
+    ))
+    decision = choose_auto_topology("invented", "bf16", 1.05, 2, cfg_value=4.0)
+    assert decision.rule.row == 99
+    assert "cfg2 table row 999 was measured on prompt pairs whose text rows differ" in decision.reason
+    granted = choose_auto_topology("invented", "bf16", 1.05, 2, cfg_value=4.0, pair_differs=True)
+    assert granted.topology.describe() == "cfg2" and granted.rule.row == 999
 
 
 @pytest.mark.parametrize(
@@ -143,15 +226,34 @@ def test_campaign_k_rows_grant_their_measured_kinds(family, quant, megapixels, c
         ("krea2", "int8", 2.359, 15, 12),
         ("qwen_image", "bf16", 1.5, 68, 72),
         ("boogu", "bf16", 1.05, 79, 78),
-        ("anima", "fp8", 1.05, 47, 48),
     ],
 )
 def test_campaign_k_ungranted_kinds_fall_through_to_their_ulysses_row(
         family, quant, megapixels, skipped, fallback) -> None:
-    decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=4.0)
-    assert decision.topology.describe() == "uly2"
-    assert decision.rule.row == fallback
-    assert decision.skipped_cfg is not None and decision.skipped_cfg.row == skipped
+    for pair_differs in (False, True):
+        decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=4.0,
+                                        pair_differs=pair_differs)
+        assert decision.topology.describe() == "uly2"
+        assert decision.rule.row == fallback
+        assert decision.skipped_cfg is not None and decision.skipped_cfg.row == skipped
+
+
+@pytest.mark.parametrize("quant", ["bf16", "fp8"])
+def test_anima_takes_ulysses_for_every_pair_since_its_text_branch_fix(quant) -> None:
+    # 2026-11-10: a Worker pads Anima's text to 512 rows in extra_conds, as stock
+    # does, so one GPU folds every pair of at most 512 T5 ids into one batch-2
+    # call that cfg2's two batch-1 calls cannot reproduce; row 47 was withdrawn
+    # and no cfg row remains to skip.
+    assert not any(rule.family == "anima" and rule.topology.get("cfg", 1) != 1
+                   for rule in AUTO_TABLE)
+    assert all(record.family != "anima" for record in CFG2_EVIDENCE.values())
+    for megapixels in (0.26, 1.05, 1.5):
+        for pair_differs in (False, True):
+            decision = choose_auto_topology("anima", quant, megapixels, 2, cfg_value=4.0,
+                                            pair_differs=pair_differs)
+            assert decision.topology.describe() == "uly2"
+            assert decision.rule.row == 48 and decision.skipped_cfg is None
+            assert "before the batching decision" in decision.reason
 
 
 def test_krea2_int8_measured_exact_but_no_faster_keeps_ulysses() -> None:
@@ -197,7 +299,8 @@ def test_an_excluded_variant_only_narrows_its_own_record(monkeypatch) -> None:
     assert cfg_row_is_eligible(row, "bf16", "kroma")
     assert not cfg_row_is_eligible(row, "bf16", "other")
     # A variant no record excludes changes no other row.
-    chroma = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=3.5, variant="kroma")
+    chroma = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=3.5, variant="kroma",
+                                  pair_differs=True)
     assert chroma.topology.cfg == 2 and chroma.rule.row == 20
 
 

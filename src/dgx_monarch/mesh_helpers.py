@@ -142,7 +142,7 @@ def publish_setup_ready(
 
 
 def install_unhandled_fault_hook(correlation_state) -> bool:
-    """Route faults to logs/toasts, consuming them for per-actor recovery.
+    """Route faults to logs/toasts, consuming them; eviction recovers the fleet.
     Deliberate teardown noise is INFO; other faults are ERROR, and an exact
     repeat is a counted line. The supplied callable returns a coherent
     ``(live, creating, teardown-in-flight)`` snapshot. Returns whether the

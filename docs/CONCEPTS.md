@@ -120,7 +120,11 @@ test results are listed in
 
 **cfg2 (CFG-parallel).** Most renders compute prompt and negative-prompt
 versions of every step. cfg2 places each on a separate GPU and targets small
-to medium images.
+to medium images. One GPU batches the two into one call when they encode to
+the same length, and cfg2's two calls can round differently from that one, so
+on Boogu and Chroma `auto` takes cfg2 only for a prompt and negative of
+different lengths. Anima pads every prompt to one length first, so one GPU
+always batches its pair and `auto` keeps Ulysses for it.
 
 **Ulysses and ring (sequence parallelism, "USP").** The image is split across
 GPUs. Each GPU holds a token slice and exchanges attention data each step.
@@ -234,8 +238,11 @@ the sidebar says **Reset attached mesh** to distinguish it from restarting a
 Worker service. A reset reclaims the retained arena; slab mode normally avoids
 it. When you move from one large model to another on the same attached mesh,
 the Worker drops the last one before it loads the next, and the price counts
-that, but the retained arena and any model in the other slot stay. So a
-refusal may still say "the old model (<name>) is still loaded" and offer
+that, but the retained arena and any model in the other slot stay, within one
+setup: a graph with another topology, attention kernel or `sync_ulysses`
+rebuilds the setup first, which unloads every model on every Worker
+([TROUBLESHOOTING #33](TROUBLESHOOTING.md#33-a-live-topology-or-residency-policy-change-times-out-while-retiring-a-large-resident)).
+So a refusal may still say "the old model (<name>) is still loaded" and offer
 **Clear and retry**, which runs this reset; **Always clear and retry** lets
 the driver run it for you. A new LoRA on a large model held with another one
 can meet the same card when the host copy that LoRA keeps holds the memory:
@@ -252,7 +259,9 @@ stock-residency reference; automatic family detection can add another proof
 render. A gate run costs two to four short proof renders.
 
 **Auto-gating.** The first render of a new model, residency and LoRA
-combination runs the gate automatically.
+combination runs the gate automatically, through any DGX Monarch sampler. A
+dual-model render proves both of its models in one gate run, and that verdict
+covers only the pair.
 
 **The ledger.** Where verdicts live (`output/dgxm_gate_ledger.jsonl`). Each
 contextual `PASS`, `INCONCLUSIVE`, or `RETESTING` row is keyed to bounded

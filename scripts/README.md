@@ -138,8 +138,10 @@ interface for Worker-service lifecycle and setup.
 `scripts/setup_env.sh` is a developer-lab helper, not the portable installer.
 It creates or changes `~/monarch-env`, assumes `~/ComfyUI`, selects a fixed
 Torch/CUDA build, and for a ComfyUI before v0.38.0, which still needs
-torchaudio, can copy it from a donor environment. Its rerun can change
-packages already installed there. Do not run it against a user's
+torchaudio, can copy it from a donor environment. A torchaudio that is
+installed but does not import stops it with the repair, whatever the ComfyUI
+version, because Transformers imports an installed torchaudio. Its rerun can
+change packages already installed there. Do not run it against a user's
 working environment as part of agent onboarding.
 
 Use [INSTALL.md](../docs/INSTALL.md) for dependency installation and
@@ -149,11 +151,33 @@ separate reviewed prerequisite plan.
 
 ## CPU test wrapper
 
-`bash scripts/test_cpu.sh` runs `pytest tests/ -q --durations=25` from the
+`bash scripts/test_cpu.sh` first runs the gate checks CI's lint-and-unit job
+runs beside the suite: the protected test inventory, the refusal ledger, the
+TRUST citations, the leak check, ruff, mypy, compileall, the template,
+brand-asset, card and artifact checks, the source archive census, shell
+syntax and shellcheck, and the browser assets. Every gate runs even after one
+fails, and one line counts them. A gate is skipped and named when CairoSVG,
+the build module, a Git checkout, shellcheck or node is missing here; any
+other missing tool fails its gate. The census builds the source archive from
+a copy of the tracked files and holds it to that list, as CI does, so run
+`git add` on a new file first. No gate writes a tracked file: each tool runs
+in its check mode, which compares in memory, the refusal ledger's among them
+(`tests/test_refusal_classes.py --check`, the command CI runs), so an
+interrupt or a second run in the same checkout cannot leave one rewritten.
+The gates keep their scratch files and compileall's caches in one temporary
+folder outside the checkout and remove it at exit; ruff and mypy keep their
+own ignored caches in the checkout, as they do when run by hand.
+
+A green run covers those gates and the suite. It does not promise a green CI
+run: `tests/test_cpu_gates.py` names the CI steps that cannot run here and
+why, and CI's tools can be other versions than yours. The gates take under
+two minutes; `DGXM_SKIP_GATES=1` skips
+them, and CI skips them because it runs each as its own step. The wrapper then
+runs `pytest tests/ -q --durations=25` from the
 checkout root with this checkout's `src` first on `PYTHONPATH`,
 `HYPOTHESIS_PROFILE=ci`, and OMP and MKL at one thread unless already set. It
-prints the total time and the 25 slowest tests, and exits with pytest's
-status. `DGXM_TEST_PYTHON` selects the interpreter. The default is `python`,
+prints the total time and the 25 slowest tests, and exits non-zero when a gate
+or pytest failed. `DGXM_TEST_PYTHON` selects the interpreter. The default is `python`,
 which some systems lack, so set it or activate the environment first.
 
 Extra arguments are added to `pytest tests/`. Options such as `-k` or

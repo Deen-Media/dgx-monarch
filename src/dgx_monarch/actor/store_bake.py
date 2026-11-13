@@ -334,7 +334,7 @@ def lazy_swap_transition(
         _adopt_patch_uuid(stored, active)
         # The swap re-baked into these weights, or restored them
         # pristine when the new stack is empty.
-        stored.base_baked = bool(lora_stack)
+        stored.base_baked = stored.baked_in_place = bool(lora_stack)
         stored.lora_sig = lora_signature(lora_stack)
         stored.request_key = (*base_key, stored.lora_sig, stored.quant_kind)
         stored.artifact_identity = requested_identity
@@ -418,15 +418,18 @@ def copies_off_the_gpu(store, stored, slot: str, active) -> tuple[int, int]:
     the whole model is copied. On the 2026-11-05 hardware leg the BF16
     Wan-Animate 2 swap spent 230 s in that copy, while a fresh load of base
     and LoRA took 13.1 s and its patch 4.0 s. A fresh load drops the slot
-    without a host copy (``resident_ledger.unload_without_offload``) and the
+    without a host copy (``resident_ledger.unload_dropped``) and the
     sampler patches from the file's own host copy, at the same price.
 
     So ``uncovered`` counts the weights the new stack patches that the backup
     the clones share does not hold, and the store reloads when it is not 0.
     It stays 0, so the swap stays in place, unless every gate holds: classic
     mode (the caller), a stock resident (slab, FSDP and comfy-managed keep their
-    own paths), a model ComfyUI placed on the GPU, and an empty other slot,
-    whose model a drop's global unload would push to the host the same slow way.
+    own paths), a model ComfyUI placed on the GPU, and an empty other slot.
+    That last gate dates from the drop's global unload, which pushed the other
+    slot's model to the host the same slow way. On unified memory a stock drop
+    no longer does (``resident_ledger.unload_dropped``); the gate stays until
+    the in-place route beside a held slot is measured on hardware.
     """
     from . import store_residency
 
@@ -458,6 +461,7 @@ def hot_swap_transition(
     Returns ``None`` when the swap would first copy weights off the GPU
     (``copies_off_the_gpu``): the caller then loads base and stack fresh.
     """
+    from . import in_place_fallback
     from .model_store import _is_quantized_kind, lora_signature
 
     t0 = time.perf_counter()
@@ -466,8 +470,10 @@ def hot_swap_transition(
     if uncovered:
         logger.info(
             "model store [%s]: a LoRA change on %s would copy the model off the GPU first "
-            "(no host copy of %d of the %d weights the new stack patches), so the slot is "
-            "dropped and base and stack load fresh", slot, unet_name, uncovered, patched)
+            "(no host copy of %d of the %d weights the new stack patches), so it is not "
+            "hot-swapped: base and stack load fresh, or bake in place", slot, unet_name, uncovered, patched)
+        # The store holds what this build read (the patches, not the model) so the fresh load's walls price a fact.
+        in_place_fallback.note_stack_read(store, slot, lora_stack, getattr(active, "patches", None))
         return None
     store_identity.assert_stable_identity(
         request_artifact_identity(unet_name, lora_stack), requested_identity,

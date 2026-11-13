@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any, NoReturn
 
 from .. import consent_pending, consent_store, mesh_safety, old_model
@@ -290,25 +291,33 @@ def _worst(windows: Iterable[Any]) -> Any:
     return max(short, key=lambda window: window.shortfall) if short else None
 
 
-def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[Any],
-                 keep: Iterable[str] = (), window: str = "") -> old_model.ClearOffer | None:
-    """Ask the Workers on the driver host what they hold, after the loader refused.
+@dataclass(frozen=True, slots=True)
+class HostAnswers:
+    """What the Workers on the driver host answered, and the fleet they are on."""
+
+    mine: tuple[Any, ...]
+    handle: Any
+    hosts: int
+    local: bool
+
+
+def driver_host_answers(mesh: Any, unet_name: str, options: Any, slot: str = "",
+                        loras: Any = None, beside: Iterable[dict] = ()) -> HostAnswers | None:
+    """Ask the Workers on the driver host what they hold and what this load would do.
 
     Read-only and best effort: only a live, set-up fleet whose rank 0 shares
     the driver host is asked, through the agreement's own quote, and any fault
-    means no card and the loader's own refusal. The box is short by the worst
-    failing window's unclamped shortfall (``DriverFootprintEstimate.shortfall``):
-    a clear must make room in both windows. Slots this load reuses, and models
-    this graph loads (``keep``), are not old models. ``window`` names the
-    worst window, the one the loader's own refusal leads with.
+    means no answer. ``slot`` is the slot the load goes into, "cond" where the
+    caller does not know it, and ``loras`` its stack where the caller has one (the
+    loader node has none: the LoRA loaders run after it). ``beside`` are the
+    specs of the other loads the same graph makes, asked in the same question.
     """
     from .. import capacity_agreement, driver_footprint
 
-    worst = _worst(windows)
     # The fleet attached now: after a clear, the MeshSpec the Init node cached
     # still holds the retired handle while a fresh fleet serves the loads.
     handle = recycle_drain.attached_fleet(getattr(mesh, "handle", None))
-    if (worst is None or handle is None or getattr(handle, "defunct", False)
+    if (handle is None or getattr(handle, "defunct", False)
             or getattr(handle, "setup_key", None) is None
             or getattr(handle, "workers", None) is None
             or not driver_footprint.rank0_co_resident(mesh)):
@@ -317,7 +326,8 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
         world = int(getattr(handle, "world", 0) or 0)
         answers = capacity_agreement.collect(
             handle, capacity_agreement.quote_request(
-                [{"unet_name": unet_name, "options": options, "loras": [], "slot": "cond"}]),
+                [{"unet_name": unet_name, "options": options, "loras": loras or [],
+                  "slot": slot or "cond"}, *beside]),
             world, deadline_s=LOADER_QUOTE_DEADLINE_S)
     except Exception as exc:
         log.info("loader preflight could not ask the driver host's Workers what they "
@@ -326,25 +336,55 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
     hosts = tuple(getattr(getattr(handle, "config", None), "hosts", None) or ())
     local = getattr(handle, "owns_hosts", True) is False or not hosts
     gpus = int(getattr(handle, "gpus_per_host", 1) or 1)
-    mine = [answer for answer in answers if answer.quotes and not answer.silent
-            and (local or answer.rank // gpus == 0)]
-    if not mine:
+    mine = tuple(answer for answer in answers if answer.quotes and not answer.silent
+                 and (local or answer.rank // gpus == 0))
+    return HostAnswers(mine, handle, 1 if local else len(hosts), local) if mine else None
+
+
+UNASKED: Any = object()
+
+
+def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[Any],
+                 keep: Iterable[str] = (), window: str = "", asked: Any = UNASKED,
+                 credit: Any = None) -> old_model.ClearOffer | None:
+    """What a clear of the attached mesh would give back, after the loader refused.
+
+    The Workers on the driver host say what they hold (``driver_host_answers``,
+    or ``asked`` where the loader already asked them). The box is short by the
+    worst failing window's unclamped shortfall
+    (``DriverFootprintEstimate.shortfall``): a clear must make room in both
+    windows. Slots this load reuses, and models this graph loads (``keep``),
+    are not old models. ``window`` names the worst window, the one the
+    loader's own refusal leads with. ``windows`` are the uncredited ones: a
+    cleared box holds no copy for a Worker to drop, so where the loader's price
+    already counted a swap ``credit`` and still refused, the offer names that
+    model as dropped and what a clear returns beyond it.
+    """
+    worst = _worst(windows)
+    if worst is None:
+        return None
+    if asked is UNASKED:
+        asked = driver_host_answers(mesh, unet_name, options)
+    if asked is None:
         return None
     kept_names = frozenset(str(name) for name in keep) | {unet_name}
     names: list[str] = []
     gain = 0
-    for answer in mine:
+    for answer in asked.mine:
         kept = old_model.kept_slots(answer.quotes, kept_names)
         names.extend(old_model.old_models(answer.quotes[0], kept))
         gain += old_model.rank_gain(answer.quotes[0], kept)
     # The agreement named the box (box_names.py): rank 0 shares the driver
     # host here, so it is the head, or this box on a local fleet.
-    box = old_model.box_name(mine[0])
+    box = old_model.box_name(asked.mine[0])
     required = int(worst.projected) + int(worst.reserve)
+    dropped = (old_model.display_name(credit.dropped),) if credit else ()
     return old_model.box_offer(
-        unet_name, old_model.ShortBox(box, tuple(dict.fromkeys(names)), required,
-                                      int(worst.mem_available), gain, window=window),
-        hosts=1 if local else len(hosts), local=local, fleet=handle)
+        unet_name, old_model.ShortBox(
+            box, tuple(dict.fromkeys(names)), required, int(worst.mem_available), gain,
+            dropped=tuple(name for name in dropped if name in names),
+            left_bytes=max(gain - int(credit.freed), 0) if credit else 0, window=window),
+        hosts=asked.hosts, local=asked.local, fleet=asked.handle)
 
 
 def refuse_at_loader(offer: old_model.ClearOffer, message: str) -> NoReturn:

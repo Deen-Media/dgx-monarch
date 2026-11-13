@@ -834,6 +834,8 @@ Cfg2 comparisons of the shipped 100/28-token prompt pair at
 MXFP8 and INT8 ConvRot. Trimming cfg padding before the stock forward keeps
 its original unmasked call. Equal-length prompts take a different path:
 BF16 cfg2 read NRMS 0.034 because stock batches both conditions together.
+Since 2026-11-07 rows 20 and 19 grant only a pair whose text rows differ, so
+auto keeps Ulysses for an equal pair ([equal pairs](#campaign-k-equal-pairs)).
 
 BF16 pure Ulysses matched same-build local references at 1024 and
 1536 for 100/28 and 44/44 prompts, and across 26-step controls including
@@ -894,7 +896,11 @@ dimension 256 exceeds the other supported kernels. `sync_ulysses=off` was
 the faster measured setting, 24 versus 26 seconds, with unchanged output.
 Those two times are one 2-second polling interval apart, and the setting
 has no effect on the pinned xfuser 0.7.0, whose Ulysses all-to-all never
-receives it (see [Adapters](ADAPTERS.md#what-an-adapter-provides)).
+receives it (see [Adapters](ADAPTERS.md#what-an-adapter-provides)). The
+shipped workflow carried the setting off until 1.5.0 and leaves it on now, so
+that its setup matches the other shipped workflows'
+([Models](MODELS.md#model-ideogram4)). Every record in this section was taken
+with it off; no hardware run of this graph with it on is recorded yet.
 
 <a id="evidence-flux-1-dev"></a>
 
@@ -1984,8 +1990,56 @@ resident output with 118 auxiliary `llm_adapter` parameters replicated.
 Explicit BF16 cfg2 at 1024, with 102/36-token prompts, matched
 one-GPU probes on Flash, cuDNN and SAGE_AUTO: 12.0 seconds warm versus 20.0
 single. Three cfg2+FSDP and twelve Ulysses+FSDP records matched their
-resident legs. Since 2026-10-14 auto takes cfg2 for BF16 below 1.2 MP
-(row 47, [Campaign K](#campaign-k-cfg2)) and Ulysses elsewhere.
+resident legs. From 2026-10-14 auto took cfg2 for BF16 below 1.2 MP
+(row 47, [Campaign K](#campaign-k-cfg2)) and Ulysses elsewhere. From
+2026-11-07 row 47 took only a pair whose text rows differ: a pair of equal
+rows read one-step NRMS 0.015 to 0.042 on cfg2 against one GPU, and no full
+schedule matched ([equal pairs](#campaign-k-equal-pairs)). Every reference
+above was the Worker's earlier one GPU, which ran the shipped pair unfolded,
+and on 2026-11-10 that reference differed from stock ComfyUI. These records
+are superseded, and row 47 was withdrawn the same day (below).
+
+<a id="anima-text-branch-fix"></a>
+
+**The text branch fix, 2026-11-10.** In the review round's cfg pair row
+(sessions FR3 and FR3L, 2026-11-10, ComfyUI `8a98ecf58`, head capped at 2100
+MHz, plateau 2093 MHz), the shipped Anima graph at one step and seed 42 read
+largest difference 0.4086 and NRMS 0.0284 against stock ComfyUI on one GPU
+for the Worker's `single` (`mode=local`, `gpus_per_host=1`), with 204483 of
+262144 latent values apart, while the Worker's `single`, row 0 of its dp2
+render and `run_matrix`'s single reference were bit-identical. The expected
+cause is ComfyUI's `Anima.extra_conds`, which prepares the text once per conditioning
+at 512 rows only in inference mode, which a Worker's sampling thread is not
+in ([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+On the CPU, against ComfyUI v0.45.0 and `8a98ecf58`, with a tiny Anima that
+ComfyUI's own loader detects, the Worker's KSampler path made two batch-1
+model calls a step on a pair of 14 and 9 Qwen3 rows where stock made one
+batch-2 call at 512 rows, and ran the text adapter on every call where stock
+ran it twice a render; inference mode alone switched the two. After the fix
+the Worker's calls equal stock's, input for input
+(`tests/test_anima_cond_branch.py`). The CPU latents matched before and after
+the fix, because CPU kernels give one batch's bits at either batch size, so
+only hardware can show the fix closes the 0.028. With the fix one GPU folds
+every Anima pair of at most 512 T5 tokens, as stock does, and cfg2's two
+batch-1 calls are not that call, so `auto` table row 47 is withdrawn and
+every Anima render under `auto` takes uly2 (row 48). The hardware legs:
+
+| Leg | Compared with | Bar | Result |
+|---|---|---|---|
+| The Worker's `single`, shipped graph, one step and the full 30 steps | stock ComfyUI on one GPU, same seed | bit-identical | NOT RUN |
+| dp2 batch 2, row 0, one step and full schedule | stock ComfyUI on one GPU | bit-identical | NOT RUN |
+| `auto` (uly2, row 48) on the shipped pair, one step and full schedule | stock ComfyUI on one GPU | bit-identical | NOT RUN |
+| `auto` (uly2) on the equal pair (`eqsame`), one step and full schedule | stock ComfyUI on one GPU | bit-identical | NOT RUN |
+| Explicit cfg2 on the shipped pair and on the equal pair, one step and full schedule | stock ComfyUI on one GPU | measured: NRMS and largest difference recorded | NOT RUN |
+| `uly2+fsdp` on the shipped pair, one step | resident uly2 | bit-identical | NOT RUN |
+| `cfg2+fsdp` on the shipped pair, one step | resident cfg2 | bit-identical | NOT RUN |
+| The shipped graph with a LoRA that has `llm_adapter` and DiT units, `single` and uly2, one step; then a strength change and the LoRA's removal on the same load | stock ComfyUI on one GPU with the same LoRA; after removal, the render without it | bit-identical; no error | NOT RUN |
+| The shipped template as shipped (`auto_gate` first_use, default slab), one render on a fresh fleet | the gate's own legs | the gate PASSes | NOT RUN |
+| Explicit cfg2 on a pair where one side passes 512 T5 tokens, one step | stock ComfyUI on one GPU | bit-identical: stock does not fold that pair | NOT RUN |
+| Warm sampler walls for one GPU, uly2 and cfg2 on the shipped pair at 1024 square | each other, head cap noted | recorded | NOT RUN |
+
+Every leg's Worker log shows `anima text branch: preprocessed once
+(extra_conds)` on every rank.
 
 <a id="evidence-boogu"></a>
 
@@ -1996,7 +2050,10 @@ controls after the instruct text layers used the full row set. The shipped
 probe also matched one GPU, with 36.0/50.0 second warm times. Stored-byte FSDP matched resident output.
 Unequal cfg2 prompts dispatch whole conditions independently; no padding is
 used. The cfg2 comparison read 0.000, with 26.0 seconds warm versus
-50.1 single. Equal-prompt timing after that repair remains unmeasured.
+50.1 single. On 2026-11-07 a pair of equal text rows, which folds onto the
+slice path, read one-step NRMS 0.014 to 0.025 on FP8 cfg2 against one GPU and
+full-schedule NRMS up to 0.279, so row 79 takes only a pair whose text rows
+differ ([equal pairs](#campaign-k-equal-pairs)).
 
 <a id="evidence-pixeldit-pid"></a>
 
@@ -2029,9 +2086,50 @@ also exercised a Video Lite LoRA, whose warm bake matched a fresh session.
 
 ### LTX 2.3 T2V
 
-FP8-scaled auto/Ulysses completed cold and warm 121-frame renders;
-the decoded one-step probe matched its local reference exactly. Native RDMA
-latent return for this LTX workload is separate and remains NOT RUN / HOLD.
+FP8-scaled auto/Ulysses completed cold and warm 121-frame renders. On
+2026-09-27 (torch 2.12.0, ComfyUI `3216c62e`) a one-step probe of the template
+on `auto`, which takes uly2, with the dev FP8-scaled checkpoint decoded to
+frames identical to its one-GPU reference; that compared decoded 8-bit frames,
+not latents. On 2026-11-07 (dev `a76e967`, torch 2.15.0+cu132, ComfyUI
+`8a98ecf58`) the shipped template with the distilled FP8-scaled checkpoint was
+compared at the latent level, one step, seed 1031: uly2 differed from a
+one-GPU render at every geometry, under the 0.10 one-step floor but not
+identical, while Wan 2.1 through the same method was identical at every
+geometry.
+
+| geometry | uly2 against one GPU: NRMS / max abs / elements differing |
+|---|---|
+| 1280x704x121 (the template) | 0.0116 / 0.041 / 1,193,521 of 1,802,240 |
+| 512x512x121 | 0.0125 / 0.043 / 370,741 of 524,288 |
+| 512x512x57 | 0.0137 / 0.049 / 190,595 of 262,144 |
+
+The difference spreads evenly over frames, rows, channels and both ranks'
+halves, the mark of rounding rather than of a wrong row. The same day an op
+probe on the head's idle GPU, at LTX 2.3's shapes, found its source, under
+torch 2.15.0 with cuBLAS 13.4.1.3 and under torch 2.12.0 with cuBLAS 13.4.0.1
+alike. The per-head gate projection, a GEMM 32 columns wide, rounded a row
+differently at a rank's row count than at stock's at every geometry, and
+comfy-kitchen's fused AdaLN did so at 1024 rows a rank only. Filled to stock's
+row count, either call gave stock's bits. The wide q, k, v, out and FFN GEMMs,
+the q and k norm and the RoPE call kept a row's bits at every row count.
+
+| op, a rank's rows against stock's (the worse of the two rank windows) | 7040 / 14080 | 2048 / 4096 | 1024 / 2048 |
+|---|---|---|---|
+| gate projection, torch 2.15: outputs differing, max abs | 80,852, 0.031 | 42,240, 0.063 | 21,112, 0.063 |
+| gate projection, torch 2.12 | 101,241, 0.031 | 42,634, 0.063 | 21,112, 0.063 |
+| fused AdaLN, both builds, each window | identical | identical | 72 / 0.016 and 85 / 0.008 |
+| either call filled to stock's rows | identical | identical | identical |
+
+So the gate's row-count dependence predates torch 2.15, and the 2026-09-27
+identity came from another checkpoint and a decoded compare. The fused AdaLN
+switch alone, which the image families meet at 512 square, does not explain
+the shipped size ([fused AdaLN switch](#fused-adaln-switch-other-families)).
+From 1.5 the
+sharded block launches both calls at one GPU's row count, and the sharded
+self-attention applies RoPE through the call stock makes
+(`adapters/ltx_parity.py`). The latent re-read of the three geometries on that
+build, with Wan 2.1 at 832x480x81 as the control, has not run. Native RDMA latent return for this LTX workload is separate
+and remains NOT RUN / HOLD.
 
 <a id="evidence-ltx-2-3-i2v-av-packed"></a>
 
@@ -2254,8 +2352,13 @@ too, so their times are not render times and no row above changes.
 | cfg2 | NRMS 0.116, over the floor | NRMS 0.085, under the floor, not identical |
 
 cfg2 renders differently from one GPU in both readings, with a largest pixel
-difference of 255, where every other family with a cfg2 record renders
-bit-identical, so the family refuses cfg-parallel from this release
+difference of 255. Other cfg2 records differ from one GPU too: the measured
+equal-length pairs on Chroma BF16, Kroma, FLUX.3 Klein Base and MOSS-Image SFT
+read under the floor ([cfg2 crossover rows](#campaign-k-cfg2)), while PixelDiT
+BF16 ([PixelDiT and PiD](#evidence-pixeldit-pid)) and Chroma NVFP4
+([Chroma](#evidence-chroma)) read over it; PixelDiT refuses cfg2, and Chroma
+NVFP4 runs it only under a waiver. SCAIL-2's reading without a LoRA is over
+it too, so the family refuses cfg-parallel from this release
 ([TROUBLESHOOTING #136](TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
 The ring2 cell with the LoRA rendered its cold and warm legs in both of two
 sessions and refused its probe leg class C both times: the cross-rank
@@ -2673,9 +2776,10 @@ lists every cell's walls, speedups and fidelity.
   1152, 1216, 1280 and 1536, Turbo BF16 at 1536, Krea2 Turbo FP8-scaled at
   1152, 1216, 1280, 1408 and 1536 (CFG 1 under `euler_cfg_pp`) and at 1536
   under CFG 4.5 Euler, Chroma1-HD BF16, FP8-mixed and INT8 ConvRot at 1152 to
-  1280, Qwen-Image 2512 FP8 at 1152 to 1328, and Kandinsky5 Lite image, Boogu
-  FP8 and Anima BF16 at 1024. uly2 on Torch Flash was bit-identical in every
-  cell.
+  1280, Qwen-Image 2512 FP8 at 1152 to 1328, and Kandinsky5 Lite image and
+  Boogu FP8 at 1024, and Anima BF16 at 1024 against the Worker's earlier one
+  GPU (superseded on 2026-11-10, [Anima](#anima-text-branch-fix)). uly2 on
+  Torch Flash was bit-identical in every cell.
 - **Krea2 RAW INT8.** cfg2 was exact at every size but no faster than uly2
   below 1536: 0.97x at 1152, 0.98x at 1216, 1.03x at 1280 and 1.08x at 1536.
   Exact is not enough for a row, so row 15 grants FP8 and BF16 only and INT8
@@ -2693,31 +2797,141 @@ lists every cell's walls, speedups and fidelity.
   became automatic rows: 15 for Krea2 FP8 and BF16 from 1.2 to 2.36 MP, 19 for
   Chroma BF16, FP8 and INT8 from 1.2 to 1.64 MP, 68 for Qwen-Image FP8 from
   1.2 to 1.77 MP, and 79 for Boogu FP8 and 47 for Anima BF16 below 1.2 MP.
+  Since 2026-11-07, rows 79 and 47, and Chroma's rows 20 and 19, grant only a
+  prompt pair whose text rows differ ([equal pairs](#campaign-k-equal-pairs)).
+  Row 47 was withdrawn on 2026-11-10: its record was measured against the
+  Worker's earlier unfolded one GPU and is superseded
+  ([Anima](#anima-text-branch-fix)).
   Each record grants only the precisions that read bit-identical and beat
   uly2 at every measured size in its band. Kandinsky5 Lite image met that bar
   at 1024, but its image and video checkpoints share one family, so it has no
   row.
 
 Not measured: MXFP8 and NVFP4 Krea2 files, Chroma
-FP8-scaled and Radiance above 1024, Qwen-Image Edit-2511, equal prompt pairs on Krea2, Boogu
-and Anima, which fold onto the slice path, and world 4. Each can still reach a cfg2 row
+FP8-scaled and Radiance above 1024, Qwen-Image Edit-2511, equal prompt pairs on Krea2,
+which fold onto the slice path, and world 4. Each can still reach a cfg2 row
 through a shared family and precision class: MXFP8 and
 NVFP4 Krea2 files reach row 15 (in September, RAW NVFP4 cfg2 read 1-step NRMS
 0.0113), Chroma FP8-scaled and Radiance reach row 19, an Edit-2511 FP8 file
-would reach row 68, and an equal pair takes the slice path on rows 15, 79 and 47.
+would reach row 68, and an equal pair takes the slice path on row 15.
 Kroma BF16 was measured on 2026-10-16 and row 15 excludes it
 ([Kroma cfg2](#kroma-cfg2)).
 Where an equal pair was measured, the slice path stayed under the floor but
 did not match one GPU: Chroma BF16 read NRMS 0.034 ([Chroma](#evidence-chroma)),
 FLUX.3 Klein Base 0.009 to 0.031
-([FLUX.3 Klein Base](#evidence-flux-3-klein-base)), Kroma BF16 0.009 to 0.011 and
+([FLUX.3 Klein Base](#evidence-flux-3-klein-base)), Kroma BF16 0.009 to 0.011,
 MOSS-Image SFT with its skip off 0.023 to 0.026
-([MOSS-Image SFT](#evidence-moss-image-sft)).
+([MOSS-Image SFT](#evidence-moss-image-sft)), and Anima BF16 0.015 to 0.042 and
+Boogu FP8 0.014 to 0.025 ([equal pairs](#campaign-k-equal-pairs)).
+
+<a id="campaign-k-equal-pairs"></a>
+
+**Equal prompt pairs on rows 47 and 79, 2026-11-07, dgx-monarch `a76e967`,
+ComfyUI `8a98ecf58`, torch 2.15.0+cu132.** Issue #52 asked whether the Anima
+and Boogu grants, measured on each template's pair, hold for a pair whose text
+rows are equal, which one GPU folds into one batch-2 call where cfg2 makes two
+batch-1 calls. `benchmark/run_matrix.py` ran in cluster mode on both Sparks,
+one process per cell, with the settings of Campaign K's cells
+`a09-anima-1024` (row 47, anima-base-v1.0 BF16, 30 steps, CFG 4) and
+`a08-boogu-fp8-1024` (row 79, the fp8_scaled file, 25 steps, CFG 4): 1024
+square, seed 42, one repeat, and the reference from batch row 0 of a
+same-build dp2 render of batch 2. The first Spark was capped, its SM clock
+peaking at 2093 MHz in every cell; the second was uncapped. Each row kept the
+template's negative and ran three positives: the template's own (`unequal`),
+the negative's text (`eqsame`), and another text that ComfyUI's tokenizers
+encode to the negative's rows (`eqdiff`: 31 Qwen3 and 36 T5 rows on Anima, 66
+Qwen3-VL rows on Boogu, where the empty negative takes the tokenizer's drop
+template). Walls are warm sampler medians without text encoding or decode.
+
+| Row, pair | cfg2 full schedule against one GPU (max abs, NRMS) | cfg2 one step (max abs, NRMS) | One GPU / cfg2 full wall |
+|---|---|---|---|
+| 47 Anima, `unequal` | Identical | Identical | 22.43 / 12.93 s |
+| 47 Anima, `eqsame` | 0.0404, 0.0047 | 0.0662, 0.0150 | 26.87 / 16.35 s |
+| 47 Anima, `eqdiff` | 2.4671, 0.0401 | 0.3575, 0.0419 | 22.21 / 13.39 s |
+| 79 Boogu FP8, `unequal` | Identical | Identical | 50.37 / 27.38 s |
+| 79 Boogu FP8, `eqsame` | 8.7038, 0.2785 | 0.1082, 0.0137 | 61.75 / 34.84 s |
+| 79 Boogu FP8, `eqdiff` | 3.7493, 0.0770 | 0.4652, 0.0252 | 50.24 / 27.47 s |
+
+Every equal-pair latent differed from the reference in all but one of its
+262144 elements, or in all of them, over the full schedule. The one-step
+readings stay under the 0.10 floor, so these are measured results, not
+refusals, but they miss the
+[cfg2 row bar](DESIGN.md#54-topology--auto-mode), which needs cfg2
+bit-identical to one GPU. The template pairs stayed bit-identical on this
+build. (The Anima rows were measured against the Worker's earlier unfolded
+one GPU, which on 2026-11-10 differed from stock; they are superseded and row
+47 was withdrawn: [Anima](#anima-text-branch-fix).) Rows 47 and 79
+therefore granted only a pair whose text rows differ:
+the sampler node tags the latent when the positive's and the negative's text
+tensors differ in rows, and an equal or unread pair takes rows 48 and 78
+(uly2). Chroma's rows 20 and 19 take the same scope on its earlier equal-pair
+reading (BF16 NRMS 0.034, [Chroma](#evidence-chroma)): its text is a
+`CONDRegular`, as Boogu's is, so rows that differ never fold on
+one GPU, and an equal pair takes the uly2 fallback below 1.2 MP and rows 21
+and 22 above it. Explicit `cfg2` on an equal pair still renders. The records are
+`out/review_round_2026-11-07/c10_cfg2/` in the validation tree: one cell file
+each, the saved latents, the token counts, both Workers' journals and the
+first Spark's clock trace.
 At world 4 a batch-1 render on a cfg row refuses class K. An evidence record
 has no CFG field, so the Krea2 record covers every CFG other than 1, and CFG 1
 under a CFG++ sampler that a DGX Monarch KSampler node names, on the strength
 of the two regimes measured. A Sampler Custom graph names no sampler, so at
 CFG 1 it keeps Ulysses.
+
+<a id="fused-adaln-switch-other-families"></a>
+
+## Fused AdaLN kernel switch in other families (2026-11-07)
+
+The FLUX.3 probe of 2026-10-16 found comfy-kitchen's fused AdaLN taking one
+kernel for calls of 1024 kernel rows or fewer and another above
+([FLUX.3 Klein](#evidence-flux-3-klein)). Issue #54 asked whether the other
+families that call `adaln` or `rms_adaln` on sharded rows meet it. On ComfyUI
+`8a98ecf58` those are Flux 1, Flux 2, Chroma, Radiance and HunyuanVideo 1.5
+(through `modulated_norm` in `flux/layers.py`), Qwen Image 2.1, Wan 2.1 and LTX
+2.3; MOSS-Image and FLUX.3 already fill their calls. Radiance and HunyuanVideo
+1.5 did not run, nor did SeedVR, which has no adapter and no shipped template. Each leg rendered a shipped template twice at one step, seed
+1031, on dgx-monarch `a76e967`, torch 2.15.0+cu132, both Sparks: Init dp2 at
+batch 2, whose batch row 0 is the one-GPU reference, and Init uly2 at batch 1,
+both with the automatic gate off and stock residency (Flux 2 with slab
+residency, because its 33.0 GiB file does not fit a stock load beside its host
+copy). A true one-GPU render (`mode=local`, `gpus_per_host=1`) of Flux 1 at 512
+square and LTX 2.3 at 1280x704x121 and 512x512x57 equalled the dp2 row 0 bit for
+bit. The first Spark was capped, its SM clock peaking at 2093 MHz; the second
+was uncapped. The table compares saved latents.
+
+| Family, template | Size | uly2 against one GPU (max abs, NRMS, elements differing) |
+|---|---|---|
+| Flux 1, `flux1-t2i` | 1024 square (shipped) | Identical |
+| Flux 1 | 512 square | 0.1298, 0.0064, 36260 of 65536 |
+| Flux 2, `flux2-t2i` (FP8-mixed) | 1024 square (shipped) | Identical |
+| Flux 2 | 512 square | 0.0938, 0.0116, 106517 of 131072 |
+| Chroma, `chroma-t2i` (FP8-mixed) | 1024 square (shipped) | Identical |
+| Chroma | 512 square | 0.6058, 0.0620, 59833 of 65536 |
+| Qwen Image 2.1, `qwen-image21-t2i` (BF16) | 1024 square (shipped) | Identical |
+| Qwen Image 2.1 | 512 square | 0.1738, 0.0060, 40275 of 65536 |
+| Wan 2.1, `wan-t2v` (14B FP8) | 832x480x81 (shipped) | Identical |
+| Wan 2.1 | 512x512x81 | Identical |
+| Wan 2.1 | 512x512x5 (1024 rows a rank) | Identical |
+| LTX 2.3, `ltx-t2v` (22B distilled FP8) | 1280x704x121 (shipped) | 0.0410, 0.0116, 1193521 of 1802240 |
+| LTX 2.3 | 512x512x121 | 0.0430, 0.0125, 370741 of 524288 |
+| LTX 2.3 | 512x512x57 (1024 rows a rank) | 0.0488, 0.0137, 190595 of 262144 |
+
+Flux 1, Flux 2, Chroma and Qwen Image 2.1 match one GPU at their shipped size
+and miss at 512 square, the switch's pattern: at 512 square a single block's
+joint call is 1536 rows on one GPU and 768 on a rank, and Qwen Image 2.1's
+prefix-plus-target call crosses the same line. The four text-to-image
+templates measured ship at 1024 square, so none is affected; the Qwen Image
+2.1 edit templates follow their input's size and did not run. From this release their sharded
+blocks fill each fused-norm call to stock's rows
+([parity rule](DESIGN.md#53-attention-adapters)); a hardware re-read of the
+512-square cells is pending. Wan 2.1 matches everywhere, the size built to meet
+the switch included: its CFG 5 folds cond and uncond into one batch-2 call, so a
+rank's call holds 2048 kernel rows there. LTX 2.3 differs at every size, the
+shipped one included, where a rank's call holds 7040 rows, far over the switch,
+so the switch does not explain it; an op probe the same day traced it to the
+per-head gate projection, with the switch adding a term at 1024 rows a rank,
+and from 1.5 both run at stock's rows ([LTX 2.3 T2V](#evidence-ltx-2-3-t2v)). The records are `out/review_round_2026-11-07/c09_adaln/` in the
+validation tree.
 
 ## INT8 GEMM kernel comparison (2026-10-28 and 29)
 
@@ -2756,8 +2970,13 @@ decoded samples for audio:
   for frame identical.
 - Audio: 9 of 12 tracks sample-identical. The three that differ are MiniMax H3
   tracks, in legs whose frames are identical, by at most 1e-3 of full scale and
-  in different legs each time. That is the audio decode, not the GEMM: a kernel
-  difference would move the latents and the frames with them.
+  in different legs each time. The audio decode is the likely source, but this
+  comparison saved no audio latents, and audio is its own output beside the
+  frames, so identical frames do not rule out a kernel difference in the audio
+  stream. On 2026-11-04 identical H3 audio latents decoded to FLAC tracks that
+  differed by up to 1.4e-3 of full scale
+  ([MiniMax H3 context windows](#minimax-h3-context-windows)), which fits that
+  reading without proving it for this run.
 - Harness verdicts matched between the passes (PASS, or CHECK where a family's
   single-GPU INT8 reference is refused under the checkpoint pin and the uly2 cell
   has nothing to compare against: FLUX.3 Klein, MOSS-Image, Kromoss).
@@ -2773,9 +2992,10 @@ Triton kernel"): 16 to 25 percent faster on MiniMax H3 and Wan Animate 2, 5 to
 Krea2, Qwen Image 2.1 and the small turbo stills. The harness times at 2 s granularity. A first stock pass had read
 Krea2 on one GPU at 86 s against 94 s under the kernel; the stock re-render
 read 94 s, so that was run-to-run variance, not the kernel. At the GEMM level
-the two routes are within 8 percent of each other either way below 4096 rows
-(the worst reading 0.92 on the Ideogram4 qkv linear at 1024 rows), the kernel
-is at or above CUTLASS from 4096 rows up on every shape but one reading
+the kernel ran at 0.92 to 1.20 times CUTLASS at 1024 rows, the only point the
+BENCHMARKS table lists below 4096: 8 percent slower at worst, on the Ideogram4
+qkv linear, and 20 percent faster at best, on the H3 mlp-out linear. From 4096
+rows up it is at or above CUTLASS on every shape but one reading
 (Ideogram4 adaln at 8192 rows, 0.96), and from 6144 rows up CUTLASS falls to 37
 to 55 percent of its peak while the Triton kernel holds about 175 TOPS. The
 small-M losses sit on calls that are a small share of a render, and no measured
@@ -3290,9 +3510,151 @@ VAE Decode, as the decode check does.
 | cell | settings | a pass shows | status |
 |---|---|---|---|
 | one rank | Init `mode=local`, `gpus_per_host=1`, beside the driver on the head | the actor log shows `Using context windows: Context length 37 with overlap 12 for 107 frames.` and `Context window 1/4` to `4/4` on each step; the driver's deadline line counts 150,838 rows plus four times the prompt's text rows, against 109,062 plus one times them unwindowed; the render completes | PASS: the four windows (frames 0-36, 25-61, 50-86 and 70-106 of 107) on each of the 20 steps and on each proof-render step, a deadline line for 152,442 packed rows (150,838 plus four times 401 text rows), and 362 PNG frames and a FLAC saved. The prompt took 3990.7 s, 3085.4 s of it sampling (about 154 s per step); the first-use gate's two proof renders, INCONCLUSIVE with nothing to gate, took 637.4 s. The head's lowest MemAvailable was 56.6 GiB |
-| the pair | topology `uly2` | the same actor lines on both ranks, both ranks report identical latents, all 362 PNG frames are identical to the one-rank cell, and the audio latent is identical | PASS: the same four windows on both ranks on every step, `cross-rank latent identity: 2 comparisons across 1 DP groups bit-identical`, the video and audio latents those of the one-rank cell, and 362 of 362 frames pixel-identical to it. The prompt took 2080.4 s, 1799.8 s of it sampling (about 90 s per step); lowest MemAvailable 48.8 GiB on the head and 76.3 GiB on the sibling. The FLAC is not sample-identical to the one-rank cell's: 18 of 964,800 samples differ, by at most 1.4e-3 of full scale. Both audio latents are identical, so that is the driver's audio decode, the noise the [INT8 GEMM kernel comparison](#int8-gemm-kernel-comparison-2026-10-28-and-29) records, not the windows |
+| the pair | topology `uly2` | the same actor lines on both ranks, both ranks report identical latents, all 362 PNG frames are identical to the one-rank cell, and the audio latent is identical | PASS: the same four windows on both ranks on every step, `cross-rank latent identity: 2 comparisons across 1 DP groups bit-identical`, the video and audio latents those of the one-rank cell, and 362 of 362 frames pixel-identical to it. The prompt took 2080.4 s, 1799.8 s of it sampling (about 90 s per step); lowest MemAvailable 48.8 GiB on the head and 76.3 GiB on the sibling. The FLAC is not sample-identical to the one-rank cell's: 18 of 964,800 samples differ, by at most 1.4e-3 of full scale. Both audio latents are identical, so that is the driver's audio decode, not the windows; the [INT8 GEMM kernel comparison](#int8-gemm-kernel-comparison-2026-10-28-and-29) saw H3 track differences of the same size |
 | ring | topology `ring2` | a window whose packed total is odd refuses class K with the H3 ring-pad text before any block runs; otherwise the render completes with identical latents on both ranks | PASS: the first window's total was odd, and both ranks refused class K with the ring-pad text at its entry, inside the gate's first proof render and again in the render, with the waiver card offered; no rank sampled, and the prompt ended in 30 s |
 | an old ComfyUI | one Worker on ComfyUI 0.43 | the render refuses class P on both ranks with the ComfyUI 0.44.0 text (#142) and no rank waits out the group timeout | NOT RUN: it needs a Worker on ComfyUI 0.43 |
+
+## ComfyUI 0.45.0
+
+ComfyUI 0.45.0, tagged on 2026-11-10, is this release's floor. Its commit
+ede4e5f (#17655) changed the MiniMax H3 output head: the last argument of
+`FinalLayer.forward` is one sigma grid per stream where 0.44.x took the two
+flow shifts, and a stacked PDD head picks its blocks by the nearest grid
+point. The CPU checks run against ComfyUI 0.45.0 in the comfy canary, and
+against the earlier tree by hand: `tests/test_h3_head_form_comfy.py` (a stacked head
+at world 1 against stock on 0.45.0, with steps that span several head intervals, the adapter's grid against stock's
+`pdd_grid`, a one-block head against stock and a stacked head's refusal on
+0.44.0, and the block loop's prefetch calls on both), canary seam 25 and the
+touchpoint manifest. No hardware run has used ComfyUI 0.45.0 yet.
+
+| behaviour | upstream change | what a run must show | status |
+|---|---|---|---|
+| MiniMax H3 t2va on uly2 | ede4e5f: the head's grids | `dgx-monarch-minimax-h3-t2va.json` at one step, seed 1031, on uly2 against one GPU on the same ComfyUI 0.45.0 tree, latents compared | NOT RUN |
+| MiniMax H3 fl2va on uly2 | ede4e5f | `dgx-monarch-minimax-h3-guide.json` likewise | NOT RUN |
+| p-h3-image on uly2 | ede4e5f | `dgx-monarch-p-h3-image.json` at its 8 steps on uly2 against one GPU on 0.45.0 | NOT RUN |
+| The block-scope pops under the malloc graph | the scope stock passes on both trees | an H3 render on uly2 with comfy-managed residency on the Workers (the one Worker mode that turns ComfyUI's malloc graph on), once with exact attention and once with Sol-Attn; the Worker log's `Comfy model compiler graph breaks: N, rogues: M` line and peak memory against the same render before this change | NOT RUN |
+| The release-test rows on 0.45.0 | the floor | the three templates above in the template release test | NOT RUN |
+
+<a id="minimax-h3-image"></a>
+
+## MiniMax-H3-Image
+
+The adapter (`adapters/minimax_h3_image.py`) has its CPU proof against
+ComfyUI 0.45.0: `tests/test_minimax_h3_image_comfy.py` gives stock's bits at
+world 1 on text to image, an odd latent, and edits with one and three
+reference pictures, on and off the head grid and down to sigma 0, and hands
+every block stock's attention operands at world 2 through the threaded
+two-rank harness, pad rows excluded, on references larger than the target,
+text across the shard line with presentation tags, the off-grid table, a
+payload without its layout and a refined context, with no attention pin
+running on a rank. At world 2 it compares by bits on aarch64 (the Sparks, on
+CPU) and within 2e-5 on the comfy canary's x86 runner; bit identity on GB10
+is a hardware leg (the identity rows below). Canary seams 53 to 59 hold the
+forward, the layout, the head, the build, the sampling grid, the edit node's
+payload and the row-keyed calls. In a world of one GPU the record says
+the header pins are kept; on uly2 it says they are dropped. No hardware render
+of this family has been taken: every hardware row below is NOT RUN.
+
+| behaviour | what a run must show | status |
+|---|---|---|
+| The row-keyed calls at a rank's rows | `tools/h3_image_row_check.py` on each DiT file at 1024, 2048 and 4096 square, every call equal on every rank | NOT RUN |
+| Identity on uly2 | uly2 against stock on one GPU on the pin-stripped copy, text to image at 1024, 2048 and 4096 square for the BF16, INT8 ConvRot and W4A8 DiTs, latents compared | NOT RUN |
+| Edits on uly2 | one and three reference pictures at 2048, against stock on one GPU on the pin-stripped copy | NOT RUN |
+| A world of one GPU with the pins | each DiT file against stock with the pins, latents identical | NOT RUN |
+| The first-use gate | in a world of one GPU and on uly2 | NOT RUN |
+| `uly2+fsdp` | BF16 and INT8 ConvRot against uly2 | NOT RUN |
+| Speed and memory | 2048 and 4096 square; activation calibration; the driver's memory with each text encoder and with the prompt expander loaded | NOT RUN |
+| A public LoRA with a head-bank key | loads and renders on uly2 against one GPU | NOT RUN |
+
+The two shipped templates and the testing graph have CPU checks only.
+`tests/test_minimax_h3_image_templates.py` holds each graph to ComfyUI's
+recipe (the four files, 6 steps, CFG 1, `euler`, `simple`, the expander chain
+wired as ComfyUI wires it), holds the task prompt and system prompt boxes of
+the two shipped graphs to this project's tracked texts byte for byte and the
+testing graph's boxes empty, holds the switch to the generator's one value
+(off as shipped) and off in the testing graph, holds the wiring of the
+caption read, the empty-caption fallback and the empty-request skip, holds
+the testing graph's Manual Sigmas to
+the published header's grid, and holds each Note to the auto table, the
+driver's cfg and dp preflight, the gate's proof request and the manifest's
+byte counts. The template widget canary passes against ComfyUI 0.45.0 with
+the three graphs. The sweep derives cells for the three graphs over the three
+DiT files, which share one name stem, and labels cfg2, dp2 and `cfg2+fsdp`
+`refuse:P` from the driver's own preflight. The template release test's
+offline plan takes both shipped templates on uly2 at one step and skips
+neither. None of this renders a picture.
+
+The edit graph's two Resize Image/Mask nodes are the first committed nodes
+whose dynamic combo reveals a child widget, so the sweep converter, which the
+release test shares, learned to read them. `tests/test_sweep_convert_dynamic.py`
+holds every node of every committed graph that reveals no child to the flat
+reading it had before, and pins the nodes that do reveal one to five: the
+edit graph's two, and Generate Text with sampling on in the
+three graphs. The widget canary holds the generator's child lists to ComfyUI's
+schema, and passes against ComfyUI 0.45.0.
+
+A graph whose expander is on with an empty task prompt, or with one that
+lacks the `{input text}` marker, refuses class P
+([#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
+`tests/test_expander_prompt.py` holds the sentence, holds it to the UNET
+loader, the four samplers and Identity Gate ahead of each node's own price,
+load and render, and holds that the loader answers for a Fleet render. It
+holds that the empty-caption fallback, a switch driven
+by Compare Text over the answer, does not quiet the refusal, that an empty
+request refuses nothing, and that with the outer switch false nothing of the
+expander runs. It holds that an expander which runs only for an extra Preview
+as Text refuses nothing, as does one behind a switch whose choice the graph
+does not state. And it holds that the shipped texts with the switch on refuse
+nothing, and that no other committed graph meets the refusal, as shipped or
+with every typed switch on, the testing graph's empty boxes apart.
+
+With the expander switch true, a render of either template depends on text a
+language model wrote on the driver, sampled at Generate Text's own seed
+([MODELS](MODELS.md#model-minimax-h3-image)). So
+every identity row here uses a graph with the switch false, as all three
+ship, and a row with the expander on records its caption beside the picture.
+The two shipped templates carry this project's own expander texts and its
+settings for Generate Text: reasoning off, `max_length` 1024, `mtp` off,
+temperature 0.7 and top_p 0.8. `tests/test_minimax_h3_image_templates.py`
+holds those five values in both shipped graphs. It holds the caption read to
+a table of fifty-six answers, kept in the widget canary. Forty-six give
+the image stage a caption: a valid object, a code fence, text around the
+object, escaped double quotes, an escaped backslash and an escaped slash;
+inner double quotes, an inner JSON object, an inner object that holds the
+answer's own key, a raw double quote before a closing brace or a comma, and
+raw and escaped quotes in one caption; more keys before or after the
+caption, a key with a hyphen or a space, a key that begins with the answer's
+own and a number with an exponent among
+them; a raw path, which stays as typed, and a raw line break, which is
+kept; and eleven rows that pin the read's limits. Ten fall back to the
+request: a cut answer, an empty value, a blank value, an object or `null` as
+the value, a trailing comma, plain prose, another key, an empty answer, and
+the one limit that loses a caption (a second key with a list as its value).
+The test runs the table through stand-ins for the four stock nodes, written
+from ComfyUI 0.45.0's code, and holds that a strict JSON read is wrong in
+the shapes the texts invite. The widget canary runs the table through
+ComfyUI's own nodes on 0.45.0. A CPU walk of
+the text path, with If/Else evaluating only the branch its switch selects as
+ComfyUI's lazy inputs do, holds that an empty request reaches no Generate
+Text run. Both templates ship with the switch false. The expander rows
+below say what a run with the switch true must show, and none has a record
+with these texts and settings yet.
+| template behaviour | what a run must show | status |
+|---|---|---|
+| The text to image template | `dgx-monarch-minimax-h3-image-t2i.json` as shipped, the switch false, 6 steps at 2048 square, on the pair under `auto` and in a world of one GPU | NOT RUN |
+| The edit template | `dgx-monarch-minimax-h3-image-edit.json` as shipped, the switch false, one picture, on the pair under `auto` and in a world of one GPU | NOT RUN |
+| The expander on, text stage | each shipped template with the switch true, the shipped texts and the shipped Generate Text settings, a set of requests at five values of Generate Text's own seed: both outputs of Generate Text and the extracted caption recorded; every counted run returns a caption; quoted words are kept letter for letter; an edit names its picture `<Picture 1>`; the shipped request queued four times at one seed to see whether the caption repeats; the expander's median and longest time and the driver's memory with it loaded | NOT RUN |
+| The expander on, picture stage | text to image and edit pairs with the expander on and off at the same KSampler seed, judged on the subject and, for an edit, on what lies outside the change | NOT RUN |
+| The caption read and its fallback | each shipped template with the switch true: a request that holds a JSON object or quoted words gives the image stage a caption, at five expander seeds; an answer that holds no caption, from a task prompt replaced with one that asks for plain prose, renders the request, and Preview as Text shows the request | NOT RUN |
+| An empty request | each shipped template with the switch true and an empty request box: no Generate Text run starts, and the model gets the empty request as with the switch false | NOT RUN |
+| The empty expander refuses | the testing graph with the switch true, its boxes empty as shipped, and a shipped template with its task prompt box emptied: the class P refusal of [#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt) at the loader before the DiT loads, and at the sampler on a re-queue of a graph that first rendered with the switch false, after the expander has run and before the render | NOT RUN |
+| The edit template in the browser | opened from Browse Templates on ComfyUI 0.45.0: the picture sockets `images.image_1` and `images.image1` keep their wires, each Resize Image/Mask node shows its child widget with the stored value, and Queue sends the API prompt the converter writes | NOT RUN |
+| The release-test rows | both templates in the [template release test](#release-test-2026-11-04): one step, seed 1031, uly2 | NOT RUN |
+| The gate's two proof paths | the first-use gate on the text to image template, a two-step KSampler proof, and on `dgx-monarch-test-minimax-h3-image-grid`, the Sampler Custom proof on the grid's first two steps; each on uly2 and in a world of one GPU | NOT RUN |
+| The published file on uly2 | uly2 on a published, pinned DiT against stock with the pins on one GPU: the difference recorded, not scored | NOT RUN |
+| cfg2 and dp2 | each refuses class P at the driver before any load, on each DiT file | NOT RUN |
+| The other text encoders | the NVFP4 AWQ and BF16 encoders in the text to image graph, a render each, with the driver's memory | NOT RUN |
+| The sweep cells | the scoped sweep of the three graphs over the BF16, INT8 ConvRot and W4A8 DiTs; identity scored on the three graphs as shipped, which send the request as written | NOT RUN |
 
 <a id="torch-2-15"></a>
 
@@ -3608,7 +3970,7 @@ through explicit stock residency on a fresh fleet in 13.4 s (the render
 `flux/R1c`, the allocator tests of 2026-11-06 under
 `out/vetting_2026-11-03/rss_retention_2026-11-06/`, and the environment repair
 that preceded the deploy under `env_repair/`
-([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
 
 ## FSDP calibration
 

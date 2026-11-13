@@ -125,6 +125,55 @@ def test_a_fully_masked_row_trims_to_zero_real_tokens():
     assert out_mask is None
 
 
+@pytest.mark.parametrize("suffix", [-1.0, 1.0, -1000.0, -60000.0])
+def test_a_finite_text_bias_is_kept_and_its_tokens_stay(suffix):
+    """A custom producer's soft bias attenuates its tokens; it does not make
+    them padding. Four real tokens with `[0, 0, b, b]` and a zero image zone
+    keep all four tokens and the mask, for a negative or a positive b."""
+    context = torch.randn(1, 4, 4)
+    mask = torch.zeros(1, 1, 4 + 9)
+    mask[..., 2:4] = suffix
+    trimmed, out_mask = _chroma_cfg_pad_trim(context, mask)
+    assert trimmed is context
+    assert out_mask is mask
+
+
+def test_a_finite_bias_on_a_real_row_before_the_pad_is_kept():
+    """Hard pad rows after a softly biased real row: the soft row is a real
+    token, so the zone is not the equalizer's zeros-then-pad construction."""
+    context = torch.randn(1, 4, 4)
+    mask = torch.zeros(1, 1, 4 + 9)
+    mask[..., 1] = -1.0
+    mask[..., 2:4] = MIN
+    trimmed, out_mask = _chroma_cfg_pad_trim(context, mask)
+    assert trimmed is context
+    assert out_mask is mask
+
+
+@pytest.mark.parametrize("cond_dtype,model_dtype", [
+    (torch.float32, torch.bfloat16), (torch.bfloat16, torch.bfloat16),
+    (torch.float32, torch.float32), (torch.float16, torch.float16),
+    (torch.float16, torch.bfloat16), (torch.float32, torch.float16),
+    (torch.bfloat16, torch.float32),
+])
+def test_the_equalizers_own_pad_still_trims_after_the_model_dtype_cast(cond_dtype, model_dtype):
+    """The equalizer writes the cond dtype's minimum, and ComfyUI casts every
+    floating extra to the model dtype before the forward. float32's minimum
+    becomes -inf in bfloat16, and float16's becomes -65536, so the trim must
+    accept every value the equalizer can produce after that cast."""
+    from dgx_monarch.actor.sampling import equalize_cond_lengths
+
+    short = [[torch.randn(1, 3, 4).to(cond_dtype), {}]]
+    long = [[torch.randn(1, 7, 4).to(cond_dtype), {}]]
+    latent = torch.zeros(1, 16, 6, 6)
+    positive, _negative = equalize_cond_lengths(ChromaAdapter(), short, long, latent)
+    context, extras = positive[0]
+    mask = extras["attention_mask"].to(model_dtype)
+    trimmed, out_mask = _chroma_cfg_pad_trim(context.to(model_dtype), mask)
+    assert trimmed.shape[1] == 3
+    assert out_mask is None
+
+
 # Part 2: the real, tiny Chroma, driven through the installed hook.
 HIDDEN = 16
 RAW_CHANNELS = 1

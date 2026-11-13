@@ -292,14 +292,7 @@ def test_a_forward_that_reads_no_norm_global_runs_unrouted():
     assert torch.equal(block(x, spans, None, {}, stock_norm_rows=(12, 8, 2)), x)
 
 
-@pytest.mark.parametrize("block_class,warned", [(_Block, 0), (_NoNormBlock, 1)])
-def test_the_adapter_binds_every_sharded_block_and_warns_once_when_unroutable(
-        monkeypatch, block_class, warned):
-    from dgx_monarch.adapters import flux3
-    from dgx_monarch.adapters.base import InjectionContext
-
-    warnings: list[str] = []
-    monkeypatch.setattr(flux3.log, "warning", lambda message, *args: warnings.append(message))
+def _flux3_model(block_class):
     model = torch.nn.Module()
     model.content_mode_blocks = torch.nn.ModuleDict({
         "image": torch.nn.ModuleList([block_class() for _ in range(2)]),
@@ -307,11 +300,43 @@ def test_the_adapter_binds_every_sharded_block_and_warns_once_when_unroutable(
     model.txt_mode_blocks = torch.nn.ModuleList()
     model.single_blocks = torch.nn.ModuleList([block_class() for _ in range(3)])
     model.single_blocks[0].num_heads = 24
+    return model
+
+
+def _inject(model):
+    from dgx_monarch.adapters import flux3
+    from dgx_monarch.adapters.base import InjectionContext
+
     flux3.Flux3Adapter().inject_usp(model, InjectionContext(
         topology_sp=2, usp_attention=None, pure_ulysses=True))
+
+
+def test_the_adapter_binds_every_sharded_block():
+    model = _flux3_model(_Block)
+    _inject(model)
     sharded = [*model.content_mode_blocks["image"], *model.single_blocks]
     assert all("forward" in vars(block) for block in sharded)
-    assert len([m for m in warnings if "parity route is off" in m]) == warned
+    assert "_forward" in vars(model)
+
+
+def test_a_block_comfyui_changed_refuses_class_p_before_anything_binds():
+    """A stock forward that reads no modulated_norm global is a changed block
+    whose sharded math nobody measured: refuse at inject, like MOSS-Image."""
+    from dgx_monarch.adapters.base import UnsupportedModelError
+    from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
+
+    model = _flux3_model(_NoNormBlock)
+    with pytest.raises(UnsupportedModelError) as raised:
+        _inject(model)
+    text = str(raised.value)
+    tag = parse_leading_refusal_tag(text)
+    assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+    assert "_NoNormBlock.forward no longer reads its modulated_norm global" in text
+    assert "a topology without sequence parallelism, such as 'single'" in text
+    assert "release that supports this ComfyUI" in text
+    sharded = [*model.content_mode_blocks["image"], *model.single_blocks]
+    assert not any("forward" in vars(block) for block in sharded)
+    assert "_forward" not in vars(model)
 
 
 # --- The GPU seam ----------------------------------------------------------------

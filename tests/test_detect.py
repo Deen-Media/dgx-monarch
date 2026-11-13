@@ -79,6 +79,8 @@ FAMILY_KEYS = {
     "wan": ["text_embedding.0.weight", "blocks.0.self_attn.q.weight"],
     "minimax_h3": ["video_patch_proj.weight", "audio_patch_proj.weight",
                    "blocks.0.attn.qkv_proj.weight"],
+    "minimax_h3_image": ["video_patch_proj.weight", "condition_proj.weight",
+                         "blocks.0.attn.qkv_proj.weight"],
 }
 
 
@@ -111,6 +113,12 @@ def test_minimax_h3_top_level_token_refiner_is_not_hunyuan():
     unknown, never to hunyuan on the refiner name alone."""
     keys = [k for k in MINIMAX_H3_KEYS if "patch_proj" not in k]
     assert detect_family_from_keys(keys) == "unknown"
+
+
+def test_minimax_h3_without_its_audio_path_is_the_image_model():
+    """ComfyUI 0.45.0's split: no audio_patch_proj.weight names minimax_h3_image."""
+    keys = [k for k in MINIMAX_H3_KEYS if "audio" not in k]
+    assert detect_family_from_keys(keys) == "minimax_h3_image"
 
 
 HUNYUAN_REFINER_KEYS = [
@@ -809,6 +817,8 @@ _SHADOW_PAIRS: dict[tuple[str, str], tuple[tuple[str, ...], tuple[str, ...]]] = 
                                   ("patch_embedding_global.",)),
     ("wan_scail", "wan"): (("patch_embedding_pose.",), ("self_attn.",)),
     ("wan_dancer", "wan"): (("patch_embedding_global.",), ("self_attn.",)),
+    # ComfyUI's own split: a MiniMax H3 file with the audio path is H3 video.
+    ("minimax_h3", "minimax_h3_image"): (("audio_patch_proj.",), ("condition_proj.",)),
 }
 
 

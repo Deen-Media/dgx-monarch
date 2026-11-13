@@ -31,7 +31,9 @@ _ADDED_SRC = _SRC not in sys.path
 if _ADDED_SRC:
     sys.path.insert(0, _SRC)
 try:
+    from dgx_monarch.demo_inputs import shipped as shipped_demo_inputs
     from dgx_monarch.nodes import NODE_CLASS_MAPPINGS
+    from dgx_monarch.nodes.expander_prompt import TROUBLESHOOTING as EXPANDER_ENTRY
     from dgx_monarch.stock_widget_drift import NEWER as NAMED_STOCK
 finally:
     if _ADDED_SRC:
@@ -114,9 +116,29 @@ STOCK = {
     # layout graph keeps its JSON here and wires it to CLIP Text Encode, whose
     # own text box the browser would rewrite on Queue (_moss_template says why).
     "PrimitiveStringMultiline": ["value"],
+    # The MiniMax-H3-Image expander chain, as ComfyUI's templates wire it:
+    # Replace Text stores ["", "{input text}", ""] with string and replace
+    # wired. It marks no input for the browser's dynamic
+    # prompt pass, so the marker's braces stay as typed.
+    "StringReplace": ["string", "find", "replace"],
+    # The empty-caption fallback: Trim Text and Compare Text, whose advanced
+    # case_sensitive widget still holds a slot. Neither marks an input for the
+    # dynamic prompt pass.
+    "StringTrim": ["string", "mode"],
+    "StringCompare": ["string_a", "string_b", "mode", "case_sensitive"],
+    # Extract Text and Replace Text (Regex), the caption read. Their three
+    # flag widgets and group_index are advanced and still hold their slots.
+    "RegexExtract": ["string", "regex_pattern", "mode", "case_insensitive", "multiline",
+                     "dotall", "group_index"],
+    "RegexReplace": ["string", "regex_pattern", "replace", "case_insensitive", "multiline",
+                     "dotall", "count"],
     # The p-h3-image graph's V3 nodes. Their autogrow image sockets start
     # empty, as BerniniConditioning's do, so none is declared below.
     "PH3ImageConditioning": ["prompt", "width", "height"],
+    # MiniMax-H3-Image's V3 node (ComfyUI 0.45.0). Its pictures are an autogrow
+    # input: a graph that wires none carries no socket for them, and a wired
+    # one is named in AUTOGROW_SOCKETS below.
+    "MiniMaxH3ImageConditioning": ["prompt", "width", "height"],
     "TextGenerateV2": ["prompt", "max_length", "sampling_mode", "thinking",
                        "use_default_template", "mtp"],
     "ComfySwitchNode": ["switch"],
@@ -209,6 +231,11 @@ STOCK = {
     # stock nodes; _flux3_template says why. resolution_steps is an advanced
     # widget the frontend still serializes.
     "ImageScaleToTotalPixels": ["upscale_method", "megapixels", "resolution_steps"],
+    # Resize Image/Mask, a V3 node: resize_type is a dynamic combo whose chosen
+    # key reveals the widgets that follow it (DYNAMIC_WIDGETS below), then
+    # scale_method. ComfyUI's MiniMax-H3-Image edit template stores
+    # ["scale total pixels", 4, "area"] and ["scale to multiple", 32, "area"].
+    "ResizeImageMaskNode": ["resize_type", "scale_method"],
     "ReferenceLatent": [],
     "LatentMultiply": ["multiplier"],
     "LTXVScheduler": ["steps", "max_shift", "base_shift", "stretch", "terminal"],
@@ -240,7 +267,13 @@ STOCK_OUTPUTS = {
     "CLIPLoader": [("CLIP", "CLIP")],
     "CLIPTextEncode": [("CONDITIONING", "CONDITIONING")],
     "PrimitiveStringMultiline": [("STRING", "STRING")],
+    "StringReplace": [("STRING", "STRING")],
+    "StringTrim": [("STRING", "STRING")],
+    "StringCompare": [("BOOLEAN", "BOOLEAN")],
+    "RegexExtract": [("STRING", "STRING")],
+    "RegexReplace": [("STRING", "STRING")],
     "PH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
+    "MiniMaxH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
     "TextGenerateV2": [("generated_text", "STRING"), ("thinking", "STRING")],
     # A match-type output takes its input's type; this graph switches strings.
     "ComfySwitchNode": [("output", "STRING")],
@@ -326,6 +359,8 @@ STOCK_OUTPUTS = {
     "LatentCutToBatch": [("LATENT", "LATENT")],
     "VAEEncode": [("LATENT", "LATENT")],
     "ImageScaleToTotalPixels": [("IMAGE", "IMAGE")],
+    # A match-type output takes its input's type; these graphs resize images.
+    "ResizeImageMaskNode": [("resized", "IMAGE")],
     "ReferenceLatent": [("CONDITIONING", "CONDITIONING")],
     "LatentMultiply": [("LATENT", "LATENT")],
     "LTXVScheduler": [("SIGMAS", "SIGMAS")],
@@ -393,6 +428,42 @@ def _widget_names(node_type: str) -> list[str]:
     return names
 
 
+# A dynamic combo (COMFY_DYNAMICCOMBO_V3) reveals child widgets by the key it
+# holds. The frontend stores them right after the combo, in the option's own
+# order, and the API prompt names each "<combo>.<child>". Each row lists the
+# keys a committed graph may hold and the children each reveals; a key that is
+# not listed stops the build. The widget canary holds every row to ComfyUI's
+# schema. Generate Text's seed is a child here, named sampling_mode.seed, and
+# takes no control widget: ComfyUI's own template stores thirteen values for
+# that node with sampling on, ["", 8192, "on", 1, 20, 0.95, 0, 1, 0, 0, true,
+# true, "auto"].
+DYNAMIC_WIDGETS = {
+    "TextGenerateV2": {"sampling_mode": {
+        "on": ["temperature", "top_k", "top_p", "min_p", "repetition_penalty",
+               "presence_penalty", "seed"],
+        "off": []}},
+    "ResizeImageMaskNode": {"resize_type": {
+        "scale total pixels": ["megapixels"],
+        "scale to multiple": ["multiple"]}},
+}
+
+
+def _node_widget_names(node_type: str, widgets: dict) -> list[str]:
+    """One spec node's widget slots: _widget_names, plus each dynamic combo's
+    revealed children after it, for the key this node's ``widgets`` hold."""
+    dynamic = DYNAMIC_WIDGETS.get(node_type, {})
+    names = []
+    for name in _widget_names(node_type):
+        names.append(name)
+        if name in dynamic:
+            key = widgets.get(name)
+            if key not in dynamic[name]:
+                raise KeyError(f"{node_type}.{name} holds {key!r}; DYNAMIC_WIDGETS lists "
+                               f"{sorted(dynamic[name])}")
+            names.extend(f"{name}.{child}" for child in dynamic[name][key])
+    return names
+
+
 @_with_comfy_stubs
 def _connection_inputs(node_type: str) -> list[tuple[str, str]]:
     if node_type in STOCK:
@@ -400,6 +471,7 @@ def _connection_inputs(node_type: str) -> list[tuple[str, str]]:
         # so leaving them out would renumber every wire after them.
         return {"CLIPTextEncode": [("clip", "CLIP")],
                 "PH3ImageConditioning": [("clip", "CLIP"), ("vae", "VAE")],
+                "MiniMaxH3ImageConditioning": [("clip", "CLIP"), ("vae", "VAE")],
                 # system_prompt is a forced input; the autogrow media sockets start empty.
                 "TextGenerateV2": [("clip", "CLIP"), ("system_prompt", "STRING")],
                 "ComfySwitchNode": [("on_false", "STRING"), ("on_true", "STRING")],
@@ -436,6 +508,7 @@ def _connection_inputs(node_type: str) -> list[tuple[str, str]]:
                 "LatentCutToBatch": [("samples", "LATENT")],
                 "VAEEncode": [("pixels", "IMAGE"), ("vae", "VAE")],
                 "ImageScaleToTotalPixels": [("image", "IMAGE")],
+                "ResizeImageMaskNode": [("input", "IMAGE")],
                 # latent is optional and keeps its slot.
                 "ReferenceLatent": [("conditioning", "CONDITIONING"),
                                     ("latent", "LATENT")],
@@ -567,23 +640,46 @@ def _outputs(node_type: str) -> list[tuple[str, str]]:
     return list(zip(names, cls.RETURN_TYPES, strict=False))
 
 
+# A wired autogrow input. The frontend grows one socket per wire and names it
+# "<input>.<slot>"; a node that wires none carries no such socket
+# (BerniniConditioning's comment in _connection_inputs says why). Each row
+# gives the socket type and the declared input the grown sockets sit before,
+# or None for after every declared input, which is where ComfyUI's schema
+# order puts them. MiniMax H3 Image Conditioning names its pictures image_1,
+# image_2 and so on; Generate Text names its own image1, image2.
+AUTOGROW_SOCKETS = {
+    "MiniMaxH3ImageConditioning": {"images": ("IMAGE", None)},
+    "TextGenerateV2": {"images": ("IMAGE", "system_prompt")},
+}
+
+
 def _sockets(node: dict, types: dict[str, str]) -> list[tuple[str, str, bool]]:
     """Every input socket of one spec node: (name, type, is a wired widget).
 
     The node's connection inputs come first, in slot order. A ``wire`` entry
+    that names a slot of an autogrow input (AUTOGROW_SOCKETS) adds that socket
+    among them. A ``wire`` entry
     that names one of the node's widgets instead becomes a widget socket after
     them, in wire order, typed by the output that feeds it; the frontend
     serializes such an input with a ``widget`` key and keeps the widget's slot
-    in ``widgets_values``. A node that wires no widget keeps exactly its
+    in ``widgets_values``. A node that wires neither keeps exactly its
     connection inputs, so every graph without one is unchanged.
     """
     ntype = node["type"]
     sockets = [(name, kind, False) for name, kind in _connection_inputs(ntype)]
+    grown = AUTOGROW_SOCKETS.get(ntype, {})
+    for inp in node.get("wire") or {}:
+        group, dot, _slot = inp.partition(".")
+        if dot and group in grown:
+            kind, before = grown[group]
+            index = next((i for i, (name, _kind, _widget) in enumerate(sockets)
+                          if name == before), len(sockets))
+            sockets.insert(index, (inp, kind, False))
     declared = {name for name, _kind, _widget in sockets}
     for inp, (src_key, out_idx) in (node.get("wire") or {}).items():
         if inp in declared:
             continue
-        if inp not in _widget_names(ntype):
+        if inp not in _node_widget_names(ntype, node.get("widgets") or {}):
             raise KeyError(f"{ntype} has no input or widget named {inp!r}")
         sockets.append((inp, _outputs(types[src_key])[out_idx][1], True))
     return sockets
@@ -605,6 +701,12 @@ def build(spec: dict) -> dict:
     nodes_out, links = [], []
     key_to_id = {n["key"]: i + 1 for i, n in enumerate(spec["nodes"])}
     key_to_type = {n["key"]: n["type"] for n in spec["nodes"]}
+    # A public graph that loads a demo input the pack ships says so in its
+    # note. A testing-only graph is hidden from the browser and says nothing.
+    demo_names = {path.name for path in shipped_demo_inputs()}
+    loads_demo = not spec.get("testing") and any(
+        value in demo_names for n in spec["nodes"]
+        for value in (n.get("widgets") or {}).values() if isinstance(value, str))
     sockets = {n["key"]: _sockets(n, key_to_type) for n in spec["nodes"]}
     link_id = 0
     node_links: dict = {}
@@ -624,11 +726,12 @@ def build(spec: dict) -> dict:
         ntype = n["type"]
         col, row = n["pos"]
         widgets = n.get("widgets", {})
+        names = [] if ntype == "Note" else _node_widget_names(ntype, widgets)
         if ntype == "Note":
-            wv = [n.get("note", "")]
+            wv = [n.get("note", "") + (f" {DEMO_INPUTS}" if loads_demo else "")]
         else:
             wv = []
-            for wname in _widget_names(ntype):
+            for wname in names:
                 if wname == CONTROL_WIDGET:
                     # Ship every seed advancing. The seed value still holds,
                     # so the first render of a fresh template is the one the
@@ -636,6 +739,10 @@ def build(spec: dict) -> dict:
                     wv.append(CONTROL_VALUE)
                 elif wname in widgets:
                     wv.append(widgets[wname])
+                elif wname.partition(".")[0] in DYNAMIC_WIDGETS.get(ntype, {}):
+                    # A revealed child has no stock default here: a silent ""
+                    # would shift nothing and still ship a wrong value.
+                    raise KeyError(f"{ntype} reveals {wname!r}; the spec must set it")
                 else:
                     wv.append(_default_for(ntype, wname))
         inputs = [{"name": name, "type": kind, "widget": {"name": name},
@@ -658,13 +765,16 @@ def build(spec: dict) -> dict:
         if ntype == "Note":
             title = spec["title"].removeprefix("DGX Monarch ")
             node_out["title"] = f"DGX Monarch | {title}"
+        elif "title" in n:
+            # A node the reader must tell from its twins carries its own title.
+            node_out["title"] = n["title"]
         if ntype in NODE_CLASS_MAPPINGS or ntype in NAMED_STOCK:
             # This is the name-to-value map web/js/dgx_monarch_widgets.js saves,
             # so a widget added after release never sends a shipped template
             # through the positional heal meant for legacy saves. A stock node
             # in NAMED_STOCK carries one too, so a ComfyUI without one of its
             # newer widgets restores the rest by name.
-            node_out["dgxm_widgets"] = dict(zip(_widget_names(ntype), wv, strict=True))
+            node_out["dgxm_widgets"] = dict(zip(names, wv, strict=True))
         nodes_out.append(node_out)
     # A testing-only spec carries no layout, so its graph keeps an empty extra.
     extra = (_app_mode_extra(spec["app_mode"], spec["nodes"], key_to_id)
@@ -729,14 +839,38 @@ def _tail(sampler_key: str) -> list[dict]:
     ]
 
 
-# Many template notes share these sentences. GATE states the first-render cost.
-# DERIVED marks a graph read off the adapter and the stock node definitions,
-# not replayed from a committed reference render. FRAMES explains the
-# image-batch decode tail on the video graphs. Some notes repeat these words
-# inline instead of using the constant; regenerate and diff after any edit.
-GATE = ("The first render of a new model runs the identity gate, comparing the mesh "
-        "with a stock single-GPU load before producing pixels. Allow a few minutes "
-        "for proof renders. Later renders of the same combination skip the gate.")
+# Many template notes share these sentences. GATE states what the first-use
+# gate compares and what it costs, on every graph a DGX Monarch sampler drives,
+# Sampler Custom and the dual-model guider included: the ceremony renders on the
+# graph's own mesh and topology (nodes/gate_ceremony.py,
+# nodes/gate_cross_mode.py) and the automatic one runs at most two steps
+# (nodes/gate_proof_request.py). GATE_DUAL_PLACEMENTS adds, on a dual-model
+# graph, the two placements where its proof cannot run (nodes/gate_dual.py). DERIVED marks a
+# graph read off the adapter and the stock node definitions, not replayed from
+# a committed reference render. FRAMES explains the image-batch decode tail on
+# the video graphs. FSDP_RULES states the FSDP launch contract
+# (adapters/fsdp.py, adapters/fsdp_lora_admission.py). Some notes repeat these
+# words inline instead of using the constant; regenerate and diff after any
+# edit. tests/test_template_note_claims.py holds each one to the code. Its
+# AUTO_GATED_KINDS and DUAL_MODEL_AUTO_GATES switches name the renders the
+# first-use gate reaches.
+GATE = ("The first render of a new model, LoRA and residency combination runs the "
+        "identity gate before any pixels, on this graph's mesh and topology: proof "
+        "renders of at most two steps, from a fresh load before and after the swap "
+        "or reload under test, must match bit for bit, and with slab residency on, "
+        "one more render with slab off must match too. Allow a few minutes for these "
+        "two to four proof renders. Later renders of the same combination skip the "
+        "gate.")
+GATE_DUAL_PLACEMENTS = ("The gate proves both models together, and its verdict covers only "
+                        "this pair. It cannot run on cfg2, where each rank holds one of the "
+                        "two models, so a cfg2 render uses stock residency; and with auto_gate "
+                        "on first_use, as shipped, a *+fsdp preset refuses this graph, "
+                        "because the clean-reload proof reloads one model.")
+FSDP_RULES = ("FSDP shards a bf16 or fp16 file, and an fp8 or int8 file as its stored "
+              "bytes; it refuses block-scaled files such as mxfp8 and nvfp4, and an fp8 "
+              "weight_dtype cast at load. A LoRA on FSDP needs lora_low_rss on, and "
+              "refuses on a comfy-kitchen quantized file (scaled fp8, fp8mixed or int8) "
+              "whatever lora_low_rss says.")
 NO_FIRST_USE_GATE = ("With slab, low-RSS and FSDP disabled, there is nothing for the "
                      "first-use gate to prove, so the first render skips it.")
 DERIVED = ("This graph is derived from the family adapter and stock node definitions, "
@@ -744,6 +878,11 @@ DERIVED = ("This graph is derived from the family adapter and stock node definit
            "your artifacts before running it.")
 FRAMES = ("VAE Decode returns an image batch; Save Image writes numbered frames. "
           "For a video file, use the stock Create Video and Save Video nodes.")
+# build() ends the note of every graph that loads a shipped demo input with
+# this (src/dgx_monarch/demo_inputs.py; tests/test_demo_inputs.py holds it).
+DEMO_INPUTS = ("The pack places a demo file drawn from code under each name this graph "
+               "loads that ComfyUI's input folder lacks; one you delete comes back at the "
+               "next start unless DGXM_DEMO_INPUTS=off is set. Load your own for real work.")
 
 # The Kandinsky 5 text encode node takes the prompt once per encoder, so each
 # demo prompt is named once here: two written copies could drift apart.
@@ -795,6 +934,35 @@ H3_SEPARATE_OUTPUTS = (
     "MiniMax H3 MP4 template."
 )
 
+
+# The Ideogram 4 template's caption: one line of compact JSON, valid against
+# the official caption schema. compositional_deconstruction with background
+# and elements is required, style_description carries aesthetics and
+# lighting and exactly one of photo or art_style, and the photo key order is
+# fixed. bbox is [y_min, x_min, y_max, x_max] over 0 to 1000 from the top
+# left. It sits in Text (Multiline): CLIP Text Encode marks its own text for
+# the browser's dynamic prompt pass, which strips every brace pair on Queue.
+IDEOGRAM_CAPTION = (
+    '{"high_level_description":"A close-up photograph of a '
+    'chalkboard menu sign propped on a wooden bakery counter '
+    'beside a tray of fresh croissants.","style_description":'
+    '{"aesthetics":"warm, rustic, inviting","lighting":"soft '
+    'morning window light from the left with gentle falloff",'
+    '"photo":"50mm, f/2.8, shallow depth of field, eye level",'
+    '"medium":"photograph","color_palette":["#2B2018",'
+    '"#E8D5B7","#C98A3C","#F5EFE6","#6B4A2F"]},'
+    '"compositional_deconstruction":{"background":"A warm '
+    'wooden bakery counter with a softly blurred shelf of bread '
+    'loaves and a copper kettle behind it.","elements":'
+    '[{"type":"text","bbox":[120,180,520,820],"text":"FRESH '
+    'BAKED DAILY","desc":"Hand lettered white chalk capitals on '
+    'a black chalkboard, set in three stacked centered lines '
+    'inside a thin chalk border, with a small wheat sprig drawn '
+    'beneath."},{"type":"obj","bbox":[560,120,940,880],"desc":'
+    '"A shallow metal tray of golden croissants with flaky '
+    'layered crusts, dusted lightly with flour, angled toward '
+    'the camera."}]}}'
+)
 
 TEMPLATES = {
     "dgx-monarch-quickstart": {
@@ -856,12 +1024,16 @@ TEMPLATES = {
         "title": "Identity Gate: prove your stack swaps exactly",
         "nodes": [*FLUX_STACK,
             {"key": "note", "type": "Note", "pos": (0, 1), "note":
-             "The Identity Gate renders your workflow twice, once through "
-             "swap-produced weights and once through a fresh stock load, and reports "
-             "PASS or FAIL with the bit-level latent difference. 2 steps are as "
-             "conclusive as 20. You rarely need this node: the first render of "
-             "a new combination runs the gate on its own. This node is the on-demand "
-             "and CI form; strict=true raises on any verdict but PASS."},
+             "The Identity Gate renders your workflow from a fresh load, nudges the "
+             "first LoRA's strength and swaps it back, renders again on the same mesh "
+             "and topology, and reports PASS or FAIL with the largest latent "
+             "difference; with slab residency on, it also renders once with slab off. "
+             "Each proof render runs the steps widget's count, 2 here, as the "
+             "automatic gate does. A PASS means these renders matched bit for bit: a "
+             "finite check of what ran, not a proof for every prompt, size or step "
+             "count. You rarely need this node, because the first render of a new "
+             "combination runs the gate on its own, through any DGX Monarch sampler. "
+             "It is the CI form: strict=true raises on any verdict but PASS."},
             {"key": "lora0", "type": "DGXMonarchLoraLoader", "pos": (2, 0),
              "widgets": {"lora_name": "your_first_lora.safetensors", "strength_model": 0.8},
              "wire": {"model": ("unet", 0)}},
@@ -914,10 +1086,7 @@ TEMPLATES = {
              "fp8 checkpoint, so the kernel the Init widget shows is replaced at "
              "dispatch. sageattention must then be installed on every worker, "
              "because a first configure that cannot import it raises instead of "
-             "falling back. The first render of a new model runs the identity gate: "
-             "before any pixels, a few minutes of proof renders check that the mesh "
-             "matches a stock single-GPU load. Later renders of the same combination "
-             "skip it. Expects "
+             "falling back. " + GATE + " Expects "
              "krea2_turbo_fp8_scaled.safetensors in models/diffusion_models, "
              "qwen3vl_4b_bf16.safetensors in models/text_encoders, and "
              "qwen_image_vae.safetensors in models/vae, the VAE the official Krea 2 "
@@ -980,9 +1149,7 @@ TEMPLATES = {
              "are CFG distilled. Comfy caps this DiT at batch 1, so cfg-parallel and "
              "data-parallel refuse; topology=auto asks for sequence-parallel on a "
              "configured pair and single on one box. Connect an image to first_frame "
-             "(and last_frame) to make this a keyframe render. The first render of a "
-             "new model runs the identity gate: before any pixels, a few minutes of "
-             "proof renders check that the mesh matches a stock single-GPU load. "
+             "(and last_frame) to make this a keyframe render. " + GATE + " "
              "Expects "
              "minimax_h3_fl2va_pruned_int8_convrot.safetensors in "
              "models/diffusion_models, qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in "
@@ -1255,8 +1422,12 @@ TEMPLATES = {
              "the resident model, so it goes through Model Sampling SD3 (DGX "
              "Monarch); the stock patch node cannot take a mesh model. For the "
              "720p tier load wan2.1_i2v_720p_14B_fp8_scaled.safetensors and raise "
-             "the canvas to match, and for the uly2+fsdp capacity preset load the "
-             "file stored in BF16, wan2.1_i2v_480p_14B_bf16.safetensors. The scoped HW "
+             "the canvas to match. The uly2+fsdp capacity preset is for a file too "
+             "large to fit resident, such as the BF16 file, "
+             "wan2.1_i2v_480p_14B_bf16.safetensors, with weight_dtype set to bf16 on "
+             "the loader, since ComfyUI runs Wan in fp16 by default and FSDP refuses a "
+             "bf16 file that loads as fp16; FSDP shards FP8 and INT8 files as stored "
+             "bytes too. The scoped HW "
              "evidence covers the FP8-scaled auto/Ulysses 81-frame path: cold and "
              "warm renders completed, and its decoded one-step probe matched the "
              "local reference exactly. It does not cover this BF16 capacity "
@@ -1814,8 +1985,9 @@ TEMPLATES = {
              "and returns a mask of that object for each frame, here at 832x480 "
              "over 17 frames, one euler step on the simple schedule at cfg 1.0, "
              "starting from the VAE encode of the source frames with no added "
-             "noise. ComfyUI ships no example clip, so the shipped Load Video "
-             "filename is a placeholder: upload your own clip, point the widget at "
+             "noise. ComfyUI ships no example clip, and the one the pack places "
+             "under the Load Video filename is a drawn stand-in of 33 frames. For "
+             "your own clip, upload it, point the widget at "
              "it, give it at least 17 frames, and keep any frame count you change on "
              "the 4k+1 grid the Wan VAE needs (17, 33, 81; the official example "
              "uses 81). The prompt is a referring expression, so keep it short and "
@@ -2057,8 +2229,12 @@ TEMPLATES = {
              "models/text_encoders, clip_vision_h.safetensors in models/clip_vision, "
              "and wan_2.1_vae.safetensors in models/vae; "
              "Wan21-14B-SCAIL-preview_fp8_scaled_mixed.safetensors halves the weights "
-             "resident on each rank if bf16 does not fit, but it gives up the FSDP "
-             "capacity route, which takes bf16 only. 40 steps at cfg 5.0 on a 14B video "
+             "resident on each rank if bf16 does not fit. FSDP admits either file. The "
+             "fp8 one shards as its stored bytes. For the bf16 one, set weight_dtype to "
+             "bf16 on the loader, because ComfyUI runs this family in fp16 by default "
+             "and FSDP refuses a bf16 file that loads as fp16 "
+             "(docs/TROUBLESHOOTING.md #17). FSDP has no hardware test on SCAIL. 40 "
+             "steps at cfg 5.0 on a 14B video "
              "model is a long first render: the lightx2v rank64 step and cfg distill "
              "LoRA runs it in 6 steps at cfg 1.0 with shift 7.0 and dpmpp_2m_sde, "
              "which this graph does not wire because the distilled recipe is not the "
@@ -2139,8 +2315,8 @@ TEMPLATES = {
              "simple schedule, an SD3 sampling shift of 5.0 and the DPO LoRA at "
              "strength 1.0. That is the official Comfy base recipe with turbo off, "
              "and it is the contract docs/VALIDATION.md records. It takes four media "
-             "inputs, all yours: no ComfyUI install ships any of them, so all four "
-             "shipped filenames are placeholders. One Load Video takes the driving "
+             "inputs. No ComfyUI install ships any of them, and the four the pack "
+             "places are drawn stand-ins. One Load Video takes the driving "
              "clip and the other takes its colored per-identity mask; one Load Image "
              "takes the reference character and the other takes that character's "
              "mask. Both modes require the masks. This graph ships Replacement Mode, "
@@ -2281,8 +2457,10 @@ TEMPLATES = {
              "checkpoint refines the first five seconds at 30 fps, 25 steps then 24 "
              "steps, both at cfg 5.0. Point Load Image at one reference dancer and "
              "Load Audio at a music track of about 25 seconds, the length the "
-             "official graph trims to; the shipped names are the official demo files "
-             "blue_dancer.png and wan_dancer_reference_audio.mp3. Both stages need "
+             "official graph trims to. The graph keeps the official demo names, "
+             "blue_dancer.png and wan_dancer_reference_audio.mp3, but the files under "
+             "them are the pack's own, a drawn figure and a synthetic 25-second loop, "
+             "which show the graph runs, not what the model can do. Both stages need "
              "the reference image: without start_image and CLIP vision every "
              "topology returns non-finite latents, which stock ComfyUI writes out as "
              "black frames. Track length sets the rest: the global pass reads its "
@@ -2293,8 +2471,9 @@ TEMPLATES = {
              "only as far as your track reaches. Only the global expert takes a "
              "Model Sampling SD3 node, because the official graph patches no model "
              "sampling onto the local checkpoint; adding a second one changes the "
-             "local stage's math. Reference Latent typed-refuses on this family, FP8 "
-             "with FSDP is out of scope, and the official Skip Layer Guidance patch "
+             "local stage's math. Reference Latent typed-refuses on this family. FSDP "
+             "admits the FP8 files as stored bytes, with no measured fidelity here. The "
+             "official Skip Layer Guidance patch "
              "cannot be wired here because a mesh model is not a stock MODEL. For "
              "the official fast path, put "
              "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors in "
@@ -2526,9 +2705,10 @@ TEMPLATES = {
              "a scheduler node, and sampled with euler. This graph runs one pass; "
              "the official graph upsamples the latent and runs the 22B DiT a second "
              "time. The canvas gives 14080 video rows and 126 audio rows, both even, "
-             "so neither stream pads at world 2. Packed data-parallel and FP8 FSDP "
-             "each refuse with a typed refusal, and cfg-parallel is unsupported "
-             "here, so cfg stays 1.0. Describe the soundtrack after Audio: in the "
+             "so neither stream pads at world 2. Packed data-parallel refuses with a "
+             "typed refusal. FSDP admits this FP8 file as stored bytes and passes the "
+             "load checks, but has no passing output comparison. This graph cannot "
+             "use cfg-parallel, so cfg stays 1.0. Describe the soundtrack after Audio: in the "
              "prompt, and quote a line of dialogue to make the model speak it. "
              + FRAMES + " " + GATE +
              " Expects ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors in "
@@ -3348,11 +3528,9 @@ TEMPLATES = {
              "supply. Pro is the 4096-dim model: if it does not fit resident, set "
              "the Init topology to uly2+fsdp, which shards the weights across the "
              "pair for capacity and takes roughly twice the time. FSDP adds "
-             "capacity, never speed, and LoRA on FSDP is unmeasured for Pro. FSDP "
-             "also needs a checkpoint stored in bf16: the launch contract reads the "
-             "safetensors header on the driver and refuses fp8, int8, fp16 and "
-             "mixed-precision files, so that route needs the bf16 Pro file, not a "
-             "quantized repack. " +
+             "capacity, never speed. " + FSDP_RULES + " Pro passed under explicit "
+             "FSDP with a full render and an exact one-step comparison; LoRA on FSDP "
+             "and quantized Pro files have no FSDP test. " +
              FRAMES + " " + GATE + " Expects "
              "kandinsky5pro_t2v_sft_5s.safetensors in models/diffusion_models, "
              "clip_l.safetensors plus qwen_2.5_vl_7b_fp8_scaled.safetensors in "
@@ -3560,9 +3738,9 @@ TEMPLATES = {
              "against DP2 with a 20-step render; on 2026-10-06 it was "
              "equal to the dp2 output at 1024 and 1040. The bf16 release with the "
              "`uly2+fsdp` preset carries the 2026-07-28 evidence instead. This graph "
-             "ships the resident path, and the FSDP launch contract refuses every "
-             "quantized file, so switching to FSDP means switching to the bf16 "
-             "checkpoint too. " + GATE +
+             "ships the resident path. " + FSDP_RULES + " The launch contract admits "
+             "this fp8mixed file, but only the bf16 release has an FSDP comparison. "
+             + GATE +
              " Expects flux2_dev_fp8mixed.safetensors in "
              "models/diffusion_models, mistral_3_small_flux2_bf16.safetensors in "
              "models/text_encoders, and flux2-vae.safetensors in models/vae. " +
@@ -3610,7 +3788,7 @@ TEMPLATES = {
         "nodes": [
             {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
              "widgets": {"topology": "uly2", "mode": "auto",
-                         "auto_gate": "first_use", "sync_ulysses": False}},
+                         "auto_gate": "first_use"}},
             {"key": "note", "type": "Note", "pos": (0, 1), "note":
              "Ideogram 4 text to image at 1024x1024, 20 steps at cfg 7.0. Two things "
              "set this family apart. First, the unconditional pass is a separate "
@@ -3630,18 +3808,14 @@ TEMPLATES = {
              "false-positive rate, and the caption is validated against a schema, "
              "so compositional_deconstruction with its background and elements is "
              "required and the key order inside style_description is fixed. The "
+             "JSON sits in Text (Multiline) and reaches CLIP Text Encode through a "
+             "link: typed into CLIP Text Encode's own box, the browser's dynamic "
+             "prompt pass would strip its braces on Queue and send broken JSON. The "
              "official presets drop guidance to 3 for the final polish steps, which "
              "the DGX Monarch guider cannot express, so this template runs the "
              "vendor's constant-guidance mode at cfg 7.0. Sigmas come from the stock "
              "Ideogram 4 Scheduler, so keep its width and height equal to the "
-             "latent's. sync_ulysses is off in this graph, which changes nothing on "
-             "the pinned xfuser 0.7.0: its Ulysses all-to-all never receives the "
-             "setting, so output and speed are the same either way. The 24.0 s "
-             "against 26.0 s measured with it on (2026-08-25) is one 2-second "
-             "polling interval, and both settings read 1-step NRMS 0.069 against "
-             "DP2. A gate verdict covers one sync_ulysses setting, so the first "
-             "render with it off runs its own identity gate before any pixels. "
-             + GATE +
+             "latent's. " + GATE + " " + GATE_DUAL_PLACEMENTS +
              " Expects ideogram4_fp8_scaled.safetensors plus "
              "ideogram4_unconditional_fp8_scaled.safetensors in "
              "models/diffusion_models, qwen3vl_8b_fp8_scaled.safetensors in "
@@ -3659,33 +3833,14 @@ TEMPLATES = {
             {"key": "clip", "type": "CLIPLoader", "pos": (0, 2),
              "widgets": {"clip_name": "qwen3vl_8b_fp8_scaled.safetensors",
                          "type": "ideogram4"}},
-            # One line of compact JSON, valid against the official caption schema:
-            # compositional_deconstruction with background and elements is required,
-            # style_description carries aesthetics and lighting and exactly one of
-            # photo or art_style, and the photo key order is fixed. bbox is
-            # [y_min, x_min, y_max, x_max] over 0 to 1000 from the top left.
+            # The caption reaches CLIP Text Encode through a link; IDEOGRAM_CAPTION
+            # says why. `text` is a wired widget: build() gives it a socket after
+            # `clip`, and its widgets_values slot stays empty.
+            {"key": "caption", "type": "PrimitiveStringMultiline", "pos": (0, 3),
+             "widgets": {"value": IDEOGRAM_CAPTION}},
             {"key": "pos", "type": "CLIPTextEncode", "pos": (1, 2),
-             "widgets": {"text":
-                         '{"high_level_description":"A close-up photograph of a '
-                         'chalkboard menu sign propped on a wooden bakery counter '
-                         'beside a tray of fresh croissants.","style_description":'
-                         '{"aesthetics":"warm, rustic, inviting","lighting":"soft '
-                         'morning window light from the left with gentle falloff",'
-                         '"photo":"50mm, f/2.8, shallow depth of field, eye level",'
-                         '"medium":"photograph","color_palette":["#2B2018",'
-                         '"#E8D5B7","#C98A3C","#F5EFE6","#6B4A2F"]},'
-                         '"compositional_deconstruction":{"background":"A warm '
-                         'wooden bakery counter with a softly blurred shelf of bread '
-                         'loaves and a copper kettle behind it.","elements":'
-                         '[{"type":"text","bbox":[120,180,520,820],"text":"FRESH '
-                         'BAKED DAILY","desc":"Hand lettered white chalk capitals on '
-                         'a black chalkboard, set in three stacked centered lines '
-                         'inside a thin chalk border, with a small wheat sprig drawn '
-                         'beneath."},{"type":"obj","bbox":[560,120,940,880],"desc":'
-                         '"A shallow metal tray of golden croissants with flaky '
-                         'layered crusts, dusted lightly with flour, angled toward '
-                         'the camera."}]}}'},
-             "wire": {"clip": ("clip", 0)}},
+             "widgets": {"text": ""},
+             "wire": {"clip": ("clip", 0), "text": ("caption", 0)}},
             {"key": "latent", "type": "EmptyFlux2LatentImage", "pos": (2, 3),
              "widgets": {"width": 1024, "height": 1024, "batch_size": 1}},
             # mu 0.0 with std 1.75 at 20 steps is the vendor's V4_DEFAULT_20 preset.
@@ -4655,9 +4810,11 @@ TEMPLATES = {
              "picks this family from the detected Qwen3 0.6B encoder and lists no "
              "anima entry, and the sampling shift of 3.0 is stored in the checkpoint, so "
              "no model sampling node belongs in this graph. topology=auto runs it on one "
-             "Spark and splits it across the pair once a cluster.toml is configured; an "
-             "FSDP preset typed-refuses here because the llm_adapter never joins the "
-             "sharded collective. " + GATE +
+             "Spark and splits it across the pair once a cluster.toml is configured. "
+             "Under an FSDP preset the llm_adapter, which ComfyUI runs before the "
+             "denoise loop, stays replicated outside the sharded collective; the BF16 "
+             "FSDP and cfg2+fsdp tests matched resident renders, and other files and "
+             "LoRAs have no FSDP test. " + FSDP_RULES + " " + GATE +
              " Expects anima-base-v1.0.safetensors in models/diffusion_models, "
              "qwen_3_06b_base.safetensors in models/text_encoders, and "
              "qwen_image_vae.safetensors in models/vae. " + DERIVED},
@@ -5260,8 +5417,9 @@ def _flux3_template(*, base: bool, edit: bool) -> dict:
         "GB is outside dgx-monarch's driver memory estimate. The stock Flux3 "
         "Layout Prompt node turns bounding boxes into prompt text. Either can "
         "feed CLIP Text Encode with no change to this graph. "
-        "The INT8 ConvRot files pin an approximate attention kernel: single, "
-        "cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. "
+        "The INT8 ConvRot files pin an approximate attention kernel: a world "
+        "of one GPU renders with it as stock ComfyUI does and asks nothing, cfg2 and dp2 "
+        "ask for the Sol-Attn waiver, and uly2 drops the pin. "
         "This graph uses the BF16 files, which ask nothing. Auto picks Ulysses "
         "on a configured pair. " + FLUX3_HW_TESTS[edit]
         + f"Expects {artifact} in models/diffusion_models, "
@@ -5547,8 +5705,9 @@ def _moss_note(*, checkpoint: str, turbo: bool, layout: bool) -> str:
     else:
         note += (
             "The INT8 ConvRot DiT files pin an approximate attention kernel on "
-            "all 42 blocks: single, cfg2 and dp2 ask for the Sol-Attn waiver, and "
-            "uly2 drops the pin. On uly2 they exactly match one GPU running the "
+            "all 42 blocks: a world of one GPU renders with it as stock ComfyUI does and asks "
+            "nothing, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the "
+            "pin. On uly2 they exactly match one GPU running the "
             "same file without its pins: the 2026-10-21 tests measured 0.027 to "
             "0.036 one-step NRMS before that day's INT8 fix and an exact match "
             "after it. With any LoRA they refuse on every topology "
@@ -5768,6 +5927,445 @@ def _p_h3_image_template() -> dict:
 
 
 TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
+
+
+# MiniMax-H3-Image (MiniMax's own image model on the H3 DiT; ComfyUI 0.45.0,
+# family minimax_h3_image, its own adapter). Both graphs follow ComfyUI's own
+# templates (Comfy-Org/workflow_templates 0.11.105, image_minimax_h3_image_t2i
+# and image_minimax_h3_image_edit): the INT8 ConvRot DiT and text encoder, the
+# FP16 VAE, KSampler at 6 steps, CFG 1, euler and simple, a zeroed negative,
+# the edit's two Resize Image/Mask nodes and Get Image Size, and the prompt
+# expander chain as ComfyUI wires it: Replace Text puts the request into a
+# task prompt, Generate Text runs the W4A8 expander,
+# Extract Text reads the caption out, and an If/Else switch
+# picks the caption or the request. Eight things differ, each on purpose.
+# Generate Text runs with this project's settings (H3I_DECODING, H3I_GENERATE),
+# where ComfyUI's templates reason at up to 8192 or 8196 tokens.
+# The task prompt and system prompt boxes of the two shipped graphs hold this
+# project's OWN texts (tools/expander_prompts/minimax_h3_image), written from
+# public research on the model: the text ComfyUI's templates carry there is
+# MiniMax's own, and this repository ships none of it. The testing graph
+# keeps both boxes empty, so no sweep or identity row can run a sampled
+# language model. The switch is off as shipped (H3I_EXPANDER_ON), where
+# ComfyUI's two templates ship it on (text to image through its subgraph's
+# enable_PE input, whose value wins over the inner node's stored false, the
+# edit through a Boolean box). The caption is read by pattern and not as
+# strict JSON: ComfyUI's Extract Text from JSON loses a caption that holds a
+# raw double quote, and can take an inner object or a cut caption for the
+# answer, and the texts here ask for drawn words copied exactly. An answer
+# with no caption falls back to the request: Trim Text and Compare Text test
+# the caption against the empty text, and an If/Else picks the request when
+# it is empty,
+# where ComfyUI's graph would render from nothing. An empty request skips the
+# expander by the same pattern, keyed on the request, so it starts no
+# language-model run. A graph that turns the expander
+# on with an empty task prompt refuses (nodes/expander_prompt.py). The text
+# to image canvas
+# sits on the conditioning node as two numbers, where upstream wires a
+# Resolution Selector: the loader's price, the sweep and App Mode read
+# numbers, and a wired side reads as none. And Preview as Text sits beside
+# the text path, not on it, as in the p-h3-image graph.
+H3I_DIT = "minimax_h3_image_pruned_int8_convrot.safetensors"
+H3I_ENCODER = "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
+H3I_VAE = "minimax_h3_image_vae_fp16.safetensors"
+H3I_EXPANDER = "qwen3.5_9b_w4a8_gptq.safetensors"
+# The sigma grid every published DiT carries in its config metadata
+# (transformer.pdd_sigmas), written out in full so Manual Sigmas parses the
+# same float32 values; tests/test_minimax_h3_image_templates.py holds it to
+# the header fixture.
+H3I_GRID = ("1.0, 0.9675236940383911, 0.8875485062599182, 0.75, "
+            "0.5327739119529724, 0.23200887441635132, 0.0")
+# The demo requests are this project's own short sentences. The edit's is
+# written for the demo picture the pack draws under reference.png
+# (tools/gen_demo_inputs.py: a clay vase with a cream band on a studio
+# backdrop); the conditioning node presents pictures as Picture 1, Picture 2.
+H3I_REQUEST = ("A small mountain weather station at first light, frost on the grass "
+               "and snow-covered peaks behind it, photographed with a 35mm lens.")
+H3I_EDIT_REQUEST = (
+    "Turn the clay vase in <Picture 1> into a glossy cobalt blue ceramic vase with "
+    "a thin gold band, and keep its shape, the plain studio backdrop and the "
+    "framing as they are.")
+# The marker Replace Text fills with the request, as ComfyUI's templates
+# write it. It sits in Replace Text's own find box, which ComfyUI does not
+# mark for the browser's dynamic prompt pass.
+H3I_MARKER = "{input text}"
+# The expander's texts, this project's own: one system prompt for both graphs
+# and a task prompt each. They are tracked files, read here byte for byte and
+# written into the Text (Multiline) boxes by the JSON encoder, so a box holds
+# exactly its file (tests/test_minimax_h3_image_templates.py). Each task
+# prompt holds the marker once; the system prompt holds none.
+H3I_PROMPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "expander_prompts", "minimax_h3_image")
+H3I_PROMPT_FILES = {"system": "system_prompt.txt", "t2i": "t2i_task_prompt.txt",
+                    "edit": "edit_task_prompt.txt"}
+
+
+def _h3i_prompt(which: str) -> str:
+    with open(os.path.join(H3I_PROMPT_DIR, H3I_PROMPT_FILES[which]),
+              encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
+# Whether the two shipped graphs send the expander's caption to the model.
+# This is the one value to change to ship the expander on: the outer switch,
+# both Notes and the template test read it. The testing graph stays off.
+H3I_EXPANDER_ON = False
+# The titles that tell the three If/Else switches apart for a reader.
+H3I_SWITCH_TITLE = "If/Else Switch (expander on or off)"
+H3I_FALLBACK_TITLE = "If/Else Switch (empty caption: send the request)"
+H3I_SKIP_TITLE = "If/Else Switch (empty request: skip the expander)"
+# The pattern Extract Text reads the caption by, with dotall on and group 2
+# taken. The group runs from the opening quote of the expanded_caption value
+# to the quote that closes the answer: the first quote that a closing brace
+# follows with no later quote-then-brace in the answer. So a raw double quote
+# inside the caption, or a JSON object copied into it, cannot end it early or
+# be taken for the answer. Between that quote and the brace the pattern lets
+# more keys stand, each a JSON string with a string, a number, true, false
+# or null as its value, so a second key after the caption stays out of it.
+# The answer's own key is not taken as such a key: an answer that writes it
+# twice is read as one caption, and a run of starts of the key cannot make
+# the search slow. Group 1 is a backslash
+# before the opening quote: some answers escape the quotes around the value,
+# and then the closing quote is escaped too and stays out of the caption. An
+# empty value or an answer cut short gives no match, and the empty-caption
+# fallback sends the request. The widget canary holds a table of answers and
+# runs it through ComfyUI's own nodes; tests/test_minimax_h3_image_templates.py
+# runs the same table through stand-ins.
+# The pattern backtracks. An ordinary answer takes under a millisecond. The
+# slowest shape found, a long run of keys with no closing brace, takes about
+# 40 ms at 6,000 characters, which is longer than any answer 1024 tokens
+# have given.
+H3I_CAPTION_PATTERN = (
+    r'"expanded_caption\\?"\s*:\s*(\\)?"(.*?)(?(1)\\"\s*"?|")\s*'
+    r'(?:,\s*(?!"expanded_caption\\?")"(?:[^"\\]|\\.)*"\s*:\s*'
+    r'(?:"(?:[^"\\]|\\.)*"|-?[0-9][0-9.]*(?:[eE][+-]?[0-9]+)?|true|false|null)\s*)*'
+    r'\}(?!.*"\s*\})')
+# The one decode pass: a backslash before a double quote, a backslash or a
+# slash becomes that mark. One pass with a backreference, so an escaped
+# backslash before a quote cannot be read twice. Other escapes stay as
+# typed: an escaped line break or tab (the texts ask for one line), a \u
+# escape, and a raw backslash in a path the request asked to have drawn.
+H3I_UNESCAPE = (r'\\(["\\/])', r'\1')
+# Where MiniMax publishes its own prompts, which this project does not ship.
+H3I_PROMPT_REPO = "MiniMaxAI/MiniMax-H3-Image-PE"
+# How Generate Text runs, in one place. These are this project's settings for
+# its own texts, not ComfyUI's template values (thinking on, max_length 8192
+# or 8196, mtp auto, temperature 1.0, top_p 0.95). The node gives reasoning
+# no budget of its own: it spends max_length, and a run cut off while it
+# reasons returns no caption. So thinking is off and the texts ask for the
+# answer at once. max_length 1024 leaves room for a long caption and
+# bounds a run. mtp is off: at auto ComfyUI re-fits the draft tree from
+# measured step time and the seeded draws follow the tree, so the text could
+# change from run to run at a fixed seed (comfy/text_encoders/qwen35.py at
+# 0.45.0, _generate_mtp); off, Generate Text decodes in its plain loop with
+# one seeded generator. Temperature 0.7 and top_p 0.8 are the texts' author's
+# choice, taken from Qwen's guidance for answers without reasoning. The other
+# sampling widgets keep ComfyUI's values, in the option's order.
+H3I_DECODING = {
+    "sampling_mode": "on", "sampling_mode.temperature": 0.7, "sampling_mode.top_k": 20,
+    "sampling_mode.top_p": 0.8, "sampling_mode.min_p": 0.0,
+    "sampling_mode.repetition_penalty": 1.0, "sampling_mode.presence_penalty": 0.0,
+    "sampling_mode.seed": 0}
+H3I_GENERATE = {"max_length": 1024, "thinking": False, "use_default_template": True,
+                "mtp": "off"}
+# The median text stage of a first hardware probe of these texts and settings
+# (2026-11-11, one seed a request), in whole seconds, for the two Notes.
+H3I_PROBE_SECONDS = {"t2i": 7, "edit": 13}
+H3I_SIZES = ("ComfyUI's template notes say the model works from about 4 MP to 20 MP "
+             "and best near 16 MP: 4096x4096, 4736x3552, 5024x3360, 5472x3072 or "
+             "6272x2688, sides swapped for portrait.")
+
+
+def _minimax_h3_image_note(*, edit: bool) -> str:
+    if edit:
+        head = (
+            "MiniMax-H3-Image edit of one picture, at about 4 MP in 6 steps, on the "
+            "INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's "
+            "own template loads. Load your picture in Load Image. The two Resize "
+            "Image/Mask nodes bring it to 4 MP and then to a multiple of 32, as in "
+            "ComfyUI's template, and Get Image Size hands that size to MiniMax H3 "
+            "Image Conditioning, so the render keeps the picture's shape. The "
+            "conditioning node shows the picture to the text encoder and, through "
+            "the VAE, hands it to the DiT as a reference; call it <Picture 1> in the "
+            "request. For more pictures, add a Load Image and the two resize nodes "
+            "for each and wire them to image_2, image_3 and so on, and to the next "
+            "image input of Generate Text if you turn the expander on; image_1 stays "
+            "the picture to edit. " + H3I_SIZES + " A reference of this size adds "
+            "about as many rows as the target, so an edit needs more Worker memory "
+            "than text to image at the same size. ")
+    else:
+        head = (
+            "MiniMax-H3-Image text to image at 2048x2048 (4 MP) in 6 steps, on the "
+            "INT8 ConvRot DiT and text encoder and the FP16 VAE, the files ComfyUI's "
+            "own template loads. Set width and height on MiniMax H3 Image "
+            "Conditioning in multiples of 32. " + H3I_SIZES + " ")
+    upstream = (
+        "ComfyUI's edit template ships its switch true, through a Boolean box, "
+        if edit else
+        "ComfyUI's text to image template ships its switch true, through its "
+        "subgraph's enable_PE input, ") + "with MiniMax's texts in the two boxes. "
+    chain = (
+        "Replace Text puts the request into the task prompt where it says "
+        + H3I_MARKER + ", Generate Text runs the expander model on the driver, with "
+        "reasoning off, Extract Text reads the caption out "
+        "of its answer, and the switch titled " + H3I_SWITCH_TITLE + " picks that "
+        "caption or the request. ")
+    cost = (
+        "the driver loads the 7.3 GB expander beside the text encoder, and Generate "
+        "Text may write up to " + str(H3I_GENERATE["max_length"]) + " tokens before the "
+        "render starts, a wait of about "
+        + str(H3I_PROBE_SECONDS["edit" if edit else "t2i"])
+        + " seconds on a DGX Spark in a first probe")
+    if H3I_EXPANDER_ON:
+        expander = (
+            "A prompt expander rewrites the request before the model sees it: "
+            + chain + "As shipped that switch is true, so " + cost + ". Set it to "
+            "false to send the request to the model as written. " + upstream)
+        memory = "and the 7.3 GB expander, which the switch as shipped loads at the first render"
+    else:
+        expander = (
+            "The request box goes to the model as written. A prompt expander is "
+            "wired and off: " + chain + "As shipped that switch is false. " + upstream +
+            "Set the switch to true to have the expander write the prompt: then "
+            + cost + ". ")
+        memory = ("and the 7.3 GB expander from the first render with the switch true "
+                  "(as shipped, this graph never loads it)")
+    return (
+        head + expander +
+        "The task prompt and system prompt boxes hold this project's own texts, "
+        "written from public research on the model. They are not MiniMax's "
+        "prompts, which MiniMax publishes in its Hugging Face repository "
+        + H3I_PROMPT_REPO + " under its own licence; nothing of those is in this "
+        "graph. You may replace either text with your own: keep " + H3I_MARKER +
+        " in the task prompt where the request belongs, and have the answer hold "
+        "the caption under the key expanded_caption. Extract Text reads the "
+        "caption by pattern, not as strict JSON, so a double quote or a JSON "
+        "object inside the caption does not lose it or cut it short; the texts "
+        "ask the expander to copy drawn words exactly, and they expect this read. "
+        "If the read holds no caption, the switch titled "
+        + H3I_FALLBACK_TITLE + " sends the request as written instead. An empty "
+        "request skips the expander: no language model runs for it. Preview as "
+        "Text shows the text that is rendered "
+        "either way. A DGX Monarch loader or sampler refuses a graph whose "
+        "expander is on with an empty task prompt, or with one that lacks the "
+        "marker (docs/TROUBLESHOOTING.md #" + str(EXPANDER_ENTRY) + "). With the "
+        "switch true the prompt is text a language model sampled, at Generate "
+        "Text's own seed and not the sampler's, so "
+        "compare renders and check identity with the switch false. "
+        "Sampling is KSampler at CFG 1 with euler and the simple scheduler, as in "
+        "ComfyUI's template. At 6 steps that schedule lands within a thousandth of "
+        "the sigma grid the checkpoint carries, and the output head picks its "
+        "blocks by the nearest grid point, so keep 6 steps, euler and simple. Add "
+        "no shift node: ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family. "
+        "auto asks for sequence-parallel (uly2) on a configured pair, and a world "
+        "of one GPU runs stock ComfyUI's forward. Every published DiT of this "
+        "family pins comfy-kitchen's INT8 attention on all 50 blocks: a world of "
+        "one GPU keeps the pins, as stock does, uly2 drops them and runs exact "
+        "attention, and the render record says which. The two kernels differ, so a "
+        "render on the pair is not bit for bit the render on one GPU. cfg2 and dp2 "
+        "refuse, because the DiT takes one sample a call, and a padded ring "
+        "refuses. The driver holds the 27.1 GB text encoder and the 1.2 GB VAE, "
+        + memory + "; each Worker holds "
+        "the 21.0 GB DiT. " + GATE + " This graph samples with KSampler (DGX "
+        "Monarch), so each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 "
+        "on this schedule; they span head blocks the 6-step render takes one at a "
+        "time, and every proof leg spans them alike. No render of this family has "
+        "run on hardware yet: docs/VALIDATION.md, under MiniMax-H3-Image, lists "
+        "each hardware leg as NOT RUN beside the adapter's CPU proof against stock "
+        "ComfyUI. Needs ComfyUI 0.45.0 or newer on the driver and every Worker. "
+        "Expects " + H3I_DIT + " in models/diffusion_models, " + H3I_ENCODER +
+        " and " + H3I_EXPANDER + " in models/text_encoders (CLIP type minimax), "
+        "and " + H3I_VAE + " in models/vae. " + DERIVED)
+
+
+def _minimax_h3_image_template(*, edit: bool = False, grid: bool = False) -> dict:
+    """One MiniMax-H3-Image graph: text to image, the edit, or the grid test.
+
+    ``grid`` swaps KSampler for Sampler Custom on the checkpoint's own sigma
+    grid; its note is set where it is registered. The expander chain is wired
+    in all three. The two shipped graphs hold this project's texts in the task
+    prompt and system prompt boxes and take their switch from H3I_EXPANDER_ON;
+    the grid graph keeps both boxes empty and its switch false.
+    """
+    task = "" if grid else _h3i_prompt("edit" if edit else "t2i")
+    system = "" if grid else _h3i_prompt("system")
+    nodes = [
+        {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
+         "widgets": {"topology": "auto", "mode": "auto", "auto_gate": "first_use"}},
+        {"key": "note", "type": "Note", "pos": (0, 1),
+         "note": _minimax_h3_image_note(edit=edit)},
+        {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
+         "widgets": {"unet_name": H3I_DIT, "weight_dtype": "default"},
+         "wire": {"mesh": ("init", 0)}},
+        {"key": "clip", "type": "CLIPLoader", "pos": (0, 2),
+         "widgets": {"clip_name": H3I_ENCODER, "type": "minimax", "device": "default"}},
+        {"key": "expclip", "type": "CLIPLoader", "pos": (0, 3),
+         "widgets": {"clip_name": H3I_EXPANDER, "type": "minimax", "device": "default"}},
+        {"key": "vae", "type": "VAELoader", "pos": (0, 4),
+         "widgets": {"vae_name": H3I_VAE}},
+        # The three text boxes carry ComfyUI's titles for them, so a reader can
+        # tell them apart.
+        {"key": "request", "type": "PrimitiveStringMultiline", "pos": (1, 2),
+         "title": "Text (user_prompt)",
+         "widgets": {"value": H3I_EDIT_REQUEST if edit else H3I_REQUEST}},
+        {"key": "task", "type": "PrimitiveStringMultiline", "pos": (1, 3),
+         "title": "Text (task_prompt)", "widgets": {"value": task}},
+        {"key": "system", "type": "PrimitiveStringMultiline", "pos": (1, 4),
+         "title": "Text (system_prompt)", "widgets": {"value": system}},
+        {"key": "splice", "type": "StringReplace", "pos": (2, 3),
+         "widgets": {"string": "", "find": H3I_MARKER, "replace": ""},
+         "wire": {"string": ("task", 0), "replace": ("request", 0)}},
+    ]
+    expand_wire = {"clip": ("expclip", 0), "system_prompt": ("system", 0),
+                   "prompt": ("splice", 0)}
+    cond_wire = {"clip": ("clip", 0), "vae": ("vae", 0), "prompt": ("switch", 0)}
+    cond_widgets = {"prompt": "", "width": 2048, "height": 2048}
+    if edit:
+        nodes.extend([
+            {"key": "image", "type": "LoadImage", "pos": (0, 5),
+             "widgets": {"image": "reference.png", "upload": "image"}},
+            # Upstream's two nodes, in upstream's order and with its values:
+            # area scaling to 4 MP, then to a multiple of 32. Each resize_type
+            # reveals one child widget (DYNAMIC_WIDGETS).
+            {"key": "scale", "type": "ResizeImageMaskNode", "pos": (1, 5),
+             "widgets": {"resize_type": "scale total pixels",
+                         "resize_type.megapixels": 4.0, "scale_method": "area"},
+             "wire": {"input": ("image", 0)}},
+            {"key": "multiple", "type": "ResizeImageMaskNode", "pos": (2, 5),
+             "widgets": {"resize_type": "scale to multiple",
+                         "resize_type.multiple": 32, "scale_method": "area"},
+             "wire": {"input": ("scale", 0)}},
+            {"key": "size", "type": "GetImageSize", "pos": (3, 5),
+             "wire": {"image": ("multiple", 0)}},
+        ])
+        # The wired sides hold 0, the node's own default, which ComfyUI never
+        # reads behind a link.
+        cond_widgets = {"prompt": "", "width": 0, "height": 0}
+        cond_wire = {"clip": ("clip", 0), "vae": ("vae", 0),
+                     "images.image_1": ("multiple", 0), "prompt": ("switch", 0),
+                     "width": ("size", 0), "height": ("size", 1)}
+        expand_wire = {"clip": ("expclip", 0), "images.image1": ("multiple", 0),
+                       "system_prompt": ("system", 0), "prompt": ("splice", 0)}
+    nodes.extend([
+        # H3I_DECODING and H3I_GENERATE hold this project's settings for the
+        # expander: reasoning off, a short max_length, mtp off.
+        {"key": "expand", "type": "TextGenerateV2", "pos": (3, 3),
+         "widgets": {"prompt": "", **H3I_DECODING, **H3I_GENERATE},
+         "wire": expand_wire},
+        # Reading the caption. The answer is meant as one JSON object, and a
+        # strict JSON read is wrong in three shapes the texts invite by asking
+        # for drawn words copied exactly: a raw double quote inside the caption
+        # makes the answer invalid; a copied object that itself holds the
+        # answer key is the first object that parses, so its value is taken;
+        # and a raw quote followed by a closing brace ends the caption early.
+        # So Extract Text reads the caption by pattern (H3I_CAPTION_PATTERN):
+        # the outermost wrapper, whatever the caption holds. Replace Text
+        # (Regex) then turns a backslash before a double quote, a backslash or
+        # a slash into that mark, which is what a JSON read would do for the
+        # escapes a model writes (H3I_UNESCAPE). One read and no branch.
+        {"key": "read", "type": "RegexExtract", "pos": (4, 3),
+         "widgets": {"string": "", "regex_pattern": H3I_CAPTION_PATTERN, "mode": "First Group",
+                     "case_insensitive": False, "multiline": False, "dotall": True,
+                     "group_index": 2},
+         "wire": {"string": ("expand", 0)}},
+        {"key": "marks", "type": "RegexReplace", "pos": (1, 6),
+         "widgets": {"string": "", "regex_pattern": H3I_UNESCAPE[0], "replace": H3I_UNESCAPE[1],
+                     "case_insensitive": False, "multiline": False, "dotall": False,
+                     "count": 0},
+         "wire": {"string": ("read", 0)}},
+        # The empty-caption fallback. When the read holds no caption (an
+        # answer cut short, plain prose, an empty value), ComfyUI's own graph
+        # would render from nothing. Compare Text tests the trimmed caption
+        # against the empty text and drives an If/Else, which hands on the
+        # request when the caption is empty and the caption as read
+        # otherwise. Its switch input is not lazy, so ComfyUI runs the
+        # expander for it whichever way it goes.
+        {"key": "trim", "type": "StringTrim", "pos": (2, 4),
+         "widgets": {"string": "", "mode": "Both"},
+         "wire": {"string": ("marks", 0)}},
+        {"key": "compare", "type": "StringCompare", "pos": (3, 4),
+         "widgets": {"string_a": "", "string_b": "", "mode": "Equal",
+                     "case_sensitive": True},
+         "wire": {"string_a": ("trim", 0)}},
+        {"key": "fallback", "type": "ComfySwitchNode", "pos": (4, 4),
+         "title": H3I_FALLBACK_TITLE, "widgets": {"switch": False},
+         "wire": {"switch": ("compare", 0), "on_false": ("marks", 0),
+                  "on_true": ("request", 0)}},
+        # An empty request skips the expander. Compare Text tests the trimmed
+        # request against the empty text and drives an If/Else whose on_true
+        # is the request and whose on_false is everything above. The If/Else
+        # is lazy (comfy_extras/nodes_logic.py: both branches are lazy inputs
+        # and check_lazy_status asks for one), so with an empty request
+        # ComfyUI never asks for Generate Text: no language-model run, and
+        # nothing invented from an empty request.
+        {"key": "req_trim", "type": "StringTrim", "pos": (1, 7),
+         "widgets": {"string": "", "mode": "Both"},
+         "wire": {"string": ("request", 0)}},
+        {"key": "req_empty", "type": "StringCompare", "pos": (2, 7),
+         "widgets": {"string_a": "", "string_b": "", "mode": "Equal",
+                     "case_sensitive": True},
+         "wire": {"string_a": ("req_trim", 0)}},
+        {"key": "skip", "type": "ComfySwitchNode", "pos": (3, 7),
+         "title": H3I_SKIP_TITLE, "widgets": {"switch": False},
+         "wire": {"switch": ("req_empty", 0), "on_false": ("fallback", 0),
+                  "on_true": ("request", 0)}},
+        # The switch a reader sets. The grid graph stays off whatever ships.
+        # With it false, the lazy switch asks for none of the nodes above.
+        {"key": "switch", "type": "ComfySwitchNode", "pos": (2, 2),
+         "title": H3I_SWITCH_TITLE,
+         "widgets": {"switch": H3I_EXPANDER_ON and not grid},
+         "wire": {"on_false": ("request", 0), "on_true": ("skip", 0)}},
+        # Beside the text path, never on it: an any-typed socket would hide
+        # the text from Studio's prompt role (the p-h3-image graph says so too).
+        # Preview as Text hands a string on unchanged, so the model gets the
+        # same text either way.
+        {"key": "preview", "type": "PreviewAny", "pos": (3, 2),
+         "wire": {"source": ("switch", 0)}},
+        {"key": "cond", "type": "MiniMaxH3ImageConditioning", "pos": (4, 2),
+         "widgets": cond_widgets, "wire": cond_wire},
+    ])
+    if grid:
+        nodes.extend([
+            {"key": "guider", "type": "DGXMonarchBasicGuider", "pos": (5, 0),
+             "wire": {"model": ("unet", 0), "conditioning": ("cond", 0)}},
+            {"key": "sampler", "type": "KSamplerSelect", "pos": (5, 2),
+             "widgets": {"sampler_name": "euler"}},
+            {"key": "noise", "type": "RandomNoise", "pos": (5, 3),
+             "widgets": {"noise_seed": 42}},
+            {"key": "sigmas", "type": "ManualSigmas", "pos": (5, 4),
+             "widgets": {"sigmas": H3I_GRID}},
+            {"key": "sc", "type": "DGXMonarchSamplerCustom", "pos": (6, 1),
+             "wire": {"noise": ("noise", 0), "guider": ("guider", 0),
+                      "sampler": ("sampler", 0), "sigmas": ("sigmas", 0),
+                      "latent_image": ("cond", 1)}},
+        ])
+        sampled = "sc"
+    else:
+        nodes.extend([
+            # Zero Out on the positive, as upstream; CFG 1 never evaluates it.
+            {"key": "neg", "type": "ConditioningZeroOut", "pos": (5, 2),
+             "wire": {"conditioning": ("cond", 0)}},
+            {"key": "ks", "type": "DGXMonarchKSampler", "pos": (5, 1),
+             "widgets": {"seed": 42, "steps": 6, "cfg": 1.0, "sampler_name": "euler",
+                         "scheduler": "simple", "denoise": 1.0},
+             "wire": {"model": ("unet", 0), "positive": ("cond", 0),
+                      "negative": ("neg", 0), "latent_image": ("cond", 1)}},
+        ])
+        sampled = "ks"
+    prefix = "dgx_monarch_minimax_h3_image" + ("_edit" if edit else "")
+    nodes.extend([
+        {"key": "dec", "type": "VAEDecode", "pos": (7, 1),
+         "wire": {"samples": (sampled, 0), "vae": ("vae", 0)}},
+        {"key": "save", "type": "SaveImage", "pos": (8, 1),
+         "widgets": {"filename_prefix": prefix},
+         "wire": {"images": ("dec", 0)}},
+    ])
+    title = "MiniMax-H3-Image " + ("image editing" if edit else "text to image")
+    return {"title": title, "nodes": nodes}
+
+
+TEMPLATES["dgx-monarch-minimax-h3-image-t2i"] = _minimax_h3_image_template()
+TEMPLATES["dgx-monarch-minimax-h3-image-edit"] = _minimax_h3_image_template(edit=True)
 
 
 # dual-spark-split shares FLUX_STACK, whose latent is 1024. Override it here to
@@ -6017,7 +6615,8 @@ def _app_mode_extra(layout: dict, nodes: list[dict], key_to_id: dict[str, int]) 
             raise KeyError(f"App Mode input {entry!r} names no node")
         if node["type"] in APP_MODE_LEFT_OUT:
             raise ValueError(f"App Mode input {entry!r}: {node['type']} stays under All inputs")
-        if widget == CONTROL_WIDGET or widget not in _widget_names(node["type"]):
+        if widget == CONTROL_WIDGET or widget not in _node_widget_names(
+                node["type"], node.get("widgets") or {}):
             raise KeyError(f"App Mode input {entry!r}: {node['type']} has no widget {widget!r}")
         if widget in (node.get("wire") or {}):
             raise ValueError(f"App Mode input {entry!r} is wired, so it holds no value")
@@ -6190,11 +6789,12 @@ APP_MODE = {
         {"size": ("scale.width", "scale.height", "latent.width", "latent.height")},
         _KS, _IMAGE, _UNET),
     "dgx-monarch-flux2-t2i": _layout(*_T2I_ZERO, _FLUX_GUIDANCE),
-    # The negative input stays unconnected, so there is no negative prompt. The
-    # scheduler builds its sigmas for a size that must equal the latent's, and
-    # the second loader holds the unconditional model.
+    # The caption JSON is the prompt; it reaches CLIP Text Encode through a
+    # wire. The negative input stays unconnected, so there is no negative
+    # prompt. The scheduler builds its sigmas for a size that must equal the
+    # latent's, and the second loader holds the unconditional model.
     "dgx-monarch-ideogram4-t2i": _layout(
-        _PROMPT,
+        {"prompt": ("caption.value",)},
         {"size": ("latent.width", "latent.height", "sched.width", "sched.height"),
          "steps": ("sched.steps",)},
         _CUSTOM, {"model": ("unet.unet_name", "uncond.unet_name")}),
@@ -6246,6 +6846,13 @@ APP_MODE = {
         {"prompt": ("request.value",), "seed": ("noise.noise_seed",),
          "size": ("cond.width", "cond.height"), "sampler": ("sampler.sampler_name",)},
         _UNET),
+    # The request box is the prompt, whether the expander rewrites it or not;
+    # the size sits on the conditioning node, which also makes the latent.
+    "dgx-monarch-minimax-h3-image-t2i": _layout(
+        {"prompt": ("request.value",), "size": ("cond.width", "cond.height")}, _KS, _UNET),
+    # An edit takes its size from the picture, so it lists none.
+    "dgx-monarch-minimax-h3-image-edit": _layout(
+        {"prompt": ("request.value",)}, _KS, _IMAGE, _UNET),
     "dgx-monarch-kromoss-t2i-turbo": _layout(*_T2I_ZERO, _LORA),
 }
 if set(APP_MODE) != set(TEMPLATES):
@@ -6425,7 +7032,30 @@ def _testing_spec(base: str, title: str, purpose: str, *,
                       "widgets": {"lora_name": TEST_LORA_NAME,
                                   "strength_model": lora_strength},
                       "wire": {"model": (unet, 0)}})
-    return {"title": title, "nodes": nodes}
+    return {"title": title, "nodes": nodes, "testing": True}
+
+
+def _minimax_h3_image_grid_spec() -> dict:
+    """MiniMax-H3-Image through Sampler Custom on the checkpoint's own grid.
+
+    _testing_spec edits a shipped spec in place and cannot swap its sampler,
+    so this graph comes from the family's helper and takes a testing note.
+    """
+    base = "dgx-monarch-minimax-h3-image-t2i"
+    spec = _minimax_h3_image_template(grid=True)
+    purpose = (
+        "Sampler Custom (DGX Monarch) walks the checkpoint's own sigma grid, typed "
+        "into Manual Sigmas, where the shipped graph's KSampler lands within a "
+        "thousandth of it; euler through Basic Guider (DGX Monarch) at CFG 1. The "
+        "first-use gate proves this graph with its own first two steps, 1.0 to "
+        "0.9675 to 0.8875, each on one head block as in the render, where the "
+        "shipped graph's two-step KSampler proof spans three blocks a step. The "
+        "expander is off and its task prompt and system prompt boxes are empty, so "
+        "the request reaches the model as written and no row of this graph runs "
+        "a language model.")
+    nodes = [({**node, "note": _testing_note(base, purpose)}
+              if node["type"] == "Note" else node) for node in spec["nodes"]]
+    return {"title": "MiniMax-H3-Image on its sigma grid", "nodes": nodes}
 
 
 TESTING_TEMPLATES = {
@@ -6681,14 +7311,18 @@ TESTING_TEMPLATES = {
                  "vae": {"vae_name": P_H3_VAE["int8"]},
                  "switch": {"switch": False}},
         lora_after=("unet",), lora_strength=1.0),
+    # MiniMax-H3-Image: the custom-sampler route on the exact grid. The sweep
+    # hands the shipped text to image graph the BF16 and W4A8 DiTs by stem.
+    "dgx-monarch-test-minimax-h3-image-grid": _minimax_h3_image_grid_spec(),
     # FLUX.3 Klein: the vendor's quantized files, an odd grid, and a
     # two-reference edit whose streams pad in both phases.
     "dgx-monarch-test-flux3-klein-int8": _testing_spec(
         "dgx-monarch-flux3-klein-t2i", "FLUX.3 Klein INT8 ConvRot",
         "The vendor's file recipe without the prompt upsampler: the "
         "step-distilled INT8 ConvRot DiT and the INT8 ConvRot text encoder. The "
-        "DiT pins comfy-kitchen's INT8 attention on 33 blocks, so single, cfg2 "
-        "and dp2 ask for the Sol-Attn waiver and uly2 drops the pins. The text "
+        "DiT pins comfy-kitchen's INT8 attention on 33 blocks, so a world of one GPU renders "
+        "with it as stock ComfyUI does and asks nothing, cfg2 and dp2 ask for the "
+        "Sol-Attn waiver, and uly2 drops the pins. The text "
         "encoder stores INT8 weights and ComfyUI runs its matmuls at full "
         "precision.",
         widgets={"unet": {"unet_name": "flux3_image_klein_sd_int8_convrot.safetensors"},
@@ -6750,8 +7384,9 @@ TESTING_TEMPLATES = {
     "dgx-monarch-test-moss-image-int8": _testing_spec(
         "dgx-monarch-moss-image-t2i", "MOSS-Image INT8 ConvRot",
         "The vendor's INT8 ConvRot DiT and INT8 ConvRot text encoder. The DiT "
-        "pins comfy-kitchen's INT8 attention on all 42 blocks, so single and dp2 "
-        "ask for the Sol-Attn waiver, cfg2 refuses first because the skip is on, "
+        "pins comfy-kitchen's INT8 attention on all 42 blocks, so a world of one GPU renders "
+        "with it as stock ComfyUI does and asks nothing, dp2 asks for the "
+        "Sol-Attn waiver, cfg2 refuses first because the skip is on, "
         "and uly2 drops the pins. ComfyUI runs these files through "
         "comfy-kitchen's fused SiTU input activation, which needs comfy-kitchen "
         "0.2.39 or newer." + MOSS_TEST_SIMPLE_NOTE,

@@ -291,7 +291,8 @@ def test_a_failing_pick_raises_as_comfys_own_and_a_failing_line_is_silent(monkey
 ])
 def test_doctor_and_status_show_the_setting(args, value, source):
     config = ClusterConfig(worker_args=args)
-    status, name, detail = fp8_matmul_row.doctor_row(config)
+    # A GPU that is not GB10: the setting alone never warns.
+    status, name, detail = fp8_matmul_row.doctor_row(config, {"spark-a": "9.0"})
     assert (status, name) == ("ok", "FP8 matmul (actors)")
     assert detail.startswith(f"fp8_matrix_mult={value} from {source}: ")
     assert "`FP8 compute:`" in detail and "docs/TROUBLESHOOTING.md #141" in detail
@@ -321,3 +322,68 @@ def test_status_prints_the_line_and_carries_the_field(monkeypatch, capsys):
     assert "fp8_matrix_mult" not in capsys.readouterr().out
     mesh_health_row.status_report(ClusterConfig(), as_json=True)
     assert json.loads(capsys.readouterr().out)["fp8_matrix_mult"] == {"value": "auto", "source": "the default"}
+
+
+@pytest.mark.parametrize(("caps", "warns"), [
+    ({"spark-a": "12.1", "spark-b": "12.1"}, True),
+    ({"spark-a": "12.1", "other": "9.0"}, True),
+    ({"other": "9.0"}, False),
+])
+def test_doctor_warns_for_on_where_a_host_reports_gb10(caps, warns):
+    """MODELS.md documents `"on"` as unsafe on GB10: the plain FP8 fast path
+    rendered Qwen-Image 2512's plain FP8 file as noise there. The row warns
+    for that setting on a GB10 host and names only that scope."""
+    config = ClusterConfig(worker_args={"fp8_matrix_mult": "on"})
+    status, _name, detail = fp8_matmul_row.doctor_row(config, caps)
+    if not warns:
+        assert status == "ok"
+        assert "spark-a" not in detail
+        return
+    assert status == "WARN"
+    assert "GB10 (compute capability 12.1) on spark-a" in detail
+    assert "plain FP8" in detail and "Qwen-Image 2512" in detail
+    assert "comfy-kitchen quantization metadata" in detail
+    assert "docs/MODELS.md" in detail
+
+
+@pytest.mark.parametrize("mode", ["auto", "off"])
+def test_doctor_stays_ok_for_auto_and_off_on_gb10(mode):
+    config = ClusterConfig(worker_args={"fp8_matrix_mult": mode})
+    assert fp8_matmul_row.doctor_row(config, {"spark-a": "12.1"})[0] == "ok"
+
+
+def test_doctor_says_unobserved_for_on_when_no_host_reported_its_gpu():
+    config = ClusterConfig(worker_args={"fp8_matrix_mult": "on"})
+    status, _name, detail = fp8_matmul_row.doctor_row(config, {"spark-a": "unknown"})
+    assert status == "WARN"
+    assert detail.startswith("unobserved:")
+
+
+@pytest.mark.parametrize(("cap", "status"), [("12.1", "WARN"), ("9.0", " ok ")])
+def test_cluster_doctor_reads_each_hosts_gpu_for_the_fp8_row(monkeypatch, capsys, cap, status):
+    """The per-host sol probe already prints `cap=`; the FP8 row reads it once, after the loop."""
+    import subprocess
+
+    from dgx_monarch.cli import doctor
+    from dgx_monarch.config import HostConfig
+    from test_doctor_hostname_row import _REMOTE_OK, _stub_driver
+
+    _stub_driver(monkeypatch, "10.0.0.1")
+    monkeypatch.setattr(doctor.shutil, "which", lambda _name: "/usr/bin/rsync")
+    monkeypatch.setattr(doctor, "_tcp_probe", lambda *_a, **_kw: False)
+    monkeypatch.setattr(doctor, "passive_worker_health",
+                        lambda *_a, **_kw: {"running": True, "listening": True, "healthy": True})
+    remote = _REMOTE_OK + (f"sol=False tvm=False cutlass=False solver=MISSING soldsl=MISSING cap={cap} "
+                           "soldeps=not-selected solheaders=present solcache=absent\n")
+    monkeypatch.setattr(doctor, "run_on_host",
+                        lambda *_a, **_kw: subprocess.CompletedProcess([], 0, remote, ""))
+    doctor.run_doctor(ClusterConfig(
+        hosts=(HostConfig(name="worker", address="tcp://10.0.0.2:26600"),),
+        client_bind="tcp://10.0.0.1:0", fabric_profile="generic-roce",
+        transport_security="trusted_fabric", source="test.toml",
+        worker_args={"fp8_matrix_mult": "on"},
+    ))
+    rows = [line for line in capsys.readouterr().out.splitlines() if "FP8 matmul (actors)" in line]
+    assert len(rows) == 1
+    assert rows[0].startswith(f"  [{status}] FP8 matmul (actors): fp8_matrix_mult=on")
+    assert ("GB10 (compute capability 12.1) on worker." in rows[0]) is (cap == "12.1")

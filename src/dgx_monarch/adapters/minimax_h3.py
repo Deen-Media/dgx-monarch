@@ -49,6 +49,8 @@ from .minimax_h3_packing import (
     _build_packed_layout,
     h3_modulation_plan,
     h3_timestep_embedding,
+    head_form,
+    head_schedule,
     pad_row_index,
     row_runs,
     splice_condition_rows,
@@ -314,6 +316,8 @@ class MiniMaxH3Adapter(Adapter):
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         attn = ctx.usp_attention
+        # The head's form decides the last argument; read once, refused here.
+        form = head_form(diffusion_model.final_layer)
 
         def usp_forward(self, x, timestep, context, transformer_options={},
                         minimax_payload=None, denoise_mask=None,
@@ -445,13 +449,19 @@ class MiniMaxH3Adapter(Adapter):
             with sol_sink_scope(video_start):
                 prefetch_queue = comfy.model_prefetch.make_prefetch_queue(
                     list(self.blocks), device, transformer_options)
+                # Stock's pops, block scope and the unconditional last pop: stock's
+                # forward runs this loop inside its malloc graph.
                 for index, block in enumerate(self.blocks):
-                    comfy.model_prefetch.prefetch_queue_pop(prefetch_queue, device, block)
+                    comfy.model_prefetch.prefetch_queue_pop(
+                        prefetch_queue, device, block, malloc_scope="block")
+                    # Stock sets the index on the options its blocks receive.
+                    transformer_options["block_index"] = index
+                    usp_opts["block_index"] = index
                     with sol_dense_scope(dense_step or index < SOL_DENSE_BLOCKS):
                         h = block(h, t_emb, local_mod, rope_freqs,
                                   transformer_options=usp_opts)
-                if prefetch_queue is not None:
-                    comfy.model_prefetch.prefetch_queue_pop(prefetch_queue, device, None)
+                comfy.model_prefetch.prefetch_queue_pop(
+                    prefetch_queue, device, None, malloc_scope="block")
 
             # Gather and trim before absolute-coordinate head slicing. t_emb is
             # indexed by modulation row rather than token and remains replicated.
@@ -460,12 +470,12 @@ class MiniMaxH3Adapter(Adapter):
             audio_seg = next((a, b, audio_row) for a, b, kind in layout.segments if kind == "audio")
             # ComfyUI final-layer contract: full stream, one
             # (start, stop, modulation-row) span per modality, then the step the
-            # PDD head bank blends over (comfy 2504e68d). A stacked head reads
-            # the sampler's own table, so it comes from the stock
-            # transformer_options rather than the sequence-parallel copy.
+            # PDD head bank blends over: the sampler's own table off the stock
+            # transformer_options, and one sigma grid per stream (ComfyUI 0.45.0).
             video_head, audio_head = self.final_layer(
                 h, t_emb, video_seg, audio_seg, sigma_v,
-                transformer_options.get("sample_sigmas"), (shift_v, shift_a))
+                transformer_options.get("sample_sigmas"),
+                head_schedule(form, self.final_layer, (shift_v, shift_a), time_shift_sigma))
 
             video_out = unpatchify_video(video_head, latent_t, lat_h // 2, lat_w // 2,
                                          self.latents_dim, self.patch_size)

@@ -139,7 +139,9 @@ records the version the command itself printed. A doctor repair receipt path
 must be absolute. An exit code of 75 (an unanswered critical probe) records
 unknown, not failed. A 4xx refusal from the driver's consent or recycle route
 records failed with the driver's short reason; a 5xx or a lost response records
-unknown. Consent apply reads the driver's pending consent requests at review.
+unknown. Studio waits up to 280 seconds for those two routes, 20 seconds past
+the 260 seconds the driver allows an attached-mesh reset, so a slow reset that
+succeeds records its receipt; other driver requests wait 20 seconds. Consent apply reads the driver's pending consent requests at review.
 Leave key and id empty to list them; with one pending request the review selects
 it. Studio offers accept only; dismiss, revoke and the automatic rescue setting
 stay in the ComfyUI panel. The driver's waiver ledger records a Studio accept
@@ -251,10 +253,10 @@ without one.
 
 Adding the table has three consequences:
 
-1. Deploy order. Releases before this one refuse a cluster.toml that holds
+1. Deploy order. Releases before 1.3.0 refuse a cluster.toml that holds
    `[studio]`, in every reader: the CLI, the driver's Init node, mesh setup,
    service observations, the TUI and Studio's management actions. Add the
-   table only after every checkout that reads the file runs this release and
+   table only after every checkout that reads the file runs 1.3.0 or newer and
    the driver has restarted on it, and when no render runs.
 2. A byte edit retires the fleet. In cluster mode the Init node fingerprints
    the file's bytes on every Queue, and any byte change, a comment included,
@@ -678,7 +680,9 @@ says why. Metric history charts one series at a time. Host picks a host or
 Render progress, the driver's step count, step time and last render duration;
 Metric picks one of that host's metrics, with a rail rate for each rail. A
 choice with a single option shows as text, and the chart opens on GPU
-utilization.
+utilization. A reading whose host or rail clock runs more than 5 seconds ahead
+of the companion's adds no point, as a whole sample from the future adds none,
+so a Worker clock set right again charts at once.
 
 The telemetry panel keeps the job rows, a Readiness line and both hosts in view.
 Readiness, under the driver's state, gives the worst state among the readiness
@@ -782,7 +786,7 @@ their own status option, and uploads have their own media kinds.
 
 ## Working with workflows
 
-Choose one of the 71 packaged workflows or import a ComfyUI UI workflow/API
+Choose one of the 75 packaged workflows or import a ComfyUI UI workflow/API
 prompt. Supported inputs appear as typed controls; connected inputs remain
 graph connections. The Inputs tab lists the inputs of the workflow's App Mode
 layout, in its order, and a workflow without one opens on All inputs. Each
@@ -1055,7 +1059,11 @@ recorded workflow instead. It also refuses a seed above 9007199254740991, which
 a draft field cannot hold exactly, rather than round it. Copy named inputs, Copy
 API prompt and Export provenance read the job's full record with every digit of
 each whole number, so a seed above 9007199254740991 comes out exact in the
-prompt, the frozen seed list and the workflow's widget values.
+prompt, the frozen seed list and the workflow's widget values. A grid cell's
+Inspect full submission and Export cell, a grid's export and the parameter
+differences under a comparison read the same way, so two seeds one apart
+still differ there. The differences table compares a field nested deeper than
+12 levels as one value and says so under the table.
 
 Submitted jobs keep requested and effective settings, the workflow and its
 digest, adapter version and lineage. Missing fingerprints and execution facts
@@ -1109,7 +1117,11 @@ submission lists its outputs; View shows one, and Compare sets it as the
 comparison for the output in view. The value fields start empty. Validate every
 cell stays disabled until the draft has a workflow, Axis A names an input and
 each chosen axis holds a JSON array with at least one value; the line beside the
-button names what is missing.
+button names what is missing. It also stays disabled while an axis value is a
+whole number outside -9007199254740991 to 9007199254740991, or the base seed of
+an incrementing grid is above 9007199254740991. The browser would send such a
+number rounded, so the grid would run other seeds than the ones typed. The line
+names each such axis value by its digits.
 
 Grids opens on what a grid does, a worked example and a first comparison to
 try. In the example, steps [20, 30, 40] on Axis A and cfg [3.5, 5] on Axis B
@@ -1420,7 +1432,8 @@ the driver acknowledged it while the job was queued and the prompt has left both
 the queue and its history. Running-job cancellation uses the driver's atomic
 prompt-specific cancellation route when available. On a driver without that
 route, a queued job falls back to queue deletion under the same cancellation
-intent; a running job is refused and its intent and key stay unspent. The
+intent; a running job is refused, and its intent and every key that joined it
+stay unspent. The
 adapter never falls back to a global interrupt. Each job retains one durable
 cancellation intent, including after a lost acknowledgement or companion
 restart. Repeating that intent cannot dispatch it again. A reviewed management

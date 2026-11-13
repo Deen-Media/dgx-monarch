@@ -7,11 +7,13 @@ cluster is a node swap, not a rebuild.
 from __future__ import annotations
 
 from ..accuracy_waiver import STAMPED_RESULT_KEY
+from ..adapters.flux_views import conditioning_carries_views, request_carries_views
+from ..cfg_pair import text_rows_differ
 from ..constants import GUIDER_TYPE, MODEL_TYPE, NODE_CATEGORY
 from ..mesh import ensure_live
 from ..sampling_contract import custom_schedule_steps
 from ..topology import topology_from_preset
-from . import requeue_price
+from . import expander_prompt, requeue_price
 from .common import (
     ModelSpec,
     RenderPipeline,
@@ -23,7 +25,7 @@ from .common import (
 from .consent_waiver import validate_inherited_stamps
 from .latent_outputs import clone_latent_samples, is_direct_nested_tensor
 from .refusal_lead import lead_with_refusal
-from .render_preflight import krea2_ref_preflight_summary, sampler_latent
+from .render_preflight import CFG_PAIR_DIFFERS_METADATA_KEY, krea2_ref_preflight_summary, sampler_latent
 from .sampler_wire import (  # noqa: F401  # Public samplers API.
     _aggregate_render_outputs,
     _canonical_noise_for_wire,
@@ -92,6 +94,7 @@ class DGXMonarchKSampler:
     @lead_with_refusal
     def sample(self, model: ModelSpec, seed, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, denoise=1.0, unique_id=None, prompt=None):
+        expander_prompt.refuse_dead_expander(prompt)
         requeue_price.price_cached_loader(model, prompt)
         request = {
             "kind": "ksampler",
@@ -105,8 +108,10 @@ class DGXMonarchKSampler:
             "denoise": float(denoise),
             "_dgxm_krea2_ref_preflight": krea2_ref_preflight_summary(positive, negative),
         }
-        out = run_render(model, request, sampler_latent(latent_image, sampler_name),
-                         cfg_value=float(cfg), steps_hint=int(steps))
+        out = run_render(model, request, sampler_latent(
+            latent_image, sampler_name, text_rows_differ(positive, negative),
+            conditioning_carries_views(positive, negative)),
+            cfg_value=float(cfg), steps_hint=int(steps))
         out.pop("_dgxm_denoised", None)
         return _sampler_result(out)
 
@@ -177,11 +182,14 @@ class DGXMonarchKSamplerPipeline:
     @lead_with_refusal
     def sample(self, model: ModelSpec, seeds, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, denoise=1.0, unique_id=None, prompt=None):
+        expander_prompt.refuse_dead_expander(prompt)
         requeue_price.price_cached_loader(model, prompt)
         validate_inherited_stamps(latent_image)
         # Tag once: the first-use check, the first render and every pushed
         # render resolve the same topology from it.
-        latent_image = sampler_latent(latent_image, sampler_name)
+        latent_image = sampler_latent(
+            latent_image, sampler_name, text_rows_differ(positive, negative),
+            conditioning_carries_views(positive, negative))
         from .. import adoption_evidence
 
         adoption_evidence.require_inactive_context("DGXMonarchKSamplerPipeline")
@@ -293,6 +301,7 @@ class DGXMonarchKSamplerAdvanced:
     def sample(self, model: ModelSpec, add_noise, noise_seed, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, start_at_step, end_at_step,
                return_with_leftover_noise, unique_id=None, prompt=None):
+        expander_prompt.refuse_dead_expander(prompt)
         requeue_price.price_cached_loader(model, prompt)
         request = {
             "kind": "ksampler_advanced",
@@ -312,8 +321,10 @@ class DGXMonarchKSamplerAdvanced:
             },
             "_dgxm_krea2_ref_preflight": krea2_ref_preflight_summary(positive, negative),
         }
-        out = run_render(model, request, sampler_latent(latent_image, sampler_name),
-                         cfg_value=float(cfg), steps_hint=int(steps))
+        out = run_render(model, request, sampler_latent(
+            latent_image, sampler_name, text_rows_differ(positive, negative),
+            conditioning_carries_views(positive, negative)),
+            cfg_value=float(cfg), steps_hint=int(steps))
         out.pop("_dgxm_denoised", None)
         return _sampler_result(out)
 
@@ -404,10 +415,12 @@ class DGXMonarchSamplerCustom:
     @lead_with_refusal
     def sample(self, noise, guider, sampler, sigmas, latent_image, unique_id=None, prompt=None):
         model: ModelSpec = guider["model"]
+        expander_prompt.refuse_dead_expander(prompt)
         requeue_price.price_cached_loader(model, prompt, guider.get("uncond_model"))
-        # A SAMPLER object carries no name, so the render stays untagged and
-        # auto keeps the CFG-1 skip; any inherited tag is dropped.
-        latent = sampler_latent(latent_image, None)
+        # A SAMPLER object carries no name, so the cfg++ tag stays off and auto
+        # keeps the CFG-1 skip; the pair and views tags come from the guider's own pair.
+        latent = sampler_latent(latent_image, None, bool(guider.get(CFG_PAIR_DIFFERS_METADATA_KEY)),
+                                request_carries_views({"guider": guider["spec"]}))
         wire_noise = _canonical_noise_for_wire(noise)
         schedule_steps = custom_schedule_steps(sigmas)
 

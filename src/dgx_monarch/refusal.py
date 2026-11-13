@@ -96,7 +96,10 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         "cross-rank weight-residency agreement, read after ComfyUI has placed "
         "the weights: no card, because the ladder is spent by then and the "
         "loader site owns the rescue offer; none is designed, because a waiver "
-        "would authorize ranks that compute different weights",
+        "would authorize ranks that compute different weights. On one rank the "
+        "same guard refuses a partial load that leaves a LoRA-patched layer "
+        "which quantizes its input off the device when the load cannot be made "
+        "whole, since that layer would not compute what a full load computes",
     ),
     "slab_load_preflight": GuardSpec(
         RefusalClass.CAPACITY,
@@ -123,6 +126,15 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         "the exact-patch backstop before a slab-resident LoRA bake: no card, "
         "because slab is already the residency and the ladder already admitted "
         "the load the bake runs on",
+    ),
+    "gpu_context_memory": GuardSpec(
+        RefusalClass.CAPACITY,
+        False,
+        "rescue-slab",
+        "a Worker's own start: the NVIDIA driver could not get memory for a new "
+        "CUDA context after the Worker made what room it could "
+        "(actor/context_room.py); no card, because no consent makes memory free. "
+        "rescue-slab is only the audit kind it is filed under: slab is no remedy here",
     ),
     "first_load_stock_memo": GuardSpec(
         RefusalClass.UNPROVEN,

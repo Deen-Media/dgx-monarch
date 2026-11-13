@@ -34,6 +34,7 @@ import threading
 import time
 from collections.abc import Mapping
 
+from ..constants import RECYCLE_HTTP_DEADLINE_S
 from ..log import get_logger
 from . import recycle_guard
 from .action_security import _action_request_allowed, _recycle_request_allowed
@@ -68,8 +69,8 @@ _TELEMETRY_CACHE_LOCK = threading.Lock()
 _TELEMETRY_TIMEOUT_S = 30.0
 # POST /dgxm/recycle: recycle_detailed() bounds the sequential group teardown
 # and ProcMesh stop at 180 s. The other 80 s keep this HTTP deadline from
-# racing a slow but legitimate internal resolution.
-_RECYCLE_TIMEOUT_S = 260.0
+# racing a slow but legitimate internal resolution. Studio reads the same value.
+_RECYCLE_TIMEOUT_S = RECYCLE_HTTP_DEADLINE_S
 _RECYCLE_MIN_INTERVAL_S = 1.0
 _RECYCLE_RATE_LOCK = threading.Lock()
 # Process lifetime, one global write gate: reset ownership is driver-wide.
@@ -338,6 +339,25 @@ def _telemetry() -> dict:
         return fresh
 
 
+def _with_driver_rules(payload: dict) -> dict:
+    """``payload`` with what this process's driver-only rules are doing now, for doctor's row.
+
+    Read on every request and never cached. The rest of a payload can be the
+    last good answer of a refresh that failed or is still running (it then
+    carries ``telemetry_error``), or up to a second old; a rule that has since
+    stepped aside must not be reported as on.
+    """
+    from .. import vae_decode_relief, vae_encode_item
+
+    return {**payload, "driver_rules": {"vae_encode_item": vae_encode_item.state(),
+                                        "vae_decode_relief": vae_decode_relief.state()}}
+
+
+def _telemetry_payload() -> dict:
+    """What ``/dgxm/telemetry`` answers: the cached snapshot with the live driver rules."""
+    return _with_driver_rules(_telemetry())
+
+
 async def _await_bounded(fn, timeout_s: float):
     """Run a blocking function off-loop under an HTTP response deadline.
 
@@ -369,11 +389,10 @@ def register() -> None:
     @app.routes.get("/dgxm/telemetry")
     async def dgxm_telemetry(_request):
         try:
-            data = await _await_bounded(_telemetry, _TELEMETRY_TIMEOUT_S)
+            data = await _await_bounded(_telemetry_payload, _TELEMETRY_TIMEOUT_S)
         except TimeoutError:
-            return web.json_response(
-                {"t": time.time(), "workers": [], "telemetry_error": "TimeoutError"},
-                status=503)
+            return web.json_response(_with_driver_rules(
+                {"t": time.time(), "workers": [], "telemetry_error": "TimeoutError"}), status=503)
         return web.json_response(_json_payload(data))
 
     @app.routes.post("/dgxm/recycle")

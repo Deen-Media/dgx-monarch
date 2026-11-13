@@ -380,6 +380,104 @@ def test_a_finished_render_frees_the_tracker_for_the_next_unload(monkeypatch, bo
 
 
 
+# A reset since the Init node ran. ComfyUI caches that node's output, so the
+# mesh a loader or a render is handed is the one it attached, and a reset
+# retires that handle while a fresh fleet serves the loads. On 2026-11-12 a
+# loader 50 s after a finished render kept ComfyUI's 16.0 GiB of models
+# "because a call to the Workers is still in flight": the reset between the
+# two renders had left its own teardown mark on the retired handle.
+
+def _reset_mesh(monkeypatch):
+    """A mesh the real reset retired, with the marks that reset leaves on it."""
+    import threading
+
+    from dgx_monarch import mesh as mesh_mod
+
+    class _Done:
+        def get(self, timeout=None):
+            return None
+
+    handle = mesh_mod.MeshHandle.__new__(mesh_mod.MeshHandle)
+    handle.defunct = False
+    handle.setup_key = ("topo",)
+    handle.lock = threading.RLock()
+    handle.workers = SimpleNamespace(teardown_group=SimpleNamespace(call=lambda **_flags: _Done()))
+    handle.procs = SimpleNamespace(stop=lambda _reason: _Done())
+    monkeypatch.setattr(mesh_mod, "_MESHES", {("k",): handle})
+    assert handle.recycle_detailed().ok
+    assert mesh_mod._MESHES == {}
+    return handle
+
+
+def test_a_reset_mesh_does_not_read_as_a_call_in_flight(monkeypatch, box):
+    from dgx_monarch import client_lease
+
+    box.mem = 20 * _GIB
+    calls = _comfy(monkeypatch, box)
+    retired = _reset_mesh(monkeypatch)
+    # What the reset leaves: a confirmed stop, and its teardown mark for good.
+    assert retired.teardown_complete and retired.defunct
+    assert client_lease.dispatch_in_flight(retired)
+    assert driver_unload.busy_reason(retired) == ""
+    assert driver_unload.serving_fleet(retired) is None
+    driver_unload.check_with_unload([_priced(box, 30 * _GIB)], handle=retired)
+    assert calls.unload == 1 and calls.mm.current_loaded_models == []
+
+
+def _attached_after(monkeypatch, retired, fresh):
+    """``fresh`` is the fleet attached now on the config ``retired`` had."""
+    from dgx_monarch import mesh as mesh_mod
+
+    retired.config = fresh.config = SimpleNamespace(source="cluster.toml", hosts=("a", "b"))
+    monkeypatch.setattr(mesh_mod, "_MESHES", {("k",): fresh})
+
+
+@pytest.mark.parametrize(("busy", "reason"), [
+    ("lease", "a render result is still held on the mesh"),
+    ("abandoned", "an abandoned render may still be running on the Workers"),
+    ("dispatch", "a call to the Workers is still in flight"),
+])
+def test_the_fleet_attached_after_a_reset_still_keeps_the_models_while_it_works(
+        monkeypatch, box, busy, reason):
+    from dgx_monarch import mesh_setup
+
+    box.mem = 20 * _GIB
+    calls = _comfy(monkeypatch, box)
+    retired = _reset_mesh(monkeypatch)
+    fresh = _Mesh(box)
+    if busy == "lease":
+        fresh.sample_leases = {3: 1}
+    elif busy == "abandoned":
+        fresh.abandoned_sample_leases = {2: 1}
+    else:
+        fresh.setup_cleanup_state = mesh_setup.cleanup_in_progress(
+            2, "load_model RPC completion", 1800.0)
+    _attached_after(monkeypatch, retired, fresh)
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as excinfo:
+        driver_unload.check_with_unload([_priced(box, 30 * _GIB)], handle=retired)
+    assert calls.unload == 0 and fresh.calls == []
+    assert str(excinfo.value).endswith(f"because {reason}; queue again once that work ends.")
+
+
+def test_a_mesh_whose_stop_was_not_confirmed_still_keeps_the_models(monkeypatch, box):
+    """A stop that timed out leaves the same mark with the Workers perhaps alive."""
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import mesh_setup
+
+    monkeypatch.setattr(mesh_mod, "_MESHES", {})
+    box.mem = 20 * _GIB
+    calls = _comfy(monkeypatch, box)
+    stranded = _leased(
+        defunct=True, teardown_complete=False,
+        replacement_blocked="ProcMesh stop timed out",
+        setup_cleanup_state=mesh_setup.cleanup_in_progress(1, "recycle group teardown", 60.0))
+    assert driver_unload.busy_reason(stranded) == "a call to the Workers is still in flight"
+    with pytest.raises(mesh_safety.StockLoadCapacityError):
+        driver_unload.check_with_unload([_priced(box, 30 * _GIB)], handle=stranded)
+    assert calls.unload == 0
+
+
+
 
 # 3. The actors' caches go last.
 #
@@ -681,6 +779,20 @@ def test_the_rescue_reaches_a_worker_only_to_release_its_cache():
     imported |= {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     for name in ("mesh", "actor", "monarch", "torch"):
         assert not any(item.split(".")[0] == name for item in imported), imported
+
+
+def test_after_a_reset_the_trim_goes_to_the_fleet_attached_now(monkeypatch, box, journal):
+    """The render's cached mesh is retired; the fresh fleet's actors hold the caches."""
+    box.mem = 30 * _GIB
+    calls = _comfy(monkeypatch, box)
+    retired = _reset_mesh(monkeypatch)
+    fresh = _Mesh(box, cache=int(17.6 * _GIB))
+    _attached_after(monkeypatch, retired, fresh)
+    driver_unload.check_with_unload(
+        [_priced(box, 60 * _GIB)], handle=retired, subject="h3.safetensors")
+    assert calls.unload == 1 and fresh.calls == [TRIM]
+    assert [record.getMessage().startswith("actor trim: h3.safetensors fits after")
+            for record in journal] == [True]
 
 
 # 4. The shipped render path: the MiniMax H3 activation preflight.

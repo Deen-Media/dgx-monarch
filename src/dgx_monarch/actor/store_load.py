@@ -16,7 +16,7 @@ from .. import attention_pins, fp8_compute, lora_quant_guard, residency_mode
 from ..compile_policy import compile_dit_blocks_slab, compile_dit_is_known_noop
 from ..constants import TRANSITION_LOAD
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error
-from . import actor_footprint, load_fault, store_detect, store_identity, store_residency
+from . import actor_footprint, in_place_fallback, load_fault, store_detect, store_identity, store_residency
 
 
 def fresh_load(
@@ -71,6 +71,8 @@ def fresh_load(
     # Before the drop and the placement: the old-model card's arena is measured
     # from this process's first reading (actor_footprint.py).
     actor_footprint.note_first_load()
+    # A classic stack's bake is priced beside the stock load at both walls below.
+    bake_probe = in_place_fallback.fresh_load_probe(store, slot, lora_stack)
     store._drop(slot)
     t0 = time.perf_counter()
     path = fsdp_preflight_path or resolve_model_path(
@@ -99,7 +101,7 @@ def fresh_load(
         blocked_reason=store.slab_blocked_reason, slab_capable_path=_slab_capable_path(path),
         authoritative_slab_retry=authoritative_slab_retry, memoized_family=memoized_family,
         vouched_families=SLAB_VOUCHED_FAMILIES, node_options=options, lora_stack=lora_stack,
-        family_override=family_override, reserve_bytes=reserve_bytes,
+        family_override=family_override, reserve_bytes=reserve_bytes, fit_probe=bake_probe,
     )
     fsdp_checkpoint_pin = None
     load_ownership = FreshLoadOwnership()
@@ -124,7 +126,7 @@ def fresh_load(
             fsdp_checkpoint_kind=checkpoint_quant,
             fsdp_world=getattr(store, "world", None),
             reserve_bytes=reserve_bytes,
-            lora_stack=lora_stack, lora_low_rss=bool(store.lora_low_rss))
+            lora_stack=lora_stack, lora_low_rss=bool(store.lora_low_rss), stock_probe=bake_probe)
         # The debug fault knob fires here and nowhere else: the fleet has
         # agreed, every local price is paid, and no weight has been read yet.
         load_fault.check()
@@ -242,6 +244,9 @@ def fresh_load(
 
             fsdp_streaming.release_materialize_window(base, load_path)
         lora_quant_guard.assert_lora_quant_supported(family, detected_quant, lora_stack)  # #129
+        # Both walls have read. A stack a declined hot swap left held goes now, before its files
+        # are read again, so the two copies never stand together (in_place_fallback.note_stack_read).
+        in_place_fallback.forget_stack_read(store)
         active = store._build_active(base, lora_stack)
         unbake_record = None
         base_baked = bool(store.lora_low_rss and lora_stack)

@@ -14,7 +14,8 @@ The seams, in run order:
   3. latent format            process_latent_in/process_latent_out types
   4. empty latent channels    fix_empty_latent_channels reshaping rules
   5. noise                    seed determinism across ranks, NOISE objects
-  6. conditioning wire        the keys a cond dict must survive the wire with
+  6. conditioning wire        the keys a cond dict must survive the wire with,
+                              UltraTex's view grid, masks and views included
   7. guider and sampler       the objects the actors build and unpickle
   8. load path                prefix strip, state-dict conversion, assign
   9. batch cycling            cycle-or-truncate, the rule the dp splitter mirrors
@@ -51,9 +52,10 @@ The seams, in run order:
                               wall prices an anchored guide's encode by
  24. minimax h3 latent mask   the two latent noise-mask parameters the packed
                               forward takes, and the refusal a set mask meets
- 25. minimax h3 pdd head      the sampler sigma, schedule and flow shifts a
-                              stacked PDD output head blends its row blocks by,
-                              and the places the rebound forward reads them from
+ 25. minimax h3 pdd head      the sampler sigma, schedule and per-stream grids
+                              (ComfyUI 0.45.0) a stacked PDD output head blends
+                              its row blocks by, and where the rebound forward
+                              reads them from
  26. nvfp4 activation scale   every quantization format classified in the pack's
                               activation-scale table, the whole-tensor fallback
                               nvfp4 alone takes, the per-module scales the
@@ -83,8 +85,9 @@ The seams, in run order:
                               exactly it, and that a matching uuid moves nothing
  33. outside forward modules  which supported families reach a diffusion-model
                               method from extra_conds, and the modules that
-                              method runs, which FSDP has to replicate, or the
-                              method an input refused off one GPU alone reaches
+                              method runs, which FSDP has to replicate, the
+                              method an input refused off one GPU alone reaches,
+                              or a method that reaches no module or parameter
  34. flux family text         the widths flux2 and longcat hand the model, and
                               that no text row either of them reads is masked
  35. cogvideox layout         the key the CogVideoX config is detected from, the
@@ -150,8 +153,9 @@ The seams, in run order:
  45. lora shape-changing set  the shape test the LoRA shape guard runs, and the
                               control LoRA that widens video_embedder
  46. dynamic prompt asymmetry  CLIP Text Encode's text declares dynamicPrompts and
-                              Text (Multiline)'s value does not, which the
-                              MOSS-Image layout graph's JSON prompt relies on
+                              Text (Multiline)'s value does not, which the JSON
+                              prompts of the MOSS-Image layout and Ideogram 4
+                              graphs rely on
  47. weight-only linear dispatch  the formats that quantize no activation and
                               the layouts they load as, the 2-D reshape the
                               quantized Linear skips for them, and outside
@@ -170,6 +174,48 @@ The seams, in run order:
  49. lazy switch              the If/Else and Soft Switch inputs and the branch
                               check_lazy_status evaluates for a fixed choice,
                               which the loader-side wall prices and no other
+ 50. pair-scoped text conds   the CONDRegular text Flux (so Chroma) and
+                              Omnigen2 (so Boogu) publish, which never folds
+                              rows that differ, the premise of the pair tag
+                              the Chroma and Boogu cfg2 rows read
+ 51. ltx stock-row parity     the globals LTX's blocks reach the fused AdaLN and
+                              the text cross-attention AdaLN by, every fused
+                              AdaLN and gate call a block makes landing on the
+                              stock-row route, and the paired rope helper the
+                              self-attention calls
+ 52. inference mode branches  every place ComfyUI's source reads or sets
+                              inference mode, reads a tensor's inference flag,
+                              or reads grad mode, by file and function, alias
+                              and string forms included; the adapter bind each
+                              model_base branch needs, and each bind's branch;
+                              and on a tiny real Anima, the 512-row text branch
+                              only inference mode takes and the bind that
+                              takes it off inference mode
+ 53. minimax h3 image forward  the bound MiniMax-H3-Image forward gives stock's
+                              bits at world 1 on text to image and an edit, the
+                              reference time constant and the modality tags
+ 54. minimax h3 image layout   [text | references | target] with the target
+                              last and no audio, extra_conds rounding the latent
+                              to even, no mask cond from _denoise_mask_conds for
+                              one stream, and a mask the stock forward ignores
+ 55. minimax h3 image head     the head depth read off video_out, and stock's
+                              head failing exactly where the grid check refuses
+ 56. minimax h3 image build    the model built from pdd_sigmas and pdd_steps with
+                              no audio stream, under MiniMaxH3Image
+ 57. minimax h3 image sampling  the grid the sampling reads, and KSampler simple at
+                              pdd_steps steps landing on it
+ 58. minimax h3 image conditioning  the edit node's inputs and the payload keys
+                              extra_conds publishes from it
+ 59. minimax h3 image row calls  the three row-keyed calls a block makes, where
+                              the row-check tool reads them
+before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
+ 60. copy-free drop            a slot's drop taking only its own records out of
+                              comfy's loaded list with no weight moved, and a
+                              pinned model unloaded and loaded back unchanged
+ 61. whole load condition      load_models_gpu keeping a model whole only with
+                              the reserve free beyond the model and the latent's
+                              estimate, which the INT8 classic bake's price
+                              leans on, and the reserve the price reads back
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -624,6 +670,13 @@ def _assert_conditioning_wire_seam() -> None:
         {"pre_filter_count": 880, "strength": 1.0,
          "pixel_mask": torch.ones(1, 1, 1, 2, 2), "latent_shape": (1, 22, 40)},
     ]
+    # UltraTex Conditioning (ComfyUI 61e524b) adds a list of (row, col) tuples,
+    # a mask dict whose reference list may hold None, and a view list mixing
+    # None and ints. comfy folds a cond pair only when each CONDConstant is
+    # equal by type as well as value, so a tuple that came back a list would
+    # stop a fold one GPU makes (adapters/flux_views.py).
+    view_grid = [(0, 0), (0, 2), (1, 0), (0, 1)]
+    token_masks = {"target": torch.ones(4, 8, 8), "refs": [torch.ones(1, 16, 16), None]}
     extras = {
         "minimax_refs": [torch.zeros(1, 2)],
         "some_scalar": 3,
@@ -631,6 +684,10 @@ def _assert_conditioning_wire_seam() -> None:
         "guide_attention_entries": guide_entries,
         "generated_keyframes": {"tokens_per_frame": 880, "first_latent_frame": 0,
                                 "num_keyframes": 1},
+        "view_grid": view_grid,
+        "token_masks": token_masks,
+        "reference_views": [None, 0],
+        "background_latent": torch.zeros(1, 2, 4, 4),
     }
     conds = [[cross_attn, {"pooled_output": pooled, **extras}]]
 
@@ -657,6 +714,15 @@ def _assert_conditioning_wire_seam() -> None:
     assert wire[0][1]["generated_keyframes"] == extras["generated_keyframes"], (
         "conditioning wire seam: packing changed the generated keyframe record"
     )
+    wired_grid, wired_masks = wire[0][1]["view_grid"], wire[0][1]["token_masks"]
+    assert type(wired_grid) is list and wired_grid == view_grid and all(
+        type(tile) is tuple for tile in wired_grid), (
+        "conditioning wire seam: packing changed UltraTex's view grid of tuples")
+    assert set(wired_masks) == {"target", "refs"} and wired_masks["refs"][1] is None and (
+        torch.equal(wired_masks["target"], token_masks["target"])), (
+        "conditioning wire seam: packing changed UltraTex's token mask dict")
+    assert wire[0][1]["reference_views"] == [None, 0], (
+        "conditioning wire seam: packing changed UltraTex's reference views")
     assert torch.equal(wire[0][0], cross_attn) and torch.equal(
         wire[0][1]["pooled_output"], pooled
     ), "conditioning wire seam: packing changed a cond tensor's values"
@@ -666,7 +732,8 @@ def _assert_conditioning_wire_seam() -> None:
         "conditioning wire seam: comfy no longer binds the entry tensor to cross_attn"
     )
     for key in ("pooled_output", "minimax_refs", "some_scalar",
-                "keyframe_idxs", "guide_attention_entries", "generated_keyframes"):
+                "keyframe_idxs", "guide_attention_entries", "generated_keyframes",
+                "view_grid", "token_masks", "reference_views", "background_latent"):
         assert key in converted[0], (
             f"conditioning wire seam: comfy's cond conversion dropped {key!r}"
         )
@@ -690,6 +757,31 @@ def _assert_conditioning_wire_seam() -> None:
     assert "cross_attn" not in empty[0], (
         "conditioning wire seam: comfy now invents a cross_attn for a text-free cond"
     )
+
+    # The keys adapters/flux_views.py scans are the view inputs stock's Flux
+    # extra_conds reads beyond its long-standing ones. A fourth view input
+    # upstream would otherwise reach an unproven topology with no refusal.
+    import ast
+    import textwrap
+
+    import comfy.ldm.flux.model
+    import comfy.model_base
+
+    from dgx_monarch.adapters.flux_views import VIEW_COND_KEYS
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(comfy.model_base.Flux.extra_conds)))
+    read = {node.args[0].value for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get" and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "kwargs" and node.args
+            and isinstance(node.args[0], ast.Constant)}
+    known = {"cross_attn", "attention_mask", "attention_mask_img_shape", "guidance",
+             "reference_latents", "reference_latents_method"}
+    views = (set(VIEW_COND_KEYS)
+             if hasattr(comfy.ldm.flux.model.Flux, "preprocess_token_masks") else set())
+    assert read - known == views, (
+        f"conditioning wire seam: Flux.extra_conds reads {sorted(read - known)} beyond the "
+        f"known keys, and adapters/flux_views.py scans {sorted(views)}")
 
 
 def _assert_guider_and_sampler_seam() -> None:
@@ -1524,8 +1616,16 @@ def _assert_minimax_h3_audio_carry_seam() -> None:
             return torch.zeros(rows.shape[0], 2, dtype=rows.dtype, device=rows.device)
 
     class FixedHeads(torch.nn.Module):
+        # v0.45.0's head form, which the adapter reads at inject, and a
+        # one-block bank for the grid it builds.
+        video_dim = 4
+
+        def __init__(self):
+            super().__init__()
+            self.video_out = torch.nn.Linear(1, 4)
+
         def forward(self, _hidden, _t_emb, video_seg, audio_seg,
-                    _sigma, _sample_sigmas, _shifts):
+                    _sigma, _sample_sigmas, grids):
             video_rows = video_seg[1] - video_seg[0]
             audio_rows = audio_seg[1] - audio_seg[0]
             return (
@@ -2025,6 +2125,38 @@ def _assert_minimax_h3_guide_inputs_seam() -> None:
     )
 
 
+def _assert_pair_scoped_text_conds_seam() -> None:
+    """The premise of the cfg pair tag: rows that differ never fold on one GPU.
+
+    Chroma rows 20 and 19 and Boogu row 79 grant cfg2 only to a prompt pair the
+    sampler tagged as differing in text rows (``dgx_monarch.cfg_pair``). That
+    reading holds because Flux's ``extra_conds``, which Chroma inherits, and
+    Omnigen2's, which Boogu inherits, publish the text as a ``CONDRegular``,
+    which concatenates only at equal shape. A switch to ``CONDCrossAttn``, which
+    folds some unequal lengths, would let a tagged pair fold on one GPU while
+    auto grants cfg2, the defect issue #52 closes. Anima left the scope on
+    2026-11-10: stock pads its text to 512 rows in ``extra_conds``, every Worker
+    now does too, so its rows decide no fold and its cfg2 row was withdrawn; the
+    inference mode branches seam holds that branch.
+    """
+    import comfy.conds
+    import comfy.model_base as mb
+    import torch
+
+    wrap = "out['c_crossattn'] = comfy.conds.CONDRegular(cross_attn)"
+    for klass in (mb.Flux, mb.Omnigen2):
+        assert wrap in inspect.getsource(klass.extra_conds), (
+            f"pair-scoped text conds seam: {klass.__name__}.extra_conds no longer wraps "
+            "the text as a CONDRegular, so rows that differ may fold (cfg_pair)")
+    assert "extra_conds" not in vars(mb.Boogu), (
+        "pair-scoped text conds seam: Boogu overrides extra_conds")
+    assert "super().extra_conds" in inspect.getsource(mb.Chroma.extra_conds), (
+        "pair-scoped text conds seam: Chroma.extra_conds no longer builds on Flux's")
+    short, long, same = (comfy.conds.CONDRegular(torch.zeros(1, rows, 4)) for rows in (5, 7, 5))
+    assert not short.can_concat(long) and short.can_concat(same), (
+        "pair-scoped text conds seam: CONDRegular now concatenates text of different rows")
+
+
 def _assert_lazy_switch_seam() -> None:
     """The branch the loader-side wall prices behind a switch is the one comfy runs.
 
@@ -2304,8 +2436,15 @@ def _assert_minimax_h3_latent_mask_seam() -> None:
             return torch.zeros(rows.shape[0], 2, dtype=rows.dtype, device=rows.device)
 
     class FixedHeads(torch.nn.Module):
+        # v0.45.0's head form and a one-block bank, as in the audio carry seam.
+        video_dim = 4
+
+        def __init__(self):
+            super().__init__()
+            self.video_out = torch.nn.Linear(1, 4)
+
         def forward(self, _hidden, _t_emb, video_seg, audio_seg,
-                    _sigma, _sample_sigmas, _shifts):
+                    _sigma, _sample_sigmas, grids):
             return (
                 torch.zeros(video_seg[1] - video_seg[0], 4, dtype=torch.float32),
                 torch.zeros(audio_seg[1] - audio_seg[0], 1, dtype=torch.float32),
@@ -2399,28 +2538,32 @@ def _assert_minimax_h3_latent_mask_seam() -> None:
 
 
 def _assert_minimax_h3_pdd_head_seam() -> None:
-    """The sampler schedule comfy 2504e68d made the H3 output head require.
+    """The sampler state ComfyUI 0.45.0's H3 output head blends its blocks by.
 
     A PDD LoRA stacks row blocks into `video_out` and `audio_out`, and the head
-    blends the blocks the step it is taking spans, so `FinalLayer.forward` now
-    takes the current sigma, the sampler's whole sigma table and the two flow
-    shifts. The rebound `_forward` calls that head itself, so it has to hand
-    down the same three values from the same places: the clamped video sigma it
-    already computes, the table off the stock `transformer_options`, and the
-    pair of shift overrides.
+    blends the blocks the step it is taking spans. `FinalLayer.forward` takes
+    the current sigma, the sampler's whole sigma table and, since ComfyUI
+    ede4e5f (v0.45.0), one decreasing sigma grid per stream, which stock's
+    `_forward` builds with `pdd_grid` from the two flow shifts. The rebound
+    `_forward` calls that head itself, so it has to hand down the same three
+    values: the clamped video sigma it already computes, the table off the
+    stock `transformer_options`, and the grids built with stock's arithmetic
+    from the pair of shift overrides (adapters/minimax_h3_packing.head_schedule).
 
     A checkpoint-free head runs on a stock bank and on a stacked one. Both legs
     hold the production adapter against the stock inner forward on the same
     weights, and a hook on the head reads back the three values it was handed,
-    so a wrong sigma fails here even where the block span it picks would not
-    move. Identity shard/gather stand in for world 1 only; packing, schedule
-    mapping and the head itself are the real paths.
+    so a wrong sigma or grid fails here even where the block span it picks would
+    not move. Identity shard/gather stand in for world 1 only; packing, schedule
+    mapping and the head itself are the real paths. The adapter reads the head's
+    form at inject, and this tree's form must be the one it passes.
     """
     import comfy.ops
     import torch
     from comfy.ldm.minimax import model as comfy_h3
 
     from dgx_monarch.adapters import minimax_h3 as adapter_module
+    from dgx_monarch.adapters import minimax_h3_packing as packing
     from dgx_monarch.adapters.base import InjectionContext
     from dgx_monarch.adapters.minimax_h3 import MiniMaxH3Adapter
 
@@ -2450,14 +2593,12 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
         head.register_forward_pre_hook(lambda _module, args: handed.append(args))
         return head
 
+    stock_class = comfy_h3.MiniMaxH3Model
+
     def build_model(head):
         class TinyPddH3:
-            forward = comfy_h3.MiniMaxH3Model.forward
-            _forward = comfy_h3.MiniMaxH3Model._forward
-            # ComfyUI 2d6b7328 moved the embed and pack out of the stock _forward
-            # into this helper; bind it where it exists so the stand-in runs both.
-            if hasattr(comfy_h3.MiniMaxH3Model, "_embed_and_pack"):
-                _embed_and_pack = comfy_h3.MiniMaxH3Model._embed_and_pack
+            forward = stock_class.forward
+            _forward = stock_class._forward
 
             def __init__(self):
                 self.blocks = []
@@ -2487,6 +2628,12 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
             def _cond_audio_rows(_payload, _device):
                 return None
 
+        # ComfyUI 2d6b7328 moved the embed and pack out of the stock _forward,
+        # and ede4e5f the time embedding and the block loop; bind each where it
+        # exists so the stand-in runs stock's whole path.
+        for helper in ("_embed_and_pack", "_time_embedding", "_run_blocks"):
+            if hasattr(stock_class, helper):
+                setattr(TinyPddH3, helper, getattr(stock_class, helper))
         return TinyPddH3()
 
     original = (
@@ -2500,21 +2647,38 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
     adapter_module.shard_seq = lambda tensor, dim=1: (tensor, tensor.shape[dim])
     adapter_module.sp_gather = lambda tensor, _orig, dim=1: tensor
     adapter_module.padded_row_indices = lambda _segments: []
-    blended: list[tuple[int, int, int, float]] = []
+    blended: list[tuple[int, int, int, tuple[float, ...]]] = []
     handed: list[tuple[object, ...]] = []
 
-    def recording_pdd_head(head, hidden, n, start, stop, flow_shift):
-        blended.append((n, start, stop, flow_shift))
-        return stock_pdd_head(head, hidden, n, start, stop, flow_shift)
+    def recording_pdd_head(head, hidden, grid, start, stop):
+        blended.append((len(grid) - 1, start, stop, tuple(grid)))
+        return stock_pdd_head(head, hidden, grid, start, stop)
+
+    def stock_grids(blocks, shifts):
+        """What stock's _forward hands a head of `blocks` blocks, and ours must match."""
+        grids = tuple(comfy_h3.pdd_grid(blocks, shift) for shift in shifts)
+        ours = tuple(packing.pdd_grid(blocks, shift, comfy_h3.time_shift_sigma)
+                     for shift in shifts)
+        assert ours == grids, (
+            f"minimax h3 pdd head seam: stock's pdd_grid gives {grids!r} for {blocks} "
+            f"block(s) at shifts {shifts!r}, and the adapter's copy of its arithmetic "
+            f"gives {ours!r}"
+        )
+        return grids
 
     try:
+        form = packing.head_form(build_head(2))
+        assert form == packing.HEAD_GRIDS, (
+            f"minimax h3 pdd head seam: this ComfyUI's FinalLayer.forward takes {form!r} "
+            "where this build's floor, ComfyUI 0.45.0, takes the per-stream grids"
+        )
         video = torch.ones(1, 1, 1, 2, 2, dtype=torch.float32)
         audio = torch.full((1, 1, 2, 1), 10.0, dtype=torch.float32)
         context = torch.zeros(1, 1, 2, dtype=torch.float32)
         timestep = torch.tensor([800.0])
         # Sigma 0.5 is the fixed point of 1 - sigma, where model time and the
         # sampler sigma read alike; 0.8 tells them apart. The step it names
-        # still clamps onto the second block of a two-block bank.
+        # still lands on the second block of a two-block bank.
         table = torch.tensor([1.0, 0.8, 0.4, 0.0], dtype=torch.float32)
 
         def render(model, options):
@@ -2527,18 +2691,18 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
                 },
             )
 
-        def check_handed(shifts):
+        def check_handed(grids):
             """The three values the head read, as the rebound forward handed them.
 
             The block span a stacked head picks saturates over most of the
             schedule, so the span alone cannot tell the video sigma from the
-            audio one or from a constant. Read the arguments instead.
+            audio one or a right grid from a wrong one. Read the arguments.
             """
             assert len(handed) == 1, (
                 f"minimax h3 pdd head seam: the head ran {len(handed)} time(s) in one "
                 "step, so the rebound forward no longer calls it exactly once"
             )
-            sigma, schedule, read_shifts = handed[0][4:]
+            sigma, schedule, read_grids = handed[0][4:]
             assert isinstance(sigma, torch.Tensor) and torch.equal(sigma, torch.tensor(0.8)), (
                 f"minimax h3 pdd head seam: the head read {sigma!r} as this step's sigma "
                 "rather than the clamped video sigma the timestep carries"
@@ -2547,9 +2711,9 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
                 f"minimax h3 pdd head seam: the head read {schedule!r} as the sigma "
                 "schedule rather than the sampler's own table"
             )
-            assert read_shifts == shifts, (
-                f"minimax h3 pdd head seam: the head read shifts {read_shifts!r} rather "
-                f"than {shifts!r} in video, audio order"
+            assert tuple(read_grids) == grids, (
+                f"minimax h3 pdd head seam: the head read grids {read_grids!r} rather "
+                f"than stock's {grids!r} in video, audio order"
             )
 
         for blocks in (1, 2):
@@ -2564,21 +2728,23 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
                 adapted = render(rebound, {"sample_sigmas": table})
             finally:
                 comfy_h3._pdd_head = stock_pdd_head
-            check_handed((12.0, 3.0))
+            grids = stock_grids(blocks, (12.0, 3.0))
+            check_handed(grids)
             stock = render(build_model(head), {"sample_sigmas": table})
             assert torch.equal(adapted[0], stock[0]) and torch.equal(adapted[1], stock[1]), (
                 f"minimax h3 pdd head seam: with {blocks} head row block(s) the rebound "
                 "forward no longer reproduces the stock inner forward on the same weights"
             )
-            expected = [] if blocks == 1 else [(2, 1, 2, 12.0), (2, 1, 2, 3.0)]
+            expected = [] if blocks == 1 else [(2, 1, 2, tuple(grids[0])),
+                                               (2, 1, 2, tuple(grids[1]))]
             assert blended == expected, (
                 f"minimax h3 pdd head seam: {blocks} head row block(s) blended {blended}, "
-                f"expected {expected}; the sigma or the schedule the adapter hands the "
-                "head no longer locates the step it is taking"
+                f"expected {expected}; the sigma, the schedule or the grids the adapter "
+                "hands the head no longer locate the step it is taking"
             )
 
-        # The head reads the two flow shifts per stream, and the overrides the
-        # sigma-shift node writes have to survive the rebound call.
+        # The grids come from the two flow shifts per stream, and the overrides
+        # the sigma-shift node writes have to survive the rebound call.
         stacked = build_model(build_head(2))
         MiniMaxH3Adapter().inject_usp(
             stacked, InjectionContext(topology_sp=1, usp_attention=object()))
@@ -2591,10 +2757,11 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
                              "minimax_h3_sigma_shift_audio": 5.0})
         finally:
             comfy_h3._pdd_head = stock_pdd_head
-        check_handed((8.0, 5.0))
-        assert [row[3] for row in blended] == [8.0, 5.0], (
+        grids = stock_grids(2, (8.0, 5.0))
+        check_handed(grids)
+        assert [row[3] for row in blended] == [tuple(grids[0]), tuple(grids[1])], (
             f"minimax h3 pdd head seam: the head blended {blended}, so the per-stream "
-            "sigma-shift overrides no longer reach it through the rebound forward"
+            "sigma-shift overrides no longer reach its grids through the rebound forward"
         )
 
         # The table belongs to the sampler. A rebound forward that substituted
@@ -3048,7 +3215,8 @@ def _assert_offload_pin_seam() -> None:
         "offload pin seam: a matching patch uuid still moved the model "
         f"({moved}); the stock hot-swap's uuid adoption no longer avoids comfy's reload")
     # A drop detaches through the same unpatch, to that clone's offload device
-    # (actor/resident_ledger.py unload_without_offload).
+    # (actor/resident_ledger.py: unload_dropped for a whole stock load,
+    # unload_without_offload for a slab or a shard build).
     model.to = lambda *args, **kwargs: moved.append(args[0] if args else kwargs.get("device")) or to(*args, **kwargs)
     try:
         again.detach(unpatch_all=True)
@@ -3164,6 +3332,154 @@ def _assert_resident_ledger_seam() -> None:
         "with an unbaked LoRA stack on it would silently drop the stack"
     )
 
+def _assert_copy_free_drop_seam() -> None:
+    """A slot's drop detaches its own model and moves no weight (2026-11-11).
+
+    ``actor/resident_ledger.unload_dropped`` takes only the dropped model's
+    records out of comfy's loaded list. It leans on five things comfy does:
+
+    - ``detach(unpatch_all=False)``, the step ``load_models_gpu`` takes when
+      it replaces a clone, moves no weight, so a partly loaded model leaves
+      the list without the host copy ``detach(True)`` makes of its device part;
+    - ``LoadedModel.model_unload()`` with no amount detaches and returns True,
+      and a model pinned to its load device is moved nowhere else by it;
+    - a record still in the list keeps its model exactly as it was;
+    - with smart memory off, as on a Worker, ``free_memory`` unloads every
+      model it is not told to keep, and a pinned one is moved nowhere else by
+      that either, then loads again to the same bytes and the same patch uuid;
+    - comfy prices the next load of a model it unloaded at the model's whole
+      size whether its weights went to the host or stayed pinned on the
+      device, so the pin changes no whole-or-partial load decision.
+    """
+    import types
+    import weakref
+
+    import comfy.model_management as mm
+    import torch
+    from comfy.model_patcher import ModelPatcher
+
+    from dgx_monarch import mesh_safety
+    from dgx_monarch.actor import resident_ledger
+
+    host = torch.device("cpu")
+    device = torch.device("cpu", 0)     # a second name for the CPU stands in for the load device
+
+    def build(seed: int, *, lora: bool = False, partly: bool = False):
+        torch.manual_seed(seed)
+        if partly:
+            # comfy's own layers, which it can leave on the host, and a budget of three
+            # quarters of the model: comfy itself loads part of it and flags the rest.
+            import comfy.ops
+
+            linear = comfy.ops.manual_cast.Linear
+            model = torch.nn.Sequential(*(linear(64, 64, bias=False) for _ in range(3)))
+            with torch.no_grad():
+                for layer in model:
+                    layer.weight.copy_(torch.randn(64, 64))
+        else:
+            model = torch.nn.Sequential(torch.nn.Linear(8, 8, bias=False), torch.nn.Linear(8, 8, bias=False))
+        model.device = host
+        size = sum(weight.numel() * weight.element_size() for weight in model.parameters())
+        patcher = ModelPatcher(model, device, host, size)
+        if lora:
+            patcher.add_patches({"0.weight": (torch.ones(8, 8),)}, 0.5)
+        patcher.partially_load(device, size * 3 // 4 if partly else 1e32)
+        assert model.model_lowvram is partly and (0 < patcher.loaded_size() < size) is partly, (
+            "copy-free drop seam: comfy no longer loads part of a model under a budget below its "
+            f"size (lowvram {model.model_lowvram}, {patcher.loaded_size()} of {size} loaded)")
+        moved: list[str] = []
+        to = model.to
+        model.to = lambda *args, **kwargs: (  # type: ignore[method-assign]
+            moved.append(str(args[0] if args else kwargs.get("device"))) or to(*args, **kwargs))
+        return patcher, model, moved
+
+    def record(patcher):
+        entry = mm.LoadedModel(patcher)
+        entry.real_model = weakref.ref(patcher.model)
+        entry.model_finalizer = weakref.finalize(patcher.model, mm.cleanup_models)
+        entry.model_finalizer.atexit = False
+        return entry
+
+    def stored(patcher):
+        return types.SimpleNamespace(base_patcher=patcher, active_patcher=patcher.clone(), slab=None,
+                                     fsdp_checkpoint_pin=None, residency_rung="stock_fits")
+
+    def weights(model) -> dict:
+        return {key: value.detach().clone() for key, value in model.state_dict().items()}
+
+    saved = (list(mm.current_loaded_models), mm.DISABLE_SMART_MEMORY, mesh_safety.gpu_is_integrated,
+             os.environ.pop(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, None))
+    flushed: list[int] = []
+    soft_empty_cache = mm.soft_empty_cache
+    try:
+        mesh_safety.gpu_is_integrated = lambda: True
+        mm.soft_empty_cache = lambda *args, **kwargs: flushed.append(1)
+
+        # A partly loaded model dropped beside a held, LoRA-patched one.
+        partial, partial_model, partial_moved = build(1, partly=True)
+        partial_at = [layer.weight.data_ptr() for layer in partial_model]
+        kept, kept_model, kept_moved = build(2, lora=True)
+        kept_before, kept_uuid = weights(kept_model), kept_model.current_weight_patches_uuid
+        dropped_slot, kept_slot = stored(partial), stored(kept)
+        gone, stays = record(dropped_slot.active_patcher), record(kept_slot.active_patcher)
+        mm.current_loaded_models[:] = [gone, stays]
+        assert resident_ledger.drop_copies_nothing(dropped_slot, kept_slot), (
+            "copy-free drop seam: the store no longer says this drop copies nothing")
+        assert resident_ledger.unload_dropped(mm, dropped_slot, kept_slot) is True
+        assert mm.current_loaded_models == [stays] and flushed == [1], (
+            "copy-free drop seam: the drop no longer leaves exactly the other slot's record in "
+            f"comfy's loaded list ({len(mm.current_loaded_models)} left) and flushes the cache once")
+        assert partial_moved == [] and partial_at == [layer.weight.data_ptr() for layer in partial_model], (
+            f"copy-free drop seam: detach(unpatch_all=False) now moves a weight ({partial_moved}); a "
+            "partly loaded model's drop would copy its device part to the host again")
+        assert gone.model_finalizer is None and gone.real_model is None
+        assert kept_moved == [] and kept_model.current_weight_patches_uuid == kept_uuid, (
+            f"copy-free drop seam: the drop touched the slot that stays ({kept_moved})")
+        assert all(torch.equal(kept_before[key], value) for key, value in kept_model.state_dict().items()), (
+            "copy-free drop seam: the kept slot's weights changed across the other slot's drop")
+        assert {kept_slot.base_patcher.offload_device, kept_slot.active_patcher.offload_device} == {device}, (
+            "copy-free drop seam: the slot that stays is no longer pinned to its load device")
+
+        # The unload comfy runs at the next load that does not use the kept model.
+        mm.DISABLE_SMART_MEMORY = True
+        unloaded = mm.free_memory(1e30, device)
+        assert unloaded == [stays] and mm.current_loaded_models == [], (
+            "copy-free drop seam: with smart memory off free_memory no longer unloads every model "
+            "it is not told to keep, so the Worker's eviction of an unused slot changed")
+        assert set(kept_moved) <= {str(device)}, (
+            f"copy-free drop seam: a pinned model's unload moved it off its load device ({kept_moved})")
+        twin, twin_model, _twin_moved = build(2, lora=True)
+        twin_entry = record(twin)
+        assert twin_entry.model_unload() is True, (
+            "copy-free drop seam: model_unload() with no amount no longer detaches and returns True")
+        assert twin_model.device == host and kept_model.device == device
+        assert (mm.LoadedModel(kept_slot.active_patcher).model_memory_required(device)
+                == mm.LoadedModel(twin).model_memory_required(device) == kept.model_size()), (
+            "copy-free drop seam: comfy no longer prices the reload of a pinned, unloaded model as it "
+            "prices one whose weights went to the host; the pin could change a whole-or-partial load")
+        mm.load_models_gpu([kept_slot.active_patcher])
+        assert all(torch.equal(kept_before[key], value) for key, value in kept_model.state_dict().items()), (
+            "copy-free drop seam: a pinned model no longer loads back to the bytes it held")
+        assert kept_model.current_weight_patches_uuid == kept_uuid and kept_model.model_lowvram is False
+        assert set(kept_moved) <= {str(device)}
+
+        # A model comfy holds whole: pinned, then comfy's own unload.
+        mm.current_loaded_models[:] = []
+        whole, _whole_model, whole_moved = build(3)
+        whole_slot = stored(whole)
+        only = record(whole_slot.active_patcher)
+        mm.current_loaded_models[:] = [only]
+        assert resident_ledger.unload_dropped(mm, whole_slot, None) is True
+        assert mm.current_loaded_models == [] and set(whole_moved) <= {str(device)}, (
+            f"copy-free drop seam: a whole load's drop moved it off its load device ({whole_moved})")
+    finally:
+        mm.current_loaded_models[:] = saved[0]
+        mm.DISABLE_SMART_MEMORY, mesh_safety.gpu_is_integrated = saved[1], saved[2]
+        mm.soft_empty_cache = soft_empty_cache
+        if saved[3] is not None:
+            os.environ[resident_ledger.COPY_FREE_DROP_DISABLE_ENV] = saved[3]
+
+
 def _calls_on_self(source: str, receiver: str | None) -> set:
     """Attribute names called on ``self`` (or on ``self.<receiver>``)."""
     import ast
@@ -3184,17 +3500,34 @@ def _calls_on_self(source: str, receiver: str | None) -> set:
 
 
 def _unet_class_of(model_class) -> object:
-    """The one ``unet_model=`` class a comfy ``model_base`` class builds."""
+    """The one ``unet_model=`` class a comfy ``model_base`` class builds.
+
+    The class is named either at the ``super().__init__`` call or, where the
+    constructor takes ``unet_model`` itself and passes it on (Flux since long
+    before UltraTex, MiniMaxH3 since ComfyUI ede4e5f), as that parameter's
+    default, which the call's bare name resolves to.
+    """
     import ast
     import importlib
     import textwrap
 
-    source = inspect.getsource(model_class.__init__)
-    dotted = [
-        ast.unparse(node.value)
-        for node in ast.walk(ast.parse(textwrap.dedent(source)))
-        if isinstance(node, ast.keyword) and node.arg == "unet_model"
-    ]
+    tree = ast.parse(textwrap.dedent(inspect.getsource(model_class.__init__)))
+    arguments = tree.body[0].args
+    positional = [*arguments.posonlyargs, *arguments.args]
+    defaults = {
+        arg.arg: default
+        for arg, default in zip(positional[len(positional) - len(arguments.defaults):],
+                                arguments.defaults, strict=True)
+    }
+    defaults.update({arg.arg: default for arg, default in zip(
+        arguments.kwonlyargs, arguments.kw_defaults, strict=True) if default is not None})
+    dotted = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg == "unet_model":
+            value = node.value
+            if isinstance(value, ast.Name) and value.id in defaults:
+                value = defaults[value.id]
+            dotted.append(ast.unparse(value))
     assert len(dotted) == 1, (
         f"outside forward modules seam: {model_class.__name__} no longer builds "
         f"its diffusion model from one unet_model class, got {dotted}"
@@ -3325,6 +3658,140 @@ def _assert_class_scoped_outside_forward_row(class_name, paths, methods, flat) -
         "flat census, which replicates them for every family")
 
 
+def _tiny_flux2_layout(unet_class, *, seed: int = 0):
+    """A real comfy Flux diffusion model in FLUX.2's layout at toy width, CPU float32.
+
+    The FLUX.2 constants of comfy's model detection (128 latent channels,
+    patch 1, four 32-wide rotary axes, global modulation, index references)
+    over hidden 256 and two heads, one double and one single block.
+    """
+    import comfy.ops
+    import torch
+
+    generator = torch.Generator().manual_seed(seed)
+    model = unet_class(
+        in_channels=128, out_channels=128, vec_in_dim=None, context_in_dim=64,
+        hidden_size=256, mlp_ratio=3.0, num_heads=2, depth=1, depth_single_blocks=1,
+        axes_dim=[32, 32, 32, 32], theta=2000, patch_size=1, qkv_bias=False,
+        guidance_embed=False, txt_ids_dims=[3], global_modulation=True, mlp_silu_act=True,
+        ops_bias=False, default_ref_method="index", ref_index_scale=10.0,
+        dtype=torch.float32, device="cpu", operations=comfy.ops.disable_weight_init)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.copy_(torch.randn(parameter.shape, generator=generator) * 0.05)
+    return model
+
+
+def _flux_token_mask_call(model) -> None:
+    """What Flux.extra_conds runs for UltraTex: preprocess_token_masks over six views.
+
+    The target masks drop some tokens of every view, the first reference has a
+    mask and the second none, as UltraTex Conditioning builds them.
+    """
+    import torch
+
+    grid = [(0, 0), (0, 2), (1, 0), (0, 1), (1, 1), (1, 2)]
+    masks = torch.zeros(len(grid), 80, 80)
+    for index in range(len(grid)):
+        masks[index, 16 * (index % 2):16 * (2 + index % 3), 16:48] = 1.0
+    keep = model.preprocess_token_masks(
+        {"target": masks, "refs": [torch.ones(1, 160, 240), None]}, grid, (6, 128, 5, 5),
+        [(1, 128, 10, 15), (1, 128, 5, 5)], torch.zeros(1, 128, 5, 5))
+    assert set(keep) == {"target", "refs", "background"} and keep["refs"][1] is None, (
+        "outside forward modules seam: preprocess_token_masks changed what it returns")
+    assert 0 < keep["target"].numel() < len(grid) * 25, (
+        "outside forward modules seam: the probe's masks no longer drop a target token")
+
+
+# Module-free rows (adapters/fsdp_islands.py) and the tiny real diffusion
+# model plus outside-forward call each is checked against.
+_MODULE_FREE_PROBES: dict = {
+    "Flux": (_tiny_flux2_layout, _flux_token_mask_call),
+}
+
+
+def _assert_module_free_outside_forward_row(class_name, unet_class, methods) -> None:
+    """A module-free row against its method source and a live call.
+
+    The reader collects the module paths each method reads off ``self`` and
+    keeps those that own parameters on a tiny real model. The live call puts a
+    forward pre-hook on every module that owns a parameter and runs under a
+    torch function mode that records every call handed a parameter, attribute
+    reads such as ``.dtype`` aside. All three stay empty: under FSDP2 a
+    parameter outside the forward is a sharded DTensor that nothing gathers.
+    A control call through one Linear first proves the hooks and the mode see
+    a parameter when one is used.
+    """
+    import torch
+    from torch.overrides import TorchFunctionMode
+
+    from dgx_monarch.adapters.fsdp_islands import resolve_module_path
+
+    assert class_name in _MODULE_FREE_PROBES, (
+        f"outside forward modules seam: no tiny real model probes the module-free {class_name} row")
+    build, call = _MODULE_FREE_PROBES[class_name]
+    model = build(unet_class)
+    read = set()
+    for method_name in methods:
+        for path in _self_module_paths(inspect.getsource(getattr(unet_class, method_name))):
+            module = resolve_module_path(model, path)
+            if isinstance(module, torch.nn.Module) and any(True for _ in module.parameters()):
+                read.add(path)
+    parameters = {id(parameter) for parameter in model.parameters()}
+    touched: list = []
+
+    def holds_parameter(value) -> bool:
+        if isinstance(value, torch.Tensor):
+            return id(value) in parameters
+        if isinstance(value, list | tuple):
+            return any(holds_parameter(item) for item in value)
+        if isinstance(value, dict):
+            return any(holds_parameter(item) for item in value.values())
+        return False
+
+    # Attribute reads of a parameter's metadata are free; any other read, a
+    # `.data` or `.weight` read in a helper the call reaches included, counts.
+    metadata = {"shape", "dtype", "device", "ndim", "requires_grad", "layout", "is_cuda", "is_meta"}
+
+    class Watch(TorchFunctionMode):
+        def __torch_function__(self, func, types, args=(), kwargs=None):
+            kwargs = kwargs or {}
+            name = getattr(func, "__name__", repr(func))
+            attr = getattr(getattr(func, "__self__", None), "__name__", None)
+            if (name != "__get__" or attr not in metadata) and holds_parameter((args, kwargs)):
+                touched.append(attr if name == "__get__" else name)
+            return func(*args, **kwargs)
+
+    names = {module: name for name, module in model.named_modules()}
+    ran: set = set()
+    handles = [
+        module.register_forward_pre_hook(lambda m, _args: ran.add(names[m]))
+        for module in names
+        if any(True for _ in module.parameters(recurse=False))
+    ]
+    try:
+        with torch.no_grad(), Watch():
+            model.img_in(torch.zeros(1, model.img_in.in_features))
+        assert ran == {"img_in"} and touched, (
+            "outside forward modules seam: the module-free probe no longer sees a parameter used")
+        ran.clear()
+        touched.clear()
+        with torch.no_grad(), Watch():
+            call(model)
+    finally:
+        for handle in handles:
+            handle.remove()
+    assert not read, (
+        f"outside forward modules seam: {class_name}'s {sorted(methods)} now read "
+        f"{sorted(read)} off the diffusion model, so the module-free row is wrong")
+    assert not ran, (
+        f"outside forward modules seam: {class_name}'s {sorted(methods)} now run "
+        f"{sorted(ran)} outside the forward, which FSDP would have to replicate")
+    assert not touched, (
+        f"outside forward modules seam: {class_name}'s {sorted(methods)} now hand a "
+        f"parameter to {sorted(set(touched))} outside the forward, where FSDP gathers nothing")
+
+
 def _assert_outside_forward_module_seam() -> None:
     """Hold the census of modules a family runs outside its denoise forward.
 
@@ -3349,6 +3816,7 @@ def _assert_outside_forward_module_seam() -> None:
         AUXILIARY_MODULE_ATTRS,
         CLASS_OUTSIDE_FORWARD_MODULE_PATHS,
         FORWARD_PATH_NAME_OWNERS,
+        MODULE_FREE_OUTSIDE_FORWARD_CALLS,
         OUTSIDE_FORWARD_MODULE_ATTRS,
         REFUSED_OUTSIDE_FORWARD_CALLS,
         outside_forward_module_attrs,
@@ -3386,8 +3854,28 @@ def _assert_outside_forward_module_seam() -> None:
             f"row names {sorted(present)} of the methods this tree has")
         if present:
             live_refused.add(class_name)
+    # A module-free row names methods that reach no module and no parameter,
+    # held as the refused rows are: inert on a tree whose model lacks them
+    # (before ComfyUI 61e524b for Flux), and probed live where it has them.
+    live_module_free: set = set()
+    for class_name, methods in MODULE_FREE_OUTSIDE_FORWARD_CALLS.items():
+        assert class_name in supported, (
+            f"outside forward modules seam: the module-free row {class_name} is no longer a "
+            "supported comfy model_base class")
+        assert class_name not in (*OUTSIDE_FORWARD_MODULE_ATTRS, *CLASS_OUTSIDE_FORWARD_MODULE_PATHS,
+                                  *REFUSED_OUTSIDE_FORWARD_CALLS), (
+            f"outside forward modules seam: {class_name} is both module-free and in another table")
+        unet_class = _unet_class_of(getattr(comfy.model_base, class_name))
+        present = {method for method in methods if hasattr(unet_class, method)}
+        assert reaching.get(class_name, set()) == present, (
+            f"outside forward modules seam: {class_name}.extra_conds now calls "
+            f"{sorted(reaching.get(class_name, ()))} on the diffusion model, and the module-free "
+            f"row names {sorted(present)} of the methods this tree has")
+        if present:
+            live_module_free.add(class_name)
+            _assert_module_free_outside_forward_row(class_name, unet_class, present)
     tabled = (set(OUTSIDE_FORWARD_MODULE_ATTRS) | set(CLASS_OUTSIDE_FORWARD_MODULE_PATHS)
-              | live_refused)
+              | live_refused | live_module_free)
     assert set(reaching) == tabled, (
         "outside forward modules seam: the supported families whose extra_conds "
         f"calls a diffusion-model method are {sorted(reaching)}, and the tables "
@@ -4189,7 +4677,7 @@ def _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations) -> Non
     from comfy.ldm.lightricks.embeddings_connector import Embeddings1DConnector
     from comfy.ldm.lightricks.model import LTXVModel
     from comfy.ldm.lumina.model import NextDiT
-    from comfy.ldm.minimax.model import TokenRefiner
+    from comfy.ldm.minimax.model import FinalLayer, TokenRefiner
     from comfy.ldm.wan.model import WanModel
     from comfy.ldm.wan.model_wandancer import MusicEncoderLayer
 
@@ -4340,7 +4828,12 @@ def _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations) -> Non
     refiner = _seeded(TokenRefiner(2, 16, 2, 8, 32, 1e-6, 1e-6, 1e-6, device="cpu",
                                    dtype=torch.float32, operations=operations), 31)
     text = randn(5, 16)
-    check("MiniMax H3 token refiner", types.SimpleNamespace(blocks=[], token_refiner=refiner),
+    # The adapter reads the installed head's form at inject, so the host
+    # carries a real FinalLayer it never runs.
+    head = FinalLayer(16, 4, 4, 1, 1e-6, dtype=torch.float32, device="cpu",
+                      operations=operations)
+    check("MiniMax H3 token refiner", types.SimpleNamespace(
+        blocks=[], token_refiner=refiner, final_layer=head),
           [block.attn for block in refiner.blocks], lambda: refiner(text),
           MiniMaxH3Adapter())
 
@@ -5552,8 +6045,8 @@ def _assert_lora_shape_changing_set_seam() -> None:
 def _assert_dynamic_prompt_asymmetry_seam() -> None:
     """CLIP Text Encode's text runs the browser's dynamic prompt pass; Text (Multiline)'s value does not.
 
-    The MOSS-Image layout template (tools/gen_templates.py) types its JSON layout
-    into a Text (Multiline) node and wires it to CLIP Text Encode's ``text``,
+    The MOSS-Image layout and Ideogram 4 templates (tools/gen_templates.py) type
+    their JSON into a Text (Multiline) node and wire it to CLIP Text Encode's ``text``,
     because the frontend rewrites ``{a|b}`` braces on Queue in a widget that
     declares ``dynamicPrompts``. A connected input runs no such pass, so the JSON
     reaches the encoder byte for byte only while the primitive's widget declares
@@ -5809,6 +6302,760 @@ def _assert_minimax_h3_context_windows_seam() -> None:
                 "would keep, and it is not the one the window's own guides build")
 
 
+def _assert_ltx_stock_row_parity_seam() -> None:
+    """What the LTX stock-row parity route (adapters/ltx_parity.py) binds in stock's blocks.
+
+    Under sequence parallelism the route launches comfy-kitchen's fused AdaLN at its stream's
+    stock row count and the per-head gate projection at stock's rows, the rank's rows at the front. It reaches
+    the norm through the ``comfy`` global of ``BasicAVTransformerBlock.forward``,
+    ``BasicTransformerBlock.forward`` and ``apply_cross_attention_adaln``, and the text cross
+    attention through the ``apply_cross_attention_adaln`` global. Pinned on a tiny real LTXAV
+    block with gated attention and cross-attention AdaLN: ``unroutable`` finds nothing changed;
+    with a geometry three rows past the block's real rows active, every ``ck.rms_adaln`` call and
+    every gate call the block makes arrives at that stock count, so no call bypasses the route;
+    and ``CrossAttention.forward`` still pairs q and k through ``apply_rotary_emb_qk``, the call
+    the patched self-attention mirrors.
+    """
+    import comfy.ldm.lightricks.av_model as av
+    import comfy.ldm.lightricks.model as ltx_model
+    import comfy.ops
+    import comfy.quant_ops
+    import torch
+
+    from dgx_monarch.adapters import ltx_parity
+    from dgx_monarch.adapters.flux3_adaln_parity import loads_global
+
+    assert hasattr(ltx_model, "apply_rotary_emb_qk") and loads_global(
+        ltx_model.CrossAttention.forward, "apply_rotary_emb_qk"), (
+        "ltx stock-row parity seam: CrossAttention.forward no longer pairs rope through "
+        "apply_rotary_emb_qk")
+    torch.manual_seed(50)
+    v_dim, a_dim, rows, a_rows, extra = 16, 8, 6, 4, 3
+    block = av.BasicAVTransformerBlock(
+        v_dim=v_dim, a_dim=a_dim, v_heads=2, a_heads=1, vd_head=8, ad_head=8,
+        v_context_dim=v_dim, a_context_dim=a_dim, apply_gated_attention=True,
+        cross_attention_adaln=True, dtype=torch.float32, device="cpu",
+        operations=comfy.ops.disable_weight_init)
+    for parameter in block.parameters():
+        torch.nn.init.normal_(parameter, mean=0.0, std=0.05)
+    changed = ltx_parity.unroutable([block], ltx_model.apply_cross_attention_adaln)
+    assert not changed, f"ltx stock-row parity seam: {changed} no longer read the routed globals"
+    assert ltx_parity.unroutable(
+        [ltx_model.BasicTransformerBlock(v_dim, 2, 8, context_dim=v_dim, cross_attention_adaln=True,
+                                         dtype=torch.float32, device="cpu",
+                                         operations=comfy.ops.disable_weight_init)],
+        ltx_model.apply_cross_attention_adaln) == [], (
+        "ltx stock-row parity seam: BasicTransformerBlock.forward no longer reads the routed globals")
+
+    seen: dict = {"adaln": [], "gates": []}
+    saved_adaln = comfy.quant_ops.ck.rms_adaln
+    linear_cls = comfy.ops.disable_weight_init.Linear
+    saved_linear = linear_cls.forward
+    gates = {id(getattr(block, name).to_gate_logits): stream
+             for name, stream in ltx_parity.GATE_STREAMS}
+
+    def adaln(x, scale, shift, *args, **kwargs):
+        seen["adaln"].append(x.shape[1])
+        return saved_adaln(x, scale, shift, *args, **kwargs)
+
+    def linear(self, x, *args, **kwargs):
+        if id(self) in gates:
+            seen["gates"].append((gates[id(self)], x.shape[1]))
+        return saved_linear(self, x, *args, **kwargs)
+
+    def rotation(n, heads):
+        angles = torch.rand(1, n, heads, 4)
+        cos, sin = angles.cos(), angles.sin()
+        return (torch.stack((cos, -sin, sin, cos), dim=-1).reshape(1, n, heads, 4, 2, 2), True)
+
+    def emb(width):
+        return torch.randn(1, 1, width) * 0.1
+
+    comfy.quant_ops.ck.rms_adaln, linear_cls.forward = adaln, linear
+    try:
+        state = ltx_parity.StockRows()
+        ltx_parity.bind_stock_row_parity(_one_block_model(block), state)
+        compressed = av.CompressedTimestep
+        streams = {ltx_parity.VIDEO: ltx_parity.ShardRows(rows + extra, rows),
+                   ltx_parity.AUDIO: ltx_parity.ShardRows(a_rows + extra, a_rows)}
+        with torch.no_grad(), state.sharded(streams):
+            block((torch.randn(1, rows, v_dim), torch.randn(1, a_rows, a_dim)),
+                  v_context=torch.randn(1, 3, v_dim), a_context=torch.randn(1, 3, a_dim),
+                  v_timestep=compressed(emb(9 * v_dim), 4), a_timestep=emb(9 * a_dim),
+                  v_pe=rotation(rows, 2), a_pe=rotation(a_rows, 1),
+                  v_cross_pe=rotation(rows, 1), a_cross_pe=rotation(a_rows, 1),
+                  v_cross_scale_shift_timestep=compressed(emb(4 * v_dim), 4),
+                  a_cross_scale_shift_timestep=emb(4 * a_dim),
+                  v_cross_gate_timestep=compressed(emb(v_dim), 4), a_cross_gate_timestep=emb(a_dim),
+                  transformer_options={}, v_prompt_timestep=emb(2 * v_dim),
+                  a_prompt_timestep=emb(2 * a_dim))
+    finally:
+        comfy.quant_ops.ck.rms_adaln, linear_cls.forward = saved_adaln, saved_linear
+    stock_of = {ltx_parity.VIDEO: rows + extra, ltx_parity.AUDIO: a_rows + extra}
+    assert seen["adaln"] and set(seen["adaln"]) <= set(stock_of.values()), (
+        f"ltx stock-row parity seam: a fused AdaLN call bypassed the route ({seen['adaln']})")
+    assert sorted({stream for stream, _ in seen["gates"]}) == [ltx_parity.AUDIO, ltx_parity.VIDEO], (
+        "ltx stock-row parity seam: the block no longer gates both streams")
+    assert all(n == stock_of[stream] for stream, n in seen["gates"]), (
+        f"ltx stock-row parity seam: a gate call bypassed the route ({seen['gates']})")
+
+
+def _one_block_model(block):
+    """A stand-in diffusion model holding one block, as ``bind_stock_row_parity`` reads it."""
+    import types
+
+    return types.SimpleNamespace(transformer_blocks=[block])
+
+
+# --- MiniMax-H3-Image (ComfyUI 0.45.0) -------------------------------------------
+
+_H3I_GRID = [1.0, 0.9675236940383911, 0.8875485062599182, 0.75, 0.5327739119529724,
+             0.23200887441635132, 0.0]
+
+
+def _h3_image_or_none(seam: str):
+    import comfy.ldm.minimax.model as h3
+
+    if not hasattr(h3, "MiniMaxH3ImageModel"):
+        print(f"seam note: {seam}: this ComfyUI predates MiniMax-H3-Image (0.45.0 added it)")
+        return None
+    return h3
+
+
+def _h3_image_tiny(h3, *, grid=_H3I_GRID, pdd_steps=6, layers=2):
+    import comfy.ops
+    import torch
+
+    torch.manual_seed(0)
+    model = h3.MiniMaxH3ImageModel(
+        pdd_sigmas=grid, pdd_steps=pdd_steps, hidden_size=48, num_layers=layers,
+        token_refiner_num_layers=1, num_attention_heads=2, attention_head_dim=24,
+        ffn_hidden_size=64, text_dim=40, time_embed_dim=8, rope_inv_freq_len=4,
+        adaln_curve_grid=1025, dtype=torch.float32, operations=comfy.ops.disable_weight_init)
+    with torch.no_grad():
+        for name, tensor in list(model.named_parameters()) + list(model.named_buffers()):
+            if name.endswith("inv_freq"):
+                tensor.copy_(1.0 / (10000 ** (torch.arange(tensor.numel()) / tensor.numel())))
+            elif "norm" in name and name.endswith("weight"):
+                tensor.copy_(1.0 + 0.1 * torch.randn_like(tensor))
+            else:
+                tensor.copy_(0.2 * torch.randn_like(tensor))
+    return model.requires_grad_(False)
+
+
+def _h3_image_run(h3, model, lat, refs, sigma=0.75, **kwargs):
+    import comfy.model_base
+    import torch
+
+    generator = torch.Generator().manual_seed(3)
+    x = torch.randn(1, 24, 1, *lat, generator=generator)
+    context = torch.randn(1, 9, 40, generator=generator)
+    timestep = torch.tensor([sigma * 1000.0])
+    payload = {"seed": 7, "audio_scale": 1.0}
+    if refs:
+        payload["refs"] = refs
+    payload.update(comfy.model_base.MiniMaxH3._cond_latents(None, refs))
+    payload["layout"] = h3.PackedLayout(9, 1, (lat[0] + 1) // 2 * 2, (lat[1] + 1) // 2 * 2, 0,
+                                        refs=payload.get("refs"))
+    options = {"sample_sigmas": torch.tensor(_H3I_GRID), "sigmas": timestep / 1000.0}
+    with torch.inference_mode():
+        return model.forward(x, timestep, context, options, minimax_payload=payload, **kwargs)
+
+
+def _h3_image_refs(count, lat):
+    import torch
+
+    generator = torch.Generator().manual_seed(11)
+    return [{"kind": "image", "latent_h": lat[0], "latent_w": lat[1],
+             "latent": torch.randn(1, 24, 1, lat[0], lat[1], generator=generator)}
+            for _ in range(count)]
+
+
+def _assert_minimax_h3_image_forward_seam() -> None:
+    """The bound MiniMax-H3-Image forward against stock at world 1 (identity shard and gather).
+
+    The adapter runs stock's own packing and timestep rows and numbers the
+    modulation rows itself (adapters/minimax_h3_packing.py), with the reference
+    time a constant and the modality tags H3's; a change to any of these moves
+    the bits this compares.
+    """
+    h3 = _h3_image_or_none("minimax h3 image forward")
+    if h3 is None:
+        return
+    import copy
+
+    import torch
+
+    from dgx_monarch.adapters import minimax_h3_image as adapter
+    from dgx_monarch.adapters.base import InjectionContext
+    from dgx_monarch.adapters.minimax_h3_packing import H3_IMAGE_SEGMENT_KINDS, H3_SEG_MODALITY
+
+    assert h3.VISUAL_COND_TIMESTEP == 0.999, "minimax h3 image forward seam: reference time moved"
+    for kind in H3_IMAGE_SEGMENT_KINDS:
+        assert h3.SEG_TAG[kind] == H3_SEG_MODALITY[kind], f"minimax h3 image forward seam: tag {kind}"
+    source = inspect.getsource(h3.MiniMaxH3ImageModel._forward)
+    for token in ('"ref_img": max(t, VISUAL_COND_TIMESTEP)', "/ 1000.0",
+                  "self._embed_and_pack(x, None,", "(self.pdd_sigmas,)"):
+        assert token in source, f"minimax h3 image forward seam: stock no longer has {token!r}"
+    saved = {name: getattr(adapter, name) for name in
+             ("sp_world", "shard_seq", "sp_gather", "padded_row_indices", "usp_options")}
+    adapter.sp_world = lambda: 1
+    adapter.shard_seq = lambda tensor, dim=1: (tensor, tensor.shape[dim])
+    adapter.sp_gather = lambda tensor, _orig, dim=1: tensor
+    adapter.padded_row_indices = lambda _segments: []
+    adapter.usp_options = lambda options, _attn, drop_rows=None: dict(options)
+    try:
+        # An odd latent pads to the patch; references arrive at even sizes.
+        for lat, count in (((6, 6), 0), ((5, 7), 0), ((6, 4), 1), ((4, 4), 3)):
+            model = _h3_image_tiny(h3)
+            bound = copy.deepcopy(model)
+            adapter.MiniMaxH3ImageAdapter().inject_usp(
+                bound, InjectionContext(topology_sp=1, usp_attention=object()))
+            refs = _h3_image_refs(count, lat)
+            for sigma in (1.0, 0.81, 0.1):
+                stock = _h3_image_run(h3, model, lat, refs, sigma)
+                ours = _h3_image_run(h3, bound, lat, refs, sigma)
+                assert torch.equal(stock, ours), (
+                    f"minimax h3 image forward seam: {lat} with {count} reference(s) at sigma "
+                    f"{sigma} differs from stock")
+    finally:
+        for name, value in saved.items():
+            setattr(adapter, name, value)
+
+
+def _assert_minimax_h3_image_layout_seam() -> None:
+    """The packed order the sharded forward reads, and the mask the image forward never sees."""
+    h3 = _h3_image_or_none("minimax h3 image layout")
+    if h3 is None:
+        return
+    import comfy.model_base
+    import torch
+
+    layout = h3.PackedLayout(9, 1, 4, 6, 0, refs=_h3_image_refs(2, (4, 4)))
+    kinds = [kind for _a, _b, kind in layout.segments]
+    assert kinds == ["text", "ref_img", "ref_img", "video"], f"minimax h3 image layout seam: {kinds}"
+    assert layout.segments[-1][1] == layout.seq_len and layout.audio_pos.numel() == 0
+    source = inspect.getsource(comfy.model_base.MiniMaxH3Image.extra_conds)
+    assert "(shape[3] + 1) // 2 * 2" in source and "(shape[4] + 1) // 2 * 2" in source, (
+        "minimax h3 image layout seam: extra_conds no longer rounds the latent to even")
+    assert "denoise_mask" not in inspect.signature(h3.MiniMaxH3ImageModel._forward).parameters
+    mask = torch.zeros(1, 1, 1, 8, 8)
+    # A bare instance: these methods read no state when there is one stream or none.
+    image = object.__new__(comfy.model_base.MiniMaxH3Image)
+    for shapes in (None, [(1, 24, 1, 8, 8)]):
+        # What extra_conds merges into its output for a mask on one stream.
+        assert image._denoise_mask_conds(mask, shapes) == {}, (
+            "minimax h3 image layout seam: one image stream now gets a mask cond")
+    model = _h3_image_tiny(h3)
+    plain = _h3_image_run(h3, model, (4, 4), [])
+    masked = _h3_image_run(h3, model, (4, 4), [], denoise_mask=torch.zeros(1, 1, 1, 2, 2))
+    assert torch.equal(plain, masked), "minimax h3 image layout seam: the forward now reads a mask"
+
+
+def _assert_minimax_h3_image_head_seam() -> None:
+    """The head depth the grid check reads, and where stock's head fails on a mismatched grid."""
+    h3 = _h3_image_or_none("minimax h3 image head")
+    if h3 is None:
+        return
+    from dgx_monarch.adapters.base import UnsupportedModelError
+    from dgx_monarch.adapters.minimax_h3_packing import assert_image_grid, head_blocks
+
+    for steps, points in ((6, 7), (6, 5), (6, 8), (1, 3)):
+        grid = [1.0 - k / (points - 1) for k in range(points)]
+        model = _h3_image_tiny(h3, grid=grid, pdd_steps=steps, layers=1)
+        assert model.final_layer.pdd_steps == head_blocks(model.final_layer) == steps
+        assert len(model.pdd_sigmas) == points
+        try:
+            assert_image_grid(model.final_layer, model.pdd_sigmas)
+            refused = False
+        except UnsupportedModelError:
+            refused = True
+        try:
+            _h3_image_run(h3, model, (4, 4), [])
+            failed = False
+        except (IndexError, RuntimeError):
+            failed = True
+        assert refused == failed, (
+            f"minimax h3 image head seam: {steps} blocks on {points} points: stock "
+            f"{'fails' if failed else 'renders'}, the grid check {'refuses' if refused else 'passes'}")
+
+
+def _assert_minimax_h3_image_build_seam() -> None:
+    """The model the adapter binds: built from the grid and head depth, with no audio stream."""
+    h3 = _h3_image_or_none("minimax h3 image build")
+    if h3 is None:
+        return
+    import comfy.ldm.minimax.sampling
+    import comfy.model_base
+
+    parameters = inspect.signature(h3.MiniMaxH3ImageModel.__init__).parameters
+    assert list(parameters)[1:3] == ["pdd_sigmas", "pdd_steps"], (
+        f"minimax h3 image build seam: the model takes {list(parameters)}")
+    model = _h3_image_tiny(h3, layers=1)
+    assert model.pdd_sigmas == [float(s) for s in _H3I_GRID]
+    assert not hasattr(model, "audio_patch_proj") and model.final_layer.audio_out is None
+    source = inspect.getsource(comfy.model_base.MiniMaxH3Image.__init__)
+    assert "MiniMaxH3ImageModel" in source and "MiniMaxH3ImageModelSampling" in source
+    assert issubclass(comfy.model_base.MiniMaxH3Image, comfy.model_base.MiniMaxH3)
+
+
+def _assert_minimax_h3_image_sampling_seam() -> None:
+    """KSampler simple at the head's depth lands on the grid (the shipped templates' premise)."""
+    h3 = _h3_image_or_none("minimax h3 image sampling")
+    if h3 is None:
+        return
+    from types import SimpleNamespace
+
+    import comfy.ldm.minimax.sampling
+    import comfy.samplers
+
+    config = SimpleNamespace(unet_config={"pdd_sigmas": _H3I_GRID}, sampling_settings={})
+    sampling = comfy.ldm.minimax.sampling.MiniMaxH3ImageModelSampling(config)
+    sigmas = comfy.samplers.calculate_sigmas(sampling, "simple", 6).tolist()
+    assert len(sigmas) == len(_H3I_GRID), f"minimax h3 image sampling seam: {sigmas}"
+    assert sigmas[0] == 1.0 and sigmas[-1] == 0.0, f"minimax h3 image sampling seam: {sigmas}"
+    worst = max(abs(a - b) for a, b in zip(sigmas, _H3I_GRID, strict=True))
+    assert worst < 1e-3, f"minimax h3 image sampling seam: simple at 6 steps is {worst} off the grid"
+
+
+def _assert_minimax_h3_image_conditioning_seam() -> None:
+    """The edit node's inputs and the payload keys extra_conds publishes from its references."""
+    h3 = _h3_image_or_none("minimax h3 image conditioning")
+    if h3 is None:
+        return
+    import comfy.model_base
+    import torch
+    from comfy_extras.nodes_minimax_h3 import MiniMaxH3ImageConditioning
+
+    names = [item.id for item in MiniMaxH3ImageConditioning.define_schema().inputs]
+    assert {"clip", "vae", "prompt", "width", "height", "images"} <= set(names), (
+        f"minimax h3 image conditioning seam: the node takes {names}")
+    assert '"minimax_refs"' in inspect.getsource(MiniMaxH3ImageConditioning.execute), (
+        "minimax h3 image conditioning seam: the edit node no longer sets minimax_refs")
+    source = inspect.getsource(comfy.model_base.MiniMaxH3.extra_conds)
+    for token in ('payload["text_token_tags"]', 'payload["refs"]', 'payload["seed"]',
+                  "self._cond_latents(keyframes, refs)"):
+        assert token in source, f"minimax h3 image conditioning seam: {token!r}"
+    refs = _h3_image_refs(2, (4, 4))
+    latents = comfy.model_base.MiniMaxH3._cond_latents(None, refs)["cond_video_latents"]
+    assert len(latents) == 2 and all(torch.equal(a, r["latent"]) for a, r in zip(latents, refs, strict=True))
+
+
+def _assert_minimax_h3_image_row_calls_seam() -> None:
+    """The row-keyed calls tools/h3_image_row_check.py runs at a rank's rows and at stock's."""
+    h3 = _h3_image_or_none("minimax h3 image row calls")
+    if h3 is None:
+        return
+    attention = inspect.getsource(h3.Attention.forward)
+    assert "comfy.quant_ops.ck.rms_rope_split_half" in attention, (
+        "minimax h3 image row calls seam: the fused q/k norm and rope moved")
+    assert 'comfy.ops.linear_input_act(self.fc2, self.fc1(x), "swiglu")' in inspect.getsource(
+        h3.MLP.forward), "minimax h3 image row calls seam: the swiglu MLP call moved"
+    assert "operations.Linear" in inspect.getsource(h3.Attention.__init__), (
+        "minimax h3 image row calls seam: the attention projections are no longer comfy Linears")
+# Every place ComfyUI reads or sets torch's inference mode, reads a tensor's
+# inference flag, or reads grad mode, which inference mode turns off and a
+# Worker's sampling thread has on, by file, enclosing function and name. The value says what a
+# Worker meets there; the inference mode branches seam holds the installed
+# tree to this table.
+_INFERENCE_MODE_SITES: dict[tuple[str, str, str], str] = {
+    ("comfy/model_base.py", "Flux3.extra_conds", "is_inference_mode_enabled"):
+        "branch: the flux3 cond bind runs it in inference mode",
+    ("comfy/model_base.py", "Anima.extra_conds", "is_inference_mode_enabled"):
+        "branch: the anima text bind runs it in inference mode",
+    ("comfy/model_base.py", "MOSSImage.extra_conds", "is_inference_mode_enabled"):
+        "branch: the moss_image cond bind runs it in inference mode",
+    ("comfy/ops.py", "_quantized_apply", "is_inference_mode_enabled"):
+        "clones an inference parameter outside inference mode: the same values",
+    ("comfy/utils.py", "set_attr_param", "is_inference_mode_enabled"):
+        "clones an inference tensor outside inference mode: the same values",
+    ("comfy/ops.py", "_quantized_apply", "is_inference"):
+        "the tensor test of that same clone",
+    ("comfy/utils.py", "set_attr_param", "is_inference"):
+        "the tensor test of that same clone",
+    ("comfy/utils.py", "tiled_scale_multidim", "inference_mode"):
+        "enters inference mode itself",
+    ("comfy/k_diffusion/deis.py", "cal_intergrand", "inference_mode"):
+        "leaves inference mode itself, with grad on, as in stock",
+    ("comfy/ldm/mmaudio/vae/autoencoder.py", "AudioAutoencoder.encode_audio", "inference_mode"):
+        "enters inference mode itself",
+    ("comfy_extras/nodes_train.py", "TrainLoraNode.execute", "inference_mode"):
+        "the training node, which no Worker runs",
+    ("execution.py", "PromptExecutor.execute_async", "inference_mode"):
+        "stock's prompt run, the mode a Worker's thread lacks",
+    ("comfy/ldm/minimax/vae.py", "Attention.rms_rope", "is_grad_enabled"):
+        "MiniMax H3 VAE: a Worker decodes under inference mode (actor/vae_decode.py)",
+    ("comfy/ldm/depth_anything_3/transform.py", "_sqrt_positive_part", "is_grad_enabled"):
+        "Depth Anything 3 nodes, which no Worker runs",
+}
+_MODE_NAMES = frozenset({"is_inference_mode_enabled", "inference_mode", "is_grad_enabled",
+                         "is_inference"})
+# Directories under the ComfyUI root the scan skips: tests, installed custom
+# node packs, and the data folders, which hold models and media, not code.
+_MODE_SCAN_SKIP = frozenset({"tests", "tests-unit", "custom_nodes", "models", "input", "output",
+                             "user", "temp"})
+
+
+def _inference_mode_sites(root: Path) -> dict[tuple[str, str, str], int]:
+    """Every use of a ``_MODE_NAMES`` name under ``root``, by file and enclosing function.
+
+    Every Python file under the root counts but those in ``_MODE_SCAN_SKIP`` and
+    hidden directories. Any attribute of that name counts, whatever it hangs
+    off (``torch.``, an alias of torch, a tensor), and so does a bare name, the
+    import that brings one in, renamed or not, and a string of that name, as
+    ``getattr(torch, ...)`` takes it, so an aliased or re-exported read is a
+    site too. A read routed through a helper in another package, or through a
+    name built at run time, is not seen.
+    """
+    import ast
+    from collections import Counter
+
+    found: Counter = Counter()
+
+    def visit(node, scope: str, relative: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = scope
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                inner = f"{scope}.{child.name}" if scope else child.name
+            name = None
+            if isinstance(child, ast.Attribute):
+                name = child.attr
+            elif isinstance(child, ast.Name):
+                name = child.id
+            elif isinstance(child, ast.alias):
+                # A renamed import leaves only its new name at each read, so
+                # the import itself is the site.
+                name = child.name
+            elif isinstance(child, ast.Constant) and isinstance(child.value, str):
+                name = child.value
+            if name in _MODE_NAMES:
+                found[(relative, scope or "<module>", name)] += 1
+            visit(child, inner, relative)
+
+    for directory, subdirectories, files in os.walk(root):
+        subdirectories[:] = sorted(
+            name for name in subdirectories
+            if not name.startswith(".")
+            and not (Path(directory) == root and name in _MODE_SCAN_SKIP)
+            and name not in ("tests", "tests-unit"))
+        for file in sorted(files):
+            if file.endswith(".py"):
+                path = Path(directory) / file
+                relative = path.relative_to(root).as_posix()
+                visit(ast.parse(path.read_text(encoding="utf-8-sig"), filename=relative), "",
+                      relative)
+    return dict(found)
+
+
+def _tiny_anima_base():
+    """A real model_base.Anima built by ComfyUI's own diffusion-model load: a
+    cosmos DiT at 256 channels and one block, beside the fixed 1024-wide,
+    six-layer llm_adapter stock builds for every file."""
+    import comfy.ops
+    import comfy.sd
+    import torch
+    from comfy.ldm.anima.model import Anima
+
+    model = Anima(max_img_h=240, max_img_w=240, max_frames=128, in_channels=16, out_channels=16,
+                  patch_spatial=2, patch_temporal=1, concat_padding_mask=True, model_channels=256,
+                  num_blocks=1, num_heads=16, crossattn_emb_channels=1024, pos_emb_cls="rope3d",
+                  pos_emb_learnable=True, pos_emb_interpolation="crop", min_fps=1, max_fps=30,
+                  use_adaln_lora=True, adaln_lora_dim=256, rope_h_extrapolation_ratio=4.0,
+                  rope_w_extrapolation_ratio=4.0, rope_t_extrapolation_ratio=1.0,
+                  extra_per_block_abs_pos_emb=False, dtype=torch.float32, device="cpu",
+                  operations=comfy.ops.disable_weight_init)
+    generator = torch.Generator().manual_seed(43)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.copy_(torch.randn(parameter.shape, generator=generator) * 0.05)
+    return comfy.sd.load_diffusion_model_state_dict(dict(model.state_dict())).model
+
+
+def _assert_inference_mode_branches_seam() -> None:
+    """Every inference-mode, inference-flag and grad-mode site in ComfyUI, and each bind.
+
+    ComfyUI runs a prompt inside ``torch.inference_mode()``
+    (``PromptExecutor.execute_async``); a Worker samples on a thread outside
+    it, with grad mode on. A model method that branches on the mode takes the
+    other branch on a Worker, as ``Anima.extra_conds`` did until 2026-11-10:
+    the raw text and the T5 inputs went to the forward, a pair whose rows
+    differ ran as two batch-1 calls where stock folds it into one, the
+    expected cause of the one-step NRMS 0.028 its one-GPU render read against
+    stock. A branch on a tensor's ``is_inference()`` flag is the same kind:
+    stock's conds are inference tensors and a Worker's are not. Pinned here: (a)
+    the installed tree's sites, walked from source by file, enclosing function
+    and name, equal ``_INFERENCE_MODE_SITES``, so a new or moved branch turns
+    this red before it reaches a render; (b) every ``model_base`` branch sits
+    in an ``extra_conds`` whose class's adapter declares its own
+    ``prepare_base_model`` and binds that method, and every such bind still
+    has its branch; (c) on a tiny real Anima, inference mode alone picks the
+    512-row branch, and the bound call off inference mode equals stock's under
+    it with no inference tensor. PyTorch's own branch, ``aten.linear``
+    decomposing before a quantized layout outside inference mode, has no
+    source line; the weight-only linear dispatch seam holds it.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    import comfy.model_base
+    import torch
+
+    from dgx_monarch.adapters import ADAPTERS
+    from dgx_monarch.adapters.anima import AnimaAdapter
+    from dgx_monarch.comfy_rebound_sites import ADAPTER_BIND_SITES
+
+    # comfy is a namespace package, so the tree's root is read off a module in it.
+    root = Path(comfy.model_base.__file__).resolve().parents[1]
+    found = _inference_mode_sites(root)
+    pinned = dict.fromkeys(_INFERENCE_MODE_SITES, 1)
+    assert found == pinned, (
+        "inference mode branches seam: ComfyUI's mode sites moved; new or changed "
+        f"{sorted(set(found.items()) - set(pinned.items()))}, gone "
+        f"{sorted(set(pinned.items()) - set(found.items()))}")
+
+    branches = sorted(function for (path, function, name) in _INFERENCE_MODE_SITES
+                      if path == "comfy/model_base.py")
+    binds = sorted(target[len("comfy.model_base."):] for site in ADAPTER_BIND_SITES
+                   if site.branch == "conds" for target in site.targets)
+    assert branches == binds, (
+        f"inference mode branches seam: model_base branches {branches} against cond binds {binds}")
+    for function in branches:
+        klass, method = function.split(".")
+        assert method == "extra_conds", (
+            f"inference mode branches seam: {function} is a branch no cond bind models")
+        owners = [adapter for adapter in ADAPTERS if klass in adapter.model_base_classes]
+        assert owners and all("prepare_base_model" in vars(type(adapter)) for adapter in owners), (
+            f"inference mode branches seam: no adapter for {klass} binds its extra_conds")
+        scopes = {site.scope for site in ADAPTER_BIND_SITES
+                  if f"comfy.model_base.{function}" in site.targets}
+        assert scopes == {f"{type(adapter).__name__}.prepare_base_model" for adapter in owners}, (
+            f"inference mode branches seam: {function} is bound from {sorted(scopes)}")
+
+    model = _tiny_anima_base()
+    generator = torch.Generator().manual_seed(47)
+    kwargs = {"cross_attn": torch.randn(1, 14, 1024, generator=generator),
+              "t5xxl_ids": torch.randint(0, 32128, (12,), generator=generator, dtype=torch.int32),
+              "t5xxl_weights": torch.ones(12), "device": torch.device("cpu")}
+    with torch.inference_mode():
+        stock = model.extra_conds(**kwargs)
+
+    def off_mode():
+        with ThreadPoolExecutor(1) as pool:
+            assert not pool.submit(torch.is_inference_mode_enabled).result(), (
+                "inference mode branches seam: a fresh executor thread now inherits inference mode")
+            return pool.submit(lambda: model.extra_conds(**kwargs)).result()
+
+    plain = off_mode()
+    assert set(stock) == {"c_crossattn"} and tuple(stock["c_crossattn"].cond.shape) == (1, 512, 1024), (
+        "inference mode branches seam: Anima no longer preprocesses its text to 512 rows "
+        f"in extra_conds under inference mode ({sorted(stock)})")
+    assert set(plain) == {"c_crossattn", "t5xxl_ids", "t5xxl_weights"}, (
+        f"inference mode branches seam: Anima's branch off inference mode moved ({sorted(plain)})")
+    AnimaAdapter().prepare_base_model(model)
+    bound = off_mode()
+    assert set(bound) == {"c_crossattn"} and torch.equal(
+        bound["c_crossattn"].cond, stock["c_crossattn"].cond), (
+        "inference mode branches seam: the bound Anima extra_conds off inference mode "
+        "differs from stock's under it")
+    assert not bound["c_crossattn"].cond.is_inference(), (
+        "inference mode branches seam: the bound Anima output still holds an inference tensor")
+
+
+def _assert_whole_load_condition_seam() -> None:
+    """ComfyUI places a model whole only with its reserve still free (2026-11-12).
+
+    ``capacity_classic_bake.reserve_keeps_floor`` prices an INT8 ConvRot
+    stack's classic bake by ComfyUI's own rule: ``load_models_gpu`` keeps the
+    weights whole only while the free reading is at least the model, the
+    reserve and the sampler's estimate for the latent, so a whole load starts
+    with the reserve free and the pack's host floor is kept by it. The price
+    leans on seven things comfy does, and one the pack does:
+
+    - a load is budgeted at all only when the process's ``vram_state`` is
+      NORMAL or LOW and no full load is forced (the sampler forces none),
+      and ``lowvram_available`` where comfy still has that flag (c5751c8
+      removed it); in any other state every load goes whole;
+    - the sampler's estimate for the recorded model (Wan-Animate 2: the
+      latent's cells x 2 bytes x 0.01 x dim / 2222 MiB, no conds counted) is
+      6.2 GiB for the recorded clip, the figure its whole load was read
+      against;
+    - the free reading is the pack's own on unified memory (the host's
+      available memory over its actors, plus torch's idle pool);
+    - the requirement is max(minimum_inference_memory(), the sampler's
+      minimum + extra_reserved_memory());
+    - the budget a model is loaded with is the free reading less that, with
+      no floor of its own under it on an NVIDIA device;
+    - a budget under the model's size is a partial load, and one above it a
+      whole load;
+    - ``extra_reserved_memory()`` is EXTRA_RESERVED_VRAM, which a Worker sets
+      from its reserve and the price reads back, and
+      ``minimum_inference_memory()`` is 0.8 GiB above it;
+    - ``prepare_sampling`` hands the load the sampler's single-batch estimate
+      as that minimum.
+    """
+    import comfy.model_management as mm
+    import comfy.sampler_helpers
+    from comfy.model_patcher import ModelPatcher
+
+    from dgx_monarch import capacity_classic_bake as price
+    from dgx_monarch.actor import in_place_fallback
+
+    def squeezed(thing) -> str:
+        return "".join(inspect.getsource(thing).split())
+
+    load = squeezed(inspect.unwrap(mm.load_models_gpu))
+    assert "extra_mem=max(inference_memory,memory_required+extra_reserved_memory())" in load, (
+        "whole load condition seam: load_models_gpu no longer requires the sampler's estimate "
+        "and the reserve together (max(inference_memory, memory_required + extra_reserved_memory()))"
+    )
+    assert ("minimum_memory_required=max(inference_memory,"
+            "minimum_memory_required+extra_reserved_memory())") in load, (
+        "whole load condition seam: load_models_gpu no longer adds the reserve to the minimum "
+        "the sampler hands it, so a whole load no longer starts with the reserve free"
+    )
+    assert "current_free_mem=get_free_memory(torch_dev)+loaded_memory" in load, (
+        "whole load condition seam: the budget is no longer read from get_free_memory, the "
+        "reading a Worker patches to the host's available memory"
+    )
+    assert ("lowvram_model_memory=max(0,(current_free_mem-minimum_memory_required),"
+            "min(current_free_mem*MIN_WEIGHT_MEMORY_RATIO,"
+            "current_free_mem-minimum_inference_memory()))") in load, (
+        "whole load condition seam: the budget a model is loaded with is no longer the free "
+        "reading less the requirement; capacity_classic_bake.reserve_keeps_floor prices by it"
+    )
+    # ComfyUI c5751c8 (2026-11-11, "Remove directml support") deleted ``lowvram_available``, the
+    # flag only DirectML cleared. The gate is the same test with or without it; the form must match
+    # whether the flag exists, so a flag that comes back without gating, or a new term, turns this red.
+    flagged = hasattr(mm, "lowvram_available")
+    gate = (("iflowvram_availableand" if flagged else "if")
+            + "(vram_set_state==VRAMState.LOW_VRAMorvram_set_state==VRAMState.NORMAL_VRAM)"
+            "andnotforce_full_load:loaded_memory=loaded_model.model_loaded_memory()")
+    assert gate in load, (
+        "whole load condition seam: the gate on the budget test changed. It must budget a load "
+        "exactly when the state is LOW or NORMAL and no full load is forced (and, where comfy "
+        "still has the flag, lowvram_available); in any other state every load goes whole at any "
+        f"reading. Expected with lowvram_available {'present' if flagged else 'absent'}: "
+        "in_place_fallback.worker_reserve reads the same names"
+    )
+    assert ("ifis_device_cpu(torch_dev):vram_set_state=VRAMState.DISABLEDelse:"
+            "vram_set_state=vram_state") in load, (
+        "whole load condition seam: a GPU load no longer takes the process's vram_state, the "
+        "state the pack's price reads"
+    )
+    for name in ("vram_state", "VRAMState"):
+        assert hasattr(mm, name), f"whole load condition seam: comfy.model_management.{name} is gone"
+    assert {"NORMAL_VRAM", "LOW_VRAM"} <= set(mm.VRAMState.__members__), (
+        "whole load condition seam: VRAMState lost NORMAL_VRAM or LOW_VRAM"
+    )
+
+    # The sampler's estimate for the recorded model. The 2.3 GiB the exception rests on holds the
+    # sampler's real use over this estimate (6.7 against 6.2 for the shipped template's clip), so a
+    # retuned factor or formula moves the margin without moving any line above.
+    import comfy.model_base
+    import comfy.samplers
+    import comfy.supported_models
+
+    factor = comfy.supported_models.WAN_Animate2({"dim": 5120}).memory_usage_factor
+    assert factor == 5120 / 2222, (
+        "whole load condition seam: Wan-Animate 2's memory_usage_factor is no longer dim / 2222 "
+        f"(now {factor}); the recorded whole load was read against that estimate"
+    )
+    assert "memory_usage_factor_conds" not in inspect.getsource(comfy.model_base.WAN_Animate2.__init__), (
+        "whole load condition seam: Wan-Animate 2 now counts conds in its estimate; the record "
+        "was read with the latent alone"
+    )
+    assert ("return(area*comfy.model_management.dtype_size(dtype)*0.01*self.memory_usage_factor)"
+            "*(1024*1024)") in squeezed(comfy.model_base.BaseModel.memory_required), (
+        "whole load condition seam: BaseModel.memory_required's flash-path formula changed"
+    )
+    from comfy_extras.nodes_wan import WanAnimate2ToVideo
+
+    assert ("latent=torch.zeros([batch_size,16,latent_length+trim_latent,latent_height,"
+            "latent_width]") in squeezed(WanAnimate2ToVideo.execute), (
+        "whole load condition seam: the Wan-Animate 2 node no longer samples the clip's latent "
+        "frames plus the reference's, the shape the recorded estimate was worked from"
+    )
+    # The shipped template: 81 frames at 480x832 is 21 latent frames, and the reference image one more.
+    cells = (21 + 1) * 104 * 60
+    estimate = cells * 2 * 0.01 * factor * 1024 * 1024
+    assert 6.1 * 1024 ** 3 < estimate < 6.25 * 1024 ** 3, (
+        "whole load condition seam: the estimate for the recorded clip is no longer 6.2 GiB"
+    )
+    assert ("minimum_memory_required=model.model.memory_required([noise_shape[0]]+"
+            "list(noise_shape[1:]),cond_shapes=cond_shapes_min)") in squeezed(
+                comfy.sampler_helpers.estimate_memory), (
+        "whole load condition seam: the minimum the sampler hands the load is no longer the "
+        "single-batch estimate"
+    )
+
+    # The free reading both sides weigh is the pack's own on unified memory.
+    from dgx_monarch.actor import comfy_bridge
+
+    reading = squeezed(comfy_bridge._patch_uma_free_memory)
+    assert ("host_available=psutil.virtual_memory().available//shares" in reading
+            and "mem_free_total=host_available+mem_free_torch" in reading), (
+        "whole load condition seam: the Worker's free reading is no longer the host's available "
+        "memory over its actors plus torch's idle pool; the recorded whole load was read on that"
+    )
+
+    assert "force_full_load=force_full_load" in squeezed(comfy.sampler_helpers._prepare_sampling), (
+        "whole load condition seam: prepare_sampling no longer passes its own force_full_load "
+        "through to the load"
+    )
+    assert ("comfy.sampler_helpers.prepare_sampling(self.model_patcher,noise.shape,self.conds,"
+            "self.model_options)") in squeezed(comfy.samplers.CFGGuider.outer_sample), (
+        "whole load condition seam: the sampler's own prepare_sampling call changed; if it now "
+        "forces a full load, a classic load goes whole at any reading and the reserve rule fails"
+    )
+    module = squeezed(mm)
+    assert "MIN_WEIGHT_MEMORY_RATIO=0.4ifis_nvidia():MIN_WEIGHT_MEMORY_RATIO=0.0" in module, (
+        "whole load condition seam: an NVIDIA device no longer loads with no floor under the "
+        "budget (MIN_WEIGHT_MEMORY_RATIO 0.0), so a model may go whole below the requirement"
+    )
+    partial = squeezed(ModelPatcher.partially_load)
+    assert ("ifself.model.model_loaded_weight_memory+extra_memory>self.model_size():"
+            "full_load=True") in partial, (
+        "whole load condition seam: ModelPatcher.partially_load no longer loads whole exactly "
+        "when its budget passes the model's size"
+    )
+    prepare = squeezed(comfy.sampler_helpers._prepare_sampling)
+    assert ("estimate_memory(" in prepare
+            and "minimum_memory_required=minimum_memory_required" in prepare), (
+        "whole load condition seam: prepare_sampling no longer hands load_models_gpu the "
+        "sampler's own minimum estimate"
+    )
+
+    gib = 1024 ** 3
+    saved = (mm.EXTRA_RESERVED_VRAM, mm.vram_state)
+    try:
+        mm.EXTRA_RESERVED_VRAM = 3 * gib
+        assert mm.extra_reserved_memory() == 3 * gib, (
+            "whole load condition seam: extra_reserved_memory() no longer returns "
+            "EXTRA_RESERVED_VRAM, the knob a Worker's reserve sets"
+        )
+        assert mm.minimum_inference_memory() == 0.8 * gib + 3 * gib, (
+            "whole load condition seam: minimum_inference_memory() is no longer 0.8 GiB above "
+            "the reserve"
+        )
+        for state in mm.VRAMState:  # this CPU run starts DISABLED; a Worker on a GPU runs NORMAL
+            mm.vram_state = state
+            budgeted = state in (mm.VRAMState.NORMAL_VRAM, mm.VRAMState.LOW_VRAM)
+            assert in_place_fallback.worker_reserve() == (3 * gib if budgeted else None), (
+                f"whole load condition seam: in state {state.name} the pack's price reads the "
+                "reserve wrongly; it must read comfy's own figure only where comfy budgets a load"
+            )
+        mm.vram_state = mm.VRAMState.NORMAL_VRAM
+        assert not price.reserve_keeps_floor(in_place_fallback.worker_reserve(), True), (
+            "whole load condition seam: a 3 GiB reserve reads as keeping the 5 GiB floor"
+        )
+        mm.EXTRA_RESERVED_VRAM = 8 * gib
+        assert price.reserve_keeps_floor(in_place_fallback.worker_reserve(), True), (
+            "whole load condition seam: the unified-memory default reserve of 8 GiB no longer "
+            "reads as keeping the floor under a whole load of the recorded model"
+        )
+    finally:
+        mm.EXTRA_RESERVED_VRAM, mm.vram_state = saved
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -5859,6 +7106,18 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("weight-only linear dispatch", _assert_weight_only_linear_dispatch_seam),
     ("minimax h3 context windows", _assert_minimax_h3_context_windows_seam),
     ("lazy switch", _assert_lazy_switch_seam),
+    ("pair-scoped text conds", _assert_pair_scoped_text_conds_seam),
+    ("ltx stock-row parity", _assert_ltx_stock_row_parity_seam),
+    ("inference mode branches", _assert_inference_mode_branches_seam),
+    ("minimax h3 image forward", _assert_minimax_h3_image_forward_seam),
+    ("minimax h3 image layout", _assert_minimax_h3_image_layout_seam),
+    ("minimax h3 image head", _assert_minimax_h3_image_head_seam),
+    ("minimax h3 image build", _assert_minimax_h3_image_build_seam),
+    ("minimax h3 image sampling", _assert_minimax_h3_image_sampling_seam),
+    ("minimax h3 image conditioning", _assert_minimax_h3_image_conditioning_seam),
+    ("minimax h3 image row calls", _assert_minimax_h3_image_row_calls_seam),
+    ("copy-free drop", _assert_copy_free_drop_seam),
+    ("whole load condition", _assert_whole_load_condition_seam),
 )
 
 

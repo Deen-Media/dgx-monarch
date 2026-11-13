@@ -294,9 +294,12 @@ if present:
  if not exact or not getattr(shutil.rmtree,'avoids_symlink_attacks',False):
   print('UNKNOWN'); raise SystemExit(0)
  # A failed rsync may leave a partial Python tree. Refuse links, foreign owners,
- # and non-source payloads, then quarantine the exact recorded slot inode.
+ # and non-source payloads, then quarantine the exact recorded slot inode. The
+ # site holds only the package rsync writes, so anything beside it is foreign.
  try:
   suffixes=('.py',*importlib.machinery.EXTENSION_SUFFIXES); package=site/'dgx_monarch'; resource_files=[]
+  if os.path.lexists(site) and not {{entry.name for entry in site.iterdir()}}<={{'dgx_monarch'}}:
+   raise RuntimeError('foreign site entry')
   if os.path.lexists(site) and os.path.lexists(package):
    for root,dirs,files in os.walk(package,followlinks=False):
     current=pathlib.Path(root); ci=current.lstat()
@@ -310,7 +313,6 @@ if present:
     resource_hashes=validate_studio_resources(str(package),False)
     if any(path.relative_to(package).as_posix() not in resource_hashes for path in resource_files):
      raise RuntimeError('foreign source entry')
-  elif os.path.lexists(site) and any(site.iterdir()): raise RuntimeError('foreign site entry')
   quarantine=local_quarantine if candidate in (archive,local_quarantine) else release_quarantine
   if candidate!=quarantine:
    if os.path.lexists(quarantine): raise RuntimeError('cleanup collision')

@@ -9,6 +9,11 @@ reclassification requires a reviewed update; new untagged refusals fail the
 check, and the grandfathered backlog can only shrink. Guard names must also
 agree with the consent subsystem's waiver registry.
 
+Run as a script, this file checks the ledger against the tree, prints any
+difference and writes nothing; CI and scripts/test_cpu.sh run it so:
+
+    PYTHONPATH=src python tests/test_refusal_classes.py --check
+
 Regenerate the ledger after a reviewed change:
 
     PYTHONPATH=src python tests/test_refusal_classes.py --write
@@ -16,8 +21,10 @@ Regenerate the ledger after a reviewed change:
 
 from __future__ import annotations
 
+import argparse
 import ast
 import copy
+import difflib
 import functools
 import json
 import sys
@@ -60,7 +67,14 @@ REFUSAL_CLASSES = frozenset({
     "PackedDataParallelError",
     "PackedCfgParallelError",
     "PartialLoadDivergenceError",
+    # One rank: a patched layer that quantizes its input is off the device and its
+    # load could not be made whole (actor/lora_partial_load.py).
+    "OffloadedInputQuantError",
     "RenderMemoryPriceError",
+    # The NVIDIA driver could not get memory for a Worker's CUDA context
+    # (actor/context_room.py). Class C: free memory is short, and the Worker
+    # made what room it could before the try.
+    "ContextMemoryError",
     "DualModelLoadDivergenceError",
     # The post-load readiness exchange (actor/rank_readiness.py). Class P on
     # the healthy rank: MIN carries agreement and not identity, so this rank
@@ -84,6 +98,10 @@ REFUSAL_CLASSES = frozenset({
     # (delivery_faults.py, restart_reattach.py, issue #47). Class C on the same
     # guard and, like a silent rank, a liveness fault, never a capacity verdict.
     "WorkerDeliveryError",
+    # A pair whose ranks do not all run the driver's torch and CUDA build holds
+    # no Gate authority (worker_runtime.py). Class P: no consent makes a proof
+    # on one build vouch for another, and the message names the fix.
+    "WorkerRuntimeMismatch",
 })
 
 # Declared exceptions that are not user-facing model/capacity refusals: control
@@ -109,6 +127,10 @@ NOT_REFUSAL_CLASSES = frozenset({
     # its own failed read, never by a rank, so it carries no class tag and the
     # finish-phase failure abandons the lease as before.
     "NativeReturnLatchedError",
+    # The upstream gate's own signal that ``_quantization_metadata`` cannot be
+    # parsed, by it or by ComfyUI: ``_verdict`` reads it as no verdict and the
+    # refusal a user sees, if any, is ComfyUI's own load error.
+    "QuantMetadataError",
     "ClusterConfigError",
     "ClusterSmokeError",
     # The pre-dial attach refusal (worker_proc_id.py): a lifecycle fault the
@@ -127,6 +149,9 @@ NOT_REFUSAL_CLASSES = frozenset({
     "GateAuditError",
     "ProfileRefusal",
     "PriorTeardownUnknownError",
+    # An unlisted proc root (cli/proc_identity.py): an IO fault that makes a
+    # liveness or sweep answer unknown, never a model or capacity refusal.
+    "ProcListingError",
     "ReleaseLayoutError",
     "RepairError",
     "SetupCliInputError",
@@ -717,7 +742,8 @@ def test_refusal_refuses_an_inconsistent_declaration():
         refusal(RefusalClass.PHYSICS, "   ")
 
 
-def _write_ledger() -> None:
+def _regenerated() -> tuple[str, str]:
+    """The ledger text this tree asks for, and its counts. It writes nothing."""
     tagged, untagged = _walk_tree()
     existing = _ledger() if LEDGER.exists() else {}
     claimed = {row["guard"] for row in tagged if row["guard"]}
@@ -736,13 +762,35 @@ def _write_ledger() -> None:
             key=lambda row: str(row["site"]),
         ),
     }
-    LEDGER.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n")
-    print(f"wrote {LEDGER} ({len(payload['tagged'])} tagged, "
-          f"{sum(payload['untagged_by_module'].values())} untagged)")
+    counts = (f"{len(payload['tagged'])} tagged, "
+              f"{sum(payload['untagged_by_module'].values())} untagged")
+    return json.dumps(payload, indent=2, sort_keys=False) + "\n", counts
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Check or regenerate tests/refusal_class_ledger.json.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--write", action="store_true",
+                      help="regenerate the ledger after a reviewed change")
+    mode.add_argument("--check", action="store_true",
+                      help="compare the ledger with this tree, print any difference and write nothing (default)")
+    args = parser.parse_args(argv)
+    wanted, counts = _regenerated()
+    if args.write:
+        LEDGER.write_text(wanted)
+        print(f"wrote {LEDGER} ({counts})")
+        return 0
+    tracked = LEDGER.read_text() if LEDGER.exists() else ""
+    if tracked == wanted:
+        print(f"refusal ledger is current ({counts})")
+        return 0
+    sys.stdout.writelines(difflib.unified_diff(
+        tracked.splitlines(keepends=True), wanted.splitlines(keepends=True),
+        fromfile=f"{LEDGER.name} (as tracked)", tofile=f"{LEDGER.name} (as this tree asks)"))
+    print("refusal ledger is stale. After review, regenerate it with "
+          "`PYTHONPATH=src python tests/test_refusal_classes.py --write`.")
+    return 1
 
 
 if __name__ == "__main__":
-    if "--write" in sys.argv:
-        _write_ledger()
-    else:
-        print("pass --write to regenerate tests/refusal_class_ledger.json")
+    raise SystemExit(main())

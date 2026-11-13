@@ -1087,6 +1087,8 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "pool thread under dgxm-latent-read",
     ("rdma_receiver.py", "_read_and_release_owned.drive"):
         "the dgxm-latent-read scratch-thread body",
+    ("actor/in_place_fallback.py", "permitted"):
+        "contextvars.ContextVar.get, not a monarch future",
     ("actor/unbake.py", "restore_pristine"):
         "stdlib queue.Queue.get, not a monarch future",
     ("actor/unbake.py", "restore_pristine._take"):
@@ -1128,6 +1130,8 @@ _OFF_LOOP_BY_CONSTRUCTION = {
     ("nodes/render_submit.py", "_reattach_facts"):
         "ContextVar read, not a monarch future",
     ("old_model.py", "graph_names"):
+        "ContextVar read, not a monarch future",
+    ("swap_credit.py", "credited"):
         "ContextVar read, not a monarch future",
     ("vae_decode_route.py", "_entry_wrapper.decode"):
         "ContextVar read, not a monarch future",

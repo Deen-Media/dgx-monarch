@@ -1,0 +1,1536 @@
+{
+ "id": "minimax-h3-image-on-its-sigma-grid",
+ "revision": 0,
+ "last_node_id": 29,
+ "last_link_id": 34,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "DGXMonarchInit",
+   "pos": [
+    80,
+    80
+   ],
+   "size": [
+    315,
+    448
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "slot_index": 0,
+     "links": [
+      1
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchInit"
+   },
+   "widgets_values": [
+    "auto",
+    "auto",
+    "TORCH_FLASH",
+    "",
+    0,
+    0.0,
+    true,
+    false,
+    1,
+    false,
+    "auto",
+    "auto",
+    "first_use",
+    false,
+    2,
+    0.0,
+    "off",
+    "auto"
+   ],
+   "dgxm_widgets": {
+    "topology": "auto",
+    "mode": "auto",
+    "attention": "TORCH_FLASH",
+    "config_path": "",
+    "gpus_per_host": 0,
+    "reserve_vram_gb": 0.0,
+    "sync_ulysses": true,
+    "compile_dit": false,
+    "pipeline_depth": 1,
+    "mmap_fallback": false,
+    "lora_low_rss": "auto",
+    "slab_weights": "auto",
+    "auto_gate": "first_use",
+    "load_profile": false,
+    "swap_verify": 2,
+    "uma_reserve_gb": 0.0,
+    "comfy_managed": "off",
+    "family_adapter": "auto"
+   }
+  },
+  {
+   "id": 2,
+   "type": "Note",
+   "pos": [
+    80,
+    270
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "Note"
+   },
+   "widgets_values": [
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-minimax-h3-image-t2i, with only the changes needed for this test. Sampler Custom (DGX Monarch) walks the checkpoint's own sigma grid, typed into Manual Sigmas, where the shipped graph's KSampler lands within a thousandth of it; euler through Basic Guider (DGX Monarch) at CFG 1. The first-use gate proves this graph with its own first two steps, 1.0 to 0.9675 to 0.8875, each on one head block as in the render, where the shipped graph's two-step KSampler proof spans three blocks a step. The expander is off and its task prompt and system prompt boxes are empty, so the request reaches the model as written and no row of this graph runs a language model."
+   ],
+   "title": "DGX Monarch | MiniMax-H3-Image on its sigma grid"
+  },
+  {
+   "id": 3,
+   "type": "DGXMonarchUNETLoader",
+   "pos": [
+    420,
+    80
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      25
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchUNETLoader"
+   },
+   "widgets_values": [
+    "minimax_h3_image_pruned_int8_convrot.safetensors",
+    "default"
+   ],
+   "dgxm_widgets": {
+    "unet_name": "minimax_h3_image_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  {
+   "id": 4,
+   "type": "CLIPLoader",
+   "pos": [
+    80,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "slot_index": 0,
+     "links": [
+      22
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+    "minimax",
+    "default"
+   ]
+  },
+  {
+   "id": 5,
+   "type": "CLIPLoader",
+   "pos": [
+    80,
+    650
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "slot_index": 0,
+     "links": [
+      4
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "qwen3.5_9b_w4a8_gptq.safetensors",
+    "minimax",
+    "default"
+   ]
+  },
+  {
+   "id": 6,
+   "type": "VAELoader",
+   "pos": [
+    80,
+    840
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "slot_index": 0,
+     "links": [
+      23,
+      33
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "minimax_h3_image_vae_fp16.safetensors"
+   ]
+  },
+  {
+   "id": 7,
+   "type": "PrimitiveStringMultiline",
+   "pos": [
+    420,
+    460
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      3,
+      13,
+      14,
+      18,
+      19
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PrimitiveStringMultiline"
+   },
+   "widgets_values": [
+    "A small mountain weather station at first light, frost on the grass and snow-covered peaks behind it, photographed with a 35mm lens."
+   ],
+   "title": "Text (user_prompt)"
+  },
+  {
+   "id": 8,
+   "type": "PrimitiveStringMultiline",
+   "pos": [
+    420,
+    650
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      2
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PrimitiveStringMultiline"
+   },
+   "widgets_values": [
+    ""
+   ],
+   "title": "Text (task_prompt)"
+  },
+  {
+   "id": 9,
+   "type": "PrimitiveStringMultiline",
+   "pos": [
+    420,
+    840
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      5
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PrimitiveStringMultiline"
+   },
+   "widgets_values": [
+    ""
+   ],
+   "title": "Text (system_prompt)"
+  },
+  {
+   "id": 10,
+   "type": "StringReplace",
+   "pos": [
+    760,
+    650
+   ],
+   "size": [
+    315,
+    162
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "string",
+     "type": "STRING",
+     "widget": {
+      "name": "string"
+     },
+     "link": 2
+    },
+    {
+     "name": "replace",
+     "type": "STRING",
+     "widget": {
+      "name": "replace"
+     },
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      6
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "StringReplace"
+   },
+   "widgets_values": [
+    "",
+    "{input text}",
+    ""
+   ]
+  },
+  {
+   "id": 11,
+   "type": "TextGenerateV2",
+   "pos": [
+    1100,
+    650
+   ],
+   "size": [
+    315,
+    426
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 4
+    },
+    {
+     "name": "system_prompt",
+     "type": "STRING",
+     "link": 5
+    },
+    {
+     "name": "prompt",
+     "type": "STRING",
+     "widget": {
+      "name": "prompt"
+     },
+     "link": 6
+    }
+   ],
+   "outputs": [
+    {
+     "name": "generated_text",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      7
+     ]
+    },
+    {
+     "name": "thinking",
+     "type": "STRING",
+     "slot_index": 1,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "TextGenerateV2"
+   },
+   "widgets_values": [
+    "",
+    1024,
+    "on",
+    0.7,
+    20,
+    0.8,
+    0.0,
+    1.0,
+    0.0,
+    0,
+    false,
+    true,
+    "off"
+   ]
+  },
+  {
+   "id": 12,
+   "type": "RegexExtract",
+   "pos": [
+    1440,
+    650
+   ],
+   "size": [
+    315,
+    228
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "string",
+     "type": "STRING",
+     "widget": {
+      "name": "string"
+     },
+     "link": 7
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      8
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "RegexExtract"
+   },
+   "widgets_values": [
+    "",
+    "\"expanded_caption\\\\?\"\\s*:\\s*(\\\\)?\"(.*?)(?(1)\\\\\"\\s*\"?|\")\\s*(?:,\\s*(?!\"expanded_caption\\\\?\")\"(?:[^\"\\\\]|\\\\.)*\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|-?[0-9][0-9.]*(?:[eE][+-]?[0-9]+)?|true|false|null)\\s*)*\\}(?!.*\"\\s*\\})",
+    "First Group",
+    false,
+    false,
+    true,
+    2
+   ]
+  },
+  {
+   "id": 13,
+   "type": "RegexReplace",
+   "pos": [
+    420,
+    1220
+   ],
+   "size": [
+    315,
+    228
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "string",
+     "type": "STRING",
+     "widget": {
+      "name": "string"
+     },
+     "link": 8
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      9,
+      12
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "RegexReplace"
+   },
+   "widgets_values": [
+    "",
+    "\\\\([\"\\\\/])",
+    "\\1",
+    false,
+    false,
+    false,
+    0
+   ]
+  },
+  {
+   "id": 14,
+   "type": "StringTrim",
+   "pos": [
+    760,
+    840
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "string",
+     "type": "STRING",
+     "widget": {
+      "name": "string"
+     },
+     "link": 9
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      10
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "StringTrim"
+   },
+   "widgets_values": [
+    "",
+    "Both"
+   ]
+  },
+  {
+   "id": 15,
+   "type": "StringCompare",
+   "pos": [
+    1100,
+    840
+   ],
+   "size": [
+    315,
+    162
+   ],
+   "flags": {},
+   "order": 14,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "string_a",
+     "type": "STRING",
+     "widget": {
+      "name": "string_a"
+     },
+     "link": 10
+    }
+   ],
+   "outputs": [
+    {
+     "name": "BOOLEAN",
+     "type": "BOOLEAN",
+     "slot_index": 0,
+     "links": [
+      11
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "StringCompare"
+   },
+   "widgets_values": [
+    "",
+    "",
+    "Equal",
+    true
+   ]
+  },
+  {
+   "id": 16,
+   "type": "ComfySwitchNode",
+   "pos": [
+    1440,
+    840
+   ],
+   "size": [
+    315,
+    140
+   ],
+   "flags": {},
+   "order": 15,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "on_false",
+     "type": "STRING",
+     "link": 12
+    },
+    {
+     "name": "on_true",
+     "type": "STRING",
+     "link": 13
+    },
+    {
+     "name": "switch",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "switch"
+     },
+     "link": 11
+    }
+   ],
+   "outputs": [
+    {
+     "name": "output",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      17
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ComfySwitchNode"
+   },
+   "widgets_values": [
+    false
+   ],
+   "title": "If/Else Switch (empty caption: send the request)"
+  },
+  {
+   "id": 17,
+   "type": "StringTrim",
+   "pos": [
+    420,
+    1410
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 16,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "string",
+     "type": "STRING",
+     "widget": {
+      "name": "string"
+     },
+     "link": 14
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      15
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "StringTrim"
+   },
+   "widgets_values": [
+    "",
+    "Both"
+   ]
+  },
+  {
+   "id": 18,
+   "type": "StringCompare",
+   "pos": [
+    760,
+    1410
+   ],
+   "size": [
+    315,
+    162
+   ],
+   "flags": {},
+   "order": 17,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "string_a",
+     "type": "STRING",
+     "widget": {
+      "name": "string_a"
+     },
+     "link": 15
+    }
+   ],
+   "outputs": [
+    {
+     "name": "BOOLEAN",
+     "type": "BOOLEAN",
+     "slot_index": 0,
+     "links": [
+      16
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "StringCompare"
+   },
+   "widgets_values": [
+    "",
+    "",
+    "Equal",
+    true
+   ]
+  },
+  {
+   "id": 19,
+   "type": "ComfySwitchNode",
+   "pos": [
+    1100,
+    1410
+   ],
+   "size": [
+    315,
+    140
+   ],
+   "flags": {},
+   "order": 18,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "on_false",
+     "type": "STRING",
+     "link": 17
+    },
+    {
+     "name": "on_true",
+     "type": "STRING",
+     "link": 18
+    },
+    {
+     "name": "switch",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "switch"
+     },
+     "link": 16
+    }
+   ],
+   "outputs": [
+    {
+     "name": "output",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      20
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ComfySwitchNode"
+   },
+   "widgets_values": [
+    false
+   ],
+   "title": "If/Else Switch (empty request: skip the expander)"
+  },
+  {
+   "id": 20,
+   "type": "ComfySwitchNode",
+   "pos": [
+    760,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 19,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "on_false",
+     "type": "STRING",
+     "link": 19
+    },
+    {
+     "name": "on_true",
+     "type": "STRING",
+     "link": 20
+    }
+   ],
+   "outputs": [
+    {
+     "name": "output",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      21,
+      24
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ComfySwitchNode"
+   },
+   "widgets_values": [
+    false
+   ],
+   "title": "If/Else Switch (expander on or off)"
+  },
+  {
+   "id": 21,
+   "type": "PreviewAny",
+   "pos": [
+    1100,
+    460
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 20,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "source",
+     "type": "*",
+     "link": 21
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PreviewAny"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 22,
+   "type": "MiniMaxH3ImageConditioning",
+   "pos": [
+    1440,
+    460
+   ],
+   "size": [
+    315,
+    206
+   ],
+   "flags": {},
+   "order": 21,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 22
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 23
+    },
+    {
+     "name": "prompt",
+     "type": "STRING",
+     "widget": {
+      "name": "prompt"
+     },
+     "link": 24
+    }
+   ],
+   "outputs": [
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      26
+     ]
+    },
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 1,
+     "links": [
+      31
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "MiniMaxH3ImageConditioning"
+   },
+   "widgets_values": [
+    "",
+    2048,
+    2048
+   ]
+  },
+  {
+   "id": 23,
+   "type": "DGXMonarchBasicGuider",
+   "pos": [
+    1780,
+    80
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 22,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "link": 25
+    },
+    {
+     "name": "conditioning",
+     "type": "CONDITIONING",
+     "link": 26
+    }
+   ],
+   "outputs": [
+    {
+     "name": "guider",
+     "type": "DGXM_GUIDER",
+     "slot_index": 0,
+     "links": [
+      28
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchBasicGuider"
+   },
+   "widgets_values": [],
+   "dgxm_widgets": {}
+  },
+  {
+   "id": 24,
+   "type": "KSamplerSelect",
+   "pos": [
+    1780,
+    460
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 23,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "SAMPLER",
+     "type": "SAMPLER",
+     "slot_index": 0,
+     "links": [
+      29
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "KSamplerSelect"
+   },
+   "widgets_values": [
+    "euler"
+   ]
+  },
+  {
+   "id": 25,
+   "type": "RandomNoise",
+   "pos": [
+    1780,
+    650
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 24,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "NOISE",
+     "type": "NOISE",
+     "slot_index": 0,
+     "links": [
+      27
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "RandomNoise"
+   },
+   "widgets_values": [
+    42,
+    "randomize"
+   ]
+  },
+  {
+   "id": 26,
+   "type": "ManualSigmas",
+   "pos": [
+    1780,
+    840
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 25,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "SIGMAS",
+     "type": "SIGMAS",
+     "slot_index": 0,
+     "links": [
+      30
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ManualSigmas"
+   },
+   "widgets_values": [
+    "1.0, 0.9675236940383911, 0.8875485062599182, 0.75, 0.5327739119529724, 0.23200887441635132, 0.0"
+   ]
+  },
+  {
+   "id": 27,
+   "type": "DGXMonarchSamplerCustom",
+   "pos": [
+    2120,
+    270
+   ],
+   "size": [
+    315,
+    184
+   ],
+   "flags": {},
+   "order": 26,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "noise",
+     "type": "NOISE",
+     "link": 27
+    },
+    {
+     "name": "guider",
+     "type": "DGXM_GUIDER",
+     "link": 28
+    },
+    {
+     "name": "sampler",
+     "type": "SAMPLER",
+     "link": 29
+    },
+    {
+     "name": "sigmas",
+     "type": "SIGMAS",
+     "link": 30
+    },
+    {
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 31
+    }
+   ],
+   "outputs": [
+    {
+     "name": "output",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      32
+     ]
+    },
+    {
+     "name": "denoised_output",
+     "type": "LATENT",
+     "slot_index": 1,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchSamplerCustom"
+   },
+   "widgets_values": [],
+   "dgxm_widgets": {}
+  },
+  {
+   "id": 28,
+   "type": "VAEDecode",
+   "pos": [
+    2460,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 27,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 32
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 33
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      34
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 29,
+   "type": "SaveImage",
+   "pos": [
+    2800,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 28,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 34
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "dgx_monarch_minimax_h3_image"
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   3,
+   0,
+   "DGXM_MESH"
+  ],
+  [
+   2,
+   8,
+   0,
+   10,
+   0,
+   "STRING"
+  ],
+  [
+   3,
+   7,
+   0,
+   10,
+   1,
+   "STRING"
+  ],
+  [
+   4,
+   5,
+   0,
+   11,
+   0,
+   "CLIP"
+  ],
+  [
+   5,
+   9,
+   0,
+   11,
+   1,
+   "STRING"
+  ],
+  [
+   6,
+   10,
+   0,
+   11,
+   2,
+   "STRING"
+  ],
+  [
+   7,
+   11,
+   0,
+   12,
+   0,
+   "STRING"
+  ],
+  [
+   8,
+   12,
+   0,
+   13,
+   0,
+   "STRING"
+  ],
+  [
+   9,
+   13,
+   0,
+   14,
+   0,
+   "STRING"
+  ],
+  [
+   10,
+   14,
+   0,
+   15,
+   0,
+   "STRING"
+  ],
+  [
+   11,
+   15,
+   0,
+   16,
+   2,
+   "BOOLEAN"
+  ],
+  [
+   12,
+   13,
+   0,
+   16,
+   0,
+   "STRING"
+  ],
+  [
+   13,
+   7,
+   0,
+   16,
+   1,
+   "STRING"
+  ],
+  [
+   14,
+   7,
+   0,
+   17,
+   0,
+   "STRING"
+  ],
+  [
+   15,
+   17,
+   0,
+   18,
+   0,
+   "STRING"
+  ],
+  [
+   16,
+   18,
+   0,
+   19,
+   2,
+   "BOOLEAN"
+  ],
+  [
+   17,
+   16,
+   0,
+   19,
+   0,
+   "STRING"
+  ],
+  [
+   18,
+   7,
+   0,
+   19,
+   1,
+   "STRING"
+  ],
+  [
+   19,
+   7,
+   0,
+   20,
+   0,
+   "STRING"
+  ],
+  [
+   20,
+   19,
+   0,
+   20,
+   1,
+   "STRING"
+  ],
+  [
+   21,
+   20,
+   0,
+   21,
+   0,
+   "*"
+  ],
+  [
+   22,
+   4,
+   0,
+   22,
+   0,
+   "CLIP"
+  ],
+  [
+   23,
+   6,
+   0,
+   22,
+   1,
+   "VAE"
+  ],
+  [
+   24,
+   20,
+   0,
+   22,
+   2,
+   "STRING"
+  ],
+  [
+   25,
+   3,
+   0,
+   23,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   26,
+   22,
+   0,
+   23,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   27,
+   25,
+   0,
+   27,
+   0,
+   "NOISE"
+  ],
+  [
+   28,
+   23,
+   0,
+   27,
+   1,
+   "DGXM_GUIDER"
+  ],
+  [
+   29,
+   24,
+   0,
+   27,
+   2,
+   "SAMPLER"
+  ],
+  [
+   30,
+   26,
+   0,
+   27,
+   3,
+   "SIGMAS"
+  ],
+  [
+   31,
+   22,
+   1,
+   27,
+   4,
+   "LATENT"
+  ],
+  [
+   32,
+   27,
+   0,
+   28,
+   0,
+   "LATENT"
+  ],
+  [
+   33,
+   6,
+   0,
+   28,
+   1,
+   "VAE"
+  ],
+  [
+   34,
+   28,
+   0,
+   29,
+   0,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {},
+ "version": 0.4
+}

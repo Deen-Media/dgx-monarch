@@ -189,6 +189,8 @@ def choose_auto_topology(
     batch_size: int = 1,
     keeps_uncond: bool = False,
     variant: str | None = None,
+    pair_differs: bool = False,
+    views: bool = False,
 ) -> AutoDecision:
     """Resolve ``auto`` and log the selected row and rationale.
 
@@ -196,17 +198,28 @@ def choose_auto_topology(
     says the sampler keeps the unconditional pass there
     (``sampler_keeps_uncond_at_cfg1``), and skips any cfg row with no passing
     evidence (topology_cfg_evidence), including a row whose record excludes the
-    checkpoint ``variant`` (``checkpoint_variant``). ``fits_resident=False``
+    checkpoint ``variant`` (``checkpoint_variant``) and a row whose record
+    covers only prompt pairs of different text rows when ``pair_differs``
+    does not say this render's pair is one (``cfg_pair``). ``fits_resident=False``
     adds FSDP for capacity. Spare ranks use data parallel only when the batch
     divides evenly; otherwise a pure sequence-parallel row folds them in, and
-    a cfg row raises UnsupportedModelError.
+    a cfg row raises UnsupportedModelError. ``views`` says the conditioning
+    carries UltraTex view inputs (adapters/flux_views.py): for the Flux
+    families that read them auto skips every cfg row, whose split would cut a
+    sample's views apart, and refuses where data parallelism or ring would
+    remain.
     """
+    if views:
+        from .adapters.flux_views import VIEW_FAMILIES
+
+        views = family in VIEW_FAMILIES
     if world <= 1:
         topo = Topology(world=max(world, 1))
         return AutoDecision(topo, False, "auto: single; world size 1", _FALLBACK_RULE)
 
     chosen: AutoRule | None = None
     skipped_cfg: AutoRule | None = None
+    skipped_views: AutoRule | None = None
     for rule in AUTO_TABLE:
         if rule.family != family:
             continue
@@ -219,7 +232,11 @@ def choose_auto_topology(
         if (rule.topology.get("cfg", 1) != 1 and cfg_value is not None
                 and abs(cfg_value - 1.0) < 1e-6 and not keeps_uncond):
             continue  # cfg-parallel has no uncond pass to parallelize at cfg 1.0
-        if rule.topology.get("cfg", 1) != 1 and not cfg_row_is_eligible(rule, quant_kind, variant):
+        if rule.topology.get("cfg", 1) != 1 and views:
+            skipped_views = rule
+            continue
+        if rule.topology.get("cfg", 1) != 1 and not cfg_row_is_eligible(
+                rule, quant_kind, variant, pair_differs):
             skipped_cfg = rule
             continue
         chosen = rule
@@ -237,7 +254,10 @@ def choose_auto_topology(
             and rule.topology.get("cfg", 1) != 1
             for rule in AUTO_TABLE
         )
-        if skipped_cfg is not None:
+        if skipped_views is not None:
+            note = (f"cfg2 table row {skipped_views.row} would split the batch that holds each "
+                    "UltraTex sample's views; uly2 is the proven topology for view conditioning")
+        elif skipped_cfg is not None:
             record = cfg_evidence_for(skipped_cfg)
             if record is None:
                 detail = "has no exact-row evidence record"
@@ -245,6 +265,10 @@ def choose_auto_topology(
                 detail = f"was measured on this {variant} checkpoint and does not grant it"
             elif record.quants and quant_kind not in record.quants:
                 detail = f"has no passing {quant_kind} result"
+            elif record.pairs == "unequal" and not pair_differs:
+                # The clause the Ulysses-row branch below appends, word for word.
+                detail = ("was measured on prompt pairs whose text rows differ, and this "
+                          "pair's rows are equal or unread")
             else:
                 detail = "has no passing in-band speed-and-fidelity result"
             note = (f"cfg2 table row {skipped_cfg.row} {detail}; uly2 is the "
@@ -270,12 +294,19 @@ def choose_auto_topology(
             # applies, but a registered family still arms its preflights.
             note = (f"family {family!r} has no auto table row, so the generic "
                     "fallback applies; uly2 is the conservative default")
+    if note is None and skipped_views is not None:
+        note = (f"{chosen.note}; cfg2 table row {skipped_views.row} would split the batch "
+                "that holds each UltraTex sample's views")
     if note is None:
         note = chosen.note
         excluded = cfg_evidence_for(skipped_cfg) if skipped_cfg is not None else None
         if excluded is not None and variant in excluded.excludes:
             note = (f"{note}; cfg2 table row {excluded.row} was measured on this "
                     f"{variant} checkpoint and does not grant it")
+        elif excluded is not None and excluded.permits(skipped_cfg, quant_kind, variant, True):
+            # Only the pair kept the row: say so, as the variant clause does.
+            note = (f"{note}; cfg2 table row {excluded.row} was measured on prompt pairs "
+                    "whose text rows differ, and this pair's rows are equal or unread")
 
     topo_kwargs = dict(chosen.topology)
     if not fits_resident:
@@ -336,6 +367,10 @@ def choose_auto_topology(
         else:
             topo = replace(topo, ring=topo.ring * topo.dp, dp=1)
             note = f"{note}; batch {batch_size} cannot split dp; folded into ring{topo.ring}"
+    if views:
+        from .adapters.flux_views import refuse_auto_views
+
+        refuse_auto_views(family, topo, world)
     topo.validate()
 
     reason = (

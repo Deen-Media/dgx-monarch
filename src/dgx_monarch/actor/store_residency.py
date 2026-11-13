@@ -200,7 +200,8 @@ def _stock_fit(row: capacity_quote.RankPrice) -> StockFit | None:
     return StockFit(bool(block["fits"]), bool(block["applies"]),
                     int(block["checkpoint_bytes"]), block["mem_available_bytes"],
                     "" if block["applies"] else row.reason,
-                    cast_bytes=int(block.get("cast_bytes") or 0))
+                    cast_bytes=int(block.get("cast_bytes") or 0), in_place_note=str(block.get("in_place_note") or ""),
+                    bake_bytes=int(block.get("bake_bytes") or 0) if block.get("bake") == "classic" else 0)
 
 
 def _slab_fit(row: capacity_quote.RankPrice) -> SlabFit | None:
@@ -280,6 +281,7 @@ def preload_capacity_check(
     lora_stack: list[dict] | None = None,
     lora_low_rss: bool = False,
     resolve_lora_path: Callable[[str], str] | None = None,
+    stock_probe: Callable[[str, dict], StockFit] | None = None,  # charges a classic stack's bake
 ) -> None:
     """Apply the capacity preflight for the selected rung.
 
@@ -340,7 +342,7 @@ def preload_capacity_check(
                         capacity_fit.preflight_wall_measured(
                             size, available, required, False)))
             return
-        fit = capacity_fit.stock_load_fit(path, model_options)
+        fit = (stock_probe or capacity_fit.stock_load_fit)(path, model_options)
         if fit.applies:
             if not fit.fits:
                 raise StockLoadCapacityError(refusal(

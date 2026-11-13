@@ -239,6 +239,7 @@ def test_only_the_known_sites_force_lora_low_rss_off():
         "nodes/render_quarantine.py",  # the persisted quarantine
         "nodes/fleet_policy.py",       # the fleet fail-closed stamp
         "nodes/gate_identity.py",      # the ceremony's stock stamps
+        "nodes/gate_dual.py",          # a dual-model render's stock stamp, moved from gate_identity
         "nodes/gate_verdict.py",       # the cross-mode temporary policy
         "nodes/consent_rescue.py",     # the rescue's own residency projection
         "nodes/init.py",               # the widget's own forcing, beside the schema's

@@ -18,6 +18,13 @@ described below. Use the current requirements in
 Each Worker host also needs `/usr/bin/python3` at Python 3.9 or newer, because
 the Worker lifecycle helpers run on it rather than on the configured `python`;
 `dgxm doctor` checks it on every host ([CLUSTER.md](CLUSTER.md#hosts)).
+This release needs ComfyUI 0.45.0 or newer on the driver and on every
+Worker, and its hardware validation runs on 0.45.0. Records from before 1.5
+name the ComfyUI they ran on; the latest of them ran on `8a98ecf58` (v0.44.0
+code). On an older ComfyUI the node pack still imports, but a MiniMax H3 file
+with a stacked output head refuses under sequence parallelism
+([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+The family floors below are older and still hold.
 FLUX.3 Klein needs ComfyUI 0.41.0 or newer, and MOSS-Image and Kromoss need
 ComfyUI 0.42.0 or newer
 ([model files](#model-files-required-by-each-template)).
@@ -123,6 +130,15 @@ changes in one plan for approval. Reuse that approval for the same listed
 work. Stop ComfyUI and any services using that environment only within the
 approved maintenance window. Keep model files, credentials,
 other custom nodes and unrelated work intact.
+
+At each start the pack copies the demo images, clips and music its templates
+name into ComfyUI's input folder, from `example_workflows/input`, when a name
+is missing there. It never replaces a file, link or folder already there, so a
+file of your own under one of those names stays, and it never creates the
+folder. A demo file you delete comes back at the next start unless you set
+`DGXM_DEMO_INPUTS=off` in the environment that starts ComfyUI; with it set,
+the pack writes nothing there. The guided setup's clean-checkout check ignores
+these files, since ComfyUI's own `.gitignore` covers `input/`.
 
 Set these paths explicitly, and run this block and every block up to the
 `DGXM` export in one shell, since later blocks read these exports and
@@ -466,6 +482,20 @@ at its root; save them in `models/loras` under the manifest's names,
 `kromoss_8-steps-dmd-lora.safetensors`. The Kromoss files change under the
 same names as training continues; the manifest pins one revision, and
 `--hash` reports a file from another.
+
+MiniMax-H3-Image needs ComfyUI 0.45.0 or newer on the driver and on every
+Worker, as the whole release does. Its two templates load four files, all
+from Comfy-Org/MiniMax-H3-Image: the INT8 ConvRot DiT, the INT8 ConvRot text
+encoder, the FP16 VAE and `qwen3.5_9b_w4a8_gptq.safetensors`, the prompt
+expander. Stage all four for either graph: ComfyUI checks every loader's file
+name when a graph is queued. The expander takes memory from the first render
+with a graph's expander switch true. Both templates ship it false, so as
+shipped neither loads it. The expander's two prompt boxes hold this project's
+own texts, so turning the switch on needs no further file
+([MODELS](MODELS.md#model-minimax-h3-image) says what it costs). The BF16
+and W4A8 DiTs and the
+other two text encoders have no manifest row, because no template names them
+([MODELS](MODELS.md#model-minimax-h3-image) lists all eight files).
 
 A row with a blank `url` or `sha256`, or a `size` of 0, is pending. The check
 reports pending rows and passes; `--pending` names them, and `--strict` fails
@@ -944,8 +974,11 @@ removed.
 ### Optional dashboard and Worker services
 
 Install the final safetensors release (>= 0.8.0), not a pre-release. ComfyUI
-brings safetensors in, and `0.8.0rc0` satisfies `>= 0.8.0` but lacks the pread
-backend; the `safetensors pread` doctor row checks this and names the fix.
+brings safetensors in, and diffusers 0.38.0, which xFuser pulls in, requires
+`safetensors>=0.8.0-rc.0`, which `0.8.0rc0` satisfies; a check of only the
+first two version numbers also reads it as 0.8. That pre-release lacks the
+pread backend. The `safetensors pread` doctor row looks for the backend
+parameter itself and names the fix.
 
 Offer the optional dgxm TUI during the initial setup questions, alongside the
 launch-script choice. If accepted, prefer one combined install with the `tui`
@@ -1306,8 +1339,8 @@ Read this before the first update from 1.2.0, in this order. An install on
    ([changelog](../CHANGELOG.md),
    [VALIDATION](VALIDATION.md#evidence-moss-image-sft)).
 9. Add the optional `[studio]` table to cluster.toml only after the driver
-   and every checkout that reads the file run this release, and when no render
-   runs. Releases before this one refuse a cluster.toml that holds it
+   and every checkout that reads the file run 1.3.0 or newer, and when no
+   render runs. Releases before 1.3.0 refuse a cluster.toml that holds it
    ([Optional Studio companion](#optional-studio-companion)).
 10. Run the driver and the Workers on the same release. `dgxm doctor` fails
     the `worker release version` row of a host whose release slot carries
@@ -1406,10 +1439,10 @@ activation prompt, and
 `--receipt` selects an absolute path for the sanitized receipt. None of them
 bypasses an activity, source, config, dependency, or ownership guard.
 
-Releases before this one refuse a cluster.toml that holds the optional
+Releases before 1.3.0 refuse a cluster.toml that holds the optional
 `[studio]` table, in every reader of the file, so update every checkout that
 reads it first. Add the `[studio]` table to cluster.toml only after the driver
-has restarted on this release, and when no render runs. If
+has restarted on 1.3.0 or newer, and when no render runs. If
 `dgxm studio up` installed the Studio service, run `dgxm studio up` again after
 an update; the service keeps running the code it started with until it
 restarts.
@@ -1624,7 +1657,11 @@ invasive diagnostic only in an operator-controlled maintenance window.
 other permission bits on the exact regular `cluster.toml` inode. It hashes and
 inspects the file without following a symlink. After confirmation it takes the
 shared config lock, rechecks the inode, bytes, and prior mode, and changes only
-the mode, to `0600`; it reruns doctor only after the receipt is published.
+the mode, to `0600`; it reruns doctor only after the receipt is published. If
+the mode change runs but its sync or readback fails, the receipt records the
+step as `unknown` with one change and the run as `partial`, since the file may
+already be private; run `dgxm doctor --repair` again to inspect it. A readback
+that still shows the prior mode records the repair as not applied.
 Lock contention refuses and attempts a failed receipt instead of racing another
 cooperating config writer. Network, SSH, packages, services, processes, meshes,
 and power remain manual. `--yes` confirms without a prompt and `--receipt`
