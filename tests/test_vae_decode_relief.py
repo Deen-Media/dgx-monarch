@@ -56,6 +56,7 @@ def _a_driver_with_dynamic_vram(monkeypatch):
     monkeypatch.setitem(sys.modules, "comfy.memory_management", SimpleNamespace(aimdo_enabled=True))
     monkeypatch.delenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, raising=False)
     monkeypatch.setattr(vae_decode_relief, "_SETTLE_S", 0.0)
+    monkeypatch.setitem(vae_decode_relief._SERVING, "handle", None)  # no fleet noted unless a case notes one
 
 
 class _Vae:
@@ -268,7 +269,8 @@ def test_with_no_text_encoder_to_free_from_nothing_is_freed_and_one_line_says_so
         assert wrapped(vae, LATENT) is answer
     assert ran == ["decode", "decode"] and mm.freed == []
     assert caplog.text.count("decode relief:") == 1
-    assert "ComfyUI held no text encoder here to free from, so the decode runs as ComfyUI runs it" in caplog.text
+    assert ("ComfyUI held no text encoder here to free from"
+            f"{vae_decode_relief.NO_FLEET}, so the decode runs as ComfyUI runs it") in caplog.text
 
 
 def test_an_entry_whose_model_is_gone_is_neither_kept_nor_named(monkeypatch):

@@ -66,9 +66,12 @@ acts, a text encoder that gave up pages faults them back, or loads again, when
 a prompt's text next changes.
 
 It adds room. It does not bound a decode: with nothing idle the decode runs as
-ComfyUI runs it, and one line says so. The Workers are not asked for their
-cached memory here: the one Worker call there is reaches every box, and only
-the driver host's Workers share the decode's memory.
+ComfyUI runs it, and one line says so. Whenever it acts it also asks the
+fleet that served the render for its Workers' idle device pools
+(``release_worker_pools``), whatever the text encoders' free returned: the
+call reaches every box, and the driver host's Workers give back what the
+decode shares. Its line always says whether the Workers released, were not
+asked and why, or had no fleet attached to ask.
 
 Scope. On by default at node import where the driver's reading is: Linux, with
 the driver's CUDA device integrated. ``DGXM_DISABLE_VAE_DECODE_RELIEF=1`` on
@@ -182,6 +185,27 @@ def note_serving(handle: Any) -> None:
         _SERVING["handle"] = None
 
 
+NO_FLEET = "; no fleet was attached to ask for the Workers' idle device pools"
+RESET_FLEET = (f"{NO_FLEET} (the fleet that served the render was reset, and none is attached in its "
+               "place)")
+UNREADY_FLEET = ("; the Workers were not asked for their idle device pools: the attached fleet is not set "
+                 "up, or its last cleanup failed")
+
+
+def _serving() -> tuple[Any, str]:
+    """The live fleet that serves this driver's renders NOW, or None and the relief's words for why not."""
+    from . import driver_unload
+
+    reference = _SERVING["handle"]
+    noted = reference() if reference is not None else None
+    if noted is None:
+        return None, NO_FLEET
+    fleet = driver_unload.serving_fleet(noted)
+    if fleet is None:
+        return None, RESET_FLEET
+    return (fleet, "") if driver_unload.trimmable(fleet) else (None, UNREADY_FLEET)
+
+
 def serving_now() -> Any:
     """The live fleet that serves this driver's renders NOW, or None.
 
@@ -190,15 +214,10 @@ def serving_now() -> Any:
     (``driver_unload.serving_fleet``). The note is never called as it is: a
     retired handle reaches Workers that are gone. A mesh that is not set up, or
     whose cleanup failed, gets no call either (``driver_unload.trimmable``).
+    The note stays alive while the fleet is attached: the mesh registry holds
+    the handle, on a pair and on a local mesh alike.
     """
-    from . import driver_unload
-
-    reference = _SERVING["handle"]
-    noted = reference() if reference is not None else None
-    if noted is None:
-        return None
-    fleet = driver_unload.serving_fleet(noted)
-    return fleet if driver_unload.trimmable(fleet) else None
+    return _serving()[0]
 
 
 def release_worker_pools() -> tuple[str, bool]:
@@ -214,14 +233,16 @@ def release_worker_pools() -> tuple[str, bool]:
     mesh's render session fails within seconds where a pipelined render owns
     it: the decode then runs as before. It does not ask
     ``driver_unload.busy_reason``, for the reason this module's text gives.
-    Never raises; an empty clause where there is no live fleet to ask.
+    Never raises. The clause always says one of three things: the Workers
+    released (with the readings), they were not asked and why, or no fleet was
+    attached.
     """
     from . import driver_unload
 
     try:
-        fleet = serving_now()
+        fleet, why = _serving()
         if fleet is None:
-            return "", False
+            return why, False
         trimmed = driver_unload.trim_actors(fleet, driver_unload.POOL_LEVEL)
     except Exception as exc:
         return f"; the Workers were not asked for their idle device pools ({type(exc).__name__}: {exc})", False
@@ -341,15 +362,15 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
     mm.soft_empty_cache()
     time.sleep(_SETTLE_S)
     available = int(mesh_safety.mem_available_bytes() or 0)
+    # The Workers beside this driver hold device pools their last step left reserved and unused (6.4 GiB
+    # on record). They are asked whatever the free returned: ComfyUI's reading counts its own floor, and
+    # on 2026-11-13 a free that met the decode's price on that reading (7.3 GiB free against 7.2 needed)
+    # left the pools standing and the box at 10.3 GiB through the decode. One call of the trim the driver
+    # unload already makes, whose clause carries its own two readings.
+    workers, released = release_worker_pools()
+    if released:
+        time.sleep(_SETTLE_S)
     after = int(mm.get_free_memory(device))
-    workers = ""
-    if after < need:
-        # Still priced above the reading: the Workers beside this driver hold device pools their last
-        # step left reserved and unused. One call of the trim the driver unload already makes.
-        workers, released = release_worker_pools()
-        if released:
-            time.sleep(_SETTLE_S)
-            after = int(mm.get_free_memory(device))
     tail = (f"the decode starts with {_gib(after)} GiB free" if after >= need else
             f"the decode is still priced above the {_gib(after)} GiB free and runs as ComfyUI runs it")
     log.info("decode relief: %s, so the driver had ComfyUI free what the decode needs from the %d text "

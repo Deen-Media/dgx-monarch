@@ -4,6 +4,17 @@
 
 ### Everyday use
 
+- The decode relief now asks the Workers for the device memory they hold idle
+  whenever it acts. It asked them only where freeing the driver's text
+  encoders still left the decode priced above ComfyUI's free reading, and on
+  two held pair renders on 2026-11-13 that free met the price on that reading
+  (7.3 GiB free against 7.2 needed), so the Workers' idle pools (6.4 GiB on
+  record) stayed and the first Spark read 10.3 GiB through the decode. Its
+  line now always says whether the Workers released, were not asked and why,
+  or had no fleet attached. The guards are as before: nothing while a
+  sampler runs, never a reset fleet, and a claim that fails in seconds under
+  a pipelined render. Not yet run on hardware.
+
 - On a pair, the room a rank needs to sample now counts the shared memory a
   fresh Worker maps in its first forward. Each rank of the proof block took
   9.4 to 10.1 GiB after the vote against a need of 8.1 (1.15 times ComfyUI's

@@ -2500,9 +2500,14 @@ that requirement, as ComfyUI's classic loader does there, keeping every model
 loaded except the text encoders. ComfyUI frees just what the call needs from
 the text encoders it holds, in its own order, and a DynamicVRAM model gives
 up pages without being unloaded where that is enough. Then ComfyUI's decode
-runs. Where the decode is still priced above the reading after that, the
-driver asks the Workers for memory they hold idle: one call of the trim the
-driver unload already makes (`driver_unload.trim_actors`, every actor's
+runs. Whenever the relief acts, whatever the text encoders' free returned,
+the driver also asks the Workers for memory they hold idle. Until
+2026-11-13 it asked only where the decode was still priced above ComfyUI's
+reading after the free; on two held pair renders that day the free met the
+price on that reading (7.3 GiB free against 7.2 needed, ComfyUI's reading
+being MemAvailable less its own floor), the Workers were never asked, and
+the first Spark read 10.3 GiB through the decode. The ask is one call of the
+trim the driver unload already makes (`driver_unload.trim_actors`, every actor's
 `clear_vram` at `pool`), which empties each Worker's device pool and collects, and drops
 nothing. A Worker keeps the pool its sampler grew reserved after the last
 step, 6.4 GiB on record beside a driver whose decode then took 2.4 to 4.4
@@ -2514,7 +2519,10 @@ reads the one attached in its place if a reset retired it
 does nothing while one of the driver's samplers runs, the Worker takes the
 call under its GPU lock, and the claim on the mesh's render session fails
 within seconds where a pipelined render owns it, after which the decode runs
-as before. It has no hardware reading yet. Eight things bound the relief:
+as before. The relief's line always ends its Worker clause with one of three
+things: the Workers released (with MemAvailable on each side), they were not
+asked and why, or no fleet was attached to ask. The ask has no hardware
+reading yet. Eight things bound the relief:
 
 - **Only text encoders are freed.** By an allow-list, not a deny-list: a text
   encoder is the one kind of model ComfyUI marks for certain (`is_clip` on its

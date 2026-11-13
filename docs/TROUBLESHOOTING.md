@@ -700,6 +700,12 @@ models it freed from, and what MemAvailable read on each side. What to know:
   above the ... free and runs as ComfyUI runs it`, or says `ComfyUI held no
   text encoder here to free from`, nothing was left to give: use VAE Decode
   (Tiled), a shorter clip or a smaller frame.
+- Whenever it acts it also asks the Workers of the fleet that served the
+  render for the device memory they hold idle after sampling (6.4 GiB on
+  record on a pair). The line says one of three things about that: `Worker
+  actor(s) then released their idle device pools` with MemAvailable on each
+  side, `the Workers were not asked` and why (another render owns the mesh,
+  or the fleet is not set up), or `no fleet was attached`.
 - It keeps everything under `DGXM_DISABLE_DRIVER_UNLOAD=1`, and with
   DynamicVRAM off, where ComfyUI unloads for the decode itself. When it keeps
   everything for a decode that is short, it says why once: `the driver kept
