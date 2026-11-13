@@ -203,7 +203,8 @@ an install on an older release follows the sections after it as well.
    describes.
 
 `dgxm update` moves only dgx-monarch and its torchmonarch pin; update ComfyUI
-your own way. [INSTALL](docs/INSTALL.md#updating) covers every flag, recovery
+your own way. This release needs ComfyUI 0.45.0 or newer on the driver and on
+every Worker. [INSTALL](docs/INSTALL.md#updating) covers every flag, recovery
 and rollback.
 
 ## Documentation

@@ -296,12 +296,14 @@ see the later [selected-rail checks](#native-rdma).
 
 ## Release 1.5.0 checks
 
-**2026-10-28 to 2026-11-01, two DGX Sparks with GB10 GPUs, the head capped at
+**2026-10-28 to 2026-11-10, two DGX Sparks with GB10 GPUs, the head capped at
 2100 MHz throughout.** The hardware evidence for this release sits in the
-feature records below, each naming the commit it ran on. The last code change
-is `4b71822`; the commits after it change documentation and one comment in
-cluster.example.toml. The release commit adds documentation and the version
-over them; it is not an exact-release-commit hardware retest.
+feature records below, each naming the commit it ran on. The first nine items
+ran through 2026-11-01, when the last code change was `4b71822`. The code has
+changed since, as the [changelog](../CHANGELOG.md) lists, and the later
+checks item names the records that followed. The release commit adds
+documentation and the version over them; it is not an exact-release-commit
+hardware retest.
 
 - INT8 GEMM kernel, 2026-10-28 and 29
   ([record](#int8-gemm-kernel-comparison-2026-10-28-and-29)): the render
@@ -358,24 +360,64 @@ over them; it is not an exact-release-commit hardware retest.
   each run headless against the CPU event fixture on the bundle its own change
   built.
 - Verified updates of both Workers on 2026-10-30 and 31 through `e4f23be`,
-  `746a229`, `7b5b59e` and `4b71822`. Both Workers run `4b71822`, and
-  `dgxm doctor` on 2026-11-01 reported 49 checks and 0 failures.
-- **NOT RUN:** the other 32 cells of the 49-cell FP8 matrix; the
-  Worker-assisted VAE decode rows for Wan 2.2 TI2V, HunyuanVideo 1.0 and 1.5
-  and LTX 2.3, with its fail-open check, a warm decode, a MiniMax H3 decode
-  short of memory, the reply budget and Clear VRAM dropping the decode VAE;
-  the BF16 rescue on the pair, on the sibling alone, through the panel click
-  and through `DGXM_ALLOW_SLAB_RESCUE=1` since the rescue change; the driver
-  unload with a pipelined submission behind a render in flight; a full Studio
-  browser round on this release's bundle; every layout at world 4; and the
-  full sweep runbook. The sample deadline, the actors' cache release before a
-  refusal, the gate's capacity check before its proof render, compile_dit's
-  eager families and the inductor cache have CPU tests and no hardware record
-  of their own.
-- Build and install, on the release commit, in a disposable Python 3.12 venv
-  that holds only `build` and `pip`: `python -m build` wrote the sdist and
-  the wheel (540 files, the `dgxm` and `dgxm-studio` console scripts and
-  the Studio bundle inside). The wheel installed with `--no-deps` and
+  `746a229`, `7b5b59e` and `4b71822`. Both Workers ran `4b71822` on
+  2026-11-01, when `dgxm doctor` reported 49 checks and 0 failures. On
+  2026-11-06 a verified update moved both to `79bb47e`, with doctor at 50
+  checks and 0 failures
+  ([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+- Later checks, 2026-11-03 to 2026-11-10, each on the commit its record
+  names: the other 32 cells of the 49-cell FP8 matrix
+  ([record](#fp8-compute-paths-the-other-cells-2026-11-03)); Worker-assisted
+  VAE decode on Wan 2.2 TI2V 5B and both HunyuanVideo VAEs
+  ([record](#worker-assisted-vae-decode)); p-h3-image and Wan 2.2 TI2V 5B
+  against stock ([p-h3-image](#evidence-p-h3-image),
+  [Wan 2.2 TI2V 5B](#evidence-wan-2-2-ti2v-5b)); the ComfyUI 0.44.0 rows and
+  the MiniMax H3 context windows ([record](#comfyui-0440-additions)); the BF16
+  rescue under `DGXM_ALLOW_SLAB_RESCUE=1`, on the pair and on the sibling
+  alone, and through the panel's card, on the pair and on the head beside the
+  driver
+  ([record](#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)); the
+  driver unload with a pipelined submission behind a render in flight
+  ([record](#driver-unload-before-a-render-site-refusal-2026-10-29)); the
+  capacity checks of 2026-11-05 ([record](#capacity-checks-2026-11-05)); the
+  torch 2.15.0 ladder, steps 1 to 10 ([record](#torch-2-15)); host memory
+  after a load ([record](#host-memory-2026-11-06)); the template release test
+  through its pass on dev `79bb47e` ([record](#release-test-2026-11-04)); the
+  fused AdaLN kernel switch and the cfg2 rows on equal prompt pairs
+  ([fused AdaLN](#fused-adaln-switch-other-families),
+  [cfg2 rows](#campaign-k-equal-pairs)); the Anima reading of 2026-11-10
+  against stock that led to its text branch fix
+  ([record](#anima-text-branch-fix)); and the
+  Studio browser round of 2026-11-03 on the bundle of that day
+  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-03)).
+- **NOT RUN:** the template release test on the build this release ships;
+  the build and install check on the build this release ships; the ComfyUI
+  0.45.0 rows, this release's floor ([record](#comfyui-0450)); every
+  MiniMax-H3-Image row ([record](#minimax-h3-image)); the Worker-assisted VAE
+  decode split for LTX 2.3, a MiniMax H3 decode with less than 512 MiB free
+  on one side, and whether its 2 GiB reply budget binds; the BF16 rescue on
+  the pair under `DGXM_AUTO_RESCUE=1`, and through the Auto-allow toggle on
+  any layout; a Worker on ComfyUI 0.43 with context windows; a Studio browser
+  round on the bundle this release ships; UltraTex, which has no record on
+  this page; the Worker's context room and the driver's decode relief; the
+  swap credit and copy-free drop of a load that replaces a stock model; the
+  Ideogram 4 template with `sync_ulysses` on; the fixed Anima render against
+  stock and its uly2 speed against cfg2; the fused-norm re-read below 1024
+  square; the LoRA weights of a partly loaded one-GPU Worker; every layout at
+  world 4; and the full sweep runbook. The sample deadline, the actors' cache
+  release before a refusal, the gate's capacity check before its proof
+  render, compile_dit's eager families and the inductor cache have CPU tests
+  and no hardware record of their own. Each feature record below lists its
+  own rows that have not run. The hardware readings of 2026-11-11 and 12
+  that led to the driver's memory reading, its VAE encode and decode rules,
+  the Worker's context room and the classic bake price have no record on
+  this page; [DESIGN](DESIGN.md) and
+  [TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)
+  hold them.
+- Build and install, on `35f1486`, the release commit of 2026-11-01, in a
+  disposable Python 3.12 venv that holds only `build` and `pip`:
+  `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and
+  `dgxm-studio` console scripts and the Studio bundle inside). The wheel installed with `--no-deps` and
   reported 1.5.0, as did an editable install of a fresh clone of the commit
   after it; `dgxm --help` answered with the runtime dependencies of the rig's
   Monarch venv on the path. The full INSTALL recipe, which rebuilds the xFuser
@@ -384,10 +426,12 @@ over them; it is not an exact-release-commit hardware retest.
   `8a98ecf5`, up to the step that starts services: the wheel built
   byte-identical in both venvs, every torch file matched its RECORD, the
   dependency check passed, and the native Monarch, xFuser and ComfyUI imports
-  and `dgxm --help` worked. Two findings from that run are open for the
-  owner: ComfyUI's install guide now installs torch 2.15.0 while every
-  hardware record here is on 2.12.0+cu132, and torchaudio 2.11.0+cu132 no
-  longer resolves from the public indexes.
+  and `dgxm --help` worked. That run found that ComfyUI's install guide
+  installs torch 2.15.0, while every hardware record of that date was on
+  2.12.0+cu132, and that torchaudio 2.11.0+cu132 no longer resolves from the
+  public indexes. The torch 2.15.0 ladder has passed since
+  ([record](#torch-2-15)), and [INSTALL](INSTALL.md#inspect-before-installing)
+  records the torchaudio finding.
 
 <a id="release-1-4-0-checks"></a>
 
@@ -486,11 +530,11 @@ the INT8 Wan-Animate 2 template took 100.1 s against pass 3's 240.1 s
 ([Wan-Animate 2](#evidence-wan-animate-2)). Each of those cells ran alone,
 not as part of a pass.
 
-**The pass on the shipping build (2026-11-06 and 07).** On dev `79bb47e`, the
-last code change of this release (the release branch adds its version string
-and these records), with ComfyUI `8a98ecf58` and torch 2.15.0+cu132, the whole
-pass ran again from 23:38 on 2026-11-06 to 02:38 on 2026-11-07: 66 success,
-0 error, 7 skipped, the same seven. A pass on `7c3eecb` and torch 2.15.0 at
+**The pass on dev `79bb47e` (2026-11-06 and 07).** That commit was the last
+code change at that date and is not the build this release ships. With
+ComfyUI `8a98ecf58` and torch 2.15.0+cu132, the whole pass ran again from
+23:38 on 2026-11-06 to 02:38 on 2026-11-07: 66 success, 0 error, 7 skipped,
+the same seven. A pass on `7c3eecb` and torch 2.15.0 at
 08:13 on 2026-11-06 had read 65 success, 1 error and 7 skipped: the error was
 `dgx-monarch-kandinsky5-video-pro`, refused at the identity gate's re-price,
 89.9 GiB against 83.0 GiB, 6.9 GiB short, because the actor still held the
@@ -514,7 +558,8 @@ since each deploy makes every combination stale. Records:
 JSON per template, the 1 Hz traces of both hosts, `compare_v3_v4.txt`); the
 08:13 pass in `out/vetting_2026-11-03/acceptance_v3_torch215/`.
 
-**NOT RUN:** the seven skipped templates.
+**NOT RUN:** the pass on the build this release ships, which needs ComfyUI
+0.45.0 or newer, and the seven skipped templates.
 
 ## Comparison method
 
@@ -3713,8 +3758,9 @@ passed at 08:11 on 2026-11-06. The rows below cite the passing runs.
 | 11. The way back | after the switch back to torch 2.12, doctor shows no new FAIL row, and a combination this release proved under torch 2.12 reads PASS again without a new gate | NOT RUN: the commands were printed and not run, because the release ships on torch 2.15; the torch 2.12 environment stays parked on both hosts |
 
 **The release test on torch 2.15:** the whole pass on dev `79bb47e`, the last
-code change of this release, read 66 success, 0 error and 7 skipped on
-2026-11-06 and 07 ([template release test](#release-test-2026-11-04)).
+code change at that date, read 66 success, 0 error and 7 skipped on
+2026-11-06 and 07 ([template release test](#release-test-2026-11-04)). The
+pass on the build this release ships is NOT RUN.
 
 ## Memory calibration
 

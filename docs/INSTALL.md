@@ -71,8 +71,8 @@ torch 2.15.0+cu132: on 2026-11-05 and 06 its ladder passed on the pair
 ([VALIDATION](VALIDATION.md#torch-2-15)) with cuDNN 9.26, Triton 3.9.0,
 torchvision 0.29.2 and torchaudio 2.11.1, and with NCCL 2.32.3 loaded through
 a symlink from the wheel's `libnccl.so.2` to a 2.32.3 build, in place of the
-2.30.7 torch 2.15 pins, and the template release test then rendered 66 of 66
-templates on it on 2026-11-06 and 07
+2.30.7 torch 2.15 pins, and the template release test of dev `79bb47e`, the
+build of that day, then rendered 66 of 66 templates on it on 2026-11-06 and 07
 ([VALIDATION](VALIDATION.md#release-test-2026-11-04)). Most of its other
 hardware checks ran on torch 2.12.0+cu132, and the steps below complete with
 either build.
@@ -1166,36 +1166,46 @@ Read this before the first update from 1.4.0, in this order. An install on
    also names the package version, so the 1.4.0 grants go stale and each
    model, residency and LoRA combination runs its first-use Gate again, once
    ([TROUBLESHOOTING #114](TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
-4. INT8 ConvRot linears now run a Triton GEMM kernel by default, in the
+4. This release needs ComfyUI 0.45.0 or newer on the driver and on every
+   Worker, at the same commit on each. Neither update mode moves ComfyUI, so
+   update it your own way, then reset the attached mesh so no actor keeps the
+   old ComfyUI imported. On an older ComfyUI the node pack still imports, but
+   a MiniMax H3 file with a stacked output head refuses under sequence
+   parallelism
+   ([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+5. INT8 ConvRot linears now run a Triton GEMM kernel by default, in the
    ComfyUI process and in every actor, with the same output as
    comfy-kitchen's CUTLASS kernel. Triton builds a launcher against the
    Python headers, so check for them on the driver and on every Worker host,
    as [Install the node pack](#install-the-node-pack) shows. Where they are
    missing, install the system package for the interpreter's version,
    `python3.12-dev` on Ubuntu 24.04. Without them a process runs CUTLASS and
-   logs one WARNING, and the new `INT8 GEMM` rows of `dgxm doctor` warn. To keep CUTLASS, set `int8_gemm = "cutlass"` in
-   `[worker_args]` and start ComfyUI with `DGXM_INT8_GEMM=cutlass`
+   logs one WARNING, and the new `INT8 GEMM` rows of `dgxm doctor` warn. To
+   keep CUTLASS, set `int8_gemm = "cutlass"` in `[worker_args]` and start
+   ComfyUI with `DGXM_INT8_GEMM=cutlass`
    ([TROUBLESHOOTING #138](TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
-5. `[worker_args]` takes three new keys, `int8_gemm`, `fp8_matrix_mult` and
+6. `[worker_args]` takes three new keys, `int8_gemm`, `fp8_matrix_mult` and
    `worker_vae_decode`. A 1.4.0 checkout refuses a cluster.toml that holds
    any of them, so add them only after the driver and every checkout that
    reads the file run this release. Writing `int8_gemm` or `fp8_matrix_mult`,
    with any value, changes every render's capability context and re-proves
    every PASS; `worker_vae_decode` reaches only the driver and re-proves none
    ([CLUSTER](CLUSTER.md#worker_args-optional)).
-6. On GB10, leave `fp8_matrix_mult` out or at `"auto"`. `"on"` sends plain
+7. On GB10, leave `fp8_matrix_mult` out or at `"auto"`. `"on"` sends plain
    FP8 checkpoints in the actors down ComfyUI's FP8 matmul path, which
    renders them as noise there, as `--fast fp8_matrix_mult` does in the
    driver. Every model build now logs one `FP8 compute:` line that names the
    path ComfyUI picked
    ([TROUBLESHOOTING #141](TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).
-7. Worker-assisted VAE decode is off by default. With
+8. Worker-assisted VAE decode is off by default. With
    `worker_vae_decode = "auto"` the stock VAE Decode and VAE Decode (Tiled)
    nodes split a video decode over the Workers, byte-identical to the
-   one-host tiled decode. MiniMax H3, Wan 2.1 and LTX 2.5 have passed the
-   hardware byte compare, and the other families are unchecked
-   ([TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
-8. The MiniMax H3 activation preflight charges each rank an 11.0 GiB floor
+   one-host tiled decode. MiniMax H3, Wan 2.1, Wan 2.2 TI2V 5B, HunyuanVideo
+   1.0, HunyuanVideo 1.5 and LTX 2.5 have passed the hardware byte compare,
+   and LTX 2.3 and LTX 2.5's convolutional VAE are unchecked
+   ([MODELS](MODELS.md#worker-assisted-vae-decode),
+   [TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+9. The MiniMax H3 activation preflight charges each rank an 11.0 GiB floor
    and 129,024 bytes per row on the rank, in place of 1,032,192 bytes per row
    with no floor. Long clips now fit where 1.4.0 refused them, such as the
    15 second clip, 362 frames at 1344x768, on one Spark, while every render
@@ -1207,15 +1217,15 @@ Read this before the first update from 1.4.0, in this order. An install on
    that cannot fit the slab path records one INCONCLUSIVE capacity row and
    renders on stock residency
    ([TROUBLESHOOTING #56](TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
-9. A capacity-rescue consent now keeps slab residency when stock residency
-   cannot load the checkpoint. The gate records INCONCLUSIVE with
-   `cross_mode=CAPACITY` and the render proceeds under slab, where 1.4.0
-   switched slab off and refused under stock. `DGXM_ALLOW_SLAB_RESCUE=1`,
-   `DGXM_AUTO_RESCUE=1` and the panel's Auto-allow toggle give the same
-   consent as a click on the card
-   ([TROUBLESHOOTING #5](TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
-   [#53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
-10. The driver's deadline for a render's sample call grows with the work for
+10. A capacity-rescue consent now keeps slab residency when stock residency
+    cannot load the checkpoint. The gate records INCONCLUSIVE with
+    `cross_mode=CAPACITY` and the render proceeds under slab, where 1.4.0
+    switched slab off and refused under stock. `DGXM_ALLOW_SLAB_RESCUE=1`,
+    `DGXM_AUTO_RESCUE=1` and the panel's Auto-allow toggle give the same
+    consent as a click on the card
+    ([TROUBLESHOOTING #5](TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
+    [#53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+11. The driver's deadline for a render's sample call grows with the work for
     MiniMax H3 and Wan SCAIL, SCAIL-2 and Animate 2, up to six hours.
     `DGXM_SAMPLE_TIMEOUT` stays the floor, 3600 s unless set, and wins over
     that cap. A floor you raised on 1.4.0 for long clips still applies to
@@ -1223,7 +1233,7 @@ Read this before the first update from 1.4.0, in this order. An install on
     the new deadline covers your clips. Above 180 steps the cap gives those
     families less time than 1.4.0 did, so raise the floor for such a render
     ([TROUBLESHOOTING #139](TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-when-the-sample-deadline-passes)).
-11. `compile_dit` no longer forces stock residency on the families it leaves
+12. `compile_dit` no longer forces stock residency on the families it leaves
     eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4, so their
     slab residency stays available. Worker services keep torch inductor's
     compile cache in `~/.cache/dgx-monarch/inductor`, so a reboot no longer
@@ -1231,8 +1241,120 @@ Read this before the first update from 1.4.0, in this order. An install on
     ([TROUBLESHOOTING #14](TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
     The Init node's `sync_ulysses` input has no effect on the pinned xfuser
     0.7.0, though changing it still reruns setup and the identity gate
-    ([Adapters](ADAPTERS.md#what-an-adapter-provides)).
-12. Studio is a supported interface from this release, beside the CLI, the
+    ([Adapters](ADAPTERS.md#what-an-adapter-provides)). The Ideogram 4
+    template now leaves it on, as every other shipped template does, so the
+    first Ideogram 4 render after the update runs its identity gate once
+    more. A workflow saved from the older template keeps the setting off;
+    turn it on in its Init node to match
+    ([MODELS](MODELS.md#model-ideogram4)).
+13. A Gate PASS now names the torch and CUDA build it was proven under.
+    Neither update mode replaces torch, so keep the driver and every Worker
+    on one build: a pair on two builds refuses a risky render until they
+    match, and a torch change proves each gated combination again on first
+    use
+    ([TROUBLESHOOTING #8](TROUBLESHOOTING.md#8-version-skew-between-hosts)).
+    The Worker loop and `scripts/comfy-driver.sh` now set
+    `MIMALLOC_PURGE_DELAY=0`, so a process on torch 2.15 gives freed host
+    memory back at once. A driver you start by hand or from your own unit
+    needs the variable too
+    ([TROUBLESHOOTING #146](TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short)).
+14. On a DGX Spark the driver's ComfyUI now reads free memory as MemAvailable
+    less a 7.6 GiB floor, where it read the device figure that follows
+    MemFree, and it encodes a batch of images one image a VAE call. Every
+    conditioning of several images changes once against 1.4.0, and a stock
+    render recorded with little MemFree can change once, since its batches
+    no longer split. With DynamicVRAM off (`--disable-dynamic-vram`,
+    `--highvram`, `--gpu-only` or `--novram`), ComfyUI's own loader follows
+    the new reading too, so a model that streamed may now load whole and
+    fewer models are unloaded. Before a VAE decode that ComfyUI prices above its free
+    memory, the driver frees the decode's price from the text encoders it
+    holds; an encoder that gave up memory loads it again when a prompt's
+    text next changes. Each has a switch on the driver:
+    `DGXM_DISABLE_DRIVER_UMA_MEMORY=1`, `DGXM_DISABLE_VAE_ENCODE_ITEM=1` and
+    `DGXM_DISABLE_VAE_DECODE_RELIEF=1`. The new `driver memory reading` row
+    of `dgxm doctor` says which reading the running driver has
+    ([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+15. On a DGX Spark a Worker that finds less than 16 GiB free while 21 GiB or
+    more is available makes room for its CUDA context before it creates one,
+    and logs one line. `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's
+    environment, set by a drop-in for the Worker's unit and a Worker
+    restart, turns that off, for diagnosis. A Worker that still cannot make
+    its context refuses in plain words, `this Worker could not start on its
+    GPU`, where it showed a traceback; on a pair the words show only when the
+    head's Worker failed, after about ten minutes
+    ([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+16. With `lora_low_rss` off, a LoRA stack's load is now priced with its
+    classic bake, by the checkpoint's format, so a load the earlier price
+    admitted can refuse with the new figure. Where the classic bake does not
+    fit and a bake in place would, the Worker bakes in place, but only when
+    the identity gate holds a PASS for that combination's in-place bake.
+    Render the combination once with `lora_low_rss` on to record that PASS.
+    The Init node's default is `auto`, which a Worker on a DGX Spark reads
+    as on, and that default is priced as before
+    ([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+17. A load that replaces a stock model in its own slot now counts the copy
+    the Worker drops first, at the loader and at the render-site checks, so
+    a change of model in one session meets the Old model in the way card
+    less often. On unified memory that drop copies nothing to the host.
+    `DGXM_DISABLE_SWAP_CREDIT=1` on the driver turns the count off, and
+    `DGXM_DISABLE_COPY_FREE_DROP=1` in the Worker's environment, set the
+    same way, turns the copy-free drop off
+    ([TROUBLESHOOTING #53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+18. Two things that need ComfyUI 0.45.0 or newer run on the Workers.
+    MiniMax-H3-Image is a new family on its own sharded adapter, with a text
+    to image template and an edit template: `auto` takes uly2 for it, and
+    cfg2, dp2, a padded ring and a batch above one refuse. Both templates
+    wire ComfyUI's prompt expander behind a switch that ships off, and a
+    graph that turns it on with an empty task prompt, or with one that lacks
+    the `{input text}` marker, refuses before the model loads
+    ([MODELS](MODELS.md#model-minimax-h3-image),
+    [TROUBLESHOOTING #153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
+    UltraTex, the FLUX.2 Klein 9B LoRAs that paint a mesh texture, runs on
+    one GPU, uly2 and uly2+fsdp, and refuses on cfg2, dp2, ring and any wider
+    mesh
+    ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
+19. Some renders now take another path than on 1.4.0. In a world of one GPU
+    a checkpoint's own attention pins run as stock ComfyUI runs them, with no
+    Sol-Attn waiver card
+    ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+    Anima under `auto` renders on uly2 at every size, where it took cfg2
+    below 1.2 MP on BF16, and the Workers prepare its text as stock ComfyUI
+    does
+    ([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+    `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP
+    only when the prompt and the negative encode to different text rows, and
+    Ulysses for an equal pair
+    ([VALIDATION](VALIDATION.md#campaign-k-equal-pairs)). uly2 renders of
+    Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1, and LTX renders
+    under sequence parallelism, run comfy-kitchen's fused AdaLN, and LTX's
+    gate projection, at the row count one GPU uses, because those calls pick
+    their kernel by row count. A render below about 1024 square, or of LTX,
+    can differ from the same render on 1.4.0
+    ([VALIDATION](VALIDATION.md#fused-adaln-switch-other-families)). A forced
+    `family_adapter` binds a model only where its adapter would take it
+    under `auto`
+    ([TROUBLESHOOTING #154](TROUBLESHOOTING.md#154-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
+    Sampler Custom renders and dual-model renders run the first-use identity
+    gate, so the first render of a new combination on the six LTX graphs, on
+    p-h3-image and on Ideogram 4 runs its check first
+    ([TROUBLESHOOTING #61](TROUBLESHOOTING.md#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
+20. The pack now ships the demo images, clips and music its templates name,
+    in `example_workflows/input`. At start it copies each one ComfyUI's
+    input folder lacks and never replaces a file, link or folder already
+    there; `DGXM_DEMO_INPUTS=off` skips the copy
+    ([Install the node pack](#install-the-node-pack)).
+21. `dgxm doctor`'s Worker service row reads unobserved, not FAIL, when a
+    host answered but could not tell whether the loop runs or listens. Doctor
+    then exits 75, and `dgxm update --verify` keeps the new release instead
+    of restoring the old one
+    ([TROUBLESHOOTING #1](TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout)).
+    `dgxm setup`'s cleanup of a reserved release slot refuses, and keeps the
+    slot, when its site holds anything beside the package. A verified update
+    that stops with "foreign distribution inventory is ambiguous" names a
+    package installed under `PYTHONPYCACHEPREFIX`; reinstall it without the
+    prefix
+    ([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+22. Studio is a supported interface from this release, beside the CLI, the
     TUI and the ComfyUI panel. Generate now checks the draft and starts the
     job in one action, and Grids, Fleet and Operations sit under Utilities.
     The tester's fourth round renamed the Operation select Job category and
