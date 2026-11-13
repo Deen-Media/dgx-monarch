@@ -2359,10 +2359,15 @@ local mesh and a respawn alike). No endpoint that runs before setup touches
 CUDA: status and `clear_vram` both say so and return early. On a GPU that
 shares the host's memory the NVIDIA driver needs free memory for a new
 context, and the page cache does not count: on 2026-11-12, on a DGX Spark,
-two Worker starts failed in `cuDevicePrimaryCtxRetain` with 1.6 and 4.6 GiB
-free while 45 and 47 GiB were available, and the kernel log read `NV_ERR_NO_MEMORY` from the driver's
-allocation of the context's main buffer. Every other start on record had
-8.9 GiB free or more, and made its context. An ordinary GPU allocation
+three Worker starts failed in `cuDevicePrimaryCtxRetain`, with 1.52, 4.61
+and 8.85 GiB free while 44.7, 47.4 and 50.8 GiB were available, and the
+kernel log read `NV_ERR_NO_MEMORY` from the driver's allocation of the
+context's main buffer. One start on record made its context with 8.87 GiB
+free, and every other had 10.6 GiB free or more, so the line lies near 9
+GiB. Each failure came while a program held tens of GiB (a test hold).
+Reading files does not by itself bring the box there: 260 GiB of model files
+read with nothing held left 26 to 28 GiB free, and the context that
+followed was made with 10.6 to 11.5 GiB free. An ordinary GPU allocation
 meets the same answer from the kernel and gets past it: the same day a
 Worker that was already up began a model load with 2.4 and then 1.8 GiB
 free (30 GiB available), the kernel logged the driver's `NV_ERR_NO_MEMORY`
@@ -2372,10 +2377,11 @@ recovers by itself, and the context's main buffer does not.
 `actor/context_room.py` holds two rules for it.
 
 - **Room first, then the context at once.** Setup calls the bootstrap through
-  `context_room`, which reads `/proc/meminfo` before the bootstrap runs. With 12 GiB free or more
-  it does nothing else. With less, and 17 GiB or more available (the 12 GiB
-  mark and the 5 GiB floor), on a GPU that shares the host's memory, it
-  writes to anonymous memory in steps of 1 GiB up to 12 GiB, holds every
+  `context_room`, which reads `/proc/meminfo` before the bootstrap runs.
+  With 16 GiB free or more it does nothing else. With less, and 21 GiB or
+  more available (the 16 GiB mark and the 5 GiB floor), on a GPU that shares
+  the host's memory, it writes to anonymous memory in steps of 1 GiB up to
+  16 GiB, holds every
   step, and releases all of it together. The kernel gives page cache back to
   serve the writes, and the release leaves that memory free. Before each
   step it checks that the step leaves 5 GiB available, and stops if not. It
@@ -2412,7 +2418,17 @@ recovers by itself, and the context's main buffer does not.
   `mesh_setup_transition.ensure_setup`, from the rank whose answer it was
   awaiting, which covers a Fleet's actors too), so on a pair it opens "On
   the sibling, this Worker could not start on its GPU". Any other error
-  passes on as it was raised. The remedy it names is a reset of the attached
+  passes on as it was raised. On a pair the refusal is not yet prompt. The
+  rank that cannot make its context raises before it joins the group
+  (`worker_env.setup_impl` calls the bootstrap ahead of
+  `dist.init_process_group`), and the driver has its error at once. But its
+  peer is by then waiting on the group's store, which rank 0 opens only after
+  its own bootstrap, or on the peers a store waits for; that wait holds the
+  peer's GPU lock for the setup's limit (600 s), the rollback's
+  `teardown_group` call queues behind it, and the driver raises the refusal
+  only when the rollback ends. On 2026-11-12 the raw error took 610 s to show
+  that way. Ending the wait at the first rank's failure is a change to the
+  setup protocol and is not in this rule. The remedy it names is a reset of the attached
   mesh after memory is freed: no record shows a second try in the same process
   making a context, and a setup that failed leaves the Worker marked as not
   torn down until a reset or a teardown settles it.
@@ -2426,7 +2442,10 @@ recovers by itself, and the context's main buffer does not.
   free memory before the step, after the release and at the context, and
   whether the Worker made the context at once or left it to the bootstrap).
 
-What it costs when it acts: a few seconds, and up to 12 GiB of page cache
+The mark is 16 GiB because the record's line is fine: 8.85 failed and 8.87
+worked. 16 keeps about 7 GiB over it, at no cost on a roomy start.
+
+What it costs when it acts: a few seconds, and up to 16 GiB of page cache
 that files must be read into again. The Worker's unit sets no memory limit,
 so the reading is the box's. Not yet run on hardware: whether memory freed
 this way serves the driver's request is what the proof cell reads, and if it

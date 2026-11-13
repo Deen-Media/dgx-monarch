@@ -716,11 +716,15 @@ that makes room for its GPU context.** A Worker makes its CUDA
 context at its setup (the first render, or the UNET loader under an explicit
 topology), and on a Spark the NVIDIA driver needs free memory for it: memory
 the page cache holds does not count, although the system would give it back.
-On 2026-11-12 two Worker starts with 1.6 and 4.6 GiB free and 45 and 47 GiB
-available ended in `Actor call dgxm_worker.setup failed` and `CUDA error:
-out of memory ... from cuDevicePrimaryCtxRetain`. So before its first CUDA
-call a Worker now reads the box's memory, and if less than 12 GiB is free
-while 17 GiB or more is available it writes to up to 12 GiB of memory and
+On 2026-11-12 three Worker starts with 1.52, 4.61 and 8.85 GiB free and
+44.7, 47.4 and 50.8 GiB available ended in `Actor call dgxm_worker.setup
+failed` and `CUDA error: out of memory ... from cuDevicePrimaryCtxRetain`;
+one start worked with 8.87 GiB free and every other on record with 10.6 or
+more. Each failure came while another program held tens of GiB. Reading
+large files is not enough to cause it: 260 GiB of model files read with
+nothing held left 26 to 28 GiB free. So before its first CUDA
+call a Worker now reads the box's memory, and if less than 16 GiB is free
+while 21 GiB or more is available it writes to up to 16 GiB of memory and
 releases it at once, which makes the system give that much page cache back,
 and then makes its context straight away. What you may see:
 
@@ -738,7 +742,12 @@ and then makes its context straight away. What you may see:
   memory, or wait for a large download or file copy to end, then click Reset
   attached mesh and queue again. If nothing can be closed, a root shell can
   drop the page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`). On a pair
-  the refusal opens with the box it came from, "On the sibling, ...".
+  the refusal opens with the box it came from, "On the sibling, ...", and it
+  can take up to ten minutes to show: the Worker that failed answers at
+  once, but the other one waits for it to join the group and gives up only
+  at its own limit, and the driver reports after that. A render that sits
+  with no progress right after a reset or a restart, on a box that is short
+  of free memory, is this wait.
 
 `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment (a drop-in for the
 Worker's unit, then a Worker restart) turns the make-room step off, for

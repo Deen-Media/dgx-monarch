@@ -5,9 +5,11 @@ that shares the host's memory the NVIDIA driver needs free memory for it:
 free, not available. With the box's free memory at a few GiB the driver's
 request fails although tens of GiB sit in the page cache, and the Worker's
 setup ended in a raw ``CUDA error: out of memory`` from
-``cuDevicePrimaryCtxRetain``. On a DGX Spark on 2026-11-12 it failed with 1.6
-and 4.6 GiB free (45 and 47 GiB available) and worked on every start on
-record with 8.9 GiB free or more.
+``cuDevicePrimaryCtxRetain``. On a DGX Spark on 2026-11-12 it failed three
+times, with 1.52, 4.61 and 8.85 GiB free (44.7, 47.4 and 50.8 GiB available).
+One start on record made its context with 8.87 GiB free; every other had
+10.6 GiB free or more. Each failure came with a program holding tens of GiB:
+reading 260 GiB of files with nothing held left 26 to 28 GiB free.
 
 Two rules answer it, both in the Worker process, which is where the context
 is made.
@@ -15,9 +17,9 @@ is made.
 **Room first, then the context at once.** Before the bootstrap that makes the
 context (``comfy_bridge.ensure_comfy``, whose import of
 ``comfy.model_management`` is the Worker's first CUDA call), the Worker reads
-``/proc/meminfo``. If free memory is under 12 GiB while 17 GiB or more is
+``/proc/meminfo``. If free memory is under 16 GiB while 21 GiB or more is
 available, and the GPU shares the host's memory, it writes to anonymous memory
-in steps of 1 GiB up to 12 GiB, holds it, and releases all of it at once. The
+in steps of 1 GiB up to 16 GiB, holds it, and releases all of it at once. The
 kernel gives page cache back to serve those writes, and the release leaves
 that memory free for the driver. It checks before every step that the step
 leaves 5 GiB available and stops if it would not. It never locks the memory.
@@ -26,7 +28,7 @@ cache again. So torch is in the process before the writes (a Worker has
 imported it by then; the step makes sure), and straight after the
 release the Worker makes the context itself, by the call ComfyUI's import
 makes first (``torch.cuda.mem_get_info``). One log line says what it did, or
-why it did nothing in that state. A start with 12 GiB free reads one file and
+why it did nothing in that state. A start with 16 GiB free reads one file and
 does nothing else.
 
 Under comfy-managed residency the Worker makes no context of its own: stage A
@@ -38,7 +40,7 @@ bootstrap reads free memory once more just ahead of that import
 
 The amount is the mark and not the mark less what is free: the pages a
 process writes first are the free ones, so writing 7 GiB on a box with 5 GiB
-free leaves about 7 GiB free afterwards, not 12.
+free leaves about 7 GiB free afterwards, not the mark.
 
 Whether the GPU shares the host's memory is asked of the CUDA driver library
 itself (``cuDeviceGetAttribute``), which answers without a context. The
@@ -81,9 +83,11 @@ _GIB = 2 ** 30
 
 DISABLE_ENV = "DGXM_DISABLE_CONTEXT_ROOM"
 
-# Free memory the Worker makes room up to. The lowest Worker start on record
-# that made its context had 8.9 GiB free; the two that failed had 4.6 and 1.6.
-MARK_BYTES = 12 * _GIB
+# Free memory the Worker makes room up to. The record puts the line near 9 GiB:
+# starts failed with 1.52, 4.61 and 8.85 GiB free, one worked with 8.87 and the
+# next lowest with 10.6. The mark keeps about 7 GiB over that line; it costs
+# nothing on a roomy start and a few seconds on a tight one.
+MARK_BYTES = 16 * _GIB
 # What must stay available while the Worker holds what it wrote: the floor the
 # pack's prices keep.
 FLOOR_BYTES = 5 * _GIB
