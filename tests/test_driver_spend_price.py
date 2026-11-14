@@ -747,7 +747,7 @@ def test_a_24_gib_reserve_moves_the_line_and_the_words_state_it(rig, monkeypatch
 @pytest.mark.parametrize(("init", "config_args", "attached", "floor"), [
     ({}, {"uma_reserve_gb": 24.0}, None, 24),  # the config file the Init node names, before a mesh is up
     ({"uma_reserve_gb": 30.0}, {"uma_reserve_gb": 24.0}, None, 30),  # the Init node's over the config's
-    ({}, {"uma_reserve_gb": 9.0}, {"uma_reserve_gb": 24.0}, 24),  # the attached mesh's policy first
+    ({}, {"uma_reserve_gb": 9.0}, {"uma_reserve_gb": 24.0}, 9),  # the file, not a mesh built from older contents
     ({"uma_reserve_gb": 2.0}, None, None, 5),  # never under the 5 GiB floor
     ({"uma_reserve_gb": ["40", 0]}, None, None, 5),  # a linked input is not known before it runs
 ])
@@ -758,6 +758,74 @@ def test_the_floor_reads_the_init_node_over_the_configured_policy(rig, monkeypat
     with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
         _guide(1)
     assert f"above its {floor}.0 GiB floor" in _refused(exc_info)
+
+
+@pytest.mark.parametrize(("attached", "edited", "floor"), [(24.0, 5.0, 5), (5.0, 24.0, 24)],
+                         ids=["the reserve lowered in the file", "the reserve raised in the file"])
+def test_a_sole_attached_mesh_from_the_files_older_contents_does_not_set_the_floor(rig, monkeypatch, attached,
+                                                                                   edited, floor):
+    """The file was edited after the mesh was built. ``get_mesh`` replaces such a mesh with one built from the
+    file at the Init node's next run, and a stock loader can spend before that run: the file decides."""
+    _settings(rig, monkeypatch, {}, config_args={"uma_reserve_gb": edited}, attached={"uma_reserve_gb": attached})
+    rig.box.value = 1 * GIB
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    assert f"above its {floor}.0 GiB floor" in _refused(exc_info)
+
+
+def _loader_pair(rig, monkeypatch, graph: dict, known_loader: bool = False) -> None:
+    """The real reader on ``graph``, a prompt with two DGX Monarch loaders, each from its own Init node; with
+    ``known_loader`` the node registry knows the loader class as one that is not an output, as a driver does."""
+    _settings(rig, monkeypatch, None)
+    rig.graphs["graph"] = graph
+    if known_loader:
+        registry = sys.modules["nodes"].NODE_CLASS_MAPPINGS
+        monkeypatch.setitem(registry, "DGXMonarchUNETLoader", type("Loader", (), {"OUTPUT_NODE": False}))
+
+
+def _pipeline(init: str, loader: str, reserve: float) -> dict:
+    return {init: {"class_type": "DGXMonarchInit",
+                   "inputs": {"topology": "auto", "mode": "auto", "uma_reserve_gb": reserve}},
+            loader: {"class_type": "DGXMonarchUNETLoader",
+                     "inputs": {"mesh": [init, 0], "unet_name": "h3.safetensors"}}}
+
+
+def _floor_read(rig) -> str:
+    rig.box.value = 1 * GIB
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    return _refused(exc_info)
+
+
+def test_a_loader_behind_a_switchs_unselected_branch_does_not_set_the_floor(rig, monkeypatch):
+    graph = {**_pipeline("1", "2", 24.0), **_pipeline("3", "4", 0.0),
+             "5": {"class_type": "ComfySwitchNode", "inputs": {"switch": False, "on_true": ["2", 0],
+                                                               "on_false": ["4", 0]}},
+             "6": {"class_type": "KSampler", "inputs": {"model": ["5", 0]}},
+             "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0]}}}
+    _loader_pair(rig, monkeypatch, graph)
+    assert "above its 5.0 GiB floor" in _floor_read(rig)
+
+
+def test_a_loader_that_feeds_nothing_that_runs_does_not_set_the_floor(rig, monkeypatch):
+    graph = {**_pipeline("1", "2", 24.0), **_pipeline("3", "4", 0.0),
+             "6": {"class_type": "KSampler", "inputs": {"model": ["4", 0]}},
+             "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0]}}}
+    _loader_pair(rig, monkeypatch, graph, known_loader=True)
+    assert "above its 5.0 GiB floor" in _floor_read(rig)
+
+
+@pytest.mark.parametrize("first", ["strict", "loose"])
+def test_two_live_loaders_price_at_the_stricter_floor_whatever_their_order(rig, monkeypatch, first):
+    """Both renders run on this box in this prompt, so a spend keeps the larger reserve either Init node asks."""
+    strict, loose = _pipeline("1", "2", 24.0), _pipeline("3", "4", 0.0)
+    renders = {"6": {"class_type": "KSampler", "inputs": {"model": ["2", 0]}},
+               "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0]}},
+               "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0]}},
+               "9": {"class_type": "SaveImage", "inputs": {"images": ["8", 0]}}}
+    graph = {**strict, **loose, **renders} if first == "strict" else {**loose, **strict, **renders}
+    _loader_pair(rig, monkeypatch, graph)
+    assert "above its 24.0 GiB floor" in _floor_read(rig)
 
 
 def test_a_config_that_cannot_be_read_leaves_the_init_nodes_reserve(rig, monkeypatch):

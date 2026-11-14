@@ -13,11 +13,10 @@ output (``nodes/loader_preflight``):
 A wrap holds no mesh. The running graph does hold the Init node the loader's
 ``mesh`` input links to, whose inputs the Init node turns into those arguments
 (``nodes/init.py``), so the wrap reads the same two values there. The configured
-policy is the attached mesh's; before a mesh is up (ComfyUI may run a spend
-before the Init node on a first queue) it is read from the file the Init node
-names, by ``get_mesh``'s rule. No Init node gives no settings: the header
-alone, at the 5 GiB floor. A configuration that cannot be read gives the Init
-node's own. A fault in the
+policy is read from the file the Init node names, by ``get_mesh``'s rule (see
+``configured``). No Init node gives no settings: the header alone, at the 5 GiB
+floor. A configuration that cannot be read gives the Init node's own. Only
+loaders ComfyUI will run count (``nodes/graph_live.live_nodes``). A fault in the
 sniff steps the price aside, as the loader steps aside for one.
 """
 from __future__ import annotations
@@ -66,15 +65,19 @@ def spec_args(inputs: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def configured(inputs: Mapping[str, Any], spec: Mapping[str, Any]) -> dict[str, Any]:
-    """``spec`` over the configured policy of the mesh the Init node attaches; ``spec`` alone where unread."""
-    try:
-        from .mesh import _MESH_LOCK, _MESHES
+    """``spec`` over the configured policy of the mesh the Init node attaches; ``spec`` alone where unread.
 
-        with _MESH_LOCK:
-            attached = [handle for handle in _MESHES.values()
-                        if not (getattr(handle, "defunct", False) or getattr(handle, "teardown_complete", False))]
-        if len(attached) == 1:
-            return dict(attached[0].effective_worker_args(dict(spec)))
+    That policy is the file's the Init node names, read as ``get_mesh`` reads it.
+    ``get_mesh`` reuses an attached mesh only where the Init node's file and
+    mode resolve to its key and its config digest still matches
+    (``mesh_cache_key``, ``config_fingerprint``), and then that mesh's policy
+    is the file's. Where the digest differs it recycles the mesh and builds one
+    from the file; where the key differs it builds one from that file (or
+    refuses a change of transport). So an attached mesh is not read in the
+    file's place: one built from older contents, or from another file, would
+    price a spend at a floor the next attach does not hold.
+    """
+    try:
         from .config import find_config_path, load_cluster_config, local_config
         from .config_schema import actor_worker_args
 
@@ -92,21 +95,29 @@ def configured(inputs: Mapping[str, Any], spec: Mapping[str, Any]) -> dict[str, 
 
 
 def priced_loader(graph: Mapping[str, Any]) -> PricedLoader | None:
-    """The first DGX Monarch UNET Loader of a family the loader prices a stack for, and the arguments it reads.
+    """The DGX Monarch UNET Loader of a family the loader prices a stack for, and the arguments it reads.
 
     By the loader's rules: a file the slab loader cannot open is not priced, a
     forced family stands over the sniff, and an unreadable header is the forced
-    family or nothing.
+    family or nothing. Only a loader ComfyUI will run counts: one behind a lazy
+    switch's unselected branch, or feeding nothing that runs, is skipped, as the
+    loader's own graph price skips it. Where two such loaders remain, both run
+    on this box in this prompt, so the one whose Init node asks the larger
+    reserve stands, the first of them on a tie.
     """
     import folder_paths
 
     from .adapters.detect import CheckpointSniffError, sniff_checkpoint
-    from .driver_footprint import DRIVER_STACK_FAMILIES
+    from .driver_footprint import DRIVER_STACK_FAMILIES, reserve_bytes
     from .family_select import effective_family, override_from_worker_args
+    from .nodes.graph_live import live_nodes
     from .nodes.loader_preflight import _slab_capable_path
 
-    for node in graph.values():
-        if not isinstance(node, Mapping) or not str(node.get("class_type", "")).startswith("DGXMonarch"):
+    live = live_nodes(graph)
+    found: list[PricedLoader] = []
+    for key, node in graph.items():
+        if (str(key) not in live or not isinstance(node, Mapping)
+                or not str(node.get("class_type", "")).startswith("DGXMonarch")):
             continue
         name = (node.get("inputs") or {}).get("unet_name")
         if not isinstance(name, str) or not name:
@@ -124,5 +135,5 @@ def priced_loader(graph: Mapping[str, Any]) -> PricedLoader | None:
                 continue
             family = forced
         if family in DRIVER_STACK_FAMILIES:
-            return PricedLoader(family, configured(inputs, spec) if inputs is not None else {})
-    return None
+            found.append(PricedLoader(family, configured(inputs, spec) if inputs is not None else {}))
+    return max(found, key=lambda loader: reserve_bytes(loader.worker_args), default=None)
