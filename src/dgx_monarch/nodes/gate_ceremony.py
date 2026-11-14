@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..refusal import RefusalClass
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call
+from . import pending_load_relief
 
 if TYPE_CHECKING:  # annotation only; the raise sites resolve it through runtime
     from .gate_fsdp import FsdpGateProofError
@@ -248,13 +249,12 @@ def gather_ceremony_evidence(
         cycle_token = runtime["render_setup_token"](
             ceremony_model, frozen_latent, cfg_value, handle)
         provenance_attestor("pre", handle, cycle_token)
-        # B must come from a clean disk load. Without this unload, auto-gating
-        # runs after the user's first render and can use an already-corrupted
-        # lazy-swap resident as its "reference", allowing identically wrong
-        # B/A renders to pass.
+        # B must come from a clean disk load: else auto-gating after the user's first render could take
+        # a corrupted lazy-swap resident as its "reference" and pass identically wrong B/A renders.
         runtime["require_confirmed_fsdp_unload"](
             handle.call_all("unload", timeout_s=600), handle, fsdp_proof_scope,
             phase="baseline")
+        pending_load_relief.note_unloaded()  # B's own render site then frees the driver for it
         b = transaction_render(
             ceremony_model,
             bind_request(runtime["copy_transaction"](frozen_request), artifact_binding),

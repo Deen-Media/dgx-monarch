@@ -2217,7 +2217,9 @@ still unloads every rank and loads its first leg from the file, now once, and a
 loader-time placement never stands in for that leg. The loader's own price and
 the render site's credit for an explicit preset are unchanged; the deferred load comes where the ceremony's
 reload came before, after the driver stack, and the Worker's load-time
-capacity check prices it.
+capacity check prices it. Since 1.5 (2026-11-13) the loader also records the
+deferral (`nodes/pending_load_relief.note_deferred`), so the render site
+counts that load as still to come ("A model load still to come", below).
 
 **Two windows, not one sum.** The loader checks two peaks separately. The
 transient window covers loading against MemAvailable minus the reserve: a
@@ -2265,6 +2267,9 @@ upsampler, passed the loader and refused at the sampler 2.0 GiB short after
 the upsampler had run; this price refuses it before anything loads, about
 7 GiB on the refusing side. A model only a lazy switch's other branch reaches
 never loads, and neither does one no output node reaches (`nodes/graph_live.py`).
+A graph that the loader admits can still meet the Workers' own price at the
+first render, which charges the host copy as well: the render site then frees
+the driver's models first ("A model load still to come", below).
 Held models credit what ComfyUI holds and no more: it cannot say which files
 they came from, so a held encoder stands in for this graph's, never for its
 upsampler too. The stack counts against MemAvailable even when no DiT is left
@@ -2615,8 +2620,9 @@ decode VAE, §5.6) and runs the checks
 once more from the one that refused. Only the last answer refuses, and it says
 what was unloaded and released and the readings around each step, which keeps
 the class C rule of offering the fitting strategy first. Each step runs at most
-once per render, and once more in the identity gate's stock reference leg
-("Where the ceremony cannot help"), only after a check refused, never while a render, a result
+once per render, once more in the identity gate's stock reference leg
+("Where the ceremony cannot help") and once more for a model load still to come
+(below), only after a check refused, never while a render, a result
 lease or a Worker call is live in the driver, and never reaches a Worker
 resident or ComfyUI's node output cache. "Live" is read on the fleet attached
 now (`driver_unload.busy_reason`): ComfyUI caches the Init node's output, so
@@ -2641,6 +2647,43 @@ freed its shared memory within 2 s, and MemAvailable rose from 49 to 88 GiB.
 Two stock loads over that slab were admitted with no refusal that day, so no
 credit for it has been needed yet
 ([VALIDATION](VALIDATION.md#capacity-checks-2026-11-05)).
+
+**A model load still to come is priced as the Workers will price it.** The
+render-site checks charge a pending load as the driver footprint sees it: under
+an explicit preset as placed at the loader node, and under `auto` at the file
+alone. The Worker that makes the load charges the file, the host copy a stock
+load is placed from and the host floor. So a graph whose text encoders the
+driver built before the model's load could pass every check above, with
+nothing to free, and then meet the ranks' load agreement short: on 2026-11-13
+p-h3-image's first use staged its text encoder and prompt upsampler (about
+25 GiB) before its 37.7 GiB file loaded, and the head's Worker priced the
+stock load at 84.1 GiB against 74.0 available. Since 1.5 a last step at the
+render site, once those checks pass and before the gate and any dispatch,
+prices a load still to come (`nodes/pending_load_relief`) with the Workers'
+own price function (`capacity_fit.stock_load_fit`, or `slab_load_fit` where
+the family's residency resolves to slab) against this box's MemAvailable.
+Where that reads short it asks the Workers on this box the agreement's own
+read-only quote, and where one of them says its price refuses the load or
+offers the slab card, it runs the rescue above: unload, then trim. It refuses
+nothing. Whatever the rescue freed, the render goes on to the ranks'
+agreement, which offers the card or refuses as before. A load is still to come
+under `auto` unless a finished render or a pipelined submission in this
+process placed the checkpoint, and under an explicit preset only where the
+loader deferred the placement; inside the gate's capacity check that check
+says itself whether the load ran. When an identity ceremony unloads every rank
+for its clean reload, the load is still to come again whatever this process
+placed before, so its first proof render's own render site prices it; the
+no-render path, which loads with no render, runs the same step between its
+unload and its load agreement. So a render whose model this process
+placed asks nothing. One whose model the Workers already hold from before a
+driver restart, or would swap with their own credit, costs the one quote and
+frees nothing. The step comes after the checks that refuse, so a render they
+refuse is refused in the same words and never reaches it. It covers a local
+mesh and a one-box fleet as it covers a pair, since it reads only the
+driver's box. It leaves a dual-model request, comfy-managed residency, an FSDP
+preset and a driver on a box with no Worker to the checks that price them
+today. A rank on the other box cannot be helped from here: its load waits on
+what its own Worker frees.
 
 **ComfyUI in the driver reads the box as it is.** The checks above are the
 pack's own and read MemAvailable. ComfyUI has readers of its own in the driver
@@ -3888,6 +3931,9 @@ dgx-monarch/
 │   │   ├── h3_context_windows.py # the node that carries ComfyUI's MiniMax H3
 │   │   │                      #   context windows to the Workers
 │   │   ├── pending.py         # terminal sample-result ownership and cleanup
+│   │   ├── pending_load_relief.py # the render site frees the driver's models
+│   │   │                      #   before a model load still to come that the
+│   │   │                      #   Workers would not fit; refuses nothing
 │   │   ├── pipeline.py        # bounded FIFO submission/abort orchestration
 │   │   ├── recycle_guard.py   # reset single-flight/rate ownership past HTTP timeout
 │   │   ├── render_session.py  # node-side names for the mesh_session.py API

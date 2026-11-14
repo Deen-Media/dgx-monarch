@@ -2601,6 +2601,18 @@ kept on this host".
 It leaves the count of the drop on, at the loader and at the render-site
 checks alike: the count is a price, not something the driver frees.
 
+**Before the slab card for a load still to come.** The ranks' load agreement
+can raise the slab card after every check on the driver passed, when the
+driver built the graph's text models before the model's load: nothing refused,
+so nothing was unloaded. Since 1.5 the render site asks the head's Worker first
+and, where it would refuse the load or offer the card, unloads ComfyUI's models
+and then trims the actors before the agreement
+([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+Where that frees enough, no card is raised. A card that still appears was
+priced after the unload, and the journal's `pending load:` line before it says
+what the driver freed. `DGXM_DISABLE_DRIVER_UNLOAD=1` turns this unload and
+trim off too.
+
 **Old model in the way:** when a model loaded earlier still holds the
 memory a load needs, and a clear of the attached mesh would make room on every
 short box, the refusal says "the old model (<name>) is still loaded on the
@@ -5597,6 +5609,24 @@ Six shapes reach the operator:
   Sparks in 4.45 s and the next queue rendered, and with Always clear and
   retry on, a queue cleared once and rendered.
 * **World 1 is a no op.** The one box prices its own load.
+
+Since 1.5, before any rank is asked, the driver frees its own box for a model
+load still to come. Once the render-site checks pass, it prices that load as
+the Worker will, file and host copy, against the head's MemAvailable. Where
+that reads short and the head's Worker, asked the same read-only question,
+says its price refuses the load or offers the slab card, the driver unloads
+the models ComfyUI holds there (the text encoders and VAEs it reloads on
+demand) and, if that is not enough, asks the actors to release their
+allocator caches. The journal shows `driver unload: the pending load of <name>
+fits after unloading ...` or `actor trim: the pending load of <name> ...`.
+This refuses nothing: whatever was freed, the agreement above decides, and
+when the driver could not free enough it logs `pending load: ...; the Workers'
+load agreement decides it` first. A first use whose text models were staged
+before the model's load met the slab card this way on 2026-11-13: p-h3-image
+on the head, 84.1 GiB against 74.0, with its text encoder and prompt upsampler
+loaded. The same step runs on one box and on a local mesh, and again when the
+first-use check unloads every rank and loads the model back. It cannot free
+memory on the sibling, whose shortfall still reaches the agreement as it is.
 
 Read the numbers with two limits in mind. Each rank prices against what it
 holds at that moment. A load that replaces the stock model in its own slot is

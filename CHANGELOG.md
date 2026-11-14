@@ -42,6 +42,29 @@
   tests on the real ledger; not yet run on hardware
   ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
 
+- Fix: a first use whose text models were staged before the model's load no
+  longer meets the slab card with ComfyUI's models still loaded on the driver.
+  On a pair, p-h3-image's first use loaded its text encoder and prompt
+  upsampler (about 25 GiB) on the driver before its 37.7 GiB file, and the
+  head's Worker priced the stock load at 84.1 GiB against 74.0 available, so
+  the ranks' load agreement offered the slab card and the first-use check
+  could not complete (2026-11-13). The driver's own checks had passed: they
+  charge a pending load at the file alone under `auto`, and as already placed
+  under an explicit preset, so nothing refused and nothing was unloaded. Once
+  those checks pass, the render site now prices a load still to come at the
+  Workers' own price. Where that reads short and the Worker on the driver's
+  box, asked the agreement's own read-only quote, would refuse the load or
+  offer the card, the driver unloads the models ComfyUI holds and then asks
+  the actors to release their caches before the agreement, which decides as
+  before. This adds no refusal and changes no refusal's words. A render whose
+  model this driver placed asks nothing; one whose model the Workers already
+  hold from before a driver restart, or would swap with their own credit,
+  costs one quote and frees nothing. The same step runs when the first-use
+  check unloads every rank and loads the model back, for a model an earlier
+  render left loaded. It covers one box and a local mesh too; memory on the
+  other box of a pair is not freed. CPU tests; not yet run on hardware
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+
 - A re-queue in the same driver can no longer encode or load on the driver
   with nothing priced before it. ComfyUI keeps the UNET Loader's output while
   nothing upstream of it changes, so a queue that changed only a guide's file,
