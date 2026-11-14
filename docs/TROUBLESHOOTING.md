@@ -2601,6 +2601,19 @@ kept on this host".
 It leaves the count of the drop on, at the loader and at the render-site
 checks alike: the count is a price, not something the driver frees.
 
+**Before the slab card for a load still to come.** The ranks' load agreement,
+or on one Spark the Worker's own load check, can raise the slab card after
+every check on the driver passed, when the driver built the graph's text models
+before the model's load: nothing refused, so nothing was unloaded. Since 1.5
+the render site asks the head's Worker first and, where it would refuse the
+load or offer the card, unloads ComfyUI's models and then trims the actors
+before any rank loads
+([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+Where that frees enough, no card is raised. A card that follows a
+`driver unload: the pending load of ...` or `pending load:` line was priced
+after the unload, and that line says what the driver freed.
+`DGXM_DISABLE_DRIVER_UNLOAD=1` turns this step off too, quote included.
+
 **Old model in the way:** when a model loaded earlier still holds the
 memory a load needs, and a clear of the attached mesh would make room on every
 short box, the refusal says "the old model (<name>) is still loaded on the
@@ -5597,6 +5610,40 @@ Six shapes reach the operator:
   Sparks in 4.45 s and the next queue rendered, and with Always clear and
   retry on, a queue cleared once and rendered.
 * **World 1 is a no op.** The one box prices its own load.
+
+**When the short box is the head, the driver frees its own models first.**
+Through 1.4 a first use whose text models were staged before its model's
+load (p-h3-image's text encoder and prompt upsampler, about 25 GiB, then its
+37.7 GiB file) was refused or offered the slab card although it fitted once
+those models were gone: on 2026-11-13, on a pair under `uly2`, 84.1 GiB
+against 74.0 on the head. That happens under an explicit preset whose
+placement moved after the text models: the first-use check defers it, or a
+reset leaves ComfyUI's cached loader node without placing it again. Under
+`auto` the loader already charges the text models beside the load, so
+p-h3-image as shipped still refuses at the loader with its slab card
+([#52](#52-driver-side-footprint-preflight-refused-a-render) names what
+fits).
+
+Since 1.5, before any rank is asked, the driver frees its own box for a model
+load still to come. Once the render-site checks pass, it prices that load as
+the Worker will, file and host copy, against the head's MemAvailable. Where
+that reads short and the head's Worker would stop the load (its read-only
+quote says so, or, before the fleet's first setup, its status shows it holds
+no model), the driver unloads the models ComfyUI holds there (the text
+encoders and VAEs it reloads on demand) and, if that is not enough, asks the
+actors to release their allocator caches. The journal shows `driver unload:
+the pending load of <name> fits after unloading ...` or `actor trim: the
+pending load of <name> ...`. This refuses nothing: whatever was freed, the
+agreement above decides, and when the driver could not free enough it logs
+`pending load: ...; the Workers' load agreement decides it` first. A quote or
+status read that fails or times out frees nothing. The same step runs on one
+box, where there is no agreement and the Worker's own load check is the
+judge, on a local mesh, and again when the first-use check unloads every rank
+and loads the model back. The unloaded models reload by ComfyUI's own path if
+a later node needs them. Nothing is freed while another render, a held result
+or a Worker call is live in the driver. It cannot free memory on the sibling,
+whose shortfall still reaches the agreement as it is.
+`DGXM_DISABLE_DRIVER_UNLOAD=1` turns the step off.
 
 Read the numbers with two limits in mind. Each rank prices against what it
 holds at that moment. A load that replaces the stock model in its own slot is

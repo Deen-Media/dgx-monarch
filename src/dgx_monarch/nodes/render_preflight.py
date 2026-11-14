@@ -20,6 +20,7 @@ from ..adapters.detect import CheckpointSniffError, sniff_checkpoint
 from ..adapters.flux_views import VIEWS_METADATA_KEY
 from ..refusal import RefusalClass, refusal
 from ..sampling_contract import latent_size_tags
+from . import pending_load_relief
 from .latent_outputs import is_direct_nested_tensor
 from .render_rows import ref_pose_shapes
 from .render_validation import validate_render_topology
@@ -305,14 +306,13 @@ def activation_footprint_preflight_for_request(
 ) -> None:
     """Run family-scoped capacity checks before worker RPC.
 
-    Shared family/path resolution feeds the render-memory price and the
-    driver-load, H3 render-fit and reference/pose activation checks
-    (docs/TROUBLESHOOTING.md #52, #56 and #47). A missing shape, an unsupported
-    file type, or an unreadable header with no forced family fails open, so
-    unrelated render paths keep their behavior. Before a check refuses,
-    ``driver_unload`` frees what this host can get back and runs it again.
-    ``weights_loaded`` stands in for the load memos (nodes/gate_capacity_stop).
-    """
+    Shared family/path resolution feeds the render-memory price and the driver-load,
+    H3 render-fit and reference/pose activation checks (docs/TROUBLESHOOTING.md #52, #56,
+    #47); a missing shape, file type or header with no forced family fails
+    open. Before a check refuses, ``driver_unload`` frees what it can and runs
+    it again; once all pass, ``pending_load_relief`` frees the driver for a load
+    still to come that will not fit, refusing nothing. ``weights_loaded``
+    stands in for the load memos (nodes/gate_capacity_stop)."""
     unet_name = getattr(model, "unet_name", None)
     if not isinstance(unet_name, str):
         return
@@ -364,6 +364,7 @@ def activation_footprint_preflight_for_request(
             family, path, unet_name, request, video_shape))
     driver_unload.check_with_unload(steps, subject=unet_name, swap=(model, request), handle=getattr(
         getattr(model, "mesh", None), "handle", None))
+    pending_load_relief.relieve(model, request, family=family, path=path, weights_loaded=weights_loaded)
 
 
 def _ref_pose_activation_preflight(family: str, path: str, unet_name: str,
@@ -408,12 +409,11 @@ def note_successful_render(unet_name: object) -> None:
     """Record the checkpoint a successful render left resident (common.py, pipeline.py)."""
     global _LAST_RENDERED_UNET
     _LAST_RENDERED_UNET = unet_name if isinstance(unet_name, str) else None
+    pending_load_relief.note_placed(_LAST_RENDERED_UNET)  # the load it marked is done
 
 
 def note_driver_charged_render(unet_name: object) -> None:
-    """Record the checkpoint whose pending load the driver preflight just
-    cleared, so a retry after a failed render is not charged for weights the
-    worker still holds."""
+    """Record the checkpoint the driver preflight cleared, so a failed render's retry is not charged again."""
     global _LAST_DRIVER_CHARGED_UNET
     _LAST_DRIVER_CHARGED_UNET = unet_name if isinstance(unet_name, str) else None
 

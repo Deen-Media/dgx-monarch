@@ -2451,7 +2451,7 @@
     "tests/test_refusal_classes.py": {
       "test_class_rules_hold_at_every_classified_site": "881a1999616424bc",
       "test_classified_refusal_sites_match_the_ledger": "d03d34e882230f9f",
-      "test_every_declared_exception_is_classified_as_refusal_or_not": "007d29cc557b4f65",
+      "test_every_declared_exception_is_classified_as_refusal_or_not": "8e00ed1e849edd1d",
       "test_every_waivable_guard_message_names_the_panel_and_the_env_fallback": "28e23825921f635e",
       "test_guard_vocabulary_agrees_with_the_frozen_ledger_vocabulary": "9525b2023313c356",
       "test_guard_vocabulary_is_claimed_or_explicitly_reserved": "f4e54e2c731766bf",

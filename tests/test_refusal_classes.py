@@ -203,6 +203,10 @@ NOT_REFUSAL_CLASSES = frozenset({
     # asked for a render, so the path returns to the full ceremony; it never
     # answers a render (nodes/gate_nothing_to_gate.py).
     "_NoRender",
+    # The render site's rescue trigger for a model load still to come
+    # (2026-11-13): caught where it is raised, it frees the driver and refuses
+    # nothing (nodes/pending_load_relief.py).
+    "PendingLoadShort",
 })
 
 # A class P message must point somewhere reachable. One of these must appear.

@@ -26,6 +26,7 @@ from ..gate_audit import fold_rank_certificates, parse_measured
 # certificate recorder from that namespace.
 from ..gate_audit import record_ceremony_certificate as record_ceremony_certificate
 from ..transfer_utils import failure_summary, safe_call
+from . import pending_load_relief
 from .latent_identity import compare_latents
 
 
@@ -68,6 +69,7 @@ def run_cross_residency_reference(
                     f"{len(still_slab)} worker(s) did not leave slab residency "
                     "for the cross-mode reference")
             handle.call_all("unload", timeout_s=600)
+            pending_load_relief.note_unloaded()  # the stock reference's load is still to come
             stock_model = runtime["_model_with_worker_overrides"](
                 ceremony_model, {"slab_weights": False}, handle=handle)
             rendered: list[dict] = []

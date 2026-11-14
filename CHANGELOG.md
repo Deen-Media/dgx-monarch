@@ -42,6 +42,51 @@
   tests on the real ledger; not yet run on hardware
   ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
 
+- Fix: a first use whose text models were staged before the model's load no
+  longer fails for room the driver itself held. On a pair with the Init
+  node's topology set to `uly2`, p-h3-image loaded its text encoder and prompt
+  upsampler (about 25 GiB) on the head before its 37.7 GiB file, because the
+  first-use check defers an explicit preset's placement, and the head's Worker
+  priced the stock load at 84.1 GiB against 74.0 available, so the ranks' load
+  agreement offered the slab card and the check could not complete (release
+  test, 2026-11-13). The same graph rendered when the model loaded first,
+  before Sampler Custom graphs ran the first-use check. One Spark under
+  `single` can meet the same kind of shortfall at the Worker's own load
+  check, with no agreement to catch it (for p-h3-image, which has about
+  10 GiB more there than on the pair's head, it is within a GiB), and so can
+  any explicit preset after a reset, whose cached loader node does not place
+  the model again. Under `auto`, the template's own setting, the loader
+  already charges the text models beside the load, so p-h3-image as shipped
+  still refuses there with its slab card, on one Spark and on the pair, as
+  before. The driver's own render-site checks had passed: they charge a
+  pending load as already placed under an explicit preset, so nothing refused
+  and nothing was unloaded. Once those checks pass, the render site now
+  prices a load still to come at the Workers' own price, with their inputs:
+  a loader cast as the Worker maps it, a slab load's LoRA bake under
+  `lora_low_rss`, and the stock price under `auto`, where the Worker prices a
+  file stock until its family memo vouches it. A stock load's LoRA stack with
+  `lora_low_rss` off, whose classic bake only the Worker can price, is always
+  asked. A load is still to
+  come after any unload of every rank until a load succeeds, so a failed one
+  leaves the rescue for the next queue. Where that reads
+  short and the Worker on the driver's box would stop the load (its read-only
+  quote says so, or, before the fleet's setup, which `auto` makes at the
+  first render, its status shows it holds no model and the driver's price,
+  read whole, is short at the smallest price any fresh Worker could choose:
+  slab wherever slab is possible), the driver unloads the
+  models ComfyUI holds and then asks the actors to release their caches; the
+  Workers then decide the load as before. This adds no refusal and changes
+  no refusal's words. It covers one Spark, a local mesh and a pair, and runs
+  again when the first-use check unloads every rank and loads the model
+  back. A render whose model a finished render or the loader placed asks
+  nothing. A retry after a failed or interrupted render, or a swap, where the
+  load reads short, costs one quote or status read and frees nothing unless
+  the Workers would stop the load; a read that
+  fails or times out frees nothing. A short sibling gets no driver unload,
+  and nothing is freed while another render runs. CPU tests; not yet run on
+  hardware
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+
 - A re-queue in the same driver can no longer encode or load on the driver
   with nothing priced before it. ComfyUI keeps the UNET Loader's output while
   nothing upstream of it changes, so a queue that changed only a guide's file,

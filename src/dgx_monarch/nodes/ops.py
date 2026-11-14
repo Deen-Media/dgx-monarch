@@ -140,6 +140,10 @@ class DGXMonarchClearVRAM:
                         f"({outcome.status.value}: {outcome.detail})")
         else:
             results = {"workers": handle.call_all("clear_vram", level, timeout_s=300)}
+            if level == "hard":  # every resident model went: the next load is still to come
+                from . import pending_load_relief
+
+                pending_load_relief.note_unloaded()
         if include_driver and (level != "recycle" or outcome.ok):
             results["driver"] = _free_driver_models("hard" if level == "recycle" else level)
         elif include_driver:

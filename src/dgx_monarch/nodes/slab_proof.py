@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .. import mesh_setup
+from . import pending_load_relief
 from .setup_binding import render_setup_token
 
 
@@ -141,6 +142,7 @@ def establish(model, model_request: dict, request: dict, artifact_binding: dict,
     if not policy_mismatch and expected and not (active and family is not None):
         initial_family = family
         handle.call_all("unload", timeout_s=600)
+        pending_load_relief.note_unloaded()  # this leg's load is still to come
         b = render_fn(
             model,
             bind_request(copy_transaction(frozen_request), artifact_binding),
