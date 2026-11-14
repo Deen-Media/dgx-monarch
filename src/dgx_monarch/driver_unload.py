@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn
 
 from . import client_lease, mesh_safety, swap_credit
+from .driver_spend_price import DriverSpendCapacityError
 from .log import get_logger
 from .render_memory_price import RenderMemoryPriceError
 
@@ -54,9 +55,10 @@ DRIVER_UNLOAD_DISABLE_ENV = "DGXM_DISABLE_DRIVER_UNLOAD"
 
 # The render-site refusals priced against this host's MemAvailable. The render
 # memory refusal stays outside the stock-load family on purpose
-# (render_memory_price), so it is named beside it.
+# (render_memory_price), and so does a node's spend on the driver
+# (driver_spend_price), so both are named beside it.
 CAPACITY_REFUSALS: tuple[type[Exception], ...] = (
-    mesh_safety.StockLoadCapacityError, RenderMemoryPriceError)
+    mesh_safety.StockLoadCapacityError, RenderMemoryPriceError, DriverSpendCapacityError)
 
 # ComfyUI waits this long after a DynamicVRAM decommit before it reads free
 # memory again (execution.py, its RAM pressure branch); the re-read waits too.

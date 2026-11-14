@@ -996,7 +996,10 @@ def test_a_stack_comfy_already_holds_is_credited_not_charged(monkeypatch):
     monkeypatch.setitem(sys.modules, "comfy.model_management", mm)
     terms = loader_graph.credited_terms(
         loader_graph.driver_stack_terms(_graph(dit=REF2VA_BF16, refs="video")))
-    assert terms.credited and terms.total == 0
+    # The loads are credited. Since 1.5.0 the reference video's encode is not: it is a transient
+    # that has not run, as a guide's is, so it stays charged at its 40 GiB.
+    assert terms.credited and terms.te_bytes == terms.vae_bytes == 0
+    assert terms.total == terms.ref_bytes == loader_graph.REF_VIDEO_ENCODE_BYTES
     # So the resident window clears: those bytes are already inside the
     # MemAvailable reading. The load window still refuses: on 2026-08-04 the
     # eager load of this 61.7 GiB artifact took MemAvailable from 114.5 GiB to

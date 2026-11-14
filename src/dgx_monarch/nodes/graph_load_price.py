@@ -21,7 +21,7 @@ from .. import box_names, consent_pending, driver_footprint
 from ..log import get_logger
 from .graph_live import SWITCH_TITLES, is_link, live_nodes
 from .graph_twins import _SHARDED_KINDS, _gib, _join, dit_twins, model_twins
-from .loader_graph import DriverStackTerms, credited_terms, remember
+from .loader_graph import DriverStackTerms, credited_terms, note_stack_charged, remember
 
 log = get_logger(__name__)
 
@@ -125,6 +125,9 @@ def executing_prompt_id() -> str | None:
 
 def note_priced(unet_name: str) -> None:
     """Record that the graph price ran for this checkpoint in the executing prompt."""
+    from .. import driver_spend_price
+
+    driver_spend_price.warn_if_unwrapped()
     prompt_id = executing_prompt_id()
     if prompt_id is not None:
         remember(_PRICED_PROMPTS, f"{prompt_id}\x00{unet_name}")
@@ -134,6 +137,22 @@ def priced_this_prompt(unet_name: str) -> bool | None:
     """Whether the graph price ran for this checkpoint in this prompt; None without a prompt id."""
     prompt_id = executing_prompt_id()
     return None if prompt_id is None else f"{prompt_id}\x00{unet_name}" in _PRICED_PROMPTS
+
+
+def priced_any_this_prompt(prompt_id: str) -> bool:
+    """Whether the graph price ran for any checkpoint in the prompt with this id."""
+    return any(key.startswith(f"{prompt_id}\x00") for key in list(_PRICED_PROMPTS))
+
+
+def note_admitted(terms: DriverStackTerms, site: str, prompt: object = None) -> None:
+    """Record an admitted charge (``note_stack_charged``), and, at the loader site on a graph the
+    price read, what it charged for each spend of this prompt (``driver_spend_marks.note_charged``)."""
+    note_stack_charged(terms)
+    prompt_id = executing_prompt_id()
+    if site == SITE_LOADER and terms.resolved and prompt_id is not None:
+        from .. import driver_spend_marks
+
+        driver_spend_marks.note_charged(prompt_id, terms, prompt)
 
 
 def driver_box(mesh: Any) -> str:

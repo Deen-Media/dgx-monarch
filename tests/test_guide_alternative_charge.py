@@ -406,7 +406,7 @@ def test_the_budget_clause_says_why_both_are_charged():
         guide_order_note=guide_order.SAMPLER_BEFORE_GUIDE)
     assert terms.budget_clause == (
         "39.0 GiB of guide encode and render activations this graph has not spent yet, "
-        "with the text encoder, VAE and reference encode charges credited (comfy already "
+        "with the text encoder and VAE charges credited (comfy already "
         "holds loaded models); both are charged because a sampler in this graph can run "
         "before a guide encodes")
 
