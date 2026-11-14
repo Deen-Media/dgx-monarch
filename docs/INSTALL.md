@@ -1218,8 +1218,14 @@ Read this before the first update from 1.4.0, in this order. An install on
    pays the floor, so a short one is charged more than on 1.4.0. Before a
    render-site capacity check refuses, the driver unloads the models ComfyUI
    holds on its host, then asks the actors to release their allocator caches,
-   and checks again; `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both steps off. The
-   identity gate runs the same checks before its proof render, and a request
+   and checks again; `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both steps off. Once
+   those checks pass, the driver also prices a model load still to come at
+   the Workers' own price, and where the Worker on its box would stop the
+   load, it frees the same way first, so a first use whose text models were
+   staged before the model's load no longer fails for room the driver held;
+   the same switch turns that off, and it adds no refusal
+   ([TROUBLESHOOTING #93](TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+   The identity gate runs the same checks before its proof render, and a request
    that cannot fit the slab path records one INCONCLUSIVE capacity row and
    renders on stock residency
    ([TROUBLESHOOTING #56](TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).

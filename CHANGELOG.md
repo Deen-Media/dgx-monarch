@@ -40,6 +40,18 @@ sections after them list every change.
   ComfyUI holds on its host and asks the actors to release their allocator
   caches; `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both off
   ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- A first use whose text models were staged before the model's load no
+  longer fails for room the driver itself held, as p-h3-image did on a pair
+  under an explicit `uly2`; under `auto`, the template's own setting, the
+  loader already charges those models and it still refuses there with its
+  slab card. Once the render-site checks pass, the driver now
+  prices a model load still to come at the Workers' own price, and where that
+  reads short and the Worker on its box would stop the load, it unloads the
+  models ComfyUI holds, which ComfyUI loads again when they are next used,
+  and asks the actors to release their caches. It adds no refusal and
+  changes no refusal's words, and `DGXM_DISABLE_DRIVER_UNLOAD=1` turns it off
+  too
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
 - The deadline for a render's sample call grows with the work for MiniMax H3
   and Wan SCAIL, SCAIL-2 and Animate 2, up to six hours, and
   `DGXM_SAMPLE_TIMEOUT` stays the floor
