@@ -25,6 +25,21 @@
   hardware
   ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
 
+- Fix: a first-use check that compared nothing no longer blocks a later
+  capacity rescue. Its INCONCLUSIVE row, and the Fleet and explicit-on rows a
+  rendering check writes beside it, made the slab-residency rescue read as
+  denied for that model: the loader offered no card, the panel refused one,
+  and the auto-rescue toggle and the rescue variables did nothing, with "the
+  identity gate was INCONCLUSIVE for these exact artifacts ... until a later
+  explicit PASS". Running the Identity Gate node did not lift it, because the
+  same row came back. A check that ran no LoRA stack and no slab residency
+  holds nothing against slab residency, so the consent read now treats it as
+  clear. The Fleet and explicit-on rows carry a `no_material_revocation`
+  marker for that read and still grant no skip; an unproven INCONCLUSIVE and
+  a FAIL deny as before, in the same words. CPU tests on the real ledger; not
+  yet run on hardware
+  ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+
 - The decode relief now asks the Workers for the device memory they hold idle
   whenever it acts. It asked them only where freeing the driver's text
   encoders still left the decode priced above ComfyUI's free reading, and on

@@ -283,13 +283,15 @@ def record_verdict_rows(runtime: Mapping[str, Any], ledger: Any, key: str, artif
     explicit-on slab sibling. Shared with nodes/gate_nothing_to_gate.py, which
     passes neither, so its no-render verdict writes the exercised row this way
     and revokes nothing it did not exercise."""
+    classified = runtime["_gate_inconclusive"]
     ledger.record(key, artifacts, commit, verdict,
-                  runtime["_gate_inconclusive"].ledger_detail(detail, result), capability_context)
+                  classified.ledger_detail(detail, result), capability_context)
+    revocation = classified.revocation_detail(detail, result)
     if fleet_capability_context is not None:
-        ledger.record(key, artifacts, commit, verdict, detail, fleet_capability_context)
+        ledger.record(key, artifacts, commit, verdict, revocation, fleet_capability_context)
     for sibling in sibling_contexts:
         ledger.record(key, artifacts, commit, verdict,
-                      {**detail, "stamped": "slab-mode-equivalence"}, sibling)
+                      {**revocation, "stamped": "slab-mode-equivalence"}, sibling)
 
 
 def append_report_row(runtime: Mapping[str, Any], result: Mapping[str, Any]) -> None:

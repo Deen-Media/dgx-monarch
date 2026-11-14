@@ -1629,6 +1629,25 @@ def test_readable_denied_ledger_verdicts_keep_their_reason_without_a_grant(
     assert consent_pending.pending_cards() == []
 
 
+@pytest.mark.parametrize(("kind", "offered"), [("no_material", True), ("unproven", False)])
+def test_the_rescue_offer_after_a_gate_that_compared_nothing(tmp_path, kind, offered):
+    """A gate that had nothing to compare holds nothing against the rescue, so
+    the loader offers its card; an unproven verdict still refuses in its own words."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import write_ceremony_rows
+
+    mesh = _Mesh(worker_args={"slab_weights": "auto"})
+    path = str(tmp_path / "diffusion_models" / FL2VA_BF16)
+    combo, artifacts = loader_preflight._combo_identity(FL2VA_BF16, {}, path)
+    write_ceremony_rows(GateLedger(str(tmp_path / "output")), combo, artifacts, kind=kind)
+
+    message = _refuse(
+        mesh, FL2VA_BF16, prompt=_graph(dit=FL2VA_BF16, refs="keyframes"))
+
+    assert ("was INCONCLUSIVE" in message) is not offered
+    assert bool(consent_pending.pending_cards()) is offered
+
+
 @pytest.mark.parametrize("decision_name", ["_UNKNOWN_QUERY", "_FAILED"])
 def test_a_load_window_quarantine_refusal_names_the_binding_window_and_footprint(
         monkeypatch, decision_name):

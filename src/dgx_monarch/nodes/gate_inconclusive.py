@@ -329,6 +329,19 @@ def ledger_detail(detail: dict, ceremony: Mapping[str, Any]) -> dict:
     return {**detail, RESULT_KEY: KIND_NO_MATERIAL}
 
 
+# On the Fleet and explicit-on slab rows a no-material ceremony writes. The
+# consent reader reads it as it reads the kind (consent_quarantine.compared_nothing);
+# row_grants_skip reads only the kind, so those contexts still re-gate on first use.
+REVOKED_BY_NO_MATERIAL = "no_material_revocation"
+
+
+def revocation_detail(detail: dict, ceremony: Mapping[str, Any]) -> dict:
+    """Mark the revocation rows of a ceremony that compared nothing."""
+    if not finished_no_material(ceremony):
+        return detail
+    return {**detail, REVOKED_BY_NO_MATERIAL: True}
+
+
 def row_grants_skip(lookup: GateLedgerLookup) -> bool:
     """Require an exact, safe, structurally classified INCONCLUSIVE row.
 

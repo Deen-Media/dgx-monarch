@@ -2661,10 +2661,14 @@ not residency settings.
 Both list and accept recheck the ledger. List hides cards/consents for FAIL,
 RETESTING, unknown, or corrupt state without altering stored state; accept
 returns a conflict. Without a governing FAIL, INCONCLUSIVE and RETESTING deny
-acceptance without consuming the card or revoking the memo. One INCONCLUSIVE
-denies nothing: a gate whose only finding is that stock residency cannot load
-the checkpoint (`cross_mode=CAPACITY`, no LoRA stack), which is the premise of
-the rescue ([#5](#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc)). List and
+acceptance without consuming the card or revoking the memo. Two INCONCLUSIVEs
+deny nothing. One is a gate whose only finding is that stock residency cannot
+load the checkpoint (`cross_mode=CAPACITY`, no LoRA stack), which is the
+premise of the rescue ([#5](#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc)).
+The other, since 1.5, is a gate that had nothing to compare (no LoRA stack, no
+slab residency; [#66](#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)):
+it ran no slab residency, so it holds nothing against loading the checkpoint
+slab-resident. List and
 accept read a card's evidence as the refusal that raised it did, so an unknown
 read is asked again under the load's own capability and a card the refusal
 offered is a card the panel lists. Later INCONCLUSIVE or RETESTING cannot
@@ -3896,6 +3900,17 @@ scoped the same way. A check that rendered writes a row for the Fleet scope
 and for the explicit-on slab siblings too, and none of those rows carries the
 classification, so none of them grants a skip. A check that rendered nothing
 writes no row for them at all.
+
+**It does not stand in the way of a capacity rescue.** If a later render of
+the same model needs the slab-residency rescue because stock residency cannot
+fit, the loader offers the card and the panel accepts it as if the model had
+never been checked; the standing auto-rescue toggle and the rescue variables
+apply too. Since 1.5 the consent read treats a verdict that compared nothing,
+and the Fleet and explicit-on rows written with it (they carry
+`"no_material_revocation": true`), as clear. Through 1.4 such a row refused the
+rescue with "the identity gate was INCONCLUSIVE for these exact artifacts ...
+until a later explicit PASS", and running the Identity Gate node did not lift
+it.
 
 **Telling them apart:** INFO with `nothing to gate on this graph` took nothing
 from you. ERROR with `auto-gate could not complete` and `disabled for that

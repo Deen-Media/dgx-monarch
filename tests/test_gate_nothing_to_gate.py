@@ -530,6 +530,27 @@ def test_a_declined_graph_is_not_frozen_by_this_path(monkeypatch, tmp_path, read
     assert len(frozen) == 1  # the path's copy, taken once it had a basis
 
 
+@pytest.mark.parametrize("case", ["a LoRA stack", "a second model", "a vouched family"])
+def test_this_path_never_freezes_a_graph_it_declines(monkeypatch, tmp_path, readable, case):
+    rig = _rig(monkeypatch, tmp_path)
+    frozen = []
+    freeze = gate_mod.freeze_transaction
+    monkeypatch.setattr(gate_mod, "freeze_transaction",
+                        lambda transaction: frozen.append(1) or freeze(transaction))
+    request = {"noise_seed": 1, "steps": 2, "cfg": 1.0}
+    if case == "a LoRA stack":
+        rig.model.loras = ({"name": "a.safetensors", "strength": 1.0},)
+    elif case == "a second model":
+        request["uncond_model"] = {"unet_name": "u.safetensors"}
+    else:
+        readable["family"] = ("krea2", False)
+    assert gate_nothing_to_gate.record_if_provable(
+        runtime=vars(gate_mod), model=rig.model, request=request,
+        latent={"samples": torch.zeros(1)}, cfg_value=1.0, origin="auto_first_use",
+        run_id="x", handle=rig.handle) is None
+    assert frozen == [] and rig.handle.calls == []
+
+
 def test_a_return_before_the_load_unloads_nothing_more(monkeypatch, tmp_path, readable):
     rig = _rig(monkeypatch, tmp_path)
     rig.handle.source = "0" * 64

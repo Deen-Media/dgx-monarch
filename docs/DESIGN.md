@@ -1880,7 +1880,10 @@ Four invariants that no consent can change:
    FAIL also revokes the class C memos it disproved, so the panel never shows a
    live residency consent for a path the gate has proven unsafe. A class K
    accuracy waiver clears a math guard rather than a lever, so a FAIL neither
-   disproves it nor revokes it; it stays live and stays stamped.
+   disproves it nor revokes it; it stays live and stays stamped. A gate that
+   had nothing to compare quarantines nothing: its INCONCLUSIVE denies no
+   capacity-rescue consent ("A gate that compared nothing denies no consent",
+   below).
 3. **A certificate is never a PASS.** The byte-verify certificate attests that
    the bytes that entered the slab are the checkpoint's own bytes. It says
    nothing about pixels. When the stock reference cannot load on this hardware,
@@ -2068,9 +2071,24 @@ Projection runs before the loader's eager load and in
 Persisted-quarantine enforcement runs after both and overrides consent.
 
 Consent is accepted only when the ledger contains no applicable FAIL for the
-exact artifacts. `nodes/consent_quarantine` uses the Gate's validity rules:
-a context-scoped FAIL expires when its recorded protocol or package version
-changes; a legacy unscoped FAIL remains.
+exact artifacts and no other durable denial. `nodes/consent_quarantine` uses
+the Gate's validity rules: a context-scoped FAIL expires when its recorded
+protocol or package version changes; a legacy unscoped FAIL remains.
+
+**A gate that compared nothing denies no consent.** An INCONCLUSIVE row of
+this build denies a consent, with two exceptions that hold nothing against
+slab residency. One is a ceremony whose stock reference a typed capacity
+refusal kept from loading ("Where the ceremony cannot help", below). The other
+is a no-material verdict: the gate ran no LoRA stack and no slab residency, so
+it says less about a capacity rescue than no row at all, which reads clear.
+Its exercised row carries `inconclusive_kind` `no_material`, and the Fleet
+and explicit-on slab rows a rendering ceremony writes beside it carry
+`no_material_revocation`; the consent read takes either as clear
+(`consent_quarantine.compared_nothing`, since 1.5, 2026-11-13). The marker
+grants no gate skip: `row_grants_skip` reads only the kind, so those contexts
+still run their own gate on first use. A FAIL keeps precedence over both
+exceptions. Rows from another release or source build were never read as
+denials here: they read unknown, and the load's own scope then decides.
 
 **What the loader asks the ledger, and in what order.** The loader checks the
 ledger before resolving consent and again when applying it. Both checks first
