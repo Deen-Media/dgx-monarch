@@ -4,7 +4,7 @@ Both adapters drop divisibility pad rows exactly on pure Ulysses only, and
 refuse a padded ring or hybrid layout inside the first model call
 (adapters/minimax_h3.py, adapters/minimax_h3_image.py). By then the Workers
 have set the layout up and, under ``auto``, loaded the model, and a first-use
-gate has run its proof render into the same refusal
+gate with something to compare has run its proof render into the same refusal
 (docs/TROUBLESHOOTING.md #49). The packed length is known here already: each
 conditioning entry is one model call, and its total is the text, guide,
 reference, audio and video rows stock's ``PackedLayout`` packs

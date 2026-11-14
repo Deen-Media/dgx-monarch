@@ -2143,13 +2143,44 @@ has no stock to fall back to, so there the refusal answers the render, and an
 explicit Gate node raises it. The no-LoRA FSDP proof keeps its own clean-reload
 price.
 
+**Nothing to compare runs no proof render.** A ceremony on a graph with no
+LoRA stack and no slab residency can only end INCONCLUSIVE with nothing to
+compare (`gate_inconclusive.classify`), and that verdict grants nothing: the
+render that follows dispatches on stock residency. Through 1.4 the ceremony
+still unloaded every rank, loaded the file and ran two proof renders at the
+user's own shape to get there; an H3 still guide at 896x1152 and 362 frames on
+a pair spent 585.8 s on them (2026-11-13). Since 1.5 (2026-11-13) the automatic path runs
+the ceremony without its renders where the driver reads nothing to compare
+(`nodes/gate_nothing_to_gate.py`): one model, no LoRA stack, comfy-managed off,
+no FSDP layout, no live capacity-rescue consent, and `slab_weights` off or
+`auto` on a family outside `SLAB_VOUCHED_FAMILIES`, read from the forced family
+or the checkpoint header. The driver's read only chooses the path; the Workers
+decide the verdict. The capacity stop prices the request first, as above, and
+a stop ends there as it does in the ceremony. Then, inside the proof-cohort
+attestation before and after, every rank unloads, the fleet agrees the load and
+loads the file, and the Workers run the swap cycle on the empty stack. Their
+stamps go through the ceremony's own `slab_proof.establish` and
+`gate_inconclusive.classify`. A no-material class writes INCONCLUSIVE on the
+exercised context alone, with `"no_material_basis": "worker swap cycle, no
+proof render"` in the row and the report; the Fleet context and the explicit-on
+slab siblings keep what they held, because nothing here proved anything about
+them. Any other answer (a vouched family, slab active, a rank missing or late,
+any fault) writes nothing and runs the full ceremony, which meets the same
+fault in its own words. Later queues read the row as they read a ceremony's,
+and TRUST's rule that a no-material skip rests on bound, current all-rank cycle
+stamps holds unchanged. The Identity Gate node always renders, because its
+output is the proof's latent. The renders' other effects stay on the user's
+render: the activation preflight before the gate, and the capacity and backup
+agreements on every sample dispatch.
+
 **A placement the ceremony would drop is not made.** The ceremony's first leg
 must come from a clean load from the file, so it unloads every rank first. With
 an explicit topology the UNET loader would otherwise place the model at node
 execution and the ceremony would drop it a moment later and load the file again
 (issue #157, a 40.4 GiB file placed twice on 2026-11-06). The loader therefore
-leaves the load to the ceremony's first proof render when a ceremony will run
-before the graph's first render (`nodes/loader_gate_defer.py`). It reads the
+leaves the load to the ceremony's first proof render, or to its no-render swap
+cycle on a graph with nothing to compare, when a ceremony will run before the
+graph's first render (`nodes/loader_gate_defer.py`). It reads the
 prompt from the loader to the nodes that render its model, collects the LoRA
 stack on the way, and asks what the first-use gate would do for each one; an
 Identity Gate node always defers it. Any doubt keeps the eager load: a Fleet
@@ -3701,6 +3732,8 @@ dgx-monarch/
 │   │   ├── fleet_jobs.py      # Fleet job-list assembly and its per-prompt limit
 │   │   ├── gate_capacity_stop.py # a ceremony's stop when its request cannot fit
 │   │   ├── gate_ceremony.py   # one ceremony's render legs, frozen as evidence
+│   │   ├── gate_nothing_to_gate.py # a no-material verdict from the Workers'
+│   │   │                      #   swap cycle, with no proof render
 │   │   ├── gate_process_state.py # process-lifetime first-use Gate state
 │   │   ├── gate_process_verdicts.py # one process-verdict publication and its reads
 │   │   ├── gate_provenance.py # mandatory all-rank Gate source bracket

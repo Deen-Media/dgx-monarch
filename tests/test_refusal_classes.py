@@ -195,6 +195,10 @@ NOT_REFUSAL_CLASSES = frozenset({
     "WorkerSpawnError",
     "_Abort",
     "_InvalidQuantConfError",
+    # The first-use gate's no-render path (2026-11-13): slab_proof.establish
+    # asked for a render, so the path returns to the full ceremony; it never
+    # answers a render (nodes/gate_nothing_to_gate.py).
+    "_NoRender",
 })
 
 # A class P message must point somewhere reachable. One of these must appear.

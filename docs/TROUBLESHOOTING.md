@@ -19,7 +19,9 @@ the error text or symptom; report failures not covered here.
 > on first use, and does not watch it: restart the driver and the workers after
 > changing an editable checkout.
 > The check uses two short test renders and compares slab against stock when
-> slab is active. A new model may also need a render to identify its family
+> slab is active. A graph with no LoRA stack whose model takes no slab
+> residency has nothing to compare, so it runs no test render: the gate
+> records that and your render starts at once. A new model may also need a render to identify its family
 > before reloading into slab, for up to four renders total. Fleet skips
 > the inline identity check: an unverified Fleet combination runs with
 > slab and low-RSS residency forced off. A dual-model render proves both of
@@ -2315,7 +2317,7 @@ admitted DiT load; see [VALIDATION.md](VALIDATION.md).
 
 | Window | Charge and remedy |
 |---|---|
-| `load` | Stock placement peaks near 2.1x checkpoint size. An explicit preset loads at the loader node, before the driver stack exists, unless the first render runs the identity gate, whose first proof render then loads it (a graph with a BasicScheduler (DGX Monarch) still loads at the loader). Under `auto` the load waits for the first render, when the driver already holds every model the graph loads, so this window charges those models too. Slab avoids the host copy and may offer rescue. |
+| `load` | Stock placement peaks near 2.1x checkpoint size. An explicit preset loads at the loader node, before the driver stack exists, unless the first render runs the identity gate, which then loads it, for its first proof render or, on a graph with nothing to compare, for its swap cycle (a graph with a BasicScheduler (DGX Monarch) still loads at the loader). Under `auto` the load waits for the first render, when the driver already holds every model the graph loads, so this window charges those models too. Slab avoids the host copy and may offer rescue. |
 | `resident` | Weights plus the graph's future text encoder, VAEs, reference/guide encodes, and declared render activations. A guide encode and the activations count as the larger of the two where the graph shows every guide encodes before every sampler ([#82](#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)). If this does not fit, use smaller artifacts or inputs; changing residency cannot remove the stack. |
 
 Rescue is offered only if slab fits both windows
@@ -3244,7 +3246,13 @@ dropped it, and the first test render loaded it again. A graph with a
 BasicScheduler (DGX Monarch) still loads it twice: the scheduler loads the
 model to compute its sigmas before the gate runs. The callout at the top of
 this file says what makes a combination new. Every release invalidates earlier
-PASS results, so the first render after an upgrade repeats the gate.
+PASS results, so the first render after an upgrade repeats the gate. Since 1.5
+a graph with no LoRA stack whose model takes no slab residency pays no test
+render: the gate has nothing to compare there, so it loads the file, asks the
+Workers what they hold, records that and starts your render
+([#66](#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)). Through 1.4
+it paid two, at your own shape: 585.8 s on a pair for a MiniMax H3 still guide
+at 896x1152 and 362 frames.
 
 **What you should see.** The driver reports these stages in the ComfyUI window,
 not only in the console. Toasts appear beside the canvas for a deferred NCCL
@@ -3258,6 +3266,14 @@ cost and the number of test renders it took:
     auto-gate: identity gate PASS in 61.4s over 3 proof renders. Your render
     starts now and is the only cost left; the next render of this combination
     skips the gate and the cold load
+
+On a graph with nothing to compare the gate's toast closes after the load with:
+
+    auto-gate: the identity gate ran no proof render: this graph has no LoRA
+    stack and the Workers hold its model without slab residency, so there is
+    nothing to compare. INCONCLUSIVE (nothing to gate) is recorded; your
+    render runs on stock residency and starts now, and later renders of this
+    combination skip the gate
 
 **A verdict other than PASS denies optimized residency.** FAIL, INCONCLUSIVE or
 ERROR means the gate could not verify the optimized residency paths (slab
@@ -3764,6 +3780,35 @@ verdict and says optimized residency is off, which is true of this render.
 What no longer happens is the session-wide disable: every other model and
 every other graph in the process keeps the residency it was configured with.
 
+**Since 1.5 most of these checks run no test render.** The automatic gate
+reads the graph first. When it sees nothing to compare (one model, no LoRA
+stack, `comfy_managed` off, no `+fsdp` layout, no live capacity-rescue
+consent, and `slab_weights` off or `auto` on a model family that takes no slab
+residency), it still checks the request fits, unloads every rank, loads the
+file once and asks the Workers what they hold, but it renders nothing. The
+Workers' answer decides, as in the full check. The INFO line then names the
+reason:
+
+    INFO identity gate: nothing to gate on this graph (auto_first_use,
+    <model>): no LoRA stack and slab residency is not engaged, so there is
+    nothing to compare; the Workers' swap cycle stamped this with no proof
+    render, as the driver read the graph (no LoRA stack, one model, family
+    minimax_h3 takes no slab residency under slab_weights=auto);
+    INCONCLUSIVE recorded, residency levers unchanged
+
+This check writes one ledger row, for the context your render uses, with
+`"no_material_basis": "worker swap cycle, no proof render"`; the report row
+adds `"proof_renders": 0` and no latent difference. The Fleet and explicit
+`slab_weights=on` rows keep what they held. Later queues read the row as they
+read a full check's. If the Workers answer anything else (a family that takes
+slab residency, a rank that did not answer), or the driver cannot read the
+graph for certain, the full check runs as before; the line `the full ceremony
+runs, because the driver cannot rule out material to compare (...)` names
+why. Through 1.4 these graphs paid two test renders at your own shape for this
+verdict: 585.8 s on a pair for a MiniMax H3 still guide at 896x1152 and 362
+frames. Slab residency is `auto` by default and engages only on Krea 2 and
+Flux 2, so most shipped templates without a LoRA land here.
+
 **A no-material verdict skips later checks.** First use of the same
 combination, in this driver or a later one, reuses the ledger verdict. The
 render runs on stock residency and logs at INFO:
@@ -3847,16 +3892,19 @@ or render it on a shape the guard does not refuse.
 **The no-material outcome covers the residency you ran under, and nothing
 else.** Turn `slab_weights` on afterwards and you are asking for a combination
 this check never exercised, so that render runs its own check. The grant is
-scoped the same way. The check writes a row for the Fleet scope and for the
-explicit-on slab siblings too, and none of those rows carries the
-classification, so none of them grants a skip.
+scoped the same way. A check that rendered writes a row for the Fleet scope
+and for the explicit-on slab siblings too, and none of those rows carries the
+classification, so none of them grants a skip. A check that rendered nothing
+writes no row for them at all.
 
 **Telling them apart:** INFO with `nothing to gate on this graph` took nothing
 from you. ERROR with `auto-gate could not complete` and `disabled for that
 combination` took both residency settings from the combination it names; the class K line
 above took none. Grep `dgxm_gate_reports.jsonl` for `inconclusive_kind` to get
 the same answer per run, or `dgxm_gate_ledger.jsonl` to see which combinations
-hold the grant.
+hold the grant. A row that also carries `no_material_basis` came from a check
+that asked the Workers and rendered nothing; one without it came from a check
+that rendered.
 
 Another ERROR-path INCONCLUSIVE says the two repeated optimized-path renders
 diverged even though the fresh stock comparison matched one of them. That is

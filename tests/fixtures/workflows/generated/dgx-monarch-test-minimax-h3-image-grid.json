@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-minimax-h3-image-t2i, with only the changes needed for this test. Sampler Custom (DGX Monarch) walks the checkpoint's own sigma grid, typed into Manual Sigmas, where the shipped graph's KSampler lands within a thousandth of it; euler through Basic Guider (DGX Monarch) at CFG 1. The first-use gate proves this graph with its own first two steps, 1.0 to 0.9675 to 0.8875, each on one head block as in the render, where the shipped graph's two-step KSampler proof spans three blocks a step. The expander is off and its task prompt and system prompt boxes are empty, so the request reaches the model as written and no row of this graph runs a language model."
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-minimax-h3-image-t2i, with only the changes needed for this test. Sampler Custom (DGX Monarch) walks the checkpoint's own sigma grid, typed into Manual Sigmas, where the shipped graph's KSampler lands within a thousandth of it; euler through Basic Guider (DGX Monarch) at CFG 1. Where the first-use gate renders, it proves this graph with its own first two steps, 1.0 to 0.9675 to 0.8875, each on one head block as in the render, where the shipped graph's two-step KSampler proof spans three blocks a step. The expander is off and its task prompt and system prompt boxes are empty, so the request reaches the model as written and no row of this graph runs a language model."
    ],
    "title": "DGX Monarch | MiniMax-H3-Image on its sigma grid"
   },

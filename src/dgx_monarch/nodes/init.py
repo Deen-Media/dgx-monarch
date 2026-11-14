@@ -109,7 +109,8 @@ class DGXMonarchInit:
                 "auto_gate": (["first_use", "off"], {"default": "first_use", "advanced": True,
                               "tooltip": "first_use (default): before the first render of a model, "
                               "residency and LoRA combination the gate ledger cannot vouch for, run one "
-                              "automatic identity gate (2-4 short proof renders, once per combination); "
+                              "automatic identity gate (2-4 short proof renders, once per combination; "
+                              "none on a graph with no LoRA stack whose model takes no slab residency); "
                               "a FAIL or ERROR turns the unproved paths off before the full render. "
                               "off: skip that proof and own the accuracy risk. off withholds no feature: "
                               "LoRA renders, lora_low_rss, slab_weights and the capacity rescue all run "

@@ -4,6 +4,27 @@
 
 ### Everyday use
 
+- A graph with no LoRA stack whose model takes no slab residency no longer
+  pays two proof renders before its first render. The first-use gate could
+  only record that there was nothing to compare there, and that verdict
+  grants nothing: the render runs on stock residency either way. To reach it,
+  the gate unloaded every rank, loaded the file and rendered twice at the
+  graph's own shape, on every fresh ledger: 585.8 s on a pair for a MiniMax
+  H3 still guide at 896x1152 and 362 frames (2026-11-13). Slab residency is
+  `auto` by default and engages only on Krea 2 and Flux 2, so 59 of the 75
+  shipped templates paid this on first use. Where the driver reads one
+  model, no LoRA stack, `comfy_managed` off, no FSDP layout, no live
+  capacity-rescue consent, and `slab_weights` off or `auto` on a family
+  outside those two, the gate now runs without its renders: the capacity
+  check, then every rank unloads and loads the file, and the Workers' swap
+  cycle on the empty stack decides, under the same all-rank attestation as
+  the full check. A no-material answer writes one ledger row, for the context
+  the render uses, marked as rendered nothing; any other answer runs the full
+  check. The Identity Gate node always renders. The 54 of those templates
+  whose notes promised the proof renders now say none run. Not yet run on
+  hardware
+  ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+
 - The decode relief now asks the Workers for the device memory they hold idle
   whenever it acts. It asked them only where freeing the driver's text
   encoders still left the decode priced above ComfyUI's free reading, and on
