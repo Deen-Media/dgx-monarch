@@ -2680,9 +2680,13 @@ read-only quote, and where one of them says its price refuses the load or
 offers the slab card, it runs the rescue above: unload, then trim. Under
 `auto` the fleet sets up at the first render, and before setup no quote can be
 asked; a status read can, and where it shows every rank on this box holding no
-model, the local price is the Worker's own and the driver unloads (no trim:
-the actors are not set up). A fleet stopped by a reset with none attached in
-its place left no process behind, so the next one holds nothing too. It
+model, the local price stands for the Worker's own and the driver unloads (no
+trim: the actors are not set up). A fleet stopped by a reset with none attached
+in its place left no process behind, so the next one holds nothing too. With no
+quote, though, the local price stands for the Worker's only where it is
+complete and no higher than a fresh Worker's: a price it could not read, or a
+vouched family under `auto` whose slab price fits (the Worker's family memo is
+persisted, so a fresh Worker may load it slab), frees nothing and reads nothing. It
 refuses nothing. Whatever the rescue freed, the render goes on to the ranks'
 agreement, which offers the card or refuses as before. A load is still to come
 under `auto` unless a finished render or a pipelined submission in this

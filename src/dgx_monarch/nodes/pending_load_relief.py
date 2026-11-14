@@ -24,8 +24,9 @@ input the Worker prices (an option it cannot map, or a stock load's LoRA stack
 with ``lora_low_rss`` off, whose classic bake the Worker prices from its own
 store); and then a Worker on
 this box would stop the load at its own price (``workers_stop``: the
-agreement's own read-only quote, or before distributed setup a status read
-showing the ranks here hold no model). Only then does it run the same rescue
+agreement's own read-only quote, or, where no quote can be asked, a status read
+showing the ranks here hold no model, taken only where the local price is
+complete and a floor of a fresh Worker's). Only then does it run the same rescue
 (unload the models ComfyUI holds, then the actors' trim where the fleet is set
 up) and let the render go on whatever the rescue freed.
 
@@ -134,18 +135,23 @@ def load_pending(model: Any, weights_loaded: bool | None) -> bool:
     return preset == "auto" or unet_name in _DEFERRED
 
 
-def workers_stop(mesh: Any, request: dict, unet_name: str, options: Any) -> bool:
+def workers_stop(mesh: Any, request: dict, unet_name: str, options: Any, *,
+                 sure: bool = True) -> bool:
     """Whether a Worker on this box would stop this load at its own price.
 
     Where the fleet completed its distributed setup: one read-only quote, the
     one the ranks' agreement reads, carrying the request's own model spec. A
     reuse, a swap the Worker's credit covers, a rank that cannot price and a
     fleet that cannot be asked all say no. Before setup (``auto`` sets up at
-    the first render) the quote cannot be asked (``mesh_setup.require_endpoint``):
-    then a rank that holds no model at all prices exactly as the local price
-    does, so the answer is whether every rank on this box holds none
-    (``_holds_nothing``). A stopped fleet with none attached in its place left
-    no process behind, so the next one attaches holding nothing.
+    the first render) the quote cannot be asked (``mesh_setup.require_endpoint``),
+    and a stopped fleet with none attached in its place has no one to ask. A
+    rank that holds no model then prices no lower than the local price only
+    where the caller says that price is ``sure``: complete, every input read,
+    and no higher than a fresh Worker's (a vouched family under ``auto`` at its
+    slab price, since the Worker's persisted family memo may vouch it). Only
+    then is the answer whether every rank on this box holds none
+    (``_holds_nothing``), or yes after a stop; otherwise it is no, with nothing
+    read.
 
     It fails open: a read that raises or times out answers no, so nothing is
     freed and the render goes on. Each read is logged at DEBUG with its
@@ -153,7 +159,7 @@ def workers_stop(mesh: Any, request: dict, unet_name: str, options: Any) -> bool
     """
     started = time.monotonic()
     try:
-        stop, read = _workers_stop(mesh, request, unet_name, options)
+        stop, read = _workers_stop(mesh, request, unet_name, options, sure)
     except Exception as exc:
         stop, read = False, f"a read that failed ({type(exc).__name__})"
     safe_call(log.debug, "pending load: %s for %s took %.0f ms and %s the load", read,
@@ -162,17 +168,22 @@ def workers_stop(mesh: Any, request: dict, unet_name: str, options: Any) -> bool
     return stop
 
 
-def _workers_stop(mesh: Any, request: dict, unet_name: str, options: Any) -> tuple[bool, str]:
+def _workers_stop(mesh: Any, request: dict, unet_name: str, options: Any,
+                  sure: bool = True) -> tuple[bool, str]:
     """``workers_stop``'s answer, and which read gave it."""
     from ..actor.capacity_quote import VERDICT_REFUSE, VERDICT_RESCUE
     from . import old_model_clear, recycle_drain
 
     handle = getattr(mesh, "handle", None)
     fleet = recycle_drain.attached_fleet(handle)
+    unsure = ", with no quote to ask and a local price that is not a sure floor"
     if fleet is None:
-        return (bool(getattr(handle, "teardown_complete", False)),
-                "no fleet attached since the last one stopped")
+        stopped = bool(getattr(handle, "teardown_complete", False))
+        return (stopped and sure,
+                "no fleet attached since the last one stopped" + ("" if sure else unsure))
     if getattr(fleet, "setup_key", None) is None:
+        if not sure:
+            return False, "before setup" + unsure
         return _holds_nothing(fleet), "the status read before setup"
     spec = request.get("model")
     spec = spec if isinstance(spec, dict) else {}
@@ -214,6 +225,14 @@ def _resolve_lora(name: str) -> str:
     if found is None:
         raise FileNotFoundError(name)
     return str(found)
+
+
+def _fits(fit: Any) -> bool:
+    """Whether a local price reads a fit (or makes no claim); an unread one does not."""
+    if fit is None:
+        return False
+    return (not fit.applies or fit.avail_bytes is None
+            or fit.avail_bytes >= fit.required_bytes)
 
 
 def _local_fit(path: str, options: dict, slab: bool, lora_stack: list | None,
@@ -259,7 +278,7 @@ def relieve(model: Any, request: dict, *, family: str, path: str,
 
 def _relieve(model: Any, request: dict, *, family: str, path: str,
              weights_loaded: bool | None) -> None:
-    from .. import driver_footprint, driver_unload, mesh_safety, residency_mode
+    from .. import capacity_fit, driver_footprint, driver_unload, mesh_safety, residency_mode
     from ..topology import declares_fsdp
     from . import loader_preflight
 
@@ -295,10 +314,16 @@ def _relieve(model: Any, request: dict, *, family: str, path: str,
                  or getattr(model, "loras", None) or ())
     # The Worker's policy: lora_low_rss is on unless set off (actor/comfy_bridge.py).
     low_rss = worker_args.get("lora_low_rss") is not False
+    # Under auto a fresh Worker may price this family slab after all: its family
+    # memo is persisted (actor/store_family.memoized_family). With no quote to
+    # ask, only the slab price is a sure floor of what it charges.
+    auto_vouched = (not slab and worker_args.get("slab_weights", "auto") == "auto" and low_rss
+                    and family in capacity_fit.SLAB_VOUCHED_FAMILIES)
+    stack = loras if low_rss and loras else None
+    reserve = driver_footprint.reserve_bytes(worker_args)
 
     def price() -> None:
-        fit = _local_fit(path, options, slab, loras if low_rss and loras else None,
-                         driver_footprint.reserve_bytes(worker_args))
+        fit = _local_fit(path, options, slab, stack, reserve)
         if fit is not None and not fit.applies:
             return  # the Worker's price makes no claim here either
         # What only the Workers can price is asked of them, never read as a fit:
@@ -315,7 +340,11 @@ def _relieve(model: Any, request: dict, *, family: str, path: str,
                    f"{fit.required_bytes / 2**30:.1f} GiB"
                    f"{' before its LoRA stack' if unread else ''} and this box has "
                    f"{(fit.avail_bytes or 0) / 2**30:.1f} GiB")
-        if not workers_stop(mesh, request, unet_name, options):
+        # Where no quote can be asked, only a complete local price that is a
+        # floor of a fresh Worker's may stand for it (workers_stop's ``sure``).
+        sure = not unread and short and not (auto_vouched and _fits(
+            _local_fit(path, options, True, stack, reserve)))
+        if not workers_stop(mesh, request, unet_name, options, sure=sure):
             safe_call(log.info if short else log.debug, "pending load: %s, but no Worker on "
                       "this box would stop it, so the driver frees nothing more", reading)
             return

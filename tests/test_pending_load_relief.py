@@ -329,7 +329,9 @@ def test_a_vouched_family_under_auto_is_priced_stock_and_asks_where_that_reads_s
     driver = Driver(monkeypatch, reading_gib=50.0, workers_admit=True)
     priced = _slab_price(monkeypatch, driver)
     _relieve(_model(Handle(driver)), checkpoint, family="krea2")
-    assert priced == [] and driver.steps == ["quote"] and driver.held
+    assert driver.steps == ["quote"] and driver.held
+    # Slab is read only as the floor a no-quote answer would need, not as the fit.
+    assert priced == [(checkpoint, None, False)]
 
 
 @pytest.mark.parametrize(("low_rss", "steps"), [
@@ -371,7 +373,7 @@ def test_a_stock_loads_classic_bake_asks_the_workers_however_the_local_price_rea
     same load asks nothing."""
     driver = Driver(monkeypatch, reading_gib=100.1)
     # The Worker's stock price with the classic bake: 84.2 GiB and about 6 more.
-    monkeypatch.setattr(pending_load_relief, "workers_stop", lambda *_args: (
+    monkeypatch.setattr(pending_load_relief, "workers_stop", lambda *_args, **_kwargs: (
         driver.steps.append("quote"), driver.reading < 90.0 * _GIB)[1])
     classic = {"lora_low_rss": False}
     request = {"kind": "custom", "model": {"unet_name": UNET, "loras": STACK}}
@@ -591,6 +593,68 @@ def test_a_stopped_fleet_with_none_in_its_place_holds_nothing(monkeypatch):
     assert pending_load_relief.workers_stop(
         types.SimpleNamespace(handle=unconfirmed), {"kind": "custom"}, UNET, {}) is False
     assert stopped.calls == unconfirmed.calls == []
+
+
+# --- where no quote can be asked -----------------------------------------------------
+
+
+def _no_quote(monkeypatch, driver, where):
+    """A handle with no quote to ask, read by the real ``workers_stop``: before
+    setup, whose status read shows every rank holding nothing, or a stopped
+    fleet with none attached in its place."""
+    monkeypatch.setattr(pending_load_relief, "workers_stop", _REAL_WORKERS_STOP)
+    handle = Handle(driver)
+    empty = [{"rank": rank, "models": _store()} for rank in range(2)]
+
+    def call_all(method, *_args, **_kwargs):
+        driver.steps.append(method)
+        return empty if method == "status" else []
+
+    handle.call_all = call_all  # type: ignore[method-assign]
+    if where == "stopped":
+        monkeypatch.setattr("dgx_monarch.mesh._MESHES", {})
+        handle.teardown_complete = True
+    return handle
+
+
+@pytest.mark.parametrize("where", ["before setup", "stopped"])
+@pytest.mark.parametrize("unread", ["classic bake", "unmappable option"])
+def test_with_no_quote_an_unread_price_frees_nothing_on_a_box_with_room(
+        monkeypatch, checkpoint, where, unread):
+    """With no quote, an empty rank prices as the local price only where that
+    price is complete. A price it could not read (a stock LoRA stack with
+    lora_low_rss off, or an option it cannot map) on a box with room must not
+    be read as short: nothing is read and nothing is freed."""
+    from dgx_monarch.actor import store_detect
+
+    driver = Driver(monkeypatch, reading_gib=110.0)
+    handle = _no_quote(monkeypatch, driver, where)
+    request = {"kind": "custom"}
+    worker_args: dict = {}
+    if unread == "classic bake":
+        request["model"] = {"unet_name": UNET, "loras": STACK}
+        worker_args["lora_low_rss"] = False
+    else:
+        monkeypatch.setattr(store_detect, "_to_comfy_model_options",
+                            lambda _options: (_ for _ in ()).throw(ValueError("unknown")))
+    _relieve(_model(handle, worker_args=worker_args), checkpoint, request=request)
+    assert driver.steps == [] and driver.held
+
+
+@pytest.mark.parametrize(("reading", "steps"), [
+    (50.0, []),                          # slab fits: a fresh Worker may admit on its memo
+    (40.0, ["status", "comfy-unload"]),  # slab short too: an empty rank stops it
+])
+def test_with_no_quote_a_vouched_family_under_auto_stands_on_its_slab_floor(
+        monkeypatch, checkpoint, reading, steps):
+    """krea2 under auto, before setup, every rank empty. The Worker's family memo
+    is persisted, so a fresh Worker may price slab and admit: with no quote, only
+    a short slab price stands for its answer. Stock reads short at both."""
+    driver = Driver(monkeypatch, reading_gib=reading)
+    _slab_price(monkeypatch, driver)
+    handle = _no_quote(monkeypatch, driver, "before setup")
+    _relieve(_model(handle), checkpoint, family="krea2")
+    assert driver.steps == steps
 
 
 # --- the rescue ----------------------------------------------------------------------
@@ -929,7 +993,7 @@ def _one_spark(monkeypatch, tmp_path, checkpoint, reading_gib):
     _handle, dispatched, driver, graph, model = _first_use(
         monkeypatch, tmp_path, checkpoint, widgets={"auto_gate": "off"}, world=1)
     driver.reading = reading_gib * _GIB
-    monkeypatch.setattr(pending_load_relief, "workers_stop", lambda *_args: (
+    monkeypatch.setattr(pending_load_relief, "workers_stop", lambda *_args, **_kwargs: (
         driver.steps.append("quote"),
         not capacity_fit.stock_load_fit(checkpoint, {}).fits)[1])
     dispatch = common.submit_render

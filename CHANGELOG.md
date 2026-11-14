@@ -71,7 +71,8 @@
   leaves the rescue for the next queue. Where that reads
   short and the Worker on the driver's box would stop the load (its read-only
   quote says so, or, before the fleet's setup, which `auto` makes at the
-  first render, its status shows it holds no model), the driver unloads the
+  first render, its status shows it holds no model and the driver's price is
+  complete and no higher than a fresh Worker's), the driver unloads the
   models ComfyUI holds and then asks the actors to release their caches; the
   Workers then decide the load as before. This adds no refusal and changes
   no refusal's words. It covers one Spark, a local mesh and a pair, and runs
