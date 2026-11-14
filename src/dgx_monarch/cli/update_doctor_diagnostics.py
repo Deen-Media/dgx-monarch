@@ -11,6 +11,7 @@ _CHECKS = {
     "torchmonarch": "monarch_pin",
     "torch CUDA": "torch_cuda",
     "torch version match": "torch_version_match",
+    "actor NCCL backend": "actor_nccl_backend",
     "NCCL_PROTO": "nccl_protocol",
     "NCCL library": "nccl_library",
     "fabric NCCL_PROTO": "fabric_nccl_protocol",
@@ -23,6 +24,7 @@ _CHECKS = {
     "fabric ifaces": "fabric_interfaces",
     "safetensors pread": "safetensors_pread",
     "python dev headers": "python_headers",
+    "INT8 GEMM here": "int8_gemm",
     "orphaned actor procs": "orphaned_actors",
 }
 _HOST_CHECKS = {
@@ -34,6 +36,7 @@ _HOST_CHECKS = {
     "swap": "worker_swap",
     "worker policy": "worker_policy",
     "worker release version": "worker_release_version",
+    "INT8 GEMM": "worker_int8_gemm",
 }
 _UNAVAILABLE = "doctor diagnostics: unavailable"
 

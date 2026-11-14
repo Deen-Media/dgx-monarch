@@ -117,8 +117,13 @@ dialog::backdrop {
   padding: 13px 8px 0;
   margin-top: 10px;
 }
-.preview-dialog pre {
-  max-height: 40vh;
+/* A frozen record runs to tens of kilobytes, so it stays closed and scrolls inside a short box. */
+.review-record > summary {
+  padding: 6px 0;
+}
+.review-record pre {
+  max-height: min(16rem, 35vh);
+  margin: 6px 0 0;
 }
 .review-status {
   margin: 0 0 14px;
@@ -131,6 +136,30 @@ dialog::backdrop {
 .review-status.ready {
   border-color: #395741;
   color: var(--status-ready);
+}
+.review-status.decide {
+  border-color: #4c4228;
+  color: #edcf8c;
+}
+.review-decisions {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid #4c4228;
+  border-radius: 7px;
+}
+.review-decisions legend {
+  padding: 0 4px;
+  font-size: 11px;
+  color: #edcf8c;
+}
+.review-decisions > p {
+  margin: 0 0 8px;
+  font-size: 11px;
+}
+.review-refusal {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
 }
 .review-summary {
   display: grid;

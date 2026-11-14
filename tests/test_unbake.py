@@ -311,6 +311,52 @@ def test_resident_over_cap_aborts(rig, monkeypatch):
         capture_unbake_record(model, KEYS, path)
 
 
+def test_capture_stops_copying_once_the_next_snapshot_would_pass_the_cap(rig, monkeypatch):
+    """The cap bounds the copies capture makes, not only the record it keeps:
+    the first snapshot fits, the second would pass the cap, so capture aborts
+    before it copies the second."""
+    model, path, _ = rig
+    with torch.no_grad():
+        for block in model.diffusion_model.blocks:
+            block.wq.weight.data[0, 0] += 1
+    per_key = 8 * 8 * torch.bfloat16.itemsize
+    monkeypatch.setattr(ub, "_RESIDENT_CAP_BYTES", per_key + per_key // 2)
+    copies: list[int] = []
+    clone = torch.Tensor.clone
+
+    def counting_clone(self, *args, **kwargs):
+        out = clone(self, *args, **kwargs)
+        if tuple(self.shape) == (8, 8):
+            copies.append(out.numel() * out.element_size())
+        return out
+
+    monkeypatch.setattr(torch.Tensor, "clone", counting_clone)
+    with pytest.raises(CaptureAborted, match="over the resident cap"):
+        capture_unbake_record(model, KEYS, path)
+    assert copies == [per_key]
+
+
+def test_capture_keeps_a_running_count_instead_of_resumming_every_snapshot(rig, monkeypatch):
+    """Each copy checks the cap against a running count. Re-summing the record
+    before every copy made capture quadratic in the keys it keeps; now the
+    record's byte sum is read once, for the summary line, however many copy."""
+    model, path, _ = rig
+    with torch.no_grad():
+        for block in model.diffusion_model.blocks:
+            block.wq.weight.data[0, 0] += 1
+    reads: list[int] = []
+    summed = ub.UnbakeRecord.resident_bytes.fget
+
+    def counting(record):
+        reads.append(1)
+        return summed(record)
+
+    monkeypatch.setattr(ub.UnbakeRecord, "resident_bytes", property(counting))
+    record = capture_unbake_record(model, KEYS, path)
+    assert record.resident_count == 2
+    assert len(reads) == 1
+
+
 def test_cast_mapped_key_restores_exactly(tmp_path):
     """Checkpoint stores F32, model runs bf16 (Krea2 keeps 174 tensors F32):
     the mapping records the loader's cast and restore replays it bit-exactly."""
@@ -352,6 +398,45 @@ def test_model_prefix_candidate(tmp_path):
         diffusion_model=SimpleNamespace(deep=SimpleNamespace(weight=t.clone())))
     record = capture_unbake_record(model, ["diffusion_model.deep.weight"], path)
     assert "diffusion_model.deep.weight" in record.mapped
+
+
+def test_a_key_comfy_renames_at_load_maps_to_the_files_tensor(tmp_path):
+    """FLUX stores a q/k norm weight as "<...>_norm.scale"; ComfyUI's model
+    config renames it to "<...>_norm.weight" at load, and a LoRA names that key.
+    The capture finds the file's tensor through the config's own rename
+    (actor/load_renames.py), so the key is file-backed like any other. On
+    2026-11-11 the 27 such keys of the FLUX.2 Klein distill LoRA stayed resident
+    behind a "did not verify against the checkpoint" warning."""
+    pristine = (1.0 + torch.randn(8)).to(torch.bfloat16)
+    path = str(tmp_path / "flux.safetensors")
+    write_safetensors(path, {"blocks.0.query_norm.scale": pristine})
+    block = nn.Module()
+    block.query_norm = nn.Module()
+    block.query_norm.weight = nn.Parameter(pristine.clone(), requires_grad=False)
+    model = nn.Module()
+    model.diffusion_model = nn.Module()
+    model.diffusion_model.blocks = nn.ModuleList([block])
+    model.model_config = SimpleNamespace(process_unet_state_dict=lambda sd: {
+        (k[:-len(".scale")] + ".weight" if k.endswith("_norm.scale") else k): v for k, v in sd.items()})
+    key = "diffusion_model.blocks.0.query_norm.weight"
+
+    record = capture_unbake_record(model, [key], path)
+    assert key in record.mapped and not record.resident
+    with torch.no_grad():
+        block.query_norm.weight.add_(1.0)  # the bake
+    restore_pristine(model, record)
+    assert torch.equal(block.query_norm.weight, pristine)
+
+    # The rename names a candidate and no more: a live weight whose bytes are
+    # not the file's stays resident, as any other key does.
+    with torch.no_grad():
+        block.query_norm.weight.add_(1.0)
+    assert key in capture_unbake_record(model, [key], path).resident
+    # Without the model's config the key has no file name, as before.
+    del model.model_config
+    with torch.no_grad():
+        block.query_norm.weight.copy_(pristine)
+    assert key in capture_unbake_record(model, [key], path).resident
 
 
 def test_stale_file_raises(rig):

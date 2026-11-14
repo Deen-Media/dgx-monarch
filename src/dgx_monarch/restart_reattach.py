@@ -43,7 +43,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
-from . import attach_trace, delivery_faults, worker_proc_id
+from . import attach_trace, box_names, delivery_faults, worker_proc_id
 from .delivery_faults import WorkerDeliveryError
 from .log import get_logger
 from .refusal import RefusalClass, refusal
@@ -90,7 +90,7 @@ class Moves:
 
     moved: tuple[str, ...] = ()
     kept: tuple[str, ...] = ()
-    unknown: tuple[str, ...] = ()  # "<name> (<address>: <reason>)"
+    unknown: tuple[str, ...] = ()  # "<plain name> (<reason>)", box_names.py
 
     @property
     def verdict(self) -> str:
@@ -117,12 +117,14 @@ def read_moves(config: Any) -> Moves:
     from .cli import lifecycle, listener_generation
 
     hosts = tuple(getattr(config, "hosts", None) or ())
+    words = box_names.address_words(config)
     try:
         readings = listener_generation.fleet(
             config, runner=lifecycle.run_on_host, timeout=mesh_attach.GENERATION_PROBE_S)
     except Exception as exc:
         return Moves(unknown=tuple(
-            f"{host.name} ({host.address}: the probe raised {type(exc).__name__})"
+            f"{words.get(str(host.address), box_names.UNLISTED)} (the probe raised "
+            f"{type(exc).__name__})"
             for host in hosts))
     moved: list[str] = []
     kept: list[str] = []
@@ -131,20 +133,20 @@ def read_moves(config: Any) -> Moves:
         fields = readings.get(host.address) or {}
         value = fields.get(worker_proc_id.FIELD)
         dialed = mesh_attach.last_dialed(host.address)
+        word = words.get(str(host.address), box_names.UNLISTED)
         if not worker_proc_id.is_value(value):
-            unknown.append(f"{host.name} ({host.address}: {worker_proc_id.problem(fields)[0]})")
+            unknown.append(f"{word} ({worker_proc_id.problem(fields)[0]})")
         elif dialed is None:
-            unknown.append(f"{host.name} ({host.address}: this driver holds no dialed id for it)")
+            unknown.append(f"{word} (this driver holds no dialed id for it)")
         else:
             (moved if value != dialed else kept).append(host.address)
     return Moves(tuple(moved), tuple(kept), tuple(unknown))
 
 
 def _labels(handle: Any, addresses: Any) -> str:
-    names = {str(getattr(host, "address", "")): str(getattr(host, "name", "") or "")
-             for host in getattr(getattr(handle, "config", None), "hosts", None) or ()}
-    return ", ".join(f"{names[address]} ({address})" if names.get(address) else address
-                     for address in addresses)
+    """The boxes at these Worker loop addresses in plain words (box_names.py)."""
+    words = box_names.address_words(getattr(handle, "config", None))
+    return box_names.join(words.get(str(address), box_names.UNLISTED) for address in addresses)
 
 
 def _refuse(text: str, cause: BaseException | None) -> NoReturn:
@@ -161,7 +163,7 @@ def refuse_undelivered(handle: Any, failed: list[str], waited_s: float,
         f"allocates, and Monarch reported a message to this fleet's Worker actor "
         f"on {_labels(handle, failed)} undeliverable, so the price wait ended "
         f"{waited_s:.1f} s into its {deadline_s:.0f} s deadline. That happens when "
-        "the Worker loop at that address restarted under this attached mesh "
+        "the Worker loop on that box restarted under this attached mesh "
         "(`dgxm restart`, a crash that systemd restarted, or a reboot): its actors "
         "are gone. Nothing was loaded on any rank. A sampler render that owns its "
         "session, and the UNET Loader's eager load, read every loop's id next and, "
@@ -183,15 +185,15 @@ def _refuse_moves(handle: Any, moves: Moves, refused: BaseException) -> NoReturn
             f"loop publishes its id; if it repeats, {_RESTART_TOGETHER}.", refused)
     if moves.verdict == PARTIAL:
         _refuse(
-            f"{head} the Worker loops at {_labels(handle, moves.moved)} serve new "
-            f"proc ids while {_labels(handle, moves.kept)} still serves the id this "
-            "mesh dialed. The loops that did not restart still hold this mesh's "
+            f"{head} the Worker loops on {_labels(handle, moves.moved)} serve new "
+            f"proc ids while those on {_labels(handle, moves.kept)} still serve the id "
+            "this mesh dialed. The loops that did not restart still hold this mesh's "
             "actors and their memory, so this render did not attach again and "
             f"nothing was loaded. To recover, {_RESTART_TOGETHER}: the next render "
             "attaches by the new ids.", refused)
     _refuse(
         f"{head} every Worker loop still serves the id this mesh dialed, so no "
-        "loop restarted: the actor at that address is gone or unreachable for "
+        "loop restarted: the actor on that box is gone or unreachable for "
         "another reason. Nothing was loaded. Click Reset attached mesh in the DGX "
         "Monarch panel, then queue again; if the reset cannot stop the fleet, run "
         "`dgxm restart`.", refused)
@@ -201,12 +203,13 @@ def _refuse_retire(handle: Any, moves: Moves, cause: BaseException | None) -> No
     from . import mesh_teardown
 
     evidence = getattr(handle, "_liveness_evidence", None)
-    fold = ",".join(f"{address}={answer}"
-                    for address, answer in getattr(evidence, "per_host", ()) or ())
+    words = box_names.address_words(getattr(handle, "config", None))
+    fold = ", ".join(f"{words.get(str(address), box_names.UNLISTED)}: {answer}"
+                     for address, answer in getattr(evidence, "per_host", ()) or ())
     seen = (f"the liveness check answered {evidence.answer} ({fold})"
             if evidence is not None else "its stop has no confirmed outcome")
     _refuse(
-        f"every Worker loop serves a new proc id ({_labels(handle, moves.moved)}), "
+        f"every Worker loop serves a new proc id (on {_labels(handle, moves.moved)}), "
         f"but this driver could not retire the stale mesh: {seen}, so no "
         "replacement was attached beside processes that may still hold memory. "
         f"Nothing was loaded. {mesh_teardown.block_cause_sentence(handle)} "
@@ -218,7 +221,7 @@ def _retire(handle: Any, moves: Moves, refused: BaseException) -> str:
     from . import mesh_helpers, mesh_liveness
     from .mesh_safety import PriorTeardownUnknownError
 
-    report = (f"worker restart: the Worker loops at {','.join(moves.moved)} serve "
+    report = (f"worker restart: the Worker loops on {_labels(handle, moves.moved)} serve "
               "new proc ids, and messages to this fleet's actors were undeliverable")
     # The publication a supervision failure makes: defunct, the death report a
     # liveness release requires, and the token that authorizes the stop below.

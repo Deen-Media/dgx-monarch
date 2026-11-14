@@ -26,6 +26,7 @@ from . import (
     mesh_teardown,
 )
 from .config import ClusterConfig, find_config_path, load_cluster_config, local_config
+from .config_schema import actor_worker_args
 from .log import get_logger
 from .mesh_factory import FleetHandoff, WorkerSpawnError, spawn_worker_fleet
 from .topology import Topology
@@ -122,8 +123,7 @@ class MeshHandle:
     deferred_supervision_error: BaseException | None = None
     # Unforgeable capability for supervision-only dead-proc reconciliation.
     _supervision_reconcile_token: object | None = field(default=None, repr=False)
-    _supervision_reconcile_thread: threading.Thread | None = field(
-        default=None, repr=False)
+    _supervision_reconcile_thread: threading.Thread | None = field(default=None, repr=False)
     _creation_phase: str = field(default="building", init=False, repr=False)
     _selection_claim: object | None = field(default=None, repr=False, compare=False)
     # RLock, not Lock: apply_worker_args is reachable from inside ensure_setup
@@ -133,7 +133,7 @@ class MeshHandle:
     lock: threading.RLock = field(default_factory=threading.RLock)
 
     def effective_worker_args(self, worker_args: dict | None = None) -> dict:
-        return {**dict(self.config.worker_args), **dict(worker_args or {})}
+        return {**actor_worker_args(self.config.worker_args), **dict(worker_args or {})}
 
     @staticmethod
     def _worker_args_key(worker_args: dict) -> tuple:

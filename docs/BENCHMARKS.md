@@ -16,6 +16,7 @@ comparison fields. Times below are seconds unless marked otherwise.
 | Krea2 RAW | 74.1 s | 48.1 s | BF16, 1536x1536, 8 steps, CFG 1, CFG++ sampler, Ulysses |
 | Ideogram4 | 36.0 s | 26.0 s | FP8-scaled dual-model, 1024x1024, 20 steps, CFG 7, Ulysses |
 | MiniMax H3 video/audio | 42:03 | 23:07 | INT8 ConvRot, 1280x720, 241 frames, 20 steps, CFG 1, exact-attention Ulysses; times are minutes:seconds |
+| MiniMax H3 image to video, 15 s | 83:31 | 50:30 | INT8 ConvRot with the Triton GEMM, 1344x768, 362 frames, 20 steps, CFG 1, exact attention; one GPU is one rank on the sibling with the driver on the head, a first render with the sample timeout raised; two GPUs is uly2, a second render that loaded the model again; times are minutes:seconds; head capped at 2100 MHz, sibling uncapped; [details](#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped) |
 | Qwen Image 2.1 | Not timed | Not timed | Matching native output recorded for 25-step T2I and editing; no comparable timing published here |
 | FLUX.3 Klein | 10.2 s | 6.7 s | Step-distilled BF16, 1024x1024, 16 steps, CFG 1, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
 | FLUX.3 Klein Base | 29.8 s | 20.0 s | BF16, 1024x1024, 25 steps, CFG 3.5, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
@@ -212,7 +213,7 @@ Method:
 
 | Cell | Checkpoint | Size | MP | Steps, CFG, sampler | One GPU | uly2 | cfg2 | cfg2 vs one GPU | cfg2 vs uly2 | Auto SAGE uly2 | cfg2 against one GPU |
 |---|---|--:|--:|---|--:|--:|--:|--:|--:|--:|---|
-| a09-anima-1024 | Anima BF16 | 1024 | 1.05 | 30, 4, `euler` | 19.6 | 12.7 | 10.0 | 1.96x | 1.27x | not run | bit-identical |
+| a09-anima-1024 | Anima BF16 | 1024 | 1.05 | 30, 4, `euler` | 19.6 | 12.7 | 10.0 | 1.96x | 1.27x | not run | bit-identical to the Worker's earlier one GPU; superseded 2026-11-10 ([Anima](VALIDATION.md#anima-text-branch-fix)) |
 | a08-boogu-fp8-1024 | Boogu FP8-scaled | 1024 | 1.05 | 25, 4, `euler` | 48.1 | 34.0 | 24.3 | 1.98x | 1.40x | not run | bit-identical |
 | b-chroma-bf16-1152 | Chroma1-HD BF16 | 1152 | 1.33 | 26, 3.5, `euler` | 77.3 | 51.6 | 39.3 | 1.97x | 1.31x | not run | bit-identical |
 | b-chroma-fp8mixed-1152 | Chroma1-HD FP8-mixed | 1152 | 1.33 | 26, 3.5, `euler` | 58.2 | 39.2 | 29.1 | 2.00x | 1.34x | 38.0 (1-step NRMS 0.078) | bit-identical |
@@ -266,7 +267,13 @@ Reading the table:
 - **New automatic rows.** Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15),
   Chroma BF16, FP8 and INT8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from
   1.2 to 1.77 MP (row 68), Boogu FP8 below 1.2 MP (row 79) and Anima BF16
-  below 1.2 MP (row 47). Each upper band ends at the largest size measured.
+  below 1.2 MP (row 47). Since 2026-11-07 rows 79 and 47, and Chroma's rows
+  20 and 19, take only a prompt pair whose text rows differ, as on the
+  templates
+  ([equal pairs](VALIDATION.md#campaign-k-equal-pairs)). Row 47 was withdrawn
+  on 2026-11-10: its one-GPU reference differed from stock ComfyUI
+  ([Anima](VALIDATION.md#anima-text-branch-fix)). Each upper band ends
+  at the largest size measured.
   The two lower bands follow rows 20 and 28 and rest on one size, 1.05 MP.
   Each grant covers only the precisions that read bit-identical and beat uly2
   at every measured size in its band, so Krea2 RAW INT8 keeps Ulysses (row
@@ -691,6 +698,239 @@ Each gap is one polling interval. The observed difference was at most about
 result. Software and artifact changes also affect timing, so these observations
 do not provide a universal clock adjustment for other tables.
 
+## INT8 GEMM: CUTLASS against the Triton kernel
+
+Warm legs of the 2026-10-28 and 29 kernel comparison (docs/VALIDATION.md, "INT8
+GEMM kernel comparison"): the same INT8 ConvRot cells on the same build, stock
+comfy-kitchen CUTLASS against kan11's Triton fused-dequant GEMM, every frame
+pixel-identical. Head capped at 2100 MHz; harness timing at 2 s granularity;
+cold legs left out because they include model loads whose disk state differed
+between the passes.
+
+| model (INT8 ConvRot file) | layout | CUTLASS warm s | Triton warm s | change |
+|---|---|---|---|---|
+| MiniMax H3 guide (124 frames) | single | 1125.0 | 884.7 | +21% |
+| MiniMax H3 guide (124 frames) | uly2 | 656.7 | 546.5 | +17% |
+| MiniMax H3 image to video (mp4) | single | 1053.0 | 838.7 | +20% |
+| MiniMax H3 image to video (mp4) | uly2 | 628.6 | 518.5 | +18% |
+| Wan Animate 2 | single | 314.3 | 264.3 | +16% |
+| Wan Animate 2 | uly2 | 266.3 | 200.2 | +25% |
+| LTX 2.5 distilled text to video | single | 108.1 | 98.1 | +9% |
+| LTX 2.5 distilled text to video | uly2 | 82.1 | 78.1 | +5% |
+| Ideogram4 | single | 44.1 | 38.0 | +14% |
+| Ideogram4 | uly2 | 26.0 | 26.0 | 0% |
+| Ideogram4 | cfg2 | 24.0 | 22.0 | +8% |
+| Chroma1-HD | single | 50.0 | 48.1 | +4% |
+| Chroma1-HD | uly2 | 32.1 | 32.0 | 0% |
+| Chroma1-HD | cfg2 | 26.0 | 24.0 | +8% |
+| Krea2 RAW | single | 94.1 | 94.1 | 0% |
+| Krea2 RAW | uly2 | 46.1 | 46.2 | 0% |
+| Krea2 RAW | cfg2 | 48.1 | 48.1 | 0% |
+| Qwen Image 2.1 | single | 18.0 | 18.0 | 0% |
+| Qwen Image 2.1 | uly2 | 12.2 | 12.0 | +2% |
+| FLUX.3 Klein | uly2 | 6.0 | 6.0 | 0% |
+| FLUX.3 Klein Base | uly2 | 16.0 | 16.0 | 0% |
+| MOSS-Image SFT | uly2 | 40.0 | 40.1 | 0% |
+| MOSS-Image Base | uly2 | 40.0 | 40.0 | 0% |
+| Kromoss | uly2 | 40.0 | 42.0 | -5% |
+| Mage Flow turbo | single | 2.0 | 2.0 | 0% |
+| Mage Flow turbo | uly2 | 2.0 | 2.0 | 0% |
+| Mage Flow edit turbo | single | 6.0 | 6.0 | 0% |
+| Mage Flow edit turbo | uly2 | 4.0 | 4.0 | 0% |
+
+GEMM throughput across M on the families' own linears, same box and cap
+(ratio is Triton over CUTLASS; TOPS at 29184 rows, the H3 per-rank count):
+
+| linear (N x K) | ratio at M 1024 | at 4096 | at 8192 | at 29184 | CUTLASS TOPS at 29184 | Triton TOPS at 29184 |
+|---|---|---|---|---|---|---|
+| krea2 mlp-in (12288 x 3072) | 1.02 | 1.08 | 1.73 | 1.90 | 91.3 | 173.4 |
+| krea2 attn-out (3072 x 3072) | 0.97 | 1.04 | 1.04 | 1.04 | 168.6 | 175.3 |
+| krea2 mlp-out (3072 x 12288) | 1.06 | 1.42 | 1.36 | 1.36 | 130.9 | 178.4 |
+| ideogram4 adaln (18432 x 512) | 1.18 | 1.01 | 0.96 | 1.50 | 52.4 | 78.4 |
+| ideogram4 qkv (9216 x 3072) | 0.92 | 1.03 | 1.68 | 2.13 | 80.6 | 172.2 |
+| ideogram4 attn-out (3072 x 3072) | 0.97 | 1.05 | 1.03 | 1.02 | 171.0 | 174.3 |
+| chroma linear1 (15360 x 3072) | 0.95 | 1.06 | 1.78 | 2.05 | 86.1 | 176.1 |
+| chroma attn-out (3072 x 3072) | 0.97 | 1.14 | 1.04 | 1.03 | 170.2 | 175.9 |
+| qwen2.1 mlp-in (12288 x 3072) | 1.13 | 1.03 | 1.74 | 1.92 | 90.7 | 173.8 |
+| qwen2.1 attn-out (3072 x 3072) | 0.97 | 1.13 | 1.04 | 1.05 | 169.7 | 177.8 |
+| h3 mlp-in (21504 x 5376) | 0.96 | 1.39 | 2.16 | 2.51 | 74.1 | 185.6 |
+| h3 attn-out (5376 x 5376) | 0.96 | 1.45 | 1.84 | 1.78 | 100.2 | 178.6 |
+| h3 mlp-out (5376 x 14336) | 1.20 | 1.71 | 1.69 | 1.68 | 103.5 | 173.8 |
+
+At 1024 rows, the only point listed below 4096, the kernel ran at 0.92 to
+1.20 times CUTLASS: 8 percent slower at worst, on the Ideogram4 qkv linear, and
+20 percent faster at best, on the H3 mlp-out linear. From 4096 rows up the
+kernel is at or above CUTLASS on every shape but one reading (Ideogram4
+adaln at 8192 rows, 0.96), and from 6144 rows up CUTLASS loses more than half
+its throughput on the wide linears while the Triton kernel holds about 175 TOPS.
+
+<a id="minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped"></a>
+<a id="a-15-second-clip-on-the-pair-2026-10-29"></a>
+
+## MiniMax H3: speed and memory by clip length
+
+The H3 image-to-video mp4 template ran at 5, 10 and 15 seconds, which are 124,
+243 and 362 frames at 24 fps, on the pair and on one Spark from 2026-10-29 to
+2026-10-30. Every cell is 1344x768, 20 steps and CFG 1. Attention is exact
+(TORCH_FLASH) unless Sol-Attn is named, and the DiT is the pruned INT8 ConvRot
+file with the Triton GEMM unless another file is named. Both Workers ran dev
+`e277238` and then `f129c62`; the change between tiers moved no timing. The
+head was capped at 2100 MHz and the sibling uncapped. A 1 Hz sampler on each
+host logged MemAvailable and each GPU process's memory, and an 8 GiB
+free-memory watchdog never fired.
+
+Pair rows run uly2. Sibling alone rows put one rank on the sibling through a
+one-host cluster file and keep the driver on the head. Head beside the driver
+rows run the local layout on the head. A wall is the whole prompt, timed by
+the harness at 10 s granularity, and sampling comes from the driver log. A
+first render pays the model load and the identity gate's first-use work; the
+second render of a session reuses what the first loaded.
+
+Times are minutes:seconds, the wall with sampling in parentheses:
+
+| Layout | Clip | Attention | DiT file | First render | Second render |
+|---|---|---|---|---|---|
+| Pair | 5 s | exact | pruned INT8 | 11:00 (7:31) | 8:50 (7:32) |
+| Pair | 5 s | Sol-Attn 0.7 | pruned INT8 | 6:50 (5:03) | 6:10 (4:58) |
+| Pair | 10 s | exact | pruned INT8 | 25:50 (22:46) | 24:50 (22:31) |
+| Pair | 10 s | Sol-Attn 0.7 | pruned INT8 | 16:20 (13:25) | 15:40 (13:17) |
+| Pair | 15 s | exact | pruned INT8 | 53:45 to 54:05 (45:10 to 45:19), on 2026-10-29 | 50:30 (45:23), model loaded again |
+| Pair | 15 s | Sol-Attn 0.7 | pruned INT8 | 29:50 (25:48) | 29:10 (25:41) |
+| Pair | 15 s | Sol-Attn 0.6 | pruned INT8 | 32:00 (27:58) | not run |
+| Pair | 15 s | Sol-Attn 1.0 | pruned INT8 | 28:40 (24:23) | not run |
+| Pair | 15 s | exact | pruned NVFP4 | 58:51 (45:36) | 48:10 (44:35) |
+| Pair | 15 s | exact | unpruned INT8, 31.7 GiB | 59:00 (45:19) | not run |
+| Sibling alone | 10 s | exact | pruned INT8 | 41:30 (38:34) | not run |
+| Sibling alone | 15 s | exact | pruned INT8 | 83:31 (79:33) | not run |
+| Sibling alone | 15 s | exact | pruned NVFP4 | 97:31 (77:47) | not run |
+| Head beside the driver | 10 s | exact | pruned INT8 | 52:10 (40:55) | not run |
+| Head beside the driver | 10 s | exact | pruned NVFP4 | 51:10 (40:04) | not run |
+| Head beside the driver | 15 s | exact | pruned INT8 | 105:51 (84:38), on 2026-10-31 at dev `4b71822` | not run |
+
+Memory in GiB: each actor's GPU memory peak, the driver's GPU memory peak, and
+the lowest MemAvailable each host read during the cell's renders:
+
+| Layout | Clip | Attention and file | Actor GPU peak | Driver GPU peak | Lowest free, head | Lowest free, sibling |
+|---|---|---|--:|--:|--:|--:|
+| Pair | 5 s | exact | 26.8 | 19.7 | 40.2 | 75.0 |
+| Pair | 5 s | Sol-Attn 0.7 | 26.0 | 19.7 | 50.7 | 79.6 |
+| Pair | 10 s | exact | 32.0 | 19.7 | 43.5 | 73.5 |
+| Pair | 10 s | Sol-Attn 0.7 | 30.5 | 19.8 | 44.3 | 74.9 |
+| Pair | 15 s | exact | 37.1 | 14.6 | 47.9 | 68.1 |
+| Pair | 15 s | Sol-Attn 0.7 | 34.9 | 19.8 | 39.1 | 70.3 |
+| Pair | 15 s | Sol-Attn 0.6 | 34.9 | 19.8 | 39.3 | 70.4 |
+| Pair | 15 s | Sol-Attn 1.0 | 34.9 | 19.8 | 38.9 | 70.3 |
+| Pair | 15 s | NVFP4 | 29.3 | 19.8 | 43.8 | 73.6 |
+| Pair | 15 s | unpruned INT8 | 49.4 | 14.6 | 35.5 | 55.1 |
+| Sibling alone | 10 s | exact | 31.1 | 19.8 | 85.3 | 78.2 |
+| Sibling alone | 15 s | exact | 36.5 | 19.8 | 83.6 | 75.3 |
+| Sibling alone | 15 s | NVFP4 | 32.8 | 19.8 | 83.3 | 77.3 |
+| Head beside the driver | 10 s | exact | 30.1 | 19.8 | 52.6 | not used |
+| Head beside the driver | 10 s | NVFP4 | 25.0 | 19.8 | 55.6 | not used |
+| Head beside the driver | 15 s | exact, on 2026-10-31 | 35.0 | 19.8 | 45.9 | not used |
+
+In the memory table the pair's 15 s exact row counts the two renders of
+2026-10-30, the first of which the sample timeout cut off. The measured
+render of 2026-10-29 read 47.5 GiB on the head and 68.2 GiB on the sibling at
+their lowest
+([VALIDATION](VALIDATION.md#the-15-second-render-measured-2026-10-29)).
+
+What the rows show, and what they do not:
+
+- **Timing and memory only.** No row compares output.
+  [VALIDATION](VALIDATION.md#evidence-minimax-h3-t2va-fl2va-ref2va-av) holds
+  the H3 comparisons, and [H3 capacity](VALIDATION.md#h3-capacity) sets these
+  memory readings against the activation charge.
+- **Sol-Attn renders a different video.** It runs approximate attention under
+  the class K waiver, so each Sol-Attn output carries the waiver stamp
+  ([TROUBLESHOOTING #55](TROUBLESHOOTING.md#55-rendering-under-an-accuracy-waiver-and-what-the-stamp-means))
+  and a different composition from the exact render. Its rows time that
+  video, not the exact one done faster. Sampling falls by a third at 5 s, 41
+  percent at 10 s and 43 percent at 15 s. At 15 s the three taus sit within
+  15 percent of each other, and 1.0 is fastest.
+- **The file does not set the pace.** The pruned NVFP4 DiT and the unpruned
+  31.7 GiB INT8 file sample within about 2 percent of the pruned INT8 file.
+  NVFP4 holds 7.8 GiB less per actor on the pair at 15 s and 3.7 GiB less on
+  one rank; the unpruned file holds 12.3 GiB more, its extra weights. A first
+  render's wall also carries the load and the gate's first-use work, which
+  differ by file: on the sibling alone NVFP4 spent 19:44 outside sampling and
+  INT8 3:58. Compare sampling.
+- **The pair's 15 s exact row spans two builds.** The suite's own first
+  render ran past the one-hour sample timeout while test suites loaded the
+  head's CPU, so the row's first-render figures come from three sessions on
+  2026-10-29, dev `50ad5e9`, before the activation refit. The suite session's
+  second render loaded the model again after that timeout, so its wall
+  includes a load. Its sampling matches the first renders.
+- **The pair now admits a second 15 s request in a session.** The Sol-Attn
+  0.7 and NVFP4 second renders reused the loaded weights, and the exact
+  second render, which loaded again, was admitted too. On 2026-10-29 the
+  activation charge before the refit refused that second request, 8.7 GiB
+  short.
+- **One Spark renders the 15 s clip.** With one rank on the sibling alone,
+  the sibling never fell below 75 GiB free. The one-hour sample timeout cut
+  off the first attempt, and the next one finished in 83:31 with
+  `DGXM_SAMPLE_TIMEOUT=14400`.
+- **The head beside the driver.** At 10 s it sampled about 6 percent slower
+  than the sibling alone. The head carries the clock cap and the driver, and
+  these rows do not separate the two. In the suite the loader refused the
+  15 s clip there before loading, 10.8 GiB short on the activation charge of
+  that day. After the 2026-10-31 refit, which admits it with 37.1 GiB to
+  spare, it rendered there on 2026-10-31 in 105:51 with both driver
+  preflights on, the head at 45.9 GiB free at its lowest. Its 84:38 of
+  sampling ran about 7 percent slower than the sibling alone's 79:25 the
+  same day
+  ([VALIDATION](VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30)).
+- **BF16 did not render.** Every attempt with the 61.7 GiB BF16 file
+  refused, on every layout, and slab rescue on the pair ended in a refusal
+  too ([VALIDATION](VALIDATION.md#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)).
+  On 2026-10-31, after the rescue change and the refit, the file rendered at
+  5 s as one rank on the head beside the driver with both driver preflights
+  on, through the capacity rescue: 22:30 (16:02), the head at 15.8 GiB free
+  at its lowest, during the driver's VAE decode
+  ([VALIDATION](VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30)).
+- **Lowest free memory in the 2026-10-29 and 30 suite.** Among its renders
+  that completed, the head's lowest reading was 35.5 GiB, with the unpruned
+  file beside the driver, and the sibling's 55.1 GiB. The suite's BF16 rescue
+  attempts went lower, to 15.1 GiB on the head and 36.2 GiB on the sibling.
+  The 2026-10-31 BF16 render above, which completed, went to 15.8 GiB on the
+  head during the driver's VAE decode.
+
+Reported, not reproduced: a single RTX 5090 renders the same 362-frame clip at
+1344x768 in 518.0 s, 8.6 minutes
+([ai-muninn.com, 2026-09-03](https://ai-muninn.com/en/blog/minimax-h3-rtx5090-config-stack)),
+with a different recipe: the pruned NVFP4 DiT and an NVFP4 text encoder, 14
+steps, the KJNodes head-group attention and chunked feed-forward patches
+(exact), torch 2.13.0+cu130 on Windows and SageAttention. The same post gives
+99.6 s for 124 frames, 2208 s at coarse chunking and an out-of-memory failure
+without the chunking patches. Per step that is about 37 s against the pair's
+136 s at 362 frames, and 7 s against the pair's 26 s and one Spark's 42 s at
+124 frames: the 5090 holds about 3.6 times the pair's pace at both lengths.
+
+## Worker-assisted VAE decode
+
+On 2026-10-31 the pair rendered the 5 s exact cell from the tables above twice
+at one seed, on dev `746a229` with the head capped at 2100 MHz: once with
+`[worker_args] worker_vae_decode` absent, so the driver decoded the video
+alone, and once with `"auto"`, so the decode split over the head and the
+sibling. Each render was the first of a new driver session, and the driver ran
+with `--use-sage-attention`, `--bf16-vae` and `--bf16-text-enc`. Times are
+seconds:
+
+| Cell | Video decode, driver alone | Video decode, split | Prompt wall, absent / auto | Sampling, absent / auto |
+|---|--:|--:|--:|--:|
+| Pair, 5 s, 124 frames, exact, pruned INT8 | 77 | 39.3 | 570.1 / 530.1 | 452.5 / 452.3 |
+
+Two readings give the driver-alone decode. Execution fell by 37.7 s at equal
+sampling, and 37.7 s added to the split's 39.3 s makes 77 s. On the head's
+1 Hz memory trace, the driver's GPU memory rose as the decode began and fell
+77 s later in the first render and 39 s later in the second. The split ran 3
+of its 7 temporal chunks on the head and 4 on the sibling, and its time
+includes the sibling building its decode VAE. The frames and the audio track
+decoded from the two saved mp4 files matched. A lossless rerun on 2026-11-01
+saved the decoder's 124 frames as PNG, split the decode in 39.9 s and matched
+every frame pixel for pixel
+([VALIDATION](VALIDATION.md#worker-assisted-vae-decode)).
+
 <a id="the-fsdp-round-capacity-path-not-speed"></a>
 
 ## FSDP memory capacity and render time
@@ -748,13 +988,15 @@ Reading the row:
 
 ## Community results: four Sparks (reported, not reproduced here)
 
-A four-Spark owner, barichardson on the NVIDIA Developer Forums, ran DGX
-Monarch v1.3.0 on four Sparks and published a full four-node matrix on
-2026-10-27 in
-[post 17 of the DGX Monarch thread](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/17).
-This section records their report with credit. This project's maintainer has
-two Sparks and has not reproduced any of it, so no number here is a verified
-result and no `auto` row rests on it. Their clocks, fabric and software differ
+Community four-Spark users reported running DGX Monarch v1.3.0 on four
+Sparks and published a full four-node matrix on 2026-10-27. This section
+records their report. This project's maintainer has two Sparks and has not
+reproduced any of it, so no number here is a verified result. No `auto` row
+rested on it until 1.5.0, when MiniMax H3 at world 4 began to fold into
+`uly4` on it and a later report
+([below](#a-second-report-minimax-h3-on-uly4-issue-188)), as an exception to the
+[rules for reports from larger clusters](../CONTRIBUTING.md#reports-from-clusters-larger-than-ours).
+Their clocks, fabric and software differ
 from the tables above, so compare within this section.
 
 Setup, as reported:
@@ -906,13 +1148,46 @@ Their one-GPU and pair runs reran the published campaign cells:
 | Outliers | All faster than published: Wan SCAIL2 `auto` by 31 percent, Ernie cfg2 by 28 percent and LTX 2.5 FLF2V `auto` by 19 percent |
 
 They name their uncapped clocks as the likely reason for the faster times;
-the published campaign capped the first Spark at 2100 MHz. The maintainer's
-reply in the thread
-([post 19](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/19))
-named the uncapped clocks and some slightly outdated published cells as
-possible causes. The published record of the LTX 2.5 two-stage cell also
+the published campaign capped the first Spark at 2100 MHz. The maintainer
+replied that the uncapped clocks and some slightly outdated published cells
+were possible causes. The published record of the LTX 2.5 two-stage cell also
 read over the floor, at one-step NRMS 0.106
 ([campaign video table](#campaign-render-times-video-2026-09-27-to-2026-09-28-head-capped)).
+
+### A second report: MiniMax H3 on uly4 (issue #188)
+
+Community four-Spark users reported in issue #188 on 2026-11-13 that `auto`
+on v1.3.0 resolved a MiniMax H3 render at world 4 to
+uly2+ring2, where the H3 adapter refused the padded packed sequence at the
+first sampler call, after setup and the load. The same graph forced to `uly4`
+rendered. This project has not reproduced it.
+
+| Item | Value, as reported |
+|---|---|
+| Reported | 2026-11-13, in issue #188 |
+| Sparks and fabric | Four, one QSFP port each into a switch, both RoCE functions in `NCCL_IB_HCA`, about 196 Gb/s per node, SM clock capped at 2000 MHz |
+| Software | DGX Monarch v1.3.0, torchmonarch 0.7.0, xfuser 0.7.0, ComfyUI 0.44.0, comfy-kitchen 0.2.40, torch 2.14.0+cu130, NCCL 2.30.7 |
+| Graph | MiniMax H3 ref2v, INT8 ConvRot, one reference image and a pinned first frame, 896x1152, 243 frames, 8 steps, CFG 1, Sage attention, two LoRAs |
+| Pad need | One divisibility pad row at sequence-parallel degree 4, by the refusal's own count |
+
+From that count this project infers one pad row at degree 2 as well: a total
+of 3 modulo 4 is odd. The report itself does not say so.
+
+| | Pair, uly2 | Four Sparks, uly4 |
+|---|--:|--:|
+| Sampling, rank 0 log | 376 s | 195 s cold, 193 s warm |
+| Prompt wall time | 535 s cold, 430 s warm | 326 s cold, 262 s warm |
+| Latent | the same sha256 on both | four ranks bit-identical |
+
+So on their software `uly4` was bit-identical to their pair's `uly2` on one
+graph that needed one pad row, which both layouts dropped on the Ulysses path.
+It does not show `uly4` against one GPU, two or three pad rows, other
+lengths, quantizations or kernels, or FSDP. With the three MiniMax H3 rows of
+the first report, which rendered on `uly4` with one-step checks within the
+0.10 limit of one GPU (closeness, not an identical latent) while `auto` and
+ring4 refused, it is the evidence for the one `auto` choice that rests on
+this section: since 1.5.0, MiniMax H3 at world 4 and batch 1 folds into `uly4`
+([DESIGN.md](DESIGN.md#54-topology--auto-mode)).
 
 ## Updating results
 

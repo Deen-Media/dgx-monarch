@@ -43,17 +43,23 @@ An `auto` cell resolves its topology through the runtime's own
 CFG and batch size. Like the runtime, it counts a CFG++ sampler as keeping the
 unconditional pass only on the DGX Monarch sampler nodes that tag the latent
 (`UNCOND_TAGGING_SAMPLERS` in `matrix.py`). An auto cell of a family with a
-cfg row (Krea2, Chroma, LongCat, Qwen-Image, Boogu and Anima, and checkpoints
-that share their families) can therefore resolve to cfg2. It then carries
+cfg row (Krea2, Chroma, LongCat, Qwen-Image and Boogu, and checkpoints that
+share their families) can therefore resolve to cfg2. It then carries
 the label and `cfg_path` the cfg2 preset would carry, and its warm leg meets
 the "cfg2 did not split" check in section 5.
 
 A checkpoint the loader's header gate refuses reads `refuse:P`, basis
-`guard`, ahead of every topology rule. The gate refuses two shapes: the
+`guard`, ahead of every topology rule. The gate refuses the
 Z-Image L2P layout
-([TROUBLESHOOTING #91](TROUBLESHOOTING.md#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down))
-and a checkpoint whose weight scales ComfyUI would drop
-([#120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
+([TROUBLESHOOTING #91](TROUBLESHOOTING.md#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down)),
+a checkpoint whose weight scales ComfyUI would drop
+([#120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)),
+a MiniMax-H3-Image file without its sigma grid or with quantization metadata
+ComfyUI cannot parse
+([#149](TROUBLESHOOTING.md#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid)
+and [#150](TROUBLESHOOTING.md#150-a-minimax-h3-image-file-refuses-because-its-quantization-metadata-cannot-be-read))
+and a header it could not read
+([#152](TROUBLESHOOTING.md#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
 The matrix calls the gate itself (`upstream_gate.refusal_for`), so the label
 and the runtime read the same header rule.
 
@@ -97,13 +103,14 @@ from the header of every checkpoint the graph loads and hands them to the
 runtime's own pin guard (`attention_pins.py`), so these labels read basis
 `header`:
 
-- **A pinned checkpoint refuses class K wherever its pins run.** Without
-  sequence parallelism ComfyUI runs each pinned kernel as it does on one GPU,
-  and both kernels it binds are approximate. On single, cfg2, dp2, cfg2+fsdp
-  and dp2+fsdp the cell reads `refuse:K` under the guard
-  `sol_attn:checkpoint_pin`. The single cell is included because a render on
-  one GPU checks whether the host can run the kernel, and the pair's GPUs run
-  both.
+- **A pinned checkpoint refuses class K wherever its pins run off one GPU.**
+  Without sequence parallelism ComfyUI runs each pinned kernel as it does on
+  one GPU, and both kernels it binds are approximate. On cfg2 and dp2, and on
+  cfg2+fsdp and dp2+fsdp for an fp8 or int8 file, the cell reads `refuse:K`
+  under the guard `sol_attn:checkpoint_pin`. The one-GPU single cell renders:
+  in a world of one GPU the checkpoint's own pins run as stock runs them and
+  ask nothing. The matrix reads checkpoint pins only and drops a LoRA arm that
+  pins, so no single cell meets a LoRA's pin.
 - **The label is waivable only where a grant lets the cell render.** A grant
   clears this guard and no other, so the cell carries the waiver only where
   the same cell without the pins renders. Three cases carry none. On an FSDP
@@ -118,18 +125,21 @@ runtime's own pin guard (`attention_pins.py`), so these labels read basis
   granted leg would meet the pin guard, and that cell carries no waiver
   either. The runner dismisses the card such a refusal raises, so a
   later cell's grant still finds exactly one card of its kind.
-- **Two refusals come before the pin guard.** A bf16 or fp16 file that pins
-  never reaches the guard under FSDP: its uint8 config tensors leave the
-  launch precision unproven, so the FSDP launch check refuses it class P on
-  every `+fsdp` preset. A sol kernel without sequence parallelism refuses
-  class P when the worker configures it, before any load.
+- **A pinned bf16 or fp16 file under FSDP asks nothing at the pin guard.** The
+  FSDP launch check does not count its uint8 config tensors, so it proves the
+  file's precision, and the shard build clears the pins; the record says
+  dropped (FSDP shard build). The matrix keys that build on the launch kind;
+  the runtime keys it on whether ComfyUI loads the weights as quantized
+  tensors, which no listed pinning file tells apart. A sol kernel without sequence parallelism refuses class P when the
+  worker configures it, before any load.
 - **A pinned checkpoint under sequence parallelism is measured, not
   scored.** uly2 and ring2 drop the pins and run the Init widget's kernel,
-  while their single-GPU reference refuses, or under the waiver runs the
-  pinned kernel. Every cell scored against that reference is scored at the
-  `waived-nrms` bar: the difference is recorded and no floor applies. On
-  uly2 and ring2 that is an exact cell against an approximate reference; on
-  cfg2 and dp2 both sides run the pinned kernel under the waiver. An auto
+  while their single-GPU reference runs the pinned kernel, as stock does, with
+  no card (`known_wrong_reference`). Every cell scored against that reference
+  is scored at the `waived-nrms` bar: the difference is recorded and no floor
+  applies. On uly2 and ring2 that is an exact cell against an approximate
+  reference; cfg2 and dp2 run the pinned kernel under the waiver, the
+  reference without one. An auto
   cell takes the label and bar of the preset it resolves to. uly2+fsdp and
   ring2+fsdp drop the pins too and keep the `bit-identical` bar against
   their resident twin. Exactness on uly2 and ring2 needs a reference rendered
@@ -286,6 +296,39 @@ A staged graph takes the probe count in every stage, so a two-stage probe is
 two sampler steps. The step-nrms floor is a one-step number. Re-run the null
 A/B (section 4) on a staged template before reading a staged probe against it.
 
+**Dynamic combos.** A ComfyUI dynamic combo reveals child widgets by the key
+it holds, and the frontend stores them right after the combo. The converter
+reads them under their dotted names, `resize_type.megapixels` for one, from
+the driver's `/object_info` or, offline, from `DYNAMIC_WIDGETS` in
+`tools/gen_templates.py`. That table lists only the keys committed graphs
+hold, so a graph that picks another key stops the offline conversion and
+names the key: add its children to the table. A child that shares a name with
+a top-level input of its node stays with that input, which keeps Save Video's
+`codec` where every committed MP4 graph has always had it. A combo fed by a
+link selects no option, as in ComfyUI, so none of its children is set; the
+frontend still stores the children its own value reveals, and the converter
+passes over their slots so the widgets after them read their own.
+`tests/test_sweep_convert_dynamic.py` holds every node that reveals no child
+to the reading it had before.
+
+**A graph whose prompt a language model writes.** The three MiniMax-H3-Image
+graphs wire a prompt expander behind an If/Else switch and ship the switch
+off, so each sends the request as written and its cells are identity rows
+like any other. A cell whose graph has the switch on is not an identity row.
+The text its DiT renders is then written at queue time by a language model on
+the driver, sampled at Generate Text's own seed. Such a cell's number carries
+whatever the expander wrote on each arm, so record its caption and score
+identity on the graph as shipped. The two shipped templates carry this
+project's expander texts in their task prompt and system prompt boxes, so
+their switch is all that stands between a cell and a sampled language model:
+leave it false in any graph a sweep scores. The testing graph
+`dgx-monarch-test-minimax-h3-image-grid` keeps both boxes empty as well as
+its switch off, so with its switch on the loader refuses class P before the
+DiT loads
+([TROUBLESHOOTING #153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)),
+and the matrix, which labels a cell from its family, file and preset, does
+not predict that refusal.
+
 ## 4. Running a scoped sweep
 
 **The config.** Copy `benchmark/sweep/sweep.example.toml` somewhere rig-local
@@ -347,7 +390,11 @@ setsid nohup python -m benchmark.sweep.run --config <cfg> --session cluster \
 Stop the driver only after the run exits. The runner recycles the fleet at
 session close, because a driver killed with a live mesh strands its actors and
 the next session's first render waits in a collective until the stall guard
-evicts it.
+evicts it. If that recycle does not answer `ok`, the session summary's
+`close_recycle` names what it answered and the runner exits non-zero. A
+response the runner cannot read, a body that is not JSON or one cut short,
+is such an answer. The fleet may still be up, so restart the driver and the
+worker loops before the next session. The cell records stand.
 
 **What re-runs.** A resume keeps a record when all of these match: the ComfyUI
 commit, the digest of the runtime source under `src/dgx_monarch`, torch, NCCL
@@ -394,8 +441,9 @@ A typed refusal the matrix predicted is a PASS. No PASS survives a finding
 filed against the same cell: the findings list is the defect list. Two kinds
 of line report something unproven rather than a fault, and those read CHECK: a
 reference compare the harness could not make (no reference record, a reference
-rendered on another build, missing or unequal frames, an audio envelope it
-could not correlate) and a warm leg the execution cache may have served. An
+rendered on another build, missing or unequal frames, audio files that differ
+in count, sample rate, channel count or length, an audio envelope it could not
+correlate) and a warm leg the execution cache may have served. An
 FSDP cell whose resident twin does not render keeps its verdict, with the
 reason in its notes and no fidelity number.
 
@@ -447,6 +495,18 @@ moves on that `use` row alone. A cell labelled anything but `render` or
 `refuse:K`, or lacking that evidence, keeps its ordinary bar; a
 `bit-identical` bar never moves.
 
+**Audio.** An audio cell's compare reads every audio file each leg saved, in
+the order comfy numbered them, and keeps each file's sample rate, channel count
+and length in the fidelity block. Two legs that differ in any of these, or in
+file count, are not compared, and the line reads CHECK: a shorter exact prefix,
+the same samples at another rate or a mix of channels would each correlate
+perfectly against audio that differs. On equal shapes the compare correlates
+the loudness envelope of each channel of each file on its own, keeps the
+lowest, and says whether every sample matched. Envelope correlation is not a
+calibrated fidelity threshold, and none is defined for audio yet, so the
+number never changes a verdict. It rides in the record's notes and in the
+report's audio section, apart from the pixel bars above.
+
 **What a step-nrms number contains above cfg 1.0.** The probe scores the latent
 one step produces, which is the cfg combination of the cond legs, so the number
 carries each leg at its cfg weight. At cfg 1.0 the combination is the positive
@@ -490,9 +550,10 @@ it over a record that already resumes.
 row per cell with the cell id, template, preset, kernel, label, observed
 answer, per-leg outcomes, cold and warm times, the fidelity numbers, the frame count and
 the verdict, then the findings, then the floorless measurements under their own
-headings. The report is redacted; generation fails if a private value remains.
-The per-cell records are not redacted: they carry the driver address and are
-keyed by host name, so they stay rig-local.
+headings, then each audio comparison under its own heading. The report is
+redacted; generation fails if a private value remains. The per-cell records
+are not redacted: they carry the driver address and are keyed by host name,
+so they stay rig-local.
 
 **Comparing two output directories.** Cell ids are a digest of the cell's own
 definition, so the same cell has the same id in every output directory, and
@@ -509,12 +570,16 @@ seconds, so a runner that kept going would file findings against cells that
 never ran. Two signals say the rig, not the cell, is the answer: a recycle the
 driver refuses twice in a row (`http 503`), and a driver message naming a fleet
 no attach can replace or a transport a partial bring-up poisoned. These end the
-session too: a clear graph or leg whose queue will not drain, a prompt
-submission whose response is lost, a recycle still rate limited after three
-tries, and a transport probe that cannot open the session's mesh. The runner
-writes the reason into `run_summary_<session>.json` beside the records and
-exits non-zero, so the shell around it can restart the driver and the worker
-loops. Restarting both is what clears it.
+session too: a clear graph or leg, the waived retry among them, whose queue
+will not drain, a cache reset before a waived, resident or probe leg that does
+not leave the queue idle, a prompt submission whose response is lost, a
+recycle still rate limited after three tries, and a transport probe that
+cannot open the session's mesh. The runner writes the reason into `run_summary_<session>.json`
+beside the records and exits non-zero, so the shell around it can restart the
+driver and the worker loops. Restarting both is what clears it. A
+session-close recycle that does not answer `ok` also exits non-zero, with its
+answer in the summary's `close_recycle` beside the cell counts; no cell record
+changes.
 
 ## 6. Rig rules
 
@@ -540,7 +605,9 @@ says so.
 
 **Fleet recycles.** The runner replaces the fleet at session open, on every
 template change, whenever the comfy-managed lever moves, after any cell that
-did not render, and at session close. A cold leg that crashes with a type in
+did not render, and at session close. The summary keeps the session-open
+answer under `open_recycle`; one that is not `ok` goes on to the transport
+probe, which decides whether the session runs. A cold leg that crashes with a type in
 `RECOVERABLE_CRASHES` gets one retry on a new fleet. If that recycle does not
 answer `ok`, the runner skips the retry and records why. Only a rendered cell
 can leave its fleet standing: a refusal that arrives after the weights are on

@@ -15,19 +15,45 @@ def compile_dit_allowed(base_patcher) -> bool:
     return not bool(getattr(base_patcher, "_dgxm_slab_resident", False))
 
 
+def _block_lists(diffusion_model) -> str:
+    """Name the model's own block lists for the eager warning; empty if unreadable.
+
+    A child counts when it is a ModuleList, or a ModuleDict of ModuleLists
+    (FLUX.3's content_mode_blocks), whose name ends in blocks, layers or
+    refiner. It only words a log line and decides nothing.
+    """
+    try:
+        from torch import nn
+
+        names = [
+            name for name, child in diffusion_model.named_children()
+            if name.endswith(("blocks", "layers", "refiner")) and (
+                isinstance(child, nn.ModuleList) or (
+                    isinstance(child, nn.ModuleDict) and len(child) > 0
+                    and all(isinstance(value, nn.ModuleList) for value in child.values())))
+        ]
+    except Exception:
+        return ""
+    return ", ".join(names)
+
+
 def maybe_compile_dit(diffusion_model) -> None:
     """Compile DiT blocks with the GB10-safe max-autotune configuration."""
     if os.environ.get("DGXM_COMPILE_DIT") != "1":
         return
     blocks = getattr(diffusion_model, "blocks", None)
     if blocks is None:
-        # Only a ``blocks`` list compiles. Krea2 uses it; families with other
-        # block-list names remain eager.
+        # Only a ``blocks`` list compiles; compile_policy.py lists the families
+        # that have one. The others stay eager: compiling their lists would put
+        # unmeasured code under the compiler, such as the dual-stream adapters'
+        # per-call text projection swap inside each block under pure Ulysses.
+        lists = _block_lists(diffusion_model)
         safe_call(
             log.warning,
-            "compile_dit: %s has no blocks list, so nothing was compiled; running eager "
+            "compile_dit: %s has no blocks list%s, so nothing was compiled; running eager "
             "(docs/TROUBLESHOOTING.md #14)",
             type(diffusion_model).__name__,
+            f" (its blocks are in {lists})" if lists else "",
         )
         return
     os.environ.setdefault("TRITON_PTXAS_PATH", "/usr/local/cuda/bin/ptxas")
@@ -48,6 +74,9 @@ def maybe_compile_dit(diffusion_model) -> None:
     def _swiglu_out_of_place(self, value):
         return self.down(functional.silu(self.gate(value)) * self.up(value))
 
+    # This guard covers wrapping only. block.compile() is lazy: dynamo traces
+    # each block on its first forward, inside the render, where a trace failure
+    # raises instead of falling back to eager.
     try:
         compiled = 0
         for block in blocks:

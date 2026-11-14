@@ -15,9 +15,10 @@ import socket
 from dataclasses import replace
 from typing import Any
 
+from .. import capacity_classic_bake
 from ..log import get_logger
 from ..transfer_utils import failure_summary
-from . import capacity_quote, store_fsdp
+from . import actor_footprint, capacity_quote, in_place_fallback, resident_ledger, store_fsdp
 from .capacity_quote import RankPrice
 
 log = get_logger(__name__)
@@ -75,6 +76,164 @@ def _spec_bytes(spec: Any) -> int:
         return os.path.getsize(path) if os.path.exists(path) else 0
     except Exception:
         return 0
+
+
+def _cast_bytes(spec: Any) -> int:
+    """The least a load cast to another weight dtype holds, or nothing.
+
+    A credit and a clear's gain must not exceed what the drop returns, so this
+    takes the cast estimate's lower bound (``cast_resident_bytes(lower=True)``):
+    every float tensor at the smaller of its stored and cast size, which never
+    exceeds the file or the copy, and nothing where the header cannot be read.
+    The price's own figure is the upper bound, which ComfyUI can undercut: it
+    builds fp32 auxiliaries at the cast's width on a copying load.
+    """
+    from .. import capacity_fit
+    from .model_store import _to_comfy_model_options, resolve_model_path
+
+    try:
+        dtype = _to_comfy_model_options(spec.get("options")).get("dtype")
+        if dtype is None:
+            return _spec_bytes(spec)
+        path = str(resolve_model_path("diffusion_models", str(spec["unet_name"])))
+        return capacity_fit.cast_resident_bytes(path, dtype, lower=True)
+    except Exception:
+        return 0
+
+
+def _resident_bytes(worker: Any, stored: Any, name: str) -> int:
+    """What a clear returns for this resident's GPU copy.
+
+    An FSDP shard holds one rank's share, so it is credited nothing and the
+    card counts the arena alone, which only ever withholds a card. A load cast
+    to another weight dtype holds the copy its cast built (``_cast_bytes``);
+    any other stock resident holds about its file.
+    """
+    if getattr(stored, "fsdp_checkpoint_pin", None) is not None:
+        return 0
+    try:
+        if store_fsdp.active(worker):
+            return 0
+        base_key: tuple[Any, ...] = tuple(getattr(stored, "base_key", ()) or ())
+        options = dict(base_key[1]) if len(base_key) > 1 else {}
+    except Exception:
+        return 0
+    spec = {"unet_name": name, "options": options}
+    return _cast_bytes(spec) if options.get("weight_dtype") else _spec_bytes(spec)
+
+
+def _backup_bytes(worker: Any, store: Any, stored: Any, slot: str) -> int:
+    """The host bytes of ComfyUI's backup of this slot's held stack, or 0.
+
+    ComfyUI keeps each weight a stack patches, as it was, on the host
+    (``ModelPatcher.patch_weight_to_device``); every clone of the base shares that
+    dict, and an in-place change puts those weights back from it and places again
+    only what it lacks: 3.8 MiB of the BF16 Wan-Animate 2 base for its distill LoRA,
+    whose 1261 patched weights the headers put at 32,785,804,928 bytes, the file.
+    The sum of the tensors' bytes is a lower bound of the memory they hold. It is
+    reported only for the state that was measured: classic mode, a stock, uncast,
+    full-precision resident placed whole on the GPU, the other slot empty (the
+    gates ``store_bake.copies_off_the_gpu`` reads), and a held stack whose every
+    patched weight the backup holds. Anything else, or a read that races the
+    store, is 0, which credits nothing.
+    """
+    from . import store_bake, store_residency
+    from .store_detect import _is_quantized_kind
+
+    try:
+        base, active = stored.base_patcher, stored.active_patcher
+        backup, patches, model = base.backup, active.patches, base.model
+        other = store.uncond if slot == capacity_quote.SLOT_COND else store.current
+        base_key = tuple(stored.base_key or ())
+        if (store.lora_low_rss or other is not None or not stored.lora_sig
+                or not isinstance(backup, dict) or not isinstance(patches, dict) or not patches
+                or store_residency.describe(stored)["residency"] != "stock"
+                or getattr(base, "_dgxm_fsdp", False) or store_fsdp.active(worker)
+                or (len(base_key) > 1 and dict(base_key[1]).get("weight_dtype"))
+                or _is_quantized_kind(stored.quant_kind) or getattr(model, "model_lowvram", False)
+                or store_bake._placed_bytes(model) <= 0 or not set(patches) <= set(backup)):
+            return 0
+        total = 0
+        for entry in list(backup.values()):
+            weight: Any = getattr(entry, "weight", None)
+            if getattr(getattr(weight, "device", None), "type", None) == "cpu":
+                total += int(weight.numel()) * int(weight.element_size())
+        return total
+    except Exception:
+        return 0
+
+
+def _resident_facts(worker: Any, store: Any, keys: dict[str, str | None] | None = None,
+                    backups: dict[str, int] | None = None,
+                    partials: dict[str, bool] | None = None,
+                    drops: dict[str, bool] | None = None) -> dict[str, Any]:
+    """What a clear of this actor would return, for the old-model card.
+
+    The name comes from the store itself, never parsed back out of the
+    snapshot's repr; the size is the GPU copy the resident holds
+    (``_resident_bytes``). The driver decides which residency's bytes a clear
+    returns (``old_model.rank_gain``), so every held slot is reported. ``keys``
+    receives the request key of each resident read, in the snapshot's form, so
+    the caller can bind these figures to the snapshot it prices against;
+    ``backups`` receives each slot's ``_backup_bytes`` in the same pass, and
+    ``partials`` whether ComfyUI holds the slot's model only partly, and
+    ``drops`` whether the slot's drop would copy nothing to the host
+    (``resident_ledger.drop_copies_nothing``, the store's own answer).
+    """
+    names: dict[str, str | None] = {}
+    sizes: dict[str, int] = {}
+    for slot, stored in ((capacity_quote.SLOT_COND, getattr(store, "current", None)),
+                         (capacity_quote.SLOT_UNCOND, getattr(store, "uncond", None))):
+        if keys is not None:
+            key = getattr(stored, "request_key", None)
+            keys[slot] = None if key is None else repr(key)
+        base_key = getattr(stored, "base_key", ()) or ()
+        name = str(base_key[0]) if base_key else None
+        names[slot] = name
+        sizes[slot] = _resident_bytes(worker, stored, name) if name else 0
+        if backups is not None:
+            backups[slot] = _backup_bytes(worker, store, stored, slot) if name else 0
+        if partials is not None:
+            # ComfyUI's detach copies a partly loaded model's device weights to the
+            # host before it frees them (resident_ledger.pin_to_load_device pins only
+            # a whole load), so that drop dips the box first: no swap credit for it,
+            # unless the store's drop detaches it in place (``drops``).
+            model = getattr(getattr(stored, "base_patcher", None), "model", None)
+            partials[slot] = bool(name) and bool(getattr(model, "model_lowvram", False))
+        if drops is not None:
+            stays = getattr(store, "current" if slot == capacity_quote.SLOT_UNCOND else "uncond", None)
+            drops[slot] = bool(name) and resident_ledger.drop_copies_nothing(stored, stays)
+    return {"resident_names": names, "resident_bytes": sizes,
+            "arena_bytes": actor_footprint.arena_bytes()}
+
+
+def _with_resident_bytes(snapshot: Any, facts: dict[str, Any], keys: dict[str, str | None],
+                         backups: dict[str, int] | None = None,
+                         partials: dict[str, bool] | None = None,
+                         drops: dict[str, bool] | None = None) -> dict:
+    """The store snapshot with each held slot's GPU copy and name beside its residency.
+
+    The swap credit reads them (``capacity_lora_bake.credit_stock_swap``): a load
+    that replaces a stock resident is priced after the store drops that copy,
+    and its refusal names the model dropped. The LoRA credit also reads the
+    slot's backup (``capacity_lora_bake.held_backup_credit``). This endpoint runs
+    outside the GPU lock, so a slot can change between the facts and the
+    snapshot. A slot whose snapshot entry does not carry the request key the
+    facts were read from gets none of them, and its facts are cleared too: no
+    credit and no old-model figures for a model the snapshot does not describe.
+    """
+    out = dict(snapshot) if isinstance(snapshot, dict) else {}
+    for slot in capacity_quote.SLOTS:
+        entry = out.get(slot)
+        if not isinstance(entry, dict) or keys.get(slot) is None or keys[slot] != entry.get("request_key"):
+            facts["resident_bytes"][slot], facts["resident_names"][slot] = 0, None
+            continue
+        out[slot] = {**entry, "resident_bytes": int(facts["resident_bytes"].get(slot) or 0),
+                     "resident_name": facts["resident_names"].get(slot) or "",
+                     "backup_bytes": int((backups or {}).get(slot) or 0),
+                     "resident_partial": bool((partials or {}).get(slot)),
+                     "drop_copy_free": bool((drops or {}).get(slot))}
+    return out
 
 
 def _request_key(snapshot: dict, slot: str, spec: dict, unet_name: str) -> str:
@@ -135,9 +294,60 @@ def _my_slots(worker: Any, specs: list[dict]) -> list[dict]:
     return [spec for spec in specs if _slot_of(spec) == mine] or specs
 
 
+def _held_base(stored: Any, spec: dict, unet_name: str, path: str) -> tuple[bool, bool]:
+    """``(held, set_aside)``: the slot holds this spec's base for a swap, or ``ensure`` will set it aside.
+
+    The comparison is the store's own (``in_place_fallback.holds_base``): the
+    key is built as ``ModelStore.ensure`` builds it, from the file name and
+    the loader options together, so a request that changes an option on a
+    held file is read as the fresh load the store makes of it. Options the
+    store's builder cannot take give no key, which reads as not held. A slot
+    with this key whose checkpoint file has changed on disk is one ``ensure``
+    sets aside: no swap is made on it and no in-place bake is offered.
+    """
+    from .model_store import ModelStore
+
+    try:
+        base_key = ModelStore.make_keys(unet_name, spec.get("options"), None, "")[0]
+    except Exception:
+        return False, False
+    if not in_place_fallback.holds_base(stored, base_key):
+        return False, False
+    moved = in_place_fallback.checkpoint_moved(stored, path)
+    return not moved, moved
+
+
+def _classic_bake_probe(worker: Any, store: Any, stored: Any, spec: dict, held: bool,
+                        in_place_bake_proven: bool | str, *, other_held: bool = False, covered: bool = False,
+                        charged: int = 0) -> Any:
+    """The stock probe for a stack that bakes ComfyUI's classic way in a fresh load; else ``None``.
+
+    It charges the bake's own term and, with the render's permission, prices
+    the in-place bake where the classic price misses, by the arguments
+    ``ModelStore.ensure`` decides by (``in_place_fallback.route``), so the
+    fleet is not refused a stack change the store would bake in place, nor
+    admitted to one it would refuse. A change the classic hot swap makes in
+    place (``in_place_fallback.loads_fresh`` says no: the other slot holds a
+    model, or the held stack's backup covers the new one) keeps today's
+    price. ``held`` is ``_held_base``'s answer, the store's own comparison
+    of the base. ``in_place_bake_proven`` is the render's permission, or the
+    clause that says why the store will not offer the in-place bake.
+    ``charged`` is what this request's earlier slots take: the bake is chosen
+    against the budget left for this slot.
+    """
+    loras = spec.get("loras")
+    if not loras or store_fsdp.active(worker):
+        return None
+    args = in_place_fallback.route(store, stored, held, in_place_bake_proven)
+    if args is None or not in_place_fallback.loads_fresh(stored, held, other_held, covered):
+        return None
+    return capacity_classic_bake.probe(loras, capacity_quote.default_resolve_lora_path, charged=charged, **args)
+
+
 def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
            pinned_staging: bool | None, rescue_consent: dict | None,
-           charged: int) -> RankPrice:
+           charged: int, in_place_bake_proven: bool = False,
+           other_loads_first: bool = False) -> RankPrice:
     from .model_store import (
         SLAB_VOUCHED_FAMILIES,
         _slab_capable_path,
@@ -157,6 +367,24 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
     base_key = getattr(stored, "base_key", ()) or ()
     retry = bool(getattr(stored, "slab_auto_retry", False)
                  and base_key and base_key[0] == unet_name)
+    request_key = _request_key(snapshot, slot, spec, unet_name)
+    other = store.current if slot == capacity_quote.SLOT_UNCOND else store.uncond
+    # ComfyUI's backup on this slot holds every weight the new stack patches: the classic hot
+    # swap then re-applies in place, and no fresh load, so no classic bake, follows. Read from
+    # the slot's own backup, the fact the store acts on, so it holds for every format. Asked
+    # only of a slot that holds this base as the store compares it (name and options).
+    held, set_aside = _held_base(stored, spec, unet_name, path)
+    covered = held and in_place_fallback.backup_covers(
+        stored, path, spec.get("loras"), capacity_quote.default_resolve_lora_path)
+    # A slot ``ensure`` sets aside is never offered the in-place bake, whatever permission came.
+    bake_allowed = in_place_bake_proven and (in_place_fallback.SET_ASIDE if set_aside else True)
+    # ``ensure`` reuses only on the files the slot loaded: a LoRA of this stack that changed on
+    # disk since makes the same request a stack change on the held base, not a reuse.
+    stack_moved = held and in_place_fallback.stack_files_moved(
+        stored, spec.get("loras"), capacity_quote.default_resolve_lora_path)
+    # The store decides this slot's hot swap when its load runs: by then an earlier slot of the
+    # same request (the conditional model of a pair) holds its model, whatever it holds now.
+    other_held = other is not None or other_loads_first
     return capacity_quote.price(
         path=path,
         unet_name=unet_name,
@@ -175,11 +403,16 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         family_override=getattr(store, "family_override", None),
         node_options=options,
         lora_stack=spec.get("loras"),
+        fit_probe=_classic_bake_probe(worker, store, stored, spec, held, bake_allowed,
+                                      other_held=other_held, covered=covered, charged=charged),
         slot=slot,
         pinned_staging=pinned_staging,
-        store_snapshot=snapshot,
+        # A slot ``ensure`` will not reuse for this request (baked in place with no permission, or
+        # a file changed on disk) is priced as a load.
+        store_snapshot=in_place_fallback.quote_snapshot(
+            store, stored, snapshot, slot, in_place_bake_proven, set_aside, stack_moved, covered),
         budget_bytes_already_charged=charged,
-        request_key=_request_key(snapshot, slot, spec, unet_name),
+        request_key=request_key,
     )
 
 
@@ -219,21 +452,31 @@ def quote(worker: Any, request: Any) -> dict:
                     for spec in specs or [{}])
         return envelope
     consent = request.get("rescue_consent") if isinstance(request, dict) else None
-    snapshot = store.snapshot()
+    keys: dict[str, str | None] = {}
+    backups: dict[str, int] = {}
+    partials: dict[str, bool] = {}
+    drops: dict[str, bool] = {}
+    facts = _resident_facts(worker, store, keys, backups, partials, drops)
+    snapshot = _with_resident_bytes(store.snapshot(), facts, keys, backups, partials, drops)
     pinned = _pinned_staging()
     charged = 0
+    earlier: set[str] = set()  # the slots this request loads before the one being priced
     for spec in _my_slots(worker, specs):
         try:
             row = _price(worker, store, spec, snapshot=snapshot,
                          pinned_staging=pinned,
                          rescue_consent=consent if isinstance(consent, dict) else None,
-                         charged=charged)
+                         charged=charged,
+                         in_place_bake_proven=(isinstance(request, dict)
+                                               and request.get("in_place_bake_proven") is True),
+                         other_loads_first=bool(earlier - {_slot_of(spec)}))
         except Exception as exc:
             # No claim either way, which admits: a probe this rank could not run
             # is not evidence that the load does not fit here.
             log.warning("capacity quote made no claim for slot %s (%s)",
                         _slot_of(spec), failure_summary(exc))
             row = _no_claim(_slot_of(spec), failure_summary(exc))
+        earlier.add(_slot_of(spec))
         charged += _charged_bytes(row, spec)
         # ``shmem_bytes`` is the ladder's own read and is not touched here: one
         # /proc/meminfo parser, and one read per row.
@@ -243,5 +486,6 @@ def quote(worker: Any, request: Any) -> dict:
                 snapshot.get("retained_failed_load_slabs", 0) or 0),
             failed_load_cleanup_pending=bool(
                 snapshot.get("failed_load_cleanup_pending", False)),
+            **facts,
         ).to_row())
     return envelope

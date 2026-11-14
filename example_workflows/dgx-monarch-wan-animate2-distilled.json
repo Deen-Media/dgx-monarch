@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Wan-Animate 2 Distilled motion transfer: one 81-frame chunk. The visible ImageScale (Upscale Image) node defaults to portrait 480x832 for portrait reference and driving media; for a landscape composition, use 832x480 with landscape media. Use your own raw driving video and reference image. The generation and pose prompts, the reference CLIP Vision encode and the CLIP Vision encode of the driving clip's first frame all stay in the native conditioning. The native node resizes frames spatially, and the export takes the loaded driving video's FPS. For another 81-frame chunk, copy the Animate2 tail, then wire the decoded frames to continue_motion and the prior video_frame_offset output to the next node. This is the pinned ComfyUI Distilled blueprint recipe: ten LCM steps, no LightX2V LoRA, and the serialized DGX SD3 shift 5.0. cfg=1.0 fills the sampler input and adds no CFG guidance. Cache stays off because native MODEL cache and patch nodes cannot take DGXM_MODEL. See docs/MODELS.md for the measured Base and Distilled BF16 recipes and the accelerated INT8+LightX2V six-step recipe. Unlisted settings, broader continuation, cache, first-use LoRA, slab/low-RSS, FSDP, ring, and background replacement remain without a passing reference comparison. This template ships slab and low-RSS off. With slab, low-RSS and FSDP disabled, there is nothing for the first-use gate to prove, so the first render skips it. Expects wan_animate_2_distill_bf16.safetensors in models/diffusion_models, umt5_xxl_fp8_e4m3fn_scaled.safetensors in models/text_encoders, clip_vision_h.safetensors in models/clip_vision, and Wan2_1_VAE_bf16.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+    "Wan-Animate 2 Distilled motion transfer: one 81-frame chunk. The visible ImageScale (Upscale Image) node defaults to portrait 480x832 for portrait reference and driving media; for a landscape composition, use 832x480 with landscape media. Use your own raw driving video and reference image. The generation and pose prompts, the reference CLIP Vision encode and the CLIP Vision encode of the driving clip's first frame all stay in the native conditioning. The native node resizes frames spatially, and the export takes the loaded driving video's FPS. For another 81-frame chunk, copy the Animate2 tail, then wire the decoded frames to continue_motion and the prior video_frame_offset output to the next node. This is the pinned ComfyUI Distilled blueprint recipe: ten LCM steps, no LightX2V LoRA, and the serialized DGX SD3 shift 5.0. cfg=1.0 fills the sampler input and adds no CFG guidance. Cache stays off because native MODEL cache and patch nodes cannot take DGXM_MODEL. See docs/MODELS.md for the measured Base and Distilled BF16 recipes and the accelerated INT8+LightX2V six-step recipe. Unlisted settings, broader continuation, cache, first-use LoRA, slab/low-RSS, FSDP, ring, and background replacement remain without a passing reference comparison. This template ships slab and low-RSS off. With slab, low-RSS and FSDP disabled, there is nothing for the first-use gate to prove, so the first render skips it. Expects wan_animate_2_distill_bf16.safetensors in models/diffusion_models, umt5_xxl_fp8_e4m3fn_scaled.safetensors in models/text_encoders, clip_vision_h.safetensors in models/clip_vision, and Wan2_1_VAE_bf16.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it. The pack places a demo file drawn from code under each name this graph loads that ComfyUI's input folder lacks; one you delete comes back at the next start unless DGXM_DEMO_INPUTS=off is set. Load your own for real work."
    ],
    "title": "DGX Monarch | Wan-Animate 2 Distilled motion transfer"
   },
@@ -1050,7 +1050,7 @@
    ],
    "size": [
     315,
-    206
+    228
    ],
    "flags": {},
    "order": 22,
@@ -1089,8 +1089,16 @@
     "",
     8,
     "sRGB",
+    "auto",
     "none"
-   ]
+   ],
+   "dgxm_widgets": {
+    "fps": "",
+    "bit_depth": 8,
+    "color_space": "sRGB",
+    "chroma_subsampling": "auto",
+    "codec": "none"
+   }
   },
   {
    "id": 24,

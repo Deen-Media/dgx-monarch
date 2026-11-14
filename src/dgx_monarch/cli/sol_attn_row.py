@@ -206,6 +206,9 @@ def doctor_row(per_host: Mapping[str, Mapping[str, str]]) -> tuple[str, str, str
     detail += (" Cache inspection covers only the account-home default candidate and parent access; "
                "the running Worker/actor environment and existing cache entries are unobserved. "
                "TRITON_CACHE_DIR from a login shell is filtered before actor launch. "
+               "Once compile_dit compiles a DiT in an actor, torch inductor points that actor's "
+               "later Triton kernels at its own cache, ~/.cache/dgx-monarch/inductor unless the "
+               "Worker environment sets TORCHINDUCTOR_CACHE_DIR. "
                "Imports, GPU compilation and kernel execution remain untested. "
                f"For dependency and idle recycle guidance: {ENTRY}.")
     return status, name, detail

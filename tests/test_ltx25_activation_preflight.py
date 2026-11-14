@@ -295,16 +295,22 @@ def test_the_shipped_row_sum_sits_just_above_the_measured_slope():
             "wants a margin between 1.0 and 1.35")
 
 
-def test_the_h3_slope_is_not_transferable_to_ltx():
-    """Never borrow the H3 slope: h3_calibration's block factor at LTX's width
-    is 2.7x the measured LTX cost and would refuse shapes this rig completes,
-    so the LTX block factor is fitted."""
+def test_the_h3_slope_is_fitted_apart_from_ltx():
+    """Never borrow one family's slope for the other. When LTX was fitted,
+    h3_calibration's block factor at LTX's width was 2.7x the measured LTX
+    cost and would have refused shapes this rig completes. The 2026-10-31 H3
+    refit moved it below LTX's own figure on H3's evidence alone, 12 x 4096 x
+    2 = 98,304 B against the 290,797 B measured, a third of it, so neither
+    stands in for the other: each family keeps the block factor its own series
+    fixed."""
     from dgx_monarch import h3_calibration
 
+    if h3_calibration._H3_BLOCK_FACTOR == ltx25_calibration._LTX_BLOCK_FACTOR:
+        pytest.fail("the two families share a block factor; recheck that each "
+                    "was fitted to its own series before trusting either")
     if (h3_calibration.H3_SHARDED_ROW_BYTES
-            <= 2 * ltx25_calibration.LTX_SHARDED_VIDEO_ROW_BYTES):
-        pytest.fail("the H3 row is no longer far above LTX's; recheck which "
-                    "constant moved before trusting either")
+            == ltx25_calibration.LTX_SHARDED_VIDEO_ROW_BYTES):
+        pytest.fail("the H3 row equals LTX's; one was copied from the other")
 
 
 def test_the_rank_floor_is_the_measured_worker_footprint():
@@ -764,11 +770,12 @@ def test_the_activation_term_is_family_scoped(artifacts):
 
 
 def test_the_h3_charge_still_routes_through_the_shared_dispatcher():
-    """One call site, two families: the LTX row must not displace H3's."""
+    """One call site, three families: the LTX row must not displace H3's or MiniMax-H3-Image's."""
     from dgx_monarch import h3_activation
 
     registered = loader_graph._ACTIVATION_FAMILIES
-    if set(registered) != {h3_activation.H3_FAMILY, ltx25_activation.LTX_FAMILY}:
+    if set(registered) != {h3_activation.H3_FAMILY, h3_activation.H3_IMAGE_FAMILY,
+                           ltx25_activation.LTX_FAMILY}:
         pytest.fail(f"unexpected activation registry: {sorted(registered)}")
 
 

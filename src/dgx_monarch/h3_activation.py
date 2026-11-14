@@ -1,10 +1,11 @@
 """MiniMax H3 packed-sequence activation preflight.
 
 H3 pricing counts video, audio, text, keyframe, and reference rows. Sequence
-rows divide by sequence-parallel degree; replicated staging and nonresident DiT
-weights do not. The total is compared with ``MemAvailable`` minus reserve before
-worker RPC. The guard is non-waivable and refuses only on a complete over-budget
-estimate; all incomplete estimates fail open.
+rows divide by sequence-parallel degree; a fixed per-rank floor, replicated
+staging and nonresident DiT weights do not. The total is compared with
+``MemAvailable`` minus reserve before worker RPC. The guard is non-waivable
+and refuses only on a complete over-budget estimate; all incomplete estimates
+fail open.
 
 Calibration lives in ``h3_calibration``. Keep this leaf free of runtime-heavy
 dependencies.
@@ -15,8 +16,9 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from . import driver_footprint, h3_rows, mesh_safety
+from . import driver_footprint, h3_rows, mesh_safety, swap_credit
 from .h3_calibration import (
+    H3_ACTIVATION_FLOOR_BYTES,
     H3_GUIDE_CLIP_ENCODE_BYTES,
     H3_GUIDE_CLIP_FLOOR_FRAMES,
     H3_GUIDE_CLIP_LENGTH_BYTES,
@@ -34,6 +36,10 @@ log = get_logger(__name__)
 _GIB = 2 ** 30
 
 H3_FAMILY = "minimax_h3"
+# MiniMax-H3-Image runs H3's blocks on its packed rows (text, references and one
+# target frame, no audio), so it is priced with H3's calibration until its own
+# activation leg runs (docs/VALIDATION.md).
+H3_IMAGE_FAMILY = "minimax_h3_image"
 
 # The generic activation guard's id. H3 counts its rows in h3_rows and prices them here.
 _GUARD = "activation_footprint_preflight"
@@ -63,6 +69,16 @@ def _gib(value: float) -> str:
     return f"{value / _GIB:.1f}"
 
 
+def activation_bytes_for(rows: h3_rows.H3Rows, sp_degree: int) -> int:
+    """Per-rank bytes: the fixed floor, the sharded rows, the replicated rows.
+
+    The render site and the loader site both price through this one formula.
+    """
+    return (H3_ACTIVATION_FLOOR_BYTES
+            + rows.per_rank(sp_degree) * H3_SHARDED_ROW_BYTES
+            + rows.total * H3_REPLICATED_ROW_BYTES)
+
+
 @dataclass(frozen=True, slots=True)
 class H3ActivationEstimate:
     """Reproducible per-rank bytes and budget with explicit residency credit."""
@@ -79,6 +95,11 @@ class H3ActivationEstimate:
         return self.rows.per_rank(self.sp_degree)
 
     @property
+    def floor_bytes(self) -> int:
+        """The fixed per-rank charge that no length or topology changes."""
+        return H3_ACTIVATION_FLOOR_BYTES
+
+    @property
     def sharded_bytes(self) -> int:
         return self.rows_per_rank * H3_SHARDED_ROW_BYTES
 
@@ -88,7 +109,7 @@ class H3ActivationEstimate:
 
     @property
     def activation_bytes(self) -> int:
-        return self.sharded_bytes + self.replicated_bytes
+        return self.floor_bytes + self.sharded_bytes + self.replicated_bytes
 
     @property
     def projected(self) -> int:
@@ -111,10 +132,11 @@ class H3ActivationEstimate:
     def max_total_rows(self) -> int:
         """Largest reachable packed-row total that clears this budget.
 
-        The closed form omits ``ceil(total/N)``. A bounded walk of at most
-        ``N - 1`` rows corrects the floor-division result.
+        The fixed floor comes off the budget first, since no row count
+        removes it. The closed form omits ``ceil(total/N)``. A bounded walk of
+        at most ``N - 1`` rows corrects the floor-division result.
         """
-        budget = self.usable - self.weight_bytes
+        budget = self.usable - self.weight_bytes - self.floor_bytes
         if budget <= 0:
             return 0
         degree = max(self.sp_degree, 1)
@@ -154,13 +176,14 @@ def h3_refusal(estimate: H3ActivationEstimate, unet_name: str) -> str:
     floor = driver_footprint.reserve_bytes(None)
     reserve_source = ("your uma_reserve_gb" if estimate.reserve > floor
                       else "the driver floor")
-    # When the weight charge, the reserve, or both leave no room for one row,
-    # no length fits: offer no zero-row target.
+    # When the weight charge, the fixed floor and the reserve leave no room for
+    # one row, no length fits: offer no zero-row target.
     fit = (f"a packed total of at most {estimate.max_total_rows} rows at this "
            f"topology, against this render's {rows.total}"
            if estimate.max_total_rows else
            "no packed total of any length at this topology (the DiT weight "
-           "charge and the reserve leave no room for one row)")
+           "charge, the fixed activation floor and the reserve leave no room "
+           "for one row)")
     return (
         f"minimax_h3 activation preflight: {_gib(estimate.projected)} GiB "
         f"needed per rank, {_gib(estimate.usable)} GiB usable "
@@ -171,6 +194,7 @@ def h3_refusal(estimate: H3ActivationEstimate, unet_name: str) -> str:
         f"activations {_gib(estimate.activation_bytes)} GiB for {rows.total} "
         f"rows [{rows.stream_summary()}] at {estimate.rows_per_rank} rows/rank "
         f"over {estimate.sp_degree} rank(s), of which "
+        f"{_gib(estimate.floor_bytes)} GiB is the fixed activation floor, "
         f"{_gib(estimate.sharded_bytes)} GiB shards with the sequence and "
         f"{_gib(estimate.replicated_bytes)} GiB is replicated staging that no "
         f"topology divides. What would fit here: {fit}, or "
@@ -247,7 +271,7 @@ def preflight_h3_activation_for_request(
     ``latent_shape`` is the grid the workers will sample.
     """
     try:
-        if family != H3_FAMILY:
+        if family not in (H3_FAMILY, H3_IMAGE_FAMILY):
             return                       # no-op for every other family
         if preflight_disabled() or not mesh_safety.gpu_is_integrated():
             return
@@ -257,7 +281,8 @@ def preflight_h3_activation_for_request(
         avail = mesh_safety.mem_available_bytes()
         if avail is None:
             return  # off Linux: host MemAvailable bounds nothing here
-        rows = h3_rows.rows_from_request(request, latent, video_shape=latent_shape)
+        rows = h3_rows.rows_from_request(request, latent, video_shape=latent_shape,
+                                         image=family == H3_IMAGE_FAMILY)
         if not rows.resolved:
             return
         # Explicit presets load weights before this reading.
@@ -279,7 +304,8 @@ def preflight_h3_activation_for_request(
         estimate = estimate_h3_activation(
             rows=rows, sp_degree=sp_degree_for_mesh(mesh),
             weight_bytes=weight_bytes, weights_resident=resident,
-            mem_available=avail, reserve=driver_footprint.reserve_bytes(args),
+            mem_available=avail if resident else swap_credit.credited(avail),
+            reserve=driver_footprint.reserve_bytes(args),
             weights_note=note)
         h3_activation_preflight(estimate, unet_name=unet_name)
     except mesh_safety.StockLoadCapacityError:
@@ -348,6 +374,10 @@ def graph_guide_encode_bytes(prompt: Any, guides: tuple[tuple[Any, int], ...],
     Guides encode one at a time and keep only a frame grid each, so the peak is
     one encode however many are chained. This is a driver-host transient: no
     topology divides it, unlike the packed rows the same guide later adds.
+    ComfyUI with DynamicVRAM returns it after Add Guide's node, so where every
+    guide's file proves it a still and the graph proves it encodes before every
+    sampler, the loader charges it as the alternative to the render
+    activations (``nodes/guide_order.py``); a clip keeps the sum.
     Never raises, like every other loader-site charge helper.
     """
     try:
@@ -386,7 +416,7 @@ def graph_activation_bytes(prompt: Any, sp_degree: int, *,
     would discard the complete loader-site footprint refusal.
     """
     try:
-        if family != H3_FAMILY:
+        if family not in (H3_FAMILY, H3_IMAGE_FAMILY):
             return 0, "not a packed-sequence family"
         if preflight_disabled():
             return 0, f"{mesh_safety.ACTIVATION_PREFLIGHT_DISABLE_ENV} is set"
@@ -395,13 +425,15 @@ def graph_activation_bytes(prompt: Any, sp_degree: int, *,
         degree = int(sp_degree)
         if degree < 1:
             return 0, "no sequence-parallel degree resolved"
-        rows = h3_rows.rows_from_prompt_graph(prompt)
+        image = family == H3_IMAGE_FAMILY
+        rows = h3_rows.rows_from_prompt_graph(prompt, image=image)
         if not rows.resolved:
             return 0, "no MiniMax H3 canvas node in this graph"
-        return (rows.per_rank(degree) * H3_SHARDED_ROW_BYTES
-                + rows.total * H3_REPLICATED_ROW_BYTES,
-                f"{rows.total} declared rows over {degree} rank(s); video and "
-                "audio rows only, keyframe and reference rows are not visible "
-                "in the graph")
+        seen = ("the target frame only, text and reference rows are not visible in the graph"
+                if image else "video and audio rows only, keyframe and reference rows are "
+                "not visible in the graph")
+        return (activation_bytes_for(rows, degree),
+                f"{rows.total} declared rows over {degree} rank(s) plus the "
+                f"{_gib(H3_ACTIVATION_FLOOR_BYTES)} GiB fixed activation floor; {seen}")
     except Exception:
         return 0, "row extraction failed; activations not charged"

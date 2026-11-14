@@ -4,10 +4,16 @@ Actor launchers inherit this environment, so it is filtered before Monarch is
 imported. Both ``nohup`` and systemd execute
 :mod:`dgx_monarch.cli.worker_loop`; systemd ``PassEnvironment=`` entries remain
 subject to the same filter.
+
+The loop also installs the host allocator policy actors inherit: torch's
+wheels allocate host memory through a bundled mimalloc, and the Workers purge
+at free time (``HOST_ALLOCATOR_PURGE_ENV``) so a dropped model's memory is back
+before the next price reads MemAvailable.
 """
 from __future__ import annotations
 
 import os
+import re
 import stat
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -31,6 +37,10 @@ _SAFE_EXACT = frozenset({
     "XDG_DATA_HOME",
     "XDG_STATE_HOME",
     "XDG_RUNTIME_DIR",
+    # An operator's own torch inductor cache directory wins over the default
+    # below. TRITON_CACHE_DIR stays filtered: with it unset, inductor keeps its
+    # Triton kernels under this directory too.
+    "TORCHINDUCTOR_CACHE_DIR",
     # CUDA, PyTorch, thread-count and xfuser controls the project or its
     # dependencies read. Device assignment and executable or library selectors
     # are actor-owned and must stay absent.
@@ -41,6 +51,8 @@ _SAFE_EXACT = frozenset({
     "CUDA_CACHE_PATH",
     "CUDA_LAUNCH_BLOCKING",
     "PYTORCH_CUDA_ALLOC_CONF",
+    # An operator's own mimalloc purge delay stands; the loop defaults it below.
+    "MIMALLOC_PURGE_DELAY",
     "CUBLAS_WORKSPACE_CONFIG",
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
@@ -58,6 +70,18 @@ _SAFE_EXACT = frozenset({
     # warning and leaves loading unchanged (actor/load_fault.py).
     "DGXM_FAULT_LOAD_RANK",
     "DGXM_ACCEPTANCE",
+    # One rank reads its model as wrong after the pair's backup free, to drive the fleet's refusal through the
+    # second exchange (actor/backup_agreement.py); needs DGXM_ACCEPTANCE=1 too, as the load fault does.
+    "DGXM_FAULT_BACKUP_RANK",
+    # Restores the drop through ComfyUI's global unload (actor/resident_ledger.py).
+    # It can only make a drop slower and withhold a swap credit.
+    "DGXM_DISABLE_COPY_FREE_DROP",
+    # Turns off the make-room step before a Worker's CUDA context
+    # (actor/context_room.py). It can only leave a start as it was before.
+    "DGXM_DISABLE_CONTEXT_ROOM",
+    # Keeps ComfyUI's weight backup after a whole classic LoRA bake however little room is
+    # left (actor/lora_partial_load.py). It can only leave a render as it was before.
+    "DGXM_DISABLE_BACKUP_FREE",
 })
 
 # Locale is the only inherited namespace. Fabric settings come from validated
@@ -109,6 +133,17 @@ _DANGEROUS_EXACT = frozenset({
 # runtime or home directory. The child path is UID-specific, atomically created,
 # ownership-checked, symlink-rejected, and forced to 0700 before use.
 _FALLBACK_RUNTIME_ROOT = Path("/tmp")  # noqa: S108
+INDUCTOR_CACHE_ENV = "TORCHINDUCTOR_CACHE_DIR"
+# torch's wheels allocate host memory through a bundled mimalloc (2.12.0 carries
+# 2.2.6, 2.15.0 carries 2.5.2), which gives freed pages back to the box only at
+# a purge, and a purge runs only when the owning thread allocates again after
+# the delay. A stock load frees its host copy as it places weights and nothing
+# allocates before the next price reads MemAvailable, so no positive delay
+# fires in that window: on torch 2.15.0 an actor kept 15 to 18 GiB of a placed
+# stock load (2026-11-06). Purge at free time instead. A value the loop
+# inherits stands.
+HOST_ALLOCATOR_PURGE_ENV = "MIMALLOC_PURGE_DELAY"
+HOST_ALLOCATOR_PURGE_DEFAULT = "0"
 # Monarch appends a temporary directory and a proc id for each Unix socket.
 # Leave at least 39 bytes below macOS's 104-byte sockaddr_un limit (108 on
 # Linux), including separators and the terminating NUL. Count encoded bytes,
@@ -210,6 +245,53 @@ def secure_worker_runtime(environ: MutableMapping[str, str]) -> Path:
     return runtime
 
 
+def _torch_build() -> str:
+    """The installed torch version as a path segment, read without importing torch."""
+    try:
+        from importlib.metadata import version
+
+        raw = version("torch")
+    except Exception:
+        raw = ""
+    return re.sub(r"[^A-Za-z0-9._+-]", "_", raw)[:64] or "unknown"
+
+
+def inductor_cache_directory(environ: MutableMapping[str, str]) -> Path | None:
+    """The default torch inductor cache: ``~/.cache/dgx-monarch/inductor/torch-<version>``.
+
+    It sits beside the pack's other caches and, like them, does not follow
+    XDG_CACHE_HOME. Inductor keys every entry on the torch and Triton versions,
+    so the version segment only names the directory a torch upgrade leaves
+    unused, which is then safe to delete.
+    """
+    home = environ.get("HOME")
+    if not home or not Path(home).is_absolute():
+        return None
+    return Path(home) / ".cache" / "dgx-monarch" / "inductor" / f"torch-{_torch_build()}"
+
+
+def route_inductor_cache(environ: MutableMapping[str, str]) -> Path | None:
+    """Keep torch inductor's compile cache on disk unless the operator placed it.
+
+    Inductor defaults to ``$TMPDIR/torchinductor_<user>``, and the runtime
+    above usually puts TMPDIR on tmpfs, so a reboot recompiled each compile_dit
+    block. Return the private 0700 directory installed here, or None when the
+    environment already names one or none could be made; torch then keeps its
+    default. A cache never stops a Worker from starting.
+    """
+    if environ.get(INDUCTOR_CACHE_ENV):
+        return None
+    target = inductor_cache_directory(environ)
+    if target is None:
+        return None
+    try:
+        _private_directory(target, create_parents=True)
+    except (OSError, RuntimeError):
+        return None
+    environ[INDUCTOR_CACHE_ENV] = str(target)
+    return target
+
+
 def prepare_worker_process_environment(
     managed_pythonpath: str | os.PathLike[str],
     environ: MutableMapping[str, str] | None = None,
@@ -234,4 +316,7 @@ def prepare_worker_process_environment(
 
     target["PYTHONDONTWRITEBYTECODE"] = "1"
     target["PYTHONPYCACHEPREFIX"] = SOURCE_ONLY_PYCACHE_PREFIX
-    return removed, secure_worker_runtime(target)
+    target.setdefault(HOST_ALLOCATOR_PURGE_ENV, HOST_ALLOCATOR_PURGE_DEFAULT)
+    runtime = secure_worker_runtime(target)
+    route_inductor_cache(target)
+    return removed, runtime

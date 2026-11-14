@@ -43,9 +43,10 @@ LOG = logging.getLogger(__name__)
 TELEMETRY_FRESH_SECONDS = 30
 # Review-only preview fields that a submitted job's frozen snapshot leaves out.
 SNAPSHOT_OMITTED = frozenset({"id", "created_at", "expires_at", "errors", "warnings"})
-# A review checks values against the driver's inputs only; the review dialog shows this text.
-BACKEND_CHECKS_WARNING = ("Studio checked these values against the inputs the driver reports. The backend checks "
-                          "memory, topology, identity and consent when the job runs and can still refuse it then.")
+# Seconds a preview stays submittable. Submit checks the node definitions and each chosen file
+# against the live driver whatever the age, so this only bounds how old the frozen runtime
+# observation can be when the job is accepted, and lets the sweep delete unused previews.
+PREVIEW_SECONDS = 600
 
 
 def _random_seed(schema: dict[str, Any]) -> int:
@@ -192,9 +193,10 @@ class Jobs:
                     "requested_topology": requested_topology(prompt),
                     "project_id": request.get("project_id"), "parent_artifact_ids": request.get("parent_artifact_ids", []),
                     "model_fingerprints": "unavailable", "effective_topology": "pending_backend_admission"}
+        # A warning asks a person to decide before the job runs. A review raises none yet, so
+        # Generate submits at once; the checks that run at dispatch are not warnings.
         value = {"id": identifier(), "digest": digest(snapshot), **snapshot, "created_at": timestamp(),
-                 "expires_at": timestamp() + 600, "errors": [],
-                 "warnings": [BACKEND_CHECKS_WARNING]}
+                 "expires_at": timestamp() + PREVIEW_SECONDS, "errors": [], "warnings": []}
         if len(canonical(value).encode()) > MAX_BODY_BYTES:
             raise StudioError("preview_limit", "Expanded submission preview exceeds the 4 MiB JSON budget.", 413)
         return self.store.create("previews", value) if persist else value

@@ -96,7 +96,10 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         "cross-rank weight-residency agreement, read after ComfyUI has placed "
         "the weights: no card, because the ladder is spent by then and the "
         "loader site owns the rescue offer; none is designed, because a waiver "
-        "would authorize ranks that compute different weights",
+        "would authorize ranks that compute different weights. On one rank the "
+        "same guard refuses a partial load that leaves a LoRA-patched layer "
+        "which quantizes its input off the device when the load cannot be made "
+        "whole, since that layer would not compute what a full load computes",
     ),
     "slab_load_preflight": GuardSpec(
         RefusalClass.CAPACITY,
@@ -105,14 +108,24 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         "worker-side slab residency wall: no card, because slab is the rescue "
         "itself and no grant makes unified memory appear",
     ),
+    "pair_backup_room": GuardSpec(
+        RefusalClass.CAPACITY,
+        False,
+        "rescue-slab",
+        "cross-rank room agreement, read after every rank has loaded whole and the ranks "
+        "have freed or kept ComfyUI's weight backup together: no consent card, because no "
+        "consent gives a rank the room its sampler needs above the host floor",
+    ),
     "cross_rank_capacity": GuardSpec(
         RefusalClass.CAPACITY,
         False,
         "rescue-slab",
-        "cross-rank capacity agreement, read before any rank allocates: no card, "
-        "because no consent makes a refusing rank fit and one refusing rank refuses "
-        "the whole fleet; when no rank refuses, the rescue offer goes out under the "
-        "waivable stock guard, priced at the leanest rank that slab would fit",
+        "cross-rank capacity agreement, read before any rank allocates: no consent "
+        "card, because no consent makes a refusing rank fit and one refusing rank "
+        "refuses the whole fleet; when no rank refuses, the rescue offer goes out under "
+        "the waivable stock guard, priced at the leanest rank that slab would fit. When "
+        "a clear would make room for an old model in the way, its card goes out under "
+        "this guard unwaived, since a reset passes no guard (old_model.py)",
     ),
     "slab_lora_bake_preflight": GuardSpec(
         RefusalClass.CAPACITY,
@@ -121,6 +134,15 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         "the exact-patch backstop before a slab-resident LoRA bake: no card, "
         "because slab is already the residency and the ladder already admitted "
         "the load the bake runs on",
+    ),
+    "gpu_context_memory": GuardSpec(
+        RefusalClass.CAPACITY,
+        False,
+        "rescue-slab",
+        "a Worker's own start: the NVIDIA driver could not get memory for a new "
+        "CUDA context after the Worker made what room it could "
+        "(actor/context_room.py); no card, because no consent makes memory free. "
+        "rescue-slab is only the audit kind it is filed under: slab is no remedy here",
     ),
     "first_load_stock_memo": GuardSpec(
         RefusalClass.UNPROVEN,
@@ -379,6 +401,28 @@ def untagged(text: str) -> str:
     if parse_leading_refusal_tag(text) is None:
         return text
     return text.split("] ", 1)[-1]
+
+
+# Which rank raised an error: one machine line a Worker in a fleet of more than
+# one rank adds (actor/failure.py), because Monarch's wrapper carries no rank.
+# The driver reads it to name the box and removes it (worker_box.py), so no
+# user reads the number. No class letter follows the colon, so no tag parser
+# here, in Studio or in job_observations reads it as a tag.
+RANK_MARK: Final = "[dgxm:rank {rank}]"
+_RANK_RE: Final = re.compile(r"\n?\[dgxm:rank (\d{1,4})\]")
+
+
+def mark_rank(text: str, rank: int) -> str:
+    """``text`` with the line that says which rank raised it."""
+    return f"{text}\n{RANK_MARK.format(rank=int(rank))}"
+
+
+def read_rank(text: str) -> tuple[str, int | None]:
+    """``text`` without its rank lines, and the rank the last one names."""
+    found = _RANK_RE.findall(text)
+    if not found:
+        return text, None
+    return _RANK_RE.sub("", text), int(found[-1])
 
 
 def is_waivable(text: str) -> bool:

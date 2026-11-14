@@ -33,6 +33,7 @@ import torch
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from . import base
+from .adaln_parity_blocks import bind_blocks, bind_qwen21_norm_parity, with_norm_rows
 from .attention_inputs import note_preferred_attention
 from .attention_patches import assert_no_foreign_attention_override
 from .base import (
@@ -433,6 +434,9 @@ class QwenImage21Adapter(Adapter):
             else:
                 active_prefix_len = prefix_len
 
+            # Target blocks fill their first fused norm to stock's rows (issue #54).
+            block_options = with_norm_rows(dict(transformer_options),
+                                           joint=active_prefix_len + target_len)
             for index, block in enumerate(self.transformer_blocks):
                 if cache is not None:
                     if not cached:
@@ -479,9 +483,10 @@ class QwenImage21Adapter(Adapter):
                             preferred_attention=_attn_kwargs.get("preferred_attention"),
                         )
                         return torch.cat((p_out, t_out), dim=1).flatten(2)
-                states = block(states, mod, pe, attn, active_prefix_len, transformer_options)
+                states = block(states, mod, pe, attn, active_prefix_len, block_options)
             target = sp_gather(states[:, active_prefix_len:], target_len, dim=1)
             target = self.proj_out(self.norm_out(target, temb[:-1]))
             return target.transpose(1, 2).reshape(B, self.out_channels, H, W)
 
         self.bind(diffusion_model, "_forward", usp_forward)
+        bind_blocks(diffusion_model.transformer_blocks, bind_qwen21_norm_parity, self.family)

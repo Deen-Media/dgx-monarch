@@ -48,7 +48,8 @@ _CEREMONY_CLAIM_S = 300.0
 # leaves the auto facts None; reattach and reattach_s name a re-attach inside the render, else None)
 # and the last step time. The sampler wall and mean step join them from note_sample, keyed by render.
 _RENDER_FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step", "family", "cfg",
-                 "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch", "reattach", "reattach_s")
+                 "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch", "pair_differs", "reattach",
+                 "reattach_s")
 
 
 def emit(kind: str, **fields) -> None:

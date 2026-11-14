@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import family_select, first_render
+from .. import family_select, first_render, vae_decode_route
 from ..adapters import SELECTABLE_FAMILIES
 from ..config import find_config_path
 from ..constants import MESH_TYPE, NODE_CATEGORY
@@ -19,6 +19,13 @@ _FAMILY_CHOICES = [family_select.AUTO, *SELECTABLE_FAMILIES]
 
 class DGXMonarchInit:
     """Attach workers and select an explicit or per-render automatic topology."""
+
+    DESCRIPTION = (
+        "Attaches the DGX Monarch Workers and picks the topology for every render that "
+        "uses this mesh; the advanced inputs set Worker policy. sync_ulysses has no "
+        "effect on the pinned xfuser 0.7.0 and stays only because removing an input "
+        "needs a major release."
+    )
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -49,13 +56,21 @@ class DGXMonarchInit:
                                     "0 keeps the default: cluster.toml [worker_args] if set, else 8 GiB "
                                     "on unified memory (docs/VALIDATION.md) and ComfyUI's own on a "
                                     "discrete GPU."}),
-                "sync_ulysses": ("BOOLEAN", {"default": True, "advanced": True}),
+                "sync_ulysses": ("BOOLEAN", {"default": True, "advanced": True,
+                                 "tooltip": "No effect on the pinned xfuser 0.7.0: its Ulysses "
+                                 "all-to-all never receives this setting, so output and speed are "
+                                 "the same either way (docs/ADAPTERS.md). Changing it still runs "
+                                 "setup again, and a gate verdict covers one setting, so the first "
+                                 "render after a change runs its own identity gate. It stays because "
+                                 "removing an input needs a major release."}),
                 "compile_dit": ("BOOLEAN", {"default": False, "advanced": True,
                                 "tooltip": "torch.compile the DiT blocks (max-autotune fp8, no cudagraphs). "
                                 "Measured 21% faster on fp8-scaled Krea2 at cfg2 on GB10 (2026-07-04); "
-                                "the first render adds a one-time autotune warmup. Chroma, Flux, Flux2 "
-                                "and LongCat have no `blocks` list, so they stay eager. Opt in and "
-                                "validate per model."}),
+                                "the first render adds a one-time autotune warmup (cached on disk by "
+                                "Worker services). It compiles only a DiT with a `blocks` list: Krea2, "
+                                "MiniMax H3, the Wan family, CogVideoX and Anima. Every other family "
+                                "runs eager, says so in the worker log and keeps slab residency "
+                                "available. Opt in and validate per model."}),
                 "pipeline_depth": ("INT", {"default": 1, "min": 1, "max": 8, "advanced": True,
                                    "tooltip": "How many renders the KSampler Pipeline node keeps in "
                                    "flight. 1, the default, runs them one after another. 2 or more "
@@ -86,7 +101,7 @@ class DGXMonarchInit:
                                  "2026-07-08) the raw pread took 8.5 s and full load readiness 20.1 s; "
                                  "unloading returns the memory to the OS at once. Output is "
                                  "bit-identical; gate it. Needs lora_low_rss; ignored under FSDP, and "
-                                 "under compile_dit except on Chroma, Flux, Flux2 and LongCat. auto "
+                                 "under compile_dit on the families it compiles (see compile_dit). auto "
                                  "(default): on unified-memory GPUs, slab for gate-vouched families "
                                  "(currently krea2 and flux2). A checkpoint's first load stays stock "
                                  "while its family is learned, every later load uses the slab; other "
@@ -94,7 +109,8 @@ class DGXMonarchInit:
                 "auto_gate": (["first_use", "off"], {"default": "first_use", "advanced": True,
                               "tooltip": "first_use (default): before the first render of a model, "
                               "residency and LoRA combination the gate ledger cannot vouch for, run one "
-                              "automatic identity gate (2-4 short proof renders, once per combination); "
+                              "automatic identity gate (2-4 short proof renders, once per combination; "
+                              "none on a graph with no LoRA stack whose model takes no slab residency); "
                               "a FAIL or ERROR turns the unproved paths off before the full render. "
                               "off: skip that proof and own the accuracy risk. off withholds no feature: "
                               "LoRA renders, lora_low_rss, slab_weights and the capacity rescue all run "
@@ -143,9 +159,10 @@ class DGXMonarchInit:
                                    "checkpoint. auto (default): detection picks it. Name a family "
                                    "for a finetune whose header detection reads wrong or not at "
                                    "all: that family's topology row, capacity preflights and "
-                                   "adapter apply, even when ComfyUI built a derived subclass that "
-                                   "detection refuses. A named family that does not fit the model "
-                                   "ComfyUI built gets a typed refusal before any kernel runs, "
+                                   "adapter apply, also to a class a custom node derives from one "
+                                   "the adapter takes. A named family that does not fit the model "
+                                   "ComfyUI built, another upstream model the adapter refuses under "
+                                   "auto included, gets a typed refusal before any kernel runs, "
                                    "never a wrong render. It cannot make ComfyUI load a checkpoint "
                                    "ComfyUI cannot detect, and it does not correct a misread "
                                    "quantization. A forced run is gated as its own combination and "
@@ -219,6 +236,9 @@ class DGXMonarchInit:
     ):
         """Initialize with an explicit custom-node bootstrap policy."""
         handle = get_mesh(config_path=config_path, mode=mode, gpus_per_host=gpus_per_host)
+        # [worker_args] worker_vae_decode routes the stock VAE decodes over
+        # this mesh's Workers (vae_decode_route.py); arming never raises.
+        vae_decode_route.arm(handle)
         if topology != "auto":
             # An explicit preset sets the fleet up below, which an abandoned
             # lease refuses; heal it first so the spec carries the new fleet.

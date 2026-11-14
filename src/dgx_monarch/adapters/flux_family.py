@@ -23,6 +23,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from .adaln_parity_blocks import bind_blocks, bind_flux_norm_parity, with_norm_rows
 from .attention_patches import assert_usp_attention_patches_safe
 from .base import (
     Adapter,
@@ -58,11 +59,15 @@ def _chroma_cfg_pad_trim(context: torch.Tensor, attention_mask):
     dropping the bias hands stock's forward exactly the unpadded, maskless
     tensors a one-GPU call for that cond builds.
 
-    A mask with a nonzero image column, or a text zone that is not a clean
-    prefix, is not this construction (a conditioning that ships its own
-    attention_mask skips the equalizer, sampling.py "already ships its own")
-    and is returned unchanged. A batch whose rows disagree on the real length
-    cannot be trimmed to one shape and is refused.
+    Pad is a hard sentinel, at or below float16's minimum: ComfyUI casts the
+    equalizer's cond-dtype minimum to the model dtype (-inf from float32 in
+    bfloat16), and attention gives any such key exactly zero weight, so the
+    trim is the same math. A finite bias such as a custom producer's soft
+    mask attenuates real tokens and is no pad. Such a mask, a nonzero image
+    column, or a text zone that is not zeros then pad is not this construction
+    (a conditioning that ships its own attention_mask skips the equalizer,
+    sampling.py "already ships its own") and is returned unchanged. A batch
+    whose rows disagree on the real length cannot be trimmed and is refused.
     """
     if attention_mask is None:
         return context, None
@@ -71,9 +76,10 @@ def _chroma_cfg_pad_trim(context: torch.Tensor, attention_mask):
     if bias.shape[-1] < text_len:
         return context, attention_mask
     text_zone, image_zone = bias[:, :text_len], bias[:, text_len:]
-    if image_zone.numel() and bool((image_zone != 0).any()):
-        return context, attention_mask
     real = text_zone == 0
+    if (image_zone.numel() and bool((image_zone != 0).any())) or not bool(
+            (real | (text_zone <= torch.finfo(torch.float16).min)).all()):
+        return context, attention_mask
     lengths = real.sum(dim=1)
     is_prefix = real == (
         torch.arange(text_len, device=real.device).unsqueeze(0) < lengths.unsqueeze(1)
@@ -154,9 +160,9 @@ class ChromaAdapter(Adapter):
             # Each rank contributes [txt_local, img_local] to the gathered
             # sequence, so the pad rows of both segments are named in that
             # order. The set is fixed in the override when it is built.
-            usp_opts = joint_double_options(transformer_options, attn, _family_drop_rows(
+            usp_opts = with_norm_rows(joint_double_options(transformer_options, attn, _family_drop_rows(
                 pad_vouched, [(txt_orig_len, txt.shape[1]), (img_orig_len, img.shape[1])]),
-                ctx, txt.shape[1], img.shape[1])
+                ctx, txt.shape[1], img.shape[1]), txt=txt_orig_len, img=img_orig_len)
             blocks_replace = patches_replace.get("dit", {})
             usp_opts["total_blocks"] = len(self.double_blocks)
             usp_opts["block_type"] = "double"
@@ -212,8 +218,8 @@ class ChromaAdapter(Adapter):
             # sequence, in an options dict of its own (one dict cannot carry two
             # drop sets). img_slice keeps stock's [txt, img] split of the full
             # stream (chroma/model.py), though the block tensors are shards.
-            single_opts = usp_options(transformer_options, attn, drop_rows=_family_drop_rows(
-                pad_vouched, [(joint_orig_len, img.shape[1])]))
+            single_opts = with_norm_rows(usp_options(transformer_options, attn, drop_rows=_family_drop_rows(
+                pad_vouched, [(joint_orig_len, img.shape[1])])), joint=joint_orig_len)
             single_opts["img_slice"] = [txt_len_full, joint_orig_len]
             single_opts["total_blocks"] = len(self.single_blocks)
             single_opts["block_type"] = "single"
@@ -259,10 +265,10 @@ class ChromaAdapter(Adapter):
             return img
 
         self.bind(diffusion_model, "forward_orig", usp_forward_orig)
-        log.info(
-            "chroma USP injected: %d double + %d single blocks, sp=%d",
-            len(diffusion_model.double_blocks), len(diffusion_model.single_blocks), ctx.topology_sp,
-        )
+        bind_blocks((*diffusion_model.double_blocks, *diffusion_model.single_blocks),
+                    bind_flux_norm_parity, family)
+        log.info("chroma USP injected: %d double + %d single blocks, sp=%d",
+                 len(diffusion_model.double_blocks), len(diffusion_model.single_blocks), ctx.topology_sp)
 
     def inject_cfg_pad_forward(self, diffusion_model) -> None:
         """Remove the CFG equalizer's padding and mask before stock attention.
@@ -404,9 +410,9 @@ class FluxAdapter(Adapter):
             else:
                 pe_double = None
             # Pads sit in rank-major [txt_local, img_local]; pure Ulysses restores stock order.
-            usp_opts = joint_double_options(transformer_options, attn, _family_drop_rows(
+            usp_opts = with_norm_rows(joint_double_options(transformer_options, attn, _family_drop_rows(
                 pad_vouched, [(txt_orig_len, txt.shape[1]), (img_orig_len, img.shape[1])]),
-                ctx, txt.shape[1], img.shape[1])
+                ctx, txt.shape[1], img.shape[1]), txt=txt_orig_len, img=img_orig_len)
 
             vec_orig = vec
             if self.params.global_modulation:
@@ -480,8 +486,8 @@ class FluxAdapter(Adapter):
 
             # As in ChromaAdapter: the pads are a tail, in options of their
             # own, and img_slice keeps stock's full-stream [txt, img] split.
-            single_opts = usp_options(transformer_options, attn, drop_rows=_family_drop_rows(
-                pad_vouched, [(joint_orig_len, img.shape[1])]))
+            single_opts = with_norm_rows(usp_options(transformer_options, attn, drop_rows=_family_drop_rows(
+                pad_vouched, [(joint_orig_len, img.shape[1])])), joint=joint_orig_len)
             single_opts["img_slice"] = [txt_len_full, joint_orig_len]
             single_opts["total_blocks"] = len(self.single_blocks)
             single_opts["block_type"] = "single"
@@ -521,11 +527,10 @@ class FluxAdapter(Adapter):
             return img
 
         self.bind(diffusion_model, "forward_orig", usp_forward_orig)
-        log.info(
-            "%s USP injected: %d double + %d single blocks, sp=%d",
-            self.family, len(diffusion_model.double_blocks),
-            len(diffusion_model.single_blocks), ctx.topology_sp,
-        )
+        bind_blocks((*diffusion_model.double_blocks, *diffusion_model.single_blocks),
+                    bind_flux_norm_parity, family)
+        log.info("%s USP injected: %d double + %d single blocks, sp=%d", self.family,
+                 len(diffusion_model.double_blocks), len(diffusion_model.single_blocks), ctx.topology_sp)
 
 
 class Flux2Adapter(FluxAdapter):

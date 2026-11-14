@@ -428,7 +428,8 @@ class PendingRender:
             surfaced = exc
             surfaced_cause: BaseException | None = None
             try:
-                consent_observe.observe_refusal(exc)
+                consent_observe.observe_refusal(
+                    exc, getattr(self._handle, "active_worker_args", None))
             except BaseException as observe_exc:
                 safe_note(exc, "worker refusal observation failed", observe_exc)
             timed_out = phase == "collect" and isinstance(exc, TimeoutError)

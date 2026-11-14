@@ -67,7 +67,10 @@ published a full four-node matrix, reported and not reproduced here
 ([community results](BENCHMARKS.md#community-four-node-results-2026-10-27)).
 In short, uly2+cfg2 ran fastest for models that use CFG and uly4 for MiniMax
 H3 and LTX. `auto` refused many rows and beat the explicit layouts only on
-Ideogram4, so they advise against it at world 4. Small or fast models gained
+Ideogram4, so they advise against it at world 4. Since 1.5.0 `auto` takes uly4
+for MiniMax H3 at world 4, on community reports: their passing one-step
+checks and a later report of a latent identical to a pair's `uly2` (issue
+#188), not on runs of this project's own. Small or fast models gained
 nothing. On Wan SCAIL2, every four-Spark layout but uly4 failed the one-step
 quality check, with no warning.
 
@@ -245,7 +248,9 @@ errors and the render ignores them; use a converted release. Row by row:
 **I have a finetune or a merge.** Init has a `family_adapter` widget for the
 case where the file header does not say what the model is. Naming the child
 family for a finetune of that child is what works; naming a parent family for
-a child model is refused, because it would compute the wrong math. A named
+a child model is refused, because it would compute the wrong math, and so is
+naming a family for another upstream model its adapter does not take, such as
+a Wan VACE file under `wan`. A named
 family declares the file's family; it neither inherits the support row's
 evidence nor enables automatic slab residency. [MODELS.md](MODELS.md) has the
 rules.
@@ -312,11 +317,13 @@ it through port forwarding without those protections.
 
 **License?**
 Apache-2.0 for this repo. ComfyUI is the GPL-3.0 host, xDiT and xfuser are Apache-2.0,
-Monarch is BSD-3-Clause, each installed separately. The tree vendors no
-third-party source. Two kinds of shipped file do carry third-party material:
-the wordmarks hold DejaVu glyph outlines, and the compiled Studio bundle holds
-the MIT-licensed Svelte runtime with small Vite, clsx and esm-env helpers.
-Their notices are in [THIRD-PARTY-NOTICES.txt](../THIRD-PARTY-NOTICES.txt), and
+Monarch is BSD-3-Clause, each installed separately. The tree vendors one
+third-party source file: the MIT-licensed INT8 GEMM kernel from kan11's
+gb10-comfyui-tuning, in `src/dgx_monarch/kernels/int8_gemm_triton.py`. Two
+other kinds of shipped file carry third-party material: the wordmarks hold
+DejaVu glyph outlines, and the compiled Studio bundle holds the MIT-licensed
+Svelte runtime with small Vite, clsx and esm-env helpers. Their notices are in
+[THIRD-PARTY-NOTICES.txt](../THIRD-PARTY-NOTICES.txt), and
 [LICENSE-NOTES.md](../LICENSE-NOTES.md) lists every dependency.
 
 ## When it breaks

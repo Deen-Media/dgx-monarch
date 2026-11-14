@@ -160,10 +160,20 @@ def test_gate_start_sentence_carries_the_shape_and_the_escape(sent):
         first_render.reset()
         sent.clear()
         first_render.gate_started(state)
-        assert ("stale or not vouched (a model or LoRA file, the dgx-monarch release or source, or the "
-                "residency, worker, attention, cluster or topology settings changed; the ComfyUI commit "
-                "changed or cannot be read; or the gate ledger holds a damaged line or a non-PASS row "
-                "for this combination)") in sent[0][1]["message"]
+        assert ("stale or not vouched (a model or LoRA file, the dgx-monarch release or source, the "
+                "torch or CUDA build, or the residency, worker, attention, cluster or topology settings "
+                "changed; the ComfyUI commit changed or cannot be read; or the gate ledger holds a "
+                "damaged line or a non-PASS row for this combination)") in sent[0][1]["message"]
+
+
+def test_gate_start_names_a_torch_change_in_place_of_the_general_causes(sent):
+    first_render.gate_started("stale", "proven under torch 2.12.0+cu132 with CUDA 13.2, not under "
+                                       "this driver's torch 2.15.0+cu132 with CUDA 13.2")
+    message = sent[0][1]["message"]
+    assert message.startswith("auto-gate: this model+stack combination is proven under torch "
+                              "2.12.0+cu132 with CUDA 13.2, not under this driver's torch "
+                              "2.15.0+cu132 with CUDA 13.2, so the identity gate runs once now")
+    assert "stale or not vouched" not in message
 
 
 def test_proof_renders_are_counted_and_never_toast(ring, sent):
@@ -303,11 +313,11 @@ def test_failed_ceremony_replaces_the_sticky_toast_and_closes_the_window(
 def test_progress_bracket_counts_a_proof_leg(monkeypatch, sent):
     from monarch.actor import Channel
 
-    from dgx_monarch.progress import ProgressReceiver
+    from dgx_monarch.progress import _CLOSE, ProgressReceiver
 
     class Future:
         def get(self, timeout=None):
-            return {"done": True}
+            return {_CLOSE: True}
 
     class Receiver:
         def recv(self):
@@ -398,6 +408,47 @@ def test_a_real_non_pass_ceremony_announces_the_denial_not_a_render(
     assert "identity gate FAIL in 61.4s" in summary["message"]
     assert "starts now" not in summary["message"]
     assert summary["severity"] == "warn"
+
+
+def test_a_capacity_stop_says_the_render_runs_stock_and_checks_again(ring, sent):
+    """A ceremony that stopped on capacity before its proof render left every
+    lever in place: the toast must not say the optimized paths stay off."""
+    first_render.gate_started("unknown")
+    sent.clear()
+
+    first_render.gate_finished(None, True)
+    assert len(sent) == 1
+    payload = sent[0][1]
+    assert payload["phase"] == "gate_done"
+    assert "ran no proof render" in payload["message"]
+    assert "runs on stock residency" in payload["message"]
+    assert "checks again" in payload["message"]
+    assert "stay off" not in payload["message"]
+    assert payload["note"] == "gate skipped for capacity, stock residency"
+    assert payload["severity"] == "warn"
+    assert first_render.note_proof_render() is None
+
+
+def test_a_consent_settled_capacity_verdict_says_the_render_runs_on_slab(sent):
+    """The one non-PASS the summary must not call a denial: stock residency
+    cannot load the checkpoint, a rescue consent is active, and the render
+    runs on slab residency (nodes/gate_inconclusive stamps the result)."""
+    from dgx_monarch.nodes import gate_inconclusive
+
+    first_render.gate_started("unknown")
+    first_render.note_proof_render()
+    sent.clear()
+    first_render.gate_finished({
+        "verdict": "INCONCLUSIVE", "wall_s": 147.8,
+        gate_inconclusive.RESCUE_RESULT_KEY: {"consent_id": "c" * 32, "consent_source": "env"}})
+
+    payload = sent[0][1]
+    assert ("identity gate INCONCLUSIVE in 147.8s over 1 proof renders"
+            in payload["message"])
+    assert "your render runs on slab residency" in payload["message"]
+    assert "stay off" not in payload["message"]
+    assert payload["note"] == "gate INCONCLUSIVE in 147.8s, slab residency under consent"
+    assert payload["severity"] == "warn"
 
 
 def test_a_raising_ceremony_still_closes_the_window(

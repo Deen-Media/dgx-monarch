@@ -5,6 +5,7 @@ import os
 import socket
 import time
 
+from .. import fp8_compute, gate_runtime, mesh_builds
 from ..accuracy_waiver import RESULT_KEY as _ACCURACY_WAIVER_RESULT_KEY
 from ..log import get_logger
 from ..transfer import LatentReturn
@@ -14,9 +15,9 @@ from ..transfer_utils import (
     reconcile_error,
     safe_note,
 )
-from . import fsdp_checkpoint_pin, load_fault, rendezvous
+from . import fsdp_checkpoint_pin, load_fault, rendezvous, vae_decode
 from .attention_dispatch import _AttentionDispatch as _AttentionDispatch
-from .comfy_bridge import ensure_comfy
+from .context_room import ensure_comfy  # comfy_bridge's, with room for the CUDA context
 from .worker_authorization import (
     accuracy_waiver_stamps as accuracy_waiver_stamps,
 )
@@ -39,11 +40,7 @@ ACCURACY_WAIVER_RESULT_KEY = _ACCURACY_WAIVER_RESULT_KEY
 
 
 def apply_worker_args_impl(worker, worker_args: dict) -> dict:
-    from .comfy_bridge import (
-        _CUSTOM_NODES_DISABLED,
-        _apply_worker_args,
-        _uma_memory_defaults,
-    )
+    from .comfy_bridge import _CUSTOM_NODES_DISABLED, _apply_worker_args, _uma_memory_defaults
 
     if _CUSTOM_NODES_DISABLED is not None and (
         bool(worker_args.get("disable_custom_nodes"))
@@ -56,13 +53,14 @@ def apply_worker_args_impl(worker, worker_args: dict) -> dict:
 
     wa = _uma_memory_defaults(dict(worker_args or {}))
     _apply_worker_args(wa)
-    compile_changed = (os.environ.get("DGXM_COMPILE_DIT") == "1") is not bool(
-        wa.get("compile_dit"))
-    # The shared activation scale wraps forwards at load, so a resident built
-    # under the previous setting cannot serve this one either.
+    compile_changed = (os.environ.get("DGXM_COMPILE_DIT") == "1") is not bool(wa.get("compile_dit"))
+    # The shared activation scale wraps forwards at load and the FP8 matmul
+    # setting picks comfy's operations class there, so a resident built under
+    # the previous setting of either cannot serve this one.
     from ..adapters.quant_activation_scale import env_from_worker_args
 
     scale_changed = env_from_worker_args(wa, getattr(worker, "_active_worker_args", None))
+    fp8_changed = fp8_compute.configure_from_worker_args(wa)
     if wa.get("compile_dit"):
         os.environ["DGXM_COMPILE_DIT"] = "1"
     else:
@@ -89,7 +87,7 @@ def apply_worker_args_impl(worker, worker_args: dict) -> dict:
     worker.fsdp_prefetch_depth = int(wa.get("fsdp_prefetch_depth", 1))
     worker.uma_reserve_gb = float(wa.get("uma_reserve_gb", getattr(worker, "uma_reserve_gb", 0.0)))
     worker.store.uma_reserve_gb = worker.uma_reserve_gb
-    if compile_changed or family_changed or scale_changed:
+    if compile_changed or family_changed or scale_changed or fp8_changed:
         # Each binds at model load, so prior residents cannot serve this policy.
         worker.store.unload_all()
     else:
@@ -258,20 +256,18 @@ def setup_impl(worker, env: dict) -> dict:
     # worker replaces a configured rail only when that interface is absent or down.
     os.environ["CUDA_VISIBLE_DEVICES"] = str(env.get("local_gpu_index", 0))
     os.environ.update(fabric)
-    ensure_comfy(
-        os.path.expanduser(env["comfy_dir"]),
-        env.get("worker_args"),
-        gpus_per_host=int(env.get("gpus_per_host") or 1),
-    )
+    ensure_comfy(os.path.expanduser(env["comfy_dir"]), env.get("worker_args"),
+                 gpus_per_host=int(env.get("gpus_per_host") or 1), rank=(rank, world))
     # Resolve auto low-RSS policy per host; mode changes rebuild residents.
     from .comfy_bridge import _uma_memory_defaults as _uma_defaults
 
     _wa_eff = _uma_defaults(dict(env.get("worker_args") or {}))
     from ..family_select import override_from_worker_args
 
-    # Setup starts with no resident, so this is a plain assignment; the eviction
+    # Setup starts with no resident, so these are plain assignments; the eviction
     # on a later change belongs to apply_worker_args_impl above.
     worker.store.family_override = override_from_worker_args(_wa_eff)
+    fp8_compute.configure_from_worker_args(_wa_eff)
     worker.store.set_lora_mode(bool(_wa_eff.get("lora_low_rss")))
     worker.store.set_slab_mode(worker._slab_mode_effective(_wa_eff, env["topology"]),
                                slab_mode_reason(_wa_eff, env["topology"]))
@@ -448,6 +444,9 @@ def setup_info(worker) -> dict:
         # rank-asymmetric selection before dispatch. A raise inside a
         # collective on one rank only abandons the lease and strands its peers.
         "sol_attn": sol_attn_available(),
+        "runtime": gate_runtime.runtime_build_identity(),  # Gate authority needs the driver's (worker_runtime.py)
+        mesh_builds.SOURCE_FIELD: mesh_builds.source_digest(),  # one build a fleet: mesh_builds.refuse_two_builds
+        "switches": list(getattr(worker, "_switches", ())),  # diagnostic switches set here (worker_switches.py)
         "sp_rank": get_sequence_parallel_rank(),
         "cfg_rank": get_classifier_free_guidance_rank(),
         "dp_rank": get_data_parallel_rank(),
@@ -468,6 +467,7 @@ def teardown_parallel_state(worker, release_models: bool = True) -> None:
         lambda: fsdp_checkpoint_pin.close_store_pins(worker.store))
     stages = (
         ("model unload", unload),
+        ("decode VAE", (lambda: vae_decode.drop_resident(worker)) if release_models else (lambda: None)),
         ("attention dispatch", invalidate_attention),
         ("model-parallel groups", destroy_model_parallel),
         ("distributed environment", destroy_distributed_environment),

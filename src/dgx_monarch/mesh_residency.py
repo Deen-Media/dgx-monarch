@@ -19,8 +19,13 @@ NORMAL_RENDER_RESIDENCY_CAPABILITY = "normal_render_residency"
 
 
 def physical_capability_context(handle) -> dict:
-    """Physical/config identity shared by capability grants and preflight."""
+    """Physical/config identity and the driver's torch build, shared by grants and preflight.
+
+    The build is the driver's once every rank's setup report agrees with it;
+    a pair whose reports differ refuses here (worker_runtime.cohort_runtime).
+    """
     from .monarch_policy_io import trust_config_fingerprint
+    from .worker_runtime import cohort_runtime
 
     config = getattr(handle, "config", None)
     return {
@@ -31,6 +36,7 @@ def physical_capability_context(handle) -> dict:
         "physical_world": int(getattr(handle, "world", 0) or 0),
         "hosts": int(getattr(handle, "n_hosts", 0) or 0),
         "gpus_per_host": int(getattr(handle, "gpus_per_host", 0) or 0),
+        "runtime": cohort_runtime(handle),
     }
 
 
@@ -118,7 +124,8 @@ def assert_normal_render_residency_mode(
     elif mode == "stock":
         if residency_mode.requested(effective_worker_args):
             # The driver stamps "stock" whenever it could not vouch the
-            # combination, and for every dual-model request. Under this rung
+            # combination, and for every dual-model request under it
+            # (nodes/gate_dual.py: no comfy-managed proof covers two models). Under this rung
             # that stamp is unreachable, not merely unproven: the levers it
             # names are already off and the one that matters cannot be turned
             # off in a live process. Typed, so the operator gets the cause and
@@ -130,7 +137,8 @@ def assert_normal_render_residency_mode(
                 "not authorize this render's residency: either this model and LoRA "
                 "combination has no exact identity-gate PASS for the comfy-managed "
                 "capability context, or the render dispatches a second (unconditional) "
-                "model, which is always stamped stock because a ceremony proves one model. "
+                "model, which this residency always stamps stock because no comfy-managed "
+                "proof covers two models. "
                 "Unlike slab_weights and lora_low_rss there is no safe residency to fall back "
                 "to: ComfyUI's DynamicVRAM is a bootstrap policy and cannot be turned off "
                 "for one render. Nothing was loaded and nothing was quarantined. What works "
@@ -161,13 +169,15 @@ def assert_fleet_residency_grant(
     effective_worker_args: dict,
     expected_context: dict | None = None,
     rank_world: int = 1,
+    local_runtime: dict | None = None,
 ) -> bool:
     """Validate a risky fleet request's exact artifact/context grant.
 
     The driver passes ``expected_context`` to bind physical/config identity as
     well as policy.  Workers cannot reconstruct driver config paths, but still
     bind the same grant to their current raw effective policy, world-1 setup,
-    request combo, and freshly sampled local artifact identity.
+    request combo, freshly sampled local artifact identity and, through
+    ``local_runtime``, their own torch and CUDA build.
     """
     runtime = _compat_runtime()
     grant = request.get("_dgxm_fleet_residency_grant")
@@ -234,6 +244,9 @@ def assert_fleet_residency_grant(
     if tuple(grant.get("gate_token") or ()) != expected_token:
         raise RuntimeError(
             "fleet residency grant token does not match its artifact/context payload")
+    from .worker_runtime import assert_grant_runtime  # adapters import this module's callers
+
+    assert_grant_runtime(context, local_runtime)
     return True
 
 
@@ -248,8 +261,13 @@ def assert_normal_render_residency_grant(
     setup_key: tuple | None = None,
     worker_args_key: tuple | None = None,
     worker_topology: dict | None = None,
+    local_runtime: dict | None = None,
 ) -> bool:
-    """Validate an exact first-use Gate grant for a normal risky render."""
+    """Validate an exact first-use Gate grant for a normal risky render.
+
+    A Worker passes ``local_runtime``, its own torch and CUDA build, which the
+    grant's context must name.
+    """
     runtime = _compat_runtime()
     grant = request.get("_dgxm_normal_residency_grant")
     if grant is None:
@@ -331,7 +349,13 @@ def assert_normal_render_residency_grant(
             raise RuntimeError(
                 "normal-render Gate context does not match the sample sync policy"
             )
-    combo = runtime.request_combo_key(request["model"])
+    uncond = request.get("uncond_model")
+    if uncond is None:
+        combo = runtime.request_combo_key(request["model"])
+    else:  # a dual PASS binds both slots under its own key (gate_dual_identity.py)
+        from .gate_dual_identity import dual_combo_key
+
+        combo = dual_combo_key(request["model"], uncond)
     if grant.get("combo_key") != combo:
         raise RuntimeError(
             "normal-render model/options/LoRA combination changed after authorization"
@@ -348,9 +372,15 @@ def assert_normal_render_residency_grant(
         raise RuntimeError(
             "model/LoRA/Comfy identity changed after normal-render authorization"
         )
-    if len(artifact_sets) != 1:
-        raise RuntimeError("normal-render Gate grants authorize exactly one model")
-    identity = artifact_sets[0]
+    if len(artifact_sets) != (1 if uncond is None else 2):
+        raise RuntimeError(
+            "a normal-render Gate grant authorizes exactly the models its request names")
+    if uncond is None:
+        identity = artifact_sets[0]
+    else:
+        from .gate_dual_identity import dual_identity_summary
+
+        identity = dual_identity_summary(artifact_sets)
     if (grant.get("comfy") != identity.get("comfy")
             or grant.get("artifact_digest") != identity.get("digest")):
         raise RuntimeError(
@@ -369,4 +399,7 @@ def assert_normal_render_residency_grant(
         raise RuntimeError(
             "normal-render residency grant token does not match its artifact/context payload"
         )
+    from .worker_runtime import assert_grant_runtime  # adapters import this module's callers
+
+    assert_grant_runtime(context, local_runtime)
     return True

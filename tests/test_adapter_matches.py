@@ -63,6 +63,7 @@ from dgx_monarch.adapters.lens import LensAdapter
 from dgx_monarch.adapters.ltx import LTXAdapter
 from dgx_monarch.adapters.mage_flow import MageFlowAdapter
 from dgx_monarch.adapters.minimax_h3 import MiniMaxH3Adapter
+from dgx_monarch.adapters.minimax_h3_image import MiniMaxH3ImageAdapter
 from dgx_monarch.adapters.moss_image import MOSSImageAdapter
 from dgx_monarch.adapters.omnigen2 import Omnigen2Adapter
 from dgx_monarch.adapters.pixeldit import Ideogram4Adapter
@@ -132,6 +133,11 @@ _ROWS = (
     _Row(
         MiniMaxH3Adapter(), {"MiniMaxH3": None}, ("MiniMaxH3",),
         reject_fragment="minimax_h3 variant",
+    ),
+    _Row(
+        MiniMaxH3ImageAdapter(), {"MiniMaxH3": None, "MiniMaxH3Image": "MiniMaxH3"},
+        ("MiniMaxH3Image",), extra_declines=("MiniMaxH3",),
+        reject_fragment="minimax_h3_image variant",
     ),
     _Row(
         # test_matches_rejects_boogu_subclass_typed (test_omnigen2_adapter.py)

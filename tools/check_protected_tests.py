@@ -49,15 +49,22 @@ SUITE_MODULES = (
     "tests/test_capacity_quote.py",
     "tests/test_gate_ledger.py",
     "tests/test_gate_ledger_properties.py",
+    "tests/test_int8_gemm_kitchen_version.py",
+    "tests/test_int8_gemm_option.py",
     "tests/test_refusal_classes.py",
     "tests/test_sweep_matrix.py",
     "tests/test_sweep_run.py",
+    # Worker-assisted VAE decode: the byte identity with ComfyUI's tiled
+    # decode, and the decode VAE an actor holds in its accounting.
+    "tests/test_vae_decode_split_comfy.py",
+    "tests/test_vae_decode_worker.py",
 )
 CAPACITY_MODULES = (
     "tests/test_capacity_agreement.py",
     "tests/test_capacity_lora_bake.py",
     "tests/test_capacity_memory.py",
     "tests/test_capacity_quote.py",
+    "tests/test_cast_load_price.py",
     "tests/test_comfy_managed_pricing.py",
     "tests/test_design_capacity_table.py",
     "tests/test_driver_footprint_preflight.py",

@@ -1,21 +1,26 @@
-"""Driver preflights for the per-render model patches (Skip Layer Guidance, the SD3
-shift, LoRA) and for MOSS-Image reference images and text attention bias.
+"""Driver preflights for the per-render model patches (Skip Layer Guidance, MiniMax H3
+context windows, the SD3 and MiniMax H3 shifts, LoRA), for MOSS-Image reference
+images and text attention bias, and for UltraTex view conditioning on the Flux family.
 
-All five run once per render in nodes/render_submit.py, after the topology
+All eight run once per render in nodes/render_submit.py, after the topology
 resolves and before any Worker call, so a refusal costs no dispatch. Each fails
-open where it cannot read its facts: the Worker belt (actor/guidance_render.py)
-still guards Skip Layer Guidance, the shift guard refuses only a config that
+open where it cannot read its facts: the Worker belts (actor/guidance_render.py,
+actor/context_windows_render.py, actor/model_sampling_render.py) still guard
+Skip Layer Guidance, the context windows and the H3 shift, the shift guard refuses only a config that
 says multiplier 1.0 outright, the model store refuses a LoRA on a refused
 quantized file on every Worker (lora_quant_guard.py), the MOSS-Image sharded
 forward refuses reference images on every rank, and every Worker rank scans the
-whole request for the bias before sampling (actor/sample_protocol.py).
+whole request for the bias and for UltraTex views before sampling
+(actor/sample_protocol.py).
 """
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
-from .. import family_select, lora_quant_guard
+from .. import family_select, h3_sigma_shift, lora_quant_guard
+from ..log import get_logger
+from ..model_sampling import normalize_model_sampling, sampling_kind
 from ..refusal import RefusalClass, refusal
 from ..skip_layer_guidance import (
     normalize_skip_layer_guidance,
@@ -23,10 +28,13 @@ from ..skip_layer_guidance import (
     skip_layer_guidance_refusal_reason,
 )
 
+log = get_logger(__name__)
+
 
 def preflight_model_patches(model: Any, topo: Any, request: Mapping[str, Any]) -> None:
     """The one driver entry: the skip check, then the shift and LoRA checks on every model."""
     preflight_skip_layer_guidance(model, topo, request)
+    preflight_context_windows(model, request)
     preflight_shift_node(model)
     uncond = request.get("uncond_model")
     if uncond is not None:
@@ -147,6 +155,25 @@ def preflight_moss_image_attention_bias(model: Any, request: Mapping[str, Any], 
     raise UnsupportedModelError(CONTEXT_ATTENTION_BIAS_REFUSAL)
 
 
+def preflight_flux_views(model: Any, request: Mapping[str, Any], topo: Any) -> None:
+    """Refuse UltraTex view conditioning off a proven topology before dispatch (#148).
+
+    A Flux, Flux 2 or LongCat render whose prompts carry ``view_grid``,
+    ``token_masks`` or ``reference_views`` runs on one GPU, uly2 or uly2+fsdp
+    (adapters/flux_views.py). The header is read only for a request that
+    carries them on another topology, and an unreadable one passes: every
+    Worker rank then reads the same request against its loaded model's family
+    before sampling and refuses alike (actor/sample_protocol.py).
+    """
+    from ..adapters import flux_views
+
+    if flux_views.runs_views(topo) or not flux_views.request_carries_views(request):
+        return
+    flux_views.refuse_unproven_views(
+        _sniffed_family(model), topo, request,
+        preset=getattr(getattr(model, "mesh", None), "topology_preset", None))
+
+
 def preflight_skip_layer_guidance(model: Any, topo: Any, request: Mapping[str, Any]) -> None:
     """Refuse an active skip the resolved topology cannot carry (#126).
 
@@ -181,8 +208,31 @@ def preflight_skip_layer_guidance(model: Any, topo: Any, request: Mapping[str, A
         troubleshooting=126))
 
 
-def refuse_shift_after_skip(model: Any) -> None:
-    """Refuse the SD3 shift node wired after a skip whose window the shift would move (#126).
+def preflight_context_windows(model: Any, request: Mapping[str, Any]) -> None:
+    """Refuse MiniMax H3 context windows on another family or a guider's negative (#142).
+
+    The guider arm needs no header. The family arm reads it, and an unreadable
+    header passes: every Worker reads the loaded model's family instead.
+    """
+    from ..h3_context_windows import DUAL_MODEL_REASON, FIELD, family_refusal_reason
+
+    uncond = request.get("uncond_model")
+    reason = None
+    if isinstance(uncond, Mapping) and uncond.get(FIELD) is not None:
+        reason = DUAL_MODEL_REASON
+    elif getattr(model, FIELD, None) is not None:
+        reason = family_refusal_reason(_sniffed_family(model))
+    if reason is None:
+        return
+    from ..adapters.base import UnsupportedModelError
+
+    raise UnsupportedModelError(refusal(
+        RefusalClass.PHYSICS, f"{reason} Without the node, the graph samples the clip whole instead.",
+        troubleshooting=142))
+
+
+def refuse_shift_after_skip(model: Any, node: str = "Model Sampling SD3 (DGX Monarch)") -> None:
+    """Refuse a shift node wired after a skip whose window the shift would move (#126).
 
     Stock ComfyUI turns the skip's step window into sigmas when its node runs, from
     the sampling the model has at that point. Every Worker applies the shift first
@@ -201,7 +251,7 @@ def refuse_shift_after_skip(model: Any) -> None:
 
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
-        "Model Sampling SD3 (DGX Monarch) follows Skip Layer Guidance (DGX Monarch) in this "
+        f"{node} follows Skip Layer Guidance (DGX Monarch) in this "
         f"graph, and the skip's step window runs from {wire['start_percent']:g} to "
         f"{wire['end_percent']:g}. Stock ComfyUI turns that window into sigmas when the skip "
         "node runs, from the sampling the model has at that point, while every Worker applies "
@@ -225,7 +275,7 @@ def preflight_shift_node(model: Any) -> None:
     renders today changes outcome unless its own config says 1.0.
     """
     unet_name, sampling = _shift_target(model)
-    if sampling is None or not unet_name:
+    if sampling is None or not unet_name or sampling_kind(sampling) != "sd3":
         return
     try:
         import folder_paths
@@ -252,3 +302,56 @@ def preflight_shift_node(model: Any) -> None:
         "for MOSS-Image). Remove the node and render with the checkpoint's own sampling "
         "instead; for MOSS-Image that already applies the vendor's shift of 5.",
         troubleshooting=128))
+
+
+def preflight_h3_sigma_shift(model: Any, request: Mapping[str, Any], latent: Any) -> None:
+    """Refuse a MiniMax H3 shift the Workers cannot apply as stock does (#144).
+
+    Two arms. ModelSamplingMiniMaxH3 (DGX Monarch) on a checkpoint that reads as
+    another family, on the model or a guider's negative; an unreadable header
+    or one no signature matches passes. Then a one-frame H3 audio-video latent,
+    p-h3-image's image latent, that no H3 shift reaches: the Workers would
+    sample it at H3's defaults. That arm reads the family too, so a latent that
+    only looks like it on another family passes. Every Worker repeats both
+    arms from the loaded model (actor/model_sampling_render.py), so a header
+    this side cannot read still refuses there.
+    """
+    from ..adapters.base import UnsupportedModelError
+
+    uncond = request.get("uncond_model")
+    override = family_select.override_for_model(model)
+    for target in (model, uncond):
+        if target is None:
+            continue
+        _name, sampling = _shift_target(target)
+        if sampling_kind(sampling) != "minimax_h3":
+            continue
+        family = (_sniffed_family(target) if not isinstance(target, Mapping)
+                  else _sniffed_family_of_request(target, override))
+        reason = h3_sigma_shift.family_refusal_reason(family)
+        if reason is not None:
+            raise UnsupportedModelError(refusal(
+                RefusalClass.PHYSICS, f"{reason} Remove the node and render with the "
+                "checkpoint's own sampling instead, or load a MiniMax H3 or p-h3-image "
+                "checkpoint.", troubleshooting=h3_sigma_shift.TROUBLESHOOTING))
+    if not h3_sigma_shift.is_image_latent(latent) or _sniffed_family(model) != h3_sigma_shift.FAMILY:
+        return
+    sampling = _shift_target(model)[1]
+    reason = h3_sigma_shift.missing_shift_reason(sampling_kind(sampling))
+    if reason is not None:
+        raise UnsupportedModelError(refusal(
+            RefusalClass.PHYSICS, f"{reason} Use the shifts the model's own workflow names "
+            "(docs/MODELS.md).", troubleshooting=h3_sigma_shift.TROUBLESHOOTING))
+    wire: Mapping[str, Any] = normalize_model_sampling(sampling) or {}
+    log.info("minimax_h3: one-frame image latent (p-h3-image) at shifts %s and %s",
+             wire.get("shift_video"), wire.get("shift_audio"))
+
+
+def _sniffed_family_of_request(model: Mapping[str, Any], override: str | None) -> str | None:
+    """The family of a model request dict's checkpoint under the primary's override,
+    or None when it cannot be read."""
+    try:
+        sniffed = _sniffed_checkpoint(model.get("unet_name"), override)
+    except Exception:
+        return None
+    return None if sniffed is None else sniffed[0]

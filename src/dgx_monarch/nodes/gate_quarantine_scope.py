@@ -77,12 +77,18 @@ def abort_class(cause: BaseException | None) -> str:
         return "an abort of unreadable class"
 
 
-def combination(model: Any) -> str:
-    """This model combination's gate ledger key, or empty when unreadable."""
+def combination(model: Any, uncond: dict | None = None) -> str:
+    """This combination's gate ledger key, the dual key for a dual render, or empty."""
     try:
         from ..gate_ledger import combo_key
 
         loras = getattr(model, "loras", ()) or ()
+        if uncond is not None:  # a dual proof's own key (gate_dual_identity.py)
+            from ..gate_dual_identity import dual_combo_key
+
+            return dual_combo_key({"unet_name": model.unet_name,
+                                   "options": dict(getattr(model, "options", None) or {}),
+                                   "loras": loras}, uncond)
         return combo_key(
             str(model.unet_name), dict(getattr(model, "options", None) or {}),
             [str(entry["name"]) for entry in loras])
@@ -90,10 +96,10 @@ def combination(model: Any) -> str:
         return ""
 
 
-def combination_label(model: Any) -> str:
+def combination_label(model: Any, uncond: dict | None = None) -> str:
     """The combination as the driver log names it: file first, then key."""
     name = str(getattr(model, "unet_name", "") or "an unnamed model")
-    key = combination(model)
+    key = combination(model, uncond)
     return f"{name} (combination {key})" if key else name
 
 
@@ -106,15 +112,20 @@ def _record_for(worker_args: Any) -> dict[str, Any] | None:
 
 def write_scoped_quarantine(
     model: Any, levers: dict[str, bool], cause: BaseException | None = None,
+    uncond: dict | None = None,
 ) -> list[str]:
-    """Turn the unproven levers off for one combination, and say whose."""
+    """Turn the unproven levers off for one combination, and say whose.
+
+    ``uncond`` names a dual render's second model: its ceremony proved the
+    pair, so the quarantine belongs to the pair, not to the conditional model.
+    """
     guard = measured_abort_guard(cause)
     if guard is not None:
         log.error(
             "auto-gate could not complete for %s: the class K guard %s refused "
             "inside the ceremony. That guard is measured, so it answers this "
             "combination's accuracy and takes no residency lever from the "
-            "graph", combination_label(model), guard)
+            "graph", combination_label(model, uncond), guard)
         return []
     worker_args = model.mesh.worker_args
     changed = [lever for lever in levers if worker_args.get(lever) is not _OFF]
@@ -127,15 +138,16 @@ def write_scoped_quarantine(
     # expose one lever disabled while the other remains risky.
     worker_args.update(**levers)
     if changed:
-        _remember(model, worker_args, requested)
+        _remember(model, worker_args, requested, abort_class(cause), uncond)
         log.error(
             "auto-gate could not complete for %s on %s; %s disabled for that "
             "combination for the rest of this session",
-            combination_label(model), abort_class(cause), ", ".join(changed))
+            combination_label(model, uncond), abort_class(cause), ", ".join(changed))
     return changed
 
 
-def _remember(model: Any, worker_args: Any, requested: dict[str, Any]) -> None:
+def _remember(model: Any, worker_args: Any, requested: dict[str, Any],
+              cause: str = "an unproved verdict", uncond: dict | None = None) -> None:
     """Bind this quarantine to the combination whose ceremony aborted."""
     try:
         record = _record_for(worker_args)
@@ -149,13 +161,36 @@ def _remember(model: Any, worker_args: Any, requested: dict[str, Any]) -> None:
         # the next combination a quarantine back instead of the graph's ask.
         for lever, value in requested.items():
             record["requested"].setdefault(lever, value)
-        record["combination"] = combination(model)
+        record["combination"] = combination(model, uncond)
+        record["label"], record["cause"] = combination_label(model, uncond), cause
     except BaseException as exc:  # An unscoped quarantine is still a quarantine.
         log.warning(
             "an unproven quarantine was not bound to its combination (%r)", exc)
 
 
-def restore_requested_levers(model: Any) -> list[str]:
+def session_blocker(worker_args: Any) -> str:
+    """Name the session quarantine holding slab residency off in this policy, or "".
+
+    A refusal that cannot offer slab says which ceremony took the levers and
+    what clears them, rather than pointing at an Init widget the operator never
+    set. Empty when the graph itself set slab_weights off, or nothing is known.
+    """
+    try:
+        record = None if worker_args is None else _record_for(worker_args)
+        if (record is None or "slab_weights" not in record["requested"]
+                or worker_args.get("slab_weights") is not _OFF):
+            return ""
+        return (f"the identity gate for {record.get('label', 'a combination')} could "
+                f"not complete on {record.get('cause', 'an unproved verdict')} earlier "
+                f"in this session and turned {', '.join(sorted(record['requested']))} off "
+                "on this Init node for the rest of the session, and no consent can turn "
+                "them back on; restart ComfyUI to clear it, and the next session prices "
+                "this load with the graph's own settings")
+    except BaseException:  # A refusal's wording never replaces the refusal.
+        return ""
+
+
+def restore_requested_levers(model: Any, uncond: dict | None = None) -> list[str]:
     """Give a different combination the levers the graph asked for.
 
     The aborting combination keeps its quarantine: it is the one thing here
@@ -168,7 +203,7 @@ def restore_requested_levers(model: Any) -> list[str]:
         worker_args: Any = getattr(
             getattr(model, "mesh", None), "worker_args", None)
         record = None if worker_args is None else _record_for(worker_args)
-        if record is None or record.get("combination") == combination(model):
+        if record is None or record.get("combination") == combination(model, uncond):
             return []
         for lever, value in record["requested"].items():
             if worker_args.get(lever) is not _OFF:
@@ -186,7 +221,7 @@ def restore_requested_levers(model: Any) -> list[str]:
         log.warning(
             "%s asked for %s, which an earlier combination's aborted ceremony "
             "turned off; restoring them, because that abort proved nothing about this combination",
-            combination_label(model), ", ".join(restored))
+            combination_label(model, uncond), ", ".join(restored))
     return restored
 
 

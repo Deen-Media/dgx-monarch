@@ -176,6 +176,29 @@ def _placeholder_hosts_get_the_hosted_runner_answer(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _the_decode_reliefs_note_of_a_fleet_ends_with_the_test():
+    """``vae_decode_relief`` keeps a weak note of the fleet a render was last submitted to: process state.
+
+    A fake fleet a render-submit test left in it would reach the relief's own tests in another order.
+    """
+    yield
+    relief = sys.modules.get("dgx_monarch.vae_decode_relief")
+    if relief is not None:
+        relief.note_serving(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_test_takes_the_switches_left_on_this_box(monkeypatch):
+    """A Worker reads ``~/.config/dgx-monarch/worker.env`` as it starts (``actor/worker_switches.py``).
+
+    A test that builds a Worker must not take the diagnostic switches a person left on this box.
+    """
+    from dgx_monarch.actor import worker_switches
+
+    monkeypatch.setattr(worker_switches, "FILE", Path("/nonexistent-dgxm-test") / "worker.env")
+
+
+@pytest.fixture(autouse=True)
 def _source_only_imports_end_with_the_test():
     """Restore import flags and environment after source-only worker tests.
 
@@ -193,6 +216,42 @@ def _source_only_imports_end_with_the_test():
             os.environ.pop(name, None)
         else:
             os.environ[name] = value
+
+
+# pytest's package setup imports the repository-root __init__.py, the pack
+# entrypoint, before any fixture runs, so the switch is set when conftest loads.
+os.environ["DGXM_DEMO_INPUTS"] = "off"
+
+
+@pytest.fixture(autouse=True)
+def _the_battery_places_no_demo_inputs(monkeypatch):
+    """No test, and no process a test starts, copies demo inputs into ComfyUI.
+
+    The pack entrypoint copies the templates' demo inputs into ComfyUI's input
+    folder at import (``demo_inputs.py``), and a shell may export any value of
+    its switch. The assignment above covers pytest's own import of the
+    entrypoint. This second guard covers a test that changed the switch and a
+    later test that runs the entrypoint in this process or in a child.
+    ``tests/test_demo_inputs.py`` clears it to point the copy at scratch
+    folders.
+    """
+    monkeypatch.setenv("DGXM_DEMO_INPUTS", "off")
+
+
+@pytest.fixture(autouse=True)
+def _doctor_reads_no_live_drivers_memory(monkeypatch):
+    """No test asks a ComfyUI running on this box how it reads memory.
+
+    Doctor's ``driver memory reading`` row finds every local ComfyUI and reads
+    its ``/system_stats``, and a dozen harnesses run every doctor row. Left
+    alone, the row would send a GET to a live driver and its status would
+    follow this box's memory. A test that names its candidates still probes.
+    """
+    from dgx_monarch.cli import driver_memory_row
+
+    fetch = driver_memory_row.fetch
+    monkeypatch.setattr(driver_memory_row, "fetch",
+                        lambda candidates=None: [] if candidates is None else fetch(candidates))
 
 
 @pytest.fixture(autouse=True)
@@ -231,6 +290,17 @@ def _native_return_latch_starts_clear(monkeypatch):
     from dgx_monarch import native_return_latch
 
     monkeypatch.setattr(native_return_latch, "_STATE", native_return_latch.clear_state())
+
+
+@pytest.fixture(autouse=True)
+def _pending_load_marks_start_clear():
+    """The loader's deferrals and a ceremony's unload mark live as long as a driver
+    process (``nodes/pending_load_relief.py``); each test starts as a fresh one."""
+    from dgx_monarch.nodes import pending_load_relief
+
+    pending_load_relief.reset()
+    yield
+    pending_load_relief.reset()
 
 
 @pytest.fixture(autouse=True)
@@ -326,31 +396,75 @@ def _isolate_service_telemetry(monkeypatch):
     monkeypatch.setattr(services, "snapshot", lambda: {"state": "unavailable"})
 
 
+def _refused_ssh(args, kwargs):
+    """What ssh returns when it cannot connect, exit 255 with no output, sent nowhere.
+
+    Output streams follow the call's own capture and text options, and
+    ``check=True`` raises ``CalledProcessError`` as the real call would.
+    """
+    text = any(kwargs.get(key) for key in ("text", "universal_newlines", "encoding", "errors"))
+    empty = "" if text else b""
+    captured = bool(kwargs.get("capture_output"))
+    stdout = empty if captured or kwargs.get("stdout") is subprocess.PIPE else None
+    stderr = empty if captured or kwargs.get("stderr") is subprocess.PIPE else None
+    if kwargs.get("check"):
+        raise subprocess.CalledProcessError(255, args, stdout, stderr)
+    return subprocess.CompletedProcess(args, 255, stdout, stderr)
+
+
+# The unguarded call, for a test that puts its own fake ssh first on PATH and
+# runs the real rsync against it, so nothing leaves the box.
+REAL_SUBPROCESS_RUN = subprocess.run
+
+
+def _remote_shell(args) -> bool:
+    """An ``ssh`` argv, or an ``rsync`` argv that names a remote shell, which
+    rsync would start as ssh to reach the other end."""
+    if not isinstance(args, (list, tuple)) or not args or not isinstance(args[0], str):
+        return False
+    program = os.path.basename(args[0])
+    if program == "ssh":
+        return True
+    return program == "rsync" and any(
+        isinstance(arg, str) and (arg in ("-e", "--rsh") or arg.startswith("--rsh=")
+                                  or (arg.startswith("-e") and not arg.startswith("--")))
+        for arg in args[1:])
+
+
+def _ssh_refusing_run(real, spawned: list[str]):
+    """``subprocess.run`` that records a remote-shell call and refuses it before dispatch."""
+    def record(args, *rest, **kwargs):
+        if _remote_shell(args):
+            spawned.append(" ".join(map(str, args)))
+            return _refused_ssh(args, kwargs)
+        return real(args, *rest, **kwargs)
+
+    return record
+
+
 @pytest.fixture(autouse=True)
 def _the_battery_never_shells_out_to_ssh(monkeypatch):
     """Fail a test that spawned ssh instead of standing in for the runner.
 
-    Every fleet path in this repository reaches a worker through
-    ``lifecycle.run_on_host``, which runs ``ssh`` for a host that is not this
-    box. A test that leaves that seam unpatched sends real traffic at the
-    placeholder addresses the battery configures. It usually passes anyway,
-    because ssh exits 255 at once and the callers read a failed probe as
-    unobserved, so nothing in the run says what happened.
+    The guard covers every ``ssh`` the battery spawns through
+    ``subprocess.run``, which is how ``lifecycle.run_on_host`` reaches a host
+    that is not this box, and every ``rsync`` there whose argv names a remote
+    shell (``-e`` or ``--rsh``), as the package sync, setup's copy and the
+    release copy do. A test that leaves such a seam unpatched would send real
+    traffic at the placeholder addresses the battery configures. The guard
+    refuses the call before dispatch: nothing is sent, and the caller sees exit
+    255, which ssh itself returns when it cannot connect, so no tested path
+    changes. The callers read that as an unobserved probe or a failed copy, so
+    the test fails at teardown. A remote shell started another way, such as
+    through ``Popen``, is outside it. A test whose own fake ssh stands first on
+    PATH calls ``REAL_SUBPROCESS_RUN`` instead.
 
     It records instead of raising: the attach reads its listener generations
     inside a ``try`` that swallows every exception, so a guard that raised
     would be absorbed by the code it is guarding and the test would still pass.
     """
     spawned: list[str] = []
-    real = subprocess.run
-
-    def record(args, *rest, **kwargs):
-        first = args[0] if isinstance(args, (list, tuple)) and args else args
-        if isinstance(first, str) and os.path.basename(first) == "ssh":
-            spawned.append(" ".join(map(str, args)))
-        return real(args, *rest, **kwargs)
-
-    monkeypatch.setattr(subprocess, "run", record)
+    monkeypatch.setattr(subprocess, "run", _ssh_refusing_run(subprocess.run, spawned))
     yield
     assert not spawned, (
         "this test spawned ssh; patch the host runner seam it reaches "

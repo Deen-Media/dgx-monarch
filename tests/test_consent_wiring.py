@@ -1465,3 +1465,163 @@ def test_the_uncertified_slab_load_refusal_is_a_protocol_skew_not_known_wrong(
     assert "What works instead: restart the Worker service" in text
     assert "there is no waiver for this refusal" not in text
     assert "protocol skew rather than measured wrongness" in text
+
+
+# ---- A gate that compared nothing holds nothing against a capacity rescue ---
+# (2026-11-13). The rows come from the real writer on the real ledger
+# (tests/no_material_ledger_rows.py), in a gate's own contexts.
+
+
+def _h3_combo(checkpoint):
+    return consent_rescue.combo_identity("h3_fl2va_bf16.safetensors", {}, str(checkpoint))
+
+
+def _load_decision(checkpoint):
+    combo, artifacts = _h3_combo(checkpoint)
+    scope = consent_rescue.load_capability_context({"slab_weights": "auto"})
+    return consent_rescue.quarantine_decision_for_load(combo, artifacts, scope)
+
+
+@pytest.mark.parametrize("rendered", [False, True], ids=["no_render", "rendered"])
+def test_a_no_material_verdict_reads_clear_for_a_rescue(checkpoint, _rig, rendered):
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import write_ceremony_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    write_ceremony_rows(GateLedger(str(_rig)), combo, artifacts, rendered=rendered)
+    entries, _damage = GateLedger(str(_rig)).entries_with_integrity()
+    assert len(entries) == (4 if rendered else 1)
+    assert consent_quarantine.quarantine_decision(combo, artifacts).state == "clear"
+    assert _load_decision(checkpoint).state == "clear"
+
+
+def test_the_marker_rides_only_the_revocation_rows_and_grants_no_skip(checkpoint, _rig):
+    from dgx_monarch.gate_ledger import GateLedger, GateLedgerLookup
+    from dgx_monarch.nodes import gate_inconclusive
+    from no_material_ledger_rows import write_ceremony_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    write_ceremony_rows(GateLedger(str(_rig)), combo, artifacts)
+    (_line, exercised), *revocations = GateLedger(str(_rig)).entries_with_integrity()[0]
+    assert exercised[gate_inconclusive.RESULT_KEY] == gate_inconclusive.KIND_NO_MATERIAL
+    assert gate_inconclusive.REVOKED_BY_NO_MATERIAL not in exercised
+    assert gate_inconclusive.row_grants_skip(GateLedgerLookup("inconclusive", exercised, True))
+    for _line, row in revocations:
+        assert row[gate_inconclusive.REVOKED_BY_NO_MATERIAL] is True
+        assert gate_inconclusive.RESULT_KEY not in row
+        # The Fleet and explicit-on contexts still run their own gate on first use.
+        assert not gate_inconclusive.row_grants_skip(GateLedgerLookup("inconclusive", row, True))
+
+
+@pytest.mark.parametrize("rendered", [False, True], ids=["exercised", "with_revocations"])
+def test_an_unproven_inconclusive_still_denies_in_its_own_words(checkpoint, _rig, rendered):
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import write_ceremony_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    write_ceremony_rows(GateLedger(str(_rig)), combo, artifacts, kind="unproven",
+                        rendered=rendered)
+    decision = _load_decision(checkpoint)
+    assert decision.state == "denied"
+    assert decision.reason == consent_quarantine._INCONCLUSIVE_REASON
+
+
+def test_a_fail_before_a_no_material_verdict_still_quarantines(checkpoint, _rig):
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import GATE_CONTEXT, write_ceremony_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    ledger = GateLedger(str(_rig))
+    ledger.record(combo, artifacts, "deadbeef", "FAIL",
+                  {"quarantine_levers": ["slab_weights"]}, GATE_CONTEXT)
+    write_ceremony_rows(ledger, combo, artifacts)
+    decision = _load_decision(checkpoint)
+    assert decision.state == "fail"
+    assert decision.reason == consent_quarantine._QUARANTINE_REASON
+
+
+def test_rows_an_older_release_wrote_read_as_they_did_before_the_marker(
+        checkpoint, _rig, monkeypatch):
+    """An older release's plain revocation rows are not bound to this build: the
+    contextless read says unknown, and the load's own scope then reads clear,
+    as it did before the marker existed. No case is left that denies."""
+    from dgx_monarch import gate_ledger as ledger_mod
+    from no_material_ledger_rows import FLEET_CONTEXT, GATE_CONTEXT, SIBLING_CONTEXTS
+
+    combo, artifacts = _h3_combo(checkpoint)
+    detail = {"loras": 0, "max_abs_latent_diff": 0.0, "quarantine_levers": []}
+    with monkeypatch.context() as older:
+        older.setattr(ledger_mod, "__version__", "an-older-release")
+        ledger = ledger_mod.GateLedger(str(_rig))
+        ledger.record(combo, artifacts, "deadbeef", "INCONCLUSIVE",
+                      {**detail, "inconclusive_kind": "no_material"}, GATE_CONTEXT)
+        for context in (FLEET_CONTEXT, *SIBLING_CONTEXTS):
+            ledger.record(combo, artifacts, "deadbeef", "INCONCLUSIVE", detail, context)
+    contextless = consent_quarantine.quarantine_decision(combo, artifacts)
+    assert contextless.state == "unknown"
+    assert contextless.reason == consent_quarantine._UNKNOWN_UNBOUND_REASON
+    assert _load_decision(checkpoint).state == "clear"
+
+
+@pytest.mark.parametrize("source", ["env", "auto_env", "toggle"])
+def test_a_headless_rescue_projects_after_a_no_material_verdict(
+        checkpoint, _rig, monkeypatch, source):
+    """live_grant for each grant with no context of its own: the slab-rescue
+    variable, the standing auto-rescue variable and the standing toggle."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import write_ceremony_rows
+
+    if source == "env":
+        monkeypatch.setenv(consent_pending.KIND_SPECS["rescue-slab"].env_var, "1")
+    elif source == "auto_env":
+        monkeypatch.setenv(consent_pending.AUTO_RESCUE_ENV, "1")
+    else:
+        consent_store.set_auto_rescue(True)
+    combo, artifacts = _h3_combo(checkpoint)
+    write_ceremony_rows(GateLedger(str(_rig)), combo, artifacts)
+    model = _Model(_Mesh({"slab_weights": "auto"}))
+    assert consent_projection.project_for_render(model) is True
+    assert model.mesh.worker_args["slab_weights"] is True
+
+
+@pytest.mark.parametrize("source", ["env", "auto_env", "toggle"])
+def test_a_headless_rescue_stays_denied_after_an_unproven_verdict(
+        checkpoint, _rig, monkeypatch, source):
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import write_ceremony_rows
+
+    if source == "env":
+        monkeypatch.setenv(consent_pending.KIND_SPECS["rescue-slab"].env_var, "1")
+    elif source == "auto_env":
+        monkeypatch.setenv(consent_pending.AUTO_RESCUE_ENV, "1")
+    else:
+        consent_store.set_auto_rescue(True)
+    combo, artifacts = _h3_combo(checkpoint)
+    write_ceremony_rows(GateLedger(str(_rig)), combo, artifacts, kind="unproven")
+    model = _Model(_Mesh({"slab_weights": "auto"}))
+    assert consent_projection.project_for_render(model) is False
+    assert model.mesh.worker_args["slab_weights"] == "auto"
+
+
+@pytest.mark.parametrize(("older", "state"), [("unproven", "clear"), ("FAIL", "fail")])
+def test_the_newest_row_of_a_context_decides_and_only_a_pass_lifts_a_fail(
+        checkpoint, _rig, older, state):
+    """In one context a newer verdict that compared nothing supersedes an older
+    unproven one; an older FAIL stands until a later bound PASS."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import GATE_CONTEXT, write_ceremony_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    ledger = GateLedger(str(_rig))
+    if older == "FAIL":
+        ledger.record(combo, artifacts, "deadbeef", "FAIL",
+                      {"quarantine_levers": ["slab_weights"]}, GATE_CONTEXT)
+    else:
+        write_ceremony_rows(ledger, combo, artifacts, kind="unproven", rendered=False)
+    write_ceremony_rows(ledger, combo, artifacts, rendered=False)  # same context, newer
+    decision = _load_decision(checkpoint)
+    assert decision.state == state
+    if older == "FAIL":
+        assert decision.reason == consent_quarantine._QUARANTINE_REASON
+        ledger.record(combo, artifacts, "deadbeef", "PASS", context=GATE_CONTEXT)
+        assert _load_decision(checkpoint).state == "clear"

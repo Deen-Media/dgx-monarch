@@ -88,7 +88,10 @@ def passive_worker_health(
     exact process plus exact LISTEN endpoint is healthy, and only a host that
     reported one of them down is definitely not. ``pgrep`` exits 1 for "no
     match" and 2 or 3 for a fault, so only the 1 is read as a stopped loop: a
-    broken or missing ``pgrep`` says nothing about the process.
+    broken or missing ``pgrep`` says nothing about the process. The listener
+    verdict is the word awk prints from ``END`` after reading the whole table,
+    taken only when awk exits 0: a missing, failing or killed awk read
+    nothing, so the listener is unknown, not closed.
     """
     proc_path, endpoint = _proc_listener_target(host.address)
     pattern = shlex.quote(loop_regex(host))
@@ -110,17 +113,16 @@ elif [ $? -eq 1 ]; then
 else
   echo PROCESS=unknown
 fi
+LISTEN_STATE=unknown
 if [ -r {shlex.quote(proc_path)} ]; then
-  if awk -v endpoint={shlex.quote(endpoint)} \
-      '$2 == endpoint && $4 == "0A" {{ found=1 }} END {{ exit !found }}' \
-      {shlex.quote(proc_path)}; then
-    echo LISTENER=listening
-  else
-    echo LISTENER=not_listening
+  if SEEN=$(awk -v endpoint={shlex.quote(endpoint)} \
+      '$2 == endpoint && $4 == "0A" {{ found=1 }}
+       END {{ print (found ? "listening" : "not_listening") }}' \
+      {shlex.quote(proc_path)}); then
+    case "$SEEN" in listening|not_listening) LISTEN_STATE=$SEEN ;; esac
   fi
-else
-  echo LISTENER=unknown
 fi
+echo "LISTENER=$LISTEN_STATE"
 """
     try:
         result = runner(config, host, script, timeout=timeout)
@@ -169,18 +171,19 @@ def worker_service_row(
 ) -> tuple[str, str, str, str, bool]:
     """Return ``(status, name, detail, reason, critical)`` for a Worker service.
 
-    A timeout or command that never ran warns with reason ``unobserved``; treating
-    it as a definite failure could authorize an unsafe update rollback. An observed
-    healthy loop is OK. An unhealthy loop or a reported unknown state is FAIL.
+    Only an observed healthy loop is OK, and only an observed stopped loop or
+    closed port is FAIL. No verdict, whether the command never ran or the host
+    answered without observing one half, warns with reason ``unobserved``:
+    reading it as a failure could authorize an unsafe update rollback.
     """
     process = {True: "running", False: "stopped"}.get(health["running"], "unknown")
     listener = {True: "listening", False: "not listening"}.get(
         health["listening"], "unknown")
+    healthy = health["healthy"]
     status, reason = (
-        (probe_certainty.OK, "") if health["healthy"] is True
+        (probe_certainty.OK, "") if healthy is True
+        else (probe_certainty.FAIL, "") if healthy is False
         else probe_certainty.blind_row(probe_certainty.FAIL)
-        if health.get("error")
-        else (probe_certainty.FAIL, "")
     )
     return (
         status,

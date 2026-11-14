@@ -2,8 +2,10 @@
 
 DiT weights never enter the driver process. With an explicit topology the base
 model loads eagerly at node execution, except a dm-cfg2 slot, which defers to
-the sample path; with `auto` the load happens on the first render (topology
-must exist before load so USP injection binds at load). LoRA nodes only extend
+the sample path, and a load an identity gate would drop before its first proof
+render, which defers to that render (nodes/loader_gate_defer.py, #157); with
+`auto` the load happens on the first render (topology must exist before load so
+USP injection binds at load). LoRA nodes only extend
 the request signature. The model store (DESIGN.md section 5.5) turns a LoRA
 tweak into a hot-swap, never a reload.
 """
@@ -25,10 +27,21 @@ from ..loader_options import SUPPORTED_WEIGHT_DTYPES, validate_weight_dtype
 from ..log import get_logger
 from ..mesh import ensure_live
 from ..mesh_safety import ArtifactBindingError
+from ..old_model import OldModelRefusal, graph_loads
 from ..safetensors_header import SafetensorsFileIdentity
 from ..topology import Topology, topology_from_preset
-from . import consent_projection, loader_graph, loader_preflight, render_validation
+from . import (
+    consent_projection,
+    expander_prompt,
+    loader_gate_defer,
+    loader_graph,
+    loader_preflight,
+    old_model_clear,
+    pending_load_relief,
+    render_validation,
+)
 from .common import MeshSpec, ModelSpec
+from .refusal_lead import lead_with_refusal
 
 log = get_logger(__name__)
 
@@ -165,6 +178,7 @@ class DGXMonarchUNETLoader:
         except Exception:
             return False
 
+    @lead_with_refusal
     def load(self, mesh: MeshSpec, unet_name: str, weight_dtype: str = "default",
              unique_id=None, prompt=None):
         weight_dtype = validate_weight_dtype(weight_dtype)
@@ -191,15 +205,18 @@ class DGXMonarchUNETLoader:
         # budget, so it answers before the comfy-managed policy card, the
         # footprint card, and ensure_live healing or spawning a fleet.
         loader_preflight.preflight_upstream_gated_artifact(unet_name)
+        # A prompt expander that cannot see the request renders a wrong picture
+        # on any budget, so it answers here too, before the price and any load.
+        expander_prompt.refuse_dead_expander(prompt)
         # This runs above the footprint card; preflight_graph_batch_divides_dp says why.
-        render_validation.preflight_graph_batch_divides_dp(mesh, prompt)
+        render_validation.preflight_graph_batch_divides_dp(mesh, prompt, unique_id)
         # Above the footprint card, which would otherwise offer slab residency
         # where slab is not a lever (see preflight_comfy_managed_topology).
         loader_preflight.preflight_comfy_managed_topology(mesh)
 
         def price_load():
             rescue = loader_preflight.preflight_loader_footprint(
-                mesh, unet_name, options, prompt)
+                mesh, unet_name, options, prompt, slot=self.SLOT)
             if rescue is None:
                 # Always project consent: worker capacity checks may offer rescue
                 # even when this family-scoped driver estimator made no claim.
@@ -215,7 +232,18 @@ class DGXMonarchUNETLoader:
         # every rank. Inside that session it would still be typed and caught,
         # but only after a full bring-up. run_render and the pipeline keep the
         # same placement.
-        rescue_load = price_load()
+        from .render_session import active_render_session
+
+        try:
+            rescue_load = price_load()
+        except OldModelRefusal as exc:
+            # Always clear and retry: clear once, then price again on the
+            # emptied box; a second refusal is not caught. Never under a
+            # session pinned to its mesh.
+            if not old_model_clear.clear_for_retry(
+                    mesh.handle, exc, inherited=active_render_session() is not None):
+                raise
+            rescue_load = price_load()
         handle = ensure_live(mesh.handle, mesh_preflight=mesh_preflight)
         if mesh.topology_preset != "auto":
             from .abandoned_heal import heal_before_eager_setup
@@ -238,17 +266,32 @@ class DGXMonarchUNETLoader:
             from . import render_preflight
             from .render_session import mutation_render_session
 
-            render_preflight.preflight_sol_sequence_parallel(topo, mesh.attention)
-            if self._defers_for_dual_model_cfg2(mesh, unet_name, topo):
-                # Setup stays eager (topology is known), but the load defers to
-                # the first render so the sample path loads one checkpoint per
-                # rank. record_rescue_row is skipped with the load, mirroring the
-                # auto path (no call_all results to certify).
+            def defers(handle, topo) -> bool:
+                # Setup stays eager (topology is known), but a dm-cfg2 load
+                # defers to the first render so the sample path loads one
+                # checkpoint per rank, and a load an identity gate would drop
+                # before its first proof render defers to that render (#157).
+                # record_rescue_row is skipped with the load, mirroring the auto
+                # path (no call_all results to certify); a projected consent
+                # keeps its eager load.
+                render_preflight.preflight_sol_sequence_parallel(topo, mesh.attention)
+                if self._defers_for_dual_model_cfg2(mesh, unet_name, topo):
+                    reason = "explicit cfg2 dm-cfg2"
+                elif rescue_load is None and loader_gate_defer.ceremony_drops_load(
+                        spec, handle, prompt, unique_id):
+                    reason = loader_gate_defer.REASON
+                else:
+                    return False
                 with mutation_render_session(handle):
                     mesh_setup.ensure_request_setup(
                         handle, topo, mesh.attention, mesh.sync_ulysses,
                         mesh.worker_args)
-                first_render.load_deferred(self.ENDPOINT, reason="explicit cfg2 dm-cfg2")
+                first_render.load_deferred(self.ENDPOINT, reason=reason)
+                # The render site then counts this load as still to come.
+                pending_load_relief.note_deferred(unet_name)
+                return True
+
+            if defers(handle, topo):
                 return (spec,)
 
             def eager_load(handle, topo):
@@ -264,8 +307,10 @@ class DGXMonarchUNETLoader:
                     # the request because the uncond loader inherits this
                     # method, so a slotless quote would price an uncond load
                     # against the cond slot.
-                    capacity_agreement.agree_load(
-                        handle, unet_name, options, [], self.SLOT)
+                    # The graph's own checkpoints are never the old model.
+                    with graph_loads(loader_graph.unet_names(prompt)):
+                        capacity_agreement.agree_load(
+                            handle, unet_name, options, [], self.SLOT)
                     return handle.call_all(
                         self.ENDPOINT, unet_name, options, [], timeout_s=1800,
                         **mesh_setup.token_kwargs(setup_token))
@@ -288,8 +333,21 @@ class DGXMonarchUNETLoader:
                 topo = topology_from_preset(mesh.topology_preset, handle.world)
                 render_preflight.preflight_sol_sequence_parallel(topo, mesh.attention)
                 results = eager_load(handle, topo)
+            except OldModelRefusal as exc:
+                # Always clear and retry, outside the session: clear once,
+                # attach a fresh fleet, run the same preflights on its
+                # topology, then price and load once more.
+                if not old_model_clear.clear_for_retry(
+                        handle, exc, inherited=active_render_session() is not None):
+                    raise
+                handle = reprice_then_respawn(handle)
+                topo = topology_from_preset(mesh.topology_preset, handle.world)
+                if defers(handle, topo):
+                    return (spec,)
+                results = eager_load(handle, topo)
             for r in results:
                 log.info("%s: %s -> %s", self.ENDPOINT, r.get("host"), r.get("transition"))
+            pending_load_relief.note_placed(unet_name)
             # The SLOT matters: the worker's snapshot carries a certificate for
             # both model slots, and the uncond loader inherits this method, so
             # folding "cond" here would stamp the uncond row with the cond

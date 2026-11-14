@@ -196,14 +196,17 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
             handle.setup_generation, "distributed setup", budget.rank_setup_s)
         fabric_env = handle.config.resolved_fabric_env()
         master_addr = handle.config.resolved_master_addr()
+        futures: list[Any] = []
+        results: list[dict] = []
         try:
             deadline = mesh_setup.deadline_after(budget.rank_setup_s)
             futures = mesh_setup.dispatch_setup(
                 handle, topology, attention, sync_ulysses, worker_args,
                 fabric_env, master_addr, master_port, fleet)
-            results = [handle._await_or_evict(
-                f, mesh_setup.remaining(deadline, "distributed setup"),
-                holding_lock=True) for f in futures]
+            for future in futures:  # in rank order: len(results) is the rank awaited
+                results.append(handle._await_or_evict(
+                    future, mesh_setup.remaining(deadline, "distributed setup"),
+                    holding_lock=True))
             # READY publication is part of this same rollback transaction.
             # A BaseException at the call boundary after every worker has
             # accepted setup must still tear those groups back down rather
@@ -212,6 +215,13 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
                 handle, key, wa_key, worker_args, topology, attention,
                 budget.rank_setup_s)
         except BaseException as setup_exc:
+            # A rank's own setup error says which box it came from (worker_box.py):
+            # the rank whose answer was being awaited, in a Fleet too, where
+            # every actor is rank 0 of its own world and can mark nothing.
+            from . import worker_box
+
+            worker_box.name(setup_exc, handle,
+                            len(results) if len(results) < len(futures) else None)
             # Some ranks may have completed setup before a peer failed.
             # Tear all of them back to the common uninitialized state;
             # otherwise a retry can mix generations of NCCL groups.

@@ -9,6 +9,8 @@ import subprocess
 import sys
 import types
 
+import pytest
+
 from dgx_monarch.cli import doctor
 
 
@@ -259,3 +261,131 @@ def test_gpu_clock_row_is_ok_only_when_the_absent_device_was_observed(monkeypatc
     row = _row(doctor._spark_health_rows(None), "GPU clock under load")
     assert row["status"] == doctor._OK
     assert "no CUDA device" in row["detail"]
+
+
+def _command_answers(monkeypatch, name, returncode, stdout):
+    """Make one shelled-out probe complete with this exit status and output."""
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):
+        if cmd and cmd[0] == name:
+            return subprocess.CompletedProcess(cmd, returncode, stdout, "")
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+
+@pytest.mark.parametrize(("returncode", "stdout", "observed"), [
+    (0, "\nwtmp begins Fri Oct  9 04:18:18 2026\n", True),   # an empty history
+    (1, "", False),                                         # last failed and printed nothing
+    (1, "last: cannot open /var/log/wtmp\n", False),
+])
+def test_unexpected_shutdown_row_reads_only_a_successful_last(monkeypatch, returncode, stdout, observed):
+    _stub_no_cuda_torch(monkeypatch)
+    _command_answers(monkeypatch, "last", returncode, stdout)
+    row = _row(doctor._spark_health_rows(None), "unexpected shutdowns")
+    if observed:
+        assert (row["status"], row["detail"]) == (doctor._OK, "none in recent boot records")
+    else:
+        assert row["status"] == doctor._WARN
+        assert row["detail"].startswith("unobserved:")
+        assert f"exited {returncode}" in row["detail"]
+
+
+@pytest.mark.parametrize(("returncode", "stdout", "expected"), [
+    (0, "", (doctor._OK, "none")),
+    (0, "4242, /usr/bin/python3, 1024 MiB\n", (doctor._OK, "1: 4242, /usr/bin/python3, 1024 MiB")),
+    (0, "4242, python, [N/A]\n", (doctor._OK, "1: 4242, python, [N/A]")),
+    (9, "", None),
+    (9, "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver.\n", None),
+    (0, "No devices were found\n", None),
+])
+def test_co_resident_row_reads_only_a_successful_well_formed_query(monkeypatch, returncode, stdout, expected):
+    _stub_no_cuda_torch(monkeypatch)
+    _command_answers(monkeypatch, "nvidia-smi", returncode, stdout)
+    row = _row(doctor._spark_health_rows(None), "co-resident GPU procs")
+    if expected is not None:
+        assert (row["status"], row["detail"]) == expected
+    else:
+        assert row["status"] == doctor._WARN
+        assert row["detail"].startswith("unobserved:")
+        assert "NVIDIA-SMI has failed" not in row["detail"]
+
+
+def _remote_swap_line(content: str | None) -> str:
+    """Run the per-host swap probe source against this /proc/swaps text; None refuses the read."""
+    import io
+
+    from dgx_monarch.cli import doctor_probes
+
+    def fake_open(path, *_args, **_kwargs):
+        assert path == "/proc/swaps"
+        if content is None:
+            raise PermissionError(13, "Permission denied", path)
+        return io.StringIO(content)
+
+    printed: list[str] = []
+    exec(doctor_probes.SWAP_PROBE_SOURCE, {"open": fake_open, "print": printed.append})  # noqa: S102
+    assert len(printed) == 1
+    return printed[0]
+
+
+_SWAPS_HEADER = "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n"
+
+
+@pytest.mark.parametrize(("content", "status", "detail"), [
+    (_SWAPS_HEADER, doctor._OK, "off"),
+    (_SWAPS_HEADER + "/swap.img  file  8388604  0  -2\n", doctor._WARN, "8.0 GiB active on /swap.img"),
+    (None, doctor._WARN, "unobserved: /proc/swaps was unreadable on that host"),
+    (_SWAPS_HEADER + "/swap.img  file  lots  0  -2\n", doctor._WARN,
+     "unobserved: /proc/swaps on that host held a size the probe could not read"),
+])
+def test_remote_swap_row_tells_an_empty_table_from_an_unreadable_one(content, status, detail):
+    from dgx_monarch.cli import doctor_probes
+
+    row = doctor_probes.remote_swap_row("w1", _remote_swap_line(content))
+    assert row[0] == status
+    assert row[2].startswith(detail)
+
+
+@pytest.mark.parametrize("line", ["swap_kib=abc swap_paths=/swap.img", "swap_kib=-4 swap_paths=none",
+                                  "swap_paths=/swap.img"])
+def test_a_malformed_remote_swap_line_is_unobserved(line):
+    from dgx_monarch.cli import doctor_probes
+
+    row = doctor_probes.remote_swap_row("w1", line)
+    assert row[0] == doctor._WARN and row[2].startswith("unobserved:")
+
+
+@pytest.mark.parametrize("fabric_line", [
+    "fabric_iface=up rdma_active=unread",       # an RDMA port state file could not be read
+    "fabric_iface=unread rdma_active=2",        # the interface's operstate could not be read
+])
+def test_a_fabric_probe_that_could_not_read_sysfs_is_unobserved(monkeypatch, capsys, fabric_line):
+    """An unreadable sysfs file is no answer, so the fabric row must not FAIL on it."""
+    from dgx_monarch.config import ClusterConfig, HostConfig
+    from test_doctor_hostname_row import _REMOTE_OK, _stub_driver
+
+    _stub_driver(monkeypatch, "10.0.0.1")
+    monkeypatch.setattr(doctor.shutil, "which", lambda _name: "/usr/bin/rsync")
+    monkeypatch.setattr(doctor, "_tcp_probe", lambda *_a, **_kw: False)
+    monkeypatch.setattr(doctor, "passive_worker_health",
+                        lambda *_a, **_kw: {"running": True, "listening": True, "healthy": True})
+    scripts: list[str] = []
+    remote = _REMOTE_OK.replace("fabric_iface=up rdma_active=1", fabric_line)
+
+    def run_on_host(_config, _host, script, **_kwargs):
+        scripts.append(script)
+        return subprocess.CompletedProcess([], 0, remote, "")
+
+    monkeypatch.setattr(doctor, "run_on_host", run_on_host)
+    doctor.run_doctor(ClusterConfig(
+        hosts=(HostConfig(name="worker", address="tcp://10.0.0.2:26600"),),
+        client_bind="tcp://10.0.0.1:0", fabric_profile="generic-roce",
+        transport_security="trusted_fabric", source="test.toml",
+    ))
+    rows = [line for line in capsys.readouterr().out.splitlines() if "worker fabric" in line]
+    assert rows == ["  [WARN] worker fabric: unobserved: that host could not read its interface "
+                    "or RDMA port state in sysfs, so its fabric state is unknown"]
+    probe = next(script for script in scripts if "fabric_iface=" in script)
+    assert 'iface = "unread"' in probe and 'active = "unread"' in probe

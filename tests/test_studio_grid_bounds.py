@@ -145,6 +145,38 @@ def test_http_compact_grid_roundtrip_retains_full_export(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_an_incrementing_grid_serves_every_seed_digit_to_the_browser(tmp_path, monkeypatch):
+    """Review F12: from base 2**53 - 1 the cell seeds pass what a browser double holds.
+
+    The companion's text keeps each digit in the cell records Inspect full submission
+    reads and the base seed in the grid record Export manifest and outcomes reads;
+    Studio's exact reader (studio/src/gridProvenance.test.ts) keeps them from there.
+    """
+    async def scenario():
+        async with companion(tmp_path, monkeypatch) as system:
+            from test_studio_http_quality import preview_request
+
+            request = {**preview_request("grids"), "axes": [{"name": "main:2:steps", "values": [2, 3, 4]}],
+                       "seed_policy": "increment", "seed_binding": "main:2:seed", "base_seed": 2**53 - 1}
+            preview = await system.request("POST", "/grids/preview?summary=true", json=request)
+            seeds = [str(2**53 - 1 + index) for index in range(3)]
+
+            async def text(path):
+                response = await system.browser.get("/api/v1" + path, headers=system.headers)
+                assert response.status == 200
+                return await response.text()
+            for cell, seed in zip(preview["cells"], seeds, strict=True):
+                assert seed in await text(f"/jobs/previews/{cell['preview_id']}")
+            accepted = await system.request("POST", "/grids?summary=true", expected=202,
+                                            json={"preview_id": preview["id"], "idempotency_key": "exact-seeds"})
+            for cell, seed in zip(accepted["cells"], seeds, strict=True):
+                assert seed in await text(f"/jobs/{cell['job_id']}")
+            # The grid record holds the request, so its whole number is the base seed.
+            exported = await text(f"/grids/{accepted['id']}")
+            assert f'"base_seed":{seeds[0]}' in exported.replace(" ", "")
+    asyncio.run(scenario())
+
+
 def large_workflow_grid(excluded=()):
     request = grid_request()
     # About 24 KB of graph metadata that the compiled prompt does not carry, as in a UI workflow.

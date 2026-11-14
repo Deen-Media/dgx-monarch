@@ -122,8 +122,17 @@ test('the Grids screen opens with a how-to that uses the Create draft', async ()
     restoreDraft: async () => {},
   });
   const text = visibleText(body);
-  const guide = text.indexOf('How to run a grid');
-  assert.ok(guide > 0 && guide < text.indexOf('Axis A'), 'the how-to comes before the axes');
+  // The guide's own example names Axis A too, so place the guide against the form's heading.
+  const heading = body.indexOf('<h3>Axis A</h3>');
+  assert.ok(heading > 0, 'the form names Axis A in its heading');
+  const form = visibleText(body.slice(0, heading)).length;
+  const [what, how, first] = ['What a grid does', 'How to run a grid', 'Your first comparison'].map(
+    (heading) => text.indexOf(heading),
+  );
+  assert.ok(
+    0 < what && what < how && how < first && first < form,
+    'the guide comes before the axes',
+  );
   for (const step of [
     'Load a workflow in Create and set its inputs there. Each cell is that Create draft with the axis values filled in.',
     'Pick an input for Axis A and list its values as a JSON array, for example steps 20, 30, 40 as [20, 30, 40].',
@@ -134,4 +143,28 @@ test('the Grids screen opens with a how-to that uses the Create draft', async ()
     assert.ok(text.includes(step), step);
   assert.match(body, /<ol>(?:<!--[^>]*-->|\s)*<li>/);
   assert.ok(text.includes(NO_AXIS), 'a loaded workflow with no axis asks for Axis A');
+});
+
+test('the Grids guide works one example through and walks a first comparison', async () => {
+  const text = visibleText(await renderComponent('./components/GridGuide.svelte', {}));
+  for (const line of [
+    'For example, steps [20, 30, 40] on Axis A and cfg [3.5, 5] on Axis B make 3 × 2 = 6 cells with the same prompt and seed.',
+    // Axis A is the outer loop of the backend's itertools.product, so Axis B changes first.
+    'Cell 1 is 20 steps at CFG 3.5, cell 2 is 20 steps at CFG 5, cell 3 is 30 steps at CFG 3.5, and so on to cell 6, 40 steps at CFG 5.',
+    'if 30 and 40 steps look alike, 30 steps is enough for this prompt.',
+    'Your first comparison: 20 steps against 40',
+    'Here, choose steps for Axis A and write [20, 40].',
+    'Leave Axis B on No second axis and Seed policy on Fixed draft seeds, so both cells use the seed shown in Create.',
+    'Press Validate every cell. The preview reads 2 cells · 2 jobs.',
+    'press Inspect full submission on cell 1 and View its output. Then press Inspect full submission on cell 2 and Compare on its output.',
+    'Only the steps changed, so any difference in the pictures comes from the steps.',
+  ])
+    assert.ok(text.includes(line), line);
+  const ordered = ['What a grid does', 'How to run a grid', 'Your first comparison'];
+  const places = ordered.map((heading) => text.indexOf(heading));
+  assert.deepEqual(
+    [...places].sort((a, b) => a - b),
+    places,
+    'what, how, then the first run',
+  );
 });

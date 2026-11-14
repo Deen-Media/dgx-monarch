@@ -215,6 +215,9 @@ def cleanup_aborted_fsdp_proof(
         return False
     try:
         responses = handle.call_all("unload", timeout_s=timeout_s)
+        from . import pending_load_relief
+
+        pending_load_relief.note_unloaded()  # nothing placed survives this cleanup
         world = getattr(handle, "world", None)
         if (
             type(world) is not int

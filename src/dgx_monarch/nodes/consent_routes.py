@@ -1,7 +1,8 @@
 """Driver endpoints for consent cards and standing rescue.
 
 ``GET /dgxm/consents`` returns pending and active consent state.
-``POST /dgxm/consent`` accepts, dismisses, revokes, or changes auto-rescue.
+``POST /dgxm/consent`` accepts, dismisses, revokes, or changes auto-rescue or
+auto-clear; accepting an Old model in the way card clears the attached mesh.
 POST uses the same CSRF controls as recycle; ComfyUI authentication remains a
 separate boundary. GET exposes only basenames and opaque keys and performs no
 mesh RPC or durable writes. It rechecks quarantine before projecting live rows.
@@ -18,7 +19,7 @@ from typing import Any
 
 from .. import consent_pending, consent_store
 from ..log import get_logger
-from . import routes
+from . import old_model_clear, routes
 
 log = get_logger(__name__)
 
@@ -122,58 +123,49 @@ def _rate_limit_ok(now: float | None = None) -> bool:
         return True
 
 
-def _capacity_query(kind: object, combo_key: object, artifacts: object,
-                    artifacts_legacy: object, legacy_complete: object,
-                    capability_context: object) -> Any:
-    spec = consent_pending.KIND_SPECS.get(str(kind or ""))
-    if spec is None or spec.refusal_class != "C":
-        return None
-    from ..gate_ledger import ArtifactSetSignature
-    from .consent_rescue import quarantine_query
-    if (not isinstance(artifacts, str) or not artifacts
-            or not isinstance(artifacts_legacy, str) or not artifacts_legacy
-            or not isinstance(legacy_complete, bool)):
-        return quarantine_query("", "")
-    signature = ArtifactSetSignature(artifacts, artifacts_legacy, legacy_complete)
-    return quarantine_query(combo_key, signature, capability_context)
+def _asks(item: Any) -> Any:
+    """A card's or memo's query, and the scoped one an ``unknown`` is asked again under.
+
+    The pair the raising site read (``consent_quarantine.offer_decisions``), so
+    a card offered on a load's scope is listed and accepted on that scope, and
+    the memo its accept wrote is listed on that scope too.
+    """
+    from .consent_quarantine import capacity_query
+
+    args = (item.kind, item.combo_key, item.artifacts, item.artifacts_legacy,
+            item.artifacts_legacy_complete)
+    query = capacity_query(*args, item.capability_context)
+    fallback = (capacity_query(*args, item.scope)
+                if query is not None and item.capability_context is None
+                and item.scope is not None else None)
+    return query, fallback
 
 
 def _live_rows(memo: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Project rows against one quarantine snapshot without mutating state."""
-    pending: list[tuple[dict[str, Any], Any]] = []
-    queries: set[Any] = set()
+    """Project rows against one quarantine snapshot without mutating state.
+
+    A card or memo whose first read is unknown takes one more scan, under its scope.
+    """
+    from .consent_quarantine import offer_decisions
+
+    rows: list[tuple[dict[str, Any], Any, bool]] = []
     for card in consent_pending.pending_cards():
         entry = consent_pending.peek_pending(str(card["key"]), str(card["id"]))
-        if entry is None:
-            continue
-        desc = entry.descriptor
-        query = _capacity_query(
-            desc.kind, desc.combo_key, desc.artifacts, desc.artifacts_legacy,
-            desc.artifacts_legacy_complete, desc.capability_context)
-        if query is not None:
-            queries.add(query)
-        pending.append((card, query))
-
-    listed_active = consent_store.list_active(memo)
-    active: list[tuple[dict[str, Any], Any]] = []
-    for row in listed_active:
+        if entry is not None:
+            rows.append((card, _asks(entry.descriptor), True))
+    for row in consent_store.list_active(memo):
         record = consent_store.ConsentRecord.from_json(memo["consents"].get(row["key"]))
-        if record is None:
-            continue
-        query = _capacity_query(
-            record.kind, record.combo_key, record.artifacts, record.artifacts_legacy,
-            record.artifacts_legacy_complete, record.capability_context)
-        if query is not None:
-            queries.add(query)
-        active.append((row, query))
-
-    from .consent_rescue import quarantine_decisions
-    decisions = quarantine_decisions(tuple(queries))
-    pending_rows = [card for card, query in pending
-                    if query is None or decisions[query].state == "clear"]
+        if record is not None:
+            rows.append((row, _asks(record), False))
+    asked = [asks for _row, asks, _pending in rows if asks[0] is not None]
+    decided = iter(offer_decisions(asked))
+    pending_rows: list[dict[str, Any]] = []
     active_rows: list[dict[str, Any]] = []
-    for row, query in active:
-        if query is not None and decisions[query].state != "clear":
+    for row, asks, is_card in rows:
+        if asks[0] is not None and next(decided).state != "clear":
+            continue
+        if is_card:
+            pending_rows.append(row)
             continue
         spec = consent_pending.KIND_SPECS.get(str(row.get("kind", "")))
         row["style"] = spec.style if spec is not None else "capacity"
@@ -190,6 +182,7 @@ def consent_state() -> dict[str, Any]:
         "schema": consent_store.SCHEMA,
         "auto_rescue": memo["auto_rescue"] is True,
         "auto_rescue_env": consent_pending.auto_rescue_env(),
+        "auto_clear": memo["auto_clear"] is True, "auto_clear_env": old_model_clear.always_env(),
         "pending": pending,
         "active": active,
         "kinds": {
@@ -240,13 +233,11 @@ def _accept(key: str, pending_id: str, source: str = "panel") -> tuple[int, dict
                      "detail": "no pending consent for that request; queue the render again"}
     desc = entry.descriptor
     spec = consent_pending.KIND_SPECS[desc.kind]
-    query = _capacity_query(
-        desc.kind, desc.combo_key, desc.artifacts, desc.artifacts_legacy,
-        desc.artifacts_legacy_complete, desc.capability_context)
-    if query is not None:
-        from .consent_rescue import quarantine_decisions
+    asks = _asks(desc)
+    if asks[0] is not None:
+        from .consent_quarantine import offer_decisions
 
-        decision = quarantine_decisions((query,))[query]
+        decision = offer_decisions([asks])[0]
         if decision.state != "clear":
             if decision.state == "fail":
                 consent_pending.take_pending(key, pending_id)
@@ -312,6 +303,7 @@ def _accept(key: str, pending_id: str, source: str = "panel") -> tuple[int, dict
         capability_context=desc.capability_context,
         unet_name=desc.unet_name or desc.artifact,
         loras=desc.loras,
+        scope=desc.scope,
     )
     try:
         consent_store.grant(record, key)
@@ -432,6 +424,8 @@ def handle_action(body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         return 400, {"ok": False, "detail": "consent source must be panel or studio"}
     if action == "auto_rescue":
         return _auto_rescue(body.get("value"), source)
+    if action == "auto_clear":
+        return old_model_clear.set_always(body.get("value"), source)
     key, pending_id = body.get("key"), body.get("id")
     if not isinstance(key, str) or not key:
         return 400, {"ok": False, "detail": "consent action needs a key"}
@@ -439,6 +433,8 @@ def handle_action(body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         return _revoke(key)
     if not isinstance(pending_id, str) or not pending_id:
         return 400, {"ok": False, "detail": "consent action needs the pending id"}
+    if action == "accept" and old_model_clear.is_clear_card(key, pending_id):
+        return old_model_clear.accept(key, pending_id, body, source)
     if action == "accept":
         return _accept(key, pending_id, source)
     if action == "dismiss":
@@ -488,9 +484,13 @@ def register(app: Any, web: Any) -> None:
         if not isinstance(body, dict):
             return web.json_response(
                 {"ok": False, "detail": "consent request body is not an object"}, status=400)
+        # Clear and retry runs the recycle route's teardown, so it gets its deadline.
+        clears = body.get("action") == "accept" and old_model_clear.is_clear_card(
+            body.get("key"), body.get("id"))
         try:
             status, payload = await routes._await_bounded(
-                lambda: handle_action(body), _ACTION_TIMEOUT_S)
+                lambda: handle_action(body),
+                routes._RECYCLE_TIMEOUT_S if clears else _ACTION_TIMEOUT_S)
         except TimeoutError:
             return web.json_response(
                 {"ok": False, "detail": "consent action timed out server-side; see driver log"},

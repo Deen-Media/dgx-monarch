@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .. import mesh_setup
+from . import pending_load_relief
 from .setup_binding import render_setup_token
 
 
@@ -105,13 +106,15 @@ def establish(model, model_request: dict, request: dict, artifact_binding: dict,
         return _cycle_state(values, handle)
 
     def cycle_again():
+        from .gate_dual import fold_uncond_cycle
+
         token = render_setup_token(model, frozen_latent, cfg_value, handle)
-        return handle.call_all(
+        return fold_uncond_cycle(handle, handle.call_all(
             "gate_swap_cycle", model_request["unet_name"],
             dict(model_request.get("options") or {}),
             [dict(entry) for entry in model_request.get("loras") or []],
             ceremony_identity, timeout_s=1800,
-            **mesh_setup.token_kwargs(token))
+            **mesh_setup.token_kwargs(token)), frozen_request, artifact_binding, token)
 
     cycle, complete, conclusive, reasons, active, any_active, family = state(raw_cycle)
     mode = worker_args.get("slab_weights")
@@ -139,6 +142,7 @@ def establish(model, model_request: dict, request: dict, artifact_binding: dict,
     if not policy_mismatch and expected and not (active and family is not None):
         initial_family = family
         handle.call_all("unload", timeout_s=600)
+        pending_load_relief.note_unloaded()  # this leg's load is still to come
         b = render_fn(
             model,
             bind_request(copy_transaction(frozen_request), artifact_binding),

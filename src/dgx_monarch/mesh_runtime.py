@@ -145,6 +145,15 @@ def bootstrap_proc() -> None:
     configure_policy_logged(policy.diagnostics, "actor")  # an ERROR, never a spawn failure
     activate_native_policy()
 
+    # Register the INT8 GEMM import hook before anything imports comfy-kitchen:
+    # setup sets the mode from [worker_args] int8_gemm before ensure_comfy
+    # imports ComfyUI, and the hook applies it as comfy-kitchen loads. Standard
+    # library only, so no torch ahead of CUDA init, and it never raises
+    # (kernels/int8_gemm.py).
+    from .kernels import int8_gemm
+
+    int8_gemm.install_actor()
+
     # Arm the actor-side reaper here, the one piece of dgx-monarch that already
     # runs inside every spawned proc. Imported function-locally and after the
     # path insertion above so the driver-advertised source wins, and from a

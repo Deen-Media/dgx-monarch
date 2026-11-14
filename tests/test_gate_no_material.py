@@ -21,6 +21,7 @@ import dgx_monarch.nodes.gate as gate_mod
 import dgx_monarch.runtime_provenance as runtime_provenance
 from dgx_monarch.actor import gate_cycle
 from dgx_monarch.actor import model_store as model_store_mod
+from dgx_monarch.gate_runtime import runtime_build_identity
 from dgx_monarch.mesh_setup import SetupToken
 from dgx_monarch.nodes import gate_inconclusive, gate_process_state
 from dgx_monarch.nodes.slab_proof import SlabProof
@@ -243,6 +244,7 @@ def _ceremony_rig(monkeypatch, tmp_path, cycle, worker_args):
                     "source_manifest_sha256": (
                         runtime_provenance.cached_dgx_source_manifest_sha256()
                     ),
+                    "runtime": runtime_build_identity(),
                 }]
             if method == "unload":
                 return [{"unloaded": True}]
@@ -605,7 +607,7 @@ def _render_rig(monkeypatch, gate_result):
     monkeypatch.setattr(common, "submit_render", lambda *_args, **_kwargs: Pending())
     monkeypatch.setattr(
         common, "_quarantine_unproven_paths",
-        lambda model: quarantines.append(model))
+        lambda model, **_kwargs: quarantines.append(model))
     return quarantines
 
 

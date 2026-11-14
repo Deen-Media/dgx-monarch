@@ -27,6 +27,8 @@ on:
       # The comfy module guard in conftest.py runs under every pytest step.
       - "tests/conftest.py"
       - "tests/test_bake_equivalence.py"
+      - "tests/test_lora_cast_time.py"
+      - "tests/test_lora_partial_load.py"
       - "tests/test_comfy_seam_contracts.py"
       - "tests/test_int8_linear_layout.py"
       - "tests/test_slab_hook_canary.py"
@@ -36,6 +38,9 @@ on:
       - "tests/test_chroma_cfg_pad_forward.py"
       - "tests/test_chroma_text_projections.py"
       - "tests/test_dropped_scale_gate.py"
+      - "tests/test_upstream_gate_damaged_header.py"
+      - "tests/test_upstream_gate_extra_tensor.py"
+      - "tests/test_forced_family_comfy.py"
       - "tests/test_fsdp_lora_replicated.py"
       - "tests/test_ideogram4_stock_equivalence.py"
 
@@ -45,19 +50,41 @@ on:
       - "tests/test_ernie_stock_equivalence.py"
       - "tests/test_flux3_comfy_exactness.py"
       - "tests/test_flux3_cond_branch.py"
+      - "tests/test_flux_views_comfy_exactness.py"
+      - "tests/test_held_rows_price.py"
+      - "tests/test_vae_encode_item.py"
+      - "tests/test_vae_decode_relief.py"
+      - "tests/test_anima_cond_branch.py"
       - "tests/test_moss_image_comfy_exactness.py"
       - "tests/test_moss_image_parity.py"
       - "tests/test_moss_image_support.py"
       - "tests/test_moss_image_skip_end_to_end.py"
       - "tests/test_skip_layer_guidance_comfy.py"
+      - "tests/test_h3_context_windows_comfy.py"
+      - "tests/test_h3_sigma_shift_comfy.py"
+      - "tests/test_p_h3_image_comfy_exactness.py"
+      - "tests/test_h3_head_form_comfy.py"
+      - "tests/test_minimax_h3_image_comfy.py"
+      - "tests/test_h3_image_row_check_tool.py"
+      - "tools/h3_image_row_check.py"
+      - "tests/test_wan22_ti2v_templates.py"
       - "tests/test_lora_shape_guard.py"
       - "tests/test_mage_flow_comfy_differential.py"
       - "tests/test_qwen_image21_adapter.py"
       - "tests/test_qwen_image21_prefix_cache.py"
+      - "tests/test_adaln_parity_blocks.py"
+      - "tests/test_ltx_comfy_exactness.py"
       - "tests/test_qwen_text_projections.py"
       - "tests/test_render_memory_price.py"
       - "tests/test_wan_variants.py"
       - "tests/test_worker_latent_size_tags.py"
+      - "tests/test_compile_surface.py"
+      - "tests/test_int8_gemm_kitchen_version.py"
+      - "tests/test_vae_decode_split_comfy.py"
+      - "tests/test_minimax_h3_image_comfy_detection.py"
+      - "tests/test_attention_pin_slab_comfy.py"
+      - "tests/test_cond_batch_agreement.py"
+      - "tests/test_fp8_paths_tool.py"
       # No step runs these files, but the files the steps run import them. The
       # pad-exclusion file holds the Ernie, FLUX.3, Hunyuan, Ideogram4, Lens and
       # MOSS-Image two-rank harness. tests/test_canary_path_filter.py checks
@@ -65,6 +92,7 @@ on:
       - "tests/attention_pin_helpers.py"
       - "tests/comfy_managed_helpers.py"
       - "tests/fake_model_base_helpers.py"
+      - "tests/minimax_h3_image_headers.py"
       - "tests/module_location_helpers.py"
       - "tests/test_fsdp_lora.py"
       - "tests/test_flux_pad_exclusion.py"
@@ -82,6 +110,8 @@ on:
       - "tools/make_pin_probe_lora.py"
       # The cfg combine seam loads this file with benchmark/ on sys.path.
       - "benchmark/gates.py"
+      # The FP8 operations-rule step loads this file by path.
+      - "tools/fp8_paths.py"
       # The auto-topology step imports test_sweep_matrix.py, which loads these.
       # report.py is not here: only test functions no step runs import it.
       - "benchmark/sweep/__init__.py"
@@ -108,7 +138,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Clone ComfyUI master
@@ -164,6 +194,12 @@ jobs:
         env:
           COMFY_DIR: ../ComfyUI
         run: python tests/canary/bake_equivalence_canary.py
+      # The cast-time LoRA bake against comfy.ops' own cast (#145): the keys it
+      # leaves to the classic bake, the installed patcher and the lazy swap's verify.
+      - name: Cast-time LoRA bake vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+        run: pytest -q tests/test_lora_cast_time.py tests/test_lora_partial_load.py
       - name: Slab hook surfaces vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
@@ -214,11 +250,25 @@ jobs:
       # The dropped-scale gate replays ComfyUI's diffusion-model load on key
       # names; this checks the replay against ComfyUI's own load, key for key,
       # and that ComfyUI still drops an unrecorded fp8, int8 or packed scale.
+      # The second file holds the gate's reading of a damaged header against
+      # ComfyUI's own two readers: what they still load, and what neither reads.
+      # The third holds its two family tests against ComfyUI's own detection:
+      # the gate refuses wherever ComfyUI still builds the refused model.
       - name: Dropped-scale header gate vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
           COMFYUI_DIR: ../ComfyUI
-        run: pytest -q tests/test_dropped_scale_gate.py
+        run: >-
+          pytest -q tests/test_dropped_scale_gate.py tests/test_upstream_gate_damaged_header.py
+          tests/test_upstream_gate_extra_tensor.py
+      # A forced family_adapter binds what its adapter takes under auto: every
+      # class comfy.model_base defines is asked both ways, so a subclass a new
+      # ComfyUI adds refuses under a force from its first day.
+      - name: Forced family vs auto on every comfy model class (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_forced_family_comfy.py
       # A LoRA key on a parameter the FSDP wrap replicates bakes to ComfyUI's
       # own patch_weight_to_device bits on a one-rank gloo group.
       - name: FSDP LoRA replicated-parameter bake vs comfy master (CPU)
@@ -277,6 +327,47 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_flux3_cond_branch.py
+      # UltraTex's view grid, token drop and view references (ComfyUI 0.45.0)
+      # through Flux 2's Ulysses forward against stock, every fused-norm launch
+      # at stock's rows, and preprocess_token_masks and the forward under a
+      # real FSDP2 wrap. The file skips on a release before UltraTex.
+      - name: Flux UltraTex views under Ulysses and FSDP vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_flux_views_comfy_exactness.py
+      # A Worker prices an UltraTex render at the rows stock's forward keeps
+      # (actor/held_rows_price.py): the kept count must equal stock's own
+      # token_keep, and a render with no masks must get stock's figure. The
+      # regular CI job has no ComfyUI, so all but one case skip there.
+      - name: UltraTex held-rows price vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_held_rows_price.py
+      # The driver encodes a batch of images one image a call
+      # (vae_encode_item.py): on comfy's real VAE the result must be stock's
+      # own encode of each image alone, whatever the free-memory reading says,
+      # and the attributes and the branch the image test reads must still be
+      # there. The regular CI job has no ComfyUI, so these cases skip there.
+      - name: One image a VAE encode vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_vae_encode_item.py
+      # Before a VAE decode ComfyUI prices above its free memory, the driver
+      # gives back what is idle (vae_decode_relief.py): on comfy's real VAE a
+      # decode must give the same tensor with the relief acting, and the two
+      # lines of comfy's decode and loader that the trigger mirrors must still
+      # read as they do. The regular CI job has no ComfyUI, so these skip there.
+      - name: Decode relief vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_vae_decode_relief.py
+      # Anima's text branch: the Worker's bind of stock's extra_conds under
+      # inference mode, stock's model calls on the Worker's KSampler path, and
+      # the persistence canary with LoRA units on the llm_adapter.
+      - name: Anima text branch and persistence canary vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_anima_cond_branch.py
       # These two steps bind comfy's native Qwen Image 2.1 and Wan Animate 2
       # model classes from master and compare the injected sequence-parallel
       # forwards with stock on CPU. The ordinary CI job has no ComfyUI. The
@@ -286,6 +377,15 @@ jobs:
         env:
           COMFY_DIR: ../ComfyUI
         run: pytest -q tests/test_qwen_image21_adapter.py tests/test_qwen_image21_prefix_cache.py
+      # The fused-norm parity route (issue #54): the installed Flux-family and
+      # Qwen Image 2.1 blocks still read the norm globals it keys on, a bound
+      # real Flux block launches at stock's rows with stock's output, and two
+      # Gloo ranks launch every Qwen Image 2.1 norm at stock's rows.
+      - name: Flux-family and Qwen Image 2.1 fused-norm parity vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_adaln_parity_blocks.py
       - name: Wan Animate 2 native forward vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
@@ -307,6 +407,13 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_moss_image_comfy_exactness.py tests/test_moss_image_parity.py
+      # LTX's stock-row parity route (adapters/ltx_parity.py): a toy LTXAV
+      # against two rank threads, every gate and fused AdaLN call at its
+      # stream's stock rows, the paired rope, and each rank's output.
+      - name: LTX stock-row parity vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_ltx_comfy_exactness.py
       # The Skip Layer Guidance carrier installs ComfyUI's node on the render
       # clone and reaches MOSS-Image's sharded forward end to end; the LoRA
       # shape guard reads ComfyUI's own shape predicate.
@@ -319,6 +426,90 @@ jobs:
           tests/test_skip_layer_guidance_comfy.py
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py
+      # The MiniMax H3 context-window carrier installs ComfyUI's node on the
+      # render clone, and the deadline counts the windows ComfyUI's handler runs.
+      - name: MiniMax H3 context-window carrier vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_h3_context_windows_comfy.py
+      # ModelSamplingMiniMaxH3 (DGX Monarch) applies ComfyUI's shift node on the
+      # render clone, and p-h3-image's one-frame graph through the H3 sharded
+      # forward gives stock's bits at world 1. The head-form file holds a
+      # stacked PDD head and the block loop's prefetch calls to stock's on the
+      # installed ComfyUI, and the adapter's grid to stock's pdd_grid.
+      - name: MiniMax H3 shift carrier and p-h3-image forward vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: >-
+          pytest -q tests/test_h3_sigma_shift_comfy.py tests/test_p_h3_image_comfy_exactness.py
+          tests/test_h3_head_form_comfy.py
+      # MiniMax-H3-Image (ComfyUI 0.45.0): the sharded forward against stock at
+      # world 1 and through the threaded two-rank harness, pad rows excluded.
+      - name: MiniMax-H3-Image sharded forward vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_minimax_h3_image_comfy.py tests/test_h3_image_row_check_tool.py
+      # The Wan 2.2 TI2V 5B start image gives per-frame timesteps; the Wan
+      # sequence-parallel forward must hand every token stock's on one rank.
+      - name: Wan 2.2 TI2V per-frame timesteps vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_wan22_ti2v_templates.py
+      # compile_dit compiles a top-level blocks list only, and the no-op family
+      # list lets the others keep slab residency. Read each family's DiT class
+      # from comfy's source, without importing it, to catch a renamed list.
+      - name: compile_dit block lists vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_compile_surface.py
+      # Worker-assisted VAE decode replays ComfyUI's own tile loop and MiniMax
+      # H3's chunked decode with simulated ranks, and the bytes must match
+      # stock; the file also pins the stock seams the split replays. The
+      # regular CI job has no ComfyUI, so it skips there.
+      - name: Worker-assisted VAE decode split vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_vae_decode_split_comfy.py
+      # ComfyUI names MiniMax-H3-Image by two key paths and the absence of H3's
+      # audio path, and builds it from a sigma grid it has no default for. The
+      # detector's row and the upstream gate's grid refusal rest on those facts.
+      - name: MiniMax-H3-Image detection vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_minimax_h3_image_comfy_detection.py
+      # In a world of one GPU a checkpoint's own attention pins run, so slab
+      # residency with pins runs: a slab load must hand ComfyAttention the pin a
+      # stock load hands it, bound to the same kernel and tau. The one-GPU rule
+      # also trusts ComfyUI's load path to put the checkpoint's pin back after a
+      # LoRA clone before the next forward; the same file drives a real patcher
+      # through it.
+      - name: Attention pins through slab residency and ComfyUI's restore vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_attention_pin_slab_comfy.py
+      # Each rank picks its cond batch from its own box's free memory in
+      # ComfyUI's calc_cond_batch; two Gloo ranks with the agreement must take
+      # the leanest rank's batch. The regular CI job has no ComfyUI, so it skips.
+      - name: Cond batch agreement vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_cond_batch_agreement.py
+      # The INT8 GEMM kernel runs only on the comfy-kitchen releases it was
+      # proven exact against. Fail when ComfyUI's requirements or the installed
+      # package move past that set, so it is re-validated (docs/MODELS.md)
+      # instead of every box quietly falling back to stock CUTLASS.
+      - name: comfy-kitchen release vs the INT8 GEMM kernel's validated set (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_int8_gemm_kitchen_version.py
+      # tools/fp8_paths.py reproduces how ComfyUI picks a model's operations
+      # class for FP8 checkpoints (docs/MODELS.md, FP8 compute paths). Fail when
+      # a clause it reproduces is gone from this ComfyUI, so the table and the
+      # docs are re-read instead of quietly going wrong.
+      - name: FP8 operations rule vs comfy (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_fp8_paths_tool.py
       # Keep the formula check last so its failure cannot prevent earlier
       # canaries from running; no step uses continue-on-error.
       - name: Render-memory formula vs comfy master (CPU)
@@ -344,6 +535,8 @@ jobs:
           pytest -q
           tests/test_comfy_seam_contracts.py
           tests/test_bake_equivalence.py
+          tests/test_lora_cast_time.py
+          tests/test_lora_partial_load.py
           tests/test_slab_hook_canary.py
           tests/test_lens_comfy_exactness.py
           tests/test_lens_text_projections.py
@@ -351,6 +544,9 @@ jobs:
           tests/test_auto_latent_downscale.py
           tests/test_chroma_text_projections.py
           tests/test_dropped_scale_gate.py
+          tests/test_upstream_gate_damaged_header.py
+          tests/test_upstream_gate_extra_tensor.py
+          tests/test_forced_family_comfy.py
           tests/test_fsdp_lora_replicated.py
           tests/test_ideogram4_stock_equivalence.py
           tests/test_qwen_text_projections.py
@@ -360,8 +556,14 @@ jobs:
           tests/test_ernie_stock_equivalence.py
           tests/test_flux3_comfy_exactness.py
           tests/test_flux3_cond_branch.py
+          tests/test_flux_views_comfy_exactness.py
+          tests/test_held_rows_price.py
+          tests/test_vae_encode_item.py
+          tests/test_vae_decode_relief.py
           tests/test_qwen_image21_adapter.py
           tests/test_qwen_image21_prefix_cache.py
+          tests/test_adaln_parity_blocks.py
+          tests/test_ltx_comfy_exactness.py
           tests/test_wan_variants.py
           tests/test_int8_linear_layout.py
           tests/test_render_memory_price.py
@@ -369,5 +571,14 @@ jobs:
           tests/test_moss_image_comfy_exactness.py
           tests/test_moss_image_parity.py
           tests/test_skip_layer_guidance_comfy.py
+          tests/test_h3_context_windows_comfy.py
+          tests/test_h3_sigma_shift_comfy.py
+          tests/test_p_h3_image_comfy_exactness.py
+          tests/test_h3_head_form_comfy.py
+          tests/test_minimax_h3_image_comfy.py
+          tests/test_wan22_ti2v_templates.py
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py
+          tests/test_vae_decode_split_comfy.py
+          tests/test_minimax_h3_image_comfy_detection.py
+          tests/test_attention_pin_slab_comfy.py

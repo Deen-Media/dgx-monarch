@@ -44,6 +44,7 @@ from dgx_monarch.adapters import (  # noqa: E402
     DUAL_MODEL_CFG_FAMILIES,
     attention_capability,
     minimax_h3,
+    minimax_h3_image,
     omnigen2,
     pixeldit,
     quant_activation_scale,
@@ -149,7 +150,7 @@ WAIVED_BAR = "waived-nrms"
 # part of a longer one.
 QUANT_TOKENS = ("convrot_int8mixed", "convrot_int8", "int8_convrot", "fp8_e4m3fn",
                 "fp8_scaled", "nvfp4_mixed", "int8mixed", "fp8mixed", "mxfp8",
-                "nvfp4", "bf16", "fp16", "fp32", "int8", "fp8")
+                "nvfp4", "w4a8", "bf16", "fp16", "fp32", "int8", "fp8")
 # A block-scaled file under FSDP refuses at one of two sites, by whether the
 # file is uniform, and both answer class P. Every one of these headers sniffs
 # fp8 at launch, so the live detector decides: it reports the kind of the first
@@ -160,6 +161,19 @@ QUANT_TOKENS = ("convrot_int8mixed", "convrot_int8", "int8_convrot", "fp8_e4m3fn
 # The test is a substring, so nvfp4_mixed stays ahead of nvfp4: the two meet
 # different refusal sites.
 BLOCK_SCALED = {"nvfp4_mixed": "refuse:P", "nvfp4": "refuse:P", "mxfp8": "refuse:P"}
+# The strength a LoRA-on cell runs each loader at; the templates' placeholder
+# loaders read the same. A template listed below keeps its own loader's
+# strength instead, because its purpose is a comparison at that strength:
+# dgx-monarch-test-p-h3-image-lora measures the vendor LoRA against ComfyUI's
+# own p-h3-image template, which loads it at 1.0.
+LORA_CELL_STRENGTH = 0.8
+GRAPH_LORA_STRENGTH_TEMPLATES = frozenset({"dgx-monarch-test-p-h3-image-lora"})
+# The families whose DiT takes one sample a call, each with the sentence the
+# driver refuses cfg and dp topologies with before dispatch.
+H3_BATCH_CAPPED = {
+    "minimax_h3": minimax_h3.MINIMAX_H3_BATCH_CAPPED_MESSAGE,
+    minimax_h3_image.FAMILY: minimax_h3_image.MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE,
+}
 # Words that name neither the model nor its precision; a stem keeping one
 # lands in its own base and never meets its sibling quants.
 RESIDUE_TOKENS = ("transformer_only", "defaultloader", "hybrid_large",
@@ -241,9 +255,11 @@ T5_TOKENIZER = "t5_tokenizer/tokenizer.json"
 # The stream whose length decides a label, per family, with the comfy
 # tokenizer that builds it. Only families whose tokenizer comfy ships as a
 # `tokenizers` file are here; every other family counts nothing and keeps the
-# label its guards give. Anima is a partial answer: unequal T5 ids do split the
-# model call, but equal ones still need its qwen3 stream to match, and comfy
-# ships that tokenizer as vocab and merges files, which this reader cannot load.
+# label its guards give. For Anima the T5 ids are the whole answer since
+# 2026-11-10: a Worker pads the text to max(ids, 512) rows before the batching
+# decision, as stock does, so the ids alone decide whether a pair folds, and
+# its qwen3 stream, whose tokenizer comfy ships as vocab and merges files this
+# reader cannot load, decides nothing.
 TEXT_STREAMS = {
     "chroma": TextStream(T5_TOKENIZER, 1),     # text_encoders/pixart_t5.py
     "anima": TextStream(T5_TOKENIZER, 1),      # text_encoders/anima.py
@@ -447,6 +463,31 @@ def prompt_texts(graph: dict) -> dict[str, str]:
     return {} if any(text is None for text in found.values()) else found
 
 
+# Families whose counted stream (TEXT_STREAMS) is not the conditioning tensor
+# the runtime's pair tag reads: Anima's count is its T5 ids, the tag its Qwen3
+# rows, so the texts stand in and the predicted tag stays the runtime's. Since
+# 2026-11-10 no Anima row reads the tag (row 47 was withdrawn), so for Anima the
+# prediction decides nothing.
+_COUNT_IS_NOT_THE_TAGGED_ROWS = frozenset({"anima"})
+
+
+def auto_pair_differs(facts: dict, cell: dict | None = None) -> bool:
+    """The runtime's pair tag for this graph, predicted (cfg_pair.text_rows_differ).
+
+    The runtime reads the encoded text rows, which the graph does not hold.
+    Where the cell carries a token count for both prompts of a stream the tag
+    reads, the counts decide, so two texts of equal rows read as equal.
+    Otherwise two different texts stand in for different rows, which holds on
+    every shipped template; two texts of equal rows would then read true here
+    and false at render time, where the pair-scoped cfg rows (Boogu 79,
+    Chroma 20 and 19) give way to Ulysses.
+    """
+    counts = (cell or {}).get("text_tokens") or {}
+    if len(counts) > 1 and (cell or {}).get("family") not in _COUNT_IS_NOT_THE_TAGGED_ROWS:
+        return len(set(counts.values())) > 1
+    return len(set(facts.get("prompts", {}).values())) > 1
+
+
 def text_token_counts(prompts: dict[str, str], family: str, count_tokens) -> dict[str, int]:
     """Token count per prompt, or {} when any one of them cannot be counted."""
     counts = {slot: count_tokens(family, text) for slot, text in prompts.items()}
@@ -644,6 +685,27 @@ class ConfigError(Exception):
     """The sweep TOML says something this harness cannot read."""
 
 
+def lora_stack(template: str, facts: dict, lora_names: list[str]) -> list[dict]:
+    """The LoRA-on arm's stack: one entry per loader, in node-id order.
+
+    Every loader runs at LORA_CELL_STRENGTH, whatever its graph says, except in
+    a template of GRAPH_LORA_STRENGTH_TEMPLATES, which keeps the strength its
+    loader names because that strength is what the template compares.
+    """
+    if not (facts["loras"] and lora_names):
+        return []
+
+    def strength(node_id: str) -> float:
+        if template in GRAPH_LORA_STRENGTH_TEMPLATES:
+            value = facts["graph"][node_id]["inputs"].get("strength_model")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+        return LORA_CELL_STRENGTH
+
+    return [{"node": nid, "name": name, "strength": strength(nid)}
+            for nid, name in zip(facts["loras"], lora_names, strict=True)]
+
+
 def template_extras(config: dict, template: str, facts: dict) -> dict[str, list[str]]:
     """The artifact_groups entry for one template, in the dict form. An array
     names extras for the base loader; the table keys each loader's checkpoint."""
@@ -787,31 +849,40 @@ def pinning_loras(config: dict, lora_names: list[str]) -> list[str]:
 
 
 def pin_summary(pins: dict[str, attention_pins.BlockPin] | None,
-                topo: Topology) -> attention_pins.PinSummary | None:
+                topo: Topology, launch_quant: str | None = None) -> attention_pins.PinSummary | None:
     """What one rank of this topology renders of these pins, by the runtime's summary.
 
     ``attention_pins.summarize`` decides which pins run: sequence parallelism
     drops every one. The stand-in carries the pins where the load scan caches
-    them on a loaded model, which is all ``summarize`` reads. That attribute's
+    them on a loaded model, and they are the checkpoint's own by construction
+    (build_cells drops a LoRA arm that pins), so in a world of one GPU they ask
+    nothing, as the runtime's ``checkpoint_only`` reads them. That attribute's
     name is private to attention_pins (``_SCAN_ATTR``), and the harness reads
     it on purpose so the src tree stays untouched: a rename there breaks the
     pinned tests here at once, with an AttributeError.
 
-    No pin reads as cleared by the FSDP shard build. That build reloads only a
-    bf16 or fp16 file, and a header that pins one never reaches it: its uint8
-    config tensors leave the launch precision unproven, so the launch contract
-    refuses the cell class P first (``validate_fsdp_launch_quant``, above the
-    pin rule in label_cell). An fp8 or int8 file takes the direct wrap, which
-    keeps its pins (adapters/fsdp.py).
+    Under FSDP a bf16 or fp16 file (``launch_quant``) takes the shard build,
+    which reloads the weights through ``load_state_dict`` without the config
+    keys, so ComfyAttention clears every pin and the record says dropped
+    (``attention_pins.note_injected``). The launch check does not count the
+    uint8 config tensors (``fsdp_islands.proof_bytes_by_dtype``), so a pinned
+    header reaches that build. A checkpoint ComfyUI loads as quantized tensors
+    takes the direct wrap, which keeps its pins (adapters/fsdp.py). The runtime
+    picks the path by that, not by the launch kind; an fp8 file whose weights
+    load as plain float8 tensors would take the shard build, and no listed fp8
+    file pins.
     """
     if not pins:
         return None
+    if topo.fsdp and launch_quant in ("bf16", "fp16"):
+        pins = {key: replace(pin, cleared=True, bound=False) for key, pin in pins.items()}
     loaded = SimpleNamespace(model=SimpleNamespace(**{attention_pins._SCAN_ATTR: dict(pins)}))
-    return attention_pins.summarize([loaded], sequence_parallel=topo.sequence_parallel > 1)
+    return attention_pins.summarize([loaded], sequence_parallel=topo.sequence_parallel > 1,
+                                    checkpoint_only=True)
 
 
 def pin_refusal(pins: dict[str, attention_pins.BlockPin] | None, topo: Topology,
-                family: str, world: int) -> BaseException | None:
+                family: str, world: int, launch_quant: str | None = None) -> BaseException | None:
     """The refusal the pin guard raises for these pins on this topology, or None.
 
     The worker's own call (actor/sample_protocol.py): the guard reads the
@@ -819,7 +890,7 @@ def pin_refusal(pins: dict[str, attention_pins.BlockPin] | None, topo: Topology,
     ones on every other topology.
     """
     try:
-        attention_pins.assert_waived(pin_summary(pins, topo), asdict(topo),
+        attention_pins.assert_waived(pin_summary(pins, topo, launch_quant), asdict(topo),
                                      family=family, alone=world < 2)
     except Exception as exc:
         return exc
@@ -880,7 +951,8 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
                                      cfg_value=facts["cfg"],
                                      batch_size=cell["batch"],
                                      keeps_uncond=bool(facts.get("auto_keeps_uncond")),
-                                     variant=cell.get("variant")).topology
+                                     variant=cell.get("variant"),
+                                     pair_differs=auto_pair_differs(facts, cell)).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception as exc:
         return _label_from(exc), "guard", False, []
@@ -906,10 +978,13 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     # no consent can change an indivisible batch. It reads the literal batch out
     # of the graph the way the driver does, so a latent source the driver
     # cannot price makes no claim here either (2026-09-04: cell 2b172a2d45c8
-    # scored FINDING for its label while the runtime answered class P).
-    if topo.dp > 1 and (found := _guard(preflight_graph_batch_divides_dp,
-                                        loader_mesh(cell["preset"], world),
-                                        batch_graph(cell, facts))):
+    # scored FINDING for its label while the runtime answered class P). Each
+    # loader node passes its own id, so the check prices only its samplers.
+    graph = batch_graph(cell, facts)
+    loaders = [key for key, node in graph.items() if node.get("class_type") in UNET_CLASSES]
+    if topo.dp > 1 and (found := next(filter(None, (
+            _guard(preflight_graph_batch_divides_dp, loader_mesh(cell["preset"], world), graph, key)
+            for key in loaders)), None)):
         return found, "guard", False, guards
     if topo.fsdp and (found := _guard(validate_fsdp_launch_quant,
                                       cell["launch_quant"] or "unknown")):
@@ -978,9 +1053,14 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
                             adapter.attention_head_dim)):
         return found, "guard", False, guards
     # Sample time from here: nothing below is read until the sampler runs.
-    if family == "minimax_h3" and minimax_h3.minimax_h3_topology_would_reject(topo.cfg, topo.dp):
-        return _label_from(RuntimeError(minimax_h3.MINIMAX_H3_BATCH_CAPPED_MESSAGE)), \
-            "guard", False, guards
+    # The driver's cfg and dp preflight answers first, for MiniMax H3 and for
+    # MiniMax-H3-Image alike: one predicate, each family's own sentence
+    # (nodes/render_preflight.py preflight_minimax_h3_topology). It runs before
+    # any Worker call, so it answers ahead of the pin guard below, which every
+    # MiniMax-H3-Image file would otherwise meet on cfg2.
+    capped = H3_BATCH_CAPPED.get(family)
+    if capped and minimax_h3.minimax_h3_topology_would_reject(topo.cfg, topo.dp):
+        return _label_from(RuntimeError(capped)), "guard", False, guards
     # The driver's Skip Layer Guidance preflight runs at the render submit right
     # after the MiniMax one, once the topology resolves and before any Worker
     # call (nodes/model_patch_preflight.py), so it answers ahead of every rule
@@ -1026,7 +1106,8 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     # any load, and sol_attention.make_sol_usp_attention refuses class P there,
     # which the sol block below answers.
     sol_first = sol_attention.is_sol_kernel(cell["attention"]) and topo.ulysses * topo.ring < 2
-    exc = None if sol_first else pin_refusal(facts.get("pins"), topo, family, world)
+    exc = None if sol_first else pin_refusal(facts.get("pins"), topo, family, world,
+                                             cell.get("launch_quant"))
     shard_quant_guard = quant_activation_scale.SHARD_QUANT_GUARDS.get(family)
     if shard_quant_guard and "nvfp4" in cell["artifact_quant"] \
             and quant_activation_scale.plan_for_topology(
@@ -1222,7 +1303,8 @@ def resolved_kernel(cell: dict, facts: dict, world: int) -> str:
                                        world, cfg_value=facts["cfg"],
                                        batch_size=cell["batch"],
                                        keeps_uncond=bool(facts.get("auto_keeps_uncond")),
-                                       variant=cell.get("variant"))
+                                       variant=cell.get("variant"),
+                                       pair_differs=auto_pair_differs(facts, cell))
             sage, topo = row.sage, row.topology
         else:
             topo = topology_from_preset(cell["preset"], world)
@@ -1248,7 +1330,8 @@ def resolved_cfg_degree(cell: dict, facts: dict, world: int) -> int:
                                      world, cfg_value=facts["cfg"],
                                      batch_size=cell["batch"],
                                      keeps_uncond=bool(facts.get("auto_keeps_uncond")),
-                                     variant=cell.get("variant")).topology
+                                     variant=cell.get("variant"),
+                                     pair_differs=auto_pair_differs(facts, cell)).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception:
         return 1
@@ -1354,13 +1437,20 @@ def known_wrong_reference(reference_cell: dict | None) -> bool:
     """Whether the cell this one is scored against renders a pinned approximate kernel.
 
     The second reading beside ``known_wrong_kernel``, of the other side of the
-    comparison. The reference refuses class K under the checkpoint pin guard,
-    so it renders only under that waiver, running the pinned kernel. A cell of
-    the same checkpoint on uly2 or ring2 drops the pins and runs the Init
-    widget's kernel instead, so the two differ however exact this cell is.
+    comparison. Either the reference refuses class K under the checkpoint pin
+    guard and renders only under that waiver, or it is a one-GPU cell, where the
+    checkpoint's own pins run as stock runs them and ask nothing. Both run the
+    pinned kernel. A cell of the same checkpoint on uly2 or ring2 drops the pins
+    and runs the Init widget's kernel instead, so the two differ however exact
+    this cell is.
     """
-    return bool(reference_cell) and attention_pins.SOL_ATTN_PIN_GUARD in (
-        reference_cell.get("waiver_guards") or [])
+    if not reference_cell:
+        return False
+    if attention_pins.SOL_ATTN_PIN_GUARD in (reference_cell.get("waiver_guards") or []):
+        return True
+    pinned = attention_pins._approximate(reference_cell.get("checkpoint_pins") or {})
+    return bool(pinned) and reference_cell.get("session") == "local" \
+        and reference_cell.get("label") == "render"
 
 
 def _numeric_bar(cell: dict, steps: int, reference_cell: dict | None = None) -> str:
@@ -1514,9 +1604,7 @@ def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str],
                           "through comfy_attention config keys, which the matrix does "
                           "not model, so the lora-on arm is dropped")
             lora_names = []
-        stack = [{"node": nid, "name": name, "strength": 0.8}
-                 for nid, name in zip(facts["loras"], lora_names, strict=True)] \
-            if facts["loras"] and lora_names else []
+        stack = lora_stack(template, facts, lora_names)
         # A "-lora" template is its family's shipped graph plus LoRA loaders, so
         # its lora-off arm renders what the shipped graph's row already renders.
         # dgx-monarch-test-chroma-lora sets the 44-token prompt pair instead, so

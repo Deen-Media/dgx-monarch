@@ -64,12 +64,14 @@ _KNOWN_NODE_TYPES = frozenset({
     "DGXMonarchUncondUNETLoader",
     "DGXMonarchLoraLoader",
     "DGXMonarchModelSamplingSD3",
+    "DGXMonarchModelSamplingMiniMaxH3",
     "DGXMonarchSkipLayerGuidance",
     "DGXMonarchKSampler",
     "DGXMonarchKSamplerAdvanced",
     "DGXMonarchFleetKSampler",
     "DGXMonarchIdentityGate",
     "DGXMonarchClearVRAM",
+    "DGXMonarchBasicGuider",
     "DGXMonarchCFGGuider",
     "DGXMonarchDualModelGuider",
     "DGXMonarchSamplerCustom",
@@ -78,6 +80,20 @@ _KNOWN_NODE_TYPES = frozenset({
     "DualCLIPLoader",
     "CLIPTextEncode",
     "PrimitiveStringMultiline",
+    # p-h3-image: its conditioning node and the stock prompt upsampler chain.
+    "PH3ImageConditioning",
+    "TextGenerateV2",
+    "ComfySwitchNode",
+    "PreviewAny",
+    # MiniMax-H3-Image: its conditioning node, the edit graph's resize node,
+    # and the two string nodes ComfyUI's expander chain adds to the one above.
+    "MiniMaxH3ImageConditioning",
+    "ResizeImageMaskNode",
+    "StringReplace",
+    "StringTrim",
+    "StringCompare",
+    "RegexExtract",
+    "RegexReplace",
     "TextEncodeMageFlowEdit",
     "TextEncodeQwenImage21",
     "QwenImage21Cache",
@@ -140,6 +156,7 @@ _KNOWN_NODE_TYPES = frozenset({
     "WanDancerPadKeyframesList",
     "WanDancerVideo",
     "WanImageToVideo",
+    "Wan22ImageToVideoLatent",
     "WanAnimate2ToVideo",
     "WanSCAILToVideo",
     "TrimVideoLatent",
@@ -162,6 +179,9 @@ _EVERY_ID = [str(path.relative_to(REPO)) for path in EVERY_TEMPLATE]
 _LORA_VARIANT_SUFFIX = "-lora.json"
 _TEST_LORA_NAME = "test_lora_placeholder.safetensors"
 _TEST_LORA_STRENGTH = 0.8
+# A LoRA variant that compares at another strength holds that one, and the
+# sweep keeps it (benchmark/sweep/matrix.py GRAPH_LORA_STRENGTH_TEMPLATES).
+_LORA_STRENGTH_EXCEPTIONS = {"dgx-monarch-test-p-h3-image-lora.json": 1.0}
 
 
 def _load(path: Path) -> dict:
@@ -388,6 +408,23 @@ def test_a_monarch_graph_holds_exactly_one_init(path: Path):
     )
 
 
+@pytest.mark.parametrize("path", EVERY_TEMPLATE, ids=_EVERY_ID)
+def test_no_template_turns_sync_ulysses_off(path: Path):
+    # The input changes nothing on the pinned xfuser, but it is part of a
+    # setup's identity (mesh_setup.nccl_setup_key). One template with it off
+    # rebuilt the setup on every move to or from it, which unloads every model
+    # on every Worker: on 2026-11-12 both Ideogram 4 models loaded from disk
+    # again after one render of another template.
+    init = next((node for node in _load(path)["nodes"]
+                 if node["type"] == "DGXMonarchInit"), None)
+    if init is None:
+        pytest.skip("stock-only template")
+    assert init["dgxm_widgets"]["sync_ulysses"] is True, (
+        f"{path.name}: sync_ulysses is off, so this graph's setup differs from "
+        "every other template's"
+    )
+
+
 MODELS = REPO / "docs" / "MODELS.md"
 
 # One entry per support-matrix row in docs/MODELS.md, keyed by the row's model
@@ -414,6 +451,7 @@ TEMPLATE_FOR_ROW: dict[str, str | None] = {
     "MOSS-Image SFT": "dgx-monarch-moss-image-t2i.json",
     "MOSS-Image Base": "dgx-monarch-moss-image-base-t2i.json",
     "Kromoss": "dgx-monarch-kromoss-t2i.json",
+    "p-h3-image": "dgx-monarch-p-h3-image.json",
     "LongCat-Image": "dgx-monarch-longcat-t2i.json",
     "HunyuanImage 2.1 (+refiner)": "dgx-monarch-hunyuan-image.json",
     "Qwen-Image": "dgx-monarch-qwen-image-t2i.json",
@@ -438,6 +476,7 @@ TEMPLATE_FOR_ROW: dict[str, str | None] = {
     "Wan 2.1 (t2v)": "dgx-monarch-wan-t2v.json",
     "Wan 2.2 (t2v, high/low)": "dgx-monarch-wan22-t2v.json",
     "Wan 2.2 (i2v)": "dgx-monarch-wan22-i2v.json",
+    "Wan 2.2 TI2V 5B": "dgx-monarch-wan22-ti2v.json",
     "Wan 2.1 (i2v)": "dgx-monarch-wan21-i2v.json",
     "Wan FlowRVS": "dgx-monarch-wan-flowrvs.json",
     "Wan Bernini-R": "dgx-monarch-wan-bernini.json",
@@ -452,6 +491,9 @@ TEMPLATE_FOR_ROW: dict[str, str | None] = {
     "Kandinsky5-Video Lite": "dgx-monarch-kandinsky5-video-lite.json",
     "Kandinsky5-Video Pro": "dgx-monarch-kandinsky5-video-pro.json",
     "MiniMax H3 (t2va/fl2va/ref2va AV)": "dgx-monarch-minimax-h3-t2va.json",
+    # The row maps to the text-to-image graph; the edit graph ships beside it
+    # unmapped, as the FLUX.3 edit graphs do.
+    "MiniMax-H3-Image": "dgx-monarch-minimax-h3-image-t2i.json",
 }
 
 # Every row without a template must explicitly state that gap.
@@ -703,8 +745,10 @@ def test_a_pinned_init_topology_matches_auto_or_a_recorded_grant(path: Path):
 _MODEL_SINKS = frozenset({
     "DGXMonarchKSampler", "DGXMonarchKSamplerAdvanced", "DGXMonarchFleetKSampler",
     "DGXMonarchIdentityGate", "DGXMonarchCFGGuider", "DGXMonarchDualModelGuider",
+    "DGXMonarchBasicGuider",
 })
 _MODEL_PASSTHROUGH = frozenset({"DGXMonarchLoraLoader", "DGXMonarchModelSamplingSD3",
+                                "DGXMonarchModelSamplingMiniMaxH3",
                                 "DGXMonarchSkipLayerGuidance"})
 
 _LORA_VARIANTS = [path for path in TESTING_TEMPLATES
@@ -763,9 +807,9 @@ def test_a_lora_variant_chains_its_loader_between_unet_and_sampler(path: Path):
             f"{where}: lora_name is {named['lora_name']!r}; the testing set ships "
             f"the placeholder {_TEST_LORA_NAME}"
         )
-        assert named["strength_model"] == _TEST_LORA_STRENGTH, (
-            f"{where}: strength_model is {named['strength_model']!r}, not "
-            f"{_TEST_LORA_STRENGTH}"
+        strength = _LORA_STRENGTH_EXCEPTIONS.get(path.name, _TEST_LORA_STRENGTH)
+        assert named["strength_model"] == strength, (
+            f"{where}: strength_model is {named['strength_model']!r}, not {strength}"
         )
         source = origin.get(loader["inputs"][0]["link"])
         assert source is not None and source["type"] in (

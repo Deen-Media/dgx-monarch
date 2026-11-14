@@ -55,6 +55,6 @@ export function emptyQueueText(query: string, status: string, loading: boolean) 
     };
   return {
     title: 'No recorded jobs yet.',
-    detail: 'Review and submit a workflow to create the first immutable job record.',
+    detail: 'Load a workflow and press Generate to make the first immutable job record.',
   };
 }

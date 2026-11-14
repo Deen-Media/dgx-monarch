@@ -203,16 +203,88 @@ def test_under_sequence_parallelism_the_pin_is_reported_dropped_and_the_render_r
     }
 
 
-def test_with_the_waiver_granted_the_pin_runs_stamped_and_reported_ran(monkeypatch):
+@pytest.mark.parametrize("topology", [{"cfg": 2}, {"dp": 2}, {"cfg": 2, "fsdp": True}])
+def test_with_the_waiver_granted_the_pin_runs_stamped_and_reported_ran(monkeypatch, topology):
     accuracy_waiver._scope().grants[SOL_KIND] = {
         "id": "b" * 32, "kind": SOL_KIND, "consent_source": "panel"}
     crossed: list[bool] = []
-    result, sampled = _run(monkeypatch, _worker(world=1), _pinned_patcher(Block(sol())),
+    result, sampled = _run(monkeypatch, _worker(**topology), _pinned_patcher(Block(sol())),
                            crossed=crossed)
     assert sampled == [1]
     assert result[attention_pins.RESULT_KEY]["attention_pins_ran"] is True
     assert [stamp["guard"] for stamp in result[accuracy_waiver.RESULT_KEY]] == [
         attention_pins.SOL_ATTN_PIN_GUARD]
+
+
+@pytest.mark.parametrize("granted", [False, True], ids=["no-grant", "grant-held"])
+@pytest.mark.parametrize("kernel", [sol, int8])
+def test_on_one_rank_the_checkpoints_own_pin_renders_unstamped_and_unasked(
+        monkeypatch, granted, kernel):
+    """single: the header's pin runs as stock runs it. No refusal, no stamp, no
+    ledger use row even with a grant on hand; the record still names the kernel."""
+    if granted:
+        accuracy_waiver._scope().grants[SOL_KIND] = {
+            "id": "d" * 32, "kind": SOL_KIND, "consent_source": "panel"}
+    crossed: list[bool] = []
+    result, sampled = _run(monkeypatch, _worker(world=1), _pinned_patcher(Block(kernel())),
+                           crossed=crossed)
+    assert sampled == [1]
+    record = result[attention_pins.RESULT_KEY]
+    assert record["attention_pins_ran"] is True and record["attention_pins_dropped"] is None
+    assert len(record["attention_pins"]) == 1
+    assert not result.get(accuracy_waiver.RESULT_KEY)
+    assert accuracy_waiver.stamps() == []
+
+
+def test_a_single_preset_on_a_two_rank_mesh_resolves_to_dp2_and_keeps_class_k(monkeypatch):
+    """D5 changes a world of one GPU only (DECISIONS, third note). On a two-rank mesh the
+    `single` preset resolves to dp2, which is what the Worker sees, so a header pin asks."""
+    from dgx_monarch.topology import topology_from_preset
+
+    resolved = topology_from_preset("single", 2)
+    assert (resolved.world, resolved.dp, resolved.cfg, resolved.sequence_parallel) == (2, 2, 1, 1)
+    crossed: list[bool] = []
+    with pytest.raises(UnsupportedModelError) as caught:
+        _run(monkeypatch, _worker(world=resolved.world, dp=resolved.dp, cfg=resolved.cfg,
+                                  ulysses=resolved.ulysses, ring=resolved.ring, fsdp=resolved.fsdp),
+             _pinned_patcher(Block(int8())), crossed=crossed)
+    message = str(caught.value)
+    tag = parse_leading_refusal_tag(message)
+    assert tag is not None and tag.refusal_class is RefusalClass.KNOWN_WRONG
+    assert tag.guard == attention_pins.SOL_ATTN_PIN_GUARD and tag.waivable
+    assert "Topology dp2 runs no sequence parallelism" in message
+    assert "this stack's LoRA changes the checkpoint's pins" not in message
+    assert crossed == [False]
+
+
+def test_in_a_world_of_one_gpu_a_lora_pin_under_a_held_grant_renders_stamped(monkeypatch):
+    accuracy_waiver._scope().grants[SOL_KIND] = {
+        "id": "f" * 32, "kind": SOL_KIND, "consent_source": "panel"}
+    path = "diffusion_model.blocks.0.self_attn.comfy_attention"
+    crossed: list[bool] = []
+    result, sampled = _run(monkeypatch, _worker(world=1),
+                           _pinned_patcher(Block(int8()), object_patches={path: int8()}),
+                           crossed=crossed)
+    assert sampled == [1]
+    assert [stamp["guard"] for stamp in result[accuracy_waiver.RESULT_KEY]] == [
+        attention_pins.SOL_ATTN_PIN_GUARD]
+
+
+@pytest.mark.parametrize("patch", ["adds", "changes", "restates"])
+def test_on_one_rank_a_lora_pin_still_refuses_class_k(monkeypatch, patch):
+    """Any LoRA object patch on a comfy_attention path, one that restates the
+    header pin unchanged included, keeps class K on one rank."""
+    path = "diffusion_model.blocks.0.self_attn.comfy_attention"
+    header = Attention() if patch == "adds" else int8()
+    staged = sol() if patch == "changes" else int8()
+    crossed: list[bool] = []
+    with pytest.raises(UnsupportedModelError) as caught:
+        _run(monkeypatch, _worker(world=1),
+             _pinned_patcher(Block(header), object_patches={path: staged}), crossed=crossed)
+    tag = parse_leading_refusal_tag(str(caught.value))
+    assert tag is not None and tag.refusal_class is RefusalClass.KNOWN_WRONG
+    assert tag.guard == attention_pins.SOL_ATTN_PIN_GUARD and tag.waivable
+    assert "this stack's LoRA changes the checkpoint's pins" in str(caught.value)
 
 
 def test_an_unpinned_render_carries_no_pin_field(monkeypatch):
@@ -314,6 +386,6 @@ def test_the_driver_keeps_each_dual_model_ranks_counts_in_the_finish_record(monk
     assert last["attention_pins_dropped"] == {attention_pins.DROPPED_UNBOUND: 10}
     assert set(last[attention_pins.MODELS_FIELD]) == {"cond", "uncond"}
     assert attention_pins.describe(last) == (
-        "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; "
+        "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, kept; "
         "uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped "
         "(kernel unavailable on this host)")

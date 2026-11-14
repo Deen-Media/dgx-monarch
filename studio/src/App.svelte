@@ -22,20 +22,20 @@
   import { isActiveJob, requestJobAction } from './jobActions';
   import { OperationOpener } from './operationOpener.svelte';
   import { persistRecord } from './recordPersistence';
-  import { artifactDraft } from './artifactDraft';
+  import { artifactDraft, reuseNotice } from './artifactDraft';
   import { inspectDraft, rebuildBindings } from './workflowInspector';
   import StatusMessages from './components/StatusMessages.svelte';
   import AppShell from './components/AppShell.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import SubmissionReview from './components/SubmissionReview.svelte';
   import Viewer from './components/Viewer.svelte';
-  import Operations from './components/Operations.svelte';
+  import EditHandoff from './components/EditHandoff.svelte';
   import Generation from './views/Generation.svelte';
   import WorkspaceOutput from './views/WorkspaceOutput.svelte';
   import Gallery from './views/Gallery.svelte';
   import Queue from './views/Queue.svelte';
-  import Grids from './views/Grids.svelte';
-  import Fleet from './views/Fleet.svelte';
+  import Utilities from './views/Utilities.svelte';
+  import { isUtility, railView, resolveView } from './navigation';
   import WorkspaceRecords from './views/WorkspaceRecords.svelte';
   import Settings from './views/Settings.svelte';
   import Connect from './views/Connect.svelte';
@@ -64,13 +64,13 @@
     width = $state(340);
   let pendingActions = 0,
     workflowId = $state('');
-  let palettePanel: CommandPalette, previewPanel: SubmissionReview;
+  let palettePanel: CommandPalette, previewPanel: SubmissionReview, handoff: EditHandoff;
   let jobs = $derived(connection.snapshot.jobs),
     activeJobs = $derived(jobs.filter(isActiveJob));
   const refresh = () => connection.refresh();
   function navigate(id: string) {
     presentation = false; // a view that opens must show, not stay behind the presentation
-    view = id;
+    view = resolveView(id);
     palettePanel?.close();
     requestAnimationFrame(() => document.getElementById('main-heading')?.focus());
   }
@@ -98,7 +98,7 @@
       busy = false;
     }
   }
-  async function importDraft(value: Draft) {
+  async function importDraft(value: Draft, templateId = '') {
     const previous = structuredClone($state.snapshot(draft));
     changeDraft(value);
     draft = value;
@@ -106,7 +106,7 @@
     connections = [];
     bindingErrors = [];
     rawWorkflow = '';
-    if (draft.workflow) await inspect(draft.workflow, draft.workflowName, true);
+    if (draft.workflow) await inspect(draft.workflow, draft.workflowName, true, templateId);
     undoDraft = previous;
   }
   function setNotice(message: string) {
@@ -147,7 +147,8 @@
     const ticket = guard.begin(connection.client);
     const values = preserveValues ? structuredClone($state.snapshot(draft.values)) : undefined;
     await withBusy(async () => {
-      const result = await inspectDraft(connection.client, workflow, name, values);
+      const fit = { operation: () => draft.operation, info: connection.catalog.object_info };
+      const result = await inspectDraft(connection.client, workflow, name, values, fit);
       const state = guard.inspected(ticket, connection.client);
       if (state !== 'current')
         return void (state !== 'newer' && fail(droppedInspection(name, state)));
@@ -176,6 +177,14 @@
     });
   }
   async function reuse(artifact: Artifact, operation?: string) {
+    if (operation === 'edit')
+      return handoff.send(artifact, {
+        withBusy,
+        importDraft,
+        navigate,
+        setNotice,
+        selectTab: (tab) => (controlTab = tab),
+      });
     await withBusy(() => loadArtifact(artifact, operation));
   }
   async function loadArtifact(artifact: Artifact, operation?: string) {
@@ -192,11 +201,7 @@
     if (error) return;
     navigate('workspace');
     dirty = true;
-    setNotice(
-      operation
-        ? `Output lineage attached. Set the corresponding workflow asset input before reviewing ${operation}.`
-        : 'Recorded settings loaded into a new editable draft.',
-    );
+    setNotice(reuseNotice(operation));
   }
 
   async function saveRecord(kind: RecordKind, data: RecordData, id?: string, revision = 0) {
@@ -215,7 +220,7 @@
       }
       if (kind === 'styles') {
         changeDraft({ styles: [...draft.styles, { ...record.data, id: record.id }] });
-        setNotice('Style appended. Review expanded prompts before submission.');
+        setNotice('Style appended. Review settings shows the expanded prompts.');
       }
       if (kind === 'presets' || kind === 'sessions') {
         await importDraft(restoreDraft(record.data.draft));
@@ -281,20 +286,21 @@
       busy = --pendingActions > 0;
     }
   }
-  async function prepareJob() {
+  /** Generate starts a valid job at once; Review settings, a warning or a refusal open the review. */
+  async function prepareJob(review = false) {
     const ticket = guard.snapshot(connection.client);
     await withBusy(async () => {
       const current = () => guard.previewed(ticket, connection.client);
-      if (await submission.prepare($state.snapshot(draft), current)) previewPanel.open();
+      const next = await submission.prepare($state.snapshot(draft), current, review, bindings);
+      if (next === 'ready') await submitPreview();
+      else if (next === 'review') previewPanel.open();
       else fail(DROPPED_REVIEW);
     });
   }
   async function submitPreview() {
     await withBusy(async () => {
-      const job = await submission.submit();
-      tracker.own(job.id);
+      tracker.own((await submission.submit()).id);
       dirty = false;
-      setNotice(`Submitted ${job.id}.`);
     });
   }
   async function reconcilePending() {
@@ -318,7 +324,7 @@
   {draft}
   activeCount={activeJobs.length}
   working={tracker.working}
-  {view}
+  view={railView(view)}
   bind:presentation
   {width}
   bind:showTelemetry
@@ -384,12 +390,14 @@
           {busy}
           pending={!!submission.pending || !!submission.recoveryError}
           driverState={driverStatus(connection.snapshot.driver)}
+          confirmation={submission.confirmation}
           {changeDraft}
           {inspect}
           {fail}
           {undo}
           {prepareJob}
           {rebind}
+          issueRefresh={{ guard, apply: (next) => ({ errors: bindingErrors, connections } = next) }}
           catalogError={connection.catalogError}
           refreshCatalog={() => connection.refreshCatalog()}
         /><WorkspaceOutput
@@ -402,6 +410,7 @@
           presentation={connection.capabilities.presentation}
           driverState={connection.snapshot.driver.state}
           connectionState={connection.state}
+          serverTime={connection.snapshot.server_time}
           activeCount={activeJobs.length}
           job={tracker.status}
           working={tracker.working}
@@ -435,27 +444,18 @@
         {jobAction}
         onconsent={opener.consent}
       />
-    {:else if view === 'grid'}<Grids
-        {reuse}
-        client={connection.client}
+    {:else if isUtility(view)}<Utilities
+        {view}
+        {connection}
         {draft}
         {bindings}
+        {reuse}
         restoreDraft={importDraft}
-      />
-    {:else if view === 'fleet'}<Fleet
-        client={connection.client}
-        {jobs}
-        history={connection.metricHistory}
-        presentation={connection.capabilities.presentation}
-        telemetry={connection.snapshot.telemetry}
         {changeDraft}
+        {inspect}
         {navigate}
-      />
-    {:else if view === 'operations'}<Operations
-        client={connection.client}
-        capabilities={connection.capabilities}
+        {setNotice}
         request={opener.request}
-        operations={connection.snapshot.operations}
         onrefresh={() => void refresh().catch(fail)}
       />
     {:else if view === 'projects'}<WorkspaceRecords
@@ -491,4 +491,5 @@
   {inspect}
   onoperation={opener.operation}
 />
-<SubmissionReview bind:this={previewPanel} {submission} {bindings} {busy} {submitPreview} />
+<SubmissionReview bind:this={previewPanel} {submission} {busy} {submitPreview} bind:controlTab />
+<EditHandoff bind:this={handoff} {connection} {draft} {bindings} {workflowId} />

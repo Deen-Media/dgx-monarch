@@ -17,6 +17,7 @@ from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from ..residency_mode import ComfyManagedResidencyError
 from ..transfer_utils import failure_summary, failure_text, safe_call
+from . import lora_cast_time
 
 log = get_logger(__name__)
 
@@ -131,6 +132,7 @@ def stage_a(worker_args: Mapping[str, Any] | None) -> bool:
     want = residency_mode.requested(worker_args)
     _latch(want)
     if not want:
+        _context_reading()
         return False
     try:
         import comfy_aimdo.control as ctl
@@ -157,7 +159,19 @@ def stage_a(worker_args: Mapping[str, Any] | None) -> bool:
             "could not load aimdo.so on this host." + _BRINGUP_TAIL,
             troubleshooting=residency_mode.TROUBLESHOOTING))
     _rewire_submodule_lib(ctl)
+    _context_reading()
     return True
+
+
+def _context_reading() -> None:
+    """Read free memory where the Worker made room and left the context to the bootstrap.
+
+    The caller's next statement imports ``comfy.model_management``, which makes
+    the CUDA context, so stage A's end is the last point ahead of it.
+    """
+    from . import context_room
+
+    context_room.at_bootstrap_context()
 
 
 def _rewire_submodule_lib(ctl: Any) -> None:
@@ -186,15 +200,72 @@ def _rewire_submodule_lib(ctl: Any) -> None:
             )
 
 
+def set_native_log_level(ctl: Any) -> bool:
+    """Set the loader's native log level to INFO, as ComfyUI's own process does.
+
+    The loader's level starts at "everything", and it hands every line to a
+    Python callback, which needs the interpreter lock. Once its hooks are in, it
+    logs at each device allocation and free, and torch makes those calls while
+    it holds its allocator lock. A thread that holds the interpreter lock and
+    wants the allocator lock (a status read did) then stops the Worker for
+    good. At INFO the per-allocation lines are dropped in the library, before
+    any call into Python, and its warnings and errors still reach the log.
+    """
+    setter = getattr(ctl, "set_log_info", None)
+    if setter is None:
+        safe_call(log.warning,
+                  "this comfy-aimdo has no log level to set; if it logs through "
+                  "Python, a comfy-managed render can stop inside its first step "
+                  "(docs/TROUBLESHOOTING.md #%d)", residency_mode.TROUBLESHOOTING)
+        return False
+    if getattr(ctl, "lib", None) is None:
+        # The library did not load. ``init_devices`` then reports no working
+        # install and ``stage_b`` refuses in words; a setter called here would
+        # raise an AttributeError in that refusal's place.
+        return False
+    setter()
+    return True
+
+
+_NATIVE_LOG_INFO = 4  # comfy-aimdo's own number for INFO
+
+
+def native_log_level(ctl: Any, symbol: str = "log_level") -> int | None:
+    """The loader's native log level as its library holds it now, or None.
+
+    Read from the library and not from what the bring-up asked for: nothing in
+    the library but its eight level setters writes this value, so one read
+    after ``init_devices`` holds for the life of the process.
+    """
+    try:
+        import ctypes
+
+        return int(ctypes.c_int.in_dll(ctl.lib, symbol).value)
+    except Exception:
+        return None
+
+
+def native_log_words(level: int | None) -> str:
+    """What the bring-up's line says of the level it read back."""
+    if level == _NATIVE_LOG_INFO:
+        return "native log level INFO (read back as 4)"
+    if level is None:
+        return "native log level not readable"
+    return f"native log level {level}, NOT the INFO (4) the bring-up set"
+
+
 def stage_b(enabled: bool, *, reserve_vram_gb: float | None = None) -> bool:
     """Install the hooks, claim the device, and rebind comfy's patcher.
 
     This stage requires libcuda and a live CUDA context, so it runs after
-    ComfyUI bootstrap.
+    ComfyUI bootstrap. With the rung off the classic patcher stays, and its
+    LoRA bake takes stock's cast-time math (``lora_cast_time.install``).
     """
     global _ACTIVE, _STAGE_B_DONE
     if not enabled:
         os.environ.pop(residency_mode.ENV_ACTIVE, None)
+        # The classic patcher stays: give its LoRA bake stock's cast-time math.
+        lora_cast_time.install()
         return False
 
     # Arm before any fallible work so every failure remains visible on re-entry.
@@ -220,8 +291,6 @@ def stage_b(enabled: bool, *, reserve_vram_gb: float | None = None) -> bool:
     # Apply the same reserve to ComfyUI and aimdo. The per-device headroom below
     # is a separate setting and stays zero to avoid charging the reserve twice.
     headroom = None if not reserve_vram_gb else int(float(reserve_vram_gb) * 1024 ** 3)
-    # Keep aimdo's native log default. Its bridge emits through Python logging,
-    # where the worker level already filters output.
     try:
         ctl.init(simple_vram_headroom=headroom, nvml_pressure=True)
     except TypeError:
@@ -229,6 +298,8 @@ def stage_b(enabled: bool, *, reserve_vram_gb: float | None = None) -> bool:
             ctl.init(simple_vram_headroom=headroom)
         except TypeError:
             ctl.init()
+    # Before the hooks go in: from then on the loader logs at every allocation.
+    set_native_log_level(ctl)
 
     # ``init_devices`` resolves libcuda symbols against a live CUDA context.
     # CUDA_VISIBLE_DEVICES already narrows this process to one worker GPU.
@@ -253,10 +324,17 @@ def stage_b(enabled: bool, *, reserve_vram_gb: float | None = None) -> bool:
     _ACTIVE = True
     _STAGE_B_DONE = True
     os.environ[residency_mode.ENV_ACTIVE] = "1"
+    level = native_log_level(ctl)  # after the hooks are in: what the library holds
     log.info("comfy-managed residency ACTIVE: comfy-aimdo %s, device %d, "
-             "simple_vram_headroom %s, patcher ModelPatcherDynamic",
+             "simple_vram_headroom %s, patcher ModelPatcherDynamic, %s",
              _aimdo_version(), index,
-             "unset" if headroom is None else f"{headroom / 2 ** 30:.1f} GiB")
+             "unset" if headroom is None else f"{headroom / 2 ** 30:.1f} GiB",
+             native_log_words(level))
+    if level not in (None, _NATIVE_LOG_INFO):
+        safe_call(log.warning,
+                  "the loader logs through Python at level %d; a render can stop "
+                  "inside its first step (docs/TROUBLESHOOTING.md #%d)",
+                  level, residency_mode.TROUBLESHOOTING)
     return True
 
 

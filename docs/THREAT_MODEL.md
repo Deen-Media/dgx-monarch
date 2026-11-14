@@ -481,6 +481,17 @@ identifiers, listener ports, timings, or rig-specific diagnostics. Review and
 sanitize evidence before disclosure; keeping it in a private repository does
 not make it safe to publish.
 
+Measured results take a separate path. [BENCHMARKS.md](BENCHMARKS.md),
+[VALIDATION.md](VALIDATION.md) and the campaign exports publish the render
+times, memory readings, clock posture and hardware class of hand runs.
+Each record must be reviewed before it is committed, the report and export
+generators redact private identifiers, and the tracked-tree scan runs on the
+result
+([Diagnostics, reports, and repository artifacts](#diagnostics-reports-and-repository-artifacts)).
+That path does not widen what a gate conclusion may carry, and it publishes
+no credentials, raw logs, host names, private addresses, usernames, private
+absolute paths, GPU UUIDs or process identifiers.
+
 ### Worker process environment
 
 Before Monarch import and actor launch, long-lived Worker services apply a `0077`
@@ -493,7 +504,29 @@ reading their values. The filter does not inspect values under allowed names;
 runtime, scratch, managed import-path, and bytecode-policy variables are then
 replaced with project-controlled values
 ([worker_process_env.py](../src/dgx_monarch/cli/worker_process_env.py),
-[tests](../tests/test_worker_process_env.py)).
+[tests](../tests/test_worker_process_env.py)). The boundary fills in two allowed
+names rather than replacing them: when the Worker environment does not set
+`MIMALLOC_PURGE_DELAY`, it sets it to 0 so torch's bundled mimalloc gives freed
+host memory back at once (DESIGN, "Freed host memory goes back at once"), and
+when it does not set `TORCHINDUCTOR_CACHE_DIR`, it points it at an owned
+0700 directory under `~/.cache/dgx-monarch/inductor`. Inductor loads the code
+it generates from that directory, so an operator who sets the variable must
+name a directory only the account can write.
+
+One input reaches an actor past that boundary, and it is bounded by name. As
+it starts, each actor reads `~/.config/dgx-monarch/worker.env` and takes from
+it six diagnostic switches and nothing else
+([worker_switches.py](../src/dgx_monarch/actor/worker_switches.py),
+[tests](../tests/test_worker_switches.py)): each can only turn one of the
+Worker's own steps off, or, for the two debug faults and only with
+`DGXM_ACCEPTANCE`, make one rank refuse. No path, credential or loader
+variable can come in this way, and a value is letters, digits and four
+punctuation marks. The file is read only if it is a regular file the Worker's
+own user owns and no one else can write; a link is not followed. Whoever can
+write that file can already rewrite the Worker's unit, so it grants nothing
+new, and a unit that clears its environment stays closed to every other
+account. Every switch taken is logged at WARNING by the actor and again by
+the driver at each setup, and is in the Worker's status.
 
 This boundary limits accidental credential propagation and diagnostic exposure;
 it does not scrub the driver process or an already-running service until restart,
@@ -577,6 +610,10 @@ key filenames, and its allowlist covers only explicit fictional fixtures
 [tests](../tests/test_leak_check.py)).
 
 These controls cover benchmark publication and committed repository content.
+They are the path for measured results that
+[GitHub Actions to trusted hardware](#github-actions-to-trusted-hardware)
+keeps out of a gate conclusion: reviewed render times, memory readings,
+clock posture and hardware class may be published here.
 Report redaction is not a general secret scrubber: it preserves model and LoRA
 filenames, sizes, mtimes, sampled signatures, matrix settings, prompts, and
 other free text, and it does not sanitize console errors. The tracked-tree

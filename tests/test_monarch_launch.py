@@ -249,3 +249,34 @@ def test_disabled_actor_export_removes_coordinator_endpoint_before_startup(comma
     cmd = launch.actor_bootstrap_command(config(), True)({'hosts': 0, 'gpus': 0})
     assert cmd.env['OTEL_EXPORTER_OTLP_ENDPOINT'] is None
     assert cmd.inherit_env is True
+
+
+@pytest.mark.parametrize("use_cluster", [False, True])
+def test_every_actor_starts_on_torchs_legacy_nccl_backend(commands, monkeypatch, use_cluster):
+    """torch 2.15 reads TORCH_DIST_USE_NCCL2 at import, so only the start environment can pin it."""
+    from dgx_monarch.cli.worker_process_env import worker_environment_key_allowed
+
+    monkeypatch.setenv("TORCH_DIST_USE_NCCL2", "1")
+    command = launch.actor_bootstrap_command(config(), use_cluster)
+    for point in ({"hosts": 0, "gpus": 0}, {"hosts": 1, "gpus": 0}):
+        cmd = command(point)
+        assert cmd.env["TORCH_DIST_USE_NCCL2"] == "0"
+        assert cmd.inherit_env is use_cluster
+    # Neither the Worker loop nor the local launch passes an ambient value, so
+    # the launcher is the one place the setting comes from.
+    assert not worker_environment_key_allowed("TORCH_DIST_USE_NCCL2")
+    assert launch.actor_environment(config(), "a")["TORCH_DIST_USE_NCCL2"] == "0"
+
+
+def test_a_local_actor_purges_host_memory_at_free_time_unless_the_driver_chose(commands, monkeypatch):
+    """The worker loop gives cluster actors MIMALLOC_PURGE_DELAY=0; a local actor
+    takes the driver's value or the same default (DESIGN, "Freed host memory
+    goes back at once")."""
+    from dgx_monarch.cli.worker_process_env import HOST_ALLOCATOR_PURGE_DEFAULT, HOST_ALLOCATOR_PURGE_ENV
+
+    monkeypatch.delenv(HOST_ALLOCATOR_PURGE_ENV, raising=False)
+    cmd = launch.actor_bootstrap_command(config(), False)({"gpus": 0})
+    assert cmd.env[HOST_ALLOCATOR_PURGE_ENV] == HOST_ALLOCATOR_PURGE_DEFAULT == "0"
+    monkeypatch.setenv(HOST_ALLOCATOR_PURGE_ENV, "25")
+    cmd = launch.actor_bootstrap_command(config(), False)({"gpus": 0})
+    assert cmd.env[HOST_ALLOCATOR_PURGE_ENV] == "25"

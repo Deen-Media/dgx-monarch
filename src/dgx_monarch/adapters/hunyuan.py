@@ -94,8 +94,8 @@ class HunyuanAdapter(Adapter):
             f"hunyuan variant {type(base_model).__name__} is not in the dgx-monarch "
             "launch set (HunyuanImage 2.1 + refiner and HunyuanVideo 1.5 + SR only). "
             "HunyuanVideo 1.0 / i2v / skyreels use guiding-frame modulation over "
-            "global token ranges, which sequence sharding cannot express; run "
-            "those on a cfg2 or single topology (docs/MODELS.md)."
+            "global token ranges, which sequence sharding cannot express. Render "
+            "those in stock ComfyUI on one GPU (docs/MODELS.md)."
         )
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:

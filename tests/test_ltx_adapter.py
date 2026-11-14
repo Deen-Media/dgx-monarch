@@ -30,6 +30,16 @@ from dgx_monarch.adapters.ltx import (
 from fake_model_base_helpers import install_fake_model_base
 
 
+@pytest.fixture(autouse=True)
+def _no_stock_row_parity(monkeypatch):
+    """These fakes carry no ComfyUI block code, so the parity route is stubbed here.
+
+    tests/test_ltx_parity.py covers the route; tests/test_ltx_comfy_exactness.py runs it
+    on real ComfyUI blocks.
+    """
+    monkeypatch.setattr(ltx, "bind_stock_row_parity", lambda model, rows: 0)
+
+
 @pytest.fixture
 def fake_model_base(monkeypatch):
     """A fake comfy.model_base holding only LTXV, LTXAV and an unvetted LTXV
@@ -169,6 +179,23 @@ def test_inject_usp_dispatches_ltxv_self_attention_only():
     assert model._process_transformer_blocks is not _STOCK
 
 
+@pytest.mark.parametrize("model_type", ["ltxv", "ltxav"])
+def test_inject_binds_the_stock_row_parity_route_before_anything_else(monkeypatch, model_type):
+    """A route that cannot bind refuses before any stock method is replaced."""
+    model = _FakeLTXV() if model_type == "ltxv" else _FakeLTXAV()
+
+    def refuse(diffusion_model, rows):
+        assert diffusion_model is model and isinstance(rows, ltx.StockRows)
+        assert model._process_transformer_blocks is _STOCK
+        assert all(block.attn1.forward is _STOCK for block in model.transformer_blocks)
+        raise UnsupportedModelError("route cannot bind")
+
+    monkeypatch.setattr(ltx, "bind_stock_row_parity", refuse)
+    with pytest.raises(UnsupportedModelError, match="route cannot bind"):
+        LTXAdapter().inject_usp(model, InjectionContext(topology_sp=2, usp_attention=object()))
+    assert model._process_transformer_blocks is _STOCK
+
+
 def test_inject_usp_dispatches_ltxav_on_audio_inner_dim():
     model = _FakeLTXAV()
     LTXAdapter().inject_usp(model, InjectionContext(topology_sp=2, usp_attention=object()))
@@ -206,10 +233,14 @@ class _FakeCrossAttention:
         return tensor
 
 
-def _stub_rope(monkeypatch, apply_rotary_emb):
-    """Stand in for comfy's rope helper at the import the forward makes."""
+def _stub_rope(monkeypatch, apply_rotary_emb, apply_rotary_emb_qk=None):
+    """Stand in for comfy's rope helpers at the import the forward makes.
+
+    Without ``apply_rotary_emb_qk`` the module is a ComfyUI from before the paired helper."""
     model = types.ModuleType("comfy.ldm.lightricks.model")
     model.apply_rotary_emb = apply_rotary_emb
+    if apply_rotary_emb_qk is not None:
+        model.apply_rotary_emb_qk = apply_rotary_emb_qk
     lightricks = types.ModuleType("comfy.ldm.lightricks")
     lightricks.model = model
     ldm = types.ModuleType("comfy.ldm")
@@ -312,6 +343,71 @@ def test_without_the_stg_flag_self_attention_keeps_norms_rope_and_usp(monkeypatc
     assert module.normed == ["q", "k"]
     assert len(roped) == 2
     assert torch.equal(out, _gated_tail(module, module.to_v(x), x))
+
+
+def _rope_recorders():
+    calls = []
+
+    def single(tensor, pe):
+        calls.append(("single", pe))
+        return tensor
+
+    def paired(q, k, pe):
+        calls.append(("paired", pe))
+        return q, k
+
+    return calls, single, paired
+
+
+def _identity_attention(q, k, v, heads, query_bias_groups=None, drop_rows=None,
+                        kv_drop_rows=None):
+    return q  # one output row a query, whatever the key count
+
+
+def test_self_attention_rope_pairs_q_and_k_as_stock_does(monkeypatch):
+    """Stock CrossAttention.forward calls apply_rotary_emb_qk for self-attention."""
+    calls, single, paired = _rope_recorders()
+    _stub_rope(monkeypatch, single, paired)
+    module = _FakeCrossAttention()
+    pe = (torch.zeros(1, 6, 2, 2, 2, 2), True)
+    out = _make_usp_cross_attention(_identity_attention)(
+        module, torch.randn(1, 6, 8), pe=pe, transformer_options={})
+    assert calls == [("paired", pe)]
+    assert out.shape == (1, 6, 8)
+
+
+def test_a_cross_attention_with_its_own_key_payload_rotates_each_alone(monkeypatch):
+    """With k_pe stock rotates q by pe and k by k_pe, one call each."""
+    calls, single, paired = _rope_recorders()
+    _stub_rope(monkeypatch, single, paired)
+    module = _FakeCrossAttention()
+    pe, k_pe = (torch.zeros(1, 6, 2, 2, 2, 2), True), (torch.ones(1, 6, 2, 2, 2, 2), True)
+    _make_usp_cross_attention(_identity_attention, "video", "audio")(
+        module, torch.randn(1, 6, 8), context=torch.randn(1, 6, 8), pe=pe, k_pe=k_pe,
+        transformer_options={})
+    assert calls == [("single", pe), ("single", k_pe)]
+
+
+def test_q_and_k_of_different_shapes_rotate_each_alone(monkeypatch):
+    """Stock pairs only operands of one shape; a cross attention with more keys does not."""
+    calls, single, paired = _rope_recorders()
+    _stub_rope(monkeypatch, single, paired)
+    module = _FakeCrossAttention()
+    pe = (torch.zeros(1, 6, 2, 2, 2, 2), True)
+    _make_usp_cross_attention(_identity_attention, "audio", "video")(
+        module, torch.randn(1, 6, 8), context=torch.randn(1, 9, 8), pe=pe,
+        transformer_options={})
+    assert calls == [("single", pe), ("single", pe)]
+
+
+def test_a_comfy_without_the_paired_helper_rotates_each_alone(monkeypatch):
+    calls, single, _paired = _rope_recorders()
+    _stub_rope(monkeypatch, single)
+    module = _FakeCrossAttention()
+    pe = (torch.zeros(1, 6, 2, 2, 2, 2), True)
+    _make_usp_cross_attention(_identity_attention)(
+        module, torch.randn(1, 6, 8), pe=pe, transformer_options={})
+    assert calls == [("single", pe), ("single", pe)]
 
 
 def test_a_raw_mask_at_the_patched_attention_still_refuses(monkeypatch):

@@ -8,6 +8,7 @@ from .. import __version__, residency_mode
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from ..residency_mode import ComfyManagedResidencyError
+from ..worker_runtime import WorkerRuntimeMismatch
 from .common import ModelSpec, _process_gate_verdict
 
 log = get_logger(f"{__package__}.fleet")
@@ -86,6 +87,8 @@ def _fleet_worker_policy(spec: ModelSpec, handle) -> _FleetAuthorization:
         token = gate_verdict_token(
             key, artifacts.current, identity["comfy"], context)
         process_verdict = _process_gate_verdict(token)
+    except WorkerRuntimeMismatch:
+        raise  # two torch builds hold no Gate authority (worker_runtime.py)
     except Exception as exc:
         state = "unknown"
         log.error(
@@ -142,6 +145,11 @@ def _fleet_worker_policy(spec: ModelSpec, handle) -> _FleetAuthorization:
         "lora_low_rss=off until an exact PASS exists",
         state,
     )
+    if requested.get("slab_weights") is True:
+        # A stock refusal then names this, not the setting the user made.
+        from .refusal_lead import note_forced_stock
+
+        note_forced_stock(state)
     return _FleetAuthorization(
         {**requested, "slab_weights": False, "lora_low_rss": False},
         model_request,

@@ -26,6 +26,7 @@ from dgx_monarch import (
     attach_trace,
     capacity_agreement,
     delivery_faults,
+    driver_footprint,
     mesh_attach,
     mesh_factory,
     mesh_helpers,
@@ -181,9 +182,15 @@ class _Fleet:
         raise TimeoutError("no answer")
 
 
-def test_a_failure_recorded_during_the_wait_ends_it_within_one_poll():
+def _head_named(monkeypatch, name: str) -> None:
+    """The driver runs on the configured host ``name``, read without DNS."""
+    monkeypatch.setattr(driver_footprint, "host_is_local", lambda host: host == name)
+
+
+def test_a_failure_recorded_during_the_wait_ends_it_within_one_poll(monkeypatch):
     """The mutation that drops the short circuit makes this wait run to its
     deadline and refuse as a silent rank instead."""
+    _head_named(monkeypatch, "h0")
     fleet = _Fleet({0: True, 1: False})
     recorded_at: list[float] = []
 
@@ -201,7 +208,8 @@ def test_a_failure_recorded_during_the_wait_ends_it_within_one_poll():
     assert ended - started < 2.0
     assert all(step <= delivery_faults.POLL_S for step in fleet.steps)
     text = str(raised.value)
-    assert "h1 (tcp://10.0.0.2:26600)" in text and "undeliverable" in text
+    assert "Worker actor on the sibling undeliverable" in text
+    assert "10.0.0." not in text and "h1" not in text
     assert "KSampler (DGX Monarch)" in text and "TROUBLESHOOTING.md #2" in text
     assert "run `dgxm restart`" not in text  # restarting the loops again clears nothing
     tag = parse_leading_refusal_tag(text)
@@ -262,9 +270,10 @@ def test_a_mesh_whose_name_cannot_be_read_keeps_the_whole_deadline(monkeypatch):
     assert fleet.sent == [0, 1] and len(fleet.steps) == 2
 
 
-def test_a_failure_that_beats_the_last_send_still_counts():
+def test_a_failure_that_beats_the_last_send_still_counts(monkeypatch):
     """The wait counts from before the first send, so a failure that comes back
     while a later rank's request is still going out is not dropped."""
+    _head_named(monkeypatch, "h0")
     fleet = _Fleet({0: True, 1: False})
     send = fleet._slice
 
@@ -275,7 +284,7 @@ def test_a_failure_that_beats_the_last_send_still_counts():
 
     fleet.workers.slice = slow_send
     fleet.answers[0] = False
-    with pytest.raises(WorkerDeliveryError, match="h0"):
+    with pytest.raises(WorkerDeliveryError, match="Worker actor on the head undeliverable"):
         capacity_agreement.collect(fleet, {}, 2, deadline_s=5.0)
 
 
@@ -316,6 +325,7 @@ def test_the_move_check_compares_each_loop_with_the_id_this_driver_dialed(
 
 
 def test_an_unreadable_id_or_a_missing_dial_record_is_unknown(monkeypatch):
+    _head_named(monkeypatch, "h1")
     monkeypatch.setattr(mesh_attach, "_LAST_DIALED", {A: OLD[A]})
     readings = _readings(NEW)
     readings[A] = {"gen": "unknown", "error": "ssh failed"}
@@ -323,12 +333,18 @@ def test_an_unreadable_id_or_a_missing_dial_record_is_unknown(monkeypatch):
     moves = restart_reattach.read_moves(_config())
     assert moves.verdict == restart_reattach.UNKNOWN
     assert "ssh failed" in moves.unknown[0] and "no dialed id" in moves.unknown[1]
+    # The refusal reads these: each box by its plain name, never its address.
+    assert moves.unknown[0].startswith("the head (") and "10.0.0." not in moves.unknown[0]
+    assert moves.unknown[1] == "the sibling (this driver holds no dialed id for it)"
 
     def broken(_config, **_kwargs):
         raise OSError("no route")
 
     monkeypatch.setattr(listener_generation, "fleet", broken)
-    assert restart_reattach.read_moves(_config()).verdict == restart_reattach.UNKNOWN
+    probed = restart_reattach.read_moves(_config())
+    assert probed.verdict == restart_reattach.UNKNOWN
+    assert probed.unknown == ("the head (the probe raised OSError)",
+                              "the sibling (the probe raised OSError)")
 
 
 # ----------------------------------------------- the teardown and re-attach
@@ -440,14 +456,18 @@ def test_every_loop_moved_retires_the_stale_mesh_and_attaches_by_the_new_ids(dri
     assert mesh_mod.ensure_live(handle) is outcome.handle
 
 
-def test_one_loop_moved_refuses_fast_and_leaves_the_mesh_alone(driver):
+def test_one_loop_moved_refuses_fast_and_leaves_the_mesh_alone(driver, monkeypatch):
+    _head_named(monkeypatch, "h1")
     handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
     driver.ids = {A: NEW[A], B: OLD[B]}
     started = time.monotonic()
     with pytest.raises(WorkerDeliveryError) as raised:
         restart_reattach.heal(handle, _refused())
     assert time.monotonic() - started < 1.0
-    assert "dgxm restart" in str(raised.value) and "h2 (tcp://10.0.0.2:26600)" in str(raised.value)
+    assert "dgxm restart" in str(raised.value)
+    assert ("the Worker loops on the head serve new proc ids while those on the sibling "
+            "still serve the id this mesh dialed") in str(raised.value)
+    assert "10.0.0." not in str(raised.value) and "h2" not in str(raised.value)
     assert handle.defunct is False and driver.procs[0].stops == []
     assert len(driver.dials) == 1
     assert _trace(driver, "restart_reattach")[-1]["reason"] == "partial"
@@ -460,12 +480,16 @@ def test_no_loop_moved_refuses_with_the_reset_remedy(driver):
     assert handle.defunct is False and len(driver.dials) == 1
 
 
-def test_old_processes_not_proven_gone_refuse_and_attach_nothing(driver):
+def test_old_processes_not_proven_gone_refuse_and_attach_nothing(driver, monkeypatch):
+    _head_named(monkeypatch, "h1")
     handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
     driver.ids = dict(NEW)
     driver.liveness = mesh_liveness.ALIVE
-    with pytest.raises(WorkerDeliveryError, match="liveness check answered alive"):
+    with pytest.raises(WorkerDeliveryError, match="liveness check answered alive") as raised:
         restart_reattach.heal(handle, _refused())
+    assert ("(the head: alive, the sibling: alive)" in str(raised.value)
+            and "(on the head and the sibling)" in str(raised.value))
+    assert "10.0.0." not in str(raised.value)
     assert handle.teardown_complete is False and handle.replacement_blocked
     assert mesh_teardown.block_cause(handle) == mesh_teardown.TAG_STOP_TIMEOUT_AFTER_DEATH
     assert len(driver.dials) == 1
@@ -578,7 +602,10 @@ H3_DIT_BF16 = 66_280_487_368
 H3_MEM = int(92.2 * 2 ** 30)
 # 1344x768 at 37 latent frames, whose activations price at about 39 GiB on one
 # rank, and 512x320 at 2, about 0.4 GiB.
-H3_LONG_CLIP = (1, 24, 37, 48, 84)
+# The 15 second clip, 362 frames: at the 2026-10-31 activation price the
+# 124-frame shape fits beside the bf16 weights in this posture, and this one
+# does not, while its weights and its activations each fit alone.
+H3_LONG_CLIP = (1, 24, 107, 48, 84)
 H3_SHORT_CLIP = (1, 24, 2, 20, 32)
 
 

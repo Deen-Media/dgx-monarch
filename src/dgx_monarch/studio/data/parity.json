@@ -1,18 +1,18 @@
 {
   "baseline_counts": {
-    "nodes": 19,
-    "workflows": 71
+    "nodes": 21,
+    "workflows": 75
   },
   "counts": {
     "cli_command": 24,
     "cli_option": 102,
-    "configuration": 51,
-    "node": 19,
-    "node_input": 129,
-    "panel_action": 7,
+    "configuration": 54,
+    "node": 21,
+    "node_input": 143,
+    "panel_action": 8,
     "telemetry": 17,
     "tui_action": 9,
-    "workflow": 71
+    "workflow": 75
   },
   "coverage_meaning": "Discovered surfaces with a reviewed Studio view: an operation, a route, an equivalent, a waiver with its reason, or source coverage only. Not a claim of accepted parity.",
   "limitations": [
@@ -8409,6 +8409,45 @@
       "applicability": "Requires the owning backend capability and its runtime validation.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choices": null,
+      "datatype": "Literal['auto', 'on', 'off']",
+      "default": null,
+      "default_rule": "omitted: backend policy resolves the effective value; Init widgets take precedence",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "config.worker_args.fp8_matrix_mult",
+      "interfaces": {
+        "cli": {
+          "representation": "cluster.toml through --config",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
+          "status": "equivalent"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "configuration",
+      "name": "worker_args.fp8_matrix_mult",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/config_schema.py:WorkerArgs.fp8_matrix_mult",
+      "units": null,
+      "validation": "dgx_monarch.config_schema.validate_worker_args"
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
       "datatype": "int",
       "default": null,
       "default_rule": "omitted: backend policy resolves the effective value; Init widgets take precedence",
@@ -8441,6 +8480,45 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/config_schema.py:WorkerArgs.fsdp_prefetch_depth",
+      "units": null,
+      "validation": "dgx_monarch.config_schema.validate_worker_args"
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "Literal['triton', 'cutlass']",
+      "default": null,
+      "default_rule": "omitted: backend policy resolves the effective value; Init widgets take precedence",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "config.worker_args.int8_gemm",
+      "interfaces": {
+        "cli": {
+          "representation": "cluster.toml through --config",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
+          "status": "equivalent"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "configuration",
+      "name": "worker_args.int8_gemm",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/config_schema.py:WorkerArgs.int8_gemm",
       "units": null,
       "validation": "dgx_monarch.config_schema.validate_worker_args"
     },
@@ -8832,6 +8910,45 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/config_schema.py:WorkerArgs.uma_reserve_gb",
       "units": "GiB",
+      "validation": "dgx_monarch.config_schema.validate_worker_args"
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "Literal['off', 'auto']",
+      "default": null,
+      "default_rule": "omitted: backend policy resolves the effective value; Init widgets take precedence",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "config.worker_args.worker_vae_decode",
+      "interfaces": {
+        "cli": {
+          "representation": "cluster.toml through --config",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
+          "status": "equivalent"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "configuration",
+      "name": "worker_args.worker_vae_decode",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/config_schema.py:WorkerArgs.worker_vae_decode",
+      "units": null,
       "validation": "dgx_monarch.config_schema.validate_worker_args"
     },
     {
@@ -9287,6 +9404,82 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/nodes/loaders.py:DGXMonarchLoraLoader.INPUT_TYPES",
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "node_schema",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.DGXMonarchMiniMaxH3ContextWindows",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node schemas from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node",
+      "name": "DGXMonarchMiniMaxH3ContextWindows",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "node_schema",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.DGXMonarchModelSamplingMiniMaxH3",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchModelSamplingMiniMaxH3",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node schemas from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node",
+      "name": "DGXMonarchModelSamplingMiniMaxH3",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/nodes/model_sampling.py:DGXMonarchModelSamplingMiniMaxH3.INPUT_TYPES",
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -11278,6 +11471,51 @@
       "validation": {}
     },
     {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchIdentityGate.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchIdentityGate",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchIdentityGate",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
+      "source": "src/dgx_monarch/nodes/gate_node.py:DGXMonarchIdentityGate.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
       "applicability": "Optional ID that `dgxm gate` sets to find this run's report.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
@@ -11416,7 +11654,7 @@
       "validation": {}
     },
     {
-      "applicability": "Identity does not depend on the step count: 2 steps gate as conclusively as 20 and finish sooner.",
+      "applicability": "Steps per proof render. The automatic gate runs 2, which finishes sooner. A PASS shows that these renders matched bit for bit: a finite check of the steps that ran, not of every prompt, size or step count.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": null,
@@ -11461,7 +11699,7 @@
       "validation": {
         "max": 10000,
         "min": 1,
-        "tooltip": "Identity does not depend on the step count: 2 steps gate as conclusively as 20 and finish sooner."
+        "tooltip": "Steps per proof render. The automatic gate runs 2, which finishes sooner. A PASS shows that these renders matched bit for bit: a finite check of the steps that ran, not of every prompt, size or step count."
       }
     },
     {
@@ -11618,7 +11856,7 @@
       }
     },
     {
-      "applicability": "first_use (default): before the first render of a model, residency and LoRA combination the gate ledger cannot vouch for, run one automatic identity gate (2-4 short proof renders, once per combination); a FAIL or ERROR turns the unproved paths off before the full render. off: skip that proof and own the accuracy risk. off withholds no feature: LoRA renders, lora_low_rss, slab_weights and the capacity rescue all run as configured, on the levers first_use would have proved. What off costs: it records no PASS, so Fleet keeps forcing slab_weights and lora_low_rss off for an unproved combination until you run `dgxm gate` or the Identity Gate node. A ceremony that already FAILED keeps both levers quarantined within one package version, because that verdict is measured, not missing; a new version expires context-scoped FAILs, so first_use retests them and off treats them as untested. See docs/TROUBLESHOOTING.md #67.",
+      "applicability": "first_use (default): before the first render of a model, residency and LoRA combination the gate ledger cannot vouch for, run one automatic identity gate (2-4 short proof renders, once per combination; none on a graph with no LoRA stack whose model takes no slab residency); a FAIL or ERROR turns the unproved paths off before the full render. off: skip that proof and own the accuracy risk. off withholds no feature: LoRA renders, lora_low_rss, slab_weights and the capacity rescue all run as configured, on the levers first_use would have proved. What off costs: it records no PASS, so Fleet keeps forcing slab_weights and lora_low_rss off for an unproved combination until you run `dgxm gate` or the Identity Gate node. A ceremony that already FAILED keeps both levers quarantined within one package version, because that verdict is measured, not missing; a new version expires context-scoped FAILs, so first_use retests them and off treats them as untested. See docs/TROUBLESHOOTING.md #67.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": [
@@ -11665,7 +11903,7 @@
       "units": null,
       "validation": {
         "advanced": true,
-        "tooltip": "first_use (default): before the first render of a model, residency and LoRA combination the gate ledger cannot vouch for, run one automatic identity gate (2-4 short proof renders, once per combination); a FAIL or ERROR turns the unproved paths off before the full render. off: skip that proof and own the accuracy risk. off withholds no feature: LoRA renders, lora_low_rss, slab_weights and the capacity rescue all run as configured, on the levers first_use would have proved. What off costs: it records no PASS, so Fleet keeps forcing slab_weights and lora_low_rss off for an unproved combination until you run `dgxm gate` or the Identity Gate node. A ceremony that already FAILED keeps both levers quarantined within one package version, because that verdict is measured, not missing; a new version expires context-scoped FAILs, so first_use retests them and off treats them as untested. See docs/TROUBLESHOOTING.md #67."
+        "tooltip": "first_use (default): before the first render of a model, residency and LoRA combination the gate ledger cannot vouch for, run one automatic identity gate (2-4 short proof renders, once per combination; none on a graph with no LoRA stack whose model takes no slab residency); a FAIL or ERROR turns the unproved paths off before the full render. off: skip that proof and own the accuracy risk. off withholds no feature: LoRA renders, lora_low_rss, slab_weights and the capacity rescue all run as configured, on the levers first_use would have proved. What off costs: it records no PASS, so Fleet keeps forcing slab_weights and lora_low_rss off for an unproved combination until you run `dgxm gate` or the Identity Gate node. A ceremony that already FAILED keeps both levers quarantined within one package version, because that verdict is measured, not missing; a new version expires context-scoped FAILs, so first_use retests them and off treats them as untested. See docs/TROUBLESHOOTING.md #67."
       }
     },
     {
@@ -11720,7 +11958,7 @@
       }
     },
     {
-      "applicability": "torch.compile the DiT blocks (max-autotune fp8, no cudagraphs). Measured 21% faster on fp8-scaled Krea2 at cfg2 on GB10 (2026-07-04); the first render adds a one-time autotune warmup. Chroma, Flux, Flux2 and LongCat have no `blocks` list, so they stay eager. Opt in and validate per model.",
+      "applicability": "torch.compile the DiT blocks (max-autotune fp8, no cudagraphs). Measured 21% faster on fp8-scaled Krea2 at cfg2 on GB10 (2026-07-04); the first render adds a one-time autotune warmup (cached on disk by Worker services). It compiles only a DiT with a `blocks` list: Krea2, MiniMax H3, the Wan family, CogVideoX and Anima. Every other family runs eager, says so in the worker log and keeps slab residency available. Opt in and validate per model.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": null,
@@ -11764,7 +12002,7 @@
       "units": null,
       "validation": {
         "advanced": true,
-        "tooltip": "torch.compile the DiT blocks (max-autotune fp8, no cudagraphs). Measured 21% faster on fp8-scaled Krea2 at cfg2 on GB10 (2026-07-04); the first render adds a one-time autotune warmup. Chroma, Flux, Flux2 and LongCat have no `blocks` list, so they stay eager. Opt in and validate per model."
+        "tooltip": "torch.compile the DiT blocks (max-autotune fp8, no cudagraphs). Measured 21% faster on fp8-scaled Krea2 at cfg2 on GB10 (2026-07-04); the first render adds a one-time autotune warmup (cached on disk by Worker services). It compiles only a DiT with a `blocks` list: Krea2, MiniMax H3, the Wan family, CogVideoX and Anima. Every other family runs eager, says so in the worker log and keeps slab residency available. Opt in and validate per model."
       }
     },
     {
@@ -11816,7 +12054,7 @@
       }
     },
     {
-      "applicability": "Which model family's adapter handles this checkpoint. auto (default): detection picks it. Name a family for a finetune whose header detection reads wrong or not at all: that family's topology row, capacity preflights and adapter apply, even when ComfyUI built a derived subclass that detection refuses. A named family that does not fit the model ComfyUI built gets a typed refusal before any kernel runs, never a wrong render. It cannot make ComfyUI load a checkpoint ComfyUI cannot detect, and it does not correct a misread quantization. A forced run is gated as its own combination and never inherits a family's slab vouching: for zero-copy residency on a finetune, set slab_weights=on yourself. See docs/MODELS.md.",
+      "applicability": "Which model family's adapter handles this checkpoint. auto (default): detection picks it. Name a family for a finetune whose header detection reads wrong or not at all: that family's topology row, capacity preflights and adapter apply, also to a class a custom node derives from one the adapter takes. A named family that does not fit the model ComfyUI built, another upstream model the adapter refuses under auto included, gets a typed refusal before any kernel runs, never a wrong render. It cannot make ComfyUI load a checkpoint ComfyUI cannot detect, and it does not correct a misread quantization. A forced run is gated as its own combination and never inherits a family's slab vouching: for zero-copy residency on a finetune, set slab_weights=on yourself. See docs/MODELS.md.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": [
@@ -11838,6 +12076,7 @@
         "ltx",
         "mage_flow",
         "minimax_h3",
+        "minimax_h3_image",
         "moss_image",
         "omnigen2",
         "pixeldit_comfy",
@@ -11889,7 +12128,7 @@
       "units": null,
       "validation": {
         "advanced": true,
-        "tooltip": "Which model family's adapter handles this checkpoint. auto (default): detection picks it. Name a family for a finetune whose header detection reads wrong or not at all: that family's topology row, capacity preflights and adapter apply, even when ComfyUI built a derived subclass that detection refuses. A named family that does not fit the model ComfyUI built gets a typed refusal before any kernel runs, never a wrong render. It cannot make ComfyUI load a checkpoint ComfyUI cannot detect, and it does not correct a misread quantization. A forced run is gated as its own combination and never inherits a family's slab vouching: for zero-copy residency on a finetune, set slab_weights=on yourself. See docs/MODELS.md."
+        "tooltip": "Which model family's adapter handles this checkpoint. auto (default): detection picks it. Name a family for a finetune whose header detection reads wrong or not at all: that family's topology row, capacity preflights and adapter apply, also to a class a custom node derives from one the adapter takes. A named family that does not fit the model ComfyUI built, another upstream model the adapter refuses under auto included, gets a typed refusal before any kernel runs, never a wrong render. It cannot make ComfyUI load a checkpoint ComfyUI cannot detect, and it does not correct a misread quantization. A forced run is gated as its own combination and never inherits a family's slab vouching: for zero-copy residency on a finetune, set slab_weights=on yourself. See docs/MODELS.md."
       }
     },
     {
@@ -12243,7 +12482,7 @@
       }
     },
     {
-      "applicability": "Zero-copy weight residency (experimental). on: the DiT's weights live in a shared-memory slab the GPU reads directly (GB10-class unified memory), with no cudaMalloc copy, no CPU staging at load and no retained per-process arena. On Krea2 bf16 (24.5 GiB, 2026-07-08) the raw pread took 8.5 s and full load readiness 20.1 s; unloading returns the memory to the OS at once. Output is bit-identical; gate it. Needs lora_low_rss; ignored under FSDP, and under compile_dit except on Chroma, Flux, Flux2 and LongCat. auto (default): on unified-memory GPUs, slab for gate-vouched families (currently krea2 and flux2). A checkpoint's first load stays stock while its family is learned, every later load uses the slab; other families and discrete GPUs stay stock. off: stock cudaMalloc weights.",
+      "applicability": "Zero-copy weight residency (experimental). on: the DiT's weights live in a shared-memory slab the GPU reads directly (GB10-class unified memory), with no cudaMalloc copy, no CPU staging at load and no retained per-process arena. On Krea2 bf16 (24.5 GiB, 2026-07-08) the raw pread took 8.5 s and full load readiness 20.1 s; unloading returns the memory to the OS at once. Output is bit-identical; gate it. Needs lora_low_rss; ignored under FSDP, and under compile_dit on the families it compiles (see compile_dit). auto (default): on unified-memory GPUs, slab for gate-vouched families (currently krea2 and flux2). A checkpoint's first load stays stock while its family is learned, every later load uses the slab; other families and discrete GPUs stay stock. off: stock cudaMalloc weights.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": [
@@ -12291,7 +12530,7 @@
       "units": null,
       "validation": {
         "advanced": true,
-        "tooltip": "Zero-copy weight residency (experimental). on: the DiT's weights live in a shared-memory slab the GPU reads directly (GB10-class unified memory), with no cudaMalloc copy, no CPU staging at load and no retained per-process arena. On Krea2 bf16 (24.5 GiB, 2026-07-08) the raw pread took 8.5 s and full load readiness 20.1 s; unloading returns the memory to the OS at once. Output is bit-identical; gate it. Needs lora_low_rss; ignored under FSDP, and under compile_dit except on Chroma, Flux, Flux2 and LongCat. auto (default): on unified-memory GPUs, slab for gate-vouched families (currently krea2 and flux2). A checkpoint's first load stays stock while its family is learned, every later load uses the slab; other families and discrete GPUs stay stock. off: stock cudaMalloc weights."
+        "tooltip": "Zero-copy weight residency (experimental). on: the DiT's weights live in a shared-memory slab the GPU reads directly (GB10-class unified memory), with no cudaMalloc copy, no CPU staging at load and no retained per-process arena. On Krea2 bf16 (24.5 GiB, 2026-07-08) the raw pread took 8.5 s and full load readiness 20.1 s; unloading returns the memory to the OS at once. Output is bit-identical; gate it. Needs lora_low_rss; ignored under FSDP, and under compile_dit on the families it compiles (see compile_dit). auto (default): on unified-memory GPUs, slab for gate-vouched families (currently krea2 and flux2). A checkpoint's first load stays stock while its family is learned, every later load uses the slab; other families and discrete GPUs stay stock. off: stock cudaMalloc weights."
       }
     },
     {
@@ -12345,7 +12584,7 @@
       }
     },
     {
-      "applicability": "optional input of DGXMonarchInit; backend model/topology validation applies.",
+      "applicability": "No effect on the pinned xfuser 0.7.0: its Ulysses all-to-all never receives this setting, so output and speed are the same either way (docs/ADAPTERS.md). Changing it still runs setup again, and a gate verdict covers one setting, so the first render after a change runs its own identity gate. It stays because removing an input needs a major release.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": null,
@@ -12388,7 +12627,8 @@
       "source": "src/dgx_monarch/nodes/init.py:DGXMonarchInit.INPUT_TYPES",
       "units": null,
       "validation": {
-        "advanced": true
+        "advanced": true,
+        "tooltip": "No effect on the pinned xfuser 0.7.0: its Ulysses all-to-all never receives this setting, so output and speed are the same either way (docs/ADAPTERS.md). Changing it still runs setup again, and a gate verdict covers one setting, so the first render after a change runs its own identity gate. It stays because removing an input needs a major release."
       }
     },
     {
@@ -12824,6 +13064,51 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "schema_source": "source AST + tests/node_input_contract.json",
       "section": "required",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSampler.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchKSampler.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchKSampler",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchKSampler",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
       "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSampler.INPUT_TYPES",
       "units": null,
       "validation": {}
@@ -13436,6 +13721,51 @@
       "validation": {}
     },
     {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchKSamplerAdvanced.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchKSamplerAdvanced",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchKSamplerAdvanced",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSamplerAdvanced.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
       "applicability": "required input of DGXMonarchKSamplerAdvanced; backend model/topology validation applies.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
@@ -13996,6 +14326,51 @@
       "validation": {}
     },
     {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchKSamplerPipeline.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchKSamplerPipeline",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchKSamplerPipeline",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSamplerPipeline.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
       "applicability": "required input of DGXMonarchKSamplerPipeline; backend model/topology validation applies.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": "_sampler_names()",
@@ -14411,6 +14786,435 @@
       "validation": {}
     },
     {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "INT",
+      "default": 124,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.context_length",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "context_length",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "context_length",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "max": 16384,
+        "min": 22,
+        "step": 17
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "INT",
+      "default": 39,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.context_overlap",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "context_overlap",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "context_overlap",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 2,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "min": 5,
+        "step": 17
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "BOOLEAN",
+      "default": true,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.freenoise",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "freenoise",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "freenoise",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 4,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "advanced": true
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": [
+        "pyramid",
+        "relative",
+        "flat",
+        "overlap-linear"
+      ],
+      "datatype": "COMBO",
+      "default": "pyramid",
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.fuse_method",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "fuse_method",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "fuse_method",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 3,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "DGXM_MODEL",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.model",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "model",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "model",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 0,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "BOOLEAN",
+      "default": false,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.split_conds_to_windows",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "split_conds_to_windows",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "split_conds_to_windows",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 5,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "advanced": true
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchModelSamplingMiniMaxH3; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "DGXM_MODEL",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchModelSamplingMiniMaxH3.model",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchModelSamplingMiniMaxH3",
+          "input": "model",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "model",
+      "node": "DGXMonarchModelSamplingMiniMaxH3",
+      "order": 0,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/model_sampling.py:DGXMonarchModelSamplingMiniMaxH3.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "required input of DGXMonarchModelSamplingMiniMaxH3; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "FLOAT",
+      "default": 3.0,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchModelSamplingMiniMaxH3.shift_audio",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchModelSamplingMiniMaxH3",
+          "input": "shift_audio",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "shift_audio",
+      "node": "DGXMonarchModelSamplingMiniMaxH3",
+      "order": 2,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/model_sampling.py:DGXMonarchModelSamplingMiniMaxH3.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "max": 100.0,
+        "min": 0.01,
+        "step": 0.01
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchModelSamplingMiniMaxH3; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "FLOAT",
+      "default": 12.0,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchModelSamplingMiniMaxH3.shift_video",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchModelSamplingMiniMaxH3",
+          "input": "shift_video",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "shift_video",
+      "node": "DGXMonarchModelSamplingMiniMaxH3",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/model_sampling.py:DGXMonarchModelSamplingMiniMaxH3.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "max": 100.0,
+        "min": 0.01,
+        "step": 0.01
+      }
+    },
+    {
       "applicability": "required input of DGXMonarchModelSamplingSD3; backend model/topology validation applies.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
@@ -14779,6 +15583,51 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "schema_source": "source AST + tests/node_input_contract.json",
       "section": "required",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchSamplerCustom.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchSamplerCustom.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchSamplerCustom",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchSamplerCustom",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
       "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchSamplerCustom.INPUT_TYPES",
       "units": null,
       "validation": {}
@@ -15709,6 +16558,44 @@
       "datatype": "action",
       "default": null,
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "panel.action.dgx_monarch_consent.always.onchange",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "handler": "always.onchange",
+          "status": "available"
+        },
+        "studio": {
+          "reason": "Studio has no control for the Old model in the way card's Always clear and retry box; tick it on the card in the ComfyUI panel.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "panel_action",
+      "name": "always",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "web/js/dgx_monarch_consent.js:always.onchange",
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "action",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "panel.action.dgx_monarch_consent.box.onchange",
       "interfaces": {
         "cli": {
@@ -15724,7 +16611,7 @@
           "status": "available"
         },
         "studio": {
-          "reason": "Studio has no control for the automatic rescue setting (auto_rescue); change it in the ComfyUI panel.",
+          "reason": "Studio has no control for the automatic rescue setting (auto_rescue) or for Always clear and retry (auto_clear); change them in the ComfyUI panel.",
           "status": "not_represented"
         },
         "tui": {
@@ -17157,7 +18044,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "2b02e4a41a9e682394608e69bd217bf91d72e151e04fe1c3c076d9c9c6e35bf7",
+      "digest": "1cc96686286961887f9d39e6b8498008f3b82145115d976d2c7e925ca86b6cc0",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-anima-t2i",
       "interfaces": {
@@ -17198,7 +18085,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "896d26c491ab520208fea56bb20f9d432c8fd9f1ec406696c9282ba0af6f3a4c",
+      "digest": "d80b2bf268f161165757e2db75e34408a4261b15bf5c464b5400c00458920ef1",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-boogu-t2i",
       "interfaces": {
@@ -17239,7 +18126,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "4ca3ec4b1d2a945af383ff4e06574878a6f382deae28a1c13a090972d0cf864c",
+      "digest": "f077d0ced195801afcaf0d05c3e12595acfd698ab5776e2e9ac2879a161203d9",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-chroma-t2i",
       "interfaces": {
@@ -17280,7 +18167,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "d74efffe437bca258a800f75b2867b3767ef4070a6f74c413dc570c4bb650485",
+      "digest": "000d1abd5b8ed1f5df81482155738c27d2a96f6ef2d64b73d831e272b6c308e9",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-cogvideox-i2v",
       "interfaces": {
@@ -17321,7 +18208,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "36b05c48f2842ea2d43e99632c250754694a045dce32a0b9d26ef30dc2286d7f",
+      "digest": "750eedf057f5e970d1303d4421651cb96c637ed22727136ea488fae17bd9c98d",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-cogvideox-t2v",
       "interfaces": {
@@ -17403,7 +18290,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "01bbfe3d9ee0e15ba152a6056fe7ed66303243cd55b722cb805253eb3dac304e",
+      "digest": "2a8731851e5dce3f3166dc05ee62000214c0023080e5c0b81eb7422aded75d52",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ernie-t2i",
       "interfaces": {
@@ -17485,7 +18372,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "e59b6d047634e7cb4899c2d9ad4b0bb0485e0fbe2ef5d8e3a934eb0b20a6b9da",
+      "digest": "32b1b4f23db6ab922795f316a5ba7d9e29d85948f987d6dac5b91ff85ad562c4",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-flux1-t2i",
       "interfaces": {
@@ -17526,7 +18413,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "47c8bed28300ab6e2578e5a04231650424084fc844ad1b57c18f9d9bee5e2e95",
+      "digest": "00b6df784ac045748c116fc91eeb71697c760909309e6de85ae8c5627a6777b7",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-flux2-t2i",
       "interfaces": {
@@ -17567,7 +18454,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "1b9d282cb1f7314338f9ec00c318ff00dc96e876067ecdf65175c4ce7c86cec8",
+      "digest": "8959b0ceab4553d7314e4642abd226f9a1ee782c1fac83c60273dbfc7826fe9a",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-flux3-klein-base-edit",
       "interfaces": {
@@ -17608,7 +18495,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "1c6d49b1bc5fbbc55c9701d9fd5a494d64cd533a13f22b6c06d6bfbeb8685bc1",
+      "digest": "586f74e3f192a1aea6f873d496fccf3bfbab237784a36d9b78ad44a84e8a6602",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-flux3-klein-base-t2i",
       "interfaces": {
@@ -17649,7 +18536,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "8ba40af17ddc33c0b055e098cd8d0dedfed90b01eb200a365fd4fa907d994cfe",
+      "digest": "6680db7ff48ec16e56586a7f8e41d5d94c7d3d4c4cc1f28125364cbdce88433c",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-flux3-klein-edit",
       "interfaces": {
@@ -17690,7 +18577,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "76341b4b8204e12b16e65686c8fe4734b98e9dcc69b157702e40d249c389e5c9",
+      "digest": "b98233b1f22d07f623572c84f9133b9b6b96590d02094d05c56193fad523085e",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-flux3-klein-t2i",
       "interfaces": {
@@ -17731,7 +18618,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "73b7d5fcc9afe965de67d8cc3197406438ad403269420f5790dab6f282e724c4",
+      "digest": "66d10039ef15a08452a6c83a341637f314ad7a46ff6cd28a13b5ba5131758f78",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-hunyuan-image",
       "interfaces": {
@@ -17772,7 +18659,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "c327a8eb726b3a3c5efcb96276284c7d2c126a1007b22a0874712936c60a0610",
+      "digest": "95f2e3149e5250869ada829115137fa301ee51893b6a7ccdb15a91ffdd8c78e4",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-hunyuan-video",
       "interfaces": {
@@ -17813,7 +18700,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "cc92af358c06e8ad4402f428afbc724bd01d4afbfb93d703b88d48afc1d85ec6",
+      "digest": "d5c17617b147860b3fa9ac20a4272fd661d6d47058462a0ab5a90daac0edf25d",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-identity-gate",
       "interfaces": {
@@ -17854,7 +18741,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "13aba14442d021eeb26de7a6249a0c7672aba339eb7e973d31868dfa4a6b0034",
+      "digest": "7dbc2bb0cbd509ae8a0c6a977eab491a49a08f310c27b034d308b55db72ca131",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ideogram4-t2i",
       "interfaces": {
@@ -17895,7 +18782,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "2ea0a86ebc1a8ca4b6944bee238812b190c90a1806e9a7807796928e8c5c3988",
+      "digest": "b4d336829139bc5d2d334f44fac0950201de11b2e55fc521883bcd91f53408dd",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-kandinsky5-image",
       "interfaces": {
@@ -17936,7 +18823,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "3336fca341386163650124edc1ac1d0be208d4654991d8745bde11f0d9e0453d",
+      "digest": "320af33d888c5394ab2e3b744a4ec99e132c95d187a834790649bc0d413ff8a3",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-kandinsky5-video-lite",
       "interfaces": {
@@ -17977,7 +18864,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "92540b20e63b0e377fe16b8cef5a1ea513cf52d5e95b24a2eeb117d1ee551f0c",
+      "digest": "26b76227c501353396e7d6cc9be0e00fb7b9cd90fae0e5d5ca2f64744b4a003e",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-kandinsky5-video-pro",
       "interfaces": {
@@ -18018,7 +18905,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "08814e33c71513c972c3260f94174ac117e6f47c1f59ca67e71f5e782e1e7c3d",
+      "digest": "fbbe3885c1be56f69aa59310551fce7bc0732ad25c6a9c47df53c6859bc116b5",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-krea2-t2i",
       "interfaces": {
@@ -18182,7 +19069,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "5b5c78046d439f8578c4258d938afccae57d3e611d5266e49ec2551929e32bb2",
+      "digest": "a7a2f57873dcded8d6285e065230cfc8b83405b54e7bfe38fdf79ed5578a951c",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-kromoss-t2i",
       "interfaces": {
@@ -18223,7 +19110,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "bac4b6e6c0fcd2244f031527c76f9e784942f8cbe3a1b5d74dc7f224835d9058",
+      "digest": "9b00d72a13022ce8ed17c3e8b455f1004aed1938cbf8c14c7d9d2645b7734dea",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-kromoss-t2i-turbo",
       "interfaces": {
@@ -18264,7 +19151,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "29ee83ce3df30947e8672e55460be3c580dab5d6a94e3b346f61e0655336c5a8",
+      "digest": "b4129a86875dccc2a006710f171dd53955d8b3cd2847368d4000ab78c6fbe6da",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-lens-t2i",
       "interfaces": {
@@ -18305,7 +19192,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "d949f1af30ab5ad2797be163de604111aaa41762c08395f15cd8f72bdada5061",
+      "digest": "87a36484eb5de31336cd3b7e1a1aae79e6bdf82e4f01561172b83860b23b0073",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-longcat-t2i",
       "interfaces": {
@@ -18387,7 +19274,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "ce514ec03097782890c0da8bdcd4795e533f68f1089a38535e8f5de2bd79c6fe",
+      "digest": "875756999c1c42d1650d782c9ce9c34f723ae62e38369c85879a7d4c1cfd6e07",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx-i2v-av",
       "interfaces": {
@@ -18428,7 +19315,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "acf4153c8bef1ffbed4214c3e60e7d3277ec34bcef6957f2fe36816d31b1c294",
+      "digest": "0b7fc985b51ae7edbc2b8cd837648c19dd80ee6eb57dc3638636e0025d47e557",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx-t2v",
       "interfaces": {
@@ -18469,7 +19356,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "6154d73bb9aa601c36fbd0c3c086702dcb66304b004ec417b8c72c813e87b09c",
+      "digest": "a7ec87c4f97b4ac353094a3733a0f2de343a0994c4c91ed5e863e0b87bb28b91",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx25-flf2v",
       "interfaces": {
@@ -18510,7 +19397,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "5a531c77a54c942e60676830e9318cdf83ac4e8ef87455766a3d2360b1b4867d",
+      "digest": "a32352b4023751e122ee43f387a12c698b12e06c8b9e66df8fe38e4b9065bcfd",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx25-i2v",
       "interfaces": {
@@ -18551,7 +19438,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "75a57369ba42b867b96cda53322f4711c5a9304bc7dc773538c70dbc6413a711",
+      "digest": "dc413b9ddd5a05e9af1c0922267165fcb72fbfa9181d0d99c6948015fcf30838",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx25-i2v-guide",
       "interfaces": {
@@ -18592,7 +19479,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "4cf71ecec7f6fe12191e4b11fcb8b3f5bfc77f14d7f1a660e95dc7357d529969",
+      "digest": "ad12fb34094e0a2cc42c49a30865cc6d9a157114a1c34c821376250ecbaa9a5f",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx25-t2v",
       "interfaces": {
@@ -18633,7 +19520,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "2c45d96d01ef096319f48c2226054f29d21f5600960ad0933db72d0ebaadfcbf",
+      "digest": "3d4eb5fa3bcf8c9e5b7fabc1e7ec602bce217688766f7c9ee1c2df5b3e369d06",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-mage-flow-edit",
       "interfaces": {
@@ -18674,7 +19561,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "177a6755c4369eed9a113136f9163d9ff6cf7766ffa6c7278095d790899d0e09",
+      "digest": "2be9b8d95e84850f2c4644bdad7584753d30279bcf5d9e4caeac000710b7a63c",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-mage-flow-edit-turbo",
       "interfaces": {
@@ -18715,7 +19602,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "aff63c8400a96ac8ee0d89bb035be9072834b67f31def6f68c9651d8b559909f",
+      "digest": "81ea24b65a4688b9f8f013626328d8e98d5dda9ff32537fc54c3f0e81d769feb",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-mage-flow-t2i",
       "interfaces": {
@@ -18756,7 +19643,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "f007111ac7b5558560174c04ed98cd8ad47afeda2ed6067365813e9d276daf8e",
+      "digest": "92865e60f5f4ac45586fcb506e51f900aefa75b88b3915042444fd3de54720f2",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-mage-flow-t2i-turbo",
       "interfaces": {
@@ -18797,7 +19684,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "fffeb5118bd6784a1d102400d8b303572fa15b7b827f7525735d0abcab3a0ab3",
+      "digest": "94f187f1cec509624f89bf55d0570c1115bbb78367a09659a3cbd919ce99fe1e",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-minimax-h3-guide",
       "interfaces": {
@@ -18838,7 +19725,89 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "0da3e51d5e34dabc1e03ed9eaf0c86bfa7270b79134c964f8339ebd58c657d86",
+      "digest": "3dab07cd3fd237b66e71d10d42503e79828c0a86a807344e4d3c48b0c956e33c",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-minimax-h3-image-edit",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-minimax-h3-image-edit",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-minimax-h3-image-edit.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
+      "digest": "9515cc05d49d103dc944344f9fed2d30e5a7f45c021e56dbc2ed1f3a3bb9536b",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-minimax-h3-image-t2i",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-minimax-h3-image-t2i",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-minimax-h3-image-t2i.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
+      "digest": "b9a0b75ff477ef2743f51fd7063e517c3d63a66dc2971aaa0fbe5472364f015b",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-minimax-h3-mp4",
       "interfaces": {
@@ -18879,7 +19848,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "88c70917a1bfb9e8fbc514813fbaef5cb41e7f91578c14345096481c44111ee7",
+      "digest": "d360389f4d19d8f942108780a092a70ceafee2d712fbfec000a5b37a790e8901",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-minimax-h3-t2va",
       "interfaces": {
@@ -18920,7 +19889,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "363244fb89dd1c8f8aee6b72922b2c8363e486aa1a6c0f4216ff53337a141b66",
+      "digest": "1c812278f50abfe6362cf890fedae225c06b18c9e0f3a515e3acb6e28e1b9442",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-moss-image-base-t2i",
       "interfaces": {
@@ -18961,7 +19930,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "4d52ba49b8d0c565642eebbea81552ae8aff8f97fe7fdc36f6b4efe19b4fe603",
+      "digest": "f3412749c968ac5ee08f693a638d35caba8113c74db6eb7c19eefb049af5d1fb",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-moss-image-layout-t2i",
       "interfaces": {
@@ -19002,7 +19971,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "ce9c0ff245d98be2782886842e2f238602a88139bbc65340fefbb49171e9bacb",
+      "digest": "29a3a558bdb6bb790047df080a8aff04d94f4bcc04dbeed32e74071b889b3cfe",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-moss-image-t2i",
       "interfaces": {
@@ -19043,7 +20012,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "1cb8ab1c5755d1a0c3001012edc08dc9eb224cf40210cd87fa2ce14dde2d6379",
+      "digest": "c1b94645bdf38368aa7865068cf8d4a66b20369e1e79b36c36322227786cf3a0",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-omnigen2-t2i",
       "interfaces": {
@@ -19084,7 +20053,48 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "3932a619a931512c7c4b7c89cb8cb1343ad3ab000efd3b5d8ed36fe5031c128e",
+      "digest": "4631d1f6e871069238dd197087deefa38021538c4645506b080e21ceb01be525",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-p-h3-image",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-p-h3-image",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-p-h3-image.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
+      "digest": "39fa805628fc12b699165da3aa5c9ff1ad8fd8a7f58089af34e2255c9c4a15d5",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-pid-4k",
       "interfaces": {
@@ -19125,7 +20135,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "4be2517389335d82bc03e0a32d848679dabcea669ed1f396cf8cd9b2e859911f",
+      "digest": "aaa5602d43c404d4aaaddc831fa99bf23b05f5950c33792d459dd870e062c30e",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-pixeldit-t2i",
       "interfaces": {
@@ -19166,7 +20176,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "0337174ff93d0fd3ec1a9bbdaf9a176d888f01731d5bca28246ea15728cea392",
+      "digest": "73d8a13b5d4e2fbde29e46179341dc8bc86f554514a3915c89b24c5b68e26fb9",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-quickstart",
       "interfaces": {
@@ -19207,7 +20217,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "3251bc909c15563a5d6238bd3ff67405acc7b6f6e7ab1ef0ff24c352559047ea",
+      "digest": "f22209f6e63575fd37173deb335121ed23899d5a48a93626107ef01256218e7b",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-qwen-image-t2i",
       "interfaces": {
@@ -19248,7 +20258,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "031080fbde9f26aab962889efaee7520470d175ffe72607bf264b04f85b139c3",
+      "digest": "e86d6c6ab05c77e0f4e71698ca437fa994ee6c1cd1f2c1d0c89a0c35f61a4702",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-qwen-image21-edit-mask-rgba",
       "interfaces": {
@@ -19289,7 +20299,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "720f2761a60e07f905ecd5fab7fe717b7ba693ae47602498952609c07f3f3787",
+      "digest": "1a2ef5b138bddf27e73ac9c450b008279cde1d520c07f266f0bb151f6acc4c35",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-qwen-image21-edit-rgba",
       "interfaces": {
@@ -19371,7 +20381,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "631f32f3f66b2541420f85fe4b6170c9ad15df1c2d6779a4d50f41fae049193e",
+      "digest": "f848a3c1c5c72efc0f029c263a43d6c360c985fa2ed775ea0e2bc376ded6bf69",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-radiance-t2i",
       "interfaces": {
@@ -19412,7 +20422,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "ab9a6a599bb62cb81023b5f4260fa2a7b0c17d882f5241790b4884e6b09fcdc3",
+      "digest": "c92b072c6a1346c2656939c331662824f0af73abbd3af2a55afadcba791aecb9",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-animate2",
       "interfaces": {
@@ -19453,7 +20463,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "2a907f004d2f4dc9fc61a2d09239c523a67185850845e0f41c162f8f9671b784",
+      "digest": "74e3983b2be1d642785c97c5799d27209b12a1996b794c35a47cb0d144cb48d7",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-animate2-base-quality",
       "interfaces": {
@@ -19494,7 +20504,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "11079e06bd21d407add04247c3611b7e8dc33aed6797c180e623f509cf5abb8e",
+      "digest": "d86bfa119e5f9ea43dd0f3056793773043fdc7d2d7a02c612212961b4a316dcc",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-animate2-bfloat16-warm",
       "interfaces": {
@@ -19535,7 +20545,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "9acc1357077ad1709953707a72e8d60e11225ca41db4989d0e25bffbb2f96092",
+      "digest": "80587b12f1fc53c0a227e80f6705d681b748d37d82a27c824e05fe6588ca4402",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-animate2-distilled",
       "interfaces": {
@@ -19576,7 +20586,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "5df9fe1dca5917e7669926726c4d36f715c5ad255deb7da823e8ba5d467930d9",
+      "digest": "f7827b9867e2c65ba1006f1e16683aeb8b9340c3fd460ab17aab31555fab0230",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-animate2-memory-saver",
       "interfaces": {
@@ -19617,7 +20627,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "a9e52e912484860956bed4710c94d7b90540b82389c7cb941cd11ab739f96b2c",
+      "digest": "e3fce37ae88df9594ca63fc2f8be63921006de1b6eb2bde0deab812cb3f401ef",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-bernini",
       "interfaces": {
@@ -19658,7 +20668,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "23241fa3081d4e947de1fd54af84d57294fff77392f6a1a0f29579eee1f6106b",
+      "digest": "6b4f4e3b16db41b8feb0c9bcd4fae33a23093a62943536543720f4bf3fd2efa9",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-flowrvs",
       "interfaces": {
@@ -19699,7 +20709,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "15321eb19abeb642e012a3a249c697e1c556978ef562562a22c6894f4155c843",
+      "digest": "04134b5f6d4dda0ccc486427977436ce835c95affe02290ec303b73fc53139d5",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-scail",
       "interfaces": {
@@ -19740,7 +20750,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "e03b8c3cd75de6aff95f604b02134e79053512f950ddecb0e0508a095e4d7b16",
+      "digest": "cfe124f75891a73c6c16104e031d681de5e24dd9a701f6f362bf9045a020173e",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-scail2",
       "interfaces": {
@@ -19781,7 +20791,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "c88af222b7aeebc67b49ad3dc1f3c0340dd2ea5b9f1b16c4cc4afea0b4c22632",
+      "digest": "afe3cfc639f712d9fcb4957f48c37add1505de34b08f5d2ac5e5ad0fbc427911",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-t2v",
       "interfaces": {
@@ -19822,7 +20832,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "d1f682519b90a1a11c210182b23a28d43e828277be909d27bc3ec4118a5930fa",
+      "digest": "2d0f892de9bd3d4a337e7eeb4948e87be5df03a49106ed942ab9eb87124ec063",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan21-i2v",
       "interfaces": {
@@ -19863,7 +20873,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "21a6652ac63748a54057957eb77a325776e558696dd026b25bd0d525a97413f0",
+      "digest": "19e59ba77d8173702d2953c3e859371c26f733abbb688f173e2eaca3ea0de7e5",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan22-i2v",
       "interfaces": {
@@ -19904,7 +20914,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "ae922469909893feb1c6fe0db7864040a99a59a4faec59b45269d7e67f583c82",
+      "digest": "89bf4cb0aa7c405e002b32182f3fa98a9d0d904edec89f024b02bc0c20ac9fe8",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan22-t2v",
       "interfaces": {
@@ -19945,7 +20955,48 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "6c90a28157cd38e84b6c70fb4d9aedaeb7e464abe6fd04a127d12e374f0fefaa",
+      "digest": "4fe5c272d1a84794814e96c7f6d9e3ea9862b0651babb9ed32944d3830223247",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-wan22-ti2v",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-wan22-ti2v",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-wan22-ti2v.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
+      "digest": "5449ce22bb45386c194e10763ff317a1a50a5ae9cc61137a474a00418d3227d7",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wandancer",
       "interfaces": {
@@ -19986,7 +21037,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "383ee496cbd4d0f47701a2cc7200a7867a22a3f8d364cad46ccae680714f6f1b",
+      "digest": "1955483026ba343bf119fb2ca4cb19d21f23411fb50abecdeaa08f4253e2fe7f",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-zimage-dct-t2i",
       "interfaces": {
@@ -20027,7 +21078,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "d26dfb9e243ae019c819e457487acc50a1ca8e3953e6ae3c45a338db1b253db1",
+      "digest": "cf6db52841dad6f828a5dee0dc16fc9b7ff48c2dc5af3ace8e47bd081867761c",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-zimage-t2i",
       "interfaces": {

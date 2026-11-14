@@ -223,7 +223,8 @@ def test_node_registration_leaves_monarch_unloaded_so_driver_otlp_can_start():
     env = {key: value for key, value in os.environ.items()
            if key != 'OTEL_EXPORTER_OTLP_ENDPOINT' and not key.startswith('MONARCH_RDMA_')
            and key not in ('DGXM_MONARCH_POLICY', 'DGXM_RDMA_QP_SPLIT')}
-    env.update(PYTHONPATH=str(repo / 'src'), PYTHONDONTWRITEBYTECODE='1')
+    # The entrypoint copies demo inputs into ComfyUI's input folder; a probe writes none.
+    env.update(PYTHONPATH=str(repo / 'src'), PYTHONDONTWRITEBYTECODE='1', DGXM_DEMO_INPUTS='off')
     result = subprocess.run([sys.executable, '-c', _IMPORT_ORDER_PROBE, str(repo)], env=env,
                             capture_output=True, text=True, timeout=300, check=False)
     assert result.returncode == 0, result.stderr[-4000:]

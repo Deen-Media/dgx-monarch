@@ -1,15 +1,17 @@
-# DGX Monarch Studio (draft)
+# DGX Monarch Studio
 
 Studio is an optional Svelte interface served by a separate Python companion.
 The companion uses the existing ComfyUI queue and Monarch nodes. It does not
 load models, own a mesh, schedule GPU work, or change ComfyUI source. The CLI,
 TUI and ComfyUI panel remain available independently.
 
-This implementation is a draft against v1.2.0 source commit
-`5604ac77799f1f3e1a077a2f841dfce59fbcb892`. The full agreed product contract is
-[STUDIO_SPEC.md](STUDIO_SPEC.md); the [acceptance record](STUDIO_ACCEPTANCE.md)
-identifies incomplete features and unperformed checks. An inventory row is
-evidence of source coverage, not proof of a working Studio operation.
+From v1.5 on, Studio is a supported interface of DGX Monarch, beside the CLI,
+the TUI and the ComfyUI panel. It has shipped with DGX Monarch since v1.3.0,
+and this guide describes it as it stands in this tree. The full agreed product
+contract is [STUDIO_SPEC.md](STUDIO_SPEC.md), written against v1.2.0; the
+[acceptance record](STUDIO_ACCEPTANCE.md) identifies incomplete features and
+unperformed checks. An inventory row is evidence of source coverage, not proof
+of a working Studio operation.
 The [measurement record](STUDIO_PERFORMANCE.md) separates packaged asset sizes
 from unperformed host and browser performance acceptance.
 
@@ -137,7 +139,9 @@ records the version the command itself printed. A doctor repair receipt path
 must be absolute. An exit code of 75 (an unanswered critical probe) records
 unknown, not failed. A 4xx refusal from the driver's consent or recycle route
 records failed with the driver's short reason; a 5xx or a lost response records
-unknown. Consent apply reads the driver's pending consent requests at review.
+unknown. Studio waits up to 280 seconds for those two routes, 20 seconds past
+the 260 seconds the driver allows an attached-mesh reset, so a slow reset that
+succeeds records its receipt; other driver requests wait 20 seconds. Consent apply reads the driver's pending consent requests at review.
 Leave key and id empty to list them; with one pending request the review selects
 it. Studio offers accept only; dismiss, revoke and the automatic rescue setting
 stay in the ComfyUI panel. The driver's waiver ledger records a Studio accept
@@ -249,10 +253,10 @@ without one.
 
 Adding the table has three consequences:
 
-1. Deploy order. Releases before this one refuse a cluster.toml that holds
+1. Deploy order. Releases before 1.3.0 refuse a cluster.toml that holds
    `[studio]`, in every reader: the CLI, the driver's Init node, mesh setup,
    service observations, the TUI and Studio's management actions. Add the
-   table only after every checkout that reads the file runs this release and
+   table only after every checkout that reads the file runs 1.3.0 or newer and
    the driver has restarted on it, and when no render runs.
 2. A byte edit retires the fleet. In cluster mode the Init node fingerprints
    the file's bytes on every Queue, and any byte change, a comment included,
@@ -552,7 +556,7 @@ Description=ComfyUI driver with DGX Monarch
 
 [Service]
 WorkingDirectory=/home/user/ComfyUI
-Environment=CUDA_CACHE_MAXSIZE=4294967296 CUDA_MODULE_LOADING=LAZY OMP_NUM_THREADS=16
+Environment=CUDA_CACHE_MAXSIZE=4294967296 CUDA_MODULE_LOADING=LAZY OMP_NUM_THREADS=16 MIMALLOC_PURGE_DELAY=0
 Environment=TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas DGXM_CLUSTER_TOML=/home/user/.config/dgx-monarch/cluster.toml
 UnsetEnvironment=NCCL_P2P_DISABLE NCCL_PROTO
 ExecStart=/home/user/monarch-env/bin/python /home/user/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --disable-pinned-memory --disable-async-offload --reserve-vram 2 --bf16-vae --bf16-text-enc --dont-upcast-attention --disable-auto-launch
@@ -598,8 +602,8 @@ command that starts the driver with a Copy button and the place the command
 came from. It also says that if ComfyUI already runs at another address,
 `driver` in the `[studio]` table must name that address, and that the
 records belong to the current origin, so a new address needs fresh records
-([Install and start](#install-and-start)). Review generation stays disabled
-until the driver answers. Studio checks every few seconds and connects by
+([Install and start](#install-and-start)). Generate and Review settings stay
+disabled until the driver answers. Studio checks every few seconds and connects by
 itself when the driver answers: the workspace reads the catalog and inspects
 the restored draft again, with no click.
 
@@ -632,19 +636,62 @@ The catalog and workflow inspection answer HTTP 503 with the code
 `driver_not_running`, which Studio uses only for a refused connection; a
 timeout or a DNS or TLS failure stays unavailable with `driver_unknown`. A job
 dispatched while no driver listens still settles `unknown`, which is why the
-page disables Review generation.
+page disables Generate and Review settings.
 
 ## Workspace controls and media
 
-Use the navigation rail or Ctrl/Cmd+K to open a view. The command palette takes
-keyboard focus immediately; Tab chooses a result and Enter opens it. It also
+Use the navigation rail or Ctrl/Cmd+K to open a view. The rail lists Create,
+Gallery, Queue, Utilities, Library and Settings. Utilities holds Grids, Fleet
+and Operations as tabs, each with one line on what it is for, and opens on the
+tab you used last, Grids at first. The palette lists each tab by name under
+Utilities, and a button that opens one, such as Grant and retry, opens that tab.
+The command palette takes keyboard focus immediately; Tab chooses a result and
+Enter opens it. It also
 lists operations to review and, once you type, packaged workflows to load, as
 [Working with workflows](#working-with-workflows) describes. Escape
-closes dialogs or leaves presentation mode. Project selectors include the full
+closes dialogs or leaves presentation mode. In Recent Outputs, Left and Right
+on a focused output select the previous or next one and show it in the viewer,
+as a click does. Arrow keys keep their usual use in text fields, selects, the
+viewer frame and video controls. Project selectors include the full
 bounded project catalog, including projects outside the recent snapshot.
 The Telemetry and Console buttons in the footer show and hide the Spark
 telemetry panel and the event console, and Settings has a checkbox for each.
 The browser keeps that choice, and a saved session records it.
+
+The telemetry panel lists every host in the driver's latest sample side by
+side: the driver's own box and each Worker's, with what runs there, such as
+Driver · Worker rank 0 of 2. Each host shows available memory against its
+total, GPU memory, GPU utilization, GPU power and GPU temperature, with the
+names, units and precision of the shared presentation contract. An unknown
+value reads unknown, and memory categories are never added into one total.
+Available memory above 20 GiB carries a green mark and 20 GiB or less a yellow
+one, the display rule `dgxm top` and the ComfyUI panel use; the mark decides
+nothing. A host reading more than 3 seconds older than the sample says Stale
+reading. When the companion's telemetry polls fail it keeps the last sample,
+and when Studio loses the companion it keeps the last snapshot. The panel and
+the Fleet page then say so above the hosts and label each host and readiness
+row stale, with its age on the companion's clock when the companion still
+answers. Below the hosts, Worker service, Attached mesh and Render session show
+the driver's readiness report as the ComfyUI panel's card does, with an active
+layer in yellow. Workers report their hosts only while a Monarch render's mesh
+is attached, so with no mesh attached, for example before the first Monarch
+render after the driver starts, the panel lists the driver's host alone and
+says why. Metric history charts one series at a time. Host picks a host or
+Render progress, the driver's step count, step time and last render duration;
+Metric picks one of that host's metrics, with a rail rate for each rail. A
+choice with a single option shows as text, and the chart opens on GPU
+utilization. A reading whose host or rail clock runs more than 5 seconds ahead
+of the companion's adds no point, as a whole sample from the future adds none,
+so a Worker clock set right again charts at once.
+
+The telemetry panel keeps the job rows, a Readiness line and both hosts in view.
+Readiness, under the driver's state, gives the worst state among the readiness
+layers, such as active, and names the layers in it; it never reads better than
+the driver's own verdict. Detailed telemetry, under the hosts, holds the
+readiness rows with the driver's sentences, the metric history with its Host and
+Metric choices, sample inspection, the sample table, export and the raw host
+sample. It starts closed, and the browser keeps it open or closed with the other
+layout preferences. The Fleet page shows all of it at once.
 
 Phone layouts use a scrolling bottom navigation rail, larger touch controls and
 stacked panels. Expanded viewer details remain reachable without clipping the
@@ -678,6 +725,15 @@ applies once, so a later visit to Queue opens on no row. Create counts unknown
 outcomes with active jobs, as Queue does, until you reconcile them; only jobs in
 flight animate the viewer border and the logo.
 
+When the viewer begins to follow a job in flight, such as one you just
+submitted, it stops showing the earlier output, its file name and its media
+label. The heading names the job's workflow, by its title when it is a packaged
+workflow, the status line shows its progress, and the frame says that the new
+output appears there when the job finishes. A tab that submitted nothing does
+the same for the newest job in flight. An open comparison stays, and so does a
+result you choose while the job runs. A job that fails or is cancelled leaves
+the frame without an output, and Recent Outputs keeps the earlier outputs.
+
 When the followed job succeeds, the viewer shows its last final image or video,
 unless you chose another result or a comparison after the job began, or a
 comparison is open. When the snapshot leaves that output out, Studio asks for
@@ -689,8 +745,24 @@ no result of a job that had already ended, so an earlier result never shows as
 new. The recent outputs strip shows previews of job outputs only: uploads, masks
 and live previews stay out of it, and an intermediate output carries a Preview
 label. The telemetry panel names this tab's job, or the newest active job, with
-its state and time; it never ties the driver's last render to a job. The raw
-host sample stays closed until you open it.
+its state and time, and while it runs the step count and node the status line
+shows; it never ties the driver's last render to a job. The raw host sample
+stays closed until you open it.
+
+A video's preview in the strip, the Gallery and Queue is its first frame, drawn
+in the browser, with its length from the video's own metadata in the corner. To
+draw it Studio downloads the video once per page, two videos at a time, within
+the viewer's 64 MiB limit. A tile that gets no frame, after a failed download or
+for a file with no picture, says No thumbnail, with the length when known. Only
+a video the browser cannot decode says Cannot play in this browser.
+
+Over an image in the output viewer, the mouse wheel zooms in and out around the
+point under the pointer, between 10% and 800% as the zoom buttons do, and the
+first step from Fit starts at the size Fit shows. While the pointer is over the
+image the wheel never scrolls the page. Anywhere else, over a video, or for a
+sideways scroll, the wheel scrolls as before, and Fit, 1:1, the zoom buttons,
+drag to pan and the arrow keys on the focused frame work as before. An image
+smaller than the frame stays in its middle at any zoom.
 
 Image previews retain their source proportions across portrait, landscape and
 extreme aspect ratios. The mask canvas follows the displayed source bounds, so
@@ -698,7 +770,9 @@ painted positions map to the uploaded mask. An uploaded input or mask can be bou
 image upload widgets that read the input store. It joins that widget's choices
 for the request that names it, at inspection and review; any other value outside
 the driver's list is still refused. Studio refuses an empty mask before upload. Video frame controls wait for valid
-metadata; native playback, mute and loop controls remain available. The
+metadata; native playback, mute and loop controls remain available. The viewer
+reports a decode failure only for the output on screen, so an image chosen
+after a video shows at once. The
 [interface QA record](STUDIO_INTERFACE_QA.md) describes the tested fixtures and
 browser viewports without extending those results to every device or codec.
 
@@ -712,7 +786,7 @@ their own status option, and uploads have their own media kinds.
 
 ## Working with workflows
 
-Choose one of the 71 packaged workflows or import a ComfyUI UI workflow/API
+Choose one of the 75 packaged workflows or import a ComfyUI UI workflow/API
 prompt. Supported inputs appear as typed controls; connected inputs remain
 graph connections. The Inputs tab lists the inputs of the workflow's App Mode
 layout, in its order, and a workflow without one opens on All inputs. Each
@@ -720,10 +794,8 @@ packaged workflow carries a layout, and ComfyUI's App Mode shows the same one.
 It lists, where the graph has them: the prompt, the negative prompt, the seed,
 the image size, steps, CFG and any Flux guidance, sampler and scheduler, the
 denoise or strength of an upscale, the input image, video or audio, the LoRA
-strength and the model file. A field keeps its input name, so on most graphs
-the prompt and the negative prompt both read `text`; the prompt comes first. A
-graph that samples in two stages, or holds the size on two nodes, lists each
-copy side by side; change them together. All inputs lists every supported
+strength and the model file. A graph that samples in two stages, or holds the
+size on two nodes, lists each copy side by side; change them together. All inputs lists every supported
 primitive field, such as the DGX Monarch Init settings, the frame count and the
 VAE and text encoder files. The Layout tab changes which inputs are
 prominent, their labels and their order without changing binding identity, and
@@ -735,6 +807,34 @@ controls for the new choice's inputs appear, those of the old choice leave the
 draft, and review accepts edits to the new inputs. Inside a subgraph, Studio
 lists only the inputs of the saved choice. Multiline fields retain line breaks, and import controls
 allow selecting the same file again after a success or error.
+
+The prompt boxes read Prompt and Negative prompt. The inputs chosen under
+Ordered prompt styles take those roles; otherwise the graph decides: the text
+that reaches a sampler's `positive` input, or the one `conditioning` input of
+a Basic Guider, is the prompt, and the text that reaches its `negative` input
+is the negative prompt. A node that encodes both
+texts, such as Qwen Image 2.1's, gives each the role its input name says. When
+several boxes share a role, each adds its input name or its node. Any other
+multi-line text box, and a text box whose input name another one repeats, reads
+its node's title or class and its input name, such as `CLIPTextEncode · text`,
+with the node id when two would still read the same. Every other field keeps its
+input name, and pointing at a name shows the field's node. The prompt box starts
+taller and grows with its text up to a limit, then scrolls. On Inputs, an empty
+negative prompt waits behind Add negative prompt, and the raw types, such as
+STRING, INT and COMBO, show only on All inputs.
+
+Reuse settings, Send to edit and Upscale record the output they start from as
+the draft's input lineage, and each asset you upload on the Assets tab joins it.
+Inputs and All inputs list each lineage id in full under Input lineage, wrapped
+to fit, with a Copy button that copies the whole id and shows it when you point
+at it. Clear lineage empties the list. Lineage records ancestry; the asset
+controls set the input the job reads. Create's pane never scrolls sideways, at
+any pane width: ids, file names and labels wrap, and fields narrow to fit. Only
+the row of tabs scrolls along its own line when the pane is too narrow for all
+five. On a short window the field list keeps at least 280 pixels, or 40 percent
+of the window's height when that is less, and the pane scrolls instead, with
+Generate pinned at its foot. A field brought into view stops above Generate,
+and the prompt box grows no taller than 30 percent of the window's height.
 
 The Workflow list names each packaged workflow by the title of its Note node,
 in title order, and shows the chosen workflow's file name in small type under
@@ -748,6 +848,65 @@ workflow is loaded, and Escape or Clear empties the box. In the command
 palette, type part of a title or file name and choose a Load workflow row; it
 opens Create and loads that workflow as the list does. Drafts, exports and
 records still use the file name.
+
+Under the list, an Output line says what a run saves. Studio reads it from the
+graph's save nodes and the draft's format choices, for example "PNG image",
+"PNG frames plus separate FLAC audio" or "one MP4 video with sound". Save Image
+writes frames when the graph makes video. A saved video has sound when the
+Create Video node that feeds it takes an audio input; when another node makes
+the video, the line does not say. A preview node saves no file.
+
+The Job category select sets the job's operation. It labels the job, and Queue,
+the gallery filter and the job record keep that label. The loaded workflow
+decides what runs, as the line under the select says, so Image and Workflow run
+the same graph. The select lists only the operations the loaded graph supports,
+read from the nodes that run. Muted and bypassed nodes do not count, and neither
+does a subgraph that no running instance reaches:
+
+- **Image** needs a node that saves or previews an image, in a graph that makes
+  no video.
+- **Video** needs a clip frame count, a video input, a Create Video node or a
+  video output, and a node that saves or previews frames or a video. A clip
+  frame count is a `length` input on a node that also sets a width and a height,
+  such as a video latent.
+- **Edit** needs an image, video or mask input node, such as Load Image or Load
+  Image (as Mask).
+- **Upscale** needs an image or video input node and a node that enlarges by a
+  factor or a model, such as Upscale Image By or PiD Conditioning. A resize to a
+  fixed size does not count, because it also shrinks.
+- **Fleet** needs the Fleet KSampler (DGX Monarch) node.
+- **Workflow** fits every graph.
+
+Loading a workflow keeps the draft's operation when the graph supports it, and
+otherwise picks the first one it supports of Fleet, Upscale, Video, Edit and
+Image. A draft can still hold an operation its graph lacks, for example after
+Upscale on an output of a text to image workflow. The select then marks it not
+supported, and a line under it names the input the operation needs. That line
+does not stop Generate. An operation you choose while a workflow loads stays as
+you chose it. Until Studio has inspected the graph, it lists every operation.
+
+MiniMax H3 and LTX graphs get a Duration control after their last size field,
+or at the end of the list, on Inputs and on All inputs. These families hold one
+clip's frame count on more than one node. Duration shows the count in frames
+and in seconds, takes a new value in either, and writes one count to every node
+that holds it. It rounds the value to the nearest count the model renders
+exactly. MiniMax H3 holds the count on its conditioning node and its latent
+node, renders 5 plus a multiple of 17 frames and runs at 24 fps, so 124 frames
+is 5.17 s. LTX holds it on the video latent and the audio latent, renders 1 plus
+a multiple of 8 frames, and takes its frame rate from its `frame_rate` inputs.
+When those disagree, or a wire from anything but a primitive node sets one,
+Duration shows frames only.
+
+A clip is the set of these nodes that feed the same sampler. A graph with two
+clips, or a subgraph used twice, gets one numbered Duration control for each
+clip, and each writes only its own nodes. When Studio cannot find the sampler a
+count feeds, it shows no control for that count. When the counts of a clip
+differ, Duration shows each one, and a new value sets them all. When a wire
+feeds one of them, no value can set it, so Studio shows no Duration control.
+Under All inputs, each of these fields names its node, its clip when there are
+several, and its unit, frames, and says how it relates to the other. Any other
+clip frame count also reads frames, with its node when another frame count
+shares its name.
 
 Compilation preserves the original workflow and extension metadata. Unknown
 widgets, ambiguous bindings and unsupported graph constructs refuse execution
@@ -769,7 +928,8 @@ Core loaders require `MODEL` sockets; `DGXMonarchLoraLoader` requires
 the inserted node identities, connection boundaries, asset names and strengths.
 Multiple ambiguous chains or incompatible typed connections refuse execution.
 An invalid LoRA strength, a removed LoRA or an out-of-range inserted loader is
-refused at review with `lora_binding`, naming the slot and input.
+refused with `lora_binding` when Generate checks the draft, naming the slot and
+input.
 The LoRA list comes from the driver catalog Studio reads at connect. Studio
 reads it again when the driver connects again or the companion restarts, and
 once more after a failed read while the driver stays connected. Refresh list on
@@ -795,30 +955,89 @@ entry whose `enabled` field is false; Create has no control that sets it. Style
 records saved before Library dropped its Style mode select may carry a `mode`
 field, `append` or `template`. Studio ignores it, and only `{prompt}` decides.
 
-Review generation opens a dialog that starts with a status line: ready to
-submit, or what blocks the job. A summary follows with the workflow and
-operation, the model files, the seeds, the prompt text the job sends, the
-requested topology, the checks the backend still runs and the time the review
-expires, 10 minutes after Studio made it. The prompt text lists each multi-line
-text input and any input a style rewrote. When a style changed the text, the
-summary also shows your draft text. A workflow with no multi-line text input
-lists every text input. The full record that a submitted job keeps sits closed
-under Immutable submission record. Submit stays off until you check the
-confirmation box, and a line under the button says why it is off. Once the
-review expires, the status line and that line say when, and Submit stays off;
-return to the draft and review again. The dialog keeps the companion's clock,
-starting from the time the companion made the review, and reads it every minute
-and at the expiry moment. The companion's own check at submit decides, so a
-submit in the last second or two can still be refused as expired. The dialog
-closes after every submit attempt, so a refusal or an unknown outcome shows its
-banner and the Reconcile request button.
+Generate checks the draft and starts the job in one action. Studio first checks
+each field against the inputs the driver reports. While a field fails, Generate
+stays off, and the line under it names the first such field, by the name the
+field shows, and the problem, for example "Fix unet_name: Choose an available
+value." It adds the field's node, such as "seed on node 10", only when another
+field shows the same name. Show field opens the tab that lists the field, Inputs or All inputs, scrolls to it and
+focuses it. With more than one issue, a list of them all opens under the line,
+each with its own Show field, and these controls stay on while Generate and
+Review settings are off. When only the workflow check reports a problem, the
+line starts with Check and Generate stays on. Workflow needs attention, under the
+fields, lists what the companion found when it inspected the workflow with the
+draft's values. After you edit a value, Studio inspects the draft again once
+your edits pause, so a problem you fixed, such as a model file the driver lacks,
+leaves the list and the line, and one that remains stays. Generate then asks
+the companion for the job's immutable submission record. The companion checks
+the draft again, applies styles and LoRAs, sets the seeds by the seed policy
+and freezes the prompt. When nothing needs a person, Studio submits that record at once, and the
+line under the button says the job was submitted. That line clears itself after
+five seconds. The viewer follows the job, and Queue lists it with its identifier
+and its details. Generate again with unchanged settings starts another job the
+same way, with no dialog.
 
-New drafts use the Random seed policy. At review the companion picks a new
+Review settings, beside Generate, makes the same record and shows it in a
+dialog before anything starts. Generate opens that dialog by itself only when
+something needs a person:
+
+- **A warning.** When the companion reports a warning for the job, such as a
+  resource warning, the dialog lists it under Needs your decision with its own
+  box. Generate in the dialog stays off until you tick each one, and Adjust the
+  draft closes the dialog instead. Today the companion reports no warning when
+  it checks a draft, so this case does not arise yet.
+- **A refused draft.** When the companion refuses the draft, the dialog says no
+  job started and shows the refusal with its error code. Its button opens the
+  Create tab that holds the cause: LoRAs for `lora_binding`, Inputs for a
+  style, seed or lineage refusal, All inputs for a refused workflow input and
+  Layout for any other workflow refusal.
+- **An error in the record.** The status line reads Blocked with the error, and
+  Generate stays off.
+
+A consent point never opens the dialog. The driver decides consent when it
+loads a model for the job, so a job that needs one fails with its typed refusal
+and the consent card, as
+[Read a failure and grant a consent](#read-a-failure-and-grant-a-consent)
+describes, and granting it stays a reviewed operation.
+
+The dialog starts with a status line: ready to generate, a warning that needs
+your decision, or what blocks the job. A summary follows with the workflow and
+operation, the model files, the seeds, the prompt text the job sends, the
+requested topology, one line on checks and the time the review expires. The
+checks line says that Studio checked the values against the driver's inputs and
+that the backend checks memory, topology, identity and consent when the job
+runs. The prompt text lists each multi-line text input and any input a style
+rewrote. When a style changed the text, the summary also shows your draft text.
+A workflow with no multi-line text input lists every text input. No checkbox
+appears unless a warning asks for one.
+
+The full record the job keeps sits closed under Immutable submission record
+(JSON). Studio renders it only when you open it, and it scrolls inside a short
+box. Once the job is accepted, open its row in Queue: the same record sits
+there, also closed, beside the full provenance.
+
+A review expires 10 minutes after the companion made it. The expiry does not
+bind the review to the driver's inputs: submit checks the node definitions and
+each chosen file against the live driver whatever the review's age. The expiry
+bounds how old the driver runtime that the record freezes can be, and it lets
+the companion delete reviews that were never submitted. Generate submits within
+the same action, so only a review left open in the dialog can expire. The
+dialog says when it expires and why. Once it has, Generate in the dialog stays
+off: close it and press Generate for a fresh record. The dialog keeps the
+companion's clock, starting from the time the companion made the review, and
+reads it every minute and at the expiry moment. The companion's own check at
+submit decides, so a submit in the last second or two can still be refused as
+expired. The dialog closes after every submit attempt, so a refusal or an
+unknown outcome shows its banner and the Reconcile request button.
+
+New drafts use the Random seed policy. For each job the companion picks a new
 value for each integer `seed` and `noise_seed` input and freezes it in the
-record. Your seed fields keep their values, and each one says it is chosen at
-review. Fixed sends the seed fields as they are. A saved draft or record keeps
-its own policy, and one that names no policy restores as Fixed, the companion's
-default. The review summary shows the seeds the job will use. After the job
+record. Your seed fields keep their values, but under Random each one is off and
+reads Random each run, with a line that says to choose Fixed to set it. A seed
+field with a value Studio cannot submit stays open until you repair it. Fixed
+makes the seed fields editable and sends them as they are. A saved draft or record
+keeps its own policy, and one that names no policy restores as Fixed, the
+companion's default. Review settings shows the seeds the job will use. After the job
 runs, the viewer footer shows the seed of the selected output, Queue rows show
 the seeds of each job, and Copy seed in the gallery copies the seeds alone: one
 seed as a plain number, several as JSON keyed by node and input. Copy named
@@ -840,7 +1059,11 @@ recorded workflow instead. It also refuses a seed above 9007199254740991, which
 a draft field cannot hold exactly, rather than round it. Copy named inputs, Copy
 API prompt and Export provenance read the job's full record with every digit of
 each whole number, so a seed above 9007199254740991 comes out exact in the
-prompt, the frozen seed list and the workflow's widget values.
+prompt, the frozen seed list and the workflow's widget values. A grid cell's
+Inspect full submission and Export cell, a grid's export and the parameter
+differences under a comparison read the same way, so two seeds one apart
+still differ there. The differences table compares a field nested deeper than
+12 levels as one value and says so under the table.
 
 Submitted jobs keep requested and effective settings, the workflow and its
 digest, adapter version and lineage. Missing fingerprints and execution facts
@@ -850,9 +1073,29 @@ Reuse loads the recorded executable prompt with its resolved seeds as a fixed
 draft. Already expanded styles and inserted LoRAs remain in that prompt and are
 not applied twice; original workflow metadata is retained separately. A
 recorded prompt or workflow that holds a whole number above 9007199254740991
-does not load, since a draft field cannot hold it exactly: Reuse settings, Send
-to edit, Upscale and Load workflow name each such input with its digits and
-leave the draft unchanged.
+does not load, since a draft field cannot hold it exactly: Reuse settings,
+Upscale and Load workflow name each such input with its digits and leave the
+draft unchanged.
+
+Send to edit, in the viewer footer and on a gallery card, puts an image output
+into the image input of a workflow that edits images. When the workflow in
+Create supports Edit and has an image input that Studio can set, Send to edit
+keeps it. Otherwise it looks in the Workflow list for an editing workflow: one
+that loads an image from the driver's input store, makes no video, has no
+upscale or Fleet node and uses only node classes the driver lists. When it
+finds one, it loads it. When it finds several, a dialog lists them, and the
+draft stays as it is until you choose one. When it finds none, the dialog says
+why and names where editing workflows come from: the Workflow list, Import JSON
+and workflows saved in Library. The draft and the selected output stay as they
+are. The companion copies the output into the driver's input store as an
+upload of its own, and Studio binds the copy to the image input that the
+workflow's App Mode layout lists first, never to a mask input. It sets the
+Operation to Edit, opens the tab that lists the prompt and the image, and
+records the output and its copy as lineage, after any lineage a kept workflow
+already has. One Undo restores the earlier draft.
+Send to edit takes no video output or uploaded mask. Under Edit, Generate and
+Review settings stay off until the image input holds an image the driver
+offers, and the line under Generate says why.
 
 A review binds to the definitions of the node classes its prompt uses, without
 their file lists, so adding a model, LoRA or input file does not void it.
@@ -874,7 +1117,20 @@ submission lists its outputs; View shows one, and Compare sets it as the
 comparison for the output in view. The value fields start empty. Validate every
 cell stays disabled until the draft has a workflow, Axis A names an input and
 each chosen axis holds a JSON array with at least one value; the line beside the
-button names what is missing.
+button names what is missing. It also stays disabled while an axis value is a
+whole number outside -9007199254740991 to 9007199254740991, or the base seed of
+an incrementing grid is above 9007199254740991. The browser would send such a
+number rounded, so the grid would run other seeds than the ones typed. The line
+names each such axis value by its digits.
+
+Grids opens on what a grid does, a worked example and a first comparison to
+try. In the example, steps [20, 30, 40] on Axis A and cfg [3.5, 5] on Axis B
+make six cells with the same prompt and seed. Axis B changes first: cell 1 is
+20 steps at CFG 3.5, cell 2 is 20 steps at CFG 5 and cell 6 is 40 steps at CFG
+5. The first comparison puts steps [20, 40] on Axis A alone with the Fixed
+draft seeds policy, so its two cells differ only in steps. View cell 1's output
+and Compare cell 2's, and the viewer shows them side by side above their
+recorded parameter differences.
 
 Parameter grids use typed workflow inputs or named style stacks as axes. A
 style-axis value is an ordered list of saved style IDs; an empty list selects
@@ -893,6 +1149,80 @@ match; otherwise it drops the preview and asks for validation again. A dispatch
 whose outcome is unknown keeps its preview and request ID so it can be
 reconciled, and Grids says when that review came from an earlier draft.
 
+## Workflow sources and updates
+
+The Workflow list is the bundled set, read from one file: the workflow catalog
+in the installed dgx-monarch package. `tools/gen_studio_inventory.py` builds it
+from the checkout's `example_workflows` folder, which ComfyUI lists under
+Browse Templates. Studio scans no folder at run time, neither that one nor
+ComfyUI's saved workflows.
+
+Any other workflow comes in through Import JSON on Create: a UI workflow that
+ComfyUI saves or exports, or an API prompt from its Export (API). The driver's
+`/object_info` must list every node class the graph uses, and the graph needs a
+save or preview node. Studio edits INT, FLOAT, STRING, BOOLEAN and COMBO
+widgets, dynamic choices included. A wired input stays a connection, and an
+unknown custom widget refuses with a repair reason. A graph needs no DGX
+Monarch node to run, but only DGX Monarch nodes render across the Sparks
+([QUICKSTART](QUICKSTART.md#2-only-some-nodes-move-to-the-cluster)). App Mode
+is optional. `extra.linearData.inputs` lists the prominent inputs in order,
+each as a `[node id, widget name]` pair or a `graphId:nodeId:name` identity,
+with an optional configuration object. `extra.linearData.outputs` lists save
+node ids. Each input must name an editable widget that no wire feeds;
+otherwise Generate's check refuses the draft until you repair it on Layout. A
+graph without App Mode opens on All inputs.
+
+An update replaces the bundled templates and the catalog with the new
+release's copies. Studio never writes to either, and your edits live in copies
+that an update leaves alone. The draft stays in this browser. Presets, sessions
+and workflows saved in Library, and each job's submitted workflow, stay in the
+companion's [state directory](#state-reconciliation-and-limits). Files you
+export stay where you saved them. A copy keeps the version it was made from;
+load the template again to get the new one. ComfyUI saves a template you
+changed as a new file in its own user workflows folder.
+
+Do not edit or add files in the checkout's `example_workflows`.
+`dgxm update --verify` refuses a checkout with local changes (`repo_dirty`).
+A plain `dgxm update` stops at its merge when the new release changes the same
+file, and otherwise keeps your edit, which the Workflow list still does not
+show. To keep a workflow with its Layout, save it in Library under workflows.
+To keep its input values too, save a preset. Load into draft brings either
+back.
+
+## Run many prompts with Fleet
+
+Fleet, a tab under Utilities, runs a workflow whose `DGXMonarchFleetKSampler`
+node turns each line of its prompts input into its own job. The jobs go to the
+GPUs in turn, one per GPU at a time, and share the model, size, steps, CFG,
+sampler and scheduler. Line 1 uses seed `noise_seed`, line 2 `noise_seed + 1`
+and so on, and the outputs come back in prompt order. Use it for more pictures
+per hour, such as many prompts on one model. It does not make one picture
+faster, and on one GPU it gains nothing; a normal Monarch workflow can split
+one render across the GPUs instead.
+
+The page says this and gives the first step. Set up Fleet in Create loads the
+packaged workflow "Fleet: many prompts, one per GPU" into Create, unless the
+draft already holds a Fleet sampler, sets the draft's Operation to Fleet and
+opens Create. A notice there names the next step: put your prompts in the
+prompts input, one per line, then generate as usual. When the load replaces a
+workflow, Undo in Create brings that workflow back, and when the load fails
+the page stays on Fleet with the error and leaves the draft as it was. If you
+leave Fleet while the workflow loads, the draft still takes it, the notice
+still appears, and Studio stays on the page you chose.
+Operation only labels the job, for the
+Gallery filter and the Fleet page's list of graph tasks: a workflow without a
+Fleet sampler runs as one ordinary job whatever its Operation says. When the
+packaged workflow is missing from the catalog, the button sets the label, opens
+Create and says to load a workflow with a Fleet sampler; a loaded workflow
+without one shows Fleet as not supported.
+
+A run takes up to 1,024 jobs, and the negative prompt is one value for every
+job or exactly one per job. The run is one ComfyUI task: no job in it can be
+paused, reordered or retried alone, so Queue retries the whole run. The page
+also shows the reporting hosts as the telemetry panel does, the metric history,
+the runtime evidence of each recorded Fleet graph task, and the driver's last
+Fleet queue snapshot and Worker sample, closed until you open them.
+
 ## Read a failure and grant a consent
 
 Studio reads a failed job's recorded error the way dgx-monarch writes it and
@@ -903,7 +1233,12 @@ The classes are those of
 [DESIGN.md section 5.9](DESIGN.md#59-refusal-taxonomy-what-a-typed-refusal-is-allowed-to-do):
 P physics, C capacity-protective, U unproven correctness and K known-wrong math.
 Any other message shows its error code and its first sentence. When the message
-names the driver's panel and headless remedy, the status line shows it. Expand
+names the driver's panel and headless remedy, the status line shows it. When a
+model loaded earlier is in the way, the message says which old model
+is still loaded on which box, and its remedy names the ComfyUI panel's Old
+model in the way card and its Clear and retry button, or Reset attached mesh,
+then queue again. Studio has no control for either, so clear the attached mesh
+in the ComfyUI panel, then retry the job. Expand
 the Queue row for the full text, the guard, the error code and a link to the
 docs/TROUBLESHOOTING.md entry the message cites. The link opens that page, so
 find the entry by its number. When the companion shortens a long message it
@@ -914,9 +1249,15 @@ shows a 64 pixel thumbnail of the job's newest final output when the snapshot
 holds one, and nothing when it does not. The preview downloads once the row
 scrolls within 200 pixels of the visible area.
 
-A refusal that a consent can clear carries a consent request. The status line
-and the Queue row then show its reason and the label of the ComfyUI panel button
-that grants it, with a Grant and retry button. That button opens Operations with
+A refusal that a consent can clear names the ComfyUI panel button that grants
+it. The samplers, Fleet KSampler, the UNET loaders and Identity Gate end the
+error with that sentence and drop the machine consent block
+([DESIGN.md section 5.9](DESIGN.md#59-refusal-taxonomy-what-a-typed-refusal-is-allowed-to-do)),
+so for those the status line shows the remedy and no consent request: open
+Operations and choose consent apply, which lists the driver's pending requests.
+A recorded error that still carries a consent request, such as one from an
+older driver, shows its reason and the label of the ComfyUI panel button that
+grants it, with a Grant and retry button. That button opens Operations with
 consent apply chosen and its key and id empty, beside the request's model, kind
 and consent id. Review it: with one pending request the review selects it, and
 with several it lists each one with its consent id. Studio says whether the
@@ -1091,7 +1432,8 @@ the driver acknowledged it while the job was queued and the prompt has left both
 the queue and its history. Running-job cancellation uses the driver's atomic
 prompt-specific cancellation route when available. On a driver without that
 route, a queued job falls back to queue deletion under the same cancellation
-intent; a running job is refused and its intent and key stay unspent. The
+intent; a running job is refused, and its intent and every key that joined it
+stay unspent. The
 adapter never falls back to a global interrupt. Each job retains one durable
 cancellation intent, including after a lost acknowledgement or companion
 restart. Repeating that intent cannot dispatch it again. A reviewed management
@@ -1130,7 +1472,9 @@ Studio decodes at most 16 megapixels (4096 x 4096 pixels) per image, for input
 uploads and thumbnails alike, and checks that from the file header before it
 decodes. Input uploads accept PNG, JPEG or WebP files of at most 2 MiB, keep
 mask alpha, and store an orientation-normalized RGBA PNG; a larger image is
-refused with a request to downscale it. Thumbnails return at most 320 pixels per
+refused with a request to downscale it. Send to edit stores its copy of an
+output the same way, read from the driver's file, so the 2 MiB limit on what a
+browser sends does not apply to it. Thumbnails return at most 320 pixels per
 edge and run at most two decodes at once. A 65 MiB ceiling on the normalized
 upload and on a thumbnail's source file is only a backstop that no 8-bit image
 within the pixel limit reaches. Live previews retain at most 16 identity-bound
@@ -1161,7 +1505,9 @@ A 401 while polling returns to the token form, because a restarted companion
 issues a new token. A sign-in link from before a restart stops working the
 same way; `dgxm studio open` prints a new one. A workflow inspection or job review is discarded, with a
 notice, when the workflow, its values or the connection change while it runs;
-edits to other draft controls do not discard an inspection.
+edits to other draft controls do not discard an inspection. The inspection Create
+runs again after a value edit is dropped without a notice in the same cases, and
+the next edit runs it again.
 
 Snapshot refreshes preserve the event replay cursor so bursts spanning several
 pages reach the console. Evicted replay gaps are labelled explicitly. Media

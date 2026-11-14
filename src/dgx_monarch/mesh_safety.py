@@ -15,6 +15,7 @@ from typing import Any
 from . import absorb_fire as _absorb
 from . import delivery_faults as _delivery_faults
 from . import mesh_residency as _mesh_residency
+from . import swap_credit as _swap_credit
 from .config import ClusterConfig
 from .error_utils import failure_summary
 
@@ -297,7 +298,8 @@ def stock_load_preflight(path: str, unet_name: str, model_options: dict) -> None
     Stock weights consume roughly file size in the shared UMA pool; exceeding
     MemAvailable can invoke the OS OOM killer before Python can classify an
     exception. Discrete devices and dtype casts are excluded because file size
-    does not bound their resident allocation.
+    does not bound their resident allocation. The ladder calls this only where
+    ``capacity_fit.stock_load_fit`` made no claim, and that probe prices a cast.
     """
     import os
 
@@ -362,6 +364,14 @@ def _token_count_5d(shape: Iterable[int]) -> int:
     return max(b, 1) * t * -(-h // 2) * -(-w // 2)
 
 
+def ref_pose_token_counts(video_shape: Iterable[int], ref_shapes: Iterable[Iterable[int]] = (),
+                          pose_shape: Iterable[int] | None = None) -> tuple[int, int]:
+    """(video plus reference tokens, pose tokens): the rows the preflight below
+    prices and the sample deadline (sample_deadline.py) scales with."""
+    video_tokens = _token_count_5d(video_shape) + sum(_token_count_5d(s) for s in ref_shapes)
+    return video_tokens, (_token_count_5d(pose_shape) if pose_shape is not None else 0)
+
+
 def activation_footprint_preflight(
     family: str,
     path: str,
@@ -391,15 +401,15 @@ def activation_footprint_preflight(
     # double-charge every warm render.
     weight_bytes = 0 if weights_resident else (
         os.path.getsize(path) if os.path.exists(path) else 0)
-    video_tokens = _token_count_5d(video_shape) + sum(
-        _token_count_5d(s) for s in ref_shapes)
-    pose_tokens = _token_count_5d(pose_shape) if pose_shape is not None else 0
+    video_tokens, pose_tokens = ref_pose_token_counts(
+        video_shape, ref_shapes, pose_shape)
     total_tokens = video_tokens + pose_tokens
     tokens_per_rank = -(-total_tokens // max(int(sp_degree), 1))
     bytes_per_token = hidden_dim * _ACTIVATION_BF16_BYTES * _ACTIVATION_BLOCK_FACTOR
     activation_bytes = tokens_per_rank * bytes_per_token
     estimate = weight_bytes + activation_bytes
-    avail = mem_available_bytes()
+    # A charged load: the copy the Worker drops before it counts while a swap credit is in force.
+    avail = _swap_credit.credited(mem_available_bytes()) if weight_bytes else mem_available_bytes()
     if avail is None or estimate <= avail:
         return
     max_tokens_per_rank = max((avail - weight_bytes) // max(bytes_per_token, 1), 0)

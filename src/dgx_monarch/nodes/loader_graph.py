@@ -8,6 +8,12 @@ applies policy.
 Graph and path parse failures omit a charge instead of raising. This preserves
 the class C failure direction: uncertain evidence cannot create a false
 capacity refusal.
+
+The guide encode and the render activations are a sum unless every guide's
+file proves it a still and the graph proves it encodes, and ComfyUI returns its
+memory, before any sampler runs; then they are alternatives and the larger one
+is charged (``guide_order.py``, issue #187). A clip, or an order that cannot be
+read, keeps the sum.
 """
 from __future__ import annotations
 
@@ -17,6 +23,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from .. import driver_footprint, h3_activation, ltx25_activation
+from . import driver_model_charge, guide_order
+from .graph_live import is_link as _is_link
+from .graph_live import live_nodes
 
 _GIB = 2 ** 30
 
@@ -27,6 +36,8 @@ _GIB = 2 ** 30
 _ACTIVATION_FAMILIES = {
     h3_activation.H3_FAMILY: (h3_activation.graph_activation_bytes,
                               h3_activation.sp_degree_for_mesh),
+    h3_activation.H3_IMAGE_FAMILY: (h3_activation.graph_activation_bytes,
+                                    h3_activation.sp_degree_for_mesh),
     ltx25_activation.LTX_FAMILY: (ltx25_activation.graph_activation_bytes,
                                   ltx25_activation.sp_degree_for_mesh),
 }
@@ -95,10 +106,17 @@ IMAGE_REF_BYTES = 0
 
 # Graph vocabulary, matched on input key rather than class_type, so a custom or
 # renamed loader node that keeps comfy's input names still prices correctly.
-_TE_NAME_KEYS = ("clip_name", "text_encoder_name")
+# CLIP Vision files resolve in their own folder and are priced as encoders.
+_TE_NAME_KEYS = ("clip_name", "text_encoder")  # text_encoder: LTXAVTextEncoderLoader's file, the one stock use
 _VAE_NAME_KEYS = ("vae_name",)
-_TE_FOLDERS = ("text_encoders", "clip")
+_TE_FOLDERS = ("text_encoders", "clip", "clip_vision")
 _VAE_FOLDERS = ("vae",)
+# Whole models the driver loads itself: a checkpoint loader's file, and a stock
+# UNET loader's. A DGX Monarch loader's `unet_name` loads on the Workers and is
+# the DiT term, so its class prefix keeps it out of this charge. Read-only after import.
+_DRIVER_MODEL_KEYS = {"ckpt_name": ("checkpoints",),
+                      "unet_name": ("diffusion_models", "unet")}
+_WORKER_LOADER_PREFIX = "DGXMonarch"
 # Count only linked reference inputs. This excludes widgets such as
 # ``ref_image_size`` even though their names share a reference prefix.
 _VIDEO_REF_PREFIXES = ("ref_video",)
@@ -112,9 +130,6 @@ _GUIDE_NODE_CLASSES = ("MiniMaxH3AddGuide",)
 _GUIDE_IMAGE_KEYS = ("image",)
 # The canvas a guide is resized to before it encodes, named by a link.
 _GUIDE_LATENT_KEYS = ("latent",)
-# The widget a loader carries its filename on, so a guide's length can be
-# proved from the file rather than trusted from a node name or an extension.
-_GUIDE_FILE_KEYS = ("image",)
 # Priced at zero like an image reference: audio encodes through the small VAE.
 _GUIDE_AUDIO_KEYS = ("audio",)
 
@@ -172,6 +187,9 @@ class DriverStackTerms:
     ref_bytes: int = 0
     te_artifacts: tuple[str, ...] = ()
     vae_artifacts: tuple[str, ...] = ()
+    # Checkpoints and stock UNETs the driver loads itself, at file size.
+    model_bytes: int = 0
+    model_artifacts: tuple[str, ...] = ()
     video_refs: int = 0
     image_refs: int = 0
     guide_refs: int = 0
@@ -184,40 +202,58 @@ class DriverStackTerms:
     # This text reaches class C refusals when headless calls omit ``prompt``.
     # Keep it nonempty so the activation clause remains actionable.
     activation_note: str = "no graph available at the loader node"
+    # Every guide encodes, and ComfyUI returns its memory, before any sampler
+    # runs (``guide_order``): the guide and the activations are then
+    # alternatives. ``guide_order_note`` says why, either way.
+    guide_first: bool = False
+    guide_order_note: str = ""
+
+    @property
+    def encode_and_render_bytes(self) -> int:
+        """The guide encode and the render activations: the larger of the two
+        when ``guide_first``, both otherwise."""
+        if self.guide_first:
+            return max(self.guide_bytes, self.activation_bytes)
+        return self.guide_bytes + self.activation_bytes
 
     @property
     def total(self) -> int:
-        return (self.te_bytes + self.vae_bytes + self.ref_bytes
-                + self.guide_bytes + self.activation_bytes)
+        return self.models_bytes + self.ref_bytes + self.encode_and_render_bytes
+
+    @property
+    def models_bytes(self) -> int:
+        """The models this graph loads on the driver, without encodes or activations."""
+        return self.te_bytes + self.vae_bytes + self.model_bytes
+
+    @property
+    def models(self) -> tuple[str, ...]:
+        return (*self.te_artifacts, *self.model_artifacts, *self.vae_artifacts)
 
     @property
     def budget_clause(self) -> str:
         """Describe the settled budget without claiming absent charges.
 
-        Credit clears the text encoder, VAE and reference encode charges
-        (``credited_terms``). It never clears render activations or a guide
-        encode, so a credited result names what survives and keeps its
-        ``credit_reason`` either way.
+        Credit clears the text encoder and VAE charges (``credited_terms``). It
+        never clears render activations, a guide or a reference encode, so a
+        credited result names what survives and keeps its
+        ``credit_reason`` either way. With both a guide and activations, the
+        clause says whether they are charged as alternatives or together, and
+        why (``guide_order_note``).
         """
         total = self.total
         if not total:
             return (f"no driver stack charged ({self.credit_reason})"
                     if self.credited else "no driver stack charged")
+        guide, renders, order = guide_order.budget_words(
+            self.guide_bytes, self.activation_bytes, self.guide_first, self.guide_order_note)
         carried = " and ".join(name for name, charged in (
-            ("driver stack", self.te_bytes + self.vae_bytes + self.ref_bytes),
-            ("guide encode", self.guide_bytes),
-            ("render activations", self.activation_bytes)) if charged)
-        credit = (f", with the text encoder, VAE and reference encode charges "
+            ("driver stack", self.models_bytes + self.ref_bytes),
+            ("guide encode", guide),
+            ("render activations", renders)) if charged)
+        credit = (f", with the text encoder and VAE charges "
                   f"credited ({self.credit_reason})" if self.credited else "")
         return (f"{_gib(total)} GiB of {carried} this graph has not spent "
-                f"yet{credit}")
-
-
-def _is_link(value: object) -> bool:
-    """Comfy API-format link: ``[node_id, output_index]``."""
-    return (isinstance(value, (list, tuple)) and len(value) == 2
-            and isinstance(value[0], (str, int))
-            and isinstance(value[1], int) and not isinstance(value[1], bool))
+                f"yet{credit}{order}")
 
 
 def _links_under(value: object) -> int:
@@ -254,45 +290,6 @@ def _artifact_bytes(folders: tuple[str, ...], name: str) -> int:
     return 0
 
 
-def named_file_frames(prompt: object, node_id: object) -> int:
-    """Frames in the file this node names, or 0 when nothing proves a count.
-
-    The file is opened and its frames counted, so an animated PNG or WebP
-    cannot pass as a still behind an image extension, and a video that no
-    image decoder opens reads unreadable rather than cheap. Missing files,
-    unreadable files and sources that name no file all return 0, which the
-    guide price reads as the declared length or else the worst case.
-
-    A file replaced between this preflight read and execution is charged on
-    the proof taken, the same window every other pre-execution read here has.
-    """
-    if not isinstance(prompt, Mapping) or node_id is None:
-        return 0
-    node = prompt.get(node_id)
-    if node is None:
-        node = prompt.get(str(node_id))
-    inputs = node.get("inputs") if isinstance(node, Mapping) else None
-    if not isinstance(inputs, Mapping):
-        return 0
-    for key in _GUIDE_FILE_KEYS:
-        name = inputs.get(key)
-        if not isinstance(name, str) or not name:
-            continue
-        try:
-            import folder_paths
-            from PIL import Image
-
-            path = folder_paths.get_annotated_filepath(name)
-            if not path or not os.path.isfile(path):
-                return 0
-            with Image.open(path) as image:
-                frames = getattr(image, "n_frames", 1)
-            return int(frames) if isinstance(frames, int) and frames > 0 else 0
-        except Exception:  # unreadable evidence charges the worst case
-            return 0
-    return 0
-
-
 def driver_stack_terms(prompt: object, *, family: str = "",
                        sp_degree: int = 1) -> DriverStackTerms:
     """Price unresolved driver-stack and render-activation memory.
@@ -304,21 +301,28 @@ def driver_stack_terms(prompt: object, *, family: str = "",
     checks catch that permissive under-count later.
 
     ``family`` prevents unrelated canvas nodes from inheriting another model
-    family's activation charge. An unknown family charges none.
+    family's activation charge. An unknown family charges none. With both a
+    guide and activations charged, ``guide_order`` decides whether they are
+    alternatives, and the guide's note says which and why.
     """
     if not isinstance(prompt, Mapping) or not prompt:
         return DriverStackTerms()
     activation_bytes, activation_note = graph_activation_bytes(
         prompt, sp_degree, family=family)
-    te_bytes = vae_bytes = 0
+    te_bytes = vae_bytes = model_bytes = 0
     te_names: list[str] = []
     vae_names: list[str] = []
+    model_names: list[str] = []
     video_refs = image_refs = 0
     guide_latents: list[tuple[object, int]] = []
-    for node in prompt.values():
+    guide_nodes: list[str] = []
+    live = live_nodes(prompt)
+    for key, node in prompt.items():
         inputs = node.get("inputs") if isinstance(node, Mapping) else None
-        if not isinstance(inputs, Mapping):
+        if not isinstance(inputs, Mapping) or str(key) not in live:
             continue
+        node_key = str(key)
+        on_driver = not str(node.get("class_type", "")).startswith(_WORKER_LOADER_PREFIX)
         guide_node = (isinstance(node, Mapping)
                       and node.get("class_type") in _GUIDE_NODE_CLASSES)
         if guide_node:
@@ -329,9 +333,12 @@ def driver_stack_terms(prompt: object, *, family: str = "",
                 if not isinstance(key, str) or not key.startswith(_GUIDE_IMAGE_KEYS):
                     continue
                 source = value[0] if isinstance(value, (list, tuple)) else None
+                links = _links_under(value)
+                if links and node_key not in guide_nodes:
+                    guide_nodes.append(node_key)
                 guide_latents.extend(
-                    (canvas, named_file_frames(prompt, source))
-                    for _ in range(_links_under(value)))
+                    (canvas, guide_order.named_file_frames(prompt, source))
+                    for _ in range(links))
         for key, value in inputs.items():
             if not isinstance(key, str):
                 continue
@@ -346,6 +353,11 @@ def driver_stack_terms(prompt: object, *, family: str = "",
                     if size:
                         vae_bytes += size
                         vae_names.append(os.path.basename(value))
+                elif key in _DRIVER_MODEL_KEYS and on_driver:
+                    size = driver_model_charge.driver_model_bytes(str(node.get("class_type", "")), key, value)
+                    if size:
+                        model_bytes += size
+                        model_names.append(os.path.basename(value))
                 continue
             if guide_node and key.startswith(_GUIDE_IMAGE_KEYS):
                 continue                 # counted with its canvas above
@@ -355,16 +367,26 @@ def driver_stack_terms(prompt: object, *, family: str = "",
                 image_refs += _links_under(value)
     guide_bytes, guide_note = graph_guide_encode_bytes(
         prompt, tuple(guide_latents), family=family)
+    guide_first, order_note = False, ""
+    if guide_bytes and activation_bytes:
+        # A still as the price proves one: a file of fewer frames than a clip, which Add Guide
+        # anchors as its first image alone. A declared or unread length is no proof.
+        stills = all(0 < frames < h3_activation.H3_GUIDE_CLIP_FLOOR_FRAMES for _, frames in guide_latents)
+        guide_first, order_note = guide_order.proved(prompt, live, tuple(guide_nodes), stills)
+        guide_note = guide_order.charged_note(guide_note, guide_bytes, activation_bytes,
+                                              guide_first, order_note)
     return DriverStackTerms(
         te_bytes=int(te_bytes * TE_RESIDENT_RATIO),
         vae_bytes=vae_bytes,
         ref_bytes=(REF_VIDEO_ENCODE_BYTES if video_refs
                    else IMAGE_REF_BYTES * image_refs),
         te_artifacts=tuple(te_names), vae_artifacts=tuple(vae_names),
+        model_bytes=model_bytes, model_artifacts=tuple(model_names),
         video_refs=video_refs, image_refs=image_refs, resolved=True,
         guide_refs=len(guide_latents), guide_bytes=guide_bytes,
         guide_note=guide_note,
         activation_bytes=activation_bytes, activation_note=activation_note,
+        guide_first=guide_first, guide_order_note=order_note,
     )
 
 
@@ -392,8 +414,8 @@ def _comfy_has_loaded_models() -> bool:
 
     Comfy execution order can run VAE or text loaders first. A model comfy is
     using already shows in the MemAvailable reading, so charging it again
-    would create a class C false refusal. Any one entry is enough, so
-    ``credited_terms`` assumes the reading already counts the whole stack.
+    would create a class C false refusal. ``credited_terms`` credits what
+    the entries hold, up to the whole stack (``_comfy_held_bytes``).
 
     A loaded but not yet used artifact is absent from that list and can be
     over-charged once. The artifact memo covers repeats; missing every charge
@@ -407,23 +429,60 @@ def _comfy_has_loaded_models() -> bool:
         return False
 
 
-def credited_terms(terms: DriverStackTerms) -> DriverStackTerms:
+def _comfy_held_bytes() -> int | None:
+    """The bytes of the models ComfyUI holds, or None when it cannot say.
+
+    It cannot say which files they came from, so the credit below never
+    exceeds this: a held encoder can stand in for this graph's, never for more.
+    """
+    try:
+        import comfy.model_management as mm
+
+        return sum(int(loaded.model_memory()) for loaded in mm.current_loaded_models
+                   if loaded.model is not None)
+    except Exception:  # an unreadable size credits as before, the whole stack
+        return None
+
+
+def _credit_held(terms: DriverStackTerms, held: int, ratio: float = 1.0) -> DriverStackTerms:
+    """Credit ``held`` bytes against the graph's models; the rest stays charged.
+
+    The reference encode stays charged too: with models still to load, it has
+    not run either. ``ratio`` reads held bytes as encoders resident at that ratio.
+    """
+    te = max(terms.te_bytes - int(held * ratio), 0)
+    left = max(held - int(terms.te_bytes / ratio), 0)
+    vae = max(terms.vae_bytes - left, 0)
+    left = max(left - terms.vae_bytes, 0)
+    return replace(terms, te_bytes=te, vae_bytes=vae,
+                   model_bytes=max(terms.model_bytes - left, 0), credited=True,
+                   credit_reason=(f"comfy already holds {_gib(held)} GiB of loaded models, "
+                                  f"credited against the {_gib(terms.models_bytes)} GiB of "
+                                  "models this graph loads"))
+
+
+def credited_terms(terms: DriverStackTerms, ratio: float = 1.0) -> DriverStackTerms:
     """Apply the residency credits: comfy's loaded models, then earlier charges.
 
-    A guide encode survives both credits, like render activations. The first
-    credit fires on any loaded model and assumes MemAvailable already counts
-    the stack; a loaded model does not show that Add Guide has run.
+    A guide or reference encode survives both credits, like render activations:
+    each is a transient, and a held model does not show that it has run. The
+    first credit fires on any loaded model. It credits the whole stack only
+    where what ComfyUI holds covers it (MemAvailable already counts that much),
+    and otherwise only the bytes held.
     """
     if not terms.resolved:
         return terms
     if _comfy_has_loaded_models():
-        return replace(terms, te_bytes=0, vae_bytes=0, ref_bytes=0,
+        held = _comfy_held_bytes()
+        if held is not None and held < terms.models_bytes:
+            return _credit_held(terms, held, ratio)
+        return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0,
                        credited=True,
                        credit_reason="comfy already holds loaded models, so "
                                      "the preflight assumes MemAvailable counts this stack")
-    named = (*terms.te_artifacts, *terms.vae_artifacts)
+    named = terms.models
     if named and all(name in _CHARGED_STACK_ARTIFACTS for name in named):
-        return replace(terms, te_bytes=0, vae_bytes=0, ref_bytes=0,
+        return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0,
                        credited=True,
                        credit_reason="an earlier loader node charged "
                                      "this stack")
@@ -432,5 +491,5 @@ def credited_terms(terms: DriverStackTerms) -> DriverStackTerms:
 
 def note_stack_charged(terms: DriverStackTerms) -> None:
     """Record a cleared charge, so the next loader node credits it."""
-    for name in (*terms.te_artifacts, *terms.vae_artifacts):
+    for name in terms.models:
         remember(_CHARGED_STACK_ARTIFACTS, name)

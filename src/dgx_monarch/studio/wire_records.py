@@ -12,6 +12,8 @@ PAGE_BYTES = 8 * 1024 * 1024
 # A browser reads a JSON number as a double, which holds whole numbers exactly only up to
 # 2**53 - 1, its Number.MAX_SAFE_INTEGER. ComfyUI seeds reach 2**64 - 1.
 SAFE_INTEGER = 2**53 - 1
+# A summary row carries at most this many characters of the draft's workflow name.
+WORKFLOW_NAME_CHARS = 200
 # An imported job has no frozen seed list, so the projection hands decode_row the inputs of
 # each prompt node with an integer seed input. An object extracts as its exact text, while a
 # json_each or scalar value turns an integer above 2**63 into a rounded real. Only object nodes
@@ -40,7 +42,12 @@ def projection(kind: str) -> str:
                         "experiment_id", "cell_index", "preview_artifact_id", "started_at", "ended_at",
                         "running_observed_at"))
         submission = _object(("project_id", "versions", "model_identities", "digest"), "$.submission")
-        requested = _object(("operation", "project_id"), "$.submission.requested")
+        # The draft's workflow name, which the viewer shows while the job runs; a long name is cut.
+        workflow_name = ("CASE WHEN json_type(document,'$.submission.requested.workflowName')='text' "
+                         f"THEN substr(json_extract(document,'$.submission.requested.workflowName'),1,"
+                         f"{WORKFLOW_NAME_CHARS}) END")
+        requested = (f"json_set({_object(('operation', 'project_id'), '$.submission.requested')},"
+                     f"'$.workflowName',{workflow_name})")
         # The seeds the driver ran with, at the path the full record uses. decode_row fills an
         # imported job's from its prompt and gives each the form a browser reads exactly.
         effective = ("json_object('seeds',json_extract(document,'$.submission.effective.seeds'),'prompt_seeds',"

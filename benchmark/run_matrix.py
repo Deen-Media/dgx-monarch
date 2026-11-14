@@ -789,6 +789,7 @@ def run_case(
     import torch
     from gates import scored_latent
 
+    from dgx_monarch.cfg_pair import text_rows_differ
     from dgx_monarch.nodes.common import (
         LATENT_DOWNSCALE_METADATA_KEY,
         resolve_topology,
@@ -817,8 +818,8 @@ def run_case(
         metadata_key=LATENT_DOWNSCALE_METADATA_KEY,
     )
     sampling_cfg = float(merged["cfg"]) if sampling_path == "ksampler" else 1.0
-    # The KSampler node tags its latent the same way, so the provenance label
-    # names the topology the render resolves (a cfg++ sampler at cfg 1.0).
+    # The KSampler node tags its latent the same way (the cfg++ flag and the
+    # prompt pair), so the provenance label names the topology the render resolves.
     effective_topology, sage, topology_reason = resolve_topology(
         model,
         latent["samples"],
@@ -826,6 +827,8 @@ def run_case(
         latent_downscale=latent_downscale,
         keeps_uncond=(sampling_path == "ksampler"
                       and sampler_keeps_uncond_at_cfg1(merged["sampler"])),
+        pair_differs=(sampling_path == "ksampler"
+                      and text_rows_differ(positive, negative)),
     )
 
     waiver_runs: set[str] = set()

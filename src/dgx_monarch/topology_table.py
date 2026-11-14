@@ -58,10 +58,13 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "too, because row 15's record excludes Kroma (2026-10-16)"),
     # --- chroma (flux-family DiT) -----------------------------------------
     AutoRule(20, "chroma", (), 0.0, 1.2, 2, {"cfg": 2}, False,
-             "cfg2 below 1.2 MP; on the shipped graph at 1024 square on 2026-10-01 it read "
-             "bit-identical to one GPU and ran faster than uly2 on bf16, fp8 and int8"),
+             "cfg2 below 1.2 MP for a prompt pair whose text rows differ; on the shipped graph "
+             "at 1024 square on 2026-10-01 it read bit-identical to one GPU and ran faster than "
+             "uly2 on bf16, fp8 and int8, and a BF16 pair of equal rows read NRMS 0.034, so "
+             "such a pair takes the uly2 fallback"),
     AutoRule(19, "chroma", (), 1.2, 1.64, 2, {"cfg": 2}, False,
-             "cfg2 from 1.2 to 1.64 MP on BF16, FP8 and INT8: Campaign K (2026-10-14, "
+             "cfg2 from 1.2 to 1.64 MP on BF16, FP8 and INT8 for a prompt pair whose text rows "
+             "differ (a pair of equal rows takes rows 21 and 22): Campaign K (2026-10-14, "
              "ComfyUI e8665ca8, head capped at 2100 MHz) read Chroma1-HD BF16, FP8-mixed "
              "and INT8 ConvRot bit-identical to one GPU at 1152, 1216 and 1280 square, "
              "1.30x to 1.31x faster than uly2 on BF16, 1.26x to 1.30x faster than uly2 "
@@ -127,13 +130,15 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "latent comparison matched DP2 at 1-step NRMS 0.000"),
     # --- boogu (dual-stream image DiT, ~10B, 4 attention stages) -----------
     AutoRule(79, "boogu", (), 0.0, 1.2, 2, {"cfg": 2}, False,
-             "cfg2 below 1.2 MP on FP8: Campaign K (2026-10-14, ComfyUI e8665ca8, head "
-             "capped at 2100 MHz) read the shipped unequal prompt pair, on the per-cond "
-             "dispatch path, bit-identical to one GPU and 1.40x faster than uly2 at 1024 "
-             "square"),
+             "cfg2 below 1.2 MP on FP8 for a prompt pair whose text rows differ: Campaign "
+             "K (2026-10-14, ComfyUI e8665ca8, head capped at 2100 MHz) read the shipped "
+             "pair, on the per-cond dispatch path, bit-identical to one GPU and 1.40x "
+             "faster than uly2 at 1024 square; on 2026-11-07 a pair of equal rows read "
+             "one-step NRMS 0.014 to 0.025 against one GPU, so it takes row 78"),
     AutoRule(78, "boogu", (), 0.0, _INF, 2, {"ulysses": 2}, False,
              "28 heads tile uly2, USP default; about 20GB bf16 resident, *+fsdp for headroom; "
-             "row 79 takes cfg2 below 1.2 MP on FP8; elsewhere cfg2 is an explicit preset, "
+             "row 79 takes cfg2 below 1.2 MP on FP8 for a pair whose text rows differ; "
+             "elsewhere cfg2 is an explicit preset, "
              "and since 2026-09-05 it takes any prompt pair: "
              "unequal num_tokens dispatch one cond per rank instead of folding; "
              "2026-10-06 fp8 uly2 bit-identical to dp2 (was 1-step NRMS 0.012)"),
@@ -175,25 +180,34 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "into one batched call, and the DiT caps batch at 1; cfg2 and dp "
              "both typed-refuse on the driver before dispatch. Ring only when "
              "the packed total needs no divisibility pad: pad-row exclusion is "
-             "ulysses-only, so the odd-world fallback and the world-4 fold "
+             "ulysses-only, so the odd-world fallback and a ring fold "
              "refuse a padded sequence instead of rendering it"),
+    # The world-4 fold into uly4 says where it stands in the logged reason
+    # only where it runs (topology.VALIDATED_ULYSSES_FOLD_NOTES), so a pair's
+    # line keeps speaking of the pair.
+    # --- minimax_h3_image (H3's DiT, no audio, one latent frame) ----------
+    AutoRule(55, "minimax_h3_image", (), 0.0, _INF, 2, {"ulysses": 2}, False,
+             "packed text, reference pictures and target in one sequence: USP always "
+             "(56 heads tile uly2). No cfg2 row: each conditioning publishes its own "
+             "packed layout and the DiT caps batch at 1, so cfg2 and dp typed-refuse "
+             "on the driver before dispatch. Pad-row exclusion is ulysses-only, so a "
+             "padded ring refuses"),
     # --- omnigen2 (Lumina2-style single-stack; 21 q / 7 kv heads) ----------
     AutoRule(80, "omnigen2", (), 0.0, _INF, 2, {"ring": 2}, False,
              "21 q and 7 kv heads do not divide by 2, so ulysses cannot split them; ring is "
              "the only SP topology. Refiners local; cfg2 stays an explicit preset, since 2026-09-05 "
              "on the per-cond dispatch rather than on a batch the num_tokens constant blocks"),
     # --- anima (cosmos MiniTrainDIT ~2B image DiT, H-axis shard) -----------
-    AutoRule(47, "anima", (), 0.0, 1.2, 2, {"cfg": 2}, False,
-             "cfg2 below 1.2 MP on BF16: Campaign K (2026-10-14, dgx-monarch 65d14333, "
-             "ComfyUI e8665ca8, head capped at 2100 MHz) read the shipped unequal prompt "
-             "pair, on the per-cond dispatch path, bit-identical to one GPU and 1.27x "
-             "faster than uly2 at 1024 square"),
+    # Row 47, cfg2 below 1.2 MP on BF16, was withdrawn on 2026-11-10 with the
+    # text branch fix (TROUBLESHOOTING #151): its record was measured against a
+    # Worker's one GPU that ran the shipped pair as two batch-1 calls, and stock
+    # folds that pair into one batch-2 call, which cfg2 cannot reproduce.
     AutoRule(48, "anima", (), 0.0, _INF, 2, {"ulysses": 2}, False,
-             "about 2B cosmos-MiniTrainDIT, uly2 default (16 heads d128); row 47 takes "
-             "cfg2 below 1.2 MP on BF16; cfg_cond_padding none: comfy's 512 pad lands "
-             "inside the forward, after the batching decision, so an unequal prompt pair "
-             "splits the model call at any length and cfg2 takes the per-cond dispatch "
-             "(2026-09-02)"),
+             "about 2B cosmos-MiniTrainDIT, uly2 default (16 heads d128); "
+             "cfg_cond_padding none: comfy's 512-row text pad runs in extra_conds, "
+             "before the batching decision, so one GPU folds a prompt pair of at most "
+             "512 T5 ids into one batch-2 call, which cfg2's two batch-1 calls do not "
+             "reproduce, and cfg2 stays an explicit preset (2026-11-10)"),
     # --- hunyuan (flux double/single DiT: image 2.1 + video 1.5/SR, one family)
     AutoRule(46, "hunyuan", (), 0.0, _INF, 2, {"ulysses": 2}, False,
              "USP default for both the image (2.1) and video (1.5/SR) checkpoints "

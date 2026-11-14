@@ -34,6 +34,10 @@ class Driver:
         self.form = form
         self.posts = []
         self.uploads = []
+        # Files the driver saved as job outputs, served through /view as ComfyUI does.
+        self.outputs: dict[str, bytes] = {}
+        # When set, /view drops the connection mid-request, as a driver going away does.
+        self.drop_view = False
 
     def object_info(self):
         files = sorted(self.inputs)
@@ -58,9 +62,21 @@ class Driver:
             parts = await request.multipart()
             fields = {}
             async for part in parts:
-                fields[part.name] = part.filename if part.filename else await part.text()
+                if part.filename:
+                    fields[part.name], fields["bytes"] = part.filename, await part.read()
+                else:
+                    fields[part.name] = await part.text()
             self.uploads.append(fields)
             return web.json_response({"name": fields["image"], "subfolder": fields["subfolder"], "type": "input"})
+
+        async def view(request):
+            if self.drop_view:
+                request.transport.close()
+                return web.Response(status=500)
+            data = self.outputs.get(request.query.get("filename", ""))
+            if request.query.get("type") != "output" or data is None:
+                return web.json_response({"error": "missing"}, status=404)
+            return web.Response(body=data, content_type="image/png")
 
         async def prompt(request):
             body = await request.json()
@@ -75,6 +91,7 @@ class Driver:
 
         app.router.add_get("/object_info", object_info)
         app.router.add_post("/upload/image", upload)
+        app.router.add_get("/view", view)
         app.router.add_post("/prompt", prompt)
         app.router.add_get("/queue", queue)
         app.router.add_get("/history", empty)
@@ -303,4 +320,106 @@ def test_a_grid_axis_over_stored_uploads_previews_and_submits(tmp_path, form):
             assert status == 200 and not grid["ready"]
             assert grid["cells"][0]["errors"] == [] and grid["cells"][1]["errors"] == [
                 "root:1:image: Value is not an available choice"]
+    asyncio.run(scenario())
+
+
+def saved_output(system, name="out.png", data=None, **fields):
+    """A job's saved image output, as the companion records one from driver history."""
+    system.driver.outputs[name] = data if data is not None else base64.b64decode(png("green"))
+    record = {"id": "output-" + name, "job_id": "job", "kind": "image", "filename": name, "subfolder": "",
+              "type": "output", "metadata": {}, **fields}
+    system.store.create("artifacts", record)
+    return record["id"]
+
+
+@pytest.mark.parametrize("form", ["legacy", "options"])
+def test_send_to_edit_copies_an_output_into_the_input_store_and_binds_it(tmp_path, form):
+    # Send to edit binds a job's output as the actual image input: the companion copies
+    # it into the driver's input store as an upload of its own, which preview accepts.
+    async def scenario():
+        async with companion(tmp_path, form) as system:
+            output = saved_output(system)
+            status, copied = await system.call("POST", "/assets", json={"kind": "input", "artifact_id": output})
+            assert status == 201, copied
+            binding = copied["binding_value"]
+            assert binding.startswith("studio/") and copied["source_artifact_id"] == output
+            assert (copied["kind"], copied["job_id"], copied["width"], copied["height"]) == ("input", None, 8, 6)
+            (upload,) = system.driver.uploads
+            assert (upload["type"], upload["subfolder"], upload["image"]) == ("input", "studio", binding.split("/")[1])
+            with Image.open(io.BytesIO(upload["bytes"])) as stored:
+                assert (stored.format, stored.mode, stored.size) == ("PNG", "RGBA", (8, 6))
+                assert stored.getpixel((0, 0)) == (0, 128, 0, 255)
+            # The output itself still widens nothing; its copy binds through preview and submit.
+            status, _ = await system.call("POST", "/jobs/preview", json=draft("output.png"))
+            assert status == 400
+            status, preview = await system.call("POST", "/jobs/preview", json=draft(binding))
+            assert status == 200, preview
+            assert preview["prompt"]["1"]["inputs"]["image"] == binding
+            status, job = await system.call("POST", "/jobs", json={"preview_id": preview["id"], "idempotency_key": "edit"})
+            assert status == 202, job
+    asyncio.run(scenario())
+
+
+def test_send_to_edit_copies_an_output_larger_than_the_browser_upload_limit(tmp_path):
+    # The bytes never cross the browser, so the 2 MiB upload contract does not bind;
+    # the pixel rule does.
+    noise = Image.frombytes("RGB", (1100, 1100), bytes(range(256)) * (1100 * 1100 * 3 // 256) + bytes(1100 * 1100 * 3 % 256))
+    data = io.BytesIO()
+    noise.save(data, "PNG", compress_level=0)
+    assert len(data.getvalue()) > 2 * 1024 * 1024
+
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system, "large.png", data.getvalue())
+            status, copied = await system.call("POST", "/assets", json={"kind": "input", "artifact_id": output})
+            assert status == 201, copied
+            assert (copied["width"], copied["height"]) == (1100, 1100)
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("body", "fields", "code", "status"), [
+    ({"artifact_id": "missing"}, None, "not_found", 404),
+    ({"artifact_id": 7}, None, "asset_source", 400),
+    ({"kind": "mask"}, {}, "asset_source", 400),
+    ({}, {"kind": "video", "filename": "out.mp4"}, "asset_source", 400),
+    ({}, {"job_id": None, "kind": "input"}, "asset_source", 400),
+    ({}, {"source": "live_preview"}, "asset_source", 400),
+    ({}, {"filename": "gone.png"}, "artifact_unavailable", 404),
+])
+def test_send_to_edit_refuses_anything_but_a_saved_image_output(tmp_path, body, fields, code, status):
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system, **(fields or {})) if fields is not None else None
+            request = {"kind": "input", **({"artifact_id": output} if output else {}), **body}
+            answer, refused = await system.call("POST", "/assets", json=request)
+            assert (answer, refused["error"]["code"]) == (status, code), refused
+            assert system.driver.uploads == []
+    asyncio.run(scenario())
+
+
+def test_send_to_edit_names_a_dropped_driver_connection(tmp_path):
+    # A driver that goes away while the output is read is a copy failure the user can act on,
+    # with its own code, not an internal error; no upload is made.
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            system.driver.drop_view = True
+            status, refused = await system.call("POST", "/assets", json={"kind": "input", "artifact_id": output})
+            assert (status, refused["error"]["code"]) == (503, "asset_copy"), refused
+            assert "Send to edit again" in refused["error"]["message"]
+            assert system.driver.uploads == []
+    asyncio.run(scenario())
+
+
+def test_send_to_edit_keeps_the_pixel_rule(tmp_path, monkeypatch):
+    from dgx_monarch.studio import media_assets
+    monkeypatch.setattr(media_assets, "IMAGE_PIXELS", 10)
+
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            status, refused = await system.call("POST", "/assets", json={"kind": "input", "artifact_id": output})
+            assert (status, refused["error"]["code"]) == (413, "image_limit")
+            assert "Downscale the image to at most 16 megapixels" in refused["error"]["message"]
+            assert system.driver.uploads == []
     asyncio.run(scenario())

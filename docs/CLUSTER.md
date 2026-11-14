@@ -287,7 +287,11 @@ says. A value that is missing or not a finite number is left out, not written
 as zero. Phase and return series carry `scope="driver"` for the ComfyUI
 process, or `scope="worker"` and `worker_index` for a Worker actor, its
 position in the telemetry `workers` list counting from 0. Host series carry,
-as `host`, the host name each actor reports.
+as `host`, the host name each actor reports. On a host with more than one GPU
+each rank reports its own GPU, so the GPU series and the Worker actor's own
+counters also carry `worker_index`, and the memory and rail series, which
+describe the whole host, appear once per host, from the first rank with a
+reading for each. No two lines share a series name and label set.
 
 | Series | Labels | Value |
 | --- | --- | --- |
@@ -310,12 +314,12 @@ as `host`, the host name each actor reports.
 | `dgxm_return_poison_owners` | `scope`, `worker_index` | poisoned RDMA registration owners |
 | `dgxm_return_pending_read_jobs` | `scope`, `worker_index` | native reads not yet settled |
 | `dgxm_return_descriptor_total` | `scope`, `worker_index`, `kind`, `reason` | latent returns a Worker actor packed, by path |
-| `dgxm_gpu_util_pct` | `host` | GPU use in percent |
-| `dgxm_gpu_power_w` | `host` | GPU power in watts |
+| `dgxm_gpu_util_pct` | `host`, `worker_index` | GPU use in percent, for the GPU that rank uses |
+| `dgxm_gpu_power_w` | `host`, `worker_index` | GPU power in watts, for the GPU that rank uses |
 | `dgxm_mem_available_gib` | `host` | `MemAvailable` in GiB |
 | `dgxm_rail_rx_bytes_total`, `dgxm_rail_tx_bytes_total` | `host`, `rail` | bytes received and sent on each cabled RDMA port; `rail` is the device name, or `<device>/<port>` on a device with more than one cabled port |
-| `dgxm_swap_verify_failures` | `host` | LoRA swap bakes that did not match ComfyUI's own computation |
-| `dgxm_unbake_file_backed_gib` | `host` | LoRA restore data the Worker reads back from the checkpoint file, in GiB |
+| `dgxm_swap_verify_failures` | `host`, `worker_index` | LoRA swap bakes in that Worker actor that did not match ComfyUI's own computation |
+| `dgxm_unbake_file_backed_gib` | `host`, `worker_index` | LoRA restore data that Worker actor reads back from the checkpoint file, in GiB |
 
 `phase` is one of `attach`, `setup`, `queue_wait`, `compute`, `collect`,
 `rdma_preflight`, `rdma_register`, `rdma_read`, `rdma_drop`, `ack`, `recycle`,
@@ -374,8 +378,10 @@ stock ComfyUI defaults. Allowed keys are:
 * bounded numbers: `reserve_vram_gb` / `uma_reserve_gb` (0..1024),
   `swap_verify` (-1..64 integer) and `fsdp_prefetch_depth` (1..8 integer;
   above 1, FSDP prefetches that many blocks ahead, paid in reserved memory);
-* `slab_weights` (boolean or `"auto"`) and `safetensors_backend` (`"pread"` or
-  `"mmap"`).
+* `slab_weights` (boolean or `"auto"`), `safetensors_backend` (`"pread"` or
+  `"mmap"`), `int8_gemm` (`"triton"` or `"cutlass"`) and `fp8_matrix_mult`
+  (`"auto"`, `"on"` or `"off"`);
+* `worker_vae_decode` (`"off"` or `"auto"`), which only the driver reads.
 
 The UMA guidance behind these values is in docs/VALIDATION.md.
 
@@ -408,6 +414,45 @@ all, with either value, changes the context of every render on this box and
 re-proves every PASS in the ledger. The Init node follows the same rule and
 writes no key when the widget is off.
 
+`int8_gemm = "cutlass"` turns the INT8 GEMM kernel off in every actor
+([MODELS.md](MODELS.md#int8-gemm-kernel)). Without the key the actors run the
+Triton kernel, the default, so leave it out unless you want CUTLASS: writing it,
+with either value, changes every render's capability context like any key
+here. The ComfyUI process does not read it; start ComfyUI with
+`DGXM_INT8_GEMM=cutlass` to turn the kernel off there too. A change reaches an
+actor at its next setup, or in place through a worker-args update, with no
+reload: both kernels give the same output.
+
+`fp8_matrix_mult` decides whether the models the actors build take ComfyUI's
+FP8 matmul path ([MODELS.md](MODELS.md#fp8-compute-paths)). ComfyUI's own
+`--fast fp8_matrix_mult` reaches only the models the driver builds, because
+the actors start ComfyUI without its argument list. `"on"` gives every model
+an actor builds the loader option that flag stands in for, so a plain FP8
+checkpoint runs `torch._scaled_mm`; `"off"` builds a loader's `fp8_e4m3fn_fast`
+as `fp8_e4m3fn`; `"auto"`, the default, follows each loader's weight dtype. A
+checkpoint with comfy-kitchen quantization metadata runs comfy-kitchen's
+kernels under all three. Do not set `"on"` on GB10: there ComfyUI's FP8 matmul
+renders plain FP8 checkpoints as noise
+([MODELS.md](MODELS.md#fp8-on-gb10)). Leave the key out for the default:
+writing it changes every render's capability context like any key here. ComfyUI picks the path
+when it builds a model, so a changed value drops each actor's resident models,
+and the next render loads them again. The `FP8 matmul (actors)` row of
+`dgxm doctor` shows the value and warns for `"on"` where a host reports a GB10
+GPU, compute capability 12.1. `dgxm status` prints the value when the file sets
+the key, and `dgxm status --json` always carries it.
+
+`worker_vae_decode = "auto"` turns on Worker-assisted VAE decode: the stock VAE
+Decode and VAE Decode (Tiled) nodes split a video decode over the Workers
+where the family allows ([MODELS.md](MODELS.md#worker-assisted-vae-decode)),
+byte-identical to the one-host tiled decode. Absent or `"off"`, the default,
+every decode stays on the driver. It is the one key here only the driver
+reads: it never reaches an actor, so it stays out of the worker policy, every
+identity-gate capability context and the trust fingerprint, and writing it
+re-proves no PASS. The Init node arms it when it runs, which a change to the
+file triggers in cluster mode. Each decode logs one line saying whether it
+split, and `dgxm doctor` shows the last one
+([docs/TROUBLESHOOTING.md #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+
 `disable_custom_nodes = true` is a startup setting for sealed validation: the
 worker imports ComfyUI core and built-in nodes and runs no third-party pack. It
 is a `[worker_args]` key, not a public Init-node widget; sealed runners reach
@@ -433,15 +478,87 @@ args reach every rank, so they cannot name one, and they ride inside every
 render's capability context, where a debug knob would re-prove every PASS in
 the ledger. The worker reads both variables at setup and logs them at WARNING,
 armed or ignored. Both names are on the worker loop's reviewed inheritance
-list, so a unit drop-in reaches the actor; neither carries a credential, and
-together they can only make one rank refuse a load. Never set either on a box
-that is rendering.
+list and among the six a Worker reads from its `worker.env`, which is the way
+to set them ([Setting a Worker-side variable](#setting-a-worker-side-variable));
+neither carries a credential, and together they can only make one rank refuse
+a load. Never set either on a box that is rendering.
+
+`DGXM_FAULT_BACKUP_RANK` is a second debug-only worker environment variable of
+the same kind, also off unless `DGXM_ACCEPTANCE=1` is set on the same worker.
+On a pair whose render carries a LoRA stack with `lora_low_rss` off it makes
+the rank it names vote short of room at any reading, so every rank frees
+ComfyUI's weight backup, and then read its own model as wrong, so the fleet's
+refusal goes through the ranks' second exchange and every rank stops before
+its first step. It exists to show on hardware that no rank waits on the other
+there. It is set the same way; take both out and recycle to render.
 
 ```toml
 [worker_args]
 disable_pinned_memory = true
 reserve_vram_gb = 8.0
 ```
+
+## Setting a Worker-side variable
+
+A few diagnostic switches are read by a Worker, not by the driver:
+`DGXM_DISABLE_CONTEXT_ROOM`, `DGXM_DISABLE_COPY_FREE_DROP`,
+`DGXM_DISABLE_BACKUP_FREE`, and the debug faults `DGXM_FAULT_LOAD_RANK` and
+`DGXM_FAULT_BACKUP_RANK` with `DGXM_ACCEPTANCE`. They are environment
+variables because a worker argument reaches every rank and rides in every
+render's capability context. No render needs one.
+
+**The way that works on every Worker: one file.** On the box whose Worker
+should take the switch, as the Worker's user, write
+`~/.config/dgx-monarch/worker.env`:
+
+```
+DGXM_DISABLE_BACKUP_FREE=1
+```
+
+Make it `chmod 600`, then **Reset attached mesh** (or any other recycle). Each
+actor reads the file as it starts, so no service restarts and no unit is
+touched. To undo it, remove the line or the file and recycle again.
+
+- Only those six names are read. Any other line is ignored, and the Worker's
+  log names it once: the name, never its value.
+- The file must be a regular file owned by the Worker's user and not writable
+  by group or others. A symbolic link is not followed. A file that fails this
+  is ignored, and the Worker's log says why.
+- A value is plain: letters, digits and `_ . : -`, at most 64 of them.
+- It is never silent. Each actor logs one WARNING as it starts,
+  `Worker switches set on this box: NAME=value (worker.env), ...`. The
+  driver's log repeats it at every setup as `Worker switches set on <host>:
+  ...`, and the Worker's status carries the list as `worker_switches`.
+  `dgxm doctor` has no row for it yet. A switch left on turns a safety step
+  off, so take it out when the diagnosis is done.
+
+**Why not a unit drop-in.** A Worker unit has one of three forms
+(`systemctl --user cat dgxm-worker.service` shows yours), and a drop-in's
+`Environment=` line does not reach all of them:
+
+| the unit was written by | its start line | an `Environment=` drop-in |
+|---|---|---|
+| `dgxm setup` | python, beside `Environment=PYTHONPATH=...` | reaches the Worker |
+| `dgxm install-service` with no dependency path of its own | the same | reaches the Worker |
+| a verified update, or an install that names its dependency path | `/usr/bin/env -i ...`, which clears the environment on purpose | is cleared and does nothing |
+
+Where a drop-in does reach the Worker, `dgxm install-service`,
+`dgxm uninstall` and the verified update refuse while it exists
+([TROUBLESHOOTING #90](TROUBLESHOOTING.md#90-install-service-or-uninstall-refuses-an-existing-worker-unit)),
+and it needs a Worker restart. The file needs neither, so use it there too.
+
+**Precedence.** A name already set in the actor's environment wins over the
+file: from a drop-in on a unit that passes it on, or, on a local mesh, from
+the environment ComfyUI starts in. The Worker's line says where each switch
+came from, `(environment)` or `(worker.env)`.
+
+**Other Worker variables.** The file is for the six switches alone. The
+worker loop passes on a short reviewed list of other names
+([INSTALL.md](INSTALL.md), "Both launch modes"), such as
+`TORCHINDUCTOR_CACHE_DIR`; those reach a Worker only from a unit that does
+not clear its environment (the first two rows) or, on a local mesh, from
+ComfyUI's environment. On a unit that starts through `/usr/bin/env -i` the
+Worker runs with its own defaults for them.
 
 ## `[[hosts]]`
 
@@ -585,9 +702,9 @@ Fabric environment settings apply only inside worker actor processes.
 ### Switched fabrics
 
 The shipped `dgx-spark-pair` profile assumes two Sparks joined by a direct
-cable. One owner of four Sparks on a switched 100GbE RoCE fabric reported
+cable. Community four-Spark users on a switched 100GbE RoCE fabric reported
 needing this override
-([forum post by barichardson](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/17)).
+([community results](BENCHMARKS.md#community-four-node-results-2026-10-27)).
 It is quoted as reported; the maintainer has not reproduced it:
 
 ```toml

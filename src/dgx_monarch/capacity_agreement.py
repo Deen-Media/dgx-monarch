@@ -19,29 +19,31 @@ from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, NoReturn
 
+from . import box_names, old_model
 from .actor import store_slab_admit
 from .actor.capacity_quote import (
     RUNG_COMFY_MANAGED,
     VERDICT_REFUSE,
     VERDICT_RESCUE,
     WOULD_LOAD_REUSE,
-    WOULD_LOAD_SWAP,
     RankPrice,
 )
-from .capacity_fit import PROBE_PREFLIGHT_WALL, SlabFit, gib
+from .capacity_classic_bake import IN_PLACE_BAKE_PROVEN
+from .capacity_fit import PROBE_PREFLIGHT_WALL, SlabFit, gib, stock_second_term
 from .consent_descriptor import ConsentDescriptor, SlabResidencyRescueOffer
 from .delivery_faults import WorkerDeliveryError
 from .gate_audit_evidence import measured_tag
 from .log import get_logger
 from .mesh_safety import StockLoadCapacityError
 from .refusal import PanelAction, RefusalClass, refusal
+from .stock_words import bake_sentences
 from .transfer_utils import failure_summary, safe_call, safe_note
 
 log = get_logger(__name__)
 
 GUARD = "cross_rank_capacity"
 # The rescue arm raises under the worker stock guard, whose consent is wired.
-# GUARD has no card: no consent makes a refusing rank fit, and one refusing rank refuses the whole fleet.
+# GUARD has no consent card: no consent makes a refusing rank fit. Its one card is a reset (old_model.py).
 RESCUE_GUARD = "stock_load_preflight"
 TROUBLESHOOTING = 93
 
@@ -59,13 +61,6 @@ _NOTHING_LOADED = (
     "did not answer, click Reset attached mesh in the DGX Monarch panel. Then "
     "queue again. This refusal is capacity-protective (class C)."
 )
-# Price existing residency without assuming an unload frees it: a stock
-# load retains its arena, while dropping a slab barely changes MemAvailable.
-_AS_HELD = (
-    "This price was taken against what each box already holds: {named}. The "
-    "quote prices the slot as it stands and does not model the drop, so a load "
-    "that would replace a resident is priced with that resident still held."
-)
 
 
 class FleetCapacityError(StockLoadCapacityError):
@@ -80,11 +75,6 @@ class FleetQuoteUnavailableError(RuntimeError):
     """
 
 
-# What the driver calls its own box when no cluster config names one: a local
-# fleet runs every rank in the driver's process tree, so this is not a guess.
-LOCAL_HOST_NAME = "this box"
-
-
 @dataclass(frozen=True, slots=True)
 class RankAnswer:
     """One rank's reply, or the fact that it did not give one."""
@@ -94,39 +84,17 @@ class RankAnswer:
     quotes: tuple[RankPrice, ...] = ()
     silent: str = ""
     elapsed_s: float = 0.0
-    # Configured host label for diagnostics when the rank did not reply.
-    configured_host: str = ""
+    # The rank's box in plain words and, on a box of several ranks, its GPU (box_names.py).
+    box: str = ""
+    gpu: int | None = None
 
     def verdicts(self, verdict: str) -> list[RankPrice]:
         return [quote for quote in self.quotes if quote.verdict == verdict]
 
     @property
     def where(self) -> str:
-        """Name the box, and say who named it.
-
-        The rank's own report wins. The config name is the fallback and is
-        marked as one, because a silent rank reported nothing and the card must
-        not present the driver's name as the rank's own report.
-        """
-        if self.host:
-            return f"rank {self.rank} (host {self.host})"
-        if self.configured_host:
-            return f"rank {self.rank} (host {self.configured_host} as configured)"
-        return f"rank {self.rank} (host unnamed)"
-
-
-def _configured_hosts(handle: Any, world: int, gpus: int) -> list[str]:
-    """The driver's name for each rank's box, in rank order.
-
-    Ranks fill hosts in blocks of ``gpus``, the order ``collect`` slices the
-    worker mesh in, so rank ``i`` sits on host ``i // gpus``. No host list is
-    a local fleet, where every rank is the driver's own box.
-    """
-    hosts = tuple(getattr(getattr(handle, "config", None), "hosts", None) or ())
-    if not hosts:
-        return [LOCAL_HOST_NAME] * world
-    return [str(getattr(hosts[index // gpus], "name", "") or "")
-            if index // gpus < len(hosts) else "" for index in range(world)]
+        """The rank in plain words, 'the sibling': the driver names every box."""
+        return box_names.label(self.box or box_names.UNLISTED, self.gpu)
 
 
 def _block(quote: RankPrice) -> dict[str, Any]:
@@ -197,6 +165,7 @@ def _pairs(answers: list[RankAnswer], verdict: str) -> list[tuple[RankAnswer, Ra
 def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str) -> str:
     """The refusing rank's own numbers, formatted rather than re-derived."""
     measured = _block(quote)
+    where = box_names.opening(answer.where)
     try:
         needed, weights, avail, headroom = (
             float(measured[key]) for key in
@@ -205,12 +174,12 @@ def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str) -> st
         text = " ".join(str(quote.reason).split())
         if len(text) > _MAX_REASON_CHARS:
             text = text[:_MAX_REASON_CHARS] + "..."
-        return f"{answer.where} refused: {text}."
+        return f"{where} refused: {text}."
     if measured.get("probe") == PROBE_PREFLIGHT_WALL:
         # Managed and FSDP estimates come from their own capacity checks; neither
         # charges the stock arena, so the sentence names no second term.
         kind = "comfy-managed" if quote.rung == RUNG_COMFY_MANAGED else "sharded"
-        return (f"{answer.where} priced a {kind} load of {unet_name}: the load "
+        return (f"{where} priced a {kind} load of {unet_name}: the load "
                 f"needs {needed} GiB against a {weights} GiB file, and {avail} "
                 f"GiB of unified memory is available, {abs(headroom)} GiB short.")
     if quote.use_slab:
@@ -222,37 +191,25 @@ def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str) -> st
         second_term = f"plus a {floor} GiB floor for the rest of the box"
         if lora:
             second_term += f" and {lora} GiB for the LoRA stack's bake"
+    elif measured.get("credit_bytes"):  # the slot's own resident, credited (old_model.py)
+        return (old_model.credited_sentence(where, unet_name, quote, needed, weights, avail, abs(headroom))
+                + bake_sentences(measured, name_the_term=True))
     else:
-        kind, second_term = "stock", "plus the host copy it is placed from"
+        kind, second_term = "stock", stock_second_term(measured)
     return (
-        f"{answer.where} priced a {kind} load of {unet_name}: the load needs "
+        f"{where} priced a {kind} load of {unet_name}: the load needs "
         f"{needed} GiB, a {weights} GiB file {second_term}, and {avail} GiB of "
         f"unified memory is available, {abs(headroom)} GiB short."
-    )
-
-
-def _held_clause(refusing: list[tuple[RankAnswer, RankPrice]]) -> str:
-    """Name the residents the prices were taken over, or say nothing."""
-    named = []
-    for answer, quote in refusing:
-        if quote.would_load not in (WOULD_LOAD_SWAP, WOULD_LOAD_REUSE):
-            continue
-        word = quote.holds_resident.get(quote.slot)
-        if not word:
-            continue
-        named.append(f"{answer.where} holds a {word} resident in the "
-                     f"{quote.slot} slot and this load reads as a "
-                     f"{quote.would_load}")
-    return _AS_HELD.format(named="; ".join(named)) if named else ""
+    ) + ("" if quote.use_slab else bake_sentences(measured))
 
 
 def _log_fleet(answers: list[RankAnswer], outcome: str) -> None:
     # A price logged only on a refusal leaves a fitting fleet
     # indistinguishable from a host where the price made no claim at all.
-    rows = [f"rank {answer.rank}={quote.slot}:{quote.verdict}/{quote.rung}"
+    rows = [f"{answer.where}={quote.slot}:{quote.verdict}/{quote.rung}"
             f"@{_headroom_text(quote)}"
             for answer in answers for quote in answer.quotes]
-    rows += [f"rank {answer.rank}={answer.silent or 'no rows'}"
+    rows += [f"{answer.where}={answer.silent or 'no rows'}"
              for answer in answers if answer.silent or not answer.quotes]
     safe_call(log.info, "cross-rank capacity %s: %s", outcome, ", ".join(rows))
 
@@ -266,7 +223,8 @@ def _refuse_unavailable(text: str) -> NoReturn:
 
 def decide(answers: list[RankAnswer], world: int, *,
            unet_name: str = "this checkpoint",
-           deadline_s: float = CAPACITY_QUOTE_DEADLINE_S) -> None:
+           deadline_s: float = CAPACITY_QUOTE_DEADLINE_S,
+           keep: frozenset[str] = frozenset()) -> None:
     """Evaluate fleet replies and raise on a definite refusal or invalid evidence.
 
     Check missing replies, incomplete or duplicated rank inventories, and
@@ -290,26 +248,36 @@ def decide(answers: list[RankAnswer], world: int, *,
     disagree = {slot: sorted(seen) for slot, seen in sizes.items() if len(seen) > 1}
     if silent or len(answers) != world or len(set(ranks)) != len(ranks) or disagree:
         _log_fleet(answers, "unavailable")
-        _refuse_unavailable(_unavailable_text(
-            answers, silent, world, ranks, disagree, deadline_s))
+        _refuse_unavailable(_unavailable_text(answers, silent, world, disagree, deadline_s))
     refusing = _pairs(answers, VERDICT_REFUSE)
+    rescuing = _pairs(answers, VERDICT_RESCUE)
+    # Priced with what a load does not replace still held: a clear may make room.
+    short = refusing + rescuing
+    # ``keep``: the models this request and graph load are never in the way.
+    offer = old_model.fleet_offer(short, answers, unet_name, keep)
+    if offer is not None and offer.helps:
+        _log_fleet(answers, "refused, old model in the way")
+        from .nodes import old_model_clear
+
+        priced = " ".join(_priced_sentence(a, q, unet_name) for a, q in short)
+        old_model.raise_fleet_refusal(offer, len({a.rank for a, _q in short}), world, priced,
+                                      card=old_model_clear.card_possible(unet_name))
     if refusing:
         _log_fleet(answers, "refused")
-        _refuse_shortfall(refusing, answers, world, unet_name)
-    rescuing = _pairs(answers, VERDICT_RESCUE)
+        _refuse_shortfall(refusing, answers, world, unet_name, offer)
     if rescuing:
         _log_fleet(answers, "rescue offered")
-        _offer_rescue(*rescuing[0])
+        _offer_rescue(*rescuing[0], offer)
     _log_fleet(answers, "admitted")
 
 
-def _unavailable_text(answers: list[RankAnswer], silent: list[RankAnswer],
-                      world: int, ranks: list[int],
+def _unavailable_text(answers: list[RankAnswer], silent: list[RankAnswer], world: int,
                       disagree: dict[str, list[int]], deadline_s: float) -> str:
     if silent:
         named = "; ".join(f"{answer.where} {answer.silent}" for answer in silent)
-        heard = "; ".join(f"rank {answer.rank} answered in {answer.elapsed_s:.2f} s"
-                          for answer in answers if not answer.silent)
+        heard = box_names.opening("; ".join(
+            f"{answer.where} answered in {answer.elapsed_s:.2f} s"
+            for answer in answers if not answer.silent))
         return (
             f"{_NEEDS_EVERY_RANK}, and {named} (deadline {deadline_s:.0f} s). "
             f"{heard or 'No other rank answered either'}. A rank that cannot "
@@ -323,16 +291,17 @@ def _unavailable_text(answers: list[RankAnswer], silent: list[RankAnswer],
             "bytes per slot), so the worker hosts hold different files under "
             f"the same checkpoint name. {_NOTHING_LOADED} Stage the same "
             "artifact on every host first.")
+    named = ", ".join(answer.where for answer in sorted(answers, key=lambda a: a.rank))
     return (
         f"{_NEEDS_EVERY_RANK}, and the fleet of {world} returned "
-        f"{len(answers)} answers from ranks {sorted(ranks)}. A rank inventory "
+        f"{len(answers)} answers, from {named}. A rank inventory "
         "that is short or duplicated cannot say what the leanest box holds. "
         f"{_NOTHING_LOADED}")
 
 
 def _refuse_shortfall(refusing: list[tuple[RankAnswer, RankPrice]],
-                      answers: list[RankAnswer], world: int,
-                      unet_name: str) -> NoReturn:
+                      answers: list[RankAnswer], world: int, unet_name: str,
+                      offer: old_model.ClearOffer | None = None) -> NoReturn:
     """At least one rank priced the load and cannot hold it."""
     short = {answer.rank for answer, _quote in refusing}
     blocker = next((quote.blocker[1] for _answer, quote in refusing
@@ -344,7 +313,7 @@ def _refuse_shortfall(refusing: list[tuple[RankAnswer, RankPrice]],
         blocker = next((store_slab_admit.rescue_blocker(fit)[1]
                         for fit in (_slab_fit(quote) for _answer, quote in refusing)
                         if fit is not None and fit.applies and not fit.fits), "")
-    held = _held_clause(refusing)
+    held = old_model.held_clause(refusing, offer)
     fitting = [f"{answer.where} took the {quote.rung} rung" if quote.rung
                else f"{answer.where} made no claim"
                for answer in answers for quote in answer.quotes
@@ -355,7 +324,7 @@ def _refuse_shortfall(refusing: list[tuple[RankAnswer, RankPrice]],
         f"{world} cannot, so nothing was loaded on any rank. "
         + " ".join(_priced_sentence(answer, quote, unet_name)
                    for answer, quote in refusing)
-        + (f" {'; '.join(fitting)}." if fitting else "")
+        + (f" {box_names.opening('; '.join(fitting))}." if fitting else "")
         + " The fleet takes the leanest answer, because the load runs everywhere."
         + (f" {held}" if held else "")
         + (f" What would fit: {blocker}." if blocker else "")
@@ -364,7 +333,8 @@ def _refuse_shortfall(refusing: list[tuple[RankAnswer, RankPrice]],
         guard=GUARD, waivable=False, troubleshooting=TROUBLESHOOTING))
 
 
-def _offer_rescue(answer: RankAnswer, quote: RankPrice) -> NoReturn:
+def _offer_rescue(answer: RankAnswer, quote: RankPrice,
+                  offer: old_model.ClearOffer | None = None) -> NoReturn:
     """Raise the existing offer earlier, with the leanest rank's numbers.
 
     Ranks agree on the rank-invariant half of a descriptor and never on the
@@ -382,6 +352,8 @@ def _offer_rescue(answer: RankAnswer, quote: RankPrice) -> NoReturn:
             f"{answer.where} offered a capacity rescue this driver could not "
             f"read, so the offer cannot be registered. {_NOTHING_LOADED}")
     spec = KIND_SPECS[consent_descriptor.KIND_RESCUE_SLAB]
+    # The rescue arm prices against the same residents the refusal arm does.
+    held = old_model.held_clause([(answer, quote)], offer)
     tail = []
     for build, note in ((lambda: measured_tag(descriptor.measured), "measured numbers"),
                         (lambda: consent_descriptor.encode(descriptor), "descriptor")):
@@ -394,8 +366,8 @@ def _offer_rescue(answer: RankAnswer, quote: RankPrice) -> NoReturn:
         RefusalClass.CAPACITY,
         f"capacity rescue available for {descriptor.unet_name}: "
         f"{descriptor.human_reason} Every rank must hold this checkpoint and "
-        f"{answer.where} is the leanest, so its price governs the fleet. "
-        "Nothing was loaded and nothing was quarantined.",
+        f"{answer.where} is the leanest, so its price governs the fleet."
+        + (f" {held}" if held else "") + " Nothing was loaded and nothing was quarantined.",
         guard=RESCUE_GUARD, waivable=True, troubleshooting=TROUBLESHOOTING,
         panel_action=PanelAction(label=spec.primary_label, env=spec.env_var),
     ) + (("\n" + "\n".join(tail)) if tail else ""))
@@ -422,9 +394,11 @@ def _answer_from(rank: int, reply: Any, elapsed: float) -> RankAnswer:
     reported = reply.get("rank")
     if isinstance(reported, int) and not isinstance(reported, bool) and reported != rank:
         # The driver knows which rank it sent to and keeps that name: a reply
-        # that renames itself makes one rank's answer stand for another's.
+        # that renames itself makes one rank's answer stand for another's. The
+        # numbers are the evidence of a slicing fault, so the log keeps them.
+        safe_call(log.warning, "cross-rank capacity: rank %d answered as rank %d", rank, reported)
         return RankAnswer(rank, host, elapsed_s=elapsed,
-                          silent=f"answered as rank {reported}")
+                          silent="answered as another rank")
     rows = reply.get("quotes")
     if not isinstance(rows, list) or not rows:
         # ``decide`` counts answers, not rows: an empty inventory priced nothing.
@@ -490,26 +464,36 @@ def collect(handle: Any, request: dict, world: int, *,
             # Measure this rank's wait, not cumulative collection time: all futures
             # start together but are read in order.
             answers.append(_answer_from(index, reply, time.monotonic() - asked))
-    # A silent rank never names its own box, so the driver's own list goes on
-    # every row here rather than at four raise sites.
-    named = _configured_hosts(handle, world, gpus)
-    return [replace(answer, configured_host=named[answer.rank])
+    # The driver names every box (box_names.py), on every row here rather
+    # than at four raise sites, so a silent rank is named too.
+    named = box_names.fleet_boxes(handle, world)
+    return [replace(answer, box=named[answer.rank][0], gpu=named[answer.rank][1])
             if answer.rank < len(named) else answer for answer in answers]
 
 
-def quote_request(specs: list[dict], rescue_consent: dict | None = None) -> dict:
-    """The narrow request the endpoint prices, with no latent riding along."""
+def quote_request(specs: list[dict], rescue_consent: dict | None = None,
+                  in_place_bake_proven: bool = False) -> dict:
+    """The narrow request the endpoint prices, with no latent riding along.
+
+    ``in_place_bake_proven`` is the render's own permission
+    (``nodes/in_place_bake_permission``), so the quote and the store's
+    ``ensure`` price one stack change by one rule. Anything but ``True`` is no.
+    """
     return {
         "specs": [{"unet_name": spec.get("unet_name"), "options": spec.get("options"),
                    "loras": spec.get("loras"), "slot": spec.get("slot", "cond")}
                   for spec in specs],
         "rescue_consent": rescue_consent,
+        "in_place_bake_proven": in_place_bake_proven is True,
     }
 
 
 def agree_sample(handle: Any, request: dict) -> None:
     """Agree the render's checkpoints before parity and dispatch."""
+    from . import mesh_builds
     from .actor.worker_authorization import sample_rescue_consent
+
+    mesh_builds.refuse_two_builds(handle)  # before any rank loads or waits on a peer
 
     model = request.get("model")
     if not isinstance(model, dict):
@@ -519,23 +503,32 @@ def agree_sample(handle: Any, request: dict) -> None:
     if isinstance(uncond, dict):
         specs.append(dict(uncond, slot="uncond"))
     agree_or_refuse(
-        handle, quote_request(specs, sample_rescue_consent(request)),
+        handle, quote_request(specs, sample_rescue_consent(request),
+                              request.get(IN_PLACE_BAKE_PROVEN) is True),
         unet_name=str(model.get("unet_name") or "this checkpoint"))
 
 
 def agree_load(handle: Any, unet_name: str, options: dict | None,
-               lora_stack: list | None, slot: str) -> None:
-    """Agree one eager loader-node load before any rank allocates."""
+               lora_stack: list | None, slot: str, keep: Any = ()) -> None:
+    """Agree one eager loader-node load before any rank allocates.
+
+    ``keep`` names the checkpoints the same graph loads, so a model the graph's
+    other loader placed seconds earlier is never offered as an old model.
+    """
+    from . import mesh_builds
+
+    mesh_builds.refuse_two_builds(handle)  # a fleet on two builds is refused before its first load
     agree_or_refuse(
         handle,
         quote_request([{"unet_name": unet_name, "options": options,
                         "loras": lora_stack, "slot": slot}]),
-        unet_name=unet_name)
+        unet_name=unet_name, keep=frozenset(str(name) for name in keep or ()))
 
 
 def agree_or_refuse(handle: Any, request: dict, *,
                     unet_name: str = "this checkpoint",
-                    deadline_s: float = CAPACITY_QUOTE_DEADLINE_S) -> None:
+                    deadline_s: float = CAPACITY_QUOTE_DEADLINE_S,
+                    keep: frozenset[str] = frozenset()) -> None:
     """Agree the load across the fleet, or raise before any rank allocates.
 
     World 1 is a no op, the way the post-load weight-residency guard already is.
@@ -548,14 +541,17 @@ def agree_or_refuse(handle: Any, request: dict, *,
         return
     answers = collect(handle, request, world, deadline_s=deadline_s)
     try:
-        decide(answers, world, unet_name=unet_name, deadline_s=deadline_s)
+        decide(answers, world, unet_name=unet_name, deadline_s=deadline_s,
+               keep=keep | old_model.named_in(request.get("specs")) | old_model.graph_names())
     except BaseException as exc:
+        if isinstance(exc, old_model.OldModelRefusal):
+            exc.fleet = handle  # its card may reset this fleet and no later one
         # The one driver frame that sees this raise, so the rescue arm becomes a
         # panel card here. Best effort, and it never replaces the refusal.
         from .consent_observe import observe_refusal
 
         try:
-            observe_refusal(exc)
+            observe_refusal(exc, getattr(handle, "active_worker_args", None))
         except BaseException as observe_exc:
             safe_note(exc, "cross-rank capacity offer observation failed", observe_exc)
         raise

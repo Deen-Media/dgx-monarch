@@ -34,6 +34,12 @@ mypy -p dgx_monarch
 bash scripts/test_cpu.sh
 ```
 
+The wrapper runs ruff, mypy and the other CI gate checks that can run on
+your box before the suite
+([scripts/README.md](scripts/README.md#cpu-test-wrapper)); the two commands
+above it also run alone. A green run covers those gates and the suite, not
+all of CI: `tests/test_cpu_gates.py` names the steps only CI runs, and CI's
+tools can be other versions than yours.
 `DGXM_TEST_PYTHON` selects the interpreter. The wrapper uses this checkout's
 source, defaults OMP/MKL to one thread and reports the 25 slowest tests; its
 120-second warning is advisory. `HYPOTHESIS_PROFILE=ci` uses deterministic
@@ -95,10 +101,12 @@ the same tool; see the [verified upstream exception](docs/TROUBLESHOOTING.md#109
 if it prints a known platform-tag failure. CI also checks the refusal ledger
 and builds and inspects both package artifacts on x64. The hosted ARM64 job
 `lint-and-unit-arm64` uses Ubuntu 24.04 and Python 3.12 for dependency,
-Torch/CUDA-build and full CPU checks; x64 covers the wheel build. To check the ledger locally, regenerate it with
-`PYTHONPATH=src python tests/test_refusal_classes.py --write` and review any
-diff in `tests/refusal_class_ledger.json`. An unexpected diff must be resolved,
-not committed just to make the check pass.
+Torch/CUDA-build and full CPU checks; x64 covers the wheel build. To check the ledger locally, run
+`PYTHONPATH=src python tests/test_refusal_classes.py --check`, the command CI
+and `scripts/test_cpu.sh` run: it prints any difference and writes nothing.
+After a reviewed change, regenerate the ledger with `--write` in place of
+`--check` and review the diff in `tests/refusal_class_ledger.json`. An
+unexpected diff must be resolved, not committed just to make the check pass.
 
 ### Test and citation maintenance
 
@@ -135,7 +143,9 @@ See [versioning policy](docs/DESIGN.md#63-versioning-and-compatibility-policy).
 Submit original work or material you have the right to contribute. Identify
 external specifications, APIs or behavior that informed the change. Do not
 copy or vendor dependency implementations; the compiled Studio bundle is build
-output, listed in [LICENSE-NOTES.md](LICENSE-NOTES.md#studio-frontend-bundle).
+output, listed in [LICENSE-NOTES.md](LICENSE-NOTES.md#studio-frontend-bundle),
+and the one vendored source file, the MIT INT8 GEMM kernel, is listed under
+[Vendored INT8 GEMM kernel](LICENSE-NOTES.md#vendored-int8-gemm-kernel).
 xFuser remains external: its
 compatibility wheel is built locally from the verified official wheel, and
 neither the wheel nor dependency source belongs in the repository.
@@ -184,6 +194,62 @@ Native latent RDMA remains off by default; actor messaging is the normal
 return path. [Selected-rail qualification](docs/VALIDATION.md#native-rdma)
 covers only its recorded scope, not untested cancellation or fabric-failure
 recovery. Do not generalize one passing configuration to another workload.
+
+### Reports from clusters larger than ours
+
+The project runs two DGX Sparks. A cluster of three to eight Sparks, and any
+other hardware DESIGN 2.2 lists in that tier, sits in the "designed for, needs community
+validation" tier of [DESIGN section 2.2](docs/DESIGN.md#22-hardware-targets),
+and it stays there whatever a report shows. Use the
+[larger-cluster report form](.github/ISSUE_TEMPLATE/larger-cluster-report.yml)
+to send one.
+
+For the project to act on a report, it must carry:
+
+- the versions: dgx-monarch, ComfyUI, torch, NCCL, torchmonarch and xFuser;
+- the graph's shape: the family, quantization, canvas, frame count, steps,
+  cfg, the LoRA count and strengths, and every Init node switch that differs
+  from its default;
+- the driver's own topology line, `render topology: ... (preset|auto: ...)`,
+  and the full text of the refusal if there was one;
+- the latent's sha256 from the rank stats, both on the layout under report
+  and on a layout this project has validated, for the same graph and seed: a
+  two-Spark pair on its `auto` layout, or one GPU with `mode=local`;
+- the rank identity line (`cross-rank latent identity: ...`);
+- at least two shapes or lengths, one of which needs a divisibility pad row
+  where the family has that guard.
+
+Timings are welcome, with the box's clock state and whether the render was
+cold or warm.
+
+What the project does with a report:
+
+1. A crash, a stall, or a refusal that should not happen is fixed where a
+   reading of the code finds the fault, and the fix is held by CPU tests.
+2. An `auto` row or fold changes only where the layout is exact by
+   construction, which means it computes what a validated layout computes
+   (for example a higher Ulysses degree whose heads tile and whose pad
+   exclusion is the same), and at least two independent reports show a latent
+   identical to a validated layout's. Such a row says in its note and in the
+   docs that it rests on community runs and was not run on the project's own
+   hardware.
+3. Speed figures are recorded as reported, never as validated, and no
+   default is chosen on speed alone.
+4. A layout that changes the arithmetic, such as a cfg composite no row
+   names, ring or hybrid attention on a padded sequence, or data parallelism
+   on a packed family, never becomes a default on reports alone.
+
+One row does not meet rule 2: MiniMax H3 folds into
+`uly4` at four Sparks (issue #188) on one report of a latent identical to a
+pair's `uly2` and one report of one-step checks within 0.10 of one GPU, which
+is closeness, not an identical latent. The maintainer allowed it as an
+exception for that case, and its note and the docs say so.
+
+Reports name nobody: the docs say "community four-Spark users" and state what
+was read. A person is named only to credit an enhancement in the code. The
+identity gate's first-use check compares renders on the reader's own mesh and
+layout only; it never tests a layout against a validated one, so a report's
+two hashes are the only check of that kind.
 
 ### Changelog entries
 

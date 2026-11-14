@@ -11,7 +11,7 @@
 
 Generate images and video across two DGX Sparks from one ComfyUI window. Split a render between the GPUs, run separate prompts at once, or shard supported model weights to fit larger checkpoints.
 
-DGX Monarch provides model loaders, samplers, memory controls, and 71 example workflows. Text encoding, VAE decode, saving, and the rest of your graph stay in ComfyUI.
+DGX Monarch provides model loaders, samplers, memory controls, and 75 example workflows. Text encoding, VAE decode, saving, and the rest of your graph stay in ComfyUI; an opt-in setting lets the Workers share a long video decode.
 
 [Get started](docs/QUICKSTART.md) · [Installation](docs/INSTALL.md) · [Model support](docs/MODELS.md) · [Benchmarks](docs/BENCHMARKS.md)
 
@@ -25,12 +25,14 @@ DGX Monarch provides model loaders, samplers, memory controls, and 71 example wo
 - **Avoid unnecessary model copies.** Slab residency and low-RSS LoRA handling reduce duplicate weights in shared memory. Built-in checks compare these paths with stock residency before reuse.
 - **Start with a model workflow.** Choose a template, select your files, and queue it. Automatic selection chooses a supported GPU layout for the model; the model guide explains the manual options.
 - **See what the pair is doing.** The ComfyUI sidebar and `dgxm top` show memory use, render progress, connection state, and errors.
+- **Decode video on both GPUs (opt-in).** With `worker_vae_decode = "auto"` the stock VAE decode nodes split a video decode over the Workers, byte-identical to ComfyUI's tiled decode. It stays off by default, and MiniMax H3, Wan 2.1 and LTX 2.5 have passed its hardware byte compare ([Model support](docs/MODELS.md#worker-assisted-vae-decode)).
 
 ## Studio
 
 Studio is an optional browser workspace for the pair. Pick a bundled
 workflow, write the prompt, queue renders on the driver and follow them on
-one page, with Gallery, Queue, Grids, Fleet and Library views beside it.
+one page, with Gallery, Queue, Library and the Grids, Fleet and Operations
+utilities beside it.
 Studio listens only on this computer. It signs your browser in with a link
 that holds its access token; treat that link like a password. Install the
 `studio` extra ([INSTALL](docs/INSTALL.md#optional-studio-companion)), tell
@@ -57,7 +59,7 @@ line that reaches it from a laptop.
 
 [![DGX Monarch Studio with test fixture data](docs/media/dgxm-studio.png)](docs/STUDIO.md)
 
-Shown with the CPU test fixture, so no model ran. Studio is a draft; the
+Shown with the CPU test fixture, so no model ran. The
 [Studio guide](docs/STUDIO.md) covers setup, remote access and what is not
 finished yet.
 
@@ -175,9 +177,8 @@ Native latent RDMA is **off by default**. [Selected-rail return checks](docs/VAL
 ## Updating
 
 Read the [changelog](CHANGELOG.md) before you update. Before the first update
-from 1.2.0, follow [Upgrading from 1.2.0](docs/INSTALL.md#upgrading-from-120);
-from 1.1.0, follow [Upgrading from 1.1.0](docs/INSTALL.md#upgrading-from-110)
-as well.
+from 1.4.0, follow [Upgrading from 1.4.0](docs/INSTALL.md#upgrading-from-140);
+an install on an older release follows the sections after it as well.
 
 1. Stop ComfyUI. Both update modes refuse while a driver answers.
 2. Check where each host's Workers run. A path under `releases/` means a
@@ -202,14 +203,15 @@ as well.
    describes.
 
 `dgxm update` moves only dgx-monarch and its torchmonarch pin; update ComfyUI
-your own way. [INSTALL](docs/INSTALL.md#updating) covers every flag, recovery
+your own way. This release needs ComfyUI 0.45.0 or newer on the driver and on
+every Worker. [INSTALL](docs/INSTALL.md#updating) covers every flag, recovery
 and rollback.
 
 ## Documentation
 
-[Studio draft](docs/STUDIO.md) describes the optional browser companion and its
-current acceptance gaps. Existing CLI, TUI and ComfyUI workflows remain the
-supported interfaces while Studio's complete specification is under development.
+[Studio](docs/STUDIO.md) describes the optional browser companion and its
+current acceptance gaps. Studio, the CLI, the TUI and ComfyUI workflows are all
+supported interfaces.
 
 [Documentation index](docs/README.md) · [Model guide](docs/MODELS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [FAQ](docs/FAQ.md) · [Contributing](CONTRIBUTING.md)
 

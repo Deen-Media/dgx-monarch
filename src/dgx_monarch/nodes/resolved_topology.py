@@ -4,8 +4,8 @@
 returns a ``ResolvedTopology``, which unpacks to the same three values and
 also carries ``facts``: the table row, the family, quant kind and latent
 megapixels auto matched on, the CFG and cfg++ flag it read, the cfg evidence
-row that admitted cfg2 or the cfg row skipped for missing evidence, and the
-batch. The render's progress record keeps them, so a reader of
+row that admitted cfg2 or the cfg row skipped for missing evidence, the
+batch, and whether the prompt pair's text rows differ. The render's progress record keeps them, so a reader of
 /dgxm/telemetry can audit the table against measured times. Nothing decides
 on them. A preset reads no checkpoint header, so it carries no facts,
 and neither does a test double that returns a plain tuple.
@@ -29,6 +29,7 @@ class TopologyFacts:
     evidence_row: int | None = None  # the record that admitted cfg-parallel
     skipped_cfg_row: int | None = None  # a cfg row passed over for its evidence
     batch: int | None = None
+    pair_differs: bool | None = None  # the pair tag the latent carried (cfg_pair)
 
 
 class ResolvedTopology(tuple[Topology, bool, str]):
@@ -47,12 +48,13 @@ class ResolvedTopology(tuple[Topology, bool, str]):
         return (type(self), (*self, self.facts))
 
 
-_AUDIT_FIELDS = ("family", "cfg", "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch")
+_AUDIT_FIELDS = ("family", "cfg", "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch",
+                 "pair_differs")
 
 
 def auto_facts(decision: object, *, world: int, quant: str, megapixels: float,
                family: str, cfg: float | None, keeps_uncond: bool,
-               batch: int) -> TopologyFacts:
+               batch: int, pair_differs: bool = False) -> TopologyFacts:
     """What auto read and chose for one render, from its AutoDecision.
 
     World 1 consults no table row, whatever the decision's rule field holds,
@@ -70,7 +72,8 @@ def auto_facts(decision: object, *, world: int, quant: str, megapixels: float,
         row=getattr(rule, "row", None), quant=quant, megapixels=megapixels,
         family=family, cfg=None if cfg is None else float(cfg),
         keeps_uncond=bool(keeps_uncond), evidence_row=getattr(evidence, "row", None),
-        skipped_cfg_row=getattr(skipped, "row", None), batch=int(batch))
+        skipped_cfg_row=getattr(skipped, "row", None), batch=int(batch),
+        pair_differs=bool(pair_differs))
 
 
 def telemetry_facts(resolved: object) -> dict[str, Any]:

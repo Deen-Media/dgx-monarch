@@ -288,6 +288,7 @@ class RenderPipeline:
             common,
             consent_waiver,
             gate_inconclusive,
+            h3_ring_pad,
             render_preflight,
             render_submit,
         )
@@ -303,12 +304,17 @@ class RenderPipeline:
 
         model, _bound_handle = common._bind_packed_render_model(
             model, latent, cfg_value)
+        # A padded H3 ring, or a SCAIL ring above two, refuses before the gate and setup; the sequential
+        # path runs the same check at the gate's entry (auto_gate.maybe_auto_gate),
+        # which a pipelined render reaches only when it needs a ceremony.
+        h3_ring_pad.preflight_for_render(model, request, latent, cfg_value)
         # Before the risk read, not after it: a quarantine another
         # combination's abort wrote reads as no risk here, so a combination
         # the ceremony never saw would lose its ceremony too.
-        common._restore_requested_levers(model)
+        common._restore_requested_levers(model, request.get("uncond_model"))
         if model is not None and common.auto_gate_required(
-                model, request.get("kind", ""), latent, cfg_value):
+                model, request.get("kind", ""), latent, cfg_value,
+                *(() if request.get("uncond_model") is None else (request["uncond_model"],))):
             while self._inflight:
                 self._collect_oldest()
             # The identity ceremony runs its own direct render. Yield this
@@ -318,7 +324,7 @@ class RenderPipeline:
             gate_result = common._maybe_auto_gate(
                 model, request, latent, cfg_value, steps_hint)
             if gate_result not in gate_inconclusive.NO_QUARANTINE_VERDICTS:
-                common._quarantine_unproven_paths(model)
+                common._quarantine_unproven_paths(model, uncond=request.get("uncond_model"))
         while len(self._inflight) >= self.depth:
             self._collect_oldest()
         seq = self._seq
