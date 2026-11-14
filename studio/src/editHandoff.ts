@@ -2,7 +2,13 @@ import type { StudioClient } from './api';
 import type { AssetReceipt } from './assetEditorState.svelte';
 import type { Artifact, Inspection, Workflow, WorkflowEntry } from './contracts';
 import type { Binding, Draft } from './model';
-import { bindingError, bindingOptions, bindingType, fieldLabel } from './model.ts';
+import {
+  bindingError,
+  bindingOptions,
+  bindingType,
+  fieldLabel,
+  freshGraphFields,
+} from './model.ts';
 import { byTitle, workflowTitle } from './workflowChoice.ts';
 import {
   bindingIndex,
@@ -131,7 +137,8 @@ export function editPlan(
 
 /**
  * The draft with the output in the image input and the Operation set to Edit. A loaded workflow
- * starts from its own values and lineage; a kept one keeps its values and adds to its lineage.
+ * starts from its own values and lineage, without the previous graph's style inputs or LoRA
+ * insertion targets; a kept one keeps them all and adds to its lineage.
  */
 export function editDraft(
   draft: Draft,
@@ -140,10 +147,10 @@ export function editDraft(
   lineage: string[],
   load?: { workflow: Workflow; name: string } | null,
 ): Draft {
-  const kept = load ? { values: {}, parent_artifact_ids: [] } : draft;
+  const kept = load ? { ...freshGraphFields(), parent_artifact_ids: [] } : draft;
   return {
     ...draft,
-    ...(load ? { workflow: load.workflow, workflowName: load.name } : {}),
+    ...(load ? { ...kept, workflow: load.workflow, workflowName: load.name } : {}),
     values: { ...kept.values, [target.id]: value },
     parent_artifact_ids: [...new Set([...kept.parent_artifact_ids, ...lineage])],
     operation: 'edit',

@@ -94,6 +94,15 @@ export const emptyDraft = (): Draft => ({
   seed_policy: 'random',
   parent_artifact_ids: [],
 });
+/**
+ * What a newly loaded workflow starts with in place of the draft fields that name the previous
+ * graph's inputs or nodes: its values, the inputs styles write to and the LoRA insertion targets.
+ * Each key is present, so the change clears the field when it merges into the draft. Styles, the
+ * LoRA stack, the project and the seed policy name no graph input, so they stay with the user.
+ */
+export function freshGraphFields(): Pick<Draft, 'values' | 'style_bindings' | 'lora_insertion'> {
+  return { values: {}, style_bindings: undefined, lora_insertion: undefined };
+}
 /** The companion's policy for a request that names none, so a saved record keeps its meaning. */
 const RECORDED_SEED_POLICY = 'fixed';
 export function fieldLabel(b: Binding) {
