@@ -8781,8 +8781,14 @@ unit example carries it.
 
 **Check:** each actor's `UMA posture` journal line ends with
 `host_purge_delay=0`. With a model placed, the actor's anonymous memory then
-sits near a fresh actor's floor, a few GiB, and the identity gate's re-price
-after a drop finds the room the loader found.
+sits a few GiB above a fresh actor's floor, and the identity gate's re-price
+after a drop finds the room the loader found. On 2026-11-06 on dev `79bb47e`
+the head actor held 1.82 to 1.95 GiB after the kandinsky5-video-pro, flux1-dev
+and wan-scail loads (a fresh actor's floor is 0.5 GiB), the kandinsky re-price
+that had been 6.9 GiB short admitted the load with 11.0 GiB to spare, and the
+release test then rendered 66 templates with no error, the seven that need
+user inputs skipped
+([VALIDATION](VALIDATION.md#host-memory-2026-11-06)).
 
 ## 147. A MiniMax H3 render refuses, or fails in its output head, after a ComfyUI update
 
@@ -9074,3 +9080,35 @@ Monarch nodes. Setting `family_adapter` back to `auto` does not help: `auto`
 refuses the same model at the same point. There is no waiver. A variant runs
 on the Workers once an adapter for it lands
 ([ADAPTERS](ADAPTERS.md#registration)).
+
+## 155. A verified update refuses: foreign distribution inventory is ambiguous
+
+**Symptom:** `dgxm update --verify` stops with "the driver's torchmonarch does
+not match the current checkout's exact pin: foreign distribution inventory is
+ambiguous (distribution=<name>; relative path=<name>-<version>.dist-info/RECORD)
+... no package repair was attempted", on every try, when nothing about
+torchmonarch has changed.
+
+**Cause:** the update's ownership check reads the pip RECORD of every foreign
+distribution that ships files inside torchmonarch's directories (`tests/` and
+`examples/`; xfuser does), and treats a RECORD as invalid when an entry
+escapes site-packages, other than a `../bin/` console script. An environment
+built with `PYTHONPYCACHEPREFIX` set records every compiled `.pyc` as such a
+path (`../../../../<prefix>/...`), so the check cannot vouch for that
+distribution. On 2026-11-06 the torch 2.15 environment on both Sparks had been
+built that way, 183 of its 204 distributions carried such entries, and
+xfuser's RECORD, with 301 of them, refused the first deploy of dev `79bb47e`
+ten times.
+
+**Fix:** reinstall the named distribution from the same wheel in a shell where
+`PYTHONPYCACHEPREFIX` is unset, in the Worker environment on every host:
+`pip install --no-index --no-deps --force-reinstall <wheel>`, then run the
+update again. Its RECORD then lists its bytecode under `<package>/__pycache__/`
+inside site-packages. Other distributions with such entries do not matter to
+the check unless they also ship files in torchmonarch's directories.
+
+**Check:** `grep -c '^\.\./' <site-packages>/<name>-<version>.dist-info/RECORD`
+reads 1 (the console script) or 0, and the next `dgxm update --verify` passes.
+On 2026-11-06 the deploy of `79bb47e` succeeded on its first try after the
+reinstall on both hosts, with doctor at 50 checks and 0 failures
+([VALIDATION](VALIDATION.md#host-memory-2026-11-06)).

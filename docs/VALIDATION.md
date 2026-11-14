@@ -292,6 +292,159 @@ persistent Worker identities stayed unchanged and final idle checks passed.
 Native latent-return RDMA was **NOT RUN / HOLD** in this October 11 record;
 see the later [selected-rail checks](#native-rdma).
 
+<a id="release-1-5-0-checks"></a>
+
+## Release 1.5.0 checks
+
+**2026-10-28 to 2026-11-14, two DGX Sparks with GB10 GPUs, the head capped at
+2100 MHz throughout.** The hardware evidence for this release sits in the
+feature records below, each naming the commit it ran on. The first nine items
+ran through 2026-11-01, when the last code change was `4b71822`. The code has
+changed since, as the [changelog](../CHANGELOG.md) lists, and the later
+checks item names the records that followed. The release gate, release test
+v5, ran whole on dev `f297c70`, the last code change, on 2026-11-14 and
+passed ([record](#release-test-v5-f297c70)). The release commit differs from
+`f297c70` in documentation and in the version only: the version string in
+`src/dgx_monarch/__init__.py` and the test that pins it in
+`tests/test_cli.py`. It is not itself a hardware retest.
+
+- INT8 GEMM kernel, 2026-10-28 and 29
+  ([record](#int8-gemm-kernel-comparison-2026-10-28-and-29)): the render
+  comparison ran the v1.4.0 build with the Triton kernel patched into every
+  process, and all 1530 frames of its 28 cells came out pixel-identical to
+  stock CUTLASS. The vendored kernel then matched CUTLASS in 240 of 240 GPU
+  cases, in a run whose commit the record does not name, and the merged
+  option on dev `7404677` ran one short render per process kind, each process
+  logging the kernel it took.
+- Driver unload before a render-site refusal, 2026-10-29, on dev `d34d9b0`
+  ([record](#driver-unload-before-a-render-site-refusal-2026-10-29)): the
+  unload freed 19.0 GiB and let a refused render through, and a render that
+  still did not fit refused with the readings taken after the unload.
+- MiniMax H3 speed and memory at 5, 10 and 15 seconds, 2026-10-29 and 30
+  ([BENCHMARKS](BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped),
+  [activation record](#activation-across-clip-lengths-measured-2026-10-29-and-30)):
+  both Workers on dev `e277238` and then `f129c62`, and the pair's first
+  15 second renders on dev `50ad5e9`
+  ([record](#the-15-second-render-measured-2026-10-29)). These rows time
+  renders and read memory; none compares output.
+- BF16 capacity rescue on the head, 2026-10-31, on dev `e4f23be`
+  ([record](#activation-across-clip-lengths-measured-2026-10-29-and-30)): the
+  61.7 GiB file rendered at 1344x768x124 as one rank beside the driver under a
+  `DGXM_AUTO_RESCUE=1` consent, with both driver preflights off for the
+  measurement, and the gate kept slab, INCONCLUSIVE with
+  `cross_mode=CAPACITY`. The rescue attempts of 2026-10-30, before that
+  change, ended refused
+  ([record](#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)).
+- The refitted H3 price, 2026-10-31, on dev `4b71822` with both driver
+  preflights on
+  ([record](#activation-across-clip-lengths-measured-2026-10-29-and-30)): all
+  three checks passed. The BF16 cell above rendered again in 1350.2 s with
+  only `DGXM_AUTO_RESCUE=1` set, and the 362-frame cell rendered as one rank
+  on the sibling alone in 5971.1 s and as one rank on the head beside the
+  driver in 6351.0 s, where the 2026-10-29 fit refused it.
+- Worker-assisted VAE decode on the pair, uly2
+  ([record](#worker-assisted-vae-decode)), each pair of renders sampling the
+  same latents: MiniMax H3 on dev `746a229` on 2026-10-31, 124 of 124 H.264
+  frames identical by framemd5 and the AAC audio sample-identical, then on
+  dev `4b71822` on 2026-11-01 with the decoder's frames saved as PNG, 124 of
+  124 pixel-identical; Wan 2.1 T2V 14B, 33 of 33 frames, and LTX 2.5, 121 of
+  121, pixel-identical on dev `4b71822` on 2026-10-31.
+- FP8 compute paths, 2026-10-31, on dev `7b5b59e`
+  ([record](#fp8-compute-paths)): 17 core cells. ComfyUI's FP8 matmul path
+  rendered plain FP8 as noise in the actors and in the driver alike, and the
+  Krea2 Turbo fp8_scaled file sampled 11 percent faster than BF16 at a
+  one-step NRMS of 0.068.
+- The item 6 probes, 2026-10-31 on the head
+  ([record](#item-6-probes-nvfp4-gemm-and-sol-attn-2026-10-31)):
+  comfy-kitchen's NVFP4 GEMM stays, and the Sol-Attn lever keeps the sol_attn
+  package. The record names no dgx-monarch commit.
+- Studio: the tester round 4 rows of 2026-10-30
+  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#tester-round-4-checks-2026-10-30)),
+  each run headless against the CPU event fixture on the bundle its own change
+  built.
+- Verified updates of both Workers on 2026-10-30 and 31 through `e4f23be`,
+  `746a229`, `7b5b59e` and `4b71822`. Both Workers ran `4b71822` on
+  2026-11-01, when `dgxm doctor` reported 49 checks and 0 failures. On
+  2026-11-06 a verified update moved both to `79bb47e`, with doctor at 50
+  checks and 0 failures
+  ([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+  For release test v5 on 2026-11-14 both Workers ran `f297c70`, with doctor
+  at 51 checks and no failure before the pass, after its main pass and after
+  its second leg ([record](#release-test-v5-f297c70)).
+- Later checks, 2026-11-03 to 2026-11-14, each on the commit its record
+  names: the other 32 cells of the 49-cell FP8 matrix
+  ([record](#fp8-compute-paths-the-other-cells-2026-11-03)); Worker-assisted
+  VAE decode on Wan 2.2 TI2V 5B and both HunyuanVideo VAEs
+  ([record](#worker-assisted-vae-decode)); p-h3-image and Wan 2.2 TI2V 5B
+  against stock ([p-h3-image](#evidence-p-h3-image),
+  [Wan 2.2 TI2V 5B](#evidence-wan-2-2-ti2v-5b)); the ComfyUI 0.44.0 rows and
+  the MiniMax H3 context windows ([record](#comfyui-0440-additions)); the BF16
+  rescue under `DGXM_ALLOW_SLAB_RESCUE=1`, on the pair and on the sibling
+  alone, and through the panel's card, on the pair and on the head beside the
+  driver
+  ([record](#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)); the
+  driver unload with a pipelined submission behind a render in flight
+  ([record](#driver-unload-before-a-render-site-refusal-2026-10-29)); the
+  capacity checks of 2026-11-05 ([record](#capacity-checks-2026-11-05)); the
+  torch 2.15.0 ladder, steps 1 to 10 ([record](#torch-2-15)); host memory
+  after a load ([record](#host-memory-2026-11-06)); the template release test
+  through its pass on dev `79bb47e` ([record](#release-test-2026-11-04)); the
+  fused AdaLN kernel switch and the cfg2 rows on equal prompt pairs
+  ([fused AdaLN](#fused-adaln-switch-other-families),
+  [cfg2 rows](#campaign-k-equal-pairs)); the Anima reading of 2026-11-10
+  against stock that led to its text branch fix
+  ([record](#anima-text-branch-fix)); the
+  Studio browser round of 2026-11-03 on the bundle of that day
+  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-03));
+  the hardware of 2026-11-11 and the fixes it led to
+  ([record](#fixes-2026-11-11)); the passes and proof blocks on the dev builds
+  of 2026-11-11 to 14 ([record](#release-build-passes)); and release test v5,
+  first on `40af2d7`, where it found the p-h3-image regression
+  ([record](#release-test-v5-40af2d7)), then whole on `f297c70`, where it
+  passed: of 75 templates, 73 rendered in the main pass and the 2 LoRA
+  templates in its second leg, with no error
+  ([record](#release-test-v5-f297c70)).
+- **NOT RUN:** the build and install check on the build this release ships;
+  the ComfyUI 0.45.0 rows that compare against one GPU or run under
+  comfy-managed residency ([record](#comfyui-0450)); the MiniMax-H3-Image rows
+  its record lists as NOT RUN: the two templates as shipped under `auto`, the
+  expander's picture stage, the empty expander's refusal, the edit template in
+  the browser, the gate's two proof paths, cfg2 and dp2, the other text
+  encoders, the sweep cells and a LoRA with a head-bank key
+  ([record](#minimax-h3-image)); the Worker-assisted VAE
+  decode split for LTX 2.3, a MiniMax H3 decode with less than 512 MiB free
+  on one side, and whether its 2 GiB reply budget binds; the BF16 rescue on
+  the pair under `DGXM_AUTO_RESCUE=1`, and through the Auto-allow toggle on
+  any layout; a Worker on ComfyUI 0.43 with context windows; a Studio browser
+  round on the bundle this release ships; every layout at world 4; and the
+  full sweep runbook. The rows of the dev builds of 2026-11-11 to 14 that did
+  not run, the LoRA weights of a partly loaded one-GPU Worker among them, are
+  listed with their reasons ([record](#release-build-not-run)). The sample
+  deadline, the actors' cache release before a render-site refusal (the same
+  release ran before the spend price's refusal in part A of proof block
+  three: [record](#proof-block-0f133d8)), the gate's capacity check before
+  its proof render, compile_dit's eager families and the inductor cache have
+  CPU tests and no hardware record of their own. Each
+  feature record below lists its own rows that have not run.
+- Build and install, on `35f1486`, the release commit of 2026-11-01, in a
+  disposable Python 3.12 venv that holds only `build` and `pip`:
+  `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and
+  `dgxm-studio` console scripts and the Studio bundle inside). The wheel installed with `--no-deps` and
+  reported 1.5.0, as did an editable install of a fresh clone of the commit
+  after it; `dgxm --help` answered with the runtime dependencies of the rig's
+  Monarch venv on the path. The full INSTALL recipe, which rebuilds the xFuser
+  compatibility wheel against a ComfyUI interpreter, ran on 2026-11-03 on the
+  head in two disposable venvs against a fresh ComfyUI clone at master
+  `8a98ecf5`, up to the step that starts services: the wheel built
+  byte-identical in both venvs, every torch file matched its RECORD, the
+  dependency check passed, and the native Monarch, xFuser and ComfyUI imports
+  and `dgxm --help` worked. That run found that ComfyUI's install guide
+  installs torch 2.15.0, while every hardware record of that date was on
+  2.12.0+cu132, and that torchaudio 2.11.0+cu132 no longer resolves from the
+  public indexes. The torch 2.15.0 ladder has passed since
+  ([record](#torch-2-15)), and [INSTALL](INSTALL.md#inspect-before-installing)
+  records the torchaudio finding.
+
 <a id="release-1-4-0-checks"></a>
 
 ## Release 1.4.0 checks
@@ -348,10 +501,11 @@ watchdog on both hosts. Seven templates are skipped, because they need inputs
 a user supplies: the two LoRA templates, `dgx-monarch-identity-gate.json` and
 `dgx-monarch-lora-low-rss.json`, and five whose demo inputs are not in the
 test's ComfyUI input folder (`qwen-image21-edit-mask-rgba`,
-`qwen-image21-edit-rgba`, `wan-flowrvs`, `wan-scail2` and `wandancer`). Every
-pass ran ComfyUI `8a98ecf58` (v0.44.0 code) and torch 2.12.0+cu132, with the
-head's 2100 MHz cap applied once and its unit off; no pass sampled the SM
-clock under load. The sibling ran uncapped.
+`qwen-image21-edit-rgba`, `wan-flowrvs`, `wan-scail2` and `wandancer`). The
+three passes of 2026-11-04 ran ComfyUI `8a98ecf58` (v0.44.0 code) and torch
+2.12.0+cu132, and the two passes of 2026-11-06 and 07 the same ComfyUI on torch
+2.15.0+cu132, each with the head's 2100 MHz cap applied once and its unit off;
+no pass sampled the SM clock under load. The sibling ran uncapped.
 
 | pass | dev | rendered | error | skipped | how it ended |
 |---|---|---|---|---|---|
@@ -391,6 +545,34 @@ memory-saver's change loads base and LoRA fresh and samples in 41.4 s, and
 the INT8 Wan-Animate 2 template took 100.1 s against pass 3's 240.1 s
 ([Wan-Animate 2](#evidence-wan-animate-2)). Each of those cells ran alone,
 not as part of a pass.
+
+**The pass on dev `79bb47e` (2026-11-06 and 07).** That commit was the last
+code change at that date and is not the build this release ships. With
+ComfyUI `8a98ecf58` and torch 2.15.0+cu132, the whole pass ran again from
+23:38 on 2026-11-06 to 02:38 on 2026-11-07: 66 success, 0 error, 7 skipped,
+the same seven. A pass on `7c3eecb` and torch 2.15.0 at
+08:13 on 2026-11-06 had read 65 success, 1 error and 7 skipped: the error was
+`dgx-monarch-kandinsky5-video-pro`, refused at the identity gate's re-price,
+89.9 GiB against 83.0 GiB, 6.9 GiB short, because the actor still held the
+host copy of the file the loader had placed and the stale gate dropped
+([TROUBLESHOOTING #146](TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short)).
+On `79bb47e` that row renders in 150.1 s and every other row kept its status.
+The head's lowest MemAvailable over the pass was 19.6 GiB, against 12.1 GiB at
+08:13. Over the 65 rows both passes rendered, wall times read 5346 s against
+5171 s, +3.4 percent, of which +210 s is `dgx-monarch-kroma-t2i` (290.1 s
+against 80.0 s): its gate ran the same three proof renders, and the stock
+load for the comparison took 234.1 s where it had taken 22.9 s, the only one
+of 67 first loads over 60 s. The sibling's copy of that load finished in
+under 80 s, the journals and the kernel log show nothing for those minutes,
+and the same load ran in 13.4 s on a fresh fleet and 12.4 s after a slab load
+on the idle rig at 07:23 ([host memory after a load](#host-memory-2026-11-06)).
+It is recorded as a one-off the records do not explain. Without that row the
+pass is 0.7 percent faster; the harness reads walls in 5 s steps, and the
+first-use gate ran for 44 templates in this pass and 45 in the 08:13 pass,
+since each deploy makes every combination stale. Records:
+`out/vetting_2026-11-03/acceptance_v4_purge/` (`results_acceptance.tsv`, one
+JSON per template, the 1 Hz traces of both hosts, `compare_v3_v4.txt`); the
+08:13 pass in `out/vetting_2026-11-03/acceptance_v3_torch215/`.
 
 <a id="demo-inputs-first-start"></a>
 
@@ -5167,6 +5349,57 @@ priced the driver's models for such a queue; the sampler now runs the
 loader's price for them
 ([TROUBLESHOOTING #52](TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)),
 which no hardware run has checked yet.
+
+<a id="host-memory-2026-11-06"></a>
+
+### Host memory after a load (2026-11-06)
+
+These ran on the pair on dev `79bb47e` with ComfyUI `8a98ecf58` and torch
+2.15.0+cu132, one step at seed 1031 on uly2 from fresh fleets, with the head's
+2100 MHz cap applied once and its unit off, SM 2093 MHz under load, and the
+sibling uncapped; a 1 Hz reader on each host logged MemAvailable and every GPU
+process's anonymous, file and shared resident memory. They check the fix of
+[TROUBLESHOOTING #146](TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short),
+which sets `MIMALLOC_PURGE_DELAY=0` for every actor and the driver.
+
+| template | result | wall | head MemAvailable at submit, at the end, lowest | head actor anonymous memory: fresh, peak during placement, after the render | sibling actor after |
+|---|---|---|---|---|---|
+| kandinsky5-video-pro | rendered | 364.3 s | 110.6, 51.2, 24.3 GiB | 0.50, 77.5, 1.82 GiB | 1.80 GiB |
+| flux1-t2i, then a second queue | rendered | 48.0 s, then 2.0 s | 110.7, 66.6, 58.2 GiB | 0.45, 45.5, 1.95 GiB | 1.96 GiB |
+| wan-scail | rendered | 176.2 s | 110.7, 52.9, 39.5 GiB | 0.47, 62.6, 1.94 GiB | 1.92 GiB |
+| wan-animate2-bfloat16-warm, a BF16 base plus its LoRA | rendered | 132.1 s | 110.5, 25.4, 19.7 GiB | 0.49, 61.7, 33.92 GiB | 33.91 GiB |
+
+Every actor's `UMA posture` line on both hosts ended with `host_purge_delay=0`.
+In each session the actor's anonymous memory fell back under 4 GiB within 3
+to 6 s of its peak, as the placement finished, and sat at 1.8 to 1.95 GiB
+through the render and after it, a fresh actor's floor being about 0.5 GiB;
+with flux1-dev placed, the head actor had held 15.0 and 16.1 GiB on torch
+2.15.0 before the fix (2026-11-06) and 2.5 GiB on torch 2.12.0 (2026-11-05).
+The peak during the placement, about 1.8 times the file, is the host copy the
+loader reads and places from, which the loader's price charges; the fix does
+not change it. The kandinsky5-video-pro cell is the 08:13 pass's error path:
+the head journal shows the file loaded twice, the loader placed it, the stale
+identity gate dropped it, and proof render 1 loaded it again, and the re-price
+that had read 83.0 GiB against 89.9 GiB admitted the load with 11.0 GiB to
+spare; the gate recorded INCONCLUSIVE, nothing to gate on a stock template,
+and the render completed. The reload itself is the loader-time placement
+meeting the first-use ceremony, a separate inefficiency. The Wan-Animate 2 row
+keeps 33.9 GiB after the load on each box, the figure of torch 2.12 on
+2026-11-05: ComfyUI's backup of the patched BF16 weights for the held base
+plus LoRA, which the held-backup credit prices, not the allocator.
+
+**The kroma-t2i load, checked twice (2026-11-07).** After the
+[release test](#release-test-2026-11-04)'s one slow load, the same file loaded
+through explicit stock residency on a fresh fleet in 13.4 s (the render
+38.0 s) and, after a slab load of it in 11.3 s (the render 34.0 s), again in
+12.4 s (the render 18.0 s), the actor at 1.8 GiB after each; the pass's
+234.1 s was not reproduced. Records: `out/rss_retention_2026-11-06/`
+(`kandinsky/K1`, `flux/F1`, `wan/W1`, `wan/L1`, `kroma/X1`, `kroma/X2`,
+`REPORT_purge_legs.md`), with the sessions before the fix in `flux/R1b` and
+`flux/R1c`, the allocator tests of 2026-11-06 under
+`out/vetting_2026-11-03/rss_retention_2026-11-06/`, and the environment repair
+that preceded the deploy under `env_repair/`
+([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
 
 ## FSDP calibration
 

@@ -177,9 +177,8 @@ Native latent RDMA is **off by default**. [Selected-rail return checks](docs/VAL
 ## Updating
 
 Read the [changelog](CHANGELOG.md) before you update. Before the first update
-from 1.2.0, follow [Upgrading from 1.2.0](docs/INSTALL.md#upgrading-from-120);
-from 1.1.0, follow [Upgrading from 1.1.0](docs/INSTALL.md#upgrading-from-110)
-as well.
+from 1.4.0, follow [Upgrading from 1.4.0](docs/INSTALL.md#upgrading-from-140);
+an install on an older release follows the sections after it as well.
 
 1. Stop ComfyUI. Both update modes refuse while a driver answers.
 2. Check where each host's Workers run. A path under `releases/` means a
@@ -204,7 +203,8 @@ as well.
    describes.
 
 `dgxm update` moves only dgx-monarch and its torchmonarch pin; update ComfyUI
-your own way. [INSTALL](docs/INSTALL.md#updating) covers every flag, recovery
+your own way. This release needs ComfyUI 0.45.0 or newer on the driver and on
+every Worker. [INSTALL](docs/INSTALL.md#updating) covers every flag, recovery
 and rollback.
 
 ## Documentation
