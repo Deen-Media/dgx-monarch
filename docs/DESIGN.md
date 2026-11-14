@@ -1116,8 +1116,8 @@ step into one, as it would with the same memory free under `lora_low_rss` on,
 and the float order of that render then differs from the same render with the
 step off. No shipped template that reaches the step is such a graph (the three
 below run at cfg 1.0), and no hardware cell reads one.
-On hardware the free has run only as the route's last step: it gave back
-15.3 GiB within 2 s after one load line into a fresh Worker, and 5.4 to 5.8 GiB
+Before the step existed the free had run on hardware only as the route's
+last step: it gave back 15.3 GiB within 2 s after one load line into a fresh Worker, and 5.4 to 5.8 GiB
 where the INT8 ConvRot Wan-Animate 2 file was loaded a second time in the same
 process (2026-11-12). What stayed, 9.5 to 9.8 GiB, equals that file's tensors
 under 32 MiB (9.78 GiB; its tensors of 32 MiB and more are 5.70). glibc raises
@@ -1136,11 +1136,21 @@ does for every slot (`resident_ledger.flush_dropped`): a placement alone left
 10.8 GiB in the arenas in the same probe, so without it a stack change's
 fresh load after a freed render could be refused as that bare load was. One
 shipped template, the memory-saver, drops a slot once a render by its design;
-the drop's line times the trim, and if a proof block reads it over 0.3 s a
-render there it moves to the store-wide drop alone. A load's placement and
-a soft clear are not followed by a trim in this release. The trim's return
-and its time have no hardware reading yet; neither has a whole load's own
-free.
+the drop's line times the trim, which would have moved to the store-wide
+drop alone had it read over 0.3 s a render there; it read 0.00 s. A load's placement and
+a soft clear are not followed by a trim in this release. On dev `45e07cc`
+(2026-11-13, one GPU of the first Spark under its clock cap, max 2100 MHz,
+highest reading 2093 MHz) every one-GPU free of the INT8 ConvRot file came
+after two load lines of it in one process, the form that had kept 9.5 to
+9.8 GiB: the free alone gave back 5.7 to 7.8 GiB and the trim 8.4 to 10.5
+more, 16.1 to 16.3 in all, the trim taking 0.36 to 0.53 s; the Worker then
+held 1.5 to 2.1 GiB of anonymous memory, and the bare load the probe had
+seen refused after a hard clear was admitted. On the pair, where a Worker
+loaded the model in one line, the free alone gave back 15.0 to 15.5 GiB and
+the trim under 1 GiB more; where a rank loaded it a second time (a
+strength change, or the bare base first) the free gave 5.7 to 6.9 and the
+trim 9.5 to 10.5
+([VALIDATION](VALIDATION.md#proof-block-45e07cc)).
 
 On a pair the ranks free together or not at all
 (`actor/backup_agreement.py`). After the cross-rank guard has found every rank
@@ -1205,8 +1215,9 @@ integers in it; both Workers must therefore run one build, and a fleet whose
 Workers state two builds at setup, or of which one states none because it
 predates the check, is refused before its first load or render
 (`mesh_builds.py`; a Fleet's world-1 actors share no collective and are not
-compared). The shared memory a rank maps for its process groups (5.5 GiB on
-record) has no price term in this release. For a proof on real ranks,
+compared). The shared memory a rank maps for its process groups (about 5.5
+GiB on a Worker of a pair) is counted in the need from #189, as what the
+rank has yet to map at the vote (above). For a proof on real ranks,
 `DGXM_FAULT_BACKUP_RANK` with `DGXM_ACCEPTANCE=1` makes the named rank vote
 short and read its model as wrong after the free. `DGXM_DISABLE_BACKUP_FREE=1` in the
 Worker's environment keeps the backup however little room is left, for
@@ -1247,9 +1258,13 @@ admitted BF16 load is a whole load and its tightest reading is the price
 itself. One such load, on the second Spark of a pair, took 77.4 GiB, 1.35 more
 than that price leaves above the floor (the recorded shortfall of section
 5.9). On one GPU, with the backup freed before the first step, that shortfall
-should go, and on a pair the ranks now free together (above). No
-hardware reading of the BF16 templates at their edge exists yet, on one GPU or
-on a pair, before or after.
+should go, and on a pair the ranks now free together (above). On one GPU
+it went: on dev `45e07cc` (2026-11-13, the first Spark under its clock cap,
+max 2100 MHz, highest reading 2093 MHz) the warm template, which took 71.3
+GiB roomy, loaded whole at a reading of 81.4 against its 81.1 price, freed
+the backup (MemAvailable 18.5 to 50.5 GiB with the trim) and read a low of
+18.54 GiB ([VALIDATION](VALIDATION.md#proof-block-45e07cc)). No reading of
+the BF16 templates at their edge exists on a pair, before or after.
 
 The bake-equivalence canary compares the bake with comfy.ops' own
 cast on INT8 ConvRot and BF16 layers, and the keys it bakes at cast time with
@@ -2438,7 +2453,15 @@ embeddings connectors are kept only in ComfyUI's compat mode, which the header
 also shows). It was charged the whole checkpoint and no text encoder. Without
 DynamicVRAM the safetensors library decides what each tensor holds, which
 ComfyUI's code does not show, so there, and where the header cannot be read,
-the whole checkpoint is still the charge.
+the whole checkpoint is still the charge. On dev `0f133d8` (2026-11-13, one
+roomy load of each Gemma 3 12B file beside the distilled fp8 checkpoint, the
+first Spark under its clock cap, max 2100 MHz, highest reading 2093 MHz)
+the load read at or within 0.2 GiB of its charge: the box fell 26.1 GiB
+against 28.3 with the bf16 file (ComfyUI staged 25,440 MB) and 12.5 against
+12.3 with the fp4 file (11,200 MB). A long prompt's encode then took about
+3 GiB more on the box, 29.15 and 15.37 at the lowest, which no text
+encoder's charge covers and the 5 GiB floor absorbs
+([VALIDATION](VALIDATION.md#proof-block-0f133d8)).
 
 **A prompt expander that cannot see the request refuses before the render.** The
 MiniMax-H3-Image templates wire ComfyUI's expander chain, Replace Text into
@@ -2584,7 +2607,7 @@ bound or its floor.
 | `comfy_managed` | one resident copy, or 2.3 times the file where ComfyUI stages through a pinned host buffer (measured on the tested Spark pair), plus the floor | `actor/capacity_quote._managed`, then `capacity_fit.managed_required_bytes` at `actor/store_residency.preload_capacity_check` |
 | `explicit`, `vouched_auto` | the file plus a capped floor, plus the LoRA bake's stray transient where `lora_low_rss` and a stack are both set; a target the header estimate cannot map prices the whole file; `explicit` refuses a loader dtype cast, which this price cannot measure | `actor/capacity_quote._slab_rung` over `capacity_fit.slab_load_fit`, itself over `capacity_lora_bake.lora_bake_bytes`, taken again by `actor/store_slab_admit.admit`, then by the exact backstop `actor/store_slab_admit.admit_bake` once the real patch set is built |
 | `consented_rescue` | the same, after both probes ran | the consent branch of `actor/capacity_quote.price`, over the same `capacity_fit.slab_load_fit`, taken again by `actor/store_slab_admit.admit` |
-| `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak. Under a loader dtype cast the copy the cast builds replaces the file, and the host copy stays the file's. A swap over the slot's own stock resident is charged that price less the resident's GPU copy at the fleet agreement, because the store drops it before the load; a LoRA change on a stock copy of the same file is the same credit, 1.1 times the file plus the floor, whether the store re-applies the stack in place or, when that would first copy the model off the GPU, drops the copy and loads fresh, and a change to a stack of the held stack's own files is also credited ComfyUI's backup of its weights, up to that host copy and net of the new stack's own LoRA files; the Worker's own ladder prices after its drop, with no store snapshot, and never applies a credit | `capacity_fit.stock_load_fit` over `stock_required_bytes` and, for a cast, `capacity_fit.cast_resident_bytes`, re-taken by `actor/store_residency.preload_capacity_check`; the credits are `capacity_lora_bake.credit_stock_swap` over `actor/worker_capacity._resident_bytes` and `capacity_lora_bake.credit_hot_swap` over `actor/store_bake.swaps_in_place`, whose in-place or fresh choice is `actor/store_bake.copies_off_the_gpu`, and `capacity_lora_bake.held_backup_credit` over `actor/worker_capacity._backup_bytes`, net of `capacity_lora_bake.stack_file_bytes` |
+| `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak. Under a loader dtype cast the copy the cast builds replaces the file, and the host copy stays the file's. A swap over the slot's own stock resident is charged that price less the resident's GPU copy at the fleet agreement, because the store drops it before the load; a LoRA change on a stock copy of the same file is the same credit, 1.1 times the file plus the floor, whether the store re-applies the stack in place or, when that would first copy the model off the GPU, drops the copy and loads fresh, and a change to a stack of the held stack's own files is also credited ComfyUI's backup of its weights, up to that host copy and net of the new stack's own LoRA files, while that backup is held (a backup given up for the sampler credits nothing, and the change loads base and stack fresh); the Worker's own ladder prices after its drop, with no store snapshot, and never applies a credit | `capacity_fit.stock_load_fit` over `stock_required_bytes` and, for a cast, `capacity_fit.cast_resident_bytes`, re-taken by `actor/store_residency.preload_capacity_check`; the credits are `capacity_lora_bake.credit_stock_swap` over `actor/worker_capacity._resident_bytes` and `capacity_lora_bake.credit_hot_swap` over `actor/store_bake.swaps_in_place`, whose in-place or fresh choice is `actor/store_bake.copies_off_the_gpu`, and `capacity_lora_bake.held_backup_credit` over `actor/worker_capacity._backup_bytes`, net of `capacity_lora_bake.stack_file_bytes` |
 | an FSDP launch | bf16/fp16: this rank's shards plus one block; fp8/int8 or an unreadable kind: the conservative full-file bound; every case includes the floor | `actor/capacity_quote_fsdp.fsdp_rung`, `adapters/fsdp.fsdp_load_capacity_check`, and `actor/store_residency.preload_capacity_check`, all over `capacity_fit.fsdp_required_bytes` |
 | the gate ceremony's clean reload | the same kind-aware FSDP figure, against each rank's MemAvailable plus its resident shard pool (torch reserved, capped at one share) | `fsdp_reload_price.price_fsdp_clean_reload`, crediting `fsdp_reload_price._rank_credit_bytes` |
 | the driver host's own stack | the transient and settled windows above, one rank's share where a shard build is declared; under `auto` the transient window carries the driver models the graph loads | `nodes/loader_preflight.preflight_loader_footprint` and `nodes/render_preflight`, both over `driver_footprint.estimate_driver_footprint`, which prices a declared shard build through `driver_footprint.fsdp_shard_build_bytes` |
@@ -2801,12 +2824,16 @@ decode runs whole anyway, because its batch is at least one item. On a
 discrete GPU the allocator then fails at the card's limit and ComfyUI falls
 back to tiles. On unified memory nothing fails until the kernel does. On
 2026-11-12, in two one-GPU video renders on a DGX Spark under its clock cap
-(max 2100 MHz), a decode priced at 16.5 GiB with ComfyUI's reserve started
-with 6.7 GiB read as free, used 9.3 and took the box to 6.7 GiB available
-while the driver held 32 GiB of text encoders no later node needed; and a
-decode priced at 5.6 GiB started with 4.9 read as free and took the box from
-12.5 to 7.8 GiB. No fault followed either. Both graphs set `lora_low_rss`
-off, which keeps ComfyUI's weight backup on the Worker; rerun on a fresh
+(max 2100 MHz, highest reading 2093 MHz), a decode that ComfyUI prices at
+16.1 GiB, 18.1 with its
+reserve, started with 6.7 GiB read as free, used 9.3 and took the box to 6.7
+GiB available while the driver held 32 GiB of text encoders no later node
+needed; and a decode priced at 5.2 GiB, 7.2 with the reserve, started with
+4.9 read as free and took the box from 12.5 to 7.8 GiB. The prices are the
+ones the relief's own line printed for the same two decodes on the next
+build. No fault followed either. Both graphs set `lora_low_rss`
+off, which on those builds kept ComfyUI's weight backup on the Worker
+through the render (section 5.5 gives when it is now given up); rerun on a fresh
 fleet, the first graph read a low of 11.63 GiB with nothing given back, 11.41
 with the driver's memory reading switched off (so the reading is not what
 took the box down), and 34.47 with the Spark's default `lora_low_rss`. A
@@ -2830,8 +2857,8 @@ trim the driver unload already makes (`driver_unload.trim_actors`, every actor's
 `clear_vram` at `pool`), which empties each Worker's device pool and collects, and drops
 nothing. A Worker keeps the pool its sampler grew reserved after the last
 step, 6.4 GiB on record beside a driver whose decode then took 2.4 to 4.4
-(a pair, 2026-11-13, the first Spark under its clock cap, max 2100 MHz: the
-box read 4.29 GiB at that decode). The call goes to the fleet attached NOW:
+(a pair, 2026-11-13, the first Spark under its clock cap, max 2100 MHz,
+highest reading 2093 MHz: the box read 4.29 GiB at that decode). The call goes to the fleet attached NOW:
 the driver keeps only a weak note of the fleet it last submitted to, and
 reads the one attached in its place if a reset retired it
 (`vae_decode_relief.serving_now`). It never runs under a sample: the relief
@@ -2840,17 +2867,23 @@ call under its GPU lock, and the claim on the mesh's render session fails
 within seconds where a pipelined render owns it, after which the decode runs
 as before. The relief's line always ends its Worker clause with one of three
 things: the Workers released (with MemAvailable on each side), they were not
-asked and why, or no fleet was attached to ask. The ask has no hardware
-reading yet. Eight things bound the relief:
+asked and why, or no fleet was attached to ask. On dev `fd03947` (2026-11-13,
+a pair, both boxes held, the backups kept by the switch, the first Spark
+under its clock cap, max 2100 MHz, highest reading 2093 MHz) two Worker
+actors released their idle pools, MemAvailable went from 14.8 to 21.0 GiB,
+and the first Spark's decode low read 16.08 GiB where it had read 10.34
+without the ask ([VALIDATION](VALIDATION.md#proof-block-fd03947)). Eight things bound the relief:
 
-- **Only text encoders are freed.** By an allow-list, not a deny-list: a text
+- **Only text encoders are freed in the driver.** By an allow-list, not a deny-list: a text
   encoder is the one kind of model ComfyUI marks for certain (`is_clip` on its
   patcher, set in `comfy.sd.CLIP`), nothing samples with one, and every gain
   on record is one (24 and 7.7 GiB in the first record, 6.3 in the second). A
   diffusion model, the VAE in hand, another VAE, CLIP vision, a ControlNet, an
   adapter or a model patch is never touched, whoever calls, from whatever
   thread and whatever sampler. A text encoder on another device than the
-  decode's is left too, since ComfyUI's call frees on one device.
+  decode's is left too, since ComfyUI's call frees on one device. What the
+  Workers are asked for drops no model either: their device pools at the
+  level `pool`, which keeps a Worker's own decode VAE.
 
 - **The trigger is ComfyUI's own.** The price is `VAE.memory_used_decode` and
   the requirement is the one `load_models_gpu` computes from it
@@ -2880,7 +2913,8 @@ reading yet. Eight things bound the relief:
   `driver_unload.busy_reason` because it drops every model and calls the
   Workers. The relief does neither, and it does not ask that check: on
   2026-11-12 the check read "a call to the Workers is still in flight" after a
-  render had finished, and a relief that leaned on it would go dead exactly
+  render had finished (a stopped mesh's handle after a reset, fixed in the
+  same release), and a relief that leaned on it would go dead exactly
   where a decode follows a render. The sampler guard and the allow-list are
   the whole test. A render on the Workers uses no model in the driver's
   process.
@@ -2892,9 +2926,10 @@ reading yet. Eight things bound the relief:
 - **It adds room; it does not bound a decode.** It frees what ComfyUI prices,
   and ComfyUI's prices have run above the use in every record (16.1 GiB priced
   for the decode that used 9.3). With nothing idle the decode runs as ComfyUI
-  runs it, and one line says so. The Workers are not asked for their cached
-  memory here: the one Worker call there is reaches every box, and only the
-  driver host's Workers share the decode's memory.
+  runs it, and one line says so. The Workers are asked for nothing but their
+  idle device pools, and only once the driver's own text encoders have given
+  what they can or where it holds none: the one Worker call there is reaches
+  every box, though only the driver host's Workers share the decode's memory.
 - **It steps aside, it does not break a decode.** If a call it makes raises,
   ComfyUI's own decode answers then and for the life of the process, with one
   WARNING. A VAE that cannot price its latent is that decode's matter alone.
@@ -2902,17 +2937,20 @@ reading yet. Eight things bound the relief:
 
 What it costs when it acts: a text encoder that gave up pages faults them
 back, or loads again, when a prompt's text next changes; an unchanged
-prompt's conditioning is cached. What a freed page returns has no hardware
-record yet. The nearest is a whole unload, which the render-site checks make:
-on 2026-11-11 and 2026-11-12, with the first Spark under its clock cap (max
-2100 MHz), unloading the LTX text encoder and two VAEs whole returned 30.6
-GiB. `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns the
+prompt's conditioning is cached. On dev `e77694c` on 2026-11-12, with the
+first Spark under its clock cap (max 2100 MHz, highest reading 2093 MHz), the
+free returned 19.0 GiB of available memory before the first of the two
+decodes above and 5.2 GiB before a later one, and the box read 13.0 GiB at
+its lowest where it had read 6.7; with the relief switched off the same
+render read 6.2 GiB. A render with one word of its prompt changed took 12.8 s
+longer than one whose conditioning was cached, which is the encode with the
+encoder the relief had partly freed, plus its relief
+([VALIDATION](VALIDATION.md#release-build-low-memory)). `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns the
 relief off, for diagnosis; the reading's switch does not. The driver
 publishes its state beside the encode rule's in `/dgxm/telemetry`
 (`driver_rules`), and doctor's `driver memory reading` row adds a clause only
 when it is off, stepped aside or not installed. `VAE.decode_tiled` is not
-wrapped (it is already the bounded form) and neither is `VAE.encode`. **NOT
-RUN** on hardware as merged: the two records above are of the build before it
+wrapped (it is already the bounded form) and neither is `VAE.encode`
 (TROUBLESHOOTING #12).
 
 **A Worker makes room for its CUDA context before it creates one.** The
@@ -2927,9 +2965,10 @@ context, and the page cache does not count: on 2026-11-12, on a DGX Spark,
 three Worker starts failed in `cuDevicePrimaryCtxRetain`, with 1.52, 4.61
 and 8.85 GiB free while 44.7, 47.4 and 50.8 GiB were available, and the
 kernel log read `NV_ERR_NO_MEMORY` from the driver's allocation of the
-context's main buffer. One start on record made its context with 8.87 GiB
-free, and every other had 10.6 GiB free or more, so the line lies near 9
-GiB. Each failure came while a program held tens of GiB (a test hold).
+context's main buffer. Other starts made their contexts with 8.87 GiB free
+and with 10.6 or more, and later ones with the step switched off did so
+with 5.13 and 4.25, so the failure is intermittent and the record gives no
+line. Each failure came while a program held tens of GiB (a test hold).
 Reading files does not by itself bring the box there: 260 GiB of model files
 read with nothing held left 26 to 28 GiB free, and the context that
 followed was made with 10.6 to 11.5 GiB free. An ordinary GPU allocation
@@ -3007,30 +3046,43 @@ recovers by itself, and the context's main buffer does not.
   torn down until a reset or a teardown settles it.
 - **It fails open, and it has one switch.** A fault anywhere in the step is
   logged once and the bootstrap goes on as before. `DGXM_DISABLE_CONTEXT_ROOM=1`
-  in the Worker's environment turns the step off, for diagnosis; the refusal
-  stays. The worker loop's environment filter lets that name through to the
+  on the Worker (in its `worker.env`, then a recycle:
+  [CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)) turns the step
+  off, for diagnosis; the refusal stays. The worker loop's environment filter lets that name through to the
   actors (`cli/worker_process_env.py`). One line in the Worker's journal
   says what the step did whenever free memory was short, and the Worker's
   status carries the same (`context_room`: the GiB touched, the seconds,
   free memory before the step, after the release and at the context, and
   whether the Worker made the context at once or left it to the bootstrap).
 
-The mark is 16 GiB because the record's line is fine: 8.85 failed and 8.87
-worked. 16 keeps about 7 GiB over it, at no cost on a roomy start.
+The mark is 16 GiB because the record gives no safe figure under it: a
+start failed with 8.85 GiB free, and none on record has failed with more.
+16 keeps about 7 GiB over that, at no cost on a roomy start.
 
-What it costs when it acts: a few seconds, and up to 16 GiB of page cache
-that files must be read into again. The Worker's unit sets no memory limit,
-so the reading is the box's. Not yet run on hardware: whether memory freed
-this way serves the driver's request is what the proof cell reads, and if it
-does not, the refusal stands alone.
+What it costs when it acts: about 4 s, and up to 16 GiB of page cache that
+files must be read into again. The Worker's unit sets no memory limit, so
+the reading is the box's. On hardware (dev `48e0509`, 2026-11-12 and 13, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz), every start with under 16 GiB free was lifted to about 16 GiB
+free and made its context: eighteen starts, on one GPU and on the pair, from
+1.1 to 15.8 GiB free, each in 3.8 to 4.2 s. The context
+was made at once where the Worker makes it, and under comfy-managed
+residency through ComfyUI's own start a moment later, with 16.7 and 16.8
+GiB free when it asked. The lowest available memory inside the step was
+6.83 GiB. Every load that followed went on or was refused at its price, so
+ComfyUI's import is content with a context made before it. Two
+comfy-managed renders then stalled for another cause
+([VALIDATION](VALIDATION.md#found-on-dev-48e0509)), which dev `45e07cc`
+answers ("The loader's log level, and who may read the allocator", above). With the step switched off the failure did not come
+back in four tries, so the refusal has no hardware row and CPU tests hold
+it ([VALIDATION](VALIDATION.md#worker-context-starts)).
 
 **A LoRA stack's classic bake has a price, and where it does not fit the
 Worker bakes in place if the identity gate allows.** With `lora_low_rss` off a
 Worker bakes a stack ComfyUI's classic way: the slot is dropped, base and
 stack load fresh from the host, and ComfyUI keeps a host backup of every
-patched weight. The stock price (the file, the host copy it is placed from and
+patched weight (the Worker now gives it up before the first step where a
+whole load leaves the sampler short: section 5.5). The stock price (the file, the host copy it is placed from and
 the floor) had no term for the stack. On one GPU of a DGX Spark under its
-clock cap (max 2100 MHz), 2026-11-12, as the rise of the Worker's GPU figure
+clock cap (max 2100 MHz, highest reading 2093 MHz), 2026-11-12, as the rise of the Worker's GPU figure
 over the same model's load with no stack, and what stays after a soft clear:
 
 | checkpoint and how its patched layers bake | stack on disk | patched weights | switch | rise | stays |
@@ -3170,7 +3222,12 @@ covers the whole load by itself. Three rules follow.
     route under 45.1 and whole above it. (On a pair a rank that loads
     partly is refused, typed, with nothing sampled: there the fleet admits
     from the price and a rank loads this template whole only from about
-    49.5, as it did before this price existed.) The exception holds for any
+    49.5, as it did before this price existed. Above that edge a rank's
+    whole load with the backup kept took the first Spark to 4.29 GiB at
+    readings near 53 on dev `48e0509` (2026-11-13, under its clock cap, max
+    2100 MHz, highest reading 2093 MHz); from dev `45e07cc` the ranks free
+    their backups together where a rank is short, and refuse together where
+    that is not enough, as section 5.5 gives.) The exception holds for any
     LoRA stack on that model, because of the 2.3 only the backup follows
     the stack and a backup cannot pass the model, which ComfyUI's condition
     already counts. The model is named by the pack's own header read (the
@@ -3192,12 +3249,22 @@ covers the whole load by itself. Three rules follow.
       ComfyUI weighs the free reading only in its NORMAL and LOW memory
       states; the price reads that state with the reserve
       (`in_place_fallback.worker_reserve`).
-    - **A longer clip is not on record.** The sampler's use over ComfyUI's
-      estimate was read at one clip (0.5 GiB). If it grows with the latent, a clip
-      about three times as long could bring the lowest whole load under
-      the floor at the default reserve. The last hardware block reads that
-      whole load three times and once at a longer clip; a low under 5.0
-      GiB in any of them removes the exception before the release.
+    - **A longer clip is on record (dev `48e0509`, 2026-11-12 and 13).**
+      At the default reserve the whole load at 81 frames read lows of 7.51,
+      7.68 and 7.01 GiB in three fresh Workers. The take grows with the
+      clip, 36.3 GiB at 41 frames, 38.8 to 39.1 at 81, 42.2 to 42.4 at 121
+      and 50.5 to 52.4 at 241, and no price knows the clip. No one-GPU
+      reading went under 5.0 GiB; at ComfyUI's whole-load edge 241 frames
+      projects to 4.4 to 6.3 GiB, a projection and not a reading
+      ([VALIDATION](VALIDATION.md#found-on-dev-48e0509)). The exception
+      stays in the price. From dev `45e07cc` the Worker gives ComfyUI's
+      backup up before the first step where a whole load leaves the sampler
+      short ("No price knows the clip", below). In its proof block the
+      whole load at 81 frames read a low of 15.82 GiB at about the reading
+      where the three above read 7.01 to 7.68, and 241 frames read 25.07 at a reading of 61.5
+      (2026-11-13, the first Spark under its clock cap, max 2100 MHz,
+      highest reading 2093 MHz;
+      [VALIDATION](VALIDATION.md#proof-block-45e07cc)).
     - The rule leans on ComfyUI's code, which is not pinned, so a canary
       seam (`whole load condition`, `tests/canary/comfy_seam_contracts.py`)
       turns the daily lane red if the condition, its gate, the estimate for
@@ -3293,7 +3360,10 @@ covers the whole load by itself. Three rules follow.
   reading less the first model's charge, as the store chooses it beside the
   loaded first model, and the first slot is counted as held, as the store
   finds it. Three places still work out a second time what the store
-  decides, and are known duplications until one function serves both sides.
+  decides, and are known duplications until one function serves both sides,
+  which is planned for the release after this one. In every case found the
+  Worker's own check still priced the load that ran, so the worst outcome
+  was a typed refusal and never a load that nothing guarded.
   The pair's budget is the reading less the first model's peak price and not
   what its load leaves, which errs toward a refusal. The quote matches the
   slab-retry flag's base by file name where the store compares the whole key;
@@ -3370,11 +3440,27 @@ now gives that backup up before the first step where a whole load leaves less
 room than the sampler may ask (`lora_partial_load.free_backup_for_sampling` on
 one GPU; on a pair the ranks together, `backup_agreement`; section 5.5), which
 takes the projected low at the 241-frame edge from 4.4 to about 10 by the
-route's record of the same step (5.8 GiB returned before the trim was added;
-not yet read on hardware for a whole load). A pair's rank at its whole-load
-edge read 4.29 GiB on the first Spark on 2026-11-13 with the backup kept; the
-pair's agreement and its room check are the answer to that reading and have no
-hardware reading of their own yet. What stays as above: a load placed partly
+route's record of the same step (5.8 GiB returned before the trim was added).
+On dev `45e07cc` a whole load's free at 241 frames returned 16.1 GiB with
+its trim, and the low read 25.07 GiB at a reading of 61.5, which is above
+the edge; at 81 frames, at the reading where three loads with the backup
+kept had read 7.0 to 7.7, it read 15.82 (2026-11-13, one GPU of the first
+Spark under its clock cap, max 2100 MHz, highest reading 2093 MHz;
+[VALIDATION](VALIDATION.md#proof-block-45e07cc)). A pair's rank at its whole-load edge read 4.29 GiB on the
+first Spark on 2026-11-13 with the backup kept (dev `48e0509`, under its
+clock cap, max 2100 MHz, highest reading 2093 MHz); the pair's agreement and
+its room check are the answer to that reading. On dev `45e07cc` both ranks
+freed where one or both were short, and the first Spark (the same cap and
+reading) read 22.28 GiB at readings near 58.5 where it had read 9.68 near 60
+with the backup kept; a
+fault on one rank stopped every rank before the first step, though that
+rank's own refusal reached no one there (on dev `fd03947` the refusal led
+with that rank's words and that box logged it:
+[VALIDATION](VALIDATION.md#proof-block-fd03947)); the room check's own refusal has no
+hardware reading ([VALIDATION](VALIDATION.md#proof-block-45e07cc)). The
+same block found that the pair's need did not count the shared memory a
+fresh rank maps in its first forward, about 2.7 GiB, which the need now
+counts (section 5.5; [VALIDATION](VALIDATION.md#found-on-dev-45e07cc)). What stays as above: a load placed partly
 whose route could not run.
 
 **Freed host memory goes back at once.** torch's wheels allocate host memory
@@ -3408,7 +3494,10 @@ fresh Worker's after its second load of the INT8 Wan-Animate 2 file, until a
 drop, a hard clear or a recycle. A small block freed from another thread still waits for that thread's
 next allocations. The cost is about 20 percent on a loop that does nothing but
 allocate and free host memory (0.44 s against 0.36 s for ten rounds of 16
-blocks of 128 MiB); the release test on this setting measures what renders pay.
+blocks of 128 MiB). Release test v5 ran on this setting on dev `f297c70`
+on 2026-11-14, as v4 did, so its walls are renders with the setting in
+place ([VALIDATION](VALIDATION.md#release-test-v5-f297c70)); no pass read
+the same renders without it.
 Each actor logs the value it started with in its `UMA posture` line.
 
 **A model in the way offers a clear, not a credit.** A refusal priced over a
@@ -3548,7 +3637,13 @@ cast was priced, `dgx-monarch-wan22-t2v`, whose two stages swap in the cond
 slot, refused its stage 2 at 58.7 GiB available against 60.9 GiB, where the
 hardware had rendered it with 39.9 GiB left at its lowest. Credited, stage 2
 needs 34.3 GiB. The Worker's own ladder prices after its drop, so it never
-needs the credit.
+needs the credit. The identity gate's stock reference leg leaves such a
+resident: after a slab PASS under `slab_weights` auto, the policy returns
+from off to `auto` over the stock copy that leg loaded, the store keeps it
+(`actor/store_residency.policy_keeps_resident`), and the user's render
+reuses it, so slab residency engages at the next fresh load of that file,
+through the family memo; the PASS proved the two residencies bit-identical,
+and on 2026-11-13 (40af2d7) the head Worker held about 23 GiB in either one.
 
 **The driver host's own prices count the same drop.** The loader preflight and
 the render-site checks that charge a pending DiT load (the driver footprint,
