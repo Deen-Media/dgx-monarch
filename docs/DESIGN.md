@@ -2299,9 +2299,20 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
   executing context gives the prompt and node id, and the prompt queue's
   running item with that id carries the graph. And in a graph whose DGX Monarch
   UNET Loader is not of a family the loader prices a driver stack for.
+- **The loader's settings, from the graph.** The loader reads two settings from
+  its mesh input, the Init node's output: the family forced there
+  (`family_adapter`), which stands over the checkpoint's header and in place of
+  one it cannot read, and its floor, `reserve_bytes` of the Init node's
+  `uma_reserve_gb` over the configured policy. A wrap holds no mesh, so it reads
+  both from the running graph's Init node that the loader's mesh comes from, by
+  the loader's own rules, over the attached mesh's configured policy or, before
+  a mesh is up, the policy of the file the Init node names
+  (`driver_spend_settings.py`). A graph with no Init node reads the header
+  alone at the 5 GiB floor; a configuration it cannot read leaves the Init
+  node's own reserve.
 - **The promise.** A marked spend is never refused. An unmarked spend is refused
   only where it would take the box under its floor
-  (`driver_footprint.reserve_bytes`) after every rescue: the room is
+  (`driver_footprint.reserve_bytes`, the loader's) after every rescue: the room is
   MemAvailable plus what this process's torch pool holds unallocated, and before
   it refuses it unloads what ComfyUI holds and trims the Workers' idle caches,
   as the render-site checks do. That is a new refusal for a queue that today

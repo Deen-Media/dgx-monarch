@@ -2954,12 +2954,13 @@ model the queue newly loads through a stock loader node (a changed file, or a
 branch a switch newly selects) loads before the sampler, where nothing priced
 it until 1.5.0. Since then the driver prices it at the loader node: what the
 loader charges for its inputs, a text encoder's file at 1.15, a model's whole,
-several files summed, against MemAvailable, after the same unload and release
-as above. The refusal starts `CLIPLoader loading <file> needs ... GiB on the
+several files summed, against MemAvailable above the loader's floor, after the
+same unload and release as above. The refusal starts `CLIPLoader loading <file> needs ... GiB on the
 driver's box` (or the node it is), under this guard's driver-host twin
 `driver_footprint_preflight`, and nothing was loaded; pick a smaller file, or
 free memory on the box. It prices only a graph whose DGX Monarch UNET Loader is
-of a family the loader prices a driver stack for, and nothing the loader
+of a family the loader prices a driver stack for (a family forced on the Init
+node counts, as at the loader), and nothing the loader
 charged at its size in this prompt
 ([#82](#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode) covers
 the encodes). Other packs' loaders and ComfyUI's internal reloads are not
@@ -4731,10 +4732,12 @@ same driver, a queue that changes only the guide's file, the canvas or the
 length runs no loader, and its new encode would run with no charge before it.
 Since 1.5.0 the driver prices that encode at Add Guide (MiniMax H3) itself,
 where the loader did not charge it: on the canvas and frame count the node
-holds, at the charge above, a clip with 1 GiB more, against MemAvailable after
-ComfyUI's models are unloaded and the Workers' idle caches released. Where
-ComfyUI runs without DynamicVRAM a clip carries 6 GiB more, and a VAE ComfyUI
-does not hold is charged too. The refusal is `[dgxm:C guard=driver_footprint_preflight waivable=0]`, starts
+holds, at the charge above, a clip with 1 GiB more, against MemAvailable above
+the loader's floor (5 GiB, or the Init node's `uma_reserve_gb` where larger)
+after ComfyUI's models are unloaded and the Workers' idle caches released.
+Where ComfyUI runs without DynamicVRAM a clip carries 6 GiB more, and a VAE
+ComfyUI does not hold is charged too. The refusal is
+`[dgxm:C guard=driver_footprint_preflight waivable=0]`, starts
 `Add Guide (MiniMax H3) for this 5-frame clip at 448x256 needs ... GiB on the
 driver's box`, says whether this prompt reached the loader, and nothing was
 encoded. Use a shorter clip or a smaller canvas, or free memory on the box.
@@ -4746,7 +4749,8 @@ at 40 GiB, and the stock loader nodes' files
 the loader charged a spend at its size in this prompt, nothing is priced, and
 the driver log reads `the loader priced this prompt; nothing priced here`; it
 prices nothing either in a graph whose DGX Monarch UNET Loader is not of a
-family the loader prices. A spend it admits logs one `driver spend price:` line
+family the loader prices, the family forced on the Init node (`family_adapter`)
+counting as at the loader. A spend it admits logs one `driver spend price:` line
 with its charge and the room it found. This is a new refusal for a queue that
 today renders only by taking the box under its floor.
 

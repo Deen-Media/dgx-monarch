@@ -7,10 +7,12 @@ is priced at the node that makes it (docs/DESIGN.md section 5.9):
 
 - What the loader charged for each spend is marked (``driver_spend_marks``); a
   spend charged at least its own size steps aside, and any other is priced live,
-  only in a running graph of a family the loader prices a driver stack for.
+  only in a running graph of a family the loader prices a driver stack for, a
+  family forced on the Init node included (``driver_spend_settings``).
 - A marked spend is never refused. An unmarked spend is refused only where it
-  would take the box under its floor (``driver_footprint.reserve_bytes``) after
-  every rescue: MemAvailable plus this process's unallocated torch pool, after
+  would take the box under its floor (``driver_footprint.reserve_bytes`` of the
+  loader's worker arguments, ``uma_reserve_gb`` included) after every rescue:
+  MemAvailable plus this process's unallocated torch pool, after
   ``driver_unload.check_with_unload`` unloads what ComfyUI holds and trims the
   Workers' idle caches.
 - Priced: Add Guide (MiniMax H3) on its exact canvas and frame count; Reference
@@ -49,6 +51,7 @@ from .driver_spend_marks import (
     remember,
     running_item,
 )
+from .driver_spend_settings import priced_loader
 from .log import get_logger
 from .refusal import RefusalClass, refusal
 
@@ -144,32 +147,6 @@ def running_graph(prompt_id: str | None) -> Mapping[str, Any] | None:
     return item[2] if item is not None and isinstance(item[2], Mapping) else None
 
 
-def priced_family(graph: Mapping[str, Any]) -> str | None:
-    """The first family the loader prices a stack for, among the graph's DGX Monarch UNET Loaders."""
-    import folder_paths
-
-    from .adapters.detect import CheckpointSniffError, sniff_checkpoint
-    from .driver_footprint import DRIVER_STACK_FAMILIES
-    from .family_select import effective_family
-
-    for node in graph.values():
-        if not isinstance(node, Mapping) or not str(node.get("class_type", "")).startswith("DGXMonarch"):
-            continue
-        name = (node.get("inputs") or {}).get("unet_name")
-        if not isinstance(name, str) or not name:
-            continue
-        path = folder_paths.get_full_path("diffusion_models", name)
-        if not path:
-            continue
-        try:
-            family = effective_family(sniff_checkpoint(path)[0], None)
-        except CheckpointSniffError:
-            continue
-        if family in DRIVER_STACK_FAMILIES:
-            return family
-    return None
-
-
 def _pool_free_bytes() -> int:
     """What this process's torch pool holds reserved and unallocated; 0 where unread."""
     try:
@@ -221,12 +198,15 @@ def _refusal_text(spend: Spend, needed: int, room: int, floor: int, reached: boo
             "box, and the next queue then runs the loader, which itemises the whole graph's figures.")
 
 
-def check(spend: Spend, prompt_id: str | None = None) -> None:
-    """Admit ``spend.charge()`` bytes now, or refuse after the driver's rescues; log what admitted it."""
+def check(spend: Spend, prompt_id: str | None = None, worker_args: Mapping[str, Any] | None = None) -> None:
+    """Admit ``spend.charge()`` bytes now, or refuse after the driver's rescues; log what admitted it.
+
+    The floor is the loader's: ``reserve_bytes`` of the worker arguments it reads, 5 GiB where none are read.
+    """
     from . import driver_footprint, driver_unload, vae_decode_relief
     from .nodes import graph_load_price
 
-    floor = driver_footprint.reserve_bytes(None)
+    floor = driver_footprint.reserve_bytes(worker_args)
     reached = prompt_id is not None and graph_load_price.priced_any_this_prompt(prompt_id)
     seen: list[tuple[int, int, int]] = []
 
@@ -271,14 +251,15 @@ def _price(name: str, spend_of: Callable[[Mapping[str, Any], str], Spend | None]
                 log.info("driver spend price: the loader priced this prompt; nothing priced here (%s, node %s: "
                          "%s GiB charged, %s GiB needed)", name, node, _gib(held), _gib(spend.own))
             return
-        if priced_family(graph) is None:
+        loader = priced_loader(graph)  # its family, forced or sniffed, and the worker arguments it reads
+        if loader is None:
             log.debug("driver spend price: not a graph of a family the loader prices; %s is not priced", name)
             return
     except Exception as exc:
         log.debug("driver spend price stepped aside for %s (%r)", name, exc)
         return
     try:
-        check(spend, prompt_id)
+        check(spend, prompt_id, loader.worker_args)
     except DriverSpendCapacityError:
         raise
     except Exception as exc:

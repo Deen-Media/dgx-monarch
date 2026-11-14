@@ -14,11 +14,13 @@
   Guide (MiniMax H3), at Reference to Video (MiniMax H3) for a reference video,
   and at the stock loader nodes of a text encoder, checkpoint or model, at what
   the loader charges for it, and refuses before anything is spent where the
-  spend would take the box under its floor after ComfyUI's models are unloaded
-  and the Workers' idle caches released. That is a new refusal for a queue that
-  today renders only by dipping under the floor. Nothing the loader charged at
-  its size in the same prompt is priced again, and nothing in a graph of a
-  family the loader does not price. The same holds where ComfyUI runs such a
+  spend would take the box under the loader's floor (5 GiB, or the Init node's
+  `uma_reserve_gb` where larger) after ComfyUI's models are unloaded and the
+  Workers' idle caches released. That is a new refusal for a queue that today
+  renders only by dipping under the floor. Nothing the loader charged at its
+  size in the same prompt is priced again, and nothing in a graph of a family
+  the loader does not price, a family forced on the Init node counting as at
+  the loader. The same holds where ComfyUI runs such a
   node before the loader on a first queue. Not yet run on hardware
   ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
 

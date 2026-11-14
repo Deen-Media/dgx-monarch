@@ -20,13 +20,17 @@ from types import SimpleNamespace
 import pytest
 
 from dgx_monarch import (
+    config,
     driver_footprint,
     driver_spend_marks,
     driver_spend_price,
+    driver_spend_settings,
     driver_unload,
+    mesh,
     mesh_safety,
     vae_decode_relief,
 )
+from dgx_monarch.adapters import SELECTABLE_FAMILIES, detect
 from dgx_monarch.nodes import graph_load_price, loader_graph
 from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
 
@@ -146,7 +150,8 @@ def rig(monkeypatch):
     graphs = {"graph": GRAPH}
     monkeypatch.setattr(driver_spend_price, "running_graph", lambda prompt_id: graphs["graph"])
     family = {"name": "minimax_h3"}
-    monkeypatch.setattr(driver_spend_price, "priced_family", lambda graph: family["name"])
+    monkeypatch.setattr(driver_spend_price, "priced_loader", lambda graph: (
+        None if family["name"] is None else driver_spend_settings.PricedLoader(family["name"], {})))
     activations = {"bytes": 11 * GIB}
     monkeypatch.setattr(loader_graph, "graph_activation_bytes",
                         lambda graph, sp, family: (activations["bytes"], ""))
@@ -639,3 +644,151 @@ def test_the_running_graph_is_read_from_comfys_queue_by_prompt_id(monkeypatch):
     assert driver_spend_price.running_graph("absent") is None and driver_spend_price.running_graph(None) is None
     monkeypatch.setitem(sys.modules, "server", SimpleNamespace())
     assert driver_spend_price.running_graph(PROMPT) is None
+
+
+# The loader's two settings, read from the running graph's Init node by the real reader.
+
+def _settings(rig, monkeypatch, init: dict | None, sniffed: object = ("minimax_h3", "int8"),
+              config_args: dict | None = None, attached: dict | None = None) -> None:
+    """The real reader on a graph whose loader takes its mesh from an Init node with these inputs (None: no
+    Init node), a header that sniffs as ``sniffed`` (an exception: unreadable), the configured policy
+    ``config_args`` of the file the Init node names, and a mesh attached with policy ``attached``."""
+    graph = {"2": {"class_type": "DGXMonarchUNETLoader", "inputs": {"mesh": ["1", 0], "unet_name": "h3.safetensors"}}}
+    if init is not None:
+        graph["1"] = {"class_type": "DGXMonarchInit", "inputs": {"topology": "auto", "mode": "auto", **init}}
+    rig.graphs["graph"] = graph
+    monkeypatch.setattr(driver_spend_price, "priced_loader", driver_spend_settings.priced_loader)
+    monkeypatch.setitem(sys.modules, "folder_paths", SimpleNamespace(
+        get_full_path=lambda folder, name: f"/models/{folder}/{name}"))
+
+    def sniff(path):
+        if isinstance(sniffed, Exception):
+            raise sniffed
+        return sniffed
+
+    monkeypatch.setattr(detect, "sniff_checkpoint", sniff)
+    monkeypatch.setattr(config, "find_config_path", lambda explicit=None: None)
+    monkeypatch.setattr(config, "local_config", lambda path=None: SimpleNamespace(worker_args=dict(config_args or {})))
+    handles = {}
+    if attached is not None:
+        handles["key"] = SimpleNamespace(effective_worker_args=lambda spec: {**attached, **dict(spec or {})})
+    monkeypatch.setattr(mesh, "_MESHES", handles)
+
+
+def test_an_unreadable_header_with_a_priced_family_forced_on_init_is_priced(rig, monkeypatch):
+    rig.box.value = 10 * GIB  # short of a still's 14 plus the floor
+    _settings(rig, monkeypatch, {"family_adapter": "minimax_h3"}, sniffed=detect.CheckpointSniffError("no header"))
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError):
+        _guide(1)
+    _settings(rig, monkeypatch, {"family_adapter": "auto"}, sniffed=detect.CheckpointSniffError("no header"))
+    _guide(1)  # the loader prices nothing for an unread header on auto, and nor does the wrap
+    assert len(_Guide.calls) == 1
+
+
+def test_a_forced_family_the_loader_does_not_price_prices_nothing(rig, monkeypatch):
+    unpriced = next(f for f in SELECTABLE_FAMILIES if f not in driver_footprint.DRIVER_STACK_FAMILIES)
+    rig.box.value = 10 * GIB
+    _settings(rig, monkeypatch, {"family_adapter": unpriced})  # the header reads H3, the forced family wins
+    _guide(1)
+    assert len(_Guide.calls) == 1
+
+
+def test_with_no_init_node_the_sniff_alone_decides_at_the_default_floor(rig, monkeypatch):
+    rig.box.value = 10 * GIB
+    _settings(rig, monkeypatch, None)
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    assert "above its 5.0 GiB floor" in _refused(exc_info)
+    _settings(rig, monkeypatch, None, sniffed=detect.CheckpointSniffError("no header"))
+    _guide(1)
+    assert len(_Guide.calls) == 1
+
+
+def test_a_file_the_loader_does_not_open_is_not_priced_even_when_forced(rig, monkeypatch):
+    rig.box.value = 10 * GIB
+    _settings(rig, monkeypatch, {"family_adapter": "minimax_h3"}, sniffed=detect.CheckpointSniffError("gguf"))
+    rig.graphs["graph"]["2"]["inputs"]["unet_name"] = "h3.gguf"
+    _guide(1)
+    assert len(_Guide.calls) == 1
+
+
+def test_a_24_gib_reserve_moves_the_line_and_the_words_state_it(rig, monkeypatch):
+    """The floor is reserve_bytes of the Init node's arguments, as at the loader. The rescues run the step
+    again against that one floor, and this process's free pool adds to the room whatever the reserve."""
+    _settings(rig, monkeypatch, {"uma_reserve_gb": 24.0})
+    reserve = 24 * GIB
+    rig.box.value = reserve + 14 * GIB
+    _guide(1)
+    assert len(_Guide.calls) == 1
+    rig.box.value = reserve + 14 * GIB - 1  # admitted at the default floor, under the reserve here
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    assert "has 14.0 GiB above its 24.0 GiB floor" in _refused(exc_info) and len(_Guide.calls) == 1
+    monkeypatch.setattr(driver_spend_price, "_pool_free_bytes", lambda: 2 * GIB)
+    rig.box.value = reserve + 12 * GIB
+    _guide(1)
+    assert len(_Guide.calls) == 2
+
+    def unload(mm, models):
+        before, rig.box.value = rig.box.value, rig.box.value + 1 * GIB
+        return driver_unload.Unloaded(("text encoder",), before, rig.box.value)
+
+    monkeypatch.setattr(driver_unload, "comfy_model_management", lambda: object())
+    monkeypatch.setattr(driver_unload, "held_models", lambda mm: [(object(), "text encoder")])
+    monkeypatch.setattr(driver_unload, "unload", unload)
+    rig.box.value = reserve + 10 * GIB  # the unload frees 1, the pool adds 2: 13 above the floor, short of 14
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    assert "has 13.0 GiB above its 24.0 GiB floor" in _refused(exc_info) and len(_Guide.calls) == 2
+
+
+@pytest.mark.parametrize(("init", "config_args", "attached", "floor"), [
+    ({}, {"uma_reserve_gb": 24.0}, None, 24),  # the config file the Init node names, before a mesh is up
+    ({"uma_reserve_gb": 30.0}, {"uma_reserve_gb": 24.0}, None, 30),  # the Init node's over the config's
+    ({}, {"uma_reserve_gb": 9.0}, {"uma_reserve_gb": 24.0}, 24),  # the attached mesh's policy first
+    ({"uma_reserve_gb": 2.0}, None, None, 5),  # never under the 5 GiB floor
+    ({"uma_reserve_gb": ["40", 0]}, None, None, 5),  # a linked input is not known before it runs
+])
+def test_the_floor_reads_the_init_node_over_the_configured_policy(rig, monkeypatch, init, config_args, attached,
+                                                                  floor):
+    _settings(rig, monkeypatch, init, config_args=config_args, attached=attached)
+    rig.box.value = 1 * GIB
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    assert f"above its {floor}.0 GiB floor" in _refused(exc_info)
+
+
+def test_a_config_that_cannot_be_read_leaves_the_init_nodes_reserve(rig, monkeypatch):
+    _settings(rig, monkeypatch, {"uma_reserve_gb": 12.0})
+
+    def unreadable(explicit=None):
+        raise config.ClusterConfigError("no such file")
+
+    monkeypatch.setattr(config, "find_config_path", unreadable)
+    rig.box.value = 1 * GIB
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    assert "above its 12.0 GiB floor" in _refused(exc_info)
+
+
+def test_a_marked_spend_steps_aside_whatever_the_reserve(rig, monkeypatch):
+    """A mark is the loader's charge for the term against the spend's own size; no reserve enters it."""
+    _settings(rig, monkeypatch, {"uma_reserve_gb": 30.0})
+    _mark(driver_spend_price.GUIDE_TERM, 14 * GIB)
+    rig.box.value = 1 * GIB
+    _guide(1)
+    assert len(_Guide.calls) == 1 and rig.box.reads == 0
+
+
+def test_the_inputs_read_are_the_init_nodes_own(monkeypatch):
+    """A rename on the Init node would leave the wrap reading defaults; it reads these names."""
+    monkeypatch.setitem(sys.modules, "folder_paths", SimpleNamespace(get_filename_list=lambda kind: []))
+    from dgx_monarch.nodes.init import DGXMonarchInit
+    from dgx_monarch.nodes.loaders import DGXMonarchUNETLoader
+
+    types = DGXMonarchInit.INPUT_TYPES()
+    names = {**types["required"], **types.get("optional", {})}
+    for name in (driver_spend_settings.FAMILY_INPUT, driver_spend_settings.RESERVE_KEY, "config_path", "mode"):
+        assert name in names, name
+    assert "mesh" in DGXMonarchUNETLoader.INPUT_TYPES()["required"]
+    assert DGXMonarchInit.RETURN_TYPES == DGXMonarchUNETLoader.INPUT_TYPES()["required"]["mesh"]

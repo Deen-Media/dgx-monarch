@@ -17,10 +17,14 @@ from types import SimpleNamespace
 import pytest
 
 from dgx_monarch import (
+    config,
+    driver_footprint,
     driver_spend_marks,
     driver_spend_price,
+    driver_spend_settings,
     driver_unload,
     h3_activation,
+    mesh,
     mesh_safety,
     vae_decode_relief,
 )
@@ -127,10 +131,11 @@ def test_a_sampler_site_price_marks_nothing(pool_reset, monkeypatch):  # noqa: F
     assert driver_spend_marks._CHARGED == {}
 
 
-def _loader_refuses(graph: dict, preset: str) -> bool:
+def _loader_refuses(graph: dict, preset: str, worker_args: dict | None = None) -> bool:
     loader_preflight.reset_memos()
     try:
-        loader_preflight.preflight_loader_footprint(_Mesh(topology_preset=preset), REF2VA_INT8_PRUNED, {}, graph)
+        loader_preflight.preflight_loader_footprint(
+            _Mesh(topology_preset=preset, worker_args=worker_args), REF2VA_INT8_PRUNED, {}, graph)
     except Exception:
         return True
     return False
@@ -175,3 +180,45 @@ def test_spends_first_and_the_loader_last_in_one_prompt(
             refused.append(gib)
             assert _loader_refuses(graph, preset), f"at {gib} GiB a spend refuses that the loader admits"
     assert refused, "the sweep must read the refusing side"
+
+
+def test_a_reserve_moves_the_live_line_as_it_moves_the_loaders(pool_reset, monkeypatch, tmp_path):  # noqa: F811
+    """The same order with the Init node's uma_reserve_gb at 0 and at 24 GiB: the wrap reads it from the
+    running graph, the loader from its mesh. The live line rises with the floor, 19 GiB, and every live
+    refusal is still one the loader makes at that reading."""
+    _dynamic_vram(monkeypatch, True)
+    _write_image(tmp_path, "clip5.png", 5)
+    graph = _still_graph(width=448, height=256, image_file="clip5.png")
+    for owner, attr, value in (
+            (driver_spend_marks, "_CHARGED", {}), (graph_load_price, "executing_prompt_id", lambda: PROMPT),
+            (driver_spend_price, "_pool_free_bytes", lambda: 0), (driver_unload, "comfy_model_management", lambda: None),
+            (driver_unload, "busy_reason", lambda handle: ""),
+            (vae_decode_relief, "_serving", lambda: (None, vae_decode_relief.NO_FLEET)),
+            (config, "find_config_path", lambda explicit=None: None), (mesh, "_MESHES", {})):
+        monkeypatch.setattr(owner, attr, value)
+    te_name = next(node["inputs"]["clip_name"] for node in graph.values() if node["class_type"] == "CLIPLoader")
+    te = driver_spend_price._load_spend({"clip_name": te_name}, "CLIPLoader")(graph, "3")
+    guide = driver_spend_price._guide_spend(
+        {"image": SimpleNamespace(shape=(5, 32, 32, 3)), "latent": _latent(448, 256)})(graph, "10")
+    assert te is not None and guide is not None
+    lines = {}
+    for reserve in (0.0, 24.0):
+        graph["1"]["inputs"]["uma_reserve_gb"] = reserve
+        loader = driver_spend_settings.priced_loader(graph)
+        assert loader is not None and loader.family == h3_activation.H3_FAMILY
+        assert driver_footprint.reserve_bytes(loader.worker_args) == max(5.0, reserve) * GIB
+        refused = []
+        for gib in range(10, 101, 2):
+            monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda value=gib * GIB: value)
+            live = False
+            for spend in (te, guide):
+                try:
+                    driver_spend_price.check(spend, PROMPT, loader.worker_args)
+                except driver_spend_price.DriverSpendCapacityError:
+                    live = True
+            if live:
+                refused.append(gib)
+                assert _loader_refuses(graph, "uly2", {"uma_reserve_gb": reserve} if reserve else {}), (
+                    f"at {gib} GiB with a {reserve} GiB reserve a spend refuses that the loader admits")
+        lines[reserve] = max(refused)
+    assert 18 <= lines[24.0] - lines[0.0] <= 20, lines

@@ -7275,7 +7275,14 @@ def _assert_driver_spend_wraps_seam() -> None:
     from comfy_execution.utils import CurrentNodeContext
     from comfy_extras import nodes_minimax_h3
 
-    from dgx_monarch import driver_footprint, driver_spend_price, driver_unload, mesh_safety, vae_decode_relief
+    from dgx_monarch import (
+        driver_footprint,
+        driver_spend_price,
+        driver_spend_settings,
+        driver_unload,
+        mesh_safety,
+        vae_decode_relief,
+    )
     from dgx_monarch.nodes import loader_graph
 
     gib = 2 ** 30
@@ -7319,7 +7326,7 @@ def _assert_driver_spend_wraps_seam() -> None:
     reading = {"bytes": 0}
     patches = (
         (driver_spend_price, "running_graph", lambda prompt_id: {"2": {}}),
-        (driver_spend_price, "priced_family", lambda graph: "minimax_h3"),
+        (driver_spend_price, "priced_loader", lambda graph: driver_spend_settings.PricedLoader("minimax_h3", {})),
         (driver_spend_price, "_pool_free_bytes", lambda: 0),
         (loader_graph, "graph_activation_bytes", lambda graph, sp, family: (11 * gib, "")),
         (loader_graph, "_artifact_bytes", lambda folders, name: 10 * gib),
