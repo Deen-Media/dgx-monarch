@@ -66,6 +66,39 @@ its models (``driver_unload.busy_reason``), so it asks nothing, and so does
 one with ``DGXM_DISABLE_DRIVER_UNLOAD`` set. A dual-model request,
 comfy-managed residency, an FSDP preset and a driver on a box with no Worker
 are left to the checks that price them today.
+
+With no quote to ask, the step frees only where the price, read whole, is
+short at the smallest price a fresh Worker could choose (``no_quote_floor``).
+Every route by which a fresh Worker could price lower, taken from its code
+(``actor/capacity_quote.price``, ``actor/store_load``, ``actor/comfy_bridge``),
+and what this path does with it (the review of 2026-11-14):
+
+- the persisted family memo under ``auto`` (``actor/store_family``): a
+  vouched family is priced at slab; a family outside the vouched set reaches
+  slab by no route, the load-time retry included, so stock is its floor;
+- the vouched set: the same ``capacity_fit.SLAB_VOUCHED_FAMILIES`` on both
+  sides;
+- a family compile leaves eager: slab asked for is priced at slab, compile_dit
+  on or off;
+- a forced family: the Worker turns ``auto`` off and reads no memo, so it is
+  stock unless slab is asked for, and the floor is at or below that;
+- a loader cast: the same mapping and ``stock_load_fit``; a slab price under a
+  cast makes no claim, so nothing is freed;
+- a file that cannot take slab: the Worker goes stock, at or above the floor;
+- ``lora_low_rss`` off: the Worker turns slab off, so stock is the floor, and a
+  LoRA stack's classic bake is unread, so nothing is freed;
+- comfy-managed residency and an FSDP preset: the step returns before any
+  price;
+- one Spark and a local mesh: the same rules, the status read covering every
+  rank here;
+- a capacity-rescue consent: projected into the worker args as slab asked
+  for, so the floor is slab;
+- the slab floor's reserve: clamped the same way on both sides;
+- a setting or family it cannot place: no floor, and nothing is read or
+  freed.
+
+It rests on one agreement, as the loader's price does: the family read from
+the checkpoint header here is the family the Worker detects on the live model.
 """
 from __future__ import annotations
 
