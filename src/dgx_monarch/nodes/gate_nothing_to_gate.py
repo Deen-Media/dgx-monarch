@@ -238,6 +238,7 @@ def _worker_evidence(runtime: Mapping[str, Any], ceremony_model: Any, model_requ
     turns true once the load is asked for, so a fall-through after it unloads.
     """
     from .. import capacity_agreement
+    from . import pending_load_relief
     from .gate_provenance import ProofCohortAttestor
     from .slab_proof import establish
 
@@ -253,6 +254,7 @@ def _worker_evidence(runtime: Mapping[str, Any], ceremony_model: Any, model_requ
     capacity_agreement.agree_load(handle, unet_name, options, [], "cond")
     placed["load"] = True
     handle.call_all("load_model", unet_name, options, [], timeout_s=1800, **token_kwargs(token))
+    pending_load_relief.note_placed(unet_name)
     raw_cycle = handle.call_all("gate_swap_cycle", unet_name, options, [], identity,
                                 timeout_s=1800, **token_kwargs(token))
     proof = establish(ceremony_model, model_request, frozen_request, binding, identity,

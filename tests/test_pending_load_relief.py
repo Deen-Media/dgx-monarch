@@ -245,8 +245,18 @@ def test_a_model_the_workers_already_hold_pays_the_quote_alone(monkeypatch, chec
     with caplog.at_level("INFO"):
         _relieve(_model(Handle(driver)), checkpoint, family=family)
     assert driver.steps == ["quote"] and driver.held
-    assert ("and the Workers on this box fit it, so the driver frees nothing more"
+    assert ("but no Worker on this box would stop it, so the driver frees nothing more"
             in caplog.text)
+
+
+def test_a_retry_after_a_failed_render_pays_the_quote_alone(monkeypatch, checkpoint):
+    """The rendered memo is set only on success, so a retry after a failed or
+    interrupted render reads the load as still to come; the Worker answers the
+    reuse of the model it kept as fitting."""
+    driver = Driver(monkeypatch, reading_gib=40.0, workers_admit=True)
+    monkeypatch.setattr(render_preflight, "_LAST_DRIVER_CHARGED_UNET", UNET)
+    _relieve(_model(Handle(driver)), checkpoint)
+    assert driver.steps == ["quote"] and driver.held
 
 
 def test_models_taking_turns_pay_the_quote_alone(monkeypatch, checkpoint):
@@ -292,9 +302,93 @@ def test_what_the_workers_quote_counts_as_a_stop(monkeypatch, rows, stops):
     monkeypatch.setattr(old_model_clear, "driver_host_answers", answers)
     request = {"model": {"unet_name": UNET, "options": {"weight_dtype": "default"},
                          "loras": [["a.safetensors", 1.0]]}}
-    assert pending_load_relief.workers_stop(object(), request, UNET, {}) is stops
+    mesh = types.SimpleNamespace(handle=types.SimpleNamespace(setup_key=("set up",)))
+    assert pending_load_relief.workers_stop(mesh, request, UNET, {}) is stops
     # The request's own spec, LoRA stack included, as the agreement asks it.
     assert asked == [(UNET, {"weight_dtype": "default"}, "cond", [["a.safetensors", 1.0]])]
+
+
+class Fleet:
+    """A live fleet for the real ``workers_stop`` and ``driver_host_answers``:
+    a pair (rank 0 on this box), or a local mesh. ``status`` is each rank's
+    store as the Worker reports it."""
+
+    def __init__(self, *, local=False, world=2, set_up=True, status=None):
+        self.owns_hosts = not local
+        self.world = world
+        self.gpus_per_host = 1
+        hosts = () if local else tuple(types.SimpleNamespace(name=f"box-{n}.invalid") for n in range(world))
+        self.config = types.SimpleNamespace(hosts=hosts, worker_args={})
+        self.setup_key = ("set up",) if set_up else None
+        self.workers = object()
+        self.defunct = False
+        self.teardown_complete = False
+        self.status = status or []
+        self.calls: list[str] = []
+
+    def call_all(self, method, *_args, **_kwargs):
+        self.calls.append(method)
+        return list(self.status) if method == "status" else []
+
+
+def _rank(rank, verdict):
+    from dgx_monarch.capacity_agreement import RankAnswer
+
+    return RankAnswer(rank, quotes=(types.SimpleNamespace(slot="cond", verdict=verdict),))
+
+
+@pytest.mark.parametrize(("local", "world", "verdicts", "stops"), [
+    (False, 2, ["refuse", "fits"], True),    # the head's own price stops the load
+    (False, 2, ["fits", "refuse"], False),   # only the sibling: the driver cannot help it
+    (True, 2, ["fits", "rescue"], True),     # a local mesh: every rank is on this box
+    (True, 1, ["rescue"], True),             # one box
+    (True, 1, ["fits"], False),
+])
+def test_the_quote_reads_only_the_ranks_on_this_box(monkeypatch, local, world, verdicts, stops):
+    from dgx_monarch import capacity_agreement, driver_footprint
+
+    fleet = Fleet(local=local, world=world)
+    monkeypatch.setattr(driver_footprint, "rank0_co_resident", lambda _mesh: True)
+    monkeypatch.setattr(capacity_agreement, "collect", lambda handle, request, world, **_kw: [
+        _rank(rank, verdict) for rank, verdict in enumerate(verdicts)])
+    mesh = types.SimpleNamespace(handle=fleet)
+    assert pending_load_relief.workers_stop(mesh, {"kind": "custom"}, UNET, {}) is stops
+
+
+def _store(cond=None, retained=0):
+    return {"cond": cond, "uncond": None, "retained_failed_load_slabs": retained}
+
+
+@pytest.mark.parametrize(("local", "status", "stops"), [
+    (False, [{"rank": 0, "models": _store()}, {"rank": 1, "models": _store({"family": "x"})}], True),
+    (False, [{"rank": 0, "models": _store({"family": "minimax_h3"})}], False),  # a warm Worker
+    (False, [{"rank": 0, "models": _store(retained=1)}], False),
+    (True, [{"rank": 0, "models": _store()}, {"rank": 1, "models": _store({"family": "x"})}], False),
+    (False, [{"rank": 0}], False),                                              # unreadable
+    (False, [], False),
+])
+def test_before_setup_a_status_read_stands_in_for_the_quote(local, status, stops):
+    """``auto`` sets the fleet up at the first render, and before that the quote
+    cannot be asked. A rank that holds no model prices as the local price does."""
+    fleet = Fleet(local=local, set_up=False, status=status)
+    mesh = types.SimpleNamespace(handle=fleet)
+    assert pending_load_relief.workers_stop(mesh, {"kind": "custom"}, UNET, {}) is stops
+    assert fleet.calls == ["status"]
+
+
+def test_a_stopped_fleet_with_none_in_its_place_holds_nothing(monkeypatch):
+    """After a reset, the next fleet attaches with nothing loaded; an unconfirmed
+    stop may still hold its model."""
+    monkeypatch.setattr("dgx_monarch.mesh._MESHES", {})  # no fleet attached in its place
+    stopped = Fleet()
+    stopped.teardown_complete = True
+    assert pending_load_relief.workers_stop(
+        types.SimpleNamespace(handle=stopped), {"kind": "custom"}, UNET, {}) is True
+    unconfirmed = Fleet()
+    unconfirmed.defunct = True
+    assert pending_load_relief.workers_stop(
+        types.SimpleNamespace(handle=unconfirmed), {"kind": "custom"}, UNET, {}) is False
+    assert stopped.calls == unconfirmed.calls == []
 
 
 # --- the rescue ----------------------------------------------------------------------
@@ -395,7 +489,7 @@ def test_a_busy_driver_keeps_its_models_and_asks_nothing(monkeypatch, checkpoint
     assert driver.steps == [] and driver.held
 
 
-def test_a_fault_leaves_the_render_to_the_checks_after_it(monkeypatch, checkpoint):
+def test_a_fault_leaves_the_render_to_the_agreement(monkeypatch, checkpoint):
     driver = Driver(monkeypatch)
 
     def broken(*_args, **_kwargs):

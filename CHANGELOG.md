@@ -56,10 +56,13 @@
   box, asked the agreement's own read-only quote, would refuse the load or
   offer the card, the driver unloads the models ComfyUI holds and then asks
   the actors to release their caches before the agreement, which decides as
-  before. This adds no refusal and changes no refusal's words. A render whose
-  model this driver placed asks nothing; one whose model the Workers already
-  hold from before a driver restart, or would swap with their own credit,
-  costs one quote and frees nothing. The same step runs when the first-use
+  before. Before the fleet's setup, which `auto` makes at the first render,
+  a status read showing the Workers there hold no model stands in for the
+  quote. This adds no refusal and changes no refusal's words. A render whose
+  model a finished render or the loader placed asks nothing. A retry after a
+  failed render, a driver restarted beside warm Workers or a swap, where the
+  load reads short, costs one quote or status read and frees nothing unless
+  the Workers would stop the load. The same step runs when the first-use
   check unloads every rank and loads the model back, for a model an earlier
   render left loaded. It covers one box and a local mesh too; memory on the
   other box of a pair is not freed. CPU tests; not yet run on hardware

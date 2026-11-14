@@ -2664,8 +2664,13 @@ own price function (`capacity_fit.stock_load_fit`, or `slab_load_fit` where
 the family's residency resolves to slab) against this box's MemAvailable.
 Where that reads short it asks the Workers on this box the agreement's own
 read-only quote, and where one of them says its price refuses the load or
-offers the slab card, it runs the rescue above: unload, then trim. It refuses
-nothing. Whatever the rescue freed, the render goes on to the ranks'
+offers the slab card, it runs the rescue above: unload, then trim. Under
+`auto` the fleet sets up at the first render, and before setup no quote can be
+asked; a status read can, and where it shows every rank on this box holding no
+model, the local price is the Worker's own and the driver unloads (no trim:
+the actors are not set up). A fleet stopped by a reset with none attached in
+its place left no process behind, so the next one holds nothing too. It
+refuses nothing. Whatever the rescue freed, the render goes on to the ranks'
 agreement, which offers the card or refuses as before. A load is still to come
 under `auto` unless a finished render or a pipelined submission in this
 process placed the checkpoint, and under an explicit preset only where the
@@ -2674,13 +2679,16 @@ says itself whether the load ran. When an identity ceremony unloads every rank
 for its clean reload, the load is still to come again whatever this process
 placed before, so its first proof render's own render site prices it; the
 no-render path, which loads with no render, runs the same step between its
-unload and its load agreement. So a render whose model this process
-placed asks nothing. One whose model the Workers already hold from before a
-driver restart, or would swap with their own credit, costs the one quote and
-frees nothing. The step comes after the checks that refuse, so a render they
-refuse is refused in the same words and never reaches it. It covers a local
-mesh and a one-box fleet as it covers a pair, since it reads only the
-driver's box. It leaves a dual-model request, comfy-managed residency, an FSDP
+unload and its load agreement. So a render whose model a finished render, a
+pipelined submission or the loader placed asks nothing. Where the memos do not
+know what the Workers hold (a retry after a failed or interrupted render, a
+driver restarted beside warm Workers, a swap), a render that reads short pays
+one quote with a 10 s deadline, or before setup one status read, and frees
+nothing unless the Workers would stop the load. The step comes after the
+checks that refuse, so a render they refuse is refused in the same words and
+never reaches it. It covers a local mesh and a one-box fleet as it covers a
+pair, since it frees only the driver's box and asks only the Workers there.
+A busy driver asks nothing. It leaves a dual-model request, comfy-managed residency, an FSDP
 preset and a driver on a box with no Worker to the checks that price them
 today. A rank on the other box cannot be helped from here: its load waits on
 what its own Worker frees.
