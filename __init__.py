@@ -10,7 +10,14 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from dgx_monarch import demo_inputs, driver_uma_memory, fp8_compute, vae_decode_relief, vae_encode_item  # noqa: E402
+from dgx_monarch import (  # noqa: E402
+    demo_inputs,
+    driver_spend_price,
+    driver_uma_memory,
+    fp8_compute,
+    vae_decode_relief,
+    vae_encode_item,
+)
 from dgx_monarch.kernels import int8_gemm  # noqa: E402
 from dgx_monarch.mesh import install_fault_hook  # noqa: E402
 from dgx_monarch.nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS  # noqa: E402
@@ -45,6 +52,15 @@ vae_encode_item.install_driver()
 # (src/dgx_monarch/vae_decode_relief.py). It never raises, it steps aside if a
 # call it makes fails, and DGXM_DISABLE_VAE_DECODE_RELIEF=1 turns it off.
 vae_decode_relief.install_driver()
+
+# On the same GPUs, a node's spend on the driver that the UNET loader did not
+# charge (a re-queue whose loader ComfyUI kept, or a node ComfyUI ran first) is
+# priced where it happens: a MiniMax H3 guide or reference video encode, and a
+# stock loader node's files, in a graph of a family the loader prices
+# (src/dgx_monarch/driver_spend_price.py). ComfyUI's own nodes have loaded by
+# now; a Worker installs nothing. DGXM_DISABLE_DRIVER_SPEND_PRICE=1 turns it
+# off, for diagnosis.
+driver_spend_price.install_driver()
 
 # Copy the templates' demo images, clips and music into ComfyUI's input folder
 # where it lacks them, never replacing a file (src/dgx_monarch/demo_inputs.py).

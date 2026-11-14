@@ -23,7 +23,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from .. import driver_footprint, h3_activation, ltx25_activation
-from . import guide_order
+from . import driver_model_charge, guide_order
 from .graph_live import is_link as _is_link
 from .graph_live import live_nodes
 
@@ -107,7 +107,7 @@ IMAGE_REF_BYTES = 0
 # Graph vocabulary, matched on input key rather than class_type, so a custom or
 # renamed loader node that keeps comfy's input names still prices correctly.
 # CLIP Vision files resolve in their own folder and are priced as encoders.
-_TE_NAME_KEYS = ("clip_name", "text_encoder_name")
+_TE_NAME_KEYS = ("clip_name", "text_encoder")  # text_encoder: LTXAVTextEncoderLoader's file, the one stock use
 _VAE_NAME_KEYS = ("vae_name",)
 _TE_FOLDERS = ("text_encoders", "clip", "clip_vision")
 _VAE_FOLDERS = ("vae",)
@@ -233,9 +233,9 @@ class DriverStackTerms:
     def budget_clause(self) -> str:
         """Describe the settled budget without claiming absent charges.
 
-        Credit clears the text encoder, VAE and reference encode charges
-        (``credited_terms``). It never clears render activations or a guide
-        encode, so a credited result names what survives and keeps its
+        Credit clears the text encoder and VAE charges (``credited_terms``). It
+        never clears render activations, a guide or a reference encode, so a
+        credited result names what survives and keeps its
         ``credit_reason`` either way. With both a guide and activations, the
         clause says whether they are charged as alternatives or together, and
         why (``guide_order_note``).
@@ -250,7 +250,7 @@ class DriverStackTerms:
             ("driver stack", self.models_bytes + self.ref_bytes),
             ("guide encode", guide),
             ("render activations", renders)) if charged)
-        credit = (f", with the text encoder, VAE and reference encode charges "
+        credit = (f", with the text encoder and VAE charges "
                   f"credited ({self.credit_reason})" if self.credited else "")
         return (f"{_gib(total)} GiB of {carried} this graph has not spent "
                 f"yet{credit}{order}")
@@ -354,7 +354,7 @@ def driver_stack_terms(prompt: object, *, family: str = "",
                         vae_bytes += size
                         vae_names.append(os.path.basename(value))
                 elif key in _DRIVER_MODEL_KEYS and on_driver:
-                    size = _artifact_bytes(_DRIVER_MODEL_KEYS[key], value)
+                    size = driver_model_charge.driver_model_bytes(str(node.get("class_type", "")), key, value)
                     if size:
                         model_bytes += size
                         model_names.append(os.path.basename(value))
@@ -464,11 +464,11 @@ def _credit_held(terms: DriverStackTerms, held: int, ratio: float = 1.0) -> Driv
 def credited_terms(terms: DriverStackTerms, ratio: float = 1.0) -> DriverStackTerms:
     """Apply the residency credits: comfy's loaded models, then earlier charges.
 
-    A guide encode survives both credits, like render activations. The first
-    credit fires on any loaded model. It credits the whole stack only where
-    what ComfyUI holds covers it (MemAvailable already counts that much), and
-    otherwise only the bytes held; a loaded model does not show that Add Guide
-    has run.
+    A guide or reference encode survives both credits, like render activations:
+    each is a transient, and a held model does not show that it has run. The
+    first credit fires on any loaded model. It credits the whole stack only
+    where what ComfyUI holds covers it (MemAvailable already counts that much),
+    and otherwise only the bytes held.
     """
     if not terms.resolved:
         return terms
@@ -476,13 +476,13 @@ def credited_terms(terms: DriverStackTerms, ratio: float = 1.0) -> DriverStackTe
         held = _comfy_held_bytes()
         if held is not None and held < terms.models_bytes:
             return _credit_held(terms, held, ratio)
-        return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0, ref_bytes=0,
+        return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0,
                        credited=True,
                        credit_reason="comfy already holds loaded models, so "
                                      "the preflight assumes MemAvailable counts this stack")
     named = terms.models
     if named and all(name in _CHARGED_STACK_ARTIFACTS for name in named):
-        return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0, ref_bytes=0,
+        return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0,
                        credited=True,
                        credit_reason="an earlier loader node charged "
                                      "this stack")

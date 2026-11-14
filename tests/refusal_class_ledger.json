@@ -1210,6 +1210,12 @@
       "waivable": false
     },
     {
+      "site": "driver_spend_price.py::check.step::DriverSpendCapacityError#0",
+      "class": "C",
+      "guard": "driver_footprint_preflight",
+      "waivable": false
+    },
+    {
       "site": "family_select.py::assert_override_admits_checkpoint::UnsupportedModelError#0",
       "class": "P",
       "guard": null,

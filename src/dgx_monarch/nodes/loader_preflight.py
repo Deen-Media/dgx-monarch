@@ -40,7 +40,6 @@ from .loader_graph import (
     activation_sp_degree,
     clear_memos,
     driver_stack_terms,
-    note_stack_charged,
     remember,
     reset_charged_artifacts,
     unet_names,
@@ -443,7 +442,7 @@ def preflight_loader_footprint(
         if relief.fits or (fits_box(transient) and fits_box(settled)):
             loader_relief.admitted(relief, _CLEARED_UNETS, unet_name, avail, unloaded)
             remember(_CLEARED_UNETS, memo_key)
-            note_stack_charged(terms)
+            graph_load_price.note_admitted(terms, site, prompt)
             if fsdp_world:
                 # The admitting path prints no card, so without this line the
                 # shard price leaves no evidence in the journal.
@@ -518,7 +517,7 @@ def preflight_loader_footprint(
                 grant, combo_key=combo, artifacts=artifacts, unet_name=unet_name,
                 path=path, context=memo_context(unet_name, options))
             remember(_CLEARED_UNETS, memo_key)
-            note_stack_charged(terms)
+            graph_load_price.note_admitted(terms, site, prompt)
             log.info("loader footprint preflight: consent %r present for %s, "
                      "loading slab-resident", RESCUE_KIND, unet_name)
             return consent_rescue.RescueLoad(

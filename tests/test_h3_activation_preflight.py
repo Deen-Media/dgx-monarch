@@ -2243,13 +2243,13 @@ def test_loader_site_activation_term_stands_down_under_either_kill_switch(
 
 def test_loader_site_activation_term_survives_the_stack_credits(monkeypatch, artifacts):
     """A render's activations are never already spent, so the two residency
-    credits that zero the text encoder, the VAEs and the reference encode must
-    leave this term alone."""
+    credits that zero the text encoder and the VAEs must leave this term alone,
+    as they leave the guide and reference encodes."""
     monkeypatch.setattr(loader_graph, "_comfy_has_loaded_models", lambda: True)
     terms = loader_graph.credited_terms(_terms(_h3_graph(CONFIG_B)))
     if not terms.credited:
         pytest.fail("this fixture must exercise the credit path")
-    if terms.te_bytes or terms.vae_bytes or terms.ref_bytes:
+    if terms.te_bytes or terms.vae_bytes:
         pytest.fail("the spent stack must be credited")
     if not terms.activation_bytes or terms.total != terms.activation_bytes:
         pytest.fail(f"the render's activations must stay charged: {terms}")
