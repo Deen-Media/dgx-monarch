@@ -15,8 +15,9 @@ A wrap holds no mesh. The running graph does hold the Init node the loader's
 (``nodes/init.py``), so the wrap reads the same two values there. The configured
 policy is the attached mesh's; before a mesh is up (ComfyUI may run a spend
 before the Init node on a first queue) it is read from the file the Init node
-names, by ``get_mesh``'s rule. No Init node gives no settings, as before 1.5.0;
-a configuration that cannot be read gives the Init node's own. A fault in the
+names, by ``get_mesh``'s rule. No Init node gives no settings: the header
+alone, at the 5 GiB floor. A configuration that cannot be read gives the Init
+node's own. A fault in the
 sniff steps the price aside, as the loader steps aside for one.
 """
 from __future__ import annotations

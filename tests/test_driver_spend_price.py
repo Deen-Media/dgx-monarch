@@ -675,13 +675,15 @@ def _settings(rig, monkeypatch, init: dict | None, sniffed: object = ("minimax_h
     monkeypatch.setattr(mesh, "_MESHES", handles)
 
 
-def test_an_unreadable_header_with_a_priced_family_forced_on_init_is_priced(rig, monkeypatch):
+@pytest.mark.parametrize("sniffed", [("unknown", "int8"), detect.CheckpointSniffError("no header")],
+                         ids=["a header that reads unknown", "a header that cannot be read"])
+def test_a_header_the_loader_cannot_name_with_a_priced_family_forced_on_init_is_priced(rig, monkeypatch, sniffed):
     rig.box.value = 10 * GIB  # short of a still's 14 plus the floor
-    _settings(rig, monkeypatch, {"family_adapter": "minimax_h3"}, sniffed=detect.CheckpointSniffError("no header"))
+    _settings(rig, monkeypatch, {"family_adapter": "minimax_h3"}, sniffed=sniffed)
     with pytest.raises(driver_spend_price.DriverSpendCapacityError):
         _guide(1)
-    _settings(rig, monkeypatch, {"family_adapter": "auto"}, sniffed=detect.CheckpointSniffError("no header"))
-    _guide(1)  # the loader prices nothing for an unread header on auto, and nor does the wrap
+    _settings(rig, monkeypatch, {"family_adapter": "auto"}, sniffed=sniffed)
+    _guide(1)  # on auto the loader prices nothing for this header, and nor does the wrap
     assert len(_Guide.calls) == 1
 
 
