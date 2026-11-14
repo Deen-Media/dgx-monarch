@@ -2622,8 +2622,9 @@ what was unloaded and released and the readings around each step, which keeps
 the class C rule of offering the fitting strategy first. Each step runs at most
 once per render, once more in the identity gate's stock reference leg
 ("Where the ceremony cannot help") and once more for a model load still to come
-(below), only after a check refused, never while a render, a result
-lease or a Worker call is live in the driver, and never reaches a Worker
+(below), only after a check refused or, for that load, the Workers' own price
+read short, never while a render, a result lease or a Worker call is live in
+the driver, and never reaches a Worker
 resident or ComfyUI's node output cache. "Live" is read on the fleet attached
 now (`driver_unload.busy_reason`): ComfyUI caches the Init node's output, so
 after a reset a graph still carries the mesh the reset stopped, whose handle
@@ -2654,10 +2655,15 @@ an explicit preset as placed at the loader node, and under `auto` at the file
 alone. The Worker that makes the load charges the file, the host copy a stock
 load is placed from and the host floor. So a graph whose text encoders the
 driver built before the model's load could pass every check above, with
-nothing to free, and then meet the ranks' load agreement short: on 2026-11-13
-p-h3-image's first use staged its text encoder and prompt upsampler (about
-25 GiB) before its 37.7 GiB file loaded, and the head's Worker priced the
-stock load at 84.1 GiB against 74.0 available. Since 1.5 a last step at the
+nothing to free, and then meet the ranks' load agreement short: on 2026-11-13,
+on a pair under `uly2`, p-h3-image's first use staged its text encoder and
+prompt upsampler (about 25 GiB) before its 37.7 GiB file loaded, since the
+first-use check defers an explicit preset's placement, and the head's Worker
+priced the stock load at 84.1 GiB against 74.0 available. Under `auto` the
+loader's deferred window already charges those models beside the load, so
+this reaches an explicit preset whose placement moved after them: a deferral,
+or a reset after which ComfyUI's cached loader node does not place it again.
+Since 1.5 a last step at the
 render site, once those checks pass and before the gate and any dispatch,
 prices a load still to come (`nodes/pending_load_relief`) with the Workers'
 own price function (`capacity_fit.stock_load_fit`, or `slab_load_fit` where
@@ -2676,8 +2682,10 @@ under `auto` unless a finished render or a pipelined submission in this
 process placed the checkpoint, and under an explicit preset only where the
 loader deferred the placement; inside the gate's capacity check that check
 says itself whether the load ran. When an identity ceremony unloads every rank
-for its clean reload, the load is still to come again whatever this process
-placed before, so its first proof render's own render site prices it; the
+for its clean reload, or a reset or restart stops the Workers' processes, the
+load is still to come again whatever this process placed before (ComfyUI's
+cached loader node does not place it again), so the next render site prices
+it; the
 no-render path, which loads with no render, runs the same step between its
 unload and its load agreement. So a render whose model a finished render, a
 pipelined submission or the loader placed asks nothing. Where the memos do not

@@ -15,7 +15,7 @@ def drop_residency_memos() -> None:
     Every door that stops the procs runs this, so it also answers every open
     Old model in the way card: the model it names went with the procs.
     """
-    from . import loader_preflight, old_model_clear, render_preflight, routes
+    from . import loader_preflight, old_model_clear, pending_load_relief, render_preflight, routes
 
     old_model_clear.drop_cards()
     loader_preflight.reset_memos()
@@ -23,6 +23,9 @@ def drop_residency_memos() -> None:
     render_preflight.note_successful_render(None)
     render_preflight.note_submitted_render(None)
     render_preflight.note_driver_charged_render(None)
+    # An explicit preset's eager placement went with the procs too: the next
+    # render's load is still to come (nodes/pending_load_relief.py).
+    pending_load_relief.note_unloaded()
     routes.invalidate_telemetry_caches()
 
 

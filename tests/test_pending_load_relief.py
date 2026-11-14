@@ -21,6 +21,9 @@ it does not fit, and refuses nothing. This file holds:
   an FSDP preset, a busy driver, a fault;
 - the render-site call order, and a render the checks refuse keeping today's
   words;
+- one Spark end to end, where the Worker's own load check is the judge: staged
+  text models freed and the load fits, a fit that frees nothing, and the same
+  graph without the step meeting the Worker's refusal;
 - end to end on the first-use rig: the no-render path, a LoRA ceremony, an
   explicit preset's eager placement, and a warm re-queue; and the no-render
   path and a LoRA ceremony on a model an earlier render left loaded, whose
@@ -45,6 +48,8 @@ from gate_orchestration_helpers import (  # noqa: F401  # autouse fixture import
 _GIB = 2 ** 30
 UNET = "p-h3-image_bf16.safetensors"
 FILE_GIB = 37.7
+# The Driver rig stands this read in; the fail-open test puts it back.
+_REAL_WORKERS_STOP = pending_load_relief.workers_stop
 
 
 @pytest.fixture(autouse=True)
@@ -169,6 +174,21 @@ def test_which_loads_are_still_to_come(monkeypatch):
     assert not pending_load_relief.load_pending(_model(None), True)
 
 
+def test_a_stop_of_the_workers_makes_an_eager_placement_pending_again():
+    """Every door that stops the Workers' processes drains the memos
+    (``recycle_drain.drop_residency_memos``); an explicit preset's eager
+    placement went with them, so the next render's load is still to come."""
+    from dgx_monarch.nodes import recycle_drain
+
+    explicit = _model(None, preset="uly2")
+    pending_load_relief.note_placed(UNET)
+    assert not pending_load_relief.load_pending(explicit, None)
+    recycle_drain.drop_residency_memos()
+    assert pending_load_relief.load_pending(explicit, None)
+    pending_load_relief.note_placed(UNET)  # the loader places it again
+    assert not pending_load_relief.load_pending(explicit, None)
+
+
 def test_an_unload_for_a_clean_reload_makes_the_load_pending_over_the_memos(monkeypatch, checkpoint):
     """The memos still name a model the Workers no longer hold, until the next
     render's own check, or a loader placement."""
@@ -249,10 +269,12 @@ def test_a_model_the_workers_already_hold_pays_the_quote_alone(monkeypatch, chec
             in caplog.text)
 
 
-def test_a_retry_after_a_failed_render_pays_the_quote_alone(monkeypatch, checkpoint):
-    """The rendered memo is set only on success, so a retry after a failed or
-    interrupted render reads the load as still to come; the Worker answers the
-    reuse of the model it kept as fitting."""
+def test_a_requeue_after_an_interrupted_render_frees_nothing_on_a_reuse(monkeypatch, checkpoint):
+    """A re-queue after an interrupted or failed render: the rendered memo is
+    set only on success, so the load reads as still to come and the local
+    price reads short with the model resident. The Worker answers the reuse of
+    the model it kept as fitting, so the driver frees nothing and the re-queue
+    pays the one quote."""
     driver = Driver(monkeypatch, reading_gib=40.0, workers_admit=True)
     monkeypatch.setattr(render_preflight, "_LAST_DRIVER_CHARGED_UNET", UNET)
     _relieve(_model(Handle(driver)), checkpoint)
@@ -489,6 +511,40 @@ def test_a_busy_driver_keeps_its_models_and_asks_nothing(monkeypatch, checkpoint
     assert driver.steps == [] and driver.held
 
 
+@pytest.mark.parametrize("read", ["quote", "status"])
+def test_a_read_that_fails_or_times_out_frees_nothing(monkeypatch, checkpoint, caplog, read):
+    """Fail open: a quote or a status read that raises answers no, so the
+    driver keeps its models and the render goes on; the read is logged at
+    DEBUG with its milliseconds."""
+    from dgx_monarch.nodes import old_model_clear
+
+    driver = Driver(monkeypatch)
+    monkeypatch.setattr(pending_load_relief, "workers_stop", _REAL_WORKERS_STOP)
+
+    def silent(*_args, **_kwargs):
+        raise TimeoutError("the Workers did not answer in time")
+
+    handle = Handle(driver)
+    if read == "quote":
+        handle.setup_key = ("set up",)
+        monkeypatch.setattr(old_model_clear, "driver_host_answers", silent)
+    else:
+        handle.call_all = silent  # type: ignore[method-assign]
+    with caplog.at_level("DEBUG", logger=pending_load_relief.log.name):
+        _relieve(_model(handle), checkpoint)  # no raise
+    assert driver.steps == [] and driver.held
+    line = [r.getMessage() for r in caplog.records if " ms and would not stop" in r.getMessage()]
+    assert line and "took" in line[0]
+
+
+def test_the_off_switch_asks_nothing(monkeypatch, checkpoint):
+    """DGXM_DISABLE_DRIVER_UNLOAD=1 turns the step off, quote included."""
+    driver = Driver(monkeypatch)
+    monkeypatch.setenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, "1")
+    _relieve(_model(Handle(driver)), checkpoint)
+    assert driver.steps == [] and driver.held
+
+
 def test_a_fault_leaves_the_render_to_the_agreement(monkeypatch, checkpoint):
     driver = Driver(monkeypatch)
 
@@ -553,15 +609,27 @@ def test_a_render_the_checks_refuse_never_reaches_the_relief_and_keeps_its_words
 # --- end to end on the first-use rig -----------------------------------------------
 
 
-def _first_use(monkeypatch, tmp_path, checkpoint, *, widgets=None, lora=False):
+def _first_use(monkeypatch, tmp_path, checkpoint, *, widgets=None, lora=False, world=2):
     """The first-use rig on the driver's own box, with the render site's relief live."""
-    from first_use_gate_helpers import TEMPLATES, doc, graph_model, mesh_rig, no_material_rows
-
+    from dgx_monarch.nodes import gate as gate_mod
     from dgx_monarch.nodes import gate_nothing_to_gate
+    from dgx_monarch.topology import Topology
+    from first_use_gate_helpers import (
+        TEMPLATES,
+        doc,
+        graph_model,
+        mesh_rig,
+        no_material_rows,
+        swapped_rows,
+    )
 
     latent = torch.zeros(1, 4, 8, 8)
+    # A LoRA stack gives the ceremony something to compare, so it runs its legs.
     handle, _topology, dispatched = mesh_rig(
-        monkeypatch, tmp_path, no_material_rows(), [latent.clone() for _ in range(4)])
+        monkeypatch, tmp_path, swapped_rows() if lora else no_material_rows(),
+        [latent.clone() for _ in range(4)],
+        topology=None if world == 2 else Topology(world=world, dp=world))
+    handle.world = world
     monkeypatch.delenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, raising=False)
     driver = Driver(monkeypatch)
     handle.owns_hosts = False  # rank 0 on the driver's box
@@ -579,6 +647,16 @@ def _first_use(monkeypatch, tmp_path, checkpoint, *, widgets=None, lora=False):
             model, request, family="minimax_h3", path=checkpoint, weights_loaded=weights_loaded))
     monkeypatch.setattr(gate_nothing_to_gate, "_family", lambda _model: ("minimax_h3", False))
     monkeypatch.setattr(gate_nothing_to_gate, "_rescue_consent_live", lambda _model: False)
+    # The rig's ceremony legs skip common.run_render; each passes the render
+    # site first here, as a real leg does, and is recorded as "render".
+    fake_render = gate_mod.run_render
+
+    def render(render_model, request, latent_in, **kwargs):
+        render_preflight.activation_footprint_preflight_for_request(render_model, request, latent_in)
+        driver.steps.append("render")
+        return fake_render(render_model, request, latent_in, **kwargs)
+
+    monkeypatch.setattr(gate_mod, "run_render", render)
     graph = doc(TEMPLATES / "dgx-monarch-p-h3-image.json")
     model = graph_model(graph, widgets=widgets)
     if lora:
@@ -614,10 +692,7 @@ def test_a_lora_ceremony_frees_the_driver_once_before_its_first_proof_render(
 
     _handle, _dispatched, driver, graph, model = _first_use(
         monkeypatch, tmp_path, checkpoint, lora=True)
-    try:
-        queue(graph, model)
-    except Exception:  # the rig's LoRA ceremony may answer for reasons of its own
-        pass
+    queue(graph, model)
     assert driver.steps.count("comfy-unload") == 1
     assert driver.steps.index("comfy-unload") < driver.steps.index("render")
 
@@ -626,16 +701,14 @@ def test_a_lora_ceremony_on_a_warm_model_frees_the_driver_before_its_clean_reloa
         monkeypatch, tmp_path, checkpoint):
     """A model an earlier render left warm passes the user's render site as
     placed. The ceremony then unloads every rank and reloads it from disk for
-    its first proof render, whose own render site frees the driver first."""
+    its first proof render, whose own render site frees the driver first
+    (gate_ceremony.py marks the unload)."""
     from first_use_gate_helpers import queue
 
     _handle, _dispatched, driver, graph, model = _first_use(
         monkeypatch, tmp_path, checkpoint, lora=True)
     monkeypatch.setattr(render_preflight, "_LAST_RENDERED_UNET", UNET)
-    try:
-        queue(graph, model)
-    except Exception:  # the rig's LoRA ceremony may answer for reasons of its own
-        pass
+    queue(graph, model)
     steps = driver.steps
     assert steps.count("comfy-unload") == 1
     assert steps.index("unload") < steps.index("comfy-unload") < steps.index("render")
@@ -645,9 +718,8 @@ def test_the_no_render_path_on_a_warm_model_frees_the_driver_before_its_load(
         monkeypatch, tmp_path, checkpoint):
     """The same on the no-render path: it unloads every rank and loads with no
     render, so it asks for the driver's room itself, before the agreement."""
-    from first_use_gate_helpers import queue
-
     from dgx_monarch.nodes import gate_nothing_to_gate
+    from first_use_gate_helpers import queue
 
     _handle, dispatched, driver, graph, model = _first_use(monkeypatch, tmp_path, checkpoint)
     monkeypatch.setattr(gate_nothing_to_gate, "_checkpoint_path", lambda _model: checkpoint)
@@ -657,6 +729,75 @@ def test_the_no_render_path_on_a_warm_model_frees_the_driver_before_its_load(
     assert steps.count("comfy-unload") == 1
     assert steps.index("unload") < steps.index("comfy-unload") < steps.index("load_model")
     assert "render" not in steps and len(dispatched) == 1
+
+
+def _relief_steps(driver):
+    """The steps this file asserts on, without the rig's other Worker calls."""
+    return [step for step in driver.steps
+            if step in ("quote", "comfy-unload", "actor-trim", "worker-load")]
+
+
+def _one_spark(monkeypatch, tmp_path, checkpoint, reading_gib):
+    """One Spark under ``auto`` with no first-use check: the model's first load
+    comes at the render, where the Worker's own load check is the judge (there
+    is no agreement at world 1). The Worker here prices as the local price
+    does, and its load refuses below that price, as its ladder would."""
+    from dgx_monarch import capacity_fit
+    from dgx_monarch import mesh_safety as safety
+    from dgx_monarch.nodes import common
+
+    _handle, dispatched, driver, graph, model = _first_use(
+        monkeypatch, tmp_path, checkpoint, widgets={"auto_gate": "off"}, world=1)
+    driver.reading = reading_gib * _GIB
+    monkeypatch.setattr(pending_load_relief, "workers_stop", lambda *_args: (
+        driver.steps.append("quote"),
+        not capacity_fit.stock_load_fit(checkpoint, {}).fits)[1])
+    dispatch = common.submit_render
+
+    def worker_load(model, request, latent, *args, **kwargs):
+        fit = capacity_fit.stock_load_fit(checkpoint, {})
+        if not fit.fits:
+            raise safety.StockLoadCapacityError(
+                f"stock residency cannot load {UNET} here: needs "
+                f"{fit.required_bytes / _GIB:.1f} GiB, {fit.avail_bytes / _GIB:.1f} GiB available")
+        driver.steps.append("worker-load")
+        return dispatch(model, request, latent, *args, **kwargs)
+
+    monkeypatch.setattr(common, "submit_render", worker_load)
+    return dispatched, driver, graph, model
+
+
+def test_one_spark_frees_the_staged_text_models_and_the_workers_load_fits(
+        monkeypatch, tmp_path, checkpoint, caplog):
+    from first_use_gate_helpers import queue
+
+    dispatched, driver, graph, model = _one_spark(monkeypatch, tmp_path, checkpoint, 74.0)
+    with caplog.at_level("INFO"):
+        queue(graph, model)
+    assert _relief_steps(driver) == ["quote", "comfy-unload", "worker-load"]
+    assert len(dispatched) == 1 and not driver.held
+    assert "driver unload: the pending load of p-h3-image_bf16.safetensors fits" in caplog.text
+
+
+def test_one_spark_that_fits_frees_nothing(monkeypatch, tmp_path, checkpoint):
+    from first_use_gate_helpers import queue
+
+    dispatched, driver, graph, model = _one_spark(monkeypatch, tmp_path, checkpoint, 100.1)
+    queue(graph, model)
+    assert _relief_steps(driver) == ["worker-load"] and driver.held and len(dispatched) == 1
+
+
+def test_one_spark_without_the_render_sites_step_meets_the_workers_refusal(
+        monkeypatch, tmp_path, checkpoint):
+    """The control for the first test: with the step off, the same staged text
+    models leave the Worker's own load short, as before 1.5."""
+    from first_use_gate_helpers import queue
+
+    dispatched, driver, graph, model = _one_spark(monkeypatch, tmp_path, checkpoint, 74.0)
+    monkeypatch.setattr(pending_load_relief, "relieve", lambda *_args, **_kwargs: None)
+    with pytest.raises(Exception, match="stock residency cannot load"):
+        queue(graph, model)
+    assert "comfy-unload" not in driver.steps and not dispatched
 
 
 def test_an_explicit_presets_eager_placement_frees_nothing(monkeypatch, tmp_path, checkpoint):
@@ -686,3 +827,25 @@ def test_an_explicit_presets_deferred_placement_is_freed_before_the_gate(
     assert driver.steps.count("comfy-unload") == 1
     assert driver.steps.index("comfy-unload") < driver.steps.index("load_model")
     assert len(dispatched) == 1
+
+
+def test_an_explicit_preset_requeued_after_the_no_render_paths_load_asks_nothing(
+        monkeypatch, tmp_path, checkpoint):
+    """Under an explicit preset the loader deferred the placement, and the
+    no-render path then loaded the model. A re-queue after a render that failed
+    before its rendered memo was set must read the model as placed (the
+    no-render path marks it), not as a deferral still to come."""
+    from first_use_gate_helpers import queue
+
+    _handle, _dispatched, driver, graph, model = _first_use(
+        monkeypatch, tmp_path, checkpoint, widgets={"topology": "uly2"})
+    pending_load_relief.note_deferred(UNET)
+    queue(graph, model)
+    monkeypatch.setattr(render_preflight, "_LAST_RENDERED_UNET", None)  # the render failed
+    monkeypatch.setattr(render_preflight, "_LAST_SUBMITTED_UNET", None)
+    assert not pending_load_relief.load_pending(model, None)
+    before = list(driver.steps)
+    driver.held = ["Qwen35TEModel_", "MiniMaxH3TEModel_"]
+    driver.reading = 74.0 * _GIB
+    _relieve(model, checkpoint)
+    assert driver.steps == before and driver.held

@@ -1,11 +1,13 @@
 """Free the driver's own models before a model load that is still to come and will not fit.
 
-On a pair, p-h3-image's first use staged its text encoder and prompt upsampler
-on the driver (about 25 GiB) before its 37.7 GiB file loaded, and the head's
+On a pair under ``uly2``, p-h3-image's first use staged its text encoder and
+prompt upsampler on the driver (about 25 GiB) before its 37.7 GiB file loaded,
+since the first-use check defers an explicit preset's placement, and the head's
 Worker then priced the stock load at 84.1 GiB against 74.0 available: the
-ranks' load agreement offered the slab card and the first-use check could not
-complete (a release test, 2026-11-13). The same graph rendered when the model
-loaded before those text models.
+ranks' load agreement offered the slab card and the check could not complete
+(a release test, 2026-11-13). The same graph rendered when the model loaded
+before those text models. Under ``auto`` the loader already charges those
+models beside the load and refuses p-h3-image there, as before.
 
 The render-site checks (``render_preflight.activation_footprint_preflight_for_request``)
 run before the gate and before any dispatch, with ``driver_unload``'s rescue
@@ -35,11 +37,12 @@ The load is still to come (``load_pending``):
 - under an explicit preset, only where the loader deferred its placement
   (``note_deferred``, at the identity gate's or the dual-model deferral), since
   otherwise the loader placed it at its node;
-- after every rank unloaded for an identity ceremony's clean reload
-  (``note_unloaded``), whatever the memos say, until the next render's own
-  check or a loader placement: the memos still name a model the Workers no
-  longer hold. The no-render path, which loads with no render, passes
-  ``weights_loaded=False`` itself (``gate_nothing_to_gate``);
+- after every rank unloaded for an identity ceremony's clean reload, or the
+  Workers' processes stopped (``recycle_drain.drop_residency_memos``), which
+  ``note_unloaded`` marks, whatever the memos and an explicit preset's eager
+  placement say, until the next render's own check or a loader placement. The
+  no-render path, which loads with no render, passes ``weights_loaded=False``
+  itself (``gate_nothing_to_gate``);
 - inside the gate's capacity check, as that check's own ``weights_loaded`` says.
 
 A render whose model a finished render, a pipelined submission or the loader
@@ -48,13 +51,17 @@ placed prices nothing here. Where the memos do not know what the Workers hold
 Workers, a swap for a model they hold), the render pays at most the one quote,
 or before setup the one status read, and only where the local price reads
 short: the Worker answers a reuse, or a swap its own credit covers, as
-fitting, and a rank holding a model is never read as empty. A driver with a render, a result lease or a
-Worker call live keeps its models (``driver_unload.busy_reason``), so it asks
-nothing. A dual-model request, comfy-managed residency, an FSDP preset and a
-driver on a box with no Worker are left to the checks that price them today.
+fitting, and a rank holding a model is never read as empty. That read is
+logged at DEBUG with its milliseconds, and one that fails or times out frees
+nothing. A driver with a render, a result lease or a Worker call live keeps
+its models (``driver_unload.busy_reason``), so it asks nothing, and so does
+one with ``DGXM_DISABLE_DRIVER_UNLOAD`` set. A dual-model request,
+comfy-managed residency, an FSDP preset and a driver on a box with no Worker
+are left to the checks that price them today.
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from ..log import get_logger
@@ -67,7 +74,8 @@ log = get_logger(__name__)
 # leaves them, which errs towards a load still to come, and after a recycle
 # that is true.
 _DEFERRED: set[str] = set()
-# Every rank unloaded since the last render's check or loader placement.
+# Session lifetime: every rank unloaded or stopped since the last render's
+# check or loader placement.
 _UNLOADED = False
 # A status read before setup, on the short path only (nodes/routes.py reads it at 10 s too).
 _STATUS_TIMEOUT_S = 10.0
@@ -92,7 +100,7 @@ def note_placed(unet_name: object) -> None:
 
 
 def note_unloaded() -> None:
-    """Every rank just unloaded its models for a clean reload (nodes/gate_ceremony.py)."""
+    """Every rank unloaded its models (gate_ceremony.py) or stopped (recycle_drain.py)."""
     global _UNLOADED
     _UNLOADED = True
 
@@ -131,25 +139,44 @@ def workers_stop(mesh: Any, request: dict, unet_name: str, options: Any) -> bool
     does, so the answer is whether every rank on this box holds none
     (``_holds_nothing``). A stopped fleet with none attached in its place left
     no process behind, so the next one attaches holding nothing.
+
+    It fails open: a read that raises or times out answers no, so nothing is
+    freed and the render goes on. Each read is logged at DEBUG with its
+    milliseconds, so a run can show what it cost.
     """
+    started = time.monotonic()
+    try:
+        stop, read = _workers_stop(mesh, request, unet_name, options)
+    except Exception as exc:
+        stop, read = False, f"a read that failed ({type(exc).__name__})"
+    safe_call(log.debug, "pending load: %s for %s took %.0f ms and %s the load", read,
+              unet_name, (time.monotonic() - started) * 1000.0,
+              "would stop" if stop else "would not stop")
+    return stop
+
+
+def _workers_stop(mesh: Any, request: dict, unet_name: str, options: Any) -> tuple[bool, str]:
+    """``workers_stop``'s answer, and which read gave it."""
     from ..actor.capacity_quote import VERDICT_REFUSE, VERDICT_RESCUE
     from . import old_model_clear, recycle_drain
 
     handle = getattr(mesh, "handle", None)
     fleet = recycle_drain.attached_fleet(handle)
     if fleet is None:
-        return bool(getattr(handle, "teardown_complete", False))
+        return (bool(getattr(handle, "teardown_complete", False)),
+                "no fleet attached since the last one stopped")
     if getattr(fleet, "setup_key", None) is None:
-        return _holds_nothing(fleet)
+        return _holds_nothing(fleet), "the status read before setup"
     spec = request.get("model")
     spec = spec if isinstance(spec, dict) else {}
     asked = old_model_clear.driver_host_answers(
         mesh, unet_name, spec.get("options", options), "cond", loras=spec.get("loras"))
     if asked is None:
-        return False
-    return any(getattr(row, "slot", None) == "cond"
+        return False, "the quote, with no answer from this box"
+    stop = any(getattr(row, "slot", None) == "cond"
                and getattr(row, "verdict", None) in (VERDICT_REFUSE, VERDICT_RESCUE)
                for answer in asked.mine for row in getattr(answer, "quotes", ()) or ())
+    return stop, "the quote"
 
 
 def _holds_nothing(fleet: Any) -> bool:
@@ -186,12 +213,13 @@ def relieve(model: Any, request: dict, *, family: str, path: str,
 def _relieve(model: Any, request: dict, *, family: str, path: str,
              weights_loaded: bool | None) -> None:
     global _UNLOADED
-    from .. import capacity_fit, driver_footprint, driver_unload, residency_mode
+    from .. import capacity_fit, driver_footprint, driver_unload, mesh_safety, residency_mode
     from ..topology import declares_fsdp
     from . import loader_preflight
 
     mesh = getattr(model, "mesh", None)
-    if (request.get("uncond_model") is not None
+    if (mesh_safety.env_enabled(driver_unload.DRIVER_UNLOAD_DISABLE_ENV)
+            or request.get("uncond_model") is not None
             or declares_fsdp(str(getattr(mesh, "topology_preset", "auto") or "auto"))
             or not driver_footprint.rank0_co_resident(mesh)
             or not load_pending(model, weights_loaded)):
