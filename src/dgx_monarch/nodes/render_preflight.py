@@ -409,11 +409,11 @@ def note_successful_render(unet_name: object) -> None:
     """Record the checkpoint a successful render left resident (common.py, pipeline.py)."""
     global _LAST_RENDERED_UNET
     _LAST_RENDERED_UNET = unet_name if isinstance(unet_name, str) else None
+    pending_load_relief.note_placed(_LAST_RENDERED_UNET)  # the load it marked is done
 
 
 def note_driver_charged_render(unet_name: object) -> None:
-    """Record the checkpoint whose pending load the driver preflight just cleared, so a
-    retry after a failed render is not charged for weights the worker still holds."""
+    """Record the checkpoint the driver preflight cleared, so a failed render's retry is not charged again."""
     global _LAST_DRIVER_CHARGED_UNET
     _LAST_DRIVER_CHARGED_UNET = unet_name if isinstance(unet_name, str) else None
 

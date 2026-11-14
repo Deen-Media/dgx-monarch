@@ -61,7 +61,14 @@
   before. The driver's own render-site checks had passed: they charge a
   pending load as already placed under an explicit preset, so nothing refused
   and nothing was unloaded. Once those checks pass, the render site now
-  prices a load still to come at the Workers' own price. Where that reads
+  prices a load still to come at the Workers' own price, with their inputs:
+  a loader cast as the Worker maps it, a slab load's LoRA bake under
+  `lora_low_rss`, and the stock price under `auto`, where the Worker prices a
+  file stock until its family memo vouches it. A stock load's LoRA stack with
+  `lora_low_rss` off, whose classic bake only the Worker can price, is always
+  asked. A load is still to
+  come after any unload of every rank until a load succeeds, so a failed one
+  leaves the rescue for the next queue. Where that reads
   short and the Worker on the driver's box would stop the load (its read-only
   quote says so, or, before the fleet's setup, which `auto` makes at the
   first render, its status shows it holds no model), the driver unloads the

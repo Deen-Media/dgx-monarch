@@ -2666,8 +2666,15 @@ or a reset after which ComfyUI's cached loader node does not place it again.
 Since 1.5 a last step at the
 render site, once those checks pass and before the gate and any dispatch,
 prices a load still to come (`nodes/pending_load_relief`) with the Workers'
-own price function (`capacity_fit.stock_load_fit`, or `slab_load_fit` where
-the family's residency resolves to slab) against this box's MemAvailable.
+own price function and inputs against this box's MemAvailable:
+`capacity_fit.stock_load_fit`, with a loader cast mapped as the Worker maps it,
+or `slab_load_fit` where `slab_weights` is on outright, with the LoRA stack's
+bake under `lora_low_rss`. Under `auto` a vouched family is priced stock, the
+larger price, since the Worker prices a file stock until its family memo,
+which the driver cannot read, vouches it. A stock load's LoRA stack with
+`lora_low_rss` off, whose classic bake the Worker prices from its own store
+(under `lora_low_rss` its stock price takes no LoRA term), and an option the driver
+cannot map are never read as a fit: they go to the Workers.
 Where that reads short it asks the Workers on this box the agreement's own
 read-only quote, and where one of them says its price refuses the load or
 offers the slab card, it runs the rescue above: unload, then trim. Under
@@ -2681,11 +2688,14 @@ agreement, which offers the card or refuses as before. A load is still to come
 under `auto` unless a finished render or a pipelined submission in this
 process placed the checkpoint, and under an explicit preset only where the
 loader deferred the placement; inside the gate's capacity check that check
-says itself whether the load ran. When an identity ceremony unloads every rank
-for its clean reload, or a reset or restart stops the Workers' processes, the
-load is still to come again whatever this process placed before (ComfyUI's
-cached loader node does not place it again), so the next render site prices
-it; the
+says itself whether the load ran. When the driver unloads every rank (an
+identity ceremony's clean reload, the no-render path, the slab proof, the
+cross-mode reference, the FSDP cleanup, a rescue's dropped slot, a hard Clear
+VRAM) or a reset or restart stops the Workers' processes, the load is still to
+come again whatever this process placed before (ComfyUI's cached loader node
+does not place it again), and it stays so until a load succeeds: a successful
+render, the loader's placement or the no-render path's load. A check that
+reads it does not clear it, since the load it lets through may still fail. The
 no-render path, which loads with no render, runs the same step between its
 unload and its load agreement. So a render whose model a finished render, a
 pipelined submission or the loader placed asks nothing. Where the memos do not

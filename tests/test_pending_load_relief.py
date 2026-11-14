@@ -174,6 +174,31 @@ def test_which_loads_are_still_to_come(monkeypatch):
     assert not pending_load_relief.load_pending(_model(None), True)
 
 
+def test_every_unload_of_every_rank_marks_the_load_still_to_come():
+    """Each driver site that unloads every rank marks the next load as still to
+    come, so a placement it undid is never read as standing: the ceremonies, the
+    no-render path and its fall-through, the slab proof, the cross-mode
+    reference, the FSDP cleanup, a rescue's dropped slot, and a hard Clear VRAM."""
+    import re
+    from pathlib import Path
+
+    nodes = Path(pending_load_relief.__file__).parent
+    sites = []
+    for source in sorted(nodes.glob("*.py")):
+        if source.name == "pending_load_relief.py":
+            continue  # its docstring names the sites
+        lines = source.read_text().splitlines()
+        for index, line in enumerate(lines):
+            if re.search(r"call_all\(\s*\"unload\"", line):
+                sites.append(source.name)
+                after = "\n".join(lines[index:index + 5])
+                assert "pending_load_relief.note_unloaded()" in after, f"{source.name}:{index + 1}"
+    assert len(sites) >= 7
+    ops = (nodes / "ops.py").read_text()
+    workers = ops.index('handle.call_all("clear_vram", level')
+    assert "pending_load_relief.note_unloaded()" in ops[workers:workers + 300]
+
+
 def test_a_stop_of_the_workers_makes_an_eager_placement_pending_again():
     """Every door that stops the Workers' processes drains the memos
     (``recycle_drain.drop_residency_memos``); an explicit preset's eager
@@ -189,9 +214,12 @@ def test_a_stop_of_the_workers_makes_an_eager_placement_pending_again():
     assert not pending_load_relief.load_pending(explicit, None)
 
 
-def test_an_unload_for_a_clean_reload_makes_the_load_pending_over_the_memos(monkeypatch, checkpoint):
-    """The memos still name a model the Workers no longer hold, until the next
-    render's own check, or a loader placement."""
+def test_an_unload_makes_the_load_pending_over_the_memos_until_a_load_succeeds(
+        monkeypatch, checkpoint):
+    """The memos still name a model the Workers no longer hold. The mark stays
+    through the next render's check, which places nothing, and through a load
+    that fails; only a load that succeeds clears it: a successful render or a
+    loader's placement. The memo drain at a reset is not a load."""
     driver = Driver(monkeypatch, reading_gib=100.1)
     monkeypatch.setattr(render_preflight, "_LAST_RENDERED_UNET", UNET)
     auto, explicit = _model(Handle(driver)), _model(Handle(driver), preset="uly2")
@@ -199,12 +227,47 @@ def test_an_unload_for_a_clean_reload_makes_the_load_pending_over_the_memos(monk
     assert pending_load_relief.load_pending(auto, None)
     assert pending_load_relief.load_pending(explicit, None)
     assert not pending_load_relief.load_pending(auto, True)  # the capacity check's own word
-    _relieve(auto, checkpoint)                               # the next render's check
-    assert not pending_load_relief.load_pending(auto, None)
+    _relieve(explicit, checkpoint)                           # the next render's check
+    assert pending_load_relief.load_pending(explicit, None)  # its load may still fail
+    render_preflight.note_successful_render(None)            # a memo drain places nothing
+    assert pending_load_relief.load_pending(explicit, None)
+    render_preflight.note_successful_render(UNET)            # a render that succeeded
+    assert not pending_load_relief.load_pending(explicit, None)
     pending_load_relief.note_unloaded()
-    pending_load_relief.note_placed(UNET)
+    pending_load_relief.note_placed(UNET)                    # a loader's placement
     assert not pending_load_relief.load_pending(explicit, None)
     assert driver.steps == []  # it fitted: no quote, no unload
+
+
+def test_a_failed_load_after_a_reset_leaves_the_rescue_for_the_next_queue(monkeypatch, checkpoint):
+    """An explicit preset placed eagerly, then a reset (ComfyUI's cached loader
+    does not place it again). The first check's quote times out, so nothing is
+    freed (fail open), and the Worker then refuses the load for capacity. The
+    next queue still reads the load as pending and runs the rescue."""
+    from dgx_monarch.nodes import old_model_clear, recycle_drain
+
+    driver = Driver(monkeypatch)
+    monkeypatch.setattr(pending_load_relief, "workers_stop", _REAL_WORKERS_STOP)
+    handle = Handle(driver)
+    handle.setup_key = ("set up",)
+    explicit = _model(handle, preset="uly2")
+    pending_load_relief.note_placed(UNET)
+    recycle_drain.drop_residency_memos()
+    answers: list[object] = [TimeoutError("the Workers did not answer in time")]
+
+    def quote(*_args, **_kwargs):
+        answer = answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(old_model_clear, "driver_host_answers", quote)
+    _relieve(explicit, checkpoint)
+    assert driver.steps == [] and driver.held  # the read failed: nothing freed
+    # The Worker refused the load: no render succeeded, nothing was placed.
+    answers.append(_answers([("cond", "refuse")]))
+    _relieve(explicit, checkpoint)
+    assert driver.steps == ["comfy-unload"]
 
 
 # --- never worse ---------------------------------------------------------------------
@@ -224,26 +287,143 @@ def test_a_placed_model_never_triggers_however_short_the_box(monkeypatch, checkp
     assert driver.steps == [] and driver.held
 
 
-def _slab_price(monkeypatch, driver):
-    """The slab price on the sparse file: the file and the floor, no host copy."""
-    priced: list[str] = []
+LORA_BAKE_GIB = 20.0
 
-    def slab_fit(path, options, *, reserve_bytes=None, **_kwargs):
-        priced.append(path)
+
+def _slab_price(monkeypatch, driver):
+    """The slab price on the sparse file: the file and the floor, no host copy,
+    and a stack's bake where the stack and a resolver are passed, as
+    ``capacity_fit.slab_load_fit`` prices it. Records each call's LoRA inputs."""
+    priced: list[tuple] = []
+
+    def slab_fit(path, options, *, reserve_bytes=None, lora_stack=None, resolve_lora_path=None,
+                 **_kwargs):
+        priced.append((path, lora_stack, resolve_lora_path is not None))
         avail = int(driver.reading)
         size = int(FILE_GIB * _GIB)
-        return SlabFit(size + 5 * _GIB <= avail, True, size, avail, 5 * _GIB)
+        lora = int(LORA_BAKE_GIB * _GIB) if lora_stack and resolve_lora_path else 0
+        return SlabFit(size + 5 * _GIB + lora <= avail, True, size, avail, 5 * _GIB, lora_bytes=lora)
 
     monkeypatch.setattr("dgx_monarch.capacity_fit.slab_load_fit", slab_fit)
     return priced
 
 
+SLAB_ON = {"slab_weights": True}
+STACK = [{"name": "style.safetensors", "strength": 1.0}]
+
+
 def test_a_slab_load_is_priced_at_the_slab_price(monkeypatch, checkpoint):
-    """A family whose auto residency is slab: the file and the floor, no host copy."""
+    """slab_weights on outright: the file and the floor, no host copy."""
     driver = Driver(monkeypatch, reading_gib=50.0)
     priced = _slab_price(monkeypatch, driver)
+    _relieve(_model(Handle(driver), worker_args=SLAB_ON), checkpoint, family="krea2")
+    assert priced == [(checkpoint, None, False)] and driver.steps == []
+
+
+def test_a_vouched_family_under_auto_is_priced_stock_and_asks_where_that_reads_short(
+        monkeypatch, checkpoint):
+    """Under auto the Worker prices a vouched family stock on the first load of a
+    file (a cold family memo this driver cannot read), so the local test takes
+    the stock price, the larger one: short at 50 GiB though slab would fit, it
+    asks, and the Worker's answer decides."""
+    driver = Driver(monkeypatch, reading_gib=50.0, workers_admit=True)
+    priced = _slab_price(monkeypatch, driver)
     _relieve(_model(Handle(driver)), checkpoint, family="krea2")
-    assert priced == [checkpoint] and driver.steps == []
+    assert priced == [] and driver.steps == ["quote"] and driver.held
+
+
+@pytest.mark.parametrize(("low_rss", "steps"), [
+    (None, ["quote", "comfy-unload"]),   # lora_low_rss is on unless set off
+    (True, ["quote", "comfy-unload"]),
+    (False, []),                         # the Worker passes no stack then
+])
+def test_a_slab_loras_bake_is_priced_as_the_worker_prices_it(monkeypatch, checkpoint, low_rss, steps):
+    """The file and floor fit at 50 GiB; the stack's bake under lora_low_rss does
+    not, so the load reaches the quote and the rescue."""
+    driver = Driver(monkeypatch, reading_gib=50.0)
+    priced = _slab_price(monkeypatch, driver)
+    worker_args = dict(SLAB_ON, **({} if low_rss is None else {"lora_low_rss": low_rss}))
+    request = {"kind": "custom", "model": {"unet_name": UNET, "loras": STACK}}
+    _relieve(_model(Handle(driver), worker_args=worker_args), checkpoint, family="krea2",
+             request=request)
+    assert driver.steps == steps
+    assert priced[0] == (checkpoint, None if low_rss is False else STACK, low_rss is not False)
+
+
+def test_a_lora_this_box_cannot_find_is_left_to_the_bakes_own_fallback(monkeypatch):
+    """The resolver raises for a LoRA ComfyUI cannot find, as the Worker's does;
+    ``capacity_lora_bake.lora_bake_bytes`` then prices the whole checkpoint,
+    which only raises the local price, so the load is asked, never read as a fit."""
+    fake = types.ModuleType("folder_paths")
+    fake.get_full_path = lambda kind, name: (  # type: ignore[attr-defined]
+        f"/loras/{name}" if (kind, name) == ("loras", "found.safetensors") else None)
+    monkeypatch.setitem(__import__("sys").modules, "folder_paths", fake)
+    assert pending_load_relief._resolve_lora("found.safetensors") == "/loras/found.safetensors"
+    with pytest.raises(FileNotFoundError):
+        pending_load_relief._resolve_lora("missing.safetensors")
+
+
+def test_a_stock_loads_classic_bake_asks_the_workers_however_the_local_price_reads(
+        monkeypatch, checkpoint):
+    """With lora_low_rss off the Worker prices a stock load's LoRA stack (its
+    classic bake) from its own store, which this driver cannot read: a load that
+    fits locally is asked, and the Worker's answer decides. With no stack the
+    same load asks nothing."""
+    driver = Driver(monkeypatch, reading_gib=100.1)
+    # The Worker's stock price with the classic bake: 84.2 GiB and about 6 more.
+    monkeypatch.setattr(pending_load_relief, "workers_stop", lambda *_args: (
+        driver.steps.append("quote"), driver.reading < 90.0 * _GIB)[1])
+    classic = {"lora_low_rss": False}
+    request = {"kind": "custom", "model": {"unet_name": UNET, "loras": STACK}}
+    _relieve(_model(Handle(driver), worker_args=classic), checkpoint, request=request)
+    assert driver.steps == ["quote"] and driver.held
+    driver.reading = 80.0 * _GIB  # the bake does not fit: the rescue runs
+    _relieve(_model(Handle(driver), worker_args=classic), checkpoint, request=request)
+    assert driver.steps == ["quote", "quote", "comfy-unload", "quote"]
+    driver.steps.clear()
+    _relieve(_model(Handle(driver), worker_args=classic), checkpoint)  # no stack: as before
+    assert driver.steps == []
+
+
+def test_a_stock_loads_lora_stack_under_lora_low_rss_prices_as_the_file(monkeypatch, checkpoint):
+    """Under lora_low_rss, the UMA default, the Worker's stock price takes no
+    LoRA term (in_place_fallback.route returns None), so a load that fits
+    locally asks nothing, stack or no stack."""
+    driver = Driver(monkeypatch, reading_gib=100.1)
+    request = {"kind": "custom", "model": {"unet_name": UNET, "loras": STACK}}
+    _relieve(_model(Handle(driver)), checkpoint, request=request)
+    assert driver.steps == [] and driver.held
+
+
+def test_a_loader_cast_is_priced_at_the_copy_it_builds(monkeypatch, checkpoint):
+    """The options go through the Worker's own mapping, so stock_load_fit sees
+    the cast's dtype; an option the mapping cannot read is asked."""
+    import torch as torch_mod
+
+    from dgx_monarch import capacity_fit
+    from dgx_monarch.actor import store_detect
+
+    driver = Driver(monkeypatch, reading_gib=100.1, workers_admit=True)
+    seen: list[dict] = []
+
+    stock = capacity_fit.stock_load_fit
+
+    def recording(path, options):
+        seen.append(dict(options))
+        return stock(path, options)
+
+    monkeypatch.setattr(capacity_fit, "stock_load_fit", recording)
+    model = _model(Handle(driver))
+    model.options = {"weight_dtype": "fp8_e4m3fn"}
+    _relieve(model, checkpoint)
+    assert seen and seen[0].get("dtype") is torch_mod.float8_e4m3fn
+
+    def unreadable(_options):
+        raise ValueError("an option this mapping does not know")
+
+    monkeypatch.setattr(store_detect, "_to_comfy_model_options", unreadable)
+    _relieve(model, checkpoint)
+    assert driver.steps == ["quote"] and driver.held
 
 
 def test_a_granted_rescue_consent_is_priced_at_the_slab_load_it_grants(monkeypatch, checkpoint):
@@ -252,7 +432,7 @@ def test_a_granted_rescue_consent_is_priced_at_the_slab_load_it_grants(monkeypat
     driver = Driver(monkeypatch)
     priced = _slab_price(monkeypatch, driver)
     _relieve(_model(Handle(driver), worker_args={"slab_weights": True}), checkpoint)
-    assert priced == [checkpoint] and driver.steps == [] and driver.held
+    assert priced == [(checkpoint, None, False)] and driver.steps == [] and driver.held
 
 
 @pytest.mark.parametrize("family", ["minimax_h3", "krea2"])

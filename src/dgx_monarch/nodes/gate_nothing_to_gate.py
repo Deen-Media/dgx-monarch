@@ -194,9 +194,12 @@ def _fall_through_unloaded(handle: Any, term: str) -> None:
     a request today's ceremony runs. Its first step after the stop is the same
     unload, so this costs nothing.
     """
+    from . import pending_load_relief
+
     _declined(term)
     try:
         handle.call_all("unload", timeout_s=600)
+        pending_load_relief.note_unloaded()  # the load this path placed is gone again
     except Exception as exc:
         safe_call(log.warning, "identity gate: the unload before the full ceremony "
                   "failed (%r); the ceremony unloads again before its first render", exc)
@@ -250,6 +253,7 @@ def _worker_evidence(runtime: Mapping[str, Any], ceremony_model: Any, model_requ
     token = runtime["render_setup_token"](ceremony_model, frozen_latent, cfg_value, handle)
     attest("pre", handle, token)
     handle.call_all("unload", timeout_s=600)
+    pending_load_relief.note_unloaded()  # until load_model below succeeds
     _free_driver_for_load(ceremony_model, frozen_request)
     capacity_agreement.agree_load(handle, unet_name, options, [], "cond")
     placed["load"] = True

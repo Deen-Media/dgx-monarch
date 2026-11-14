@@ -15,15 +15,19 @@ behind them, but they price a pending model load as the driver footprint sees
 it: under an explicit preset as placed by the loader, and under ``auto`` at the
 file alone. So they found nothing to free. This step runs in the same place,
 once those checks have passed, and asks what the Workers will ask. The load is
-short when, first, this box's MemAvailable is below the Workers' own price
-(``capacity_fit.stock_load_fit``: the file, the host copy it is placed from and
-the host floor, or ``capacity_fit.slab_load_fit`` where the family's residency
-resolves to slab), and then a Worker on this box would stop the load at its
-own price (``workers_stop``: the agreement's own read-only quote, or before
-distributed setup a status read showing the ranks here hold no model). Only
-then does it run the same rescue (unload the models ComfyUI holds, then the
-actors' trim where the fleet is set up) and let the render go on whatever the
-rescue freed.
+short when, first, this box's MemAvailable is below the Workers' own price with
+the Workers' own inputs (``_local_fit``: ``capacity_fit.stock_load_fit``, the
+file or the copy a loader cast builds, the host copy and the host floor; or
+``capacity_fit.slab_load_fit`` where slab_weights is on outright, with the LoRA
+stack's bake under ``lora_low_rss``), or where the local price cannot read an
+input the Worker prices (an option it cannot map, or a stock load's LoRA stack
+with ``lora_low_rss`` off, whose classic bake the Worker prices from its own
+store); and then a Worker on
+this box would stop the load at its own price (``workers_stop``: the
+agreement's own read-only quote, or before distributed setup a status read
+showing the ranks here hold no model). Only then does it run the same rescue
+(unload the models ComfyUI holds, then the actors' trim where the fleet is set
+up) and let the render go on whatever the rescue freed.
 
 It refuses nothing: the ranks' load agreement and each Worker's own ladder stay
 the judges of the load, with the slab card or the refusal they raise today. It
@@ -37,12 +41,14 @@ The load is still to come (``load_pending``):
 - under an explicit preset, only where the loader deferred its placement
   (``note_deferred``, at the identity gate's or the dual-model deferral), since
   otherwise the loader placed it at its node;
-- after every rank unloaded for an identity ceremony's clean reload, or the
-  Workers' processes stopped (``recycle_drain.drop_residency_memos``), which
-  ``note_unloaded`` marks, whatever the memos and an explicit preset's eager
-  placement say, until the next render's own check or a loader placement. The
-  no-render path, which loads with no render, passes ``weights_loaded=False``
-  itself (``gate_nothing_to_gate``);
+- after every rank unloaded (each ``call_all("unload")`` site and a hard Clear
+  VRAM) or the Workers' processes stopped (``recycle_drain.drop_residency_memos``),
+  which ``note_unloaded`` marks, whatever the memos and an explicit preset's
+  eager placement say, until a load succeeds (``note_placed``: the loader's
+  eager placement, the no-render path's load, or a successful render). A check
+  that reads the mark leaves it, since a load it lets through may still fail.
+  The no-render path, which loads with no render, passes
+  ``weights_loaded=False`` itself (``gate_nothing_to_gate``);
 - inside the gate's capacity check, as that check's own ``weights_loaded`` says.
 
 A render whose model a finished render, a pipelined submission or the loader
@@ -74,8 +80,8 @@ log = get_logger(__name__)
 # leaves them, which errs towards a load still to come, and after a recycle
 # that is true.
 _DEFERRED: set[str] = set()
-# Session lifetime: every rank unloaded or stopped since the last render's
-# check or loader placement.
+# Session lifetime: every rank unloaded or stopped since the last load that
+# succeeded (note_placed).
 _UNLOADED = False
 # A status read before setup, on the short path only (nodes/routes.py reads it at 10 s too).
 _STATUS_TIMEOUT_S = 10.0
@@ -92,15 +98,16 @@ def note_deferred(unet_name: object) -> None:
 
 
 def note_placed(unet_name: object) -> None:
-    """The loader placed this checkpoint at its node."""
+    """A load of this checkpoint succeeded: the loader's eager placement, the
+    no-render path's load, or a successful render (render_preflight)."""
     global _UNLOADED
-    _UNLOADED = False
     if isinstance(unet_name, str):
+        _UNLOADED = False
         _DEFERRED.discard(unet_name)
 
 
 def note_unloaded() -> None:
-    """Every rank unloaded its models (gate_ceremony.py) or stopped (recycle_drain.py)."""
+    """Every rank unloaded its models or stopped; the load waits for ``note_placed``."""
     global _UNLOADED
     _UNLOADED = True
 
@@ -198,6 +205,46 @@ def _holds_nothing(fleet: Any) -> bool:
         return False
 
 
+def _resolve_lora(name: str) -> str:
+    """This box's path for a LoRA named as its loader shows it, as the Worker
+    resolves it (``actor/comfy_bridge.resolve_model_path``)."""
+    import folder_paths
+
+    found = folder_paths.get_full_path("loras", name)
+    if found is None:
+        raise FileNotFoundError(name)
+    return str(found)
+
+
+def _local_fit(path: str, options: dict, slab: bool, lora_stack: list | None,
+               reserve_bytes: int) -> Any:
+    """The Worker's own price function on this box, with the Worker's inputs, or
+    None where an input cannot be read.
+
+    The options go through the Worker's own mapping
+    (``actor/store_detect._to_comfy_model_options``), so a loader cast is
+    priced at the copy it builds. A slab load under ``lora_low_rss`` carries
+    the stack and the resolver, as the Worker passes them to ``slab_load_fit``
+    for the bake's memory; a LoRA it cannot read is priced as the whole
+    checkpoint there (``capacity_lora_bake.lora_bake_bytes``). The credit the
+    Worker takes for a stack it already holds is left out, which only raises
+    this price.
+    """
+    from .. import capacity_fit
+
+    try:
+        from ..actor.store_detect import _to_comfy_model_options
+
+        comfy_options = _to_comfy_model_options(options)
+    except Exception:
+        return None
+    if slab:
+        return capacity_fit.slab_load_fit(
+            path, comfy_options, reserve_bytes=reserve_bytes, lora_stack=lora_stack,
+            resolve_lora_path=_resolve_lora if lora_stack else None)
+    return capacity_fit.stock_load_fit(path, comfy_options)
+
+
 def relieve(model: Any, request: dict, *, family: str, path: str,
             weights_loaded: bool | None = None) -> None:
     """Run the driver's rescue where the pending load will not fit; never raise.
@@ -212,8 +259,7 @@ def relieve(model: Any, request: dict, *, family: str, path: str,
 
 def _relieve(model: Any, request: dict, *, family: str, path: str,
              weights_loaded: bool | None) -> None:
-    global _UNLOADED
-    from .. import capacity_fit, driver_footprint, driver_unload, mesh_safety, residency_mode
+    from .. import driver_footprint, driver_unload, mesh_safety, residency_mode
     from ..topology import declares_fsdp
     from . import loader_preflight
 
@@ -224,8 +270,8 @@ def _relieve(model: Any, request: dict, *, family: str, path: str,
             or not driver_footprint.rank0_co_resident(mesh)
             or not load_pending(model, weights_loaded)):
         return
-    if weights_loaded is None:
-        _UNLOADED = False  # this render makes the load the unload left to come
+    # The unload mark stays until a load succeeds (``note_placed``): this check
+    # does not place anything, and a load it lets through may still fail.
     handle = getattr(mesh, "handle", None)
     if driver_unload.busy_reason(handle):
         return  # the rescue keeps every model while work runs: nothing to ask for
@@ -235,26 +281,43 @@ def _relieve(model: Any, request: dict, *, family: str, path: str,
 
         worker_args = resolve_effective_worker_args(
             model, handle, requested_worker_args=worker_args)
-    slab = loader_preflight._effective_slab(worker_args, family)
-    if slab == residency_mode.MODE_COMFY_MANAGED:
+    if loader_preflight._effective_slab(worker_args, family) == residency_mode.MODE_COMFY_MANAGED:
         return
+    # The Worker prices slab where slab_weights is on outright and compile_dit
+    # does not keep it stock. Under auto a vouched family is priced stock on the
+    # first load of a file, from a family memo this driver cannot read, so the
+    # local test takes the stock price there, the larger of the two.
+    slab = worker_args.get("slab_weights") is True and not worker_args.get("compile_dit")
     options = dict(getattr(model, "options", None) or {})
     unet_name = str(getattr(model, "unet_name", "") or "")
+    spec = request.get("model")
+    loras = list((spec if isinstance(spec, dict) else {}).get("loras")
+                 or getattr(model, "loras", None) or ())
+    # The Worker's policy: lora_low_rss is on unless set off (actor/comfy_bridge.py).
+    low_rss = worker_args.get("lora_low_rss") is not False
 
     def price() -> None:
-        fit: Any = (capacity_fit.slab_load_fit(
-            path, options, reserve_bytes=driver_footprint.reserve_bytes(worker_args))
-            if slab is True else capacity_fit.stock_load_fit(path, options))
-        room = fit.avail_bytes
-        # The local price first, so a load that fits pays no quote.
-        if not fit.applies or room is None or room >= fit.required_bytes:
-            return
-        reading = (f"the pending {'slab' if slab is True else 'stock'} load of {unet_name} "
-                   f"needs {fit.required_bytes / 2**30:.1f} GiB and this box has "
-                   f"{room / 2**30:.1f} GiB")
+        fit = _local_fit(path, options, slab, loras if low_rss and loras else None,
+                         driver_footprint.reserve_bytes(worker_args))
+        if fit is not None and not fit.applies:
+            return  # the Worker's price makes no claim here either
+        # What only the Workers can price is asked of them, never read as a fit:
+        # an option this price cannot map, and a stock load's LoRA stack with
+        # lora_low_rss off, whose classic bake the Worker prices from its own
+        # store. Under lora_low_rss the Worker's stock price takes no LoRA term
+        # (actor/in_place_fallback.route returns None), so this one is whole.
+        unread = fit is None or (not slab and bool(loras) and not low_rss)
+        short = fit is not None and fit.avail_bytes is not None and fit.avail_bytes < fit.required_bytes
+        if not unread and not short:
+            return  # the local price first, so a load that fits pays no quote
+        reading = (f"the pending load of {unet_name} could not be priced here" if fit is None else
+                   f"the pending {'slab' if slab else 'stock'} load of {unet_name} needs "
+                   f"{fit.required_bytes / 2**30:.1f} GiB"
+                   f"{' before its LoRA stack' if unread else ''} and this box has "
+                   f"{(fit.avail_bytes or 0) / 2**30:.1f} GiB")
         if not workers_stop(mesh, request, unet_name, options):
-            safe_call(log.info, "pending load: %s, but no Worker on this box would stop it, so "
-                      "the driver frees nothing more", reading)
+            safe_call(log.info if short else log.debug, "pending load: %s, but no Worker on "
+                      "this box would stop it, so the driver frees nothing more", reading)
             return
         raise PendingLoadShort(reading)
 
