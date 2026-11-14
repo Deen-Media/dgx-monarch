@@ -682,26 +682,47 @@ render's decode took the box to 6.7 GiB available while the driver still held
 nothing failed, but nothing was holding the box there either. So on the same
 GPUs, when the driver's ComfyUI is about to run a decode it prices above its
 free memory, the pack first has ComfyUI free that much from the text encoders
-it holds, through ComfyUI's own call. Then
-ComfyUI's decode runs unchanged. Confirm the driver log line `unified memory:
+it holds, through ComfyUI's own call, and asks the Workers to release the
+device memory their last sampler left reserved and idle, which drops no
+model. Then
+ComfyUI's decode runs unchanged. On the build with it (dev `e77694c`, the
+same day, the cap unchanged at max 2100 MHz and the highest reading 2093
+MHz) that render kept 13.0 GiB available, and 6.2 GiB with the relief
+switched off
+([VALIDATION](VALIDATION.md#release-build-low-memory)). The Workers' part
+came later. On dev `45e07cc` it asked them only where the decode was still
+short, and in its proof block the two decodes read on a pair each fitted
+once the driver's text encoder had given up memory, so the Workers were not
+asked, and the first Spark (under its clock cap, max 2100 MHz, highest
+reading 2093 MHz) read 10.34 and 9.99 GiB through them
+([VALIDATION](VALIDATION.md#found-on-dev-45e07cc)); dev `fd03947` asks
+them whenever the relief acts, and in the same state two Worker actors
+released their idle pools and the first Spark (the same cap and reading)
+read 16.08 GiB through the decode ([VALIDATION](VALIDATION.md#proof-block-fd03947)). Confirm the driver log line `unified memory:
 before a VAE decode that ComfyUI prices above its free memory`. When it acts
 it logs one line that starts `decode relief:` with ComfyUI's price, the idle
-models it freed from, and what MemAvailable read on each side. What to know:
+models it freed from, and what MemAvailable read on each side; when it asked
+the Workers, the line adds `Worker actor(s) then released their idle device
+pools` with MemAvailable before and after, or says the Workers were not
+asked and why. What to know:
 
 - The decode is ComfyUI's own call with the same arguments, and freeing
   changes no weight. A video or a single image decodes to the same bits as
   before. A decode of several images takes as many a batch as ComfyUI's free
   memory allows, as it always did.
-- Only text encoders give up memory. Every other model stays loaded: the
-  diffusion model, the VAE, CLIP vision, a ControlNet. A decode made while a
-  sampler runs (a preview node that decodes at every step) frees nothing.
+- In the driver only text encoders give up memory, and on the Workers only
+  the idle device memory their sampler left. Every other model stays loaded: the
+  diffusion model, the VAE, CLIP vision, a ControlNet, and each Worker's
+  models and decode VAE. A decode made while a sampler runs (a preview node
+  that decodes at every step) frees nothing.
 - What it costs when it acts: a text encoder that gave up memory loads it
   again when you next change the prompt's text. An unchanged prompt pays
   nothing.
 - It adds room and does not bound a decode. If the line ends `is still priced
   above the ... free and runs as ComfyUI runs it`, or says `ComfyUI held no
-  text encoder here to free from`, nothing was left to give: use VAE Decode
-  (Tiled), a shorter clip or a smaller frame.
+  text encoder here to free from` with no Workers' release after it, nothing
+  was left to give: use VAE Decode (Tiled), a shorter clip or a smaller
+  frame.
 - Whenever it acts it also asks the Workers of the fleet that served the
   render for the device memory they hold idle after sampling (6.4 GiB on
   record on a pair). The line says one of three things about that: `Worker
@@ -727,8 +748,8 @@ the page cache holds does not count, although the system would give it back.
 On 2026-11-12 three Worker starts with 1.52, 4.61 and 8.85 GiB free and
 44.7, 47.4 and 50.8 GiB available ended in `Actor call dgxm_worker.setup
 failed` and `CUDA error: out of memory ... from cuDevicePrimaryCtxRetain`;
-one start worked with 8.87 GiB free and every other on record with 10.6 or
-more. Each failure came while another program held tens of GiB. Reading
+other starts worked with 8.87 GiB free and with less, so it does not
+happen every time. Each failure came while another program held tens of GiB. Reading
 large files is not enough to cause it: 260 GiB of model files read with
 nothing held left 26 to 28 GiB free. So before its first CUDA
 call a Worker now reads the box's memory, and if less than 16 GiB is free
@@ -762,7 +783,10 @@ and then makes its context straight away. What you may see:
   MemFree /proc/meminfo`) and the make-room line in the sibling Worker's
   journal. A render that sits
   with no progress right after a reset or a restart, on a box that is short
-  of free memory, is this wait.
+  of free memory, is this wait. A render with `comfy_managed` on that stops
+  inside its first step on a roomy box is another matter
+  ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses),
+  "A render that stopped inside its first step").
 
 `DGXM_DISABLE_CONTEXT_ROOM=1` on the Worker (in its `worker.env`, then a
 recycle: [CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)) turns the
@@ -772,8 +796,11 @@ and at the context. Under comfy-managed residency the Worker makes the room
 and leaves the context to ComfyUI's own start a moment later, so memory
 freed can be taken again in between; its status then reads "left to the
 bootstrap", and a second journal line gives what was free when the context
-was asked for. Not yet run on hardware
-([DESIGN](DESIGN.md), "A Worker makes room for its CUDA context before it
+was asked for. On hardware (dev `48e0509`, 2026-11-12 and 13, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) every start with under 16 GiB free made room in about 4 s and made
+its context, on one GPU and on the pair; the refusal itself was not seen,
+because the failure did not come back with the step switched off
+([VALIDATION](VALIDATION.md#worker-context-starts);
+[DESIGN](DESIGN.md), "A Worker makes room for its CUDA context before it
 creates one").
 
 **A LoRA stack with `lora_low_rss` off is refused, or baked in place.** With
@@ -818,7 +845,10 @@ you may see:
 
   **The Wan-Animate 2 INT8 file and the Init node's `reserve_vram_gb`.** A
   whole classic load of that model with its LoRA takes about 4 GiB more
-  than the 2 GiB charge promises and still leaves the 5 GiB floor, because
+  than the 2 GiB charge promises and, on one GPU at the shipped 81 frames,
+  still left the 5 GiB floor in every load on record (lows of 7.01 to 7.68
+  GiB on dev `48e0509`, the Spark under its clock cap, max 2100 MHz, highest
+  reading 2093 MHz), because
   ComfyUI places a model whole only when its free reading covers the model,
   the Worker's reserve and its own estimate for the latent; under that it
   places the model partly, and the low-RSS route bakes it for less. That was
@@ -834,7 +864,12 @@ you may see:
   renders. Every other INT8 ConvRot model pays the share at any reserve
   until a whole load of its own has been measured. (On a pair, a rank that
   ComfyUI loads only partly is refused with the `partial_load_divergence`
-  text whatever the reserve; that is #79, not this rule.)
+  text whatever the reserve; that is #79, not this rule. A rank that loads
+  it whole takes more than one GPU does, and with the backup kept the first
+  Spark read 4.29 GiB at readings near 53 GiB on dev `48e0509` (under its
+  clock cap, max 2100 MHz, highest reading 2093 MHz); the ranks
+  now give their backups up together where one is short, as the next
+  paragraph says.)
 
   **A clip much longer than the shipped ones, with `lora_low_rss` off.** Three
   shipped templates run with the switch off and a LoRA: `dgx-monarch-wan-animate2`,
@@ -846,7 +881,8 @@ you may see:
   that still loads the model whole leaves about 6 to 7 GiB. At 241 frames it
   would leave about 4.4 GiB, under the 5 GiB floor (projected from a roomy
   241-frame render that took 52.4 GiB where 81 frames takes 39, one GPU,
-  2026-11-12, the Spark under its clock cap, max 2100 MHz). If you lengthen a
+  2026-11-12, the Spark under its clock cap, max 2100 MHz, highest reading
+  2093 MHz). If you lengthen a
   clip well past the shipped length on a box with little memory to spare, turn
   `lora_low_rss` on, which keeps no such copy, or free memory first. On one GPU
   the Worker now frees that copy by itself before the first step when a whole
@@ -866,7 +902,16 @@ you may see:
   render and its latent are the same. On 2026-11-13 one held pair render sampled one step in 89.5 s on
   each rank and its repeat in 55.2 s, against about 38 s with the backup kept; a later held, freed
   render took 36.8 s, and one GPU showed no such cost. More free memory on that box before the render
-  avoids it. A load ComfyUI placed only partly
+  avoids it. On hardware (dev `45e07cc`, 2026-11-13, the first Spark under its
+  clock cap, max 2100 MHz, highest reading 2093 MHz) the INT8 template's
+  low at a tight reading went from 7.0 to 7.7 GiB with the copy kept to
+  15.82 with it freed on one GPU, 241 frames read 25.07 GiB, and on a pair
+  both ranks freed and the first Spark read 22.28 GiB where it had read 9.68
+  near 60 with the copy kept
+  ([VALIDATION](VALIDATION.md#proof-block-45e07cc)). In a fleet that pairs a Spark with a GPU that has memory of its
+  own, that GPU's rank takes no part and keeps its backup, so where the
+  lines and the refusal say every rank freed, they mean every rank on
+  unified memory. A load ComfyUI placed only partly
   whose bake could not be finished for room is still as above. If a pair's
   render is refused with `pair_backup_room` after the ranks freed their
   backups, the same queue is refused again until memory is back: clear the
@@ -2581,8 +2626,14 @@ the driver turns the count off at the loader and at the render-site checks,
 which gives the earlier price and its card. Before 2026-11-11 this check priced the new model
 beside the old one: flux1-dev and then LTX 2.3 was 13.3 GiB short with 22.2
 GiB about to be dropped, and MiniMax-H3-Image INT8 after BF16 was 11.9 GiB
-short with 37.5 GiB about to be dropped. No hardware render has run with the
-credit yet.
+short with 37.5 GiB about to be dropped. With the credit, on dev `dcdbc26`
+on 2026-11-11 and 12 (the first Spark under its stability clock cap, max
+2100 MHz, highest reading 2093 MHz), both pairings rendered with no card: the
+driver log read "fits on the head once the Worker there drops flux1-dev,
+which frees at least 22.2 GiB; MemAvailable read 51.6 GiB". A load that did
+not fit after the drop refused, named the drop, said a clear would not make
+room, and raised no card
+([VALIDATION](VALIDATION.md#release-build-passes)).
 
 **Then ComfyUI's own models.** If the drop does not make room, the loader
 unloads the models ComfyUI holds on the driver host, which ComfyUI reloads on
@@ -2947,7 +2998,13 @@ and the loader's own capacity question never count either. On 2026-11-12,
 before this rule, a loader 50 s after a finished render kept 16.0 GiB of
 ComfyUI's models "because a call to the Workers is still in flight" and
 refused 0.1 GiB short: the reset between two renders had left its teardown
-mark on the stopped mesh. It never touches the Workers' residents or
+mark on the stopped mesh. With the rule, on dev `e77694c` the same day (the
+first Spark under its stability clock cap, max 2100 MHz, highest reading 2093
+MHz), the same session with its reset admitted that load at the loader with
+the swap credit, and this guard's check then unloaded the two models, gained
+39.2 GiB and let the render run. The loader's own unload after a reset has
+no hardware row yet
+([VALIDATION](VALIDATION.md#found-on-the-release-build)). It never touches the Workers' residents or
 ComfyUI's cached node outputs. The cross-rank agreement
 ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box))
 prices a load that replaces a Worker's stock resident after the drop that
@@ -3306,6 +3363,8 @@ cost and the number of test renders it took:
     starts now and is the only cost left; the next render of this combination
     skips the gate and the cold load
 
+On a family that takes slab residency under `slab_weights` auto (Krea 2, Flux 2), the render right after a PASS runs on the stock copy the gate's last test render loaded, and each Worker logs `adopt resident ... (stock residency held across slab policy False -> auto)` then `reuse`. Slab residency engages at the next fresh load of that file. Both residencies render the same latent; the PASS proved it.
+
 On a graph with nothing to compare the gate's toast closes after the load with:
 
     auto-gate: the identity gate ran no proof render: this graph has no LoRA
@@ -3534,7 +3593,12 @@ seconds, so a first step of 45 s met one often.
 
 A stale mark means a busy Worker, never a dead one. The panel and `dgxm top`
 keep showing the Worker with its last figures, and the FSDP reload price
-credits nothing from a stale figure.
+credits nothing from a stale figure. On hardware (dev `45e07cc`,
+2026-11-13), twelve of twelve such renders ran on fresh Workers with status
+asked once a second, where the same polling stopped three of six before
+1.5's change, and one ran on a pair; every Worker read the level back as
+INFO, no status ask timed out, and 88 of 1672 answers came back stale with
+their age ([VALIDATION](VALIDATION.md#proof-block-45e07cc)).
 
 **What is still the loader's to change.** The root is a Python callback run
 under torch's allocator lock. With the level at INFO the loader can still do
@@ -3984,7 +4048,7 @@ gets under `first_use`. So, with `auto_gate=off` on a single-model render:
 |---|---|
 | a LoRA stack | renders, on whichever residency the settings below resolve to |
 | `lora_low_rss` | stays as configured (`auto` by default, which is on for unified memory): the lazy un-bake, not baked mode |
-| `slab_weights=auto` | still resolves per family on the worker, and a family verified for slab residency still slab-loads |
+| `slab_weights=auto` | still resolves per family on the worker at each load: a load of a family verified for slab residency is a slab load, except the first load of a new file, which is stock until the load names the family and then reloads once into slab |
 | `slab_weights=on` | still honored |
 | the capacity rescue ([#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)) | still offered, still consented, still certified |
 | render accuracy | unproven; checking it is up to you |
@@ -4529,8 +4593,12 @@ cells, 37.4 GiB at six views, and 65,536 cells, 25.0 GiB at four. A negative
 that carries the UltraTex conditioning drops the same tokens, and the price
 is the 34.5 and 21.9 GiB above. The factor, the reserve and the load decision
 stay ComfyUI's, so a box that cannot hold the model at that price still loads
-partially, and a pair still refuses here. No hardware render has run with it
-yet.
+partially, and a pair still refuses here. On dev `dcdbc26` on 2026-11-11 (the
+first Spark under its stability clock cap, max 2100 MHz, highest reading 2093
+MHz) a pair rendered six views at 2048 with both ranks logging the 37.4 GiB
+line and loading whole, and with 60 GiB left on the first Spark the same
+render refused here, as it should
+([VALIDATION](VALIDATION.md#release-build-passes)).
 
 **ComfyUI also picks each model call's batch per box.** It runs cond and
 uncond as one call only when its estimate of that call, times 1.5, is under the
@@ -5968,11 +6036,20 @@ agreement before any checkpoint opens. Timing a permission change against the
 load races a roughly one-second window and is not repeatable. This switch
 injects the failure inside that window.
 
-**Fix:** clear both variables from that worker's environment, wherever they were
-set, and restart that worker. Nothing else on the box is wrong. The refusal
+**Fix:** take both out of that box's `worker.env`
+(`~/.config/dgx-monarch/worker.env`, where a Worker reads them from), or out of
+the Worker's environment if they were set there, then recycle (Reset
+attached mesh); each actor reads the file as it starts, so no service
+restart is needed for the file
+([CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)). The refusal's own
+text and the arming line say to unset them and restart the worker; for the
+file, the recycle does that. The driver's `Worker switches set on <host>`
+line at the next setup, and the Worker's status (`worker_switches`), show
+whether any is still set. Nothing else on the box is wrong. The refusal
 prices nothing, writes no gate verdict and quarantines no residency setting, and the box
 renders as it did before once the variables are gone. If you did not set them,
-read it as an acceptance run that leaked into a unit and check that unit.
+read it as an acceptance run that leaked into that box's `worker.env` or the
+Worker's unit, and check both.
 
 **Related:** entry 94 (what the healthy box refuses with, and the exchange this
 knob exercises), entry 93 (the agreement that catches every other injectable
@@ -8645,9 +8722,12 @@ its layer casts. The log names the first key of each kind once (`is off the
 device after a partial load`). With `lora_low_rss` off, the Worker does not
 leave a one-GPU load partial where it can help it: before sampling it bakes
 the whole stack under a full load and frees ComfyUI's backup, as `lora_low_rss`
-does, and logs `took the low-RSS route for this load`. That needs room for
-ComfyUI's backup of the patched layers still off the device while it bakes; a
-stack change on that model then reloads it from disk. If that full load itself
+does, and logs `took the low-RSS route for this load`. That needs room, while
+it bakes, for ComfyUI's backup of the patched layers still off the device and
+for the bake itself, asked by each layer's own format: 2 GiB, and for each
+layer 7.5 MiB where it is scaled FP8 or full precision, 4 MiB where it is
+INT8 ConvRot and nothing where it is plain FP8. A stack change on that model
+then reloads it from disk. If that full load itself
 fails, the render stops with the same class C tag and says so, because ComfyUI
 unloads a model whose load fails and sampling it would run without the LoRA.
 Where there is no room
@@ -8851,8 +8931,11 @@ joins the prompt and the negative into one model call only when their text
 tensors have the same shape. In stock both have 512 rows, so each step makes
 one batch-2 call; on a Worker the raw rows of the shipped pair differ in
 length, so each step made two batch-1 calls, and GB10's matrix kernels change
-with the row count. That is the expected cause of the 0.028; as of 2026-11-10
-no hardware run on the fixed Workers has confirmed it. A CPU test against
+with the row count. That is the cause of the 0.028: on 2026-11-11 a fixed
+Worker on one GPU matched stock exactly (one DGX Spark under its clock cap,
+max 2100 MHz, reading 2067 to 2099 MHz), and
+explicit cfg2, which still makes the two batch-1 calls, read the same 0.028
+against stock. A CPU test against
 ComfyUI v0.45.0 and 8a98ecf58 shows the two call patterns, and that inference
 mode alone picks between them; on the CPU the latents still match, because its
 kernels do not change with the batch.
@@ -8868,8 +8951,9 @@ every Anima render under `auto` takes uly2 (row 48). Explicit cfg2 still
 renders. The comfy canary's `inference mode branches` seam lists every place
 ComfyUI's source reads or sets inference mode, reads a tensor's inference
 flag, or reads grad mode, so a new branch of this kind fails the canary before
-it reaches a render. As of 2026-11-10 no hardware run has
-compared the fixed Workers with stock
+it reaches a render. On 2026-11-11, with the first Spark capped at max 2100
+MHz, the fixed Workers' one GPU, row 0 of a dp2 render, `auto` and explicit
+uly2 each matched stock at one step and over the full 30 steps
 ([VALIDATION](VALIDATION.md#anima-text-branch-fix)).
 
 ## 152. A render refuses because the header gate could not read the checkpoint's header
