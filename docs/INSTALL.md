@@ -1259,6 +1259,12 @@ Read this before the first update from 1.4.0, in this order. An install on
     match, and a torch change proves each gated combination again on first
     use
     ([TROUBLESHOOTING #8](TROUBLESHOOTING.md#8-version-skew-between-hosts)).
+    Update every Worker to this release before the first render, too: a
+    fleet whose Workers run two builds of dgx-monarch, such as one still on
+    1.4.0 beside one on this release, refuses before its first load or
+    render, naming each Worker's build. Update each box, restart its Worker
+    and reset the attached mesh
+    ([DESIGN](DESIGN.md#55-model-store-reuse--lora-hot-swap)).
     The Worker loop and `scripts/comfy-driver.sh` now set
     `MIMALLOC_PURGE_DELAY=0`, so a process on torch 2.15 gives freed host
     memory back at once. A driver you start by hand or from your own unit
@@ -1274,8 +1280,9 @@ Read this before the first update from 1.4.0, in this order. An install on
     the new reading too, so a model that streamed may now load whole and
     fewer models are unloaded. Before a VAE decode that ComfyUI prices above its free
     memory, the driver frees the decode's price from the text encoders it
-    holds; an encoder that gave up memory loads it again when a prompt's
-    text next changes. Each has a switch on the driver:
+    holds and asks the Workers for the device memory they hold idle, and its
+    line says whether they released it; an encoder that gave up memory loads
+    it again when a prompt's text next changes. Each has a switch on the driver:
     `DGXM_DISABLE_DRIVER_UMA_MEMORY=1`, `DGXM_DISABLE_VAE_ENCODE_ITEM=1` and
     `DGXM_DISABLE_VAE_DECODE_RELIEF=1`. The new `driver memory reading` row
     of `dgxm doctor` says which reading the running driver has
@@ -1283,8 +1290,7 @@ Read this before the first update from 1.4.0, in this order. An install on
 15. On a DGX Spark a Worker that finds less than 16 GiB free while 21 GiB or
     more is available makes room for its CUDA context before it creates one,
     and logs one line. `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's
-    environment, set by a drop-in for the Worker's unit and a Worker
-    restart, turns that off, for diagnosis. A Worker that still cannot make
+    `worker.env` (step 22), then a recycle, turns that off, for diagnosis. A Worker that still cannot make
     its context refuses in plain words, `this Worker could not start on its
     GPU`, where it showed a traceback; on a pair the words show only when the
     head's Worker failed, after about ten minutes
@@ -1303,7 +1309,7 @@ Read this before the first update from 1.4.0, in this order. An install on
     a change of model in one session meets the Old model in the way card
     less often. On unified memory that drop copies nothing to the host.
     `DGXM_DISABLE_SWAP_CREDIT=1` on the driver turns the count off, and
-    `DGXM_DISABLE_COPY_FREE_DROP=1` in the Worker's environment, set the
+    `DGXM_DISABLE_COPY_FREE_DROP=1` in the Worker's `worker.env`, set the
     same way, turns the copy-free drop off
     ([TROUBLESHOOTING #53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
 18. Two things that need ComfyUI 0.45.0 or newer run on the Workers.
@@ -1360,7 +1366,70 @@ Read this before the first update from 1.4.0, in this order. An install on
     package installed under `PYTHONPYCACHEPREFIX`; reinstall it without the
     prefix
     ([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
-22. Studio is a supported interface from this release, beside the CLI, the
+22. A Worker's six diagnostic switches, `DGXM_DISABLE_CONTEXT_ROOM`,
+    `DGXM_DISABLE_COPY_FREE_DROP` and `DGXM_DISABLE_BACKUP_FREE` among them,
+    are set in `~/.config/dgx-monarch/worker.env` on that Worker's box, as
+    `NAME=value` lines, then a recycle. The unit a verified update writes
+    clears every variable a drop-in sets, so a drop-in never reached such a
+    Worker. The file must belong to the Worker's user and be writable by no
+    one else, and the Worker logs `Worker switches set on this box: ...` at
+    each start
+    ([CLUSTER](CLUSTER.md#setting-a-worker-side-variable)).
+23. With `lora_low_rss` off, as three Wan-Animate 2 templates ship it, a
+    Worker that loads a model whole under a classic LoRA bake frees ComfyUI's
+    weight backup before the first step where the load leaves less room than
+    the sampler is estimated to need, and logs a line that starts
+    `LoRA bake: ComfyUI loaded this model whole`; the next LoRA change on
+    that model reloads it from disk. On a pair the ranks decide together, and
+    the room a rank needs now counts the shared memory a fresh Worker maps in
+    its first forward, about 2.7 GiB. On a Spark short enough to free, the
+    first step can take up to about a minute longer, with the same latent.
+    Where a rank is still short after the free, the render refuses before its
+    first step with `pair_backup_room`, naming the short rank's box; clear the
+    Sparks and queue again, shorten the clip, or free memory on that box.
+    `DGXM_DISABLE_BACKUP_FREE=1` in the Worker's `worker.env` turns the step
+    off
+    ([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+24. The loader charges a MiniMax H3 still guide and the render activations
+    as alternatives, the larger of the two, where the guide's file proves it
+    a still and the guide encodes before every sampler; a clip still pays
+    both
+    ([TROUBLESHOOTING #82](TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
+    It now charges a reference video's 40 GiB encode on a first queue where
+    ComfyUI holds models, and Load LTXV Audio Text Encoder for its text
+    encoder and the checkpoint's text projection where it charged the whole
+    checkpoint
+    ([DESIGN](DESIGN.md#the-residency-ladder)).
+25. The driver prices what a node spends on its box before the sampler where
+    the loader did not: Add Guide (MiniMax H3), Reference to Video (MiniMax
+    H3) with a reference video, and the stock loader nodes of a text encoder,
+    checkpoint or model, on a re-queue whose loader ComfyUI kept and on a
+    first queue where ComfyUI runs those nodes first. A spend that would take
+    the box under the loader's floor after the driver's unload and the
+    Workers' release refuses before anything is spent. That is a new refusal
+    for a queue that renders today only by dipping under the floor; use a
+    shorter clip, a smaller canvas or file, or free memory on the box.
+    `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for
+    diagnosis
+    ([TROUBLESHOOTING #82](TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode),
+    [#56](TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+26. MiniMax H3 under `auto` at four Sparks folds to `uly4`, on reports from
+    community four-Spark users. Where H3 or MiniMax-H3-Image lands on ring, a
+    padded packed total refuses on the driver at the sampler node or the
+    Identity Gate node, before any proof render, setup and the `auto` load,
+    and names the Ulysses preset that fits; on a pair an explicit `ring2` on
+    a padded sequence refuses there too
+    ([TROUBLESHOOTING #49](TROUBLESHOOTING.md#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence)).
+    A report from a cluster larger than two Sparks carries what
+    [CONTRIBUTING](../CONTRIBUTING.md#reports-from-clusters-larger-than-ours)
+    lists.
+27. On a graph with one model, no LoRA stack and no slab residency, the
+    first-use gate no longer renders twice before the first render: every
+    rank unloads and loads the file, and the Workers' swap cycle decides. A
+    first-use check that compared nothing no longer blocks a later capacity
+    rescue for that model. The Identity Gate node always renders
+    ([TROUBLESHOOTING #66](TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+28. Studio is a supported interface from this release, beside the CLI, the
     TUI and the ComfyUI panel. Generate now checks the draft and starts the
     job in one action, and Grids, Fleet and Operations sit under Utilities.
     The tester's fourth round renamed the Operation select Job category and

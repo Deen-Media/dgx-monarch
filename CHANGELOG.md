@@ -73,15 +73,18 @@ sections after them list every change.
   `DGXM_DISABLE_VAE_ENCODE_ITEM=1` on the driver turns that off
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - Before a VAE decode that ComfyUI prices above its free memory, the driver on
-  a DGX Spark frees the decode's price from the text encoders it holds, and an
-  encoder that gave up memory loads it again when a prompt's text next
-  changes; `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns that off
+  a DGX Spark frees the decode's price from the text encoders it holds and
+  asks the Workers for the device memory they hold idle, and its line says
+  whether they released it. An encoder that gave up memory loads it again
+  when a prompt's text next changes; `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the
+  driver turns that off
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - `dgxm doctor` has a new `driver memory reading` row for the three driver
   rules above.
 - A Worker on a Spark that finds less than 16 GiB free while 21 GiB or more is
   available now makes room for its CUDA context before it creates one;
-  `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment turns that off
+  `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's `worker.env` (below) turns
+  that off
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - With `lora_low_rss` off, a LoRA stack's load is now priced with its classic
   bake, by the checkpoint's format, so a load the earlier price admitted can
@@ -91,13 +94,69 @@ sections after them list every change.
   `lora_low_rss` on records. The default on a DGX Spark, `lora_low_rss` at
   `auto`, which turns it on there, is priced as before
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- With `lora_low_rss` off, as three Wan-Animate 2 templates ship it, a Worker
+  that loads a model whole under a classic LoRA bake now frees ComfyUI's
+  weight backup before the first step where the load leaves less room than
+  the sampler is estimated to need. It logs a line that starts
+  `LoRA bake: ComfyUI loaded this model whole`, and the next LoRA change on
+  that model reloads it from disk. On a pair the ranks decide together: one
+  rank short and every rank frees, and a rank that cannot free keeps the fleet
+  as it is. On a Spark short enough to free, the first step can take up to
+  about a minute longer while the kernel compacts the freed memory, and the
+  latent is the same. `DGXM_DISABLE_BACKUP_FREE=1` in the Worker's
+  `worker.env` turns the step off
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- On a pair, the room a rank needs to sample now also counts the shared
+  memory a fresh Worker maps in its first forward, about 2.7 GiB on a fresh
+  Worker and 0.1 on a warm one, and a refusal's figures name that term; one
+  GPU is unchanged
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A load that replaces a stock model in its own slot now counts the copy the
   Worker drops first, at the loader and at the render-site checks, and on
   unified memory that drop copies nothing to the host.
   `DGXM_DISABLE_SWAP_CREDIT=1` on the driver turns the count off, and
-  `DGXM_DISABLE_COPY_FREE_DROP=1` in the Worker's environment turns the
+  `DGXM_DISABLE_COPY_FREE_DROP=1` in the Worker's `worker.env` turns the
   copy-free drop off
   ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+- A MiniMax H3 graph whose guide file proves it a still, and whose guide
+  encodes before every sampler, is now charged at the loader for the larger
+  of the guide encode and the render activations, not both, since ComfyUI
+  with DynamicVRAM returns the encode's memory before the Workers sample. A
+  clip still pays both, as do the other cases its entry below lists
+  ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
+- The loader now charges a reference video's 40 GiB encode on a first queue
+  where ComfyUI already holds models, which its held-model credit took
+  before. It charges Load LTXV Audio Text Encoder (`LTXAVTextEncoderLoader`)
+  for its text encoder file and the checkpoint's text projection, 28.3 GiB
+  with Gemma 3 12B bf16 and 12.3 with its fp4 file for LTX 2.3, where it
+  charged the whole checkpoint, 27.1 to 43.0 GiB; without DynamicVRAM it
+  still charges the whole checkpoint. The shipped LTX templates load their
+  encoder through Dual CLIP Loader and are unchanged
+  ([DESIGN](docs/DESIGN.md#the-residency-ladder)).
+- MiniMax H3 under `auto` at four Sparks now folds to `uly4`, where it took
+  uly2+ring2 and refused about three prompts in four at the first sampler
+  call, after setup and the load. The fold rests on reports from community
+  four-Spark users; every other row, and every row at world 2, decides as
+  before
+  ([TROUBLESHOOTING #49](docs/TROUBLESHOOTING.md#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence),
+  [BENCHMARKS](docs/BENCHMARKS.md#a-second-report-minimax-h3-on-uly4-issue-188)).
+- Where the driver reads one model, no LoRA stack and no slab residency, with
+  the other conditions its entry below lists, the first-use gate no longer
+  renders twice before the first render: it unloads every rank, loads the
+  file and lets the Workers' swap cycle decide, under the same all-rank
+  attestation. On a pair those two
+  proof renders took 585.8 s for a MiniMax H3 still guide at 896x1152 and 362
+  frames. Slab residency engages under `auto` only on Krea 2 and Flux 2, so
+  59 of the 75 shipped templates paid them on first use. The Identity Gate
+  node always renders
+  ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+- A first-use check that compared nothing no longer blocks a later capacity
+  rescue. The consent read now takes its INCONCLUSIVE row as clear for that
+  model, so the loader's rescue card, the panel, the auto-rescue toggle and
+  the rescue variables work again where they did nothing. An unproven
+  INCONCLUSIVE that is the newest row of its context, and every FAIL, still
+  deny
+  ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
 - In a world of one GPU a checkpoint's own attention pins now run as stock
   ComfyUI runs them, with no Sol-Attn waiver card
   ([TROUBLESHOOTING #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
@@ -157,6 +216,17 @@ sections after them list every change.
   texture with, runs on one GPU, uly2 and uly2+fsdp, and refuses on cfg2, dp2,
   ring and any wider mesh before dispatch
   ([TROUBLESHOOTING #148](docs/TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
+- `~/.config/dgx-monarch/worker.env` on a Worker's box sets that Worker's six
+  diagnostic switches, as `NAME=value` lines and then a recycle, on any unit.
+  The unit a verified update writes clears every variable a drop-in sets, so
+  a drop-in never reached such a Worker. The file must belong to the Worker's
+  user and be writable by no one else, and the Worker logs
+  `Worker switches set on this box: ...` at each start
+  ([CLUSTER](docs/CLUSTER.md#setting-a-worker-side-variable)).
+- CONTRIBUTING says what a report from a cluster larger than two Sparks must
+  carry and what the project does with it, and a second issue form asks for
+  exactly that
+  ([CONTRIBUTING](CONTRIBUTING.md#reports-from-clusters-larger-than-ours)).
 
 **New refusals and what they ask for.**
 
@@ -189,6 +259,44 @@ sections after them list every change.
   file that has no room stops before sampling and says what it tried.
 - `dgxm setup`'s cleanup of a reserved release slot now refuses, and keeps the
   slot, when its site holds anything beside the package.
+- A fleet whose Workers run two builds of dgx-monarch, such as one Worker
+  still on 1.4.0 beside one on this release, refuses before its first load or
+  render, class P, naming each Worker's build. It asks you to update each box,
+  restart its Worker and reset the attached mesh
+  ([DESIGN](docs/DESIGN.md#55-model-store-reuse--lora-hot-swap)).
+- The driver now prices what a node spends on its box before the sampler
+  where the loader did not price it: Add Guide (MiniMax H3), Reference to
+  Video (MiniMax H3) with a reference video, and the stock loader nodes of a
+  text encoder, checkpoint or model. That covers a re-queue that changes only
+  a guide's file, canvas or length, a reference video, or a text encoder or
+  upsampler, and a first queue where ComfyUI runs those nodes before the
+  loader. Where the spend would
+  take the box under the loader's floor (5 GiB, or the Init node's
+  `uma_reserve_gb` where larger) after the driver's unload and the Workers'
+  release, it refuses before anything is spent, class C. That is a new
+  refusal for a queue that renders today only by dipping under the floor. It
+  asks for a shorter clip, a smaller canvas or file, or memory freed on the
+  box; `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for
+  diagnosis
+  ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode),
+  [#56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Where MiniMax H3 or MiniMax-H3-Image lands on ring (an explicit ring
+  preset, `auto` at an odd world, or at six or eight Sparks), a padded packed
+  total now refuses on the driver at the sampler node or the Identity Gate
+  node, before any proof render, setup and the `auto` load, naming the total,
+  the pad rows and the Ulysses preset that fits. On a pair an explicit `ring2` on a padded sequence
+  refuses there too, where it refused inside the first model call. Wan SCAIL's
+  ring layouts above world 2 refuse at the same point and name `uly4` at four
+  Sparks
+  ([TROUBLESHOOTING #49](docs/TROUBLESHOOTING.md#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence)).
+- On a pair, where a rank would still be short of what the sampler needs
+  after the ranks freed their weight backups, the render refuses before its
+  first step with `pair_backup_room`, in the words of the short rank and
+  naming its box and figures. The same queue refuses again until memory is
+  back: clear the Sparks and queue again, shorten the clip, or free memory on
+  the box it names. Turning `lora_low_rss` on does not help a model whose
+  stack is already baked in
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 
 ### Everyday use
 
