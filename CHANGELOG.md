@@ -1893,7 +1893,8 @@ sections after them list every change.
   On 2026-11-06, on dev `79bb47e`, the head actor held 1.8 to 1.95 GiB after
   the kandinsky5-video-pro, flux1-dev and wan-scail loads, against 15 to 16
   GiB before, the kandinsky re-price admitted with 11.0 GiB to spare, and the
-  release test of that build rendered 66 of 66 templates
+  release test of that build rendered 66 templates with no error, the seven
+  that need user inputs skipped
   ([VALIDATION](docs/VALIDATION.md#host-memory-2026-11-06)).
 - A verified update that stops with "foreign distribution inventory is
   ambiguous" names a package whose pip RECORD lists bytecode outside

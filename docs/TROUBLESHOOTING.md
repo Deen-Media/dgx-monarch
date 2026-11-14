@@ -8786,7 +8786,8 @@ after a drop finds the room the loader found. On 2026-11-06 on dev `79bb47e`
 the head actor held 1.82 to 1.95 GiB after the kandinsky5-video-pro, flux1-dev
 and wan-scail loads (a fresh actor's floor is 0.5 GiB), the kandinsky re-price
 that had been 6.9 GiB short admitted the load with 11.0 GiB to spare, and the
-release test then rendered 66 of 66 templates
+release test then rendered 66 templates with no error, the seven that need
+user inputs skipped
 ([VALIDATION](VALIDATION.md#host-memory-2026-11-06)).
 
 ## 147. A MiniMax H3 render refuses, or fails in its output head, after a ComfyUI update

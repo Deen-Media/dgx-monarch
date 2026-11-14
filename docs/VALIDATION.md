@@ -420,9 +420,11 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   full sweep runbook. The rows of the dev builds of 2026-11-11 to 14 that did
   not run, the LoRA weights of a partly loaded one-GPU Worker among them, are
   listed with their reasons ([record](#release-build-not-run)). The sample
-  deadline, the actors' cache release before a refusal, the gate's capacity
-  check before its proof render, compile_dit's eager families and the
-  inductor cache have CPU tests and no hardware record of their own. Each
+  deadline, the actors' cache release before a render-site refusal (the same
+  release ran before the spend price's refusal in part A of proof block
+  three: [record](#proof-block-0f133d8)), the gate's capacity check before
+  its proof render, compile_dit's eager families and the inductor cache have
+  CPU tests and no hardware record of their own. Each
   feature record below lists its own rows that have not run.
 - Build and install, on `35f1486`, the release commit of 2026-11-01, in a
   disposable Python 3.12 venv that holds only `build` and `pip`:
