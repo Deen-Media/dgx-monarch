@@ -156,8 +156,11 @@ def _drop_uncertified_slot(load: RescueLoad, handle: Any) -> None:
     """Best-effort removal of an uncertified resident slot."""
     if handle is None:
         return
+    from . import pending_load_relief
+
     try:
         handle.call_all("unload", timeout_s=600)
+        pending_load_relief.note_unloaded()  # the next render's load is still to come
     except Exception as exc:  # The typed refusal remains the primary protection.
         log.error("uncertified slab load of %s could not be unloaded (%r); recycle the "
                   "fleet before the next render", load.unet_name, exc)

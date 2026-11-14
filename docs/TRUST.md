@@ -359,7 +359,7 @@ copied from historical evidence.
    cross-leg boundary is
    [`test_gate_orchestration.py:2174-2193`](../tests/test_gate_orchestration.py#L2174-L2193 "anchor:test_cross_residency_divergence_under_auto_revokes_the_explicit_on_sibling") and
    [`test_gate_orchestration.py:2196-2223`](../tests/test_gate_orchestration.py#L2196-L2223 "anchor:test_lazy_swap_failure_under_auto_leaves_the_explicit_on_sibling_untested"). The conditions are
-   [`slab_proof.py:23-90`](../src/dgx_monarch/nodes/slab_proof.py#L23-L90 "anchor:_cycle_state") and
+   [`slab_proof.py:24-91`](../src/dgx_monarch/nodes/slab_proof.py#L24-L91 "anchor:_cycle_state") and
    [`gate_identity.py:523-582`](../src/dgx_monarch/nodes/gate_identity.py#L523-L582 "anchor:equivalent_slab_mode_contexts")
    and the rows are written at
    [`gate_verdict.py:208-257`](../src/dgx_monarch/nodes/gate_verdict.py#L208-L257 "anchor:publish_ceremony_verdict"). Positive,
@@ -405,8 +405,8 @@ copied from historical evidence.
    world and bind that world plus the current setup generation. It refuses
    malformed, duplicate, stale, unexpected, unvouched, or partial residency before
    comparison at
-   [`slab_proof.py:23-90`](../src/dgx_monarch/nodes/slab_proof.py#L23-L90 "anchor:_cycle_state") and
-   [`slab_proof.py:93-175`](../src/dgx_monarch/nodes/slab_proof.py#L93-L175 "anchor:establish").
+   [`slab_proof.py:24-91`](../src/dgx_monarch/nodes/slab_proof.py#L24-L91 "anchor:_cycle_state") and
+   [`slab_proof.py:94-177`](../src/dgx_monarch/nodes/slab_proof.py#L94-L177 "anchor:establish").
    For a valid proof, every worker must then leave slab before a fresh stock
    load at [`gate_ceremony.py:240-262`](../src/dgx_monarch/nodes/gate_ceremony.py#L240-L262 "anchor:gather_ceremony_evidence").
    FSDP disables slab residency, and it takes a LoRA stack only with
@@ -423,7 +423,7 @@ copied from historical evidence.
    LoRA/slab quarantine lever. The worker cycle, complete-rank proof, and
    verdict binding are
    [`gate_fsdp_cycle.py:59-193`](../src/dgx_monarch/actor/gate_fsdp_cycle.py#L59-L193 "anchor:run"),
-   [`gate_fsdp.py:305-469`](../src/dgx_monarch/nodes/gate_fsdp.py#L305-L469 "anchor:establish"), and
+   [`gate_fsdp.py:308-472`](../src/dgx_monarch/nodes/gate_fsdp.py#L308-L472 "anchor:establish"), and
    [`gate_verdict.py:128-236`](../src/dgx_monarch/nodes/gate_verdict.py#L128-L236 "anchor:publish_ceremony_verdict"), with coverage in
    [`test_gate_fsdp_cycle_unit.py:61-87`](../tests/test_gate_fsdp_cycle_unit.py#L61-L87 "anchor:test_fsdp_reload_cycle_proves_one_fresh_ready_non_slab_load"),
    [`test_gate_fsdp_proof.py:63-67`](../tests/test_gate_fsdp_proof.py#L63-L67 "anchor:test_fsdp_reload_proof_accepts_complete_exact_rank_evidence"), and
@@ -1005,8 +1005,8 @@ copied from historical evidence.
   [`gate_ceremony.py:192-231`](../src/dgx_monarch/nodes/gate_ceremony.py#L192-L231 "anchor:gather_ceremony_evidence"),
   [`fsdp_reload_price.py:247-288`](../src/dgx_monarch/fsdp_reload_price.py#L247-L288 "anchor:price_fsdp_clean_reload") and
   [`gate_session.py:20-179`](../src/dgx_monarch/nodes/gate_session.py#L20-L179 "anchor:run_identity_ceremony"),
-  [`gate_fsdp.py:179-235`](../src/dgx_monarch/nodes/gate_fsdp.py#L179-L235 "anchor:cleanup_aborted_fsdp_proof"),
-  [`gate_fsdp.py:241-264`](../src/dgx_monarch/nodes/gate_fsdp.py#L241-L264 "anchor:cleanup_rejected_fsdp_pass"), and
+  [`gate_fsdp.py:179-238`](../src/dgx_monarch/nodes/gate_fsdp.py#L179-L238 "anchor:cleanup_aborted_fsdp_proof"),
+  [`gate_fsdp.py:244-267`](../src/dgx_monarch/nodes/gate_fsdp.py#L244-L267 "anchor:cleanup_rejected_fsdp_pass"), and
   [`auto_gate.py:286-495`](../src/dgx_monarch/nodes/auto_gate.py#L286-L495 "anchor:maybe_auto_gate"), covered by
   [`test_gate_orchestration.py:2385-2421`](../tests/test_gate_orchestration.py#L2385-L2421 "anchor:test_aborted_fsdp_gate_unloads_every_rank_before_refusing"),
   [`test_gate_orchestration.py:2424-2452`](../tests/test_gate_orchestration.py#L2424-L2452 "anchor:test_aborted_fsdp_gate_latches_dirty_when_all_rank_unload_fails"),

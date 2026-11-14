@@ -293,6 +293,17 @@ def _native_return_latch_starts_clear(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _pending_load_marks_start_clear():
+    """The loader's deferrals and a ceremony's unload mark live as long as a driver
+    process (``nodes/pending_load_relief.py``); each test starts as a fresh one."""
+    from dgx_monarch.nodes import pending_load_relief
+
+    pending_load_relief.reset()
+    yield
+    pending_load_relief.reset()
+
+
+@pytest.fixture(autouse=True)
 def _quarantine_scope_starts_empty():
     """Isolate quarantine records and cached class-K denials between tests.
 

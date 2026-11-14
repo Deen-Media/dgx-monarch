@@ -37,6 +37,7 @@ from . import (
     loader_graph,
     loader_preflight,
     old_model_clear,
+    pending_load_relief,
     render_validation,
 )
 from .common import MeshSpec, ModelSpec
@@ -286,6 +287,8 @@ class DGXMonarchUNETLoader:
                         handle, topo, mesh.attention, mesh.sync_ulysses,
                         mesh.worker_args)
                 first_render.load_deferred(self.ENDPOINT, reason=reason)
+                # The render site then counts this load as still to come.
+                pending_load_relief.note_deferred(unet_name)
                 return True
 
             if defers(handle, topo):
@@ -344,6 +347,7 @@ class DGXMonarchUNETLoader:
                 results = eager_load(handle, topo)
             for r in results:
                 log.info("%s: %s -> %s", self.ENDPOINT, r.get("host"), r.get("transition"))
+            pending_load_relief.note_placed(unet_name)
             # The SLOT matters: the worker's snapshot carries a certificate for
             # both model slots, and the uncond loader inherits this method, so
             # folding "cond" here would stamp the uncond row with the cond

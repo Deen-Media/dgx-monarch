@@ -194,12 +194,41 @@ def _fall_through_unloaded(handle: Any, term: str) -> None:
     a request today's ceremony runs. Its first step after the stop is the same
     unload, so this costs nothing.
     """
+    from . import pending_load_relief
+
     _declined(term)
     try:
         handle.call_all("unload", timeout_s=600)
+        pending_load_relief.note_unloaded()  # the load this path placed is gone again
     except Exception as exc:
         safe_call(log.warning, "identity gate: the unload before the full ceremony "
                   "failed (%r); the ceremony unloads again before its first render", exc)
+
+
+def _checkpoint_path(model: Any) -> str | None:
+    import folder_paths
+
+    return folder_paths.get_full_path("diffusion_models", model.unet_name)
+
+
+def _free_driver_for_load(ceremony_model: Any, frozen_request: dict) -> None:
+    """Free the driver's models first where the Workers would not fit this load.
+
+    Every rank has just unloaded, so the load is still to come whatever the
+    render site's memos say: a model an earlier render left warm passed the
+    user's render site as placed. ``pending_load_relief`` refuses nothing and
+    never raises; the agreement after it decides the load as before.
+    """
+    from . import pending_load_relief
+
+    try:
+        family, _forced = _family(ceremony_model)
+        path = _checkpoint_path(ceremony_model)
+    except Exception:
+        return
+    if family is not None and path is not None:
+        pending_load_relief.relieve(ceremony_model, frozen_request, family=family, path=path,
+                                    weights_loaded=False)
 
 
 def _worker_evidence(runtime: Mapping[str, Any], ceremony_model: Any, model_request: dict,
@@ -212,6 +241,7 @@ def _worker_evidence(runtime: Mapping[str, Any], ceremony_model: Any, model_requ
     turns true once the load is asked for, so a fall-through after it unloads.
     """
     from .. import capacity_agreement
+    from . import pending_load_relief
     from .gate_provenance import ProofCohortAttestor
     from .slab_proof import establish
 
@@ -223,9 +253,12 @@ def _worker_evidence(runtime: Mapping[str, Any], ceremony_model: Any, model_requ
     token = runtime["render_setup_token"](ceremony_model, frozen_latent, cfg_value, handle)
     attest("pre", handle, token)
     handle.call_all("unload", timeout_s=600)
+    pending_load_relief.note_unloaded()  # until load_model below succeeds
+    _free_driver_for_load(ceremony_model, frozen_request)
     capacity_agreement.agree_load(handle, unet_name, options, [], "cond")
     placed["load"] = True
     handle.call_all("load_model", unet_name, options, [], timeout_s=1800, **token_kwargs(token))
+    pending_load_relief.note_placed(unet_name)
     raw_cycle = handle.call_all("gate_swap_cycle", unet_name, options, [], identity,
                                 timeout_s=1800, **token_kwargs(token))
     proof = establish(ceremony_model, model_request, frozen_request, binding, identity,
