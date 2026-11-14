@@ -54,8 +54,9 @@ The load is still to come (``load_pending``):
 
 A render whose model a finished render, a pipelined submission or the loader
 placed prices nothing here. Where the memos do not know what the Workers hold
-(a retry after a failed or interrupted render, a driver restarted beside warm
-Workers, a swap for a model they hold), the render pays at most the one quote,
+(a retry after a failed or interrupted render, a swap for a model they hold;
+a driver restart is not one, since the Workers' processes die with it), the
+render pays at most the one quote,
 or before setup the one status read, and only where the local price reads
 short: the Worker answers a reuse, or a swap its own credit covers, as
 fitting, and a rank holding a model is never read as empty. That read is
@@ -146,9 +147,8 @@ def workers_stop(mesh: Any, request: dict, unet_name: str, options: Any, *,
     the first render) the quote cannot be asked (``mesh_setup.require_endpoint``),
     and a stopped fleet with none attached in its place has no one to ask. A
     rank that holds no model then prices no lower than the local price only
-    where the caller says that price is ``sure``: complete, every input read,
-    and no higher than a fresh Worker's (a vouched family under ``auto`` at its
-    slab price, since the Worker's persisted family memo may vouch it). Only
+    where the caller says that price is ``sure``: every input read, and the
+    smallest price any fresh Worker could choose (``no_quote_floor``). Only
     then is the answer whether every rank on this box holds none
     (``_holds_nothing``), or yes after a stop; otherwise it is no, with nothing
     read.
@@ -227,12 +227,58 @@ def _resolve_lora(name: str) -> str:
     return str(found)
 
 
-def _fits(fit: Any) -> bool:
-    """Whether a local price reads a fit (or makes no claim); an unread one does not."""
-    if fit is None:
-        return False
-    return (not fit.applies or fit.avail_bytes is None
-            or fit.avail_bytes >= fit.required_bytes)
+def _short(fit: Any) -> bool:
+    """Whether a local price was read whole and reads short."""
+    return (fit is not None and bool(fit.applies) and fit.avail_bytes is not None
+            and fit.avail_bytes < fit.required_bytes)
+
+
+FLOOR_SLAB = "slab"
+FLOOR_STOCK = "stock"
+
+
+def no_quote_floor(worker_args: Any, family: object) -> str | None:
+    """The price that may stand for a fresh Worker's where no quote can be asked.
+
+    It must be the smallest price any fresh Worker could choose for this load,
+    or the step would free the driver for a load the Worker admits. So this is
+    a list of what is known, not of exceptions: a fresh Worker reads its
+    persisted family memo (``actor/store_family.memoized_family``), and its
+    ladder (``actor/capacity_quote.price``) can choose slab by more than one
+    route. Anything not in the table answers None, and the step frees nothing.
+
+    ============  ==============  ===================================  =====
+    lora_low_rss  slab_weights    family                               floor
+    ============  ==============  ===================================  =====
+    off           any             any                                  stock
+    on            False           any                                  stock
+    on            True            any, compile_dit on or off           slab
+    on            auto (or unset) in ``SLAB_VOUCHED_FAMILIES``         slab
+    on            auto (or unset) a known family outside that set      stock
+    on            anything else   (an unknown spelling)                None
+    on            auto (or unset) unknown or unread                    None
+    ============  ==============  ===================================  =====
+
+    Slab needs ``lora_low_rss``: without it the Worker turns slab off
+    (``actor/comfy_bridge.py``). With slab asked for, compile_dit keeps a load
+    stock only for a family compile does not leave eager, which a memo may
+    name, so slab stays possible. Under auto only a vouched family's memo, or
+    the retry after a first stock load that found one, reaches slab; a forced
+    family never does, so a known family outside the set is stock either way.
+    """
+    from ..capacity_fit import SLAB_VOUCHED_FAMILIES
+
+    args = worker_args if isinstance(worker_args, dict) else {}
+    if args.get("lora_low_rss") is False:
+        return FLOOR_STOCK
+    mode = args.get("slab_weights", "auto")
+    if mode is False:
+        return FLOOR_STOCK
+    if mode is True:
+        return FLOOR_SLAB
+    if mode != "auto" or not isinstance(family, str) or family in ("", "unknown"):
+        return None
+    return FLOOR_SLAB if family in SLAB_VOUCHED_FAMILIES else FLOOR_STOCK
 
 
 def _local_fit(path: str, options: dict, slab: bool, lora_stack: list | None,
@@ -278,7 +324,7 @@ def relieve(model: Any, request: dict, *, family: str, path: str,
 
 def _relieve(model: Any, request: dict, *, family: str, path: str,
              weights_loaded: bool | None) -> None:
-    from .. import capacity_fit, driver_footprint, driver_unload, mesh_safety, residency_mode
+    from .. import driver_footprint, driver_unload, mesh_safety, residency_mode
     from ..topology import declares_fsdp
     from . import loader_preflight
 
@@ -302,11 +348,13 @@ def _relieve(model: Any, request: dict, *, family: str, path: str,
             model, handle, requested_worker_args=worker_args)
     if loader_preflight._effective_slab(worker_args, family) == residency_mode.MODE_COMFY_MANAGED:
         return
-    # The Worker prices slab where slab_weights is on outright and compile_dit
-    # does not keep it stock. Under auto a vouched family is priced stock on the
-    # first load of a file, from a family memo this driver cannot read, so the
-    # local test takes the stock price there, the larger of the two.
-    slab = worker_args.get("slab_weights") is True and not worker_args.get("compile_dit")
+    # The price the quote path tests first, the larger where the Worker could
+    # take either: slab only where slab_weights is on outright, compile_dit does
+    # not keep it stock and lora_low_rss leaves slab on (actor/comfy_bridge.py).
+    # Under auto a vouched family is priced stock on the first load of a file,
+    # from a family memo this driver cannot read.
+    slab = (worker_args.get("slab_weights") is True and not worker_args.get("compile_dit")
+            and worker_args.get("lora_low_rss") is not False)
     options = dict(getattr(model, "options", None) or {})
     unet_name = str(getattr(model, "unet_name", "") or "")
     spec = request.get("model")
@@ -314,11 +362,7 @@ def _relieve(model: Any, request: dict, *, family: str, path: str,
                  or getattr(model, "loras", None) or ())
     # The Worker's policy: lora_low_rss is on unless set off (actor/comfy_bridge.py).
     low_rss = worker_args.get("lora_low_rss") is not False
-    # Under auto a fresh Worker may price this family slab after all: its family
-    # memo is persisted (actor/store_family.memoized_family). With no quote to
-    # ask, only the slab price is a sure floor of what it charges.
-    auto_vouched = (not slab and worker_args.get("slab_weights", "auto") == "auto" and low_rss
-                    and family in capacity_fit.SLAB_VOUCHED_FAMILIES)
+    floor = no_quote_floor(worker_args, family)
     stack = loras if low_rss and loras else None
     reserve = driver_footprint.reserve_bytes(worker_args)
 
@@ -340,10 +384,13 @@ def _relieve(model: Any, request: dict, *, family: str, path: str,
                    f"{fit.required_bytes / 2**30:.1f} GiB"
                    f"{' before its LoRA stack' if unread else ''} and this box has "
                    f"{(fit.avail_bytes or 0) / 2**30:.1f} GiB")
-        # Where no quote can be asked, only a complete local price that is a
-        # floor of a fresh Worker's may stand for it (workers_stop's ``sure``).
-        sure = not unread and short and not (auto_vouched and _fits(
-            _local_fit(path, options, True, stack, reserve)))
+        # Where no quote can be asked, only the smallest price a fresh Worker
+        # could choose may stand for it, and only read whole (``no_quote_floor``).
+        sure = False
+        if floor is not None and not unread:
+            floor_fit = (fit if (floor == FLOOR_SLAB) == slab
+                         else _local_fit(path, options, floor == FLOOR_SLAB, stack, reserve))
+            sure = _short(floor_fit)
         if not workers_stop(mesh, request, unet_name, options, sure=sure):
             safe_call(log.info if short else log.debug, "pending load: %s, but no Worker on "
                       "this box would stop it, so the driver frees nothing more", reading)

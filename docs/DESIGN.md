@@ -2683,10 +2683,15 @@ asked; a status read can, and where it shows every rank on this box holding no
 model, the local price stands for the Worker's own and the driver unloads (no
 trim: the actors are not set up). A fleet stopped by a reset with none attached
 in its place left no process behind, so the next one holds nothing too. With no
-quote, though, the local price stands for the Worker's only where it is
-complete and no higher than a fresh Worker's: a price it could not read, or a
-vouched family under `auto` whose slab price fits (the Worker's family memo is
-persisted, so a fresh Worker may load it slab), frees nothing and reads nothing. It
+quote, though, only the smallest price any fresh Worker could choose may stand
+for the Worker's (`pending_load_relief.no_quote_floor`, a table of what is
+known): the slab price wherever a fresh Worker may place the load on slab
+(slab asked for, with `compile_dit` or not, or a vouched family under `auto`,
+since its family memo is persisted), the stock price only where slab is
+impossible (`lora_low_rss` off, `slab_weights` off, or `auto` on a known family
+outside the vouched set), and none for a setting or family it cannot place.
+Where that price fits, or an input could not be read, the step frees nothing
+and reads nothing. It
 refuses nothing. Whatever the rescue freed, the render goes on to the ranks'
 agreement, which offers the card or refuses as before. A load is still to come
 under `auto` unless a finished render or a pipelined submission in this
@@ -2704,7 +2709,7 @@ no-render path, which loads with no render, runs the same step between its
 unload and its load agreement. So a render whose model a finished render, a
 pipelined submission or the loader placed asks nothing. Where the memos do not
 know what the Workers hold (a retry after a failed or interrupted render, a
-driver restarted beside warm Workers, a swap), a render that reads short pays
+swap), a render that reads short pays
 one quote with a 10 s deadline, or before setup one status read, and frees
 nothing unless the Workers would stop the load. The step comes after the
 checks that refuse, so a render they refuse is refused in the same words and

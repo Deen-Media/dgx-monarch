@@ -71,16 +71,17 @@
   leaves the rescue for the next queue. Where that reads
   short and the Worker on the driver's box would stop the load (its read-only
   quote says so, or, before the fleet's setup, which `auto` makes at the
-  first render, its status shows it holds no model and the driver's price is
-  complete and no higher than a fresh Worker's), the driver unloads the
+  first render, its status shows it holds no model and the driver's price,
+  read whole, is short at the smallest price any fresh Worker could choose:
+  slab wherever slab is possible), the driver unloads the
   models ComfyUI holds and then asks the actors to release their caches; the
   Workers then decide the load as before. This adds no refusal and changes
   no refusal's words. It covers one Spark, a local mesh and a pair, and runs
   again when the first-use check unloads every rank and loads the model
   back. A render whose model a finished render or the loader placed asks
-  nothing. A retry after a failed render, a driver restarted beside warm
-  Workers or a swap, where the load reads short, costs one quote or status
-  read and frees nothing unless the Workers would stop the load; a read that
+  nothing. A retry after a failed or interrupted render, or a swap, where the
+  load reads short, costs one quote or status read and frees nothing unless
+  the Workers would stop the load; a read that
   fails or times out frees nothing. A short sibling gets no driver unload,
   and nothing is freed while another render runs. CPU tests; not yet run on
   hardware

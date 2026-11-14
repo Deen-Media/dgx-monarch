@@ -334,12 +334,8 @@ def test_a_vouched_family_under_auto_is_priced_stock_and_asks_where_that_reads_s
     assert priced == [(checkpoint, None, False)]
 
 
-@pytest.mark.parametrize(("low_rss", "steps"), [
-    (None, ["quote", "comfy-unload"]),   # lora_low_rss is on unless set off
-    (True, ["quote", "comfy-unload"]),
-    (False, []),                         # the Worker passes no stack then
-])
-def test_a_slab_loras_bake_is_priced_as_the_worker_prices_it(monkeypatch, checkpoint, low_rss, steps):
+@pytest.mark.parametrize("low_rss", [None, True])  # lora_low_rss is on unless set off
+def test_a_slab_loras_bake_is_priced_as_the_worker_prices_it(monkeypatch, checkpoint, low_rss):
     """The file and floor fit at 50 GiB; the stack's bake under lora_low_rss does
     not, so the load reaches the quote and the rescue."""
     driver = Driver(monkeypatch, reading_gib=50.0)
@@ -348,8 +344,20 @@ def test_a_slab_loras_bake_is_priced_as_the_worker_prices_it(monkeypatch, checkp
     request = {"kind": "custom", "model": {"unet_name": UNET, "loras": STACK}}
     _relieve(_model(Handle(driver), worker_args=worker_args), checkpoint, family="krea2",
              request=request)
-    assert driver.steps == steps
-    assert priced[0] == (checkpoint, None if low_rss is False else STACK, low_rss is not False)
+    assert driver.steps == ["quote", "comfy-unload"]
+    assert priced[0] == (checkpoint, STACK, True)
+
+
+def test_slab_asked_for_with_lora_low_rss_off_is_priced_stock(monkeypatch, checkpoint):
+    """The Worker turns slab off without lora_low_rss (actor/comfy_bridge.py), so
+    the load is priced stock, not at the slab price, and short at 90 GiB less
+    the stack's classic bake, which only the Worker prices: it is asked."""
+    driver = Driver(monkeypatch, reading_gib=100.1, workers_admit=True)
+    priced = _slab_price(monkeypatch, driver)
+    request = {"kind": "custom", "model": {"unet_name": UNET, "loras": STACK}}
+    _relieve(_model(Handle(driver), worker_args=dict(SLAB_ON, lora_low_rss=False)), checkpoint,
+             family="krea2", request=request)
+    assert priced == [] and driver.steps == ["quote"] and driver.held
 
 
 def test_a_lora_this_box_cannot_find_is_left_to_the_bakes_own_fallback(monkeypatch):
@@ -439,9 +447,9 @@ def test_a_granted_rescue_consent_is_priced_at_the_slab_load_it_grants(monkeypat
 
 @pytest.mark.parametrize("family", ["minimax_h3", "krea2"])
 def test_a_model_the_workers_already_hold_pays_the_quote_alone(monkeypatch, checkpoint, family, caplog):
-    """A driver restarted beside warm Workers has no memo of the model they hold,
-    stock or slab, and its MemAvailable already carries that model: the local
-    price reads short, and the Worker answers the reuse as fitting."""
+    """A model the Workers hold that no memo names (a render that loaded it and
+    then failed, say), stock or slab: MemAvailable already carries it, so the
+    local price reads short, and the Worker answers the reuse as fitting."""
     driver = Driver(monkeypatch, reading_gib=40.0, workers_admit=True)
     _slab_price(monkeypatch, driver)
     with caplog.at_level("INFO"):
@@ -641,20 +649,65 @@ def test_with_no_quote_an_unread_price_frees_nothing_on_a_box_with_room(
     assert driver.steps == [] and driver.held
 
 
-@pytest.mark.parametrize(("reading", "steps"), [
-    (50.0, []),                          # slab fits: a fresh Worker may admit on its memo
-    (40.0, ["status", "comfy-unload"]),  # slab short too: an empty rank stops it
+# The rows of ``no_quote_floor``'s table: (worker args, family, floor). With
+# the sparse file the stock price is 84.2 GiB and the slab price 42.7.
+FLOOR_ROWS = {
+    "lora_low_rss off": ({"lora_low_rss": False, "slab_weights": True}, "krea2", "stock"),
+    "slab_weights off": ({"slab_weights": False}, "krea2", "stock"),
+    "slab on, compile off": ({"slab_weights": True}, "minimax_h3", "slab"),
+    "slab on, compile on": ({"slab_weights": True, "compile_dit": True}, "flux2", "slab"),
+    "auto, vouched family": ({}, "krea2", "slab"),
+    "auto, other known family": ({"slab_weights": "auto"}, "minimax_h3", "stock"),
+    "unknown spelling": ({"slab_weights": "sometimes"}, "krea2", None),
+    "auto, unknown family": ({}, "unknown", None),
+}
+UNLOADS = ["status", "comfy-unload"]
+
+
+@pytest.mark.parametrize("row", list(FLOOR_ROWS))
+def test_the_no_quote_floor_is_the_smallest_price_a_fresh_worker_could_choose(row):
+    worker_args, family, floor = FLOOR_ROWS[row]
+    assert pending_load_relief.no_quote_floor(worker_args, family) == floor
+
+
+@pytest.mark.parametrize(("row", "reading", "steps"), [
+    # A stock floor: short at 80, so an empty rank stops the load.
+    ("lora_low_rss off", 80.0, UNLOADS),
+    ("slab_weights off", 80.0, UNLOADS),
+    ("auto, other known family", 80.0, UNLOADS),
+    # A slab floor: it fits at 80 (stock short), so nothing is read or freed;
+    # short at 40 too, and an empty rank stops it.
+    ("slab on, compile off", 80.0, []),
+    ("slab on, compile off", 40.0, UNLOADS),
+    ("slab on, compile on", 80.0, []),
+    ("slab on, compile on", 40.0, UNLOADS),
+    ("auto, vouched family", 80.0, []),
+    ("auto, vouched family", 40.0, UNLOADS),
+    # No floor: nothing is read or freed however short the box reads.
+    ("unknown spelling", 40.0, []),
+    ("auto, unknown family", 40.0, []),
 ])
-def test_with_no_quote_a_vouched_family_under_auto_stands_on_its_slab_floor(
-        monkeypatch, checkpoint, reading, steps):
-    """krea2 under auto, before setup, every rank empty. The Worker's family memo
-    is persisted, so a fresh Worker may price slab and admit: with no quote, only
-    a short slab price stands for its answer. Stock reads short at both."""
+def test_with_no_quote_each_floor_row_frees_only_where_its_price_is_short(
+        monkeypatch, checkpoint, row, reading, steps):
+    """Before setup, every rank empty, read by the real ``workers_stop``."""
+    worker_args, family, _floor = FLOOR_ROWS[row]
     driver = Driver(monkeypatch, reading_gib=reading)
     _slab_price(monkeypatch, driver)
     handle = _no_quote(monkeypatch, driver, "before setup")
-    _relieve(_model(handle), checkpoint, family="krea2")
+    _relieve(_model(handle, worker_args=worker_args), checkpoint, family=family)
     assert driver.steps == steps
+
+
+def test_explicit_slab_with_compile_on_a_noop_family_before_setup(monkeypatch, checkpoint):
+    """flux2 with slab asked for and compile_dit on is priced stock here, but a
+    fresh Worker keeps slab for a family compile leaves eager, reading its
+    persisted memo, and admits: slab fits at 50 GiB, so nothing is freed."""
+    driver = Driver(monkeypatch, reading_gib=50.0)
+    _slab_price(monkeypatch, driver)
+    handle = _no_quote(monkeypatch, driver, "before setup")
+    _relieve(_model(handle, worker_args={"slab_weights": True, "compile_dit": True}),
+             checkpoint, family="flux2")
+    assert driver.steps == [] and driver.held
 
 
 # --- the rescue ----------------------------------------------------------------------
