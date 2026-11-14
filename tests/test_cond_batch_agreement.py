@@ -292,6 +292,64 @@ def test_only_a_topology_that_shards_a_model_call_takes_the_agreement(topology, 
     assert agreement.shards_model_calls(topology) is sharded
 
 
+@pytest.mark.parametrize(("topology", "spans"), [
+    ({"ulysses": 2, "ring": 1, "cfg": 1, "dp": 1, "fsdp": False}, True),
+    ({"ulysses": 1, "ring": 1, "cfg": 1, "dp": 2, "fsdp": True}, True),
+    ({"ulysses": 2, "ring": 1, "cfg": 1, "dp": 2, "fsdp": True}, True),
+    ({"ulysses": 2, "ring": 1, "cfg": 1, "dp": 2, "fsdp": False}, False),
+    ({"ulysses": 1, "ring": 2, "cfg": 1, "dp": 2, "fsdp": False}, False),
+    ({"ulysses": 1, "ring": 1, "cfg": 2, "dp": 2, "fsdp": False}, False),
+    ({}, True),
+    (None, True),
+])
+def test_only_two_unsharded_data_parallel_groups_split_the_exchange(topology, spans):
+    """FSDP gathers each call's weights over the whole world, so its
+    data-parallel ranks share every call; without it, each group shares none."""
+    assert agreement.model_call_spans_world(topology) is spans
+
+
+def _layouts(world):
+    from dgx_monarch.topology import PRESETS, topology_from_preset
+
+    for name in PRESETS:
+        try:
+            topo = topology_from_preset(name, world)
+        except ValueError:
+            continue  # the preset does not tile this world
+        # The dict the Worker receives (mesh_setup.py).
+        yield name, {"ulysses": topo.ulysses, "ring": topo.ring, "cfg": topo.cfg,
+                     "dp": topo.dp, "fsdp": topo.fsdp}
+
+
+def test_the_pair_keeps_the_default_group_under_every_preset():
+    """At world 2 every preset that installs the agreement keeps today's
+    exchange; another group starts at world 4, and the replica group at 8."""
+    installed = {name for name, topo in _layouts(2) if agreement.shards_model_calls(topo)}
+    assert installed and all(
+        agreement.exchange_group_kind(topo) is None
+        for name, topo in _layouts(2) if name in installed)
+
+    def kinds(world):
+        return {name: agreement.exchange_group_kind(topo) for name, topo in _layouts(world)
+                if agreement.shards_model_calls(topo) and agreement.exchange_group_kind(topo)}
+
+    assert kinds(4) == {"uly2": "sp", "ring2": "sp", "cfg2": "cfg"}
+    assert kinds(8) == {"uly2": "sp", "uly4": "sp", "ring2": "sp", "ring4": "sp",
+                        "cfg2": "cfg", "uly2+cfg2": "replica"}
+
+
+def test_the_wrapper_reduces_over_the_group_it_was_built_for(monkeypatch):
+    groups = []
+    monkeypatch.setattr(agreement, "_world", lambda: 4)
+    monkeypatch.setattr(agreement, "_call_group", lambda kind: f"{kind} group")
+    monkeypatch.setattr(agreement, "leanest_free_memory",
+                        lambda local, *group: groups.append(group) or local)
+    for kind in (None, "sp", "cfg", "replica"):
+        _call(agreement.make_wrapper(kind), _Patcher(GIB), [])
+    # The default wrapper makes the call it made before, with no group named.
+    assert groups == [(), ("sp group",), ("cfg group",), ("replica group",)]
+
+
 # Real comfy in process, CPU only. Keep it last in the file.
 def _is_comfy_module(name: str) -> bool:
     return name in ("folder_paths", "comfy") or name.startswith(("comfy.", "comfy_"))
