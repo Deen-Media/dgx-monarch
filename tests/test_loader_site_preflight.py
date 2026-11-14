@@ -996,7 +996,10 @@ def test_a_stack_comfy_already_holds_is_credited_not_charged(monkeypatch):
     monkeypatch.setitem(sys.modules, "comfy.model_management", mm)
     terms = loader_graph.credited_terms(
         loader_graph.driver_stack_terms(_graph(dit=REF2VA_BF16, refs="video")))
-    assert terms.credited and terms.total == 0
+    # The loads are credited. Since 1.5.0 the reference video's encode is not: it is a transient
+    # that has not run, as a guide's is, so it stays charged at its 40 GiB.
+    assert terms.credited and terms.te_bytes == terms.vae_bytes == 0
+    assert terms.total == terms.ref_bytes == loader_graph.REF_VIDEO_ENCODE_BYTES
     # So the resident window clears: those bytes are already inside the
     # MemAvailable reading. The load window still refuses: on 2026-08-04 the
     # eager load of this 61.7 GiB artifact took MemAvailable from 114.5 GiB to
@@ -1627,6 +1630,25 @@ def test_readable_denied_ledger_verdicts_keep_their_reason_without_a_grant(
     assert "There is no waiver for this refusal" in message
     assert "evidence is readable" not in message
     assert consent_pending.pending_cards() == []
+
+
+@pytest.mark.parametrize(("kind", "offered"), [("no_material", True), ("unproven", False)])
+def test_the_rescue_offer_after_a_gate_that_compared_nothing(tmp_path, kind, offered):
+    """A gate that had nothing to compare holds nothing against the rescue, so
+    the loader offers its card; an unproven verdict still refuses in its own words."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import write_ceremony_rows
+
+    mesh = _Mesh(worker_args={"slab_weights": "auto"})
+    path = str(tmp_path / "diffusion_models" / FL2VA_BF16)
+    combo, artifacts = loader_preflight._combo_identity(FL2VA_BF16, {}, path)
+    write_ceremony_rows(GateLedger(str(tmp_path / "output")), combo, artifacts, kind=kind)
+
+    message = _refuse(
+        mesh, FL2VA_BF16, prompt=_graph(dit=FL2VA_BF16, refs="keyframes"))
+
+    assert ("was INCONCLUSIVE" in message) is not offered
+    assert bool(consent_pending.pending_cards()) is offered
 
 
 @pytest.mark.parametrize("decision_name", ["_UNKNOWN_QUERY", "_FAILED"])

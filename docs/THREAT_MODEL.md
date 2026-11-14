@@ -513,6 +513,21 @@ when it does not set `TORCHINDUCTOR_CACHE_DIR`, it points it at an owned
 it generates from that directory, so an operator who sets the variable must
 name a directory only the account can write.
 
+One input reaches an actor past that boundary, and it is bounded by name. As
+it starts, each actor reads `~/.config/dgx-monarch/worker.env` and takes from
+it six diagnostic switches and nothing else
+([worker_switches.py](../src/dgx_monarch/actor/worker_switches.py),
+[tests](../tests/test_worker_switches.py)): each can only turn one of the
+Worker's own steps off, or, for the two debug faults and only with
+`DGXM_ACCEPTANCE`, make one rank refuse. No path, credential or loader
+variable can come in this way, and a value is letters, digits and four
+punctuation marks. The file is read only if it is a regular file the Worker's
+own user owns and no one else can write; a link is not followed. Whoever can
+write that file can already rewrite the Worker's unit, so it grants nothing
+new, and a unit that clears its environment stays closed to every other
+account. Every switch taken is logged at WARNING by the actor and again by
+the driver at each setup, and is in the Worker's status.
+
 This boundary limits accidental credential propagation and diagnostic exposure;
 it does not scrub the driver process or an already-running service until restart,
 and it is not an OS sandbox.

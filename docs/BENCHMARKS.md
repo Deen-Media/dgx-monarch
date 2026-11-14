@@ -988,13 +988,15 @@ Reading the row:
 
 ## Community results: four Sparks (reported, not reproduced here)
 
-A four-Spark owner, barichardson on the NVIDIA Developer Forums, ran DGX
-Monarch v1.3.0 on four Sparks and published a full four-node matrix on
-2026-10-27 in
-[post 17 of the DGX Monarch thread](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/17).
-This section records their report with credit. This project's maintainer has
-two Sparks and has not reproduced any of it, so no number here is a verified
-result and no `auto` row rests on it. Their clocks, fabric and software differ
+Community four-Spark users reported running DGX Monarch v1.3.0 on four
+Sparks and published a full four-node matrix on 2026-10-27. This section
+records their report. This project's maintainer has two Sparks and has not
+reproduced any of it, so no number here is a verified result. No `auto` row
+rested on it until 1.5.0, when MiniMax H3 at world 4 began to fold into
+`uly4` on it and a later report
+([below](#a-second-report-minimax-h3-on-uly4-issue-188)), as an exception to the
+[rules for reports from larger clusters](../CONTRIBUTING.md#reports-from-clusters-larger-than-ours).
+Their clocks, fabric and software differ
 from the tables above, so compare within this section.
 
 Setup, as reported:
@@ -1146,13 +1148,46 @@ Their one-GPU and pair runs reran the published campaign cells:
 | Outliers | All faster than published: Wan SCAIL2 `auto` by 31 percent, Ernie cfg2 by 28 percent and LTX 2.5 FLF2V `auto` by 19 percent |
 
 They name their uncapped clocks as the likely reason for the faster times;
-the published campaign capped the first Spark at 2100 MHz. The maintainer's
-reply in the thread
-([post 19](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/19))
-named the uncapped clocks and some slightly outdated published cells as
-possible causes. The published record of the LTX 2.5 two-stage cell also
+the published campaign capped the first Spark at 2100 MHz. The maintainer
+replied that the uncapped clocks and some slightly outdated published cells
+were possible causes. The published record of the LTX 2.5 two-stage cell also
 read over the floor, at one-step NRMS 0.106
 ([campaign video table](#campaign-render-times-video-2026-09-27-to-2026-09-28-head-capped)).
+
+### A second report: MiniMax H3 on uly4 (issue #188)
+
+Community four-Spark users reported in issue #188 on 2026-11-13 that `auto`
+on v1.3.0 resolved a MiniMax H3 render at world 4 to
+uly2+ring2, where the H3 adapter refused the padded packed sequence at the
+first sampler call, after setup and the load. The same graph forced to `uly4`
+rendered. This project has not reproduced it.
+
+| Item | Value, as reported |
+|---|---|
+| Reported | 2026-11-13, in issue #188 |
+| Sparks and fabric | Four, one QSFP port each into a switch, both RoCE functions in `NCCL_IB_HCA`, about 196 Gb/s per node, SM clock capped at 2000 MHz |
+| Software | DGX Monarch v1.3.0, torchmonarch 0.7.0, xfuser 0.7.0, ComfyUI 0.44.0, comfy-kitchen 0.2.40, torch 2.14.0+cu130, NCCL 2.30.7 |
+| Graph | MiniMax H3 ref2v, INT8 ConvRot, one reference image and a pinned first frame, 896x1152, 243 frames, 8 steps, CFG 1, Sage attention, two LoRAs |
+| Pad need | One divisibility pad row at sequence-parallel degree 4, by the refusal's own count |
+
+From that count this project infers one pad row at degree 2 as well: a total
+of 3 modulo 4 is odd. The report itself does not say so.
+
+| | Pair, uly2 | Four Sparks, uly4 |
+|---|--:|--:|
+| Sampling, rank 0 log | 376 s | 195 s cold, 193 s warm |
+| Prompt wall time | 535 s cold, 430 s warm | 326 s cold, 262 s warm |
+| Latent | the same sha256 on both | four ranks bit-identical |
+
+So on their software `uly4` was bit-identical to their pair's `uly2` on one
+graph that needed one pad row, which both layouts dropped on the Ulysses path.
+It does not show `uly4` against one GPU, two or three pad rows, other
+lengths, quantizations or kernels, or FSDP. With the three MiniMax H3 rows of
+the first report, which rendered on `uly4` with one-step checks within the
+0.10 limit of one GPU (closeness, not an identical latent) while `auto` and
+ring4 refused, it is the evidence for the one `auto` choice that rests on
+this section: since 1.5.0, MiniMax H3 at world 4 and batch 1 folds into `uly4`
+([DESIGN.md](DESIGN.md#54-topology--auto-mode)).
 
 ## Updating results
 

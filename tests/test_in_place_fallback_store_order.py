@@ -285,6 +285,29 @@ def test_a_slot_baked_in_place_is_reused_only_with_the_switch_on_or_the_permissi
     assert store.current is not held and store.current.baked_in_place is False
 
 
+def test_a_slot_whose_backup_the_worker_freed_reuses_its_stack_and_reloads_for_another(classic):
+    """What ``lora_partial_load`` leaves on a classic slot: ``base_baked`` without ``baked_in_place``.
+
+    The same stack reuses the slot and needs no permission. A changed strength is never hot-swapped
+    (no backup is left to restore from): the fallback is asked before the drop, then the fresh load.
+    The quote reads the same slot as a fresh load.
+    """
+    store, calls, asked, _answer = classic
+    store.ensure(BASE, {}, STACK)  # a fresh classic load of the stack
+    held = store.current
+    held.base_baked, held.unbake = True, None  # the two writes of lora_partial_load._free_backup
+    held.base_patcher.backup = {}
+    asked.clear()
+    loads = calls.load
+    assert store.ensure(BASE, {}, STACK)[1] == "reuse"
+    assert asked == [] and calls.load == loads and store.current is held
+    assert in_place_fallback.loads_fresh(held, True, False, True) is True
+    assert store_bake.swaps_in_place(held, False) is False
+    _patcher, transition = store.ensure(BASE, {}, [{"name": "a.safetensors", "strength": 0.8}])
+    assert transition == "load" and asked == ["take"] and calls.load == loads + 1
+    assert store.current is not held and store.current.base_baked is False
+
+
 def test_a_slot_ensure_set_aside_is_not_handed_to_the_fallback(classic, monkeypatch):
     """An identity that drifted discards the resident before reuse; the fallback must not bake on it."""
     from dgx_monarch.actor import store_identity

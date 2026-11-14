@@ -696,6 +696,32 @@ def test_inconclusive_after_fail_preserves_quarantine_and_revokes(
     assert [row["action"] for row in recorded] == ["grant", "revoke"]
 
 
+@pytest.mark.parametrize(("kind", "listed"), [("no_material", True), ("unproven", False)])
+def test_the_panel_lists_and_accepts_a_rescue_after_a_gate_that_compared_nothing(
+        tmp_path, monkeypatch, kind, listed):
+    """A card with no context of its own reads every scope; a no-material verdict
+    in the gate's scopes holds nothing against it, an unproven one still denies."""
+    from no_material_ledger_rows import write_ceremony_rows
+
+    recorded: list = []
+    monkeypatch.setattr(consent_routes, "record_waiver", _fake_recorder(recorded))
+    path = _checkpoint(tmp_path)
+    card = consent_pending.register_pending(_descriptor(path, capability_context=None))
+    assert card is not None
+    write_ceremony_rows(_ledger(tmp_path, monkeypatch), COMBO, ARTIFACTS, kind=kind)
+
+    state = consent_routes.consent_state()
+    status, payload = consent_routes._accept(card["key"], card["id"])
+
+    assert ([row["key"] for row in state["pending"]] == [card["key"]]) is listed
+    if listed:
+        assert status == 200 and payload["ok"] is True
+        assert [row["action"] for row in recorded] == ["grant"]
+    else:
+        assert status == 409 and "was INCONCLUSIVE" in payload["detail"]
+        assert recorded == [] and consent_pending.pending_count() == 1
+
+
 @pytest.mark.parametrize("terminal", ["INCONCLUSIVE", "RETESTING"])
 def test_foreign_source_terminal_cannot_mask_older_fail(
         tmp_path, monkeypatch, terminal):

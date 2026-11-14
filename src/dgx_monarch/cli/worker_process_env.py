@@ -70,12 +70,18 @@ _SAFE_EXACT = frozenset({
     # warning and leaves loading unchanged (actor/load_fault.py).
     "DGXM_FAULT_LOAD_RANK",
     "DGXM_ACCEPTANCE",
+    # One rank reads its model as wrong after the pair's backup free, to drive the fleet's refusal through the
+    # second exchange (actor/backup_agreement.py); needs DGXM_ACCEPTANCE=1 too, as the load fault does.
+    "DGXM_FAULT_BACKUP_RANK",
     # Restores the drop through ComfyUI's global unload (actor/resident_ledger.py).
     # It can only make a drop slower and withhold a swap credit.
     "DGXM_DISABLE_COPY_FREE_DROP",
     # Turns off the make-room step before a Worker's CUDA context
     # (actor/context_room.py). It can only leave a start as it was before.
     "DGXM_DISABLE_CONTEXT_ROOM",
+    # Keeps ComfyUI's weight backup after a whole classic LoRA bake however little room is
+    # left (actor/lora_partial_load.py). It can only leave a render as it was before.
+    "DGXM_DISABLE_BACKUP_FREE",
 })
 
 # Locale is the only inherited namespace. Fabric settings come from validated

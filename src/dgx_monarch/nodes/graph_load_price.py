@@ -21,7 +21,7 @@ from .. import box_names, consent_pending, driver_footprint
 from ..log import get_logger
 from .graph_live import SWITCH_TITLES, is_link, live_nodes
 from .graph_twins import _SHARDED_KINDS, _gib, _join, dit_twins, model_twins
-from .loader_graph import DriverStackTerms, credited_terms, remember
+from .loader_graph import DriverStackTerms, credited_terms, note_stack_charged, remember
 
 log = get_logger(__name__)
 
@@ -80,6 +80,27 @@ def site_terms(terms: DriverStackTerms, site: str) -> DriverStackTerms:
                    activation_note="the render-site checks price them next")
 
 
+def log_alternatives(terms: DriverStackTerms, unet_name: str, avail: int, sum_fits: bool) -> None:
+    """The one line an admitted load charged a guide encode and render activations leaves (issue #187).
+
+    The admitting path prints no card, so the journal says which rule ran. As
+    alternatives, the larger of the two, because every guide is a still its
+    file proves: the line also says what the sum would have said of the same
+    load at the same reading. Otherwise both, and why (a clip, a length no file
+    proves, or an order the graph does not prove); ``sum_fits`` is then moot.
+    """
+    if not terms.guide_first:
+        log.info("loader footprint preflight: %s admitted with its %s GiB guide encode and %s GiB of render "
+                 "activations charged together, because %s; MemAvailable %s GiB", unet_name,
+                 _gib(terms.guide_bytes), _gib(terms.activation_bytes),
+                 terms.guide_order_note or "the graph does not show where the guide encodes", _gib(avail))
+        return
+    log.info("loader footprint preflight: %s admitted with its %s GiB guide encode and %s GiB of render "
+             "activations charged as alternatives (%s); charged together they would %s; MemAvailable %s GiB",
+             unet_name, _gib(terms.guide_bytes), _gib(terms.activation_bytes), terms.guide_order_note,
+             "fit too" if sum_fits else "have refused it", _gib(avail))
+
+
 def load_window_models(terms: DriverStackTerms, site: str) -> tuple[int, tuple[str, ...]]:
     """The driver models a deferred load meets, in bytes and by name.
 
@@ -104,6 +125,9 @@ def executing_prompt_id() -> str | None:
 
 def note_priced(unet_name: str) -> None:
     """Record that the graph price ran for this checkpoint in the executing prompt."""
+    from .. import driver_spend_price
+
+    driver_spend_price.warn_if_unwrapped()
     prompt_id = executing_prompt_id()
     if prompt_id is not None:
         remember(_PRICED_PROMPTS, f"{prompt_id}\x00{unet_name}")
@@ -113,6 +137,22 @@ def priced_this_prompt(unet_name: str) -> bool | None:
     """Whether the graph price ran for this checkpoint in this prompt; None without a prompt id."""
     prompt_id = executing_prompt_id()
     return None if prompt_id is None else f"{prompt_id}\x00{unet_name}" in _PRICED_PROMPTS
+
+
+def priced_any_this_prompt(prompt_id: str) -> bool:
+    """Whether the graph price ran for any checkpoint in the prompt with this id."""
+    return any(key.startswith(f"{prompt_id}\x00") for key in list(_PRICED_PROMPTS))
+
+
+def note_admitted(terms: DriverStackTerms, site: str, prompt: object = None) -> None:
+    """Record an admitted charge (``note_stack_charged``), and, at the loader site on a graph the
+    price read, what it charged for each spend of this prompt (``driver_spend_marks.note_charged``)."""
+    note_stack_charged(terms)
+    prompt_id = executing_prompt_id()
+    if site == SITE_LOADER and terms.resolved and prompt_id is not None:
+        from .. import driver_spend_marks
+
+        driver_spend_marks.note_charged(prompt_id, terms, prompt)
 
 
 def driver_box(mesh: Any) -> str:

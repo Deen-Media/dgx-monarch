@@ -14,6 +14,7 @@ from typing import Any, NoReturn
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call
 from ..worker_runtime import WorkerRuntimeMismatch
 from . import gate_process_state as _state
+from . import h3_ring_pad
 from .gate_capacity_stop import CeremonyCapacityStop
 from .gate_fsdp import (
     FsdpGateProofError,
@@ -301,6 +302,7 @@ def maybe_auto_gate(
     del steps_hint  # request steps are the canonical source below
     if getattr(_state._AUTO_GATE_ACTIVE, "on", False):
         return None
+    h3_ring_pad.preflight_for_render(model, request, latent, cfg_value)  # before any proof render
     uncond = request.get("uncond_model")
     dual = () if uncond is None else (uncond,)  # a dual render proves both slots
     claimed_token: tuple[str, ...] | None = None

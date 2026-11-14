@@ -106,7 +106,9 @@ Torch or probing CUDA, and record which existing caches remain in use.
 each Worker host it also holds `profiles/`, where the Init node's
 `load_profile` option, off by default, writes its reports and keeps the
 newest 20, and `inductor/`, the torch compile cache that the `compile_dit`
-option fills, unless the Worker environment sets `TORCHINDUCTOR_CACHE_DIR`.
+option fills, unless the Worker environment sets `TORCHINDUCTOR_CACHE_DIR`
+(which reaches a Worker only from a unit that does not clear its environment:
+[CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)).
 These paths do not follow `XDG_CACHE_HOME`. Preserve them under the
 approved test and restoration plan rather than assuming a new environment
 isolates them.
@@ -1114,7 +1116,11 @@ launch options; unknown and secret-looking names are dropped without reading
 their values. Keep the generated unit's explicit `PYTHONPATH` assignment and
 add no broad `PassEnvironment=` rule. Put NCCL, GLOO and UCX tuning in
 `cluster.toml`, which validates it and applies it inside each actor; never put
-service or cloud credentials in a Worker unit.
+service or cloud credentials in a Worker unit. The unit a verified update
+writes goes further and starts the loop through `/usr/bin/env -i`, so nothing a
+drop-in sets reaches it. A Worker's six diagnostic switches are set in one
+file its user owns instead, on any unit
+([CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)).
 
 Set the Init node's `mode` to `cluster`, or leave it on `auto`, which picks
 cluster mode whenever it finds a cluster.toml.

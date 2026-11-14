@@ -33,6 +33,9 @@ class StoredModel:
     # The stack was baked on the device onto the loaded base (the default's in-place bake, or
     # the classic bake's fallback, actor/in_place_fallback.py), not by ComfyUI's own load.
     baked_in_place: bool = False
+    # The pair's backup agreement freed ComfyUI's backup on this slot (actor/backup_agreement.py): a later
+    # render on it has no backup to be short of, so the room check asks this flag, not the backup.
+    freed_for_sampler: bool = False
 
     def __post_init__(self) -> None:
         # The model points back at its slot, weakly, so the one-GPU partial-load route

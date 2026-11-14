@@ -374,6 +374,10 @@ def graph_guide_encode_bytes(prompt: Any, guides: tuple[tuple[Any, int], ...],
     Guides encode one at a time and keep only a frame grid each, so the peak is
     one encode however many are chained. This is a driver-host transient: no
     topology divides it, unlike the packed rows the same guide later adds.
+    ComfyUI with DynamicVRAM returns it after Add Guide's node, so where every
+    guide's file proves it a still and the graph proves it encodes before every
+    sampler, the loader charges it as the alternative to the render
+    activations (``nodes/guide_order.py``); a clip keeps the sum.
     Never raises, like every other loader-site charge helper.
     """
     try:

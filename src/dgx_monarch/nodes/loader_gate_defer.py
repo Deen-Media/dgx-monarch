@@ -6,7 +6,9 @@ ceremony unloads every rank before its first proof render and loads the file
 again (issue #157): one wasted full load per rank. The ceremony's unload
 stays, because its first leg must come from a clean load from the file, so the
 loader leaves the placement to that leg instead. The load then happens once,
-inside the first proof render, and the gate's trust is unchanged.
+inside the first proof render (or, on a graph with nothing to compare, the
+gate's no-render swap cycle, nodes/gate_nothing_to_gate.py), and the gate's
+trust is unchanged.
 
 The decision reads the prompt from the loader to the nodes that render its
 model, collecting the LoRA stack on the way, and asks what the first-use gate
@@ -28,8 +30,10 @@ from .graph_live import is_link, live_nodes
 
 log = get_logger(__name__)
 
-# The journal reason ``first_render.load_deferred`` prints.
-REASON = "the identity gate loads it fresh for its first proof render"
+# The journal reason ``first_render.load_deferred`` prints. The gate loads it
+# fresh for its first proof render, or, where it has nothing to compare, for
+# its swap cycle with no proof render (nodes/gate_nothing_to_gate.py).
+REASON = "the identity gate unloads every rank and loads it fresh before the first render"
 
 # Read-only after import. Model transforms that keep the gate's combination.
 _PASSTHROUGH = frozenset({

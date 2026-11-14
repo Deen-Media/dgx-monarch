@@ -728,7 +728,10 @@ def build(spec: dict) -> dict:
         widgets = n.get("widgets", {})
         names = [] if ntype == "Note" else _node_widget_names(ntype, widgets)
         if ntype == "Note":
-            wv = [n.get("note", "") + (f" {DEMO_INPUTS}" if loads_demo else "")]
+            note = n.get("note", "")
+            if GATE in note and _nothing_to_compare(spec):
+                note = note.replace(GATE, GATE_NOTHING)
+            wv = [note + (f" {DEMO_INPUTS}" if loads_demo else "")]
         else:
             wv = []
             for wname in names:
@@ -873,6 +876,45 @@ FSDP_RULES = ("FSDP shards a bf16 or fp16 file, and an fp8 or int8 file as its s
               "whatever lora_low_rss says.")
 NO_FIRST_USE_GATE = ("With slab, low-RSS and FSDP disabled, there is nothing for the "
                      "first-use gate to prove, so the first render skips it.")
+# build() puts GATE_NOTHING in place of GATE on a graph the driver proves has
+# nothing to compare (nodes/gate_nothing_to_gate.py): no LoRA stack, no
+# dual-model guider, slab_weights auto with no forced family on checkpoints
+# outside the slab-vouched families, no FSDP layout, comfy-managed off. VOUCHED_CHECKPOINT_MARKS
+# names the shipped checkpoints of capacity_fit.SLAB_VOUCHED_FAMILIES by file
+# name (Kroma reads as krea2); tests/test_gate_nothing_to_gate.py holds the
+# marks to that set and the sentence to the code.
+GATE_NOTHING = ("This graph has no LoRA stack and its model takes no slab residency "
+                "under slab_weights=auto, so the identity gate has nothing to compare "
+                "on it: the first render runs no proof render. The gate loads the model, "
+                "records that there was nothing to gate, and the render starts. Add a "
+                "LoRA or set slab_weights on, "
+                "and the first render of each new combination runs the gate's proof "
+                "renders of at most two steps first.")
+VOUCHED_CHECKPOINT_MARKS = {"krea2": ("krea2", "kroma"), "flux2": ("flux2",)}
+
+
+def _nothing_to_compare(spec: dict) -> bool:
+    """Whether the shipped graph is one the driver records as nothing to gate."""
+    nodes = spec["nodes"]
+    if {n["type"] for n in nodes} & {"DGXMonarchLoraLoader", "DGXMonarchUncondUNETLoader",
+                                     "DGXMonarchIdentityGate"}:
+        return False
+    inits = [n.get("widgets") or {} for n in nodes if n["type"] == "DGXMonarchInit"]
+    unets = [str((n.get("widgets") or {}).get("unet_name", "")).lower()
+             for n in nodes if n["type"] == "DGXMonarchUNETLoader"]
+    if len(inits) != 1 or not unets:
+        return False
+    init = inits[0]
+    if (init.get("slab_weights", "auto") != "auto" or init.get("comfy_managed", "off") != "off"
+            or init.get("family_adapter", "auto") != "auto"
+            or "fsdp" in str(init.get("topology", "auto"))):
+        return False
+    # Each sampler pass renders one model, so a two-pass graph qualifies when
+    # every checkpoint does; the dual-model guider was excluded above.
+    return not any(mark in unet for unet in unets
+                   for marks in VOUCHED_CHECKPOINT_MARKS.values() for mark in marks)
+
+
 DERIVED = ("This graph is derived from the family adapter and stock node definitions, "
            "without a committed reference render. Check filenames and shapes against "
            "your artifacts before running it.")
@@ -971,8 +1013,7 @@ TEMPLATES = {
             {"key": "note", "type": "Note", "pos": (0, 1), "note":
              "DGX Monarch quickstart. It runs on one Spark as shipped (mode=auto). "
              "With a cluster.toml configured, topology=auto splits each render "
-             "across the pair. The first render of a new model and LoRA "
-             "combination runs the identity gate once (auto_gate)."},
+             "across the pair. " + GATE},
             {"key": "ks", "type": "DGXMonarchKSampler", "pos": (3, 1),
              "widgets": {"steps": 20, "cfg": 1.0},
              "wire": {"model": ("unet", 0), "positive": ("pos", 0),
@@ -6167,7 +6208,7 @@ def _minimax_h3_image_note(*, edit: bool) -> str:
         "refuses. The driver holds the 27.1 GB text encoder and the 1.2 GB VAE, "
         + memory + "; each Worker holds "
         "the 21.0 GB DiT. " + GATE + " This graph samples with KSampler (DGX "
-        "Monarch), so each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 "
+        "Monarch), so where the gate renders, each proof render is two KSampler steps, 1.0 to 0.75 to 0.0 "
         "on this schedule; they span head blocks the 6-step render takes one at a "
         "time, and every proof leg spans them alike. No render of this family has "
         "run on hardware yet: docs/VALIDATION.md, under MiniMax-H3-Image, lists "
@@ -7046,8 +7087,8 @@ def _minimax_h3_image_grid_spec() -> dict:
     purpose = (
         "Sampler Custom (DGX Monarch) walks the checkpoint's own sigma grid, typed "
         "into Manual Sigmas, where the shipped graph's KSampler lands within a "
-        "thousandth of it; euler through Basic Guider (DGX Monarch) at CFG 1. The "
-        "first-use gate proves this graph with its own first two steps, 1.0 to "
+        "thousandth of it; euler through Basic Guider (DGX Monarch) at CFG 1. Where "
+        "the first-use gate renders, it proves this graph with its own first two steps, 1.0 to "
         "0.9675 to 0.8875, each on one head block as in the render, where the "
         "shipped graph's two-step KSampler proof spans three blocks a step. The "
         "expander is off and its task prompt and system prompt boxes are empty, so "

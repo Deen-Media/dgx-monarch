@@ -67,6 +67,8 @@ REFUSAL_CLASSES = frozenset({
     "PackedDataParallelError",
     "PackedCfgParallelError",
     "PartialLoadDivergenceError",
+    "PairBackupRoomError",
+    "FleetTwoBuildsError",
     # One rank: a patched layer that quantizes its input is off the device and its
     # load could not be made whole (actor/lora_partial_load.py).
     "OffloadedInputQuantError",
@@ -102,6 +104,10 @@ REFUSAL_CLASSES = frozenset({
     # no Gate authority (worker_runtime.py). Class P: no consent makes a proof
     # on one build vouch for another, and the message names the fix.
     "WorkerRuntimeMismatch",
+    # A node's spend on the driver the UNET loader did not charge (driver_spend_price.py).
+    # Class C under the driver-host guard, its own type so no stock-load consent card offers
+    # a slab load for an encode; the driver's unload and trim run before it stands.
+    "DriverSpendCapacityError",
 })
 
 # Declared exceptions that are not user-facing model/capacity refusals: control
@@ -193,6 +199,10 @@ NOT_REFUSAL_CLASSES = frozenset({
     "WorkerSpawnError",
     "_Abort",
     "_InvalidQuantConfError",
+    # The first-use gate's no-render path (2026-11-13): slab_proof.establish
+    # asked for a render, so the path returns to the full ceremony; it never
+    # answers a render (nodes/gate_nothing_to_gate.py).
+    "_NoRender",
 })
 
 # A class P message must point somewhere reachable. One of these must appear.

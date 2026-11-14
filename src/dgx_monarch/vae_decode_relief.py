@@ -66,9 +66,12 @@ acts, a text encoder that gave up pages faults them back, or loads again, when
 a prompt's text next changes.
 
 It adds room. It does not bound a decode: with nothing idle the decode runs as
-ComfyUI runs it, and one line says so. The Workers are not asked for their
-cached memory here: the one Worker call there is reaches every box, and only
-the driver host's Workers share the decode's memory.
+ComfyUI runs it, and one line says so. Whenever it acts it also asks the
+fleet that served the render for its Workers' idle device pools
+(``release_worker_pools``), whatever the text encoders' free returned: the
+call reaches every box, and the driver host's Workers give back what the
+decode shares. Its line always says whether the Workers released, were not
+asked and why, or had no fleet attached to ask.
 
 Scope. On by default at node import where the driver's reading is: Linux, with
 the driver's CUDA device integrated. ``DGXM_DISABLE_VAE_DECODE_RELIEF=1`` on
@@ -90,6 +93,7 @@ import os
 import sys
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from typing import Any
 
@@ -122,6 +126,9 @@ _STATE = {"state": UNSET}
 # count loses nothing against a per-thread one.
 _SAMPLING_LOCK = threading.Lock()
 _SAMPLING = {"depth": 0}
+# The fleet this driver last submitted a render to, held weakly: never what keeps a mesh alive, and
+# never used as it is (``serving_now`` reads the fleet attached now in its place).
+_SERVING: dict[str, weakref.ref[Any] | None] = {"handle": None}  # proc lifetime: replaced at every submit
 
 # How much ComfyUI is asked to free. False: the decode's own requirement and no more, so the
 # driver holds its floor through the decode with the least taken (decided 2026-11-12). True:
@@ -168,6 +175,79 @@ def with_sampler_guard(original: Callable[..., Any]) -> Callable[..., Any]:
 
     setattr(counted_sample, _GUARD_KEY, True)
     return counted_sample
+
+
+def note_serving(handle: Any) -> None:
+    """Remember, weakly, the fleet a render was just submitted to. Never raises."""
+    try:
+        _SERVING["handle"] = None if handle is None else weakref.ref(handle)
+    except TypeError:
+        _SERVING["handle"] = None
+
+
+NO_FLEET = "; no fleet was attached to ask for the Workers' idle device pools"
+RESET_FLEET = (f"{NO_FLEET} (the fleet that served the render was reset, and none is attached in its "
+               "place)")
+UNREADY_FLEET = ("; the Workers were not asked for their idle device pools: the attached fleet is not set "
+                 "up, or its last cleanup failed")
+
+
+def _serving() -> tuple[Any, str]:
+    """The live fleet that serves this driver's renders NOW, or None and the relief's words for why not."""
+    from . import driver_unload
+
+    reference = _SERVING["handle"]
+    noted = reference() if reference is not None else None
+    if noted is None:
+        return None, NO_FLEET
+    fleet = driver_unload.serving_fleet(noted)
+    if fleet is None:
+        return None, RESET_FLEET
+    return (fleet, "") if driver_unload.trimmable(fleet) else (None, UNREADY_FLEET)
+
+
+def serving_now() -> Any:
+    """The live fleet that serves this driver's renders NOW, or None.
+
+    The handle a render was submitted to may have been retired by a reset
+    since, with a fresh fleet attached on the same config in its place
+    (``driver_unload.serving_fleet``). The note is never called as it is: a
+    retired handle reaches Workers that are gone. A mesh that is not set up, or
+    whose cleanup failed, gets no call either (``driver_unload.trimmable``).
+    The note stays alive while the fleet is attached: the mesh registry holds
+    the handle, on a pair and on a local mesh alike.
+    """
+    return _serving()[0]
+
+
+def release_worker_pools() -> tuple[str, bool]:
+    """Ask the serving fleet's actors for their idle device pools: (the relief's clause, whether they released).
+
+    One call of the trim the driver unload already makes
+    (``driver_unload.trim_actors``: every actor's ``clear_vram`` at ``pool``,
+    which empties its device pool and collects, and drops nothing: not a
+    model, and not the Worker's own decode VAE). A Worker keeps the
+    pool its sampler grew reserved after the last step, 6.4 GiB on record,
+    beside a driver whose decode then asks for 2.4 to 4.4. The Worker runs the
+    call under its GPU lock, so never under a sample, and the claim on the
+    mesh's render session fails within seconds where a pipelined render owns
+    it: the decode then runs as before. It does not ask
+    ``driver_unload.busy_reason``, for the reason this module's text gives.
+    Never raises. The clause always says one of three things: the Workers
+    released (with the readings), they were not asked and why, or no fleet was
+    attached.
+    """
+    from . import driver_unload
+
+    try:
+        fleet, why = _serving()
+        if fleet is None:
+            return why, False
+        trimmed = driver_unload.trim_actors(fleet, driver_unload.POOL_LEVEL)
+    except Exception as exc:
+        return f"; the Workers were not asked for their idle device pools ({type(exc).__name__}: {exc})", False
+    return (f"; {trimmed.actors} Worker actor(s) then released their idle device pools: MemAvailable read "
+            f"{_gib(trimmed.before)} GiB before that and {_gib(trimmed.after)} GiB after it"), True
 
 
 def decode_price(vae: Any, samples: Any) -> int:
@@ -264,10 +344,15 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
         return False
     keep, idle = kept_and_idle(mm, vae)
     if not idle:
+        # Nothing of the driver's to free: the Workers' idle pools are still there.
+        workers, released = release_worker_pools()
+        if released:
+            log.info("decode relief: %s; ComfyUI held no text encoder here to free from%s", priced, workers)
+            return True
         if "nothing idle" not in told:
             told.add("nothing idle")
-            log.info("decode relief: %s; ComfyUI held no text encoder here to free from, so the decode "
-                     "runs as ComfyUI runs it", priced)
+            log.info("decode relief: %s; ComfyUI held no text encoder here to free from%s, so the decode "
+                     "runs as ComfyUI runs it", priced, workers)
         return False
     before = int(mesh_safety.mem_available_bytes() or 0)
     # ComfyUI's classic loader's own call for this requirement: it frees in its own order until the
@@ -277,13 +362,21 @@ def relieve(mm: Any, vae: Any, samples: Any, told: set[str]) -> bool:
     mm.soft_empty_cache()
     time.sleep(_SETTLE_S)
     available = int(mesh_safety.mem_available_bytes() or 0)
+    # The Workers beside this driver hold device pools their last step left reserved and unused (6.4 GiB
+    # on record). They are asked whatever the free returned: ComfyUI's reading counts its own floor, and
+    # on 2026-11-13 a free that met the decode's price on that reading (7.3 GiB free against 7.2 needed)
+    # left the pools standing and the box at 10.3 GiB through the decode. One call of the trim the driver
+    # unload already makes, whose clause carries its own two readings.
+    workers, released = release_worker_pools()
+    if released:
+        time.sleep(_SETTLE_S)
     after = int(mm.get_free_memory(device))
     tail = (f"the decode starts with {_gib(after)} GiB free" if after >= need else
             f"the decode is still priced above the {_gib(after)} GiB free and runs as ComfyUI runs it")
     log.info("decode relief: %s, so the driver had ComfyUI free what the decode needs from the %d text "
-             "encoder%s it held (%s): MemAvailable read %s GiB before that and %s GiB after it; %s",
+             "encoder%s it held (%s): MemAvailable read %s GiB before that and %s GiB after it%s; %s",
              priced, len(idle), "" if len(idle) == 1 else "s", ", ".join(idle), _gib(before),
-             _gib(available), tail)
+             _gib(available), workers, tail)
     return True
 
 
@@ -392,5 +485,5 @@ def uninstall() -> None:
 
 __all__ = ["DISABLE_ENV", "FREE_ALL_IDLE", "INSTALLED", "NOT_INTEGRATED", "NOT_LINUX", "NO_COMFY", "OFF",
            "PROBE_FAILED", "SAMPLER_RUNNING", "STEPPED_ASIDE", "UNLOAD_SWITCH", "UNSET", "decode_need", "decode_price",
-           "install", "install_driver", "kept_and_idle", "loader_need", "relieve", "sampling_depth",
-           "state", "uninstall", "with_relief", "with_sampler_guard"]
+           "install", "install_driver", "kept_and_idle", "loader_need", "note_serving", "release_worker_pools",
+           "relieve", "sampling_depth", "serving_now", "state", "uninstall", "with_relief", "with_sampler_guard"]

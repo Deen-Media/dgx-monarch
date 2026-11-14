@@ -216,6 +216,19 @@ before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
                               the reserve free beyond the model and the latent's
                               estimate, which the INT8 classic bake's price
                               leans on, and the reserve the price reads back
+ 62. per-node pool reset       the executor emptying the device pool after every
+                              node under DynamicVRAM, which lets the loader charge
+                              a guide encode and the render activations as
+                              alternatives
+ 63. minimax h3 packed total  the length one model call packs, text, guides,
+                              references, audio and video, for H3 and
+                              MiniMax-H3-Image, which the driver's ring-pad
+                              check counts to refuse before the load
+ 64. driver spend wraps       the executor's run of Add Guide reaching the
+                              driver's spend price, Load CLIP reaching the
+                              wrapped load, and the running prompt's id and
+                              graph, which price a re-queue's encode or load
+                              the loader did not see
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -1342,6 +1355,15 @@ def _assert_cond_dispatch_seam() -> None:
             "so the seam the per-cond dispatch installs on is gone or has moved"
         )
 
+    # ComfyUI runs cond and uncond in one call from 1.5 times its estimate of free memory. The backup
+    # step's ask mirrors that share (actor/lora_partial_load.ASK_SHARE_OF_FULL_ESTIMATE), and the cond
+    # batch agreement pins the reading it is compared with (actor/cond_batch_agreement.py).
+    batching = inspect.getsource(comfy.samplers._calc_cond_batch)
+    assert "cond_shapes=cond_shapes) * 1.5 < free_memory" in batching, (
+        "cond dispatch seam: _calc_cond_batch no longer batches conds where memory_required * 1.5 is under "
+        "free memory, so the backup step's ask (1.5 times ComfyUI's full estimate) no longer mirrors it"
+    )
+
     for name in ("calc_cond_batch", "_calc_cond_batch"):
         parameters = list(inspect.signature(
             getattr(comfy.samplers, name)).parameters)
@@ -2051,6 +2073,85 @@ def _assert_minimax_h3_guide_layout_seam() -> None:
         )
 
 
+def _assert_minimax_h3_packed_total_seam() -> None:
+    """The length one MiniMax H3 model call packs, against the layout comfy builds.
+
+    nodes/h3_ring_pad.py refuses a padded ring on the driver, before the gate,
+    setup and the load, when a call's packed total does not divide the
+    sequence-parallel degree, and it counts that total with
+    h3_rows.exact_call_total. A count one row off either way would refuse a
+    render that runs, or pass one the Worker then refuses after the load, so
+    every segment kind comfy packs is checked here against
+    PackedLayout.seq_len: text, guide video and audio, image, audio and video
+    references, target audio, an odd latent grid, and MiniMax-H3-Image's text,
+    references and one frame.
+    """
+    import torch
+    from comfy.ldm.minimax.model import PackedLayout
+
+    from dgx_monarch import h3_rows
+
+    def guide(frame, grid, video=None, audio=None):
+        block = {"resolved_frame_index": frame}
+        if video is not None:
+            block["latent"] = torch.zeros(1, 24, video, *grid)
+        if audio is not None:
+            block["audio_latent"] = torch.zeros(1, 32, 2, audio)
+        return block
+
+    refs = (
+        {"kind": "image", "latent_h": 36, "latent_w": 64},
+        {"kind": "image", "latent_h": 35, "latent_w": 63},
+        {"kind": "audio", "ref_audio_t": 7},
+        {"kind": "audio", "ref_audio_t": 0},
+        {"kind": "video", "ref_audio_t": 0, "latent_t": 3, "latent_h": 24, "latent_w": 40},
+        {"kind": "video_audio", "ref_audio_t": 5, "latent_t": 2, "latent_h": 24, "latent_w": 40},
+    )
+    # (text rows, latent frames, latent height, latent width, audio frames)
+    shapes = ((9, 2, 48, 84, 5), (10, 7, 72, 56, 405), (13, 3, 45, 81, 11), (1, 2, 2, 2, 1))
+    for text_len, latent_t, lat_h, lat_w, audio_t in shapes:
+        grid = (lat_h, lat_w)
+        cases = (
+            ("text and target", None, None),
+            ("a still guide", [guide(0, grid, video=1)], None),
+            ("a guide clip with audio", [guide(1, grid, video=3, audio=2)], None),
+            ("an audio-only guide", [guide(2, grid, audio=4)], None),
+            ("every reference kind", None, list(refs)),
+            ("guides and references", [guide(0, grid, video=1), guide(3, grid, video=2, audio=1)],
+             [refs[0], refs[5]]),
+        )
+        for name, keyframes, ref_blocks in cases:
+            stock = PackedLayout(text_len, latent_t, (lat_h + 1) // 2 * 2, (lat_w + 1) // 2 * 2,
+                                 audio_t, keyframes=keyframes, refs=ref_blocks).seq_len
+            extras = {}
+            if keyframes is not None:
+                extras[h3_rows.KEYFRAMES_KEY] = keyframes
+            if ref_blocks is not None:
+                extras[h3_rows.REFS_KEY] = ref_blocks
+            latent = {"samples": _H3Nested(torch.zeros(1, 24, latent_t, lat_h, lat_w),
+                                           torch.zeros(1, 32, 2, audio_t))}
+            geometry = h3_rows.exact_geometry(latent)
+            assert geometry is not None, f"minimax h3 packed total seam: {name} read no grid"
+            counted = h3_rows.exact_call_total(
+                [torch.zeros(1, text_len, 8), extras], geometry)
+            assert counted == stock, (
+                f"minimax h3 packed total seam: {name} at {text_len} text rows and a "
+                f"{latent_t}x{lat_h}x{lat_w} latent packs {stock} rows; the driver's "
+                f"ring-pad check counts {counted}")
+            # MiniMax-H3-Image: extra_conds builds this layout from the noise
+            # shape with no audio and the references only.
+            image = PackedLayout(text_len, 1, (lat_h + 1) // 2 * 2, (lat_w + 1) // 2 * 2, 0,
+                                 refs=ref_blocks).seq_len
+            image_geometry = h3_rows.exact_geometry(
+                {"samples": torch.zeros(1, 16, 1, lat_h, lat_w)}, image=True)
+            assert image_geometry is not None
+            counted = h3_rows.exact_call_total(
+                [torch.zeros(1, text_len, 8), extras], image_geometry, image=True)
+            assert counted == image, (
+                f"minimax h3 packed total seam: MiniMax-H3-Image with {name} packs "
+                f"{image} rows; the driver's ring-pad check counts {counted}")
+
+
 def _assert_minimax_h3_guide_inputs_seam() -> None:
     """The names the loader-side wall prices an anchored guide by.
 
@@ -2065,7 +2166,7 @@ def _assert_minimax_h3_guide_inputs_seam() -> None:
     from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide
 
     from dgx_monarch import h3_activation
-    from dgx_monarch.nodes import loader_graph
+    from dgx_monarch.nodes import guide_order, loader_graph
 
     schema = MiniMaxH3AddGuide.define_schema()
     assert schema.node_id in loader_graph._GUIDE_NODE_CLASSES, (
@@ -2099,10 +2200,10 @@ def _assert_minimax_h3_guide_inputs_seam() -> None:
         if isinstance(section, dict) for name, spec in section.items()
         if isinstance(spec, tuple) and isinstance(spec[0], (list, tuple))
     }
-    assert set(loader_graph._GUIDE_FILE_KEYS) & file_widgets, (
+    assert set(guide_order._GUIDE_FILE_KEYS) & file_widgets, (
         f"minimax h3 guide inputs seam: LoadImage names its file on "
         f"{sorted(file_widgets)}, none of which the wall reads "
-        f"({loader_graph._GUIDE_FILE_KEYS}), so no guide length can be proved"
+        f"({guide_order._GUIDE_FILE_KEYS}), so no guide length can be proved"
     )
 
     # And the wall charges through those names, on the geometry the
@@ -6986,6 +7087,20 @@ def _assert_whole_load_condition_seam() -> None:
         "whole load condition seam: the minimum the sampler hands the load is no longer the "
         "single-batch estimate"
     )
+    # The Worker weighs a whole patched load by the same function's first figure, the doubled
+    # batch (actor/lora_partial_load.free_backup_for_sampling), and calls it as comfy does.
+    estimate_source = squeezed(comfy.sampler_helpers.estimate_memory)
+    assert list(inspect.signature(comfy.sampler_helpers.estimate_memory).parameters) == [
+        "model", "noise_shape", "conds"], (
+        "whole load condition seam: estimate_memory no longer takes (model, noise_shape, conds), "
+        "the call lora_partial_load makes"
+    )
+    assert ("memory_required=model.model.memory_required([noise_shape[0]*2]+"
+            "list(noise_shape[1:]),cond_shapes=cond_shapes)") in estimate_source and (
+            "returnmemory_required,minimum_memory_required") in estimate_source, (
+        "whole load condition seam: estimate_memory no longer returns the doubled-batch estimate "
+        "first and the single-batch one second"
+    )
 
     # The free reading both sides weigh is the pack's own on unified memory.
     from dgx_monarch.actor import comfy_bridge
@@ -7056,6 +7171,252 @@ def _assert_whole_load_condition_seam() -> None:
         mm.EXTRA_RESERVED_VRAM, mm.vram_state = saved
 
 
+def _assert_per_node_pool_reset_seam() -> None:
+    """ComfyUI with DynamicVRAM returns its device pool after every node (issue #187).
+
+    The loader charges a guide encode and the render activations as
+    alternatives only where ComfyUI gives the encode's memory back before any
+    sampler runs (``nodes/guide_order.proved``). That rests on what
+    comfy does: the executor's ``finally`` around each node's
+    ``get_output_data`` calls ``comfy.model_management.reset_cast_buffers()``
+    when ``comfy.memory_management.aimdo_enabled``; ``reset_cast_buffers``
+    ends in ``soft_empty_cache()``; and ``soft_empty_cache`` empties torch's
+    CUDA cache. If any of these goes, the alternative charge would leave the
+    encode's memory unpriced while the Workers sample.
+    """
+    import ast
+    import textwrap
+
+    import comfy.memory_management
+    import comfy.model_management as mm
+
+    from dgx_monarch.nodes import guide_order
+
+    assert isinstance(getattr(comfy.memory_management, "aimdo_enabled", None), bool), (
+        "per-node pool reset seam: comfy.memory_management.aimdo_enabled is gone, so "
+        "guide_order.comfy_returns_pool_after_each_node can no longer read DynamicVRAM")
+    saved = comfy.memory_management.aimdo_enabled
+    try:
+        for flag in (True, False):
+            comfy.memory_management.aimdo_enabled = flag
+            assert guide_order.comfy_returns_pool_after_each_node() is flag, (
+                f"per-node pool reset seam: with aimdo_enabled={flag} the pack reads "
+                f"{not flag}")
+    finally:
+        comfy.memory_management.aimdo_enabled = saved
+
+    soft = "".join(inspect.getsource(inspect.unwrap(mm.soft_empty_cache)).split())
+    assert "torch.cuda.empty_cache()" in soft, (
+        "per-node pool reset seam: soft_empty_cache no longer empties torch's CUDA cache")
+    reset = ast.parse(textwrap.dedent(inspect.getsource(inspect.unwrap(mm.reset_cast_buffers))))
+    function = reset.body[0]
+    assert isinstance(function, ast.FunctionDef), (
+        "per-node pool reset seam: reset_cast_buffers is no longer a plain function")
+    last = function.body[-1]
+    assert (isinstance(last, ast.Expr) and isinstance(last.value, ast.Call)
+            and ast.unparse(last.value.func) == "soft_empty_cache"), (
+        "per-node pool reset seam: reset_cast_buffers no longer ends in soft_empty_cache()")
+
+    executor = Path(mm.__file__).resolve().parents[1] / "execution.py"
+    tree = ast.parse(executor.read_text(encoding="utf-8"))
+    found = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        runs_node = any(isinstance(call, ast.Call) and ast.unparse(call.func) == "get_output_data"
+                        for stmt in node.body for call in ast.walk(stmt))
+        for stmt in node.finalbody:
+            if (runs_node and isinstance(stmt, ast.If)
+                    and ast.unparse(stmt.test) == "comfy.memory_management.aimdo_enabled"
+                    and any(isinstance(call, ast.Call) and ast.unparse(call.func)
+                            == "comfy.model_management.reset_cast_buffers"
+                            for inner in stmt.body for call in ast.walk(inner))):
+                found = True
+    assert found, (
+        "per-node pool reset seam: execution.py no longer calls "
+        "comfy.model_management.reset_cast_buffers() in the finally around a node's "
+        "get_output_data when comfy.memory_management.aimdo_enabled")
+
+
+def _assert_driver_spend_wraps_seam() -> None:
+    """The driver's spend price reaches ComfyUI's own run of the nodes it wraps.
+
+    ``driver_spend_price`` prices a MiniMax H3 guide encode, a reference video
+    encode and a stock loader node's files on the driver where the UNET loader
+    did not charge them: a re-queue whose loader ComfyUI kept, or a node
+    ComfyUI ran first. It replaces the node method on the class objects in
+    ``nodes.NODE_CLASS_MAPPINGS``, and reads the running graph and its id from
+    ComfyUI. Each part rests on ComfyUI:
+
+     1. the executor's per-node call, ``execution.get_output_data``, runs the
+        wrapped method: on Add Guide (v3, ``execute``) refused before the VAE
+        encodes anything when the box is short and run once with room, and on
+        Load CLIP (v1, its ``FUNCTION`` on an instance) refused before it loads;
+     2. Add Guide's ``execute`` is a synchronous classmethod taking positive,
+        latent, frame_idx, vae and image, and the canvas and the 17k+5 cut read as
+        the wrap reads them (the frames the stand-in VAE is handed); each
+        wrapped loader exists, synchronous, with the file inputs the loader
+        charges;
+     3. a second import of a node module leaves the same class, wrapped, in the
+        mapping: Python keeps the module, and ComfyUI fills the mapping once at
+        its start and never reloads a node module in place;
+     4. the executing context carries the prompt and node id; the server keeps
+        its queue as ``PromptServer.instance.prompt_queue``; the prompt worker
+        runs ``item[2]`` under the id ``item[1]``; and a running queue item is
+        (number, prompt id, prompt, ...), read with ``get_current_queue_volatile``.
+    """
+    import asyncio
+    import importlib
+
+    import comfy.nested_tensor
+    import execution
+    import nodes
+    import torch
+    from comfy_execution.utils import CurrentNodeContext
+    from comfy_extras import nodes_minimax_h3
+
+    from dgx_monarch import (
+        driver_footprint,
+        driver_spend_price,
+        driver_spend_settings,
+        driver_unload,
+        mesh_safety,
+        vae_decode_relief,
+    )
+    from dgx_monarch.nodes import loader_graph
+
+    gib = 2 ** 30
+    homes = {"MiniMaxH3AddGuide": "comfy_extras.nodes_minimax_h3",
+             "MiniMaxH3ReferenceToVideo": "comfy_extras.nodes_minimax_h3",
+             "TripleCLIPLoader": "comfy_extras.nodes_sd3", "QuadrupleCLIPLoader": "comfy_extras.nodes_hidream",
+             "LTXAVTextEncoderLoader": "comfy_extras.nodes_lt_audio",
+             "ImageOnlyCheckpointLoader": "comfy_extras.nodes_video_model"}
+    added = [name for name in driver_spend_price.WRAPPED_CLASSES if name not in nodes.NODE_CLASS_MAPPINGS]
+    for name in added:  # this process did not run ComfyUI's init_extra_nodes
+        nodes.NODE_CLASS_MAPPINGS[name] = getattr(importlib.import_module(homes.get(name, "nodes")), name)
+    guide = nodes.NODE_CLASS_MAPPINGS[driver_spend_price.GUIDE_CLASS]
+    assert guide is nodes_minimax_h3.MiniMaxH3AddGuide, (
+        "driver spend wraps seam: the mapping's Add Guide is not the node module's class")
+
+    def method_of(cls):
+        execute = cls.__dict__.get("execute")
+        return ("execute", execute) if isinstance(execute, classmethod) else (cls.FUNCTION, cls.__dict__.get(
+            cls.FUNCTION))
+
+    stock = {name: method_of(nodes.NODE_CLASS_MAPPINGS[name]) for name in driver_spend_price.WRAPPED_CLASSES}
+    charged = (loader_graph._TE_NAME_KEYS, tuple(loader_graph._DRIVER_MODEL_KEYS), ("text_encoder",))
+    for name, (attribute, method) in stock.items():
+        function = method.__func__ if isinstance(method, classmethod) else method
+        assert inspect.isfunction(function) and not inspect.iscoroutinefunction(function), (
+            f"driver spend wraps seam: {name}.{attribute} is no longer a synchronous method on its own class")
+        if name in driver_spend_price.LOADER_CLASSES:
+            assert any(parameter.startswith(keys) for keys in charged
+                       for parameter in inspect.signature(function).parameters), (
+                f"driver spend wraps seam: {name} no longer takes a file input the loader charges")
+    assert {"positive", "latent", "frame_idx", "vae", "image"} <= set(
+        inspect.signature(stock[driver_spend_price.GUIDE_CLASS][1].__func__).parameters), (
+        "driver spend wraps seam: Add Guide's execute no longer takes the inputs the wrap reads")
+    encodes: list = []
+
+    class StandInVae:
+        def encode(self, pixels):
+            encodes.append(tuple(pixels.shape))
+            return torch.zeros(1, 24, 1, pixels.shape[1] // 16, pixels.shape[2] // 16)
+
+    reading = {"bytes": 0}
+    patches = (
+        (driver_spend_price, "running_graph", lambda prompt_id: {"2": {}}),
+        (driver_spend_price, "priced_loader", lambda graph: driver_spend_settings.PricedLoader("minimax_h3", {})),
+        (driver_spend_price, "_pool_free_bytes", lambda: 0),
+        (loader_graph, "graph_activation_bytes", lambda graph, sp, family: (11 * gib, "")),
+        (loader_graph, "_artifact_bytes", lambda folders, name: 10 * gib),
+        (mesh_safety, "mem_available_bytes", lambda: reading["bytes"]),
+        (mesh_safety, "gpu_is_integrated", lambda: True),
+        (driver_footprint, "preflight_disabled", lambda: False),
+        (driver_unload, "comfy_model_management", lambda: None),
+        (driver_unload, "busy_reason", lambda handle: ""),
+        (vae_decode_relief, "_serving", lambda: (None, vae_decode_relief.NO_FLEET)),
+    )
+    kept = [(owner, attr, getattr(owner, attr)) for owner, attr, _value in patches]
+    state = dict(driver_spend_price._STATE)
+    try:
+        for owner, attr, value in patches:
+            setattr(owner, attr, value)
+        driver_spend_price._STATE["state"] = driver_spend_price.INSTALLED
+        driver_spend_price.install()
+        for name, (attribute, _method) in stock.items():
+            now = nodes.NODE_CLASS_MAPPINGS[name].__dict__[attribute]
+            assert getattr(now.__func__ if isinstance(now, classmethod) else now, driver_spend_price._KEY, False), (
+                f"driver spend wraps seam: {name}.{attribute} was not wrapped")
+        wrapped = guide.__dict__["execute"]
+        again = importlib.import_module("comfy_extras.nodes_minimax_h3").MiniMaxH3AddGuide
+        assert again is guide and again.__dict__["execute"] is wrapped, (
+            "driver spend wraps seam: a second import left another Add Guide, unwrapped, beside the mapping's")
+
+        # A 5-frame clip at 448x256: its grid at 1/16 of the canvas, 31 latent frames.
+        latent = {"samples": comfy.nested_tensor.NestedTensor(
+            (torch.zeros(1, 24, 31, 16, 28), torch.zeros(1, 32, 2, 121)))}
+        inputs = {"positive": [[[torch.zeros(1, 4, 8), {}]]], "latent": [latent], "frame_idx": [0],
+                  "vae": [StandInVae()], "image": [torch.zeros(5, 64, 64, 3)]}
+        with CurrentNodeContext("seam-prompt", "7"):
+            assert driver_spend_price._context() == ("seam-prompt", "7"), (
+                "driver spend wraps seam: the executing context no longer carries the prompt id")
+            reading["bytes"] = 10 * gib
+            try:
+                asyncio.run(execution.get_output_data("seam-prompt", "7", guide, inputs))
+            except driver_spend_price.DriverSpendCapacityError:
+                pass
+            else:
+                raise AssertionError("driver spend wraps seam: the executor ran Add Guide past the wrap")
+            assert encodes == [], "driver spend wraps seam: the VAE encoded before the wrap refused"
+            reading["bytes"] = 200 * gib
+            asyncio.run(execution.get_output_data("seam-prompt", "7", guide, inputs))
+        assert len(encodes) == 1 and encodes[0][:3] == (driver_spend_price.guide_frames(5), 256, 448), (
+            f"driver spend wraps seam: Add Guide encoded {encodes}, not the "
+            f"{driver_spend_price.guide_frames(5)} frames at 448x256 the wrap prices")
+
+        # A v1 loader through the same per-node call: refused before it reads the file.
+        clip_loader = nodes.NODE_CLASS_MAPPINGS["CLIPLoader"]()
+        reading["bytes"] = 1 * gib
+        with CurrentNodeContext("seam-prompt", "3"):
+            try:
+                asyncio.run(execution.get_output_data(
+                    "seam-prompt", "3", clip_loader, {"clip_name": ["seam.safetensors"], "type": ["stable_diffusion"]}))
+            except driver_spend_price.DriverSpendCapacityError:
+                pass
+            else:
+                raise AssertionError("driver spend wraps seam: the executor ran Load CLIP past the wrap")
+
+        root = Path(execution.__file__).resolve().parent
+        server_source = (root / "server.py").read_text(encoding="utf-8")
+        assert "PromptServer.instance = self" in server_source and "self.prompt_queue = " in server_source, (
+            "driver spend wraps seam: the server no longer keeps its queue as PromptServer.instance.prompt_queue")
+        main_source = (root / "main.py").read_text(encoding="utf-8")
+        assert "prompt_id = item[1]" in main_source and "e.execute(item[2], prompt_id" in main_source, (
+            "driver spend wraps seam: the prompt worker no longer runs item[2] under the id item[1]")
+
+        class StandInServer:
+            def queue_updated(self):
+                return None
+
+        queue = execution.PromptQueue(StandInServer())
+        graph = {"1": {"class_type": "X", "inputs": {}}}
+        queue.put((0, "seam-prompt", graph, {}, [], {}))
+        queue.get(timeout=1)
+        running, _queued = queue.get_current_queue_volatile()
+        assert running and running[0][1] == "seam-prompt" and running[0][2] == graph, (
+            "driver spend wraps seam: a running queue item is no longer (number, prompt id, prompt, ...)")
+    finally:
+        for owner, attr, value in kept:
+            setattr(owner, attr, value)
+        driver_spend_price._STATE.clear()
+        driver_spend_price._STATE.update(state)
+        for name, (attribute, method) in stock.items():
+            setattr(nodes.NODE_CLASS_MAPPINGS[name], attribute, method)
+        for name in added:
+            nodes.NODE_CLASS_MAPPINGS.pop(name, None)
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -7118,6 +7479,9 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("minimax h3 image row calls", _assert_minimax_h3_image_row_calls_seam),
     ("copy-free drop", _assert_copy_free_drop_seam),
     ("whole load condition", _assert_whole_load_condition_seam),
+    ("per-node pool reset", _assert_per_node_pool_reset_seam),
+    ("minimax h3 packed total", _assert_minimax_h3_packed_total_seam),
+    ("driver spend wraps", _assert_driver_spend_wraps_seam),
 )
 
 

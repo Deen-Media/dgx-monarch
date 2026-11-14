@@ -58,6 +58,18 @@
       "waivable": false
     },
     {
+      "site": "actor/backup_agreement.py::_refuse_room::PairBackupRoomError#0",
+      "class": "C",
+      "guard": "pair_backup_room",
+      "waivable": false
+    },
+    {
+      "site": "actor/backup_agreement.py::settle::OffloadedInputQuantError#0",
+      "class": "C",
+      "guard": "partial_load_divergence",
+      "waivable": false
+    },
+    {
       "site": "actor/comfy_bridge.py::load_diffusion_model_slab::StockLoadCapacityError#0",
       "class": "C",
       "guard": "stock_load_preflight",
@@ -175,6 +187,12 @@
       "site": "actor/partial_load_guard.py::check::PartialLoadDivergenceError#0",
       "class": "C",
       "guard": "partial_load_divergence",
+      "waivable": false
+    },
+    {
+      "site": "actor/rank_readiness.py::peer_failed::PeerLoadFailureError#0",
+      "class": "P",
+      "guard": null,
       "waivable": false
     },
     {
@@ -1192,6 +1210,12 @@
       "waivable": false
     },
     {
+      "site": "driver_spend_price.py::check.step::DriverSpendCapacityError#0",
+      "class": "C",
+      "guard": "driver_footprint_preflight",
+      "waivable": false
+    },
+    {
       "site": "family_select.py::assert_override_admits_checkpoint::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1205,6 +1229,12 @@
     },
     {
       "site": "lora_quant_guard.py::assert_lora_quant_supported::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "mesh_builds.py::refuse_two_builds::FleetTwoBuildsError#0",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -1235,6 +1265,24 @@
     },
     {
       "site": "nodes/fleet_policy.py::_fleet_worker_policy::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/h3_ring_pad.py::preflight::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/h3_ring_pad.py::preflight::UnsupportedModelError#1",
+      "class": "K",
+      "guard": "ring_pad:minimax_h3",
+      "waivable": true
+    },
+    {
+      "site": "nodes/h3_ring_pad.py::refuse_scail_ring::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false

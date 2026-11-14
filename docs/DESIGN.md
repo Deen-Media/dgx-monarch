@@ -260,6 +260,11 @@ endpoints:
 - `sample(request, progress_port)`: the denoise loop; streams progress (§5.8);
   leader returns latents, peers return None.
 - `status()`: VRAM/UMA snapshot, resident model key, topology, NCCL initialized.
+  It runs inline on the actor's event loop and never waits on the GPU thread:
+  it reads torch's device figures only while the GPU lock is free, and while a
+  load or a sample holds the lock it answers with the figures it last read,
+  marked `stale` with their age (`age_s`). A stale mark means a busy Worker,
+  not a dead one.
 - `provenance_baseline(setup_generation, artifact_manifest=None)`: Gate's
   setup-token-bound rank/world/package-source queue barrier for the exact READY
   generation. With a manifest it also returns strict saved pre-READY setup and
@@ -614,6 +619,40 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   render there leaves a spare data-parallel rank, and auto refuses it
   (class K) rather than fold the rank into a cfg-plus-sequence composite.
   Every cfg row's evidence was measured at world 2;
+- spare data-parallel ranks a batch cannot split fold into a larger Ulysses
+  degree only where `topology.VALIDATED_ULYSSES_FOLDS` grants that family and
+  degree, and into ring otherwise. The one grant, MiniMax H3 at world 4
+  (uly4, issue #188), bends the measured-rows rule: it rests on what
+  community four-Spark users reported, not on this project's two Sparks. One
+  report showed a graph whose latent on uly4 was bit-identical to their
+  pair's uly2; another showed three rows on uly4 within the 0.10 one-step
+  limit of one GPU, a closeness check rather than an identical latent. That
+  falls short of the rule in CONTRIBUTING.md for reports from larger clusters,
+  which asks for two independent reports of a latent identical to a validated
+  layout's, so the row stands as an exception the maintainer allowed for this
+  case. p-h3-image takes the same fold: it reads as `minimax_h3` and runs
+  H3's DiT attention, and the table-wide test names it. It replaced
+  uly2+ring2, a fold no record shows rendering, where the adapter refuses
+  about three prompts in four after setup and the load; uly4 runs the same
+  Ulysses code and pad exclusion as uly2, and 56, the one head count H3
+  shards, splits four ways. The adapter checks the live head count at
+  injection and refuses in words a degree that does not divide it. Where the
+  fold runs, the logged reason adds where it stands; on a pair the line
+  speaks only of the pair.
+  Where H3 or MiniMax-H3-Image still lands on ring (a typed ring preset, an
+  odd world, worlds 6 and 8), the driver counts each model call's packed
+  total before the first-use check, setup and the load, and refuses a padded
+  one with the Worker's own card (`nodes/h3_ring_pad.py`). It leaves to the
+  Workers' guard what it cannot count: MiniMax H3 Context Windows, an entry it
+  cannot read, and an entry ComfyUI may skip at some steps or call on part of
+  the latent (a step window, a default entry, an area, or a mask set to its
+  bounds). The auto decision
+  itself never reads the conditioning, because several sites resolve a
+  render's topology and must agree. The same check refuses at once Wan
+  SCAIL's ring layouts above a sequence-parallel world of two, which its
+  adapter refuses whatever the sequence: at four Sparks `auto` folds SCAIL's
+  uly2 row into one of them, and SCAIL gets no uly4 grant, because no report
+  shows its uly4 latent identical to a validated layout's;
 - ideogram4: auto takes Ulysses2, never cfg2; explicit Ring2 stays for
   diagnosis, and explicit cfg2 runs the dual-model split (MODELS.md);
 - flux3 earns no cfg2 row. Measured by Campaign K's method on 2026-10-15 and
@@ -1045,7 +1084,174 @@ input-quantizing layer off the device is refused, class C, before its first
 forward (`partial_load_divergence`, raised at one rank by
 `lora_partial_load.check`), saying what was tried. `lora_low_rss` on, the Spark
 default, bakes at load time and never reaches this. Comfy-managed residency
-runs ComfyUI's own patcher and is not touched. The bake-equivalence canary compares the bake with comfy.ops' own
+runs ComfyUI's own patcher and is not touched.
+
+A whole load is weighed by the same check. ComfyUI's classic bake keeps the
+host copy of every patched weight as its backup for the whole render (the
+Worker held 17.7 GiB of anonymous memory beside a 15.5 GiB model on record,
+most of it that backup), and its whole-load condition leaves only its reserve
+for what the sampler takes beyond ComfyUI's own estimate, which grows with the
+latent. So where a patched model is loaded whole on a device that shares the
+host's memory, and the room above the 5 GiB floor is under 1.5 times ComfyUI's
+full estimate for sampling this latent (`estimate_memory`'s first figure, the
+doubled batch; 1.5 is the share of free memory from which ComfyUI itself runs
+cond and uncond in one call),
+`lora_partial_load.free_backup_for_sampling` takes the route's last step
+alone before the first forward: the backup and the patches go, on every clone
+between the store's patcher and the sampler's, no weight moves, the slot is
+marked baked, and one line says so. With more room than that the backup stays
+and a stack change swaps in place as before, and nothing is logged. Every
+format holds that backup under the classic bake, the cast-time math included
+(`actor/lora_cast_time.py` records each patched key's original weight as
+stock's method does), so a silent step means room at or above the ask, not a
+missing backup: on 2026-11-13 an LTX 2.3 scaled FP8 render with a 7.08 GiB
+stack had about 5.5 GiB of room, against an ask that ComfyUI's factor for that
+model (0.077) puts well under 1 GiB, and sampled with the box at 10.51 GiB.
+It moves no price, and the
+weights the sampler reads are the ones the classic bake left. What can differ
+is ComfyUI's own choice, made from free memory at every step, to batch cond
+with uncond: on a graph with two conds on one model (a cfg other than 1, one
+checkpoint) and a large estimate, the memory given back can turn two calls a
+step into one, as it would with the same memory free under `lora_low_rss` on,
+and the float order of that render then differs from the same render with the
+step off. No shipped template that reaches the step is such a graph (the three
+below run at cfg 1.0), and no hardware cell reads one.
+On hardware the free has run only as the route's last step: it gave back
+15.3 GiB within 2 s after one load line into a fresh Worker, and 5.4 to 5.8 GiB
+where the INT8 ConvRot Wan-Animate 2 file was loaded a second time in the same
+process (2026-11-12). What stayed, 9.5 to 9.8 GiB, equals that file's tensors
+under 32 MiB (9.78 GiB; its tensors of 32 MiB and more are 5.70). glibc raises
+its threshold for giving a block its own mapping to the size of any mapped
+block the process frees, up to 32 MiB; a block under it comes from an arena,
+and the Worker's loading thread has one made of 64 MiB heaps, whose freed
+pages stay with the process. A probe read it on 2026-11-13: after the free the
+Worker held 9.95 GiB in 243 mappings of 50 to 55 MiB at 64 MiB-aligned
+addresses; a soft and a hard clear returned none of it; and the next load of
+the file went into it (a peak of 17.20 GiB, not 25). So the free is followed
+by one `malloc_trim(0)` (`actor/host_trim.py`), which walks every arena: in
+the one-GPU step, in the pair's act and in the route's tail, where the line
+that reports the free gives MemAvailable before the free, after it and after
+the trim; and after the store drops a slot, which the Worker's hard clear
+does for every slot (`resident_ledger.flush_dropped`): a placement alone left
+10.8 GiB in the arenas in the same probe, so without it a stack change's
+fresh load after a freed render could be refused as that bare load was. One
+shipped template, the memory-saver, drops a slot once a render by its design;
+the drop's line times the trim, and if a proof block reads it over 0.3 s a
+render there it moves to the store-wide drop alone. A load's placement and
+a soft clear are not followed by a trim in this release. The trim's return
+and its time have no hardware reading yet; neither has a whole load's own
+free.
+
+On a pair the ranks free together or not at all
+(`actor/backup_agreement.py`). After the cross-rank guard has found every rank
+whole, each rank adds five integers to the guard's own exchange: whether it is
+short (it holds a backup and its room is under the same ask), whether it can
+free, whether its switch is set, its margin with its rank in the low bits, and
+whether it holds a slot this agreement freed before. The margin is its room
+less 1.15 times ComfyUI's single-batch estimate plus 1 GiB (a rank added
+6.4 GiB where the estimate was 6.2; one GPU added 20.0 at 241 frames where it
+was 17.4), plus the shared memory the rank has yet to map. A Worker of a pair
+maps about 5.5 GiB of shared memory, about 2.7 by its load's end and about 2.7
+more in the first seconds of its first forward, after the vote, and keeps it
+for the actor's life; ComfyUI's estimate does not count it. The need and the
+ask that makes a rank short therefore add 5.6 GiB less what the Worker's own
+RssShmem reads at the vote, never under zero: about 2.7 GiB on a fresh Worker
+and about 0.1 GiB on a warm one. By its mappings (256 equal anonymous shared buffers
+of about 21 MiB beside the RDMA devices) it is the transport's registered
+buffers; no library names it, so that owner is read from the shape. One GPU
+maps 0.05 GiB of it, so the term is the pair's alone (a rank on a CUDA device;
+none off one). The refusal's figures name it. On a held box the kernel's
+memory compaction after a free can slow the first forward for up to about a
+minute, and its peer waits; the render is the same, and this release changes
+no rule for it (TROUBLESHOOTING #12). Every decision is made from the
+MIN that comes back, so no rank
+decides alone. Any rank short and none unable: every rank frees, the roomy
+one too, so the slots stay alike and the next stack change reloads on all of
+them. A rank that cannot free (a patched model outside its store): every rank
+keeps its backup and says what it left standing. A rank whose load device has
+memory of its own (a GPU that does not share the host's) takes no part: its
+sampler does not draw on the host, so it is never short, never the rank that
+cannot free and never the tightest margin, it keeps its backup, and it sends
+the same five integers and makes the same exchanges; a fleet of such ranks
+never frees and never refuses here, and a mixed fleet goes by its ranks on
+unified memory. A switch set on any rank
+turns the rule off for the fleet. After a free the ranks make one more
+exchange, of each rank's model as read and its margin as read: a model that
+is not what a full load leaves, or a tightest margin under zero, refuses on
+every rank before the first forward, class C under the guard
+`pair_backup_room`, naming the rank and the figures. MIN carries agreement
+and not identity, and the driver receives one rank's error for the fleet,
+whichever arrives first, so where the fleet refuses the ranks make one gather
+more of each rank's own facts (its model's fault in its own words, its room,
+its need). Every rank's error then leads with the short or wrong rank's cause
+and figures, the others' after, and carries that rank's mark, so the driver
+names its box; that rank also logs its refusal at WARNING. Once the error
+names that box, a healthy rank's text closes with that rank's own remedy, not
+the words for a peer it cannot name. Each rank's facts cross in 1,024 bytes;
+a cause too long for them once escaped keeps as many whole characters as fit
+and ends with a mark that it was cut, so the line always parses and never
+garbles, and that rank's journal has it whole. A render that
+samples makes no such gather. The margin is also
+checked where a short fleet kept its backups, and at every later render on
+slots the agreement freed: a fleet that freed and was refused has no backup
+left to be short of, and is refused again until the Sparks are cleared or
+the room is back. The margin weighs the sampler's need alone, on every rank:
+it carries NO term for the driver's decode, because the driver cannot price a
+decode before sampling (the VAE is a later node). The decode beside the driver
+is the decode relief's to cover, by the Workers' release of their idle device
+pools (`vae_decode_relief`, in the section on the driver's decode). A render
+that does not free makes the one collective it made before, with more
+integers in it; both Workers must therefore run one build, and a fleet whose
+Workers state two builds at setup, or of which one states none because it
+predates the check, is refused before its first load or render
+(`mesh_builds.py`; a Fleet's world-1 actors share no collective and are not
+compared). The shared memory a rank maps for its process groups (5.5 GiB on
+record) has no price term in this release. For a proof on real ranks,
+`DGXM_FAULT_BACKUP_RANK` with `DGXM_ACCEPTANCE=1` makes the named rank vote
+short and read its model as wrong after the free. `DGXM_DISABLE_BACKUP_FREE=1` in the
+Worker's environment keeps the backup however little room is left, for
+diagnosis and to read one build with and without the step; the Worker then
+logs what the step would have weighed, and the worker loop's environment
+filter lets the name through to the actors (`cli/worker_process_env.py`).
+A Worker-side switch is set in the one file each actor reads as it starts,
+`~/.config/dgx-monarch/worker.env` (`actor/worker_switches.py`): the unit a
+verified update writes clears its environment, so a unit drop-in does not
+reach the Worker there. The file admits six diagnostic names and no other,
+must belong to the Worker's user alone, yields to a name already in the
+environment, and is never silent: the actor logs every switch at WARNING as
+it starts, the driver repeats it at each setup, and status lists it
+([CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)).
+
+Three shipped templates reach this as shipped: `dgx-monarch-wan-animate2` (the
+INT8 ConvRot file), `dgx-monarch-wan-animate2-bfloat16-warm` and
+`dgx-monarch-wan-animate2-memory-saver` (the BF16 file), each with its LoRA at
+81 frames and with `lora_low_rss` and `slab_weights` off. The generator sets
+them so on purpose, and the templates' own notes give the reason: the recipe's
+reference comparison and its warm tests were run with ordinary weight and LoRA
+residency, slab and low-RSS have no passing reference comparison for this
+family, and with both off there is nothing for the first-use gate to prove, so
+the first render skips it (`tools/gen_templates.py`; so since the first public
+commit). That reason still stands with this step in. The step runs after
+ComfyUI's own classic bake and moves no weight, so the weights are the ones
+the reference comparison covered; what it gives up is the backup, which only a
+later stack change in place would have read. The low-RSS bake at load time
+stays unproven for this family, and the templates stay as they are.
+
+On the BF16 file the same step matters at the shipped 81 frames. The stack
+patches most of the model's weights, so the backup is most of a 30.5 GiB model
+(the Worker held about 34 GiB of anonymous memory after that load). The BF16
+price is the stock price, the line and the files (69.1 + 11.2 + 0.7 = 81.1 GiB
+before the file is read), and it sits ABOVE the reading from which ComfyUI
+would load the model whole (about 75 by its own condition; not read), so every
+admitted BF16 load is a whole load and its tightest reading is the price
+itself. One such load, on the second Spark of a pair, took 77.4 GiB, 1.35 more
+than that price leaves above the floor (the recorded shortfall of section
+5.9). On one GPU, with the backup freed before the first step, that shortfall
+should go, and on a pair the ranks now free together (above). No
+hardware reading of the BF16 templates at their edge exists yet, on one GPU or
+on a pair, before or after.
+
+The bake-equivalence canary compares the bake with comfy.ops' own
 cast on INT8 ConvRot and BF16 layers, and the keys it bakes at cast time with
 the keys stock's own `ModelPatcherDynamic.load` chooses on both sides of the
 16 KiB cut-off, against ComfyUI master every day.
@@ -1585,6 +1791,21 @@ Two related boundaries:
   about a topology the operator typed, so the auto-resolution refusals carry
   class K with no guard and say in one sentence why no card will appear.
 
+**A client that sends the same graph again gets the same refusal.** A typed
+refusal names what must change before the render can run, and every attempt
+pays the bring-up again and, where the refusal comes after it, the model load.
+So a script or API client reads the tag that opens the error
+(`[dgxm:<class> ...]`) before it decides. Class P is never worth a retry
+without the change the message names, to the graph, the topology or the
+software. Class K is worth one only after the waiver its card names is granted
+or the change it names is made. Class C is worth one after its card is
+accepted, after memory on the box is freed, or with the residency it names; a
+driver spend refusal (`DriverSpendCapacityError` at the node that would spend,
+class C, no card) is worth one only after memory on the box is freed or the
+spend is made smaller, since the same graph gets the same refusal until then. No
+site raises class U this release. An error with no class tag (a transport
+fault, a Worker restart, a timeout) is not a refusal, and a retry can succeed.
+
 #### The tag rides in the message
 
 A worker's refusal reaches the driver as Monarch-wrapped text; the exception
@@ -1662,7 +1883,10 @@ Four invariants that no consent can change:
    FAIL also revokes the class C memos it disproved, so the panel never shows a
    live residency consent for a path the gate has proven unsafe. A class K
    accuracy waiver clears a math guard rather than a lever, so a FAIL neither
-   disproves it nor revokes it; it stays live and stays stamped.
+   disproves it nor revokes it; it stays live and stays stamped. A gate that
+   had nothing to compare quarantines nothing: its INCONCLUSIVE denies no
+   capacity-rescue consent ("A gate that compared nothing denies no consent",
+   below).
 3. **A certificate is never a PASS.** The byte-verify certificate attests that
    the bytes that entered the slab are the checkpoint's own bytes. It says
    nothing about pixels. When the stock reference cannot load on this hardware,
@@ -1775,6 +1999,54 @@ That fallback could bind a durable PASS to a policy the worker never honored.
 A persisted quarantine or a Fleet call without an exact PASS therefore also
 refuses; neither can downgrade the running process.
 
+**The loader's log level, and who may read the allocator.** Before 1.5 a
+comfy-managed render could stop for good inside its first step when a status
+read met it; the stall guard ended it after its budget and the next render
+recovered by itself. The loader (comfy-aimdo) hands every log line to a
+Python callback and its native level starts at "everything", so once its hooks
+are in it calls Python at each device allocation and free, from inside the
+call torch makes while it holds its allocator lock. A call into Python needs
+the interpreter lock. The Worker's status read asked torch for its allocated
+and reserved figures, which takes that allocator lock without giving up the
+interpreter lock. The GPU thread then held the first and waited for the
+second, and the status read the reverse. Two rules follow, and both ship:
+
+- The bring-up sets the loader's native log level to INFO, as ComfyUI's own
+  process does, after the library loads and before its hooks go in
+  (`actor/comfy_dynamic.set_native_log_level`). The per-allocation lines are
+  dropped inside the library; its warnings and errors still reach the log.
+  The bring-up reads the level back from the library after the hooks are in
+  and says it in its line (`... native log level INFO (read back as 4)`).
+  Nothing in the library but its level setters writes that value, so the one
+  read holds for the life of the process.
+- No code of the pack reads or changes torch's device allocator on a Worker
+  off the GPU thread while a job runs. Every load, sample, decode, unload,
+  clear (the decode relief's pool level included), setup, teardown and gate
+  cycle runs on the GPU thread under the GPU lock, the readiness exchange and
+  the backup agreement inside the sample. The calls that stay off the lock
+  (`capacity_quote`, `artifact_identity`, `renew_client_lease`,
+  `cancel_sample`, `ack_latent_handoff`) read files and the kernel's figures
+  and never the device. `status()` was the one exception, and now reads the
+  device only while the lock is free (`actor/worker_status.device_figures`).
+
+The root is the loader's: a Python callback run under torch's allocator lock.
+With the level at INFO it can still do that in two places: an error line from
+inside a hook, on a failure path, and its page-out callback when it evicts
+pages, which ComfyUI hands it only for a model it marks writable (among the
+shipped families, Qwen Image 2.1). Neither can meet a status read any more.
+
+**What the second rule cannot promise.** It binds the pack's own code, not
+Python's. A garbage collection or a finalizer can free a device tensor on the
+actor's event-loop thread while that thread holds the interpreter lock (a dead
+cycle that still held one, ComfyUI's own model finalizer), and the free takes
+torch's allocator lock. If the GPU thread is at that moment inside one of the
+two calls above, the same two-way wait results. It is possible by mechanism
+and no record shows it: before the level was set every device allocation
+opened that window, and now only an error line or Qwen Image 2.1's page-out
+under a memory deficit does. The stall guard still ends such a render in
+words and the next render recovers. Closing it for good is the loader's
+change: no call into Python from under the allocator lock.
+
 **A class-K guard that blocks the ceremony answers first.** Gate proof renders
 ignore accuracy waivers. A class-K refusal therefore blocks every proof
 attempt for that combination. A checkpoint's own attention pins in a world of
@@ -1802,9 +2074,27 @@ Projection runs before the loader's eager load and in
 Persisted-quarantine enforcement runs after both and overrides consent.
 
 Consent is accepted only when the ledger contains no applicable FAIL for the
-exact artifacts. `nodes/consent_quarantine` uses the Gate's validity rules:
-a context-scoped FAIL expires when its recorded protocol or package version
-changes; a legacy unscoped FAIL remains.
+exact artifacts and no other durable denial. `nodes/consent_quarantine` uses
+the Gate's validity rules: a context-scoped FAIL expires when its recorded
+protocol or package version changes; a legacy unscoped FAIL remains.
+
+**A gate that compared nothing denies no consent.** An INCONCLUSIVE row of
+this build denies a consent, with two exceptions that hold nothing against
+slab residency. One is a ceremony whose stock reference a typed capacity
+refusal kept from loading ("Where the ceremony cannot help", below). The other
+is a no-material verdict: the gate ran no LoRA stack and no slab residency, so
+it says less about a capacity rescue than no row at all, which reads clear.
+Its exercised row carries `inconclusive_kind` `no_material`, and the Fleet
+and explicit-on slab rows a rendering ceremony writes beside it carry
+`no_material_revocation`; the consent read takes either as clear
+(`consent_quarantine.compared_nothing`, since 1.5, 2026-11-13). The marker
+grants no gate skip: `row_grants_skip` reads only the kind, so those contexts
+still run their own gate on first use. A FAIL keeps precedence over both
+exceptions. The newest row of each context decides, as for every verdict: a
+later no-material verdict in the same context lifts an earlier unproven one,
+as a later stock-reference row or PASS does, and only a bound PASS lifts a
+FAIL. Rows from another release or source build were never read as denials
+here: they read unknown, and the load's own scope then decides.
 
 **What the loader asks the ledger, and in what order.** The loader checks the
 ledger before resolving consent and again when applying it. Both checks first
@@ -1877,13 +2167,44 @@ has no stock to fall back to, so there the refusal answers the render, and an
 explicit Gate node raises it. The no-LoRA FSDP proof keeps its own clean-reload
 price.
 
+**Nothing to compare runs no proof render.** A ceremony on a graph with no
+LoRA stack and no slab residency can only end INCONCLUSIVE with nothing to
+compare (`gate_inconclusive.classify`), and that verdict grants nothing: the
+render that follows dispatches on stock residency. Through 1.4 the ceremony
+still unloaded every rank, loaded the file and ran two proof renders at the
+user's own shape to get there; an H3 still guide at 896x1152 and 362 frames on
+a pair spent 585.8 s on them (2026-11-13). Since 1.5 (2026-11-13) the automatic path runs
+the ceremony without its renders where the driver reads nothing to compare
+(`nodes/gate_nothing_to_gate.py`): one model, no LoRA stack, comfy-managed off,
+no FSDP layout, no live capacity-rescue consent, and `slab_weights` off or
+`auto` on a family outside `SLAB_VOUCHED_FAMILIES`, read from the forced family
+or the checkpoint header. The driver's read only chooses the path; the Workers
+decide the verdict. The capacity stop prices the request first, as above, and
+a stop ends there as it does in the ceremony. Then, inside the proof-cohort
+attestation before and after, every rank unloads, the fleet agrees the load and
+loads the file, and the Workers run the swap cycle on the empty stack. Their
+stamps go through the ceremony's own `slab_proof.establish` and
+`gate_inconclusive.classify`. A no-material class writes INCONCLUSIVE on the
+exercised context alone, with `"no_material_basis": "worker swap cycle, no
+proof render"` in the row and the report; the Fleet context and the explicit-on
+slab siblings keep what they held, because nothing here proved anything about
+them. Any other answer (a vouched family, slab active, a rank missing or late,
+any fault) writes nothing and runs the full ceremony, which meets the same
+fault in its own words. Later queues read the row as they read a ceremony's,
+and TRUST's rule that a no-material skip rests on bound, current all-rank cycle
+stamps holds unchanged. The Identity Gate node always renders, because its
+output is the proof's latent. The renders' other effects stay on the user's
+render: the activation preflight before the gate, and the capacity and backup
+agreements on every sample dispatch.
+
 **A placement the ceremony would drop is not made.** The ceremony's first leg
 must come from a clean load from the file, so it unloads every rank first. With
 an explicit topology the UNET loader would otherwise place the model at node
 execution and the ceremony would drop it a moment later and load the file again
 (issue #157, a 40.4 GiB file placed twice on 2026-11-06). The loader therefore
-leaves the load to the ceremony's first proof render when a ceremony will run
-before the graph's first render (`nodes/loader_gate_defer.py`). It reads the
+leaves the load to the ceremony's first proof render, or to its no-render swap
+cycle on a graph with nothing to compare, when a ceremony will run before the
+graph's first render (`nodes/loader_gate_defer.py`). It reads the
 prompt from the loader to the nodes that render its model, collects the LoRA
 stack on the way, and asks what the first-use gate would do for each one; an
 Identity Gate node always defers it. Any doubt keeps the eager load: a Fleet
@@ -1904,6 +2225,32 @@ stock load uses about 2.1x the artifact size while host and device copies
 coexist. The settled window covers weights at 1.0x plus the driver models and
 other memory the graph still needs to allocate. Slab removes the host copy
 and its transient peak; it does not reduce the settled graph requirement.
+
+**A still guide's encode and the render activations are alternatives where
+the order is proved.** Add Guide encodes in the driver before the sampler it
+feeds, and ComfyUI with DynamicVRAM empties its device pool after every node
+(the executor's `finally` calls `reset_cast_buffers`, which ends in
+`soft_empty_cache`), so the encode's memory is back before rank 0 samples. The
+settled window then charges the larger of the two, not both, but only for
+guides whose files prove them stills (fewer frames than a clip, as the still
+charge itself is proved). The graph must also prove the order: ComfyUI in the
+driver returns the pool after every node; no node that uses a model is
+upstream of a guide; every node that may sample has every guide among the
+nodes ComfyUI is certain to run before it; and no pipeline or fleet sampler is
+in the graph. Anything else keeps the sum, and the budget clause and the
+guide's line say which was charged and why (`nodes/guide_order.py`). The
+admitting path prints no card, so an admitted load logs one line at INFO that
+names the rule that ran: the two as alternatives, with what the sum would have
+said at the same reading, or both charged together and why. A seam
+contract holds ComfyUI to the per-node reset. Where the DiT is already resident
+while a guide encodes and the guide charge is the larger term, no activation
+charge pads the guide's, so the alternative rests on the guide charge alone.
+A still's charge (14 GiB) is read against the real driver's encode by the
+release's proof; a clip's (34 to 94 GiB) is not, so every clip, and every guide
+whose length is declared or unread, keeps the sum. Filed for a later release
+with the cell that would read it: a binding clip guide (448x256, 39 frames,
+charged 48 GiB) encoded with the DiT resident, its peak read on the box against
+the charge (issue #187).
 
 **A deferred load meets the driver's models.** An explicit preset loads at the
 loader node, before ComfyUI builds the text encoders, the VAEs and the encodes,
@@ -1964,11 +2311,129 @@ reference-to-video graph the box had just rendered. Its refusal is the
 loader's, cards included, and says which node priced the graph and that the
 Workers loaded nothing (`nodes/requeue_price.py`). The cross-rank agreement is
 not that place: it does nothing at world 1, where that re-queue ran, and it
-prices Worker rows, not a graph. Nothing prices a re-queue before its own
-upstream nodes run: an upsampler loads before the sampler, so a box short for
-that load beside a held DiT is not caught here, and freeing the encoders at the
-sampler waits for a walk that knows which models the rest of the prompt loads
-again.
+prices Worker rows, not a graph. This price comes after the re-queue's own
+upstream nodes have run, so what they spend is priced where they spend it,
+below.
+
+**What a node spends on the driver before the sampler is priced where it
+spends, where the loader did not price it.** A re-queue's upstream nodes run
+before the sampler: a text encoder or upsampler a changed file or a switch newly
+selects loads there, and a guide or reference video ComfyUI no longer keeps
+encodes there. A still swapped for a clip at 1344x768 encodes for 94 GiB or
+more, which takes the host down (TROUBLESHOOTING #83), and ComfyUI does not
+promise to run the loader before such a node on a first queue either. So the
+driver prices the spend at the node that makes it (`driver_spend_price.py`):
+- **What it prices.** Add Guide (MiniMax H3)'s encode, on the canvas and frame
+  count it holds, at the loader's guide charge, a clip with 1 GiB more where the
+  graph's activation term resolves (6 GiB without DynamicVRAM, below);
+  Reference to Video (MiniMax H3) with a reference video, at the loader's
+  40 GiB; and the stock loader nodes whose
+  inputs the loader charges (Load CLIP, the dual, triple and quadruple CLIP
+  loaders, LTX's audio-video text encoder loader, the checkpoint loaders and
+  Load Diffusion Model), at what the loader charges for those inputs: a text
+  encoder's file at 1.15, a model's whole, several files summed. It wraps those
+  classes' node methods on the class objects in ComfyUI's node mapping, so
+  ComfyUI's own internal reloads, other packs' loaders and every Worker path
+  are out by construction; a Worker, by its environment marker, installs
+  nothing.
+- **The mark, per term.** Where the loader admits a prompt at the loader site on
+  a graph it read, it records what it charged for each spend: the guide at the
+  room it held for the encode's window (the larger of the guide and the
+  activations, or both), the reference encode, and each driver load node's
+  files where no held-model credit took them. A wrap steps aside where its own
+  spend was charged at a figure at least its own, and logs that once per node.
+  A spend the loader charged at 0, such as a guide on a checkpoint whose family
+  it could not read, another family's loader in a mixed graph, or a load the
+  held-model credit took, is priced live. A mark is keyed by the running queue
+  item's number as well as the prompt id: ComfyUI takes a client's own prompt
+  id, checking only its form, so an id sent again finds no earlier marks.
+- **When it prices nothing.** Without the running prompt's graph in hand: the
+  executing context gives the prompt and node id, and the prompt queue's
+  running item with that id carries the graph. And in a graph whose DGX Monarch
+  UNET Loader is not of a family the loader prices a driver stack for.
+- **The loader's settings, from the graph.** The loader reads two settings from
+  its mesh input, the Init node's output: the family forced there
+  (`family_adapter`), which stands over the checkpoint's header and in place of
+  one it cannot read, and its floor, `reserve_bytes` of the Init node's
+  `uma_reserve_gb` over the configured policy. A wrap holds no mesh, so it reads
+  both from the running graph's Init node that the loader's mesh comes from, by
+  the loader's own rules, over the attached mesh's configured policy or, before
+  a mesh is up, the policy of the file the Init node names
+  (`driver_spend_settings.py`). A graph with no Init node reads the header
+  alone at the 5 GiB floor; a configuration it cannot read leaves the Init
+  node's own reserve.
+- **The promise.** A marked spend is never refused. An unmarked spend is refused
+  only where it would take the box under its floor
+  (`driver_footprint.reserve_bytes`, the loader's) after every rescue: the room is
+  MemAvailable plus what this process's torch pool holds unallocated, and before
+  it refuses it unloads what ComfyUI holds and trims the Workers' idle caches,
+  as the render-site checks do. That is a new refusal for a queue that today
+  renders only by dipping under the floor. The loader's held-model credit and
+  its credits for a model a later load drops are not this room's, so a spend
+  ComfyUI runs before the loader can be refused where the loader-first order
+  would have admitted it, for example under an explicit preset with another
+  model still in the Worker's slot; the refusal is still true of the box.
+  That order is the common one: on 2026-11-13, on a first queue of the shipped
+  guide graph in a fresh driver, ComfyUI loaded and ran the text encoder, ran
+  Add Guide, brought the mesh up, and ran the UNET Loader last. So on a first
+  queue the spends are priced live, unmarked, and the loader then prices the
+  whole graph after them, charging the guide it can no longer prevent, as it
+  did before. With nothing held, the loader's charge holds every one of those
+  spends beside the DiT, the activations and the floor, so a live refusal there
+  is one the loader would make at the same reading.
+- **The figures, and DynamicVRAM.** On 2026-11-13 a fresh driver's first
+  encode, which loads the VAE, raised the driver's figure 0.60 GiB, and a
+  5-frame clip at 448x256 with the DiT resident raised it 1.16 GiB against a
+  17.0 GiB charge; the same clip on a cached loader raised it 0.44 GiB at most
+  and took the box down 0.58 GiB across Add Guide's 0.47 s. Each is a net
+  change in a device total read a few times inside the node, so it sets a
+  floor on what the encode held at once, not a measure of what it allocated.
+  All three were taken with DynamicVRAM on, where a VAE pages in inside the
+  encode. There a clip carries 1 GiB more, and the
+  encode's charge leaves out a VAE ComfyUI did not hold at the first check: it
+  adds the VAE only where ComfyUI held it then and a rescue unloaded it, so a
+  trim that frees room for the first figure admits. Without DynamicVRAM the
+  encode's `load_models_gpu` copies the VAE to the device, 4.9 to 6 GiB here,
+  so a VAE ComfyUI does not hold is charged at every check, and a clip carries
+  6 GiB more, as the 2026-08-14 probe read clips 2.8 to 5.45 GiB over their
+  charges with the native allocator.
+- **The refusal.** Class C under `driver_footprint_preflight`, the driver-host
+  guard of the frozen vocabulary, with no card, as its own type, so no consent
+  card matching the stock-load family offers a slab load for an encode. It
+  names the spend, its charge and the room above the floor, says whether this
+  prompt reached the loader (the loader priced it but did not charge this spend
+  at its size, or it has not priced this prompt at all), and that nothing was
+  spent. Its remedies are a shorter clip, a smaller canvas or file, and memory
+  freed on the box; clearing the Sparks frees what the Workers hold there, and
+  the next queue then runs the loader, whose refusal itemises the whole graph.
+  A spend it admits logs one line with its charge and room.
+  `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for
+  diagnosis. A class another pack registers over one of these names is not
+  wrapped, and the first loader price in the process logs a WARNING naming it.
+- **Not priced.** VAE loader nodes, 6 GiB at most here, under the floor's
+  margin (Add Guide's charge above counts its VAE where it must); image
+  references and frame anchors, which the loader charges 0 on every queue by an
+  earlier ruling, so a re-queue is no worse than a first queue there (filed for
+  a loader charge with its own measurement); LTX's guide and image-to-video
+  encodes, CLIP vision, ControlNet and IP-adapter loads, and the prompt
+  expander's generation, none of them charged at the loader either; and a text
+  encoder ComfyUI faults back into a CLIP it already built, which returns the
+  box to the state the last render held. The render activations stay with the
+  render-site checks.
+
+The loader's reference encode survives its held-model credit, as the guide's
+does: it is a transient, and a held model does not show that it has run. A
+first queue of a video-reference graph with ComfyUI's models held is charged
+its 40 GiB. LTX's audio-video text encoder loader (`LTXAVTextEncoderLoader`) is
+charged for what it loads: its `text_encoder` file as a text encoder, and of
+the LTX checkpoint it names only the text projection ComfyUI keeps, read from
+the file's header (`nodes/driver_model_charge.py`, cached by path), since with
+DynamicVRAM ComfyUI maps the checkpoint and reads nothing else of it (the
+embeddings connectors are kept only in ComfyUI's compat mode, which the header
+also shows). It was charged the whole checkpoint and no text encoder. Without
+DynamicVRAM the safetensors library decides what each tensor holds, which
+ComfyUI's code does not show, so there, and where the header cannot be read,
+the whole checkpoint is still the charge.
 
 **A prompt expander that cannot see the request refuses before the render.** The
 MiniMax-H3-Image templates wire ComfyUI's expander chain, Replace Text into
@@ -2276,7 +2741,29 @@ that requirement, as ComfyUI's classic loader does there, keeping every model
 loaded except the text encoders. ComfyUI frees just what the call needs from
 the text encoders it holds, in its own order, and a DynamicVRAM model gives
 up pages without being unloaded where that is enough. Then ComfyUI's decode
-runs. Eight things bound it:
+runs. Whenever the relief acts, whatever the text encoders' free returned,
+the driver also asks the Workers for memory they hold idle. Until
+2026-11-13 it asked only where the decode was still priced above ComfyUI's
+reading after the free; on two held pair renders that day the free met the
+price on that reading (7.3 GiB free against 7.2 needed, ComfyUI's reading
+being MemAvailable less its own floor), the Workers were never asked, and
+the first Spark read 10.3 GiB through the decode. The ask is one call of the
+trim the driver unload already makes (`driver_unload.trim_actors`, every actor's
+`clear_vram` at `pool`), which empties each Worker's device pool and collects, and drops
+nothing. A Worker keeps the pool its sampler grew reserved after the last
+step, 6.4 GiB on record beside a driver whose decode then took 2.4 to 4.4
+(a pair, 2026-11-13, the first Spark under its clock cap, max 2100 MHz: the
+box read 4.29 GiB at that decode). The call goes to the fleet attached NOW:
+the driver keeps only a weak note of the fleet it last submitted to, and
+reads the one attached in its place if a reset retired it
+(`vae_decode_relief.serving_now`). It never runs under a sample: the relief
+does nothing while one of the driver's samplers runs, the Worker takes the
+call under its GPU lock, and the claim on the mesh's render session fails
+within seconds where a pipelined render owns it, after which the decode runs
+as before. The relief's line always ends its Worker clause with one of three
+things: the Workers released (with MemAvailable on each side), they were not
+asked and why, or no fleet was attached to ask. The ask has no hardware
+reading yet. Eight things bound the relief:
 
 - **Only text encoders are freed.** By an allow-list, not a deny-list: a text
   encoder is the one kind of model ComfyUI marks for certain (`is_clip` on its
@@ -2686,9 +3173,16 @@ covers the whole load by itself. Three rules follow.
   LoRA was counted as 1933 patched weights where the Worker counts 240).
   `StockFit` carries the term, so the Worker's two walls and the quote the
   driver reads charge one figure by one function, and every refusal prints
-  it. The partial-load route's room rule charges the line for the layers
-  still to bake, without the bytes guard: its BF16 cell ran on hardware
-  under the rule without the term. The default (`lora_low_rss` on) and FSDP,
+  it. The partial-load route's room rule charges the same term for the layers
+  still to bake, by each layer's own format (2 GiB, and for each layer 7.5 MiB
+  where it is scaled FP8 or full precision, 4 MiB where it is INT8 ConvRot,
+  nothing where it is plain FP8), without the bytes guard and without the
+  INT8 exception: its BF16 cell ran on hardware under the rule without the
+  term. Charged by the line for every format, 371 INT8 layers still off the
+  device were asked 8.4 GiB with 8.1 there (2026-11-12), the route was
+  declined, and the render ran from cast-time weights with ComfyUI's backup
+  kept, to a low of 5.97 GiB; by format the ask is 7.2. The default
+  (`lora_low_rss` on) and FSDP,
   which takes no classic bake, are charged nothing new. The loader node's own
   preflight runs before any LoRA node and cannot know the stack.
 - **The fallback** (`actor/in_place_fallback.py`). Baking in place on the
@@ -2782,6 +3276,29 @@ whole load on record is on a roomy box); a full-precision stack with a low
 read on a held base; a scaled FP8 file with weights over 64 MiB; and a
 pair's rank loading the INT8 template whole on a tight box.
 
+**No price knows the clip.** Every figure above is worked at the loader, before
+a latent exists. With a classic bake's backup held, what a render takes grows
+with the clip: the sampler's memory follows the latent, and it outruns
+ComfyUI's own estimate by more as the latent grows (0.5 GiB at 81 frames, 2.6
+at 241). ComfyUI's whole-load condition leaves only its reserve for that, so
+the low at the tightest reading that still loads the model whole falls with
+the clip: about 6 to 7 GiB at the shipped 81 frames and about 4.4 projected at
+241, from one roomy render of 2026-11-12 that took 52.4 GiB where 81 frames
+takes 39. Three shipped templates run this path as shipped (the Wan-Animate 2
+template and its BF16 and memory-saver variants, with `lora_low_rss` off and a
+LoRA), all at 81 frames. `lora_low_rss` on keeps no backup and is not on it.
+The same is so on the last release, which priced this load lower. The Worker
+now gives that backup up before the first step where a whole load leaves less
+room than the sampler may ask (`lora_partial_load.free_backup_for_sampling` on
+one GPU; on a pair the ranks together, `backup_agreement`; section 5.5), which
+takes the projected low at the 241-frame edge from 4.4 to about 10 by the
+route's record of the same step (5.8 GiB returned before the trim was added;
+not yet read on hardware for a whole load). A pair's rank at its whole-load
+edge read 4.29 GiB on the first Spark on 2026-11-13 with the backup kept; the
+pair's agreement and its room check are the answer to that reading and have no
+hardware reading of their own yet. What stays as above: a load placed partly
+whose route could not run.
+
 **Freed host memory goes back at once.** torch's wheels allocate host memory
 through a bundled mimalloc, which gives freed pages back to the box only at a
 purge, and a purge runs only when the thread that owns them allocates again
@@ -2801,7 +3318,16 @@ cluster actor inherits, the driver's launch does the same for a local actor
 driver inherits stands, and the unit `dgxm update` installs starts from an
 empty environment), and `scripts/comfy-driver.sh` exports the same for the
 driver, so a free on the thread that allocated the memory gives it back at
-once. A small block freed from another thread still waits for that thread's
+once. That setting is for torch's own allocator. The weights of a quantized
+file are the loader's own tensors, and a probe found them in the C library's
+per-thread arenas (2026-11-13, section 5.5): there, from a process's second
+load of a file on, the freed pages of blocks under 32 MiB come back only at a
+trim. The code trims after the free of a backup for a sampler and after the
+store drops a slot (the hard clear among them), and nowhere else in this
+release: a load's placement, a released LoRA stack and a soft clear are not
+followed by one, so a Worker's anonymous memory can rest about 10 GiB above a
+fresh Worker's after its second load of the INT8 Wan-Animate 2 file, until a
+drop, a hard clear or a recycle. A small block freed from another thread still waits for that thread's
 next allocations. The cost is about 20 percent on a loop that does nothing but
 allocate and free host memory (0.44 s against 0.36 s for ten rounds of 16
 blocks of 128 MiB); the release test on this setting measures what renders pay.
@@ -3348,6 +3874,8 @@ dgx-monarch/
 │   │   ├── fleet_jobs.py      # Fleet job-list assembly and its per-prompt limit
 │   │   ├── gate_capacity_stop.py # a ceremony's stop when its request cannot fit
 │   │   ├── gate_ceremony.py   # one ceremony's render legs, frozen as evidence
+│   │   ├── gate_nothing_to_gate.py # a no-material verdict from the Workers'
+│   │   │                      #   swap cycle, with no proof render
 │   │   ├── gate_process_state.py # process-lifetime first-use Gate state
 │   │   ├── gate_process_verdicts.py # one process-verdict publication and its reads
 │   │   ├── gate_provenance.py # mandatory all-rank Gate source bracket

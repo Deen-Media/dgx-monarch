@@ -58,7 +58,7 @@ def test_every_shipped_tau_parses_to_its_own_value():
 
 
 def test_the_validated_tau_set_ships_empty_and_grants_nothing():
-    """The VALIDATED_ULYSSES_FOLDS shape: an allow-list that admits nobody."""
+    """The VALIDATED_ULYSSES_FOLDS shape: an allow-list; this one admits nobody."""
     assert dict(sol.SOL_VALIDATED_TAUS) == {}
     assert not sol.tau_is_vouched("minimax_h3", 1.0)
     with pytest.raises(TypeError):  # read-only, unlike the plain-dict fold table

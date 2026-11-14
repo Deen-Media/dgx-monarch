@@ -292,6 +292,24 @@ def h3_modulation_plan(
     return unique_t, rows, t_row[seg_time["video"]], t_row[seg_time["audio"]]
 
 
+def refuse_indivisible_dit_heads(diffusion_model: Any, family: str) -> None:
+    """Refuse, class P, a Ulysses degree the DiT's own head count does not divide.
+
+    ``auto``'s world-4 fold names 56 heads from the table
+    (``topology.VALIDATED_ULYSSES_FOLDS``) and never reads the file, and the
+    all-to-all's reshape would fail untyped on a count the degree does not
+    divide. So the check reads the live first block's head count before any
+    bind. A model with no readable count (a test double) is left alone.
+    """
+    from .flux3_packing import refuse_indivisible_heads, ulysses_degree
+
+    block = next(iter(getattr(diffusion_model, "blocks", None) or ()), None)
+    heads = getattr(getattr(block, "attn", None), "heads", None)
+    if isinstance(heads, int) and not isinstance(heads, bool):
+        refuse_indivisible_heads(heads, ulysses_degree(), family=family,
+                                 divisors="2, 4 or 8 for every shipped H3 file's 56 heads")
+
+
 def pad_row_index(rows: torch.Tensor, padded_len: int) -> torch.Tensor:
     """Extend row indices across divisibility padding.
 

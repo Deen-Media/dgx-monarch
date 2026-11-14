@@ -6,7 +6,8 @@ nodes/gate_cross_mode.py). Which renders reach it is set by the two switches
 below, AUTO_GATED_KINDS and DUAL_MODEL_AUTO_GATES: since 1.5 every sampler
 kind does (auto_gate.auto_gate_context), and a dual-model render proves both of
 its models (nodes/gate_dual.py). Each graph's Note must say the sentence for its
-own sampler.
+own sampler. Since 1.5 a graph the driver proves has nothing to compare
+(nodes/gate_nothing_to_gate.py) says so instead, and runs no proof render.
 
 FSDP: the launch contract shards bf16, fp16, fp8 and int8 files and refuses
 block-scaled ones (adapters/fsdp.py), a LoRA there needs lora_low_rss and a
@@ -153,8 +154,50 @@ def test_a_note_states_the_gate_its_own_sampler_gets(path):
         assert custom and custom in note
         assert gen_templates.GATE not in note
     # The automatic gate is promised only where a render reaches it.
-    if "runs the identity gate" in note or gen_templates.GATE in note:
+    if ("runs the identity gate" in note or gen_templates.GATE in note
+            or gen_templates.GATE_NOTHING in note):
         assert _auto_gated(doc)
+
+
+def test_the_nothing_to_compare_marks_name_every_slab_vouched_family():
+    """GATE_NOTHING stands only where nodes/gate_nothing_to_gate.py skips the proof renders."""
+    from dgx_monarch.capacity_fit import SLAB_VOUCHED_FAMILIES
+
+    assert set(gen_templates.VOUCHED_CHECKPOINT_MARKS) == set(SLAB_VOUCHED_FAMILIES)
+    sentence = gen_templates.GATE_NOTHING
+    assert "nothing to compare" in sentence and "no proof render" in sentence
+    assert "runs the identity gate" not in sentence
+
+
+def test_every_shipped_graph_the_driver_reads_as_nothing_to_compare_says_so():
+    """The converse: no qualifying graph still promises proof renders."""
+    stale = []
+    for name, spec in gen_templates.TEMPLATES.items():
+        if not gen_templates._nothing_to_compare(spec):
+            continue
+        note = _note(_doc(ROOT / "example_workflows" / f"{name}.json"))
+        if gen_templates.GATE in note or "runs the identity gate" in note:
+            stale.append(name)
+    assert stale == []
+
+
+@pytest.mark.parametrize("path", SHIPPED, ids=lambda path: path.stem)
+def test_a_nothing_to_compare_note_stands_on_a_graph_the_driver_skips(path):
+    doc = _doc(path)
+    note = _note(doc)
+    if gen_templates.GATE_NOTHING not in note:
+        return
+    assert gen_templates.GATE not in note and _auto_gated(doc)
+    kinds = {node["type"] for node in doc["nodes"]}
+    assert not kinds & {"DGXMonarchLoraLoader", "DGXMonarchUncondUNETLoader",
+                        "DGXMonarchIdentityGate"}
+    unets = [str(value).lower() for node in doc["nodes"]
+             if node["type"] == "DGXMonarchUNETLoader"
+             for value in node.get("widgets_values") or [] if isinstance(value, str)
+             and value.endswith((".safetensors", ".sft", ".gguf"))]
+    assert unets
+    marks = [mark for group in gen_templates.VOUCHED_CHECKPOINT_MARKS.values() for mark in group]
+    assert not [unet for unet in unets if any(mark in unet for mark in marks)]
 
 
 @pytest.mark.parametrize(("switch", "name", "sentence"), NO_GATE_SENTENCES,

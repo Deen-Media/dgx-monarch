@@ -256,7 +256,9 @@ LoRAs it holds, or one of them removed, reuses that host copy and does not.
 request before and after the relevant swap or reload cycle. Both outputs must
 be identical. When slab residency is active, the gate also compares a fresh
 stock-residency reference; automatic family detection can add another proof
-render. A gate run costs two to four short proof renders.
+render. A gate run costs two to four short proof renders. A graph with no
+LoRA stack whose model takes no slab residency has nothing to compare, so the
+automatic gate records that in the ledger and runs no proof render.
 
 **Auto-gating.** The first render of a new model, residency and LoRA
 combination runs the gate automatically, through any DGX Monarch sampler. A

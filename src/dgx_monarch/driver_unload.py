@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn
 
 from . import client_lease, mesh_safety, swap_credit
+from .driver_spend_price import DriverSpendCapacityError
 from .log import get_logger
 from .render_memory_price import RenderMemoryPriceError
 
@@ -54,9 +55,10 @@ DRIVER_UNLOAD_DISABLE_ENV = "DGXM_DISABLE_DRIVER_UNLOAD"
 
 # The render-site refusals priced against this host's MemAvailable. The render
 # memory refusal stays outside the stock-load family on purpose
-# (render_memory_price), so it is named beside it.
+# (render_memory_price), and so does a node's spend on the driver
+# (driver_spend_price), so both are named beside it.
 CAPACITY_REFUSALS: tuple[type[Exception], ...] = (
-    mesh_safety.StockLoadCapacityError, RenderMemoryPriceError)
+    mesh_safety.StockLoadCapacityError, RenderMemoryPriceError, DriverSpendCapacityError)
 
 # ComfyUI waits this long after a DynamicVRAM decommit before it reads free
 # memory again (execution.py, its RAM pressure branch); the re-read waits too.
@@ -66,6 +68,7 @@ _SETTLE_S = 0.05
 # frees the allocator cache, where ``hard`` would also unload every resident.
 TRIM_ENDPOINT = "clear_vram"
 TRIM_LEVEL = "soft"
+POOL_LEVEL = "pool"  # the device pool alone: the Worker keeps its resident decode VAE (the decode relief's ask)
 
 # Another render session that owns the mesh (an idle pipeline, say) fails the
 # trim's claim this fast instead of after the default claim wait.
@@ -301,7 +304,7 @@ def trimmable(handle: Any) -> bool:
         return False
 
 
-def trim_actors(handle: Any) -> Trimmed:
+def trim_actors(handle: Any, level: str = TRIM_LEVEL) -> Trimmed:
     """Ask every actor of ``handle`` to release its allocator cache.
 
     The call claims the mesh's render session, or joins the one active here
@@ -312,7 +315,7 @@ def trim_actors(handle: Any) -> Trimmed:
 
     before = mesh_safety.mem_available_bytes() or 0
     with mutation_render_session(handle, timeout_s=_TRIM_CLAIM_S):
-        answers = handle.call_all(TRIM_ENDPOINT, TRIM_LEVEL, timeout_s=_TRIM_TIMEOUT_S)
+        answers = handle.call_all(TRIM_ENDPOINT, level, timeout_s=_TRIM_TIMEOUT_S)
     time.sleep(_SETTLE_S)
     after = mesh_safety.mem_available_bytes() or 0
     return Trimmed(len(list(answers or ())), before, after)

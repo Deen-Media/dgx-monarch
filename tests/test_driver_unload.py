@@ -764,8 +764,20 @@ def test_the_rescue_reaches_a_worker_only_to_release_its_cache():
     assert len(calls) == 1
     endpoint, level = calls[0].args[:2]
     assert isinstance(endpoint, ast.Name) and endpoint.id == "TRIM_ENDPOINT"
-    assert isinstance(level, ast.Name) and level.id == "TRIM_LEVEL"
+    # The level is the caller's. The rescue names none and so takes the
+    # default, soft. The decode relief, the one caller outside this module,
+    # asks for less: the device pool alone, with the decode VAE kept.
+    assert isinstance(level, ast.Name) and level.id == "level"
+    trim = next(node for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == "trim_actors")
+    (default,) = trim.args.defaults
+    assert isinstance(default, ast.Name) and default.id == "TRIM_LEVEL"
+    own_calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                 and node.func.id == "trim_actors"]
+    assert own_calls and all(len(call.args) == 1 and not call.keywords for call in own_calls)
     assert (driver_unload.TRIM_ENDPOINT, driver_unload.TRIM_LEVEL) == ("clear_vram", "soft")
+    assert driver_unload.POOL_LEVEL == "pool"
     attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
     for name in ("call_one", "workers", "recycle_detailed", "capacity_quote", "slice",
                  "unload_all", "apply_worker_args"):

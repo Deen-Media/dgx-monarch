@@ -490,6 +490,9 @@ def publish_worker_capabilities(handle: Any, results: list) -> None:
     reports = []
     for report in results:
         log.info("worker up: %s", report)
+        if isinstance(report, dict) and report.get("switches"):  # never silent: actor/worker_switches.py
+            log.warning("Worker switches set on %s: %s. Remove them when the diagnosis is done (docs/CLUSTER.md)",
+                        report.get("host"), ", ".join(map(str, report["switches"])))
         if isinstance(report, dict):
             reports.append(report)
     handle.worker_capabilities = reports

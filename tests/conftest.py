@@ -176,6 +176,29 @@ def _placeholder_hosts_get_the_hosted_runner_answer(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _the_decode_reliefs_note_of_a_fleet_ends_with_the_test():
+    """``vae_decode_relief`` keeps a weak note of the fleet a render was last submitted to: process state.
+
+    A fake fleet a render-submit test left in it would reach the relief's own tests in another order.
+    """
+    yield
+    relief = sys.modules.get("dgx_monarch.vae_decode_relief")
+    if relief is not None:
+        relief.note_serving(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_test_takes_the_switches_left_on_this_box(monkeypatch):
+    """A Worker reads ``~/.config/dgx-monarch/worker.env`` as it starts (``actor/worker_switches.py``).
+
+    A test that builds a Worker must not take the diagnostic switches a person left on this box.
+    """
+    from dgx_monarch.actor import worker_switches
+
+    monkeypatch.setattr(worker_switches, "FILE", Path("/nonexistent-dgxm-test") / "worker.env")
+
+
+@pytest.fixture(autouse=True)
 def _source_only_imports_end_with_the_test():
     """Restore import flags and environment after source-only worker tests.
 
