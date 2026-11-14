@@ -406,8 +406,12 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   ([record](#release-test-v5-f297c70)).
 - **NOT RUN:** the build and install check on the build this release ships;
   the ComfyUI 0.45.0 rows that compare against one GPU or run under
-  comfy-managed residency ([record](#comfyui-0450)); the MiniMax-H3-Image row
-  its record lists ([record](#minimax-h3-image)); the Worker-assisted VAE
+  comfy-managed residency ([record](#comfyui-0450)); the MiniMax-H3-Image rows
+  its record lists as NOT RUN: the two templates as shipped under `auto`, the
+  expander's picture stage, the empty expander's refusal, the edit template in
+  the browser, the gate's two proof paths, cfg2 and dp2, the other text
+  encoders, the sweep cells and a LoRA with a head-bank key
+  ([record](#minimax-h3-image)); the Worker-assisted VAE
   decode split for LTX 2.3, a MiniMax H3 decode with less than 512 MiB free
   on one side, and whether its 2 GiB reply budget binds; the BF16 rescue on
   the pair under `DGXM_AUTO_RESCUE=1`, and through the Auto-allow toggle on
