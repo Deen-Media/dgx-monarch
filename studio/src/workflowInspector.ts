@@ -3,6 +3,7 @@ import type { Inspection, Workflow } from './contracts';
 import { droppedInspection, type InspectionGuard } from './inspectionGuard.ts';
 import { stampIssues } from './issueRefresh.ts';
 import type { Binding, Draft } from './model';
+import { freshGraphFields } from './model.ts';
 import type { ObjectInfo } from './workflowGraph.ts';
 import { fittedOperation, workflowTraits } from './workflowTraits.ts';
 
@@ -30,10 +31,11 @@ export function bindingValues(bindings: Binding[], priorValues?: Draft['values']
 /**
  * Resolve editable bindings once; connected sockets stay owned by the graph. Prior draft values
  * travel with the workflow, so an edited dynamic choice lists its own child inputs. A newly loaded
- * workflow, which has no prior values, takes `fit`: the draft keeps its operation when the graph
- * supports it, and otherwise takes the graph's first supported one (fittedOperation). `fit` reads
- * the draft's operation when the request starts and again when the answer arrives, so a choice
- * made while the request runs stays as it is.
+ * workflow, which has no prior values, starts without the previous graph's style inputs and LoRA
+ * insertion targets (freshGraphFields), and takes `fit`: the draft keeps its operation when the
+ * graph supports it, and otherwise takes the graph's first supported one (fittedOperation).
+ * `fit` reads the draft's operation when the request starts and again when the answer arrives, so
+ * a choice made while the request runs stays as it is.
  */
 export async function inspectDraft(
   client: StudioClient,
@@ -60,7 +62,13 @@ export async function inspectDraft(
     bindings,
     connections: result.connections ?? [],
     errors: result.errors ?? [],
-    patch: { workflow: original, workflowName: name, values, ...(operation ? { operation } : {}) },
+    patch: {
+      ...(priorValues ? {} : freshGraphFields()),
+      workflow: original,
+      workflowName: name,
+      values,
+      ...(operation ? { operation } : {}),
+    },
     rawWorkflow: JSON.stringify(original, null, 2),
     controlTab: bindings.some((binding) => binding.prominent) ? 'inputs' : 'advanced',
   };

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import type { StudioClient } from './api.ts';
 import { bindingValues, inspectDraft, rebuildBindings } from './workflowInspector.ts';
 import { componentFunctions } from './renderHarness.js';
+import { droppedInspection, InspectionGuard } from './inspectionGuard.ts';
+import { emptyDraft } from './model.ts';
+import { loadWorkflow } from './workflowChoice.ts';
 
 test('inspection keeps graph-owned sockets out of draft values and preserves editable overrides', async () => {
   const workflow = { extra: { customMetadata: { retained: true } }, nodes: [] };
@@ -194,4 +197,86 @@ test('a rebuild yields to a newer inspection or another workflow and refuses a n
   moved.client = inspection(Promise.resolve(), []);
   await assert.rejects(reconnected, /companion connection changed/);
   assert.ok(await rebuildBindings(connection, new InspectionGuard(), () => draft, values));
+});
+
+// Run the shipped App inspect and changeDraft, with the shipped loadWorkflow the picker calls.
+const pickCode = await componentFunctions('./App.svelte', ['changeDraft', 'inspect']);
+const pickHarness = new Function(
+  'inspectDraft',
+  'InspectionGuard',
+  'droppedInspection',
+  'loadWorkflow',
+  'connection',
+  'initial',
+  `'use strict';
+  const guard = new InspectionGuard();
+  let draft = initial, undoDraft = null, workflowId = '', dirty = false;
+  let bindings = [], connections = [], bindingErrors = [], rawWorkflow = '', controlTab = '';
+  const errors = [], submission = { preview: null };
+  const $state = { snapshot: (value) => value };
+  const fail = (cause) => errors.push(String(cause));
+  const withBusy = async (action) => { try { await action(); } catch (cause) { fail(cause); } };
+  ${pickCode}
+  return { inspect, pick: (entry) => loadWorkflow(entry, inspect), view: () => ({ draft, errors }) };`,
+);
+
+test('a workflow picked by hand names none of the old graph; the same graph inspected again keeps its controls', async () => {
+  const controls = {
+    style_bindings: { prompt: 'old-graph:6:text', negative_prompt: 'old-graph:7:text' },
+    lora_insertion: {
+      loader: 'LoraLoader',
+      model_targets: [{ node_id: '9', input_name: 'model' }],
+      clip_targets: [{ node_id: '6', input_name: 'clip' }],
+    },
+  };
+  const user = {
+    styles: [{ id: 'style-ink', name: 'Ink', prompt: 'ink wash, {prompt}', enabled: true }],
+    lora_stack: [{ id: 'detail', name: 'detail', enabled: true, model_strength: 0.8 }],
+    project_id: 'project',
+    seed_policy: 'fixed',
+  };
+  const old = { id: 'old-graph', nodes: [] };
+  const connection = {
+    client: {
+      request: async (_path: string, body: { workflow: { id: string } }) => ({
+        workflow: body.workflow,
+        bindings: [
+          { id: `${body.workflow.id}:6:text`, resolved: true, value: 'a fox' },
+          { id: `${body.workflow.id}:7:text`, resolved: true, value: '' },
+        ],
+      }),
+    },
+    catalog: {},
+  };
+  const initial = { ...emptyDraft(), workflow: old, workflowName: 'Old', ...controls, ...user };
+  const app = pickHarness(
+    inspectDraft,
+    InspectionGuard,
+    droppedInspection,
+    loadWorkflow,
+    connection,
+    initial,
+  );
+  // A connect or a draft import inspects the current graph again with its values.
+  await app.inspect(old, 'Old', true);
+  let { draft } = app.view();
+  assert.deepEqual(
+    { style_bindings: draft.style_bindings, lora_insertion: draft.lora_insertion },
+    controls,
+  );
+  await app.pick({
+    id: 'new',
+    name: 'New',
+    title: 'New',
+    workflow: { id: 'new-graph', nodes: [] },
+  });
+  ({ draft } = app.view());
+  assert.deepEqual(app.view().errors, []);
+  assert.equal(draft.workflowName, 'New');
+  assert.deepEqual(draft.values, { 'new-graph:6:text': 'a fox', 'new-graph:7:text': '' });
+  assert.equal(draft.style_bindings, undefined);
+  assert.equal(draft.lora_insertion, undefined);
+  const { styles, lora_stack, project_id, seed_policy } = draft;
+  assert.deepEqual({ styles, lora_stack, project_id, seed_policy }, user);
+  assert.equal(JSON.stringify(draft).includes('old-graph'), false);
 });
