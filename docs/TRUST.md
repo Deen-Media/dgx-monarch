@@ -746,7 +746,12 @@ copied from historical evidence.
     `no_material_revocation` marker on the Fleet and explicit-on rows written
     with it, with no LoRA stack and no lever taken. That gate ran no slab
     residency, so it holds nothing against a rescue; the marker grants no gate
-    skip. That reading is
+    skip. The newest row of each context decides: in one context a newer
+    verdict that compared nothing supersedes an older unproven one, as a newer
+    stock-reference row or PASS does; a FAIL is lifted only by a later bound
+    PASS
+    ([`test_consent_wiring.py:1607-1627`](../tests/test_consent_wiring.py#L1607-L1627 "anchor:test_the_newest_row_of_a_context_decides_and_only_a_pass_lifts_a_fail")).
+    That reading is
     [`consent_quarantine.py:144-162`](../src/dgx_monarch/nodes/consent_quarantine.py#L144-L162 "anchor:compared_nothing"),
     covered by
     [`test_consent_wiring.py:1486-1495`](../tests/test_consent_wiring.py#L1486-L1495 "anchor:test_a_no_material_verdict_reads_clear_for_a_rescue") and

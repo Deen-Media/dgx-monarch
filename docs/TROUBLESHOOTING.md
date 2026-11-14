@@ -2668,7 +2668,10 @@ premise of the rescue ([#5](#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc)).
 The other, since 1.5, is a gate that had nothing to compare (no LoRA stack, no
 slab residency; [#66](#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)):
 it ran no slab residency, so it holds nothing against loading the checkpoint
-slab-resident. List and
+slab-resident. The newest row of each context decides: in one context a newer
+verdict that compared nothing supersedes an older unproven one, as a newer
+stock-reference row or PASS does; a FAIL is lifted only by a later bound PASS.
+List and
 accept read a card's evidence as the refusal that raised it did, so an unknown
 read is asked again under the load's own capability and a card the refusal
 offered is a card the panel lists. Later INCONCLUSIVE or RETESTING cannot

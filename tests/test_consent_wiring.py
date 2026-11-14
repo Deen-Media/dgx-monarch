@@ -1601,3 +1601,27 @@ def test_a_headless_rescue_stays_denied_after_an_unproven_verdict(
     model = _Model(_Mesh({"slab_weights": "auto"}))
     assert consent_projection.project_for_render(model) is False
     assert model.mesh.worker_args["slab_weights"] == "auto"
+
+
+@pytest.mark.parametrize(("older", "state"), [("unproven", "clear"), ("FAIL", "fail")])
+def test_the_newest_row_of_a_context_decides_and_only_a_pass_lifts_a_fail(
+        checkpoint, _rig, older, state):
+    """In one context a newer verdict that compared nothing supersedes an older
+    unproven one; an older FAIL stands until a later bound PASS."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import GATE_CONTEXT, write_ceremony_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    ledger = GateLedger(str(_rig))
+    if older == "FAIL":
+        ledger.record(combo, artifacts, "deadbeef", "FAIL",
+                      {"quarantine_levers": ["slab_weights"]}, GATE_CONTEXT)
+    else:
+        write_ceremony_rows(ledger, combo, artifacts, kind="unproven", rendered=False)
+    write_ceremony_rows(ledger, combo, artifacts, rendered=False)  # same context, newer
+    decision = _load_decision(checkpoint)
+    assert decision.state == state
+    if older == "FAIL":
+        assert decision.reason == consent_quarantine._QUARANTINE_REASON
+        ledger.record(combo, artifacts, "deadbeef", "PASS", context=GATE_CONTEXT)
+        assert _load_decision(checkpoint).state == "clear"

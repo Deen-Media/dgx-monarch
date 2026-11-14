@@ -35,9 +35,11 @@
   same row came back. A check that ran no LoRA stack and no slab residency
   holds nothing against slab residency, so the consent read now treats it as
   clear. The Fleet and explicit-on rows carry a `no_material_revocation`
-  marker for that read and still grant no skip; an unproven INCONCLUSIVE and
-  a FAIL deny as before, in the same words. CPU tests on the real ledger; not
-  yet run on hardware
+  marker for that read and still grant no skip; an unproven INCONCLUSIVE that
+  is the newest row of its context, and every FAIL, deny as before, in the
+  same words. In one context a newer verdict that compared nothing supersedes
+  an older unproven one; a FAIL is lifted only by a later bound PASS. CPU
+  tests on the real ledger; not yet run on hardware
   ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
 
 - A re-queue in the same driver can no longer encode or load on the driver

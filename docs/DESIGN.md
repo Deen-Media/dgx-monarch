@@ -2090,8 +2090,11 @@ and explicit-on slab rows a rendering ceremony writes beside it carry
 (`consent_quarantine.compared_nothing`, since 1.5, 2026-11-13). The marker
 grants no gate skip: `row_grants_skip` reads only the kind, so those contexts
 still run their own gate on first use. A FAIL keeps precedence over both
-exceptions. Rows from another release or source build were never read as
-denials here: they read unknown, and the load's own scope then decides.
+exceptions. The newest row of each context decides, as for every verdict: a
+later no-material verdict in the same context lifts an earlier unproven one,
+as a later stock-reference row or PASS does, and only a bound PASS lifts a
+FAIL. Rows from another release or source build were never read as denials
+here: they read unknown, and the load's own scope then decides.
 
 **What the loader asks the ledger, and in what order.** The loader checks the
 ledger before resolving consent and again when applying it. Both checks first
