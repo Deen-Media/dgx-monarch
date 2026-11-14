@@ -6,11 +6,12 @@ Context-scoped records expire for both readers when the gate protocol or
 package version changes. Older unscoped records retain their quarantine.
 
 A FAIL copied to an equivalent slab context applies only when the original
-cross-residency comparison failed. One INCONCLUSIVE reads through: a ceremony
+cross-residency comparison failed. Two INCONCLUSIVEs read through. A ceremony
 whose slab legs agreed and whose stock reference a typed class C capacity
 refusal kept from loading, with no LoRA stack, holds nothing against slab
 residency; it records the premise of a capacity rescue (docs/DESIGN.md, "Where
-the ceremony cannot help").
+the ceremony cannot help"). A gate that had nothing to compare (no LoRA stack,
+no slab residency) holds nothing against it either (``compared_nothing``).
 """
 from __future__ import annotations
 
@@ -140,6 +141,27 @@ def stock_reference_unavailable(entry: Mapping[str, Any]) -> bool:
             and classification_class(entry.get("capacity_detail")) == "C")
 
 
+def compared_nothing(entry: Mapping[str, Any]) -> bool:
+    """Whether one INCONCLUSIVE row records only that its gate had nothing to compare.
+
+    The exercised row of a no-material verdict carries the kind, and the Fleet
+    and explicit-on slab rows the same ceremony wrote carry its revocation
+    marker (``gate_inconclusive.revocation_detail``). That ceremony ran no slab
+    residency and no LoRA stack, so the row holds nothing against a rescue: it
+    says less than no row at all, which reads clear. A row from before the
+    marker, or from another build, is not bound to this one and reads unknown
+    as before.
+    """
+    from .gate_inconclusive import KIND_NO_MATERIAL, RESULT_KEY, REVOKED_BY_NO_MATERIAL
+
+    loras = entry.get("loras")
+    return (entry.get("verdict") == "INCONCLUSIVE"
+            and type(loras) is int and loras == 0
+            and entry.get("quarantine_levers") == []
+            and (entry.get(RESULT_KEY) == KIND_NO_MATERIAL
+                 or entry.get(REVOKED_BY_NO_MATERIAL) is True))
+
+
 def quarantine_query(combo_key_value: object, artifacts: Any,
                      capability_context: object = None) -> QuarantineQuery:
     """Normalize one consent/gate join without losing the legacy digest alias."""
@@ -247,7 +269,8 @@ def _scope_decision(rows: Sequence[tuple[int, dict[str, Any]]], damage: int,
     if verdict == "RETESTING":
         return _RETESTING
     if verdict == "INCONCLUSIVE":
-        return _CLEAR if stock_reference_unavailable(latest) else _INCONCLUSIVE
+        return (_CLEAR if stock_reference_unavailable(latest) or compared_nothing(latest)
+                else _INCONCLUSIVE)
     if verdict != "PASS":
         return _UNKNOWN_VERDICT
     return _CLEAR

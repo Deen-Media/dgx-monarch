@@ -257,14 +257,10 @@ def publish_ceremony_verdict(
                   **({"cross_mode": cross_mode["verdict"]} if cross_mode else {}),
                   **({"capacity_detail": cross_mode.get("capacity_detail")}
                      if cross_mode and cross_mode["verdict"] == "CAPACITY" else {})}
-        ledger.record(key, artifacts, commit, verdict,
-                      runtime["_gate_inconclusive"].ledger_detail(detail, result), capability_context)
-        if not fsdp_proof_scope:
-            ledger.record(
-                key, artifacts, commit, verdict, detail, fleet_capability_context)
-        for sibling in sibling_contexts:
-            ledger.record(key, artifacts, commit, verdict,
-                          {**detail, "stamped": "slab-mode-equivalence"}, sibling)
+        record_verdict_rows(
+            runtime, ledger, key, artifacts, commit, verdict, detail, result,
+            capability_context,
+            None if fsdp_proof_scope else fleet_capability_context, sibling_contexts)
         runtime["record_ceremony_certificate"](
             ledger, key, artifacts, commit, cross_mode, capability_context, detail)
         if verdict == "INCONCLUSIVE" and not fsdp_proof_scope:
@@ -272,10 +268,34 @@ def publish_ceremony_verdict(
             # RETESTING row it supersedes.
             runtime["_gate_inconclusive"].settle_stock_reference_unavailable(
                 model, result, detail)
-        report_row = {k: v for k, v in result.items()
-                      if k != "latent" and not k.startswith("_")}
-        with open(os.path.join(runtime["_ledger_dir"](), "dgxm_gate_reports.jsonl"), "a") as f:
-            f.write(json.dumps(report_row) + "\n")
+        append_report_row(runtime, result)
     except Exception as exc:
         safe_call(runtime["log"].warning, "could not persist identity-gate verdict: %r", exc)
     return result
+
+
+def record_verdict_rows(runtime: Mapping[str, Any], ledger: Any, key: str, artifacts: Any,
+                        commit: Any, verdict: str, detail: dict, result: Mapping[str, Any],
+                        capability_context: Any, fleet_capability_context: Any | None,
+                        sibling_contexts: list) -> None:
+    """The ledger rows one verdict writes: the context it exercised, the Fleet
+    context (None under an FSDP proof scope, which has none), and every
+    explicit-on slab sibling. Shared with nodes/gate_nothing_to_gate.py, which
+    passes neither, so its no-render verdict writes the exercised row this way
+    and revokes nothing it did not exercise."""
+    classified = runtime["_gate_inconclusive"]
+    ledger.record(key, artifacts, commit, verdict,
+                  classified.ledger_detail(detail, result), capability_context)
+    revocation = classified.revocation_detail(detail, result)
+    if fleet_capability_context is not None:
+        ledger.record(key, artifacts, commit, verdict, revocation, fleet_capability_context)
+    for sibling in sibling_contexts:
+        ledger.record(key, artifacts, commit, verdict,
+                      {**revocation, "stamped": "slab-mode-equivalence"}, sibling)
+
+
+def append_report_row(runtime: Mapping[str, Any], result: Mapping[str, Any]) -> None:
+    """Append one gate report row: the result without its latent or private keys."""
+    report_row = {k: v for k, v in result.items() if k != "latent" and not k.startswith("_")}
+    with open(os.path.join(runtime["_ledger_dir"](), "dgxm_gate_reports.jsonl"), "a") as f:
+        f.write(json.dumps(report_row) + "\n")

@@ -4,6 +4,44 @@
 
 ### Everyday use
 
+- A graph with no LoRA stack whose model takes no slab residency no longer
+  pays two proof renders before its first render. The first-use gate could
+  only record that there was nothing to compare there, and that verdict
+  grants nothing: the render runs on stock residency either way. To reach it,
+  the gate unloaded every rank, loaded the file and rendered twice at the
+  graph's own shape, on every fresh ledger: 585.8 s on a pair for a MiniMax
+  H3 still guide at 896x1152 and 362 frames (2026-11-13). Slab residency is
+  `auto` by default and engages only on Krea 2 and Flux 2, so 59 of the 75
+  shipped templates paid this on first use. Where the driver reads one
+  model, no LoRA stack, `comfy_managed` off, no FSDP layout, no live
+  capacity-rescue consent, and `slab_weights` off or `auto` on a family
+  outside those two, the gate now runs without its renders: the capacity
+  check, then every rank unloads and loads the file, and the Workers' swap
+  cycle on the empty stack decides, under the same all-rank attestation as
+  the full check. A no-material answer writes one ledger row, for the context
+  the render uses, marked as rendered nothing; any other answer runs the full
+  check. The Identity Gate node always renders. The 54 of those templates
+  whose notes promised the proof renders now say none run. Not yet run on
+  hardware
+  ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+
+- Fix: a first-use check that compared nothing no longer blocks a later
+  capacity rescue. Its INCONCLUSIVE row, and the Fleet and explicit-on rows a
+  rendering check writes beside it, made the slab-residency rescue read as
+  denied for that model: the loader offered no card, the panel refused one,
+  and the auto-rescue toggle and the rescue variables did nothing, with "the
+  identity gate was INCONCLUSIVE for these exact artifacts ... until a later
+  explicit PASS". Running the Identity Gate node did not lift it, because the
+  same row came back. A check that ran no LoRA stack and no slab residency
+  holds nothing against slab residency, so the consent read now treats it as
+  clear. The Fleet and explicit-on rows carry a `no_material_revocation`
+  marker for that read and still grant no skip; an unproven INCONCLUSIVE that
+  is the newest row of its context, and every FAIL, deny as before, in the
+  same words. In one context a newer verdict that compared nothing supersedes
+  an older unproven one; a FAIL is lifted only by a later bound PASS. CPU
+  tests on the real ledger; not yet run on hardware
+  ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+
 - A re-queue in the same driver can no longer encode or load on the driver
   with nothing priced before it. ComfyUI keeps the UNET Loader's output while
   nothing upstream of it changes, so a queue that changed only a guide's file,

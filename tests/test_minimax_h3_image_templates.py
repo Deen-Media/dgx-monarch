@@ -695,7 +695,9 @@ def test_the_note_names_the_files_the_topologies_the_gate_and_the_record(name):
         assert file in note
     assert "auto asks for sequence-parallel (uly2) on a configured pair" in note
     assert "a world of one GPU runs stock ComfyUI's forward" in note
-    assert gen_templates.GATE in note and gen_templates.DERIVED in note
+    # No LoRA stack and a family outside the slab-vouched set: the gate has
+    # nothing to compare, and the note says so (nodes/gate_nothing_to_gate.py).
+    assert gen_templates.GATE_NOTHING in note and gen_templates.DERIVED in note
     assert "docs/VALIDATION.md, under MiniMax-H3-Image" in note and "NOT RUN" in note
     assert "ComfyUI 0.45.0 or newer" in note
     assert "ModelSamplingMiniMaxH3 (DGX Monarch) refuses this family" in note

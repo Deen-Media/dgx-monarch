@@ -159,10 +159,11 @@ def gate_started(state: str, torch_change: str | None = None) -> None:
         "gate",
         "auto-gate: this model+stack combination is "
         f"{torch_change or _GATE_REASON.get(state, _GATE_STALE)}, so the identity gate runs "
-        "once now: 2-4 short proof renders (3 or 4 under slab residency), then "
+        "once now: 2-4 short proof renders (3 or 4 under slab residency; none on a "
+        "graph with no LoRA stack whose model takes no slab residency), then "
         "your render. Later renders of this combination skip the gate. To turn "
         "the gate off, set auto_gate=off on the Init node",
-        "identity gate running (2-4 proof renders)",
+        "identity gate running (up to 4 proof renders)",
         sticky=True,
     )
 
@@ -216,6 +217,11 @@ _GATE_DONE_RESCUED = ("Stock residency cannot load this checkpoint, so there is 
                       "but with no accuracy verdict (docs/TROUBLESHOOTING.md #5)")
 
 
+# nodes/gate_inconclusive.BASIS_KEY, spelled here so this leaf imports no node
+# module; tests/test_gate_nothing_to_gate.py holds the two equal.
+NO_MATERIAL_BASIS_KEY = "no_material_basis"
+
+
 def gate_finished(result: dict | None, capacity_stop: bool = False) -> None:
     """Close the identity-check window and report elapsed time without raising.
 
@@ -248,6 +254,19 @@ def gate_finished(result: dict | None, capacity_stop: bool = False) -> None:
             "residency or is refused",
             "gate did not finish, optimized residency off",
             severity="warn",
+        )
+        return
+    if result.get(NO_MATERIAL_BASIS_KEY) is not None:
+        # The Workers stamped nothing to compare with no proof render around it
+        # (nodes/gate_nothing_to_gate.py).
+        notice(
+            "gate_done",
+            "auto-gate: the identity gate ran no proof render: this graph has no LoRA "
+            "stack and the Workers hold its model without slab residency, so there is "
+            "nothing to compare. INCONCLUSIVE (nothing to gate) is recorded; your "
+            "render runs on stock residency and starts now, and later renders of this "
+            "combination skip the gate",
+            "gate: nothing to compare, no proof render",
         )
         return
     verdict = str(result.get("verdict") or "?")

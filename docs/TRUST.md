@@ -345,13 +345,15 @@ copied from historical evidence.
    sibling row at all, so the untested explicit-`on` capability keeps the
    preflight `RETESTING` denial and re-gates on next use instead of taking a
    sticky `FAIL` it never earned. An `INCONCLUSIVE` that found nothing to gate
-   revokes the sibling rows in the ledger only. The process cache denies the
+   revokes the sibling rows in the ledger only. The automatic path's no-render
+   form of that verdict (`nodes/gate_nothing_to_gate.py`) opens no retest and
+   writes the exercised row alone, so it touches no sibling. The process cache denies the
    one context that ceremony exercised; the sibling contexts lose the retest
    guard's denial the ceremony opened on them and any session `PASS` the row
    revoked, and gain no denial. The first explicit-`on` or Fleet render of the
    combination then runs its own ceremony instead of taking a quarantine from a
    ceremony that never ran slab residency (see
-   [`gate_inconclusive.py:274-288`](../src/dgx_monarch/nodes/gate_inconclusive.py#L274-L288 "anchor:session_denial_tokens")). A sibling `FAIL` row written before the cross-leg rule
+   [`gate_inconclusive.py:295-309`](../src/dgx_monarch/nodes/gate_inconclusive.py#L295-L309 "anchor:session_denial_tokens")). A sibling `FAIL` row written before the cross-leg rule
    retires with the protocol and package binding above;
    [docs/TROUBLESHOOTING.md #81](TROUBLESHOOTING.md#81-explicit-slab-residency-still-reads-quarantined-after-a-lora-only-gate-fail) carries the operator recovery. Coverage for the
    cross-leg boundary is
@@ -360,7 +362,7 @@ copied from historical evidence.
    [`slab_proof.py:23-90`](../src/dgx_monarch/nodes/slab_proof.py#L23-L90 "anchor:_cycle_state") and
    [`gate_identity.py:523-582`](../src/dgx_monarch/nodes/gate_identity.py#L523-L582 "anchor:equivalent_slab_mode_contexts")
    and the rows are written at
-   [`gate_verdict.py:208-264`](../src/dgx_monarch/nodes/gate_verdict.py#L208-L264 "anchor:publish_ceremony_verdict"). Positive,
+   [`gate_verdict.py:208-257`](../src/dgx_monarch/nodes/gate_verdict.py#L208-L257 "anchor:publish_ceremony_verdict"). Positive,
    reverse, config-supplied-auto, and unvouched cases are covered by
    [`test_gate_orchestration.py:1767-1798`](../tests/test_gate_orchestration.py#L1767-L1798 "anchor:test_cross_mode_reference_passes_and_restores_slab")
    and
@@ -387,7 +389,7 @@ copied from historical evidence.
    [`mesh_safety.py:261-262`](../src/dgx_monarch/mesh_safety.py#L261-L262 "anchor:StockLoadCapacityError"),
    [`mesh_safety.py:265-269`](../src/dgx_monarch/mesh_safety.py#L265-L269 "anchor:is_stock_load_capacity_error"),
    [`driver_footprint.py:103-103`](../src/dgx_monarch/driver_footprint.py#L103-L103 "anchor:DriverFootprintCapacityError"), and
-   [`gate_verdict.py:74-109`](../src/dgx_monarch/nodes/gate_verdict.py#L74-L109 "anchor:publish_ceremony_verdict"). A driver-side
+   [`gate_verdict.py:74-102`](../src/dgx_monarch/nodes/gate_verdict.py#L74-L102 "anchor:publish_ceremony_verdict"). A driver-side
    refusal raised inside a first-use leg is covered by
    [`test_driver_footprint_preflight.py:536-585`](../tests/test_driver_footprint_preflight.py#L536-L585 "anchor:test_a_gate_leg_reports_it_as_capacity_with_the_numbers_intact").
    Typed, wrapped, and generic-OOM cases are covered by
@@ -422,7 +424,7 @@ copied from historical evidence.
    verdict binding are
    [`gate_fsdp_cycle.py:59-193`](../src/dgx_monarch/actor/gate_fsdp_cycle.py#L59-L193 "anchor:run"),
    [`gate_fsdp.py:305-469`](../src/dgx_monarch/nodes/gate_fsdp.py#L305-L469 "anchor:establish"), and
-   [`gate_verdict.py:128-243`](../src/dgx_monarch/nodes/gate_verdict.py#L128-L243 "anchor:publish_ceremony_verdict"), with coverage in
+   [`gate_verdict.py:128-236`](../src/dgx_monarch/nodes/gate_verdict.py#L128-L236 "anchor:publish_ceremony_verdict"), with coverage in
    [`test_gate_fsdp_cycle_unit.py:61-87`](../tests/test_gate_fsdp_cycle_unit.py#L61-L87 "anchor:test_fsdp_reload_cycle_proves_one_fresh_ready_non_slab_load"),
    [`test_gate_fsdp_proof.py:63-67`](../tests/test_gate_fsdp_proof.py#L63-L67 "anchor:test_fsdp_reload_proof_accepts_complete_exact_rank_evidence"), and
    [`test_gate_orchestration.py:2236-2267`](../tests/test_gate_orchestration.py#L2236-L2267 "anchor:test_fsdp_no_lora_clean_reload_can_earn_exact_capability_pass").
@@ -497,7 +499,7 @@ copied from historical evidence.
    disables `slab_weights`; an in-mode lazy-swap
    divergence disables `lora_low_rss`; both findings disable both. Lever
    selection and attempted row detail are
-   [`gate_verdict.py:163-254`](../src/dgx_monarch/nodes/gate_verdict.py#L163-L254 "anchor:publish_ceremony_verdict"). A later
+   [`gate_verdict.py:163-247`](../src/dgx_monarch/nodes/gate_verdict.py#L163-L247 "anchor:publish_ceremony_verdict"). A later
    session reads the verdict and exact row together before setup, uses the
    lever list only as diagnosis, and dispatches that combination with both
    `slab_weights` and `lora_low_rss` off, plus `comfy_managed` when the graph
@@ -739,8 +741,23 @@ copied from historical evidence.
     state, and damage still deny, except an `INCONCLUSIVE` that records only a
     stock reference that cannot load: a typed class C capacity refusal, slab
     legs that agreed, and no LoRA stack (DESIGN.md, "Where the ceremony cannot
-    help"). That reading is
-    [`consent_quarantine.py:122-140`](../src/dgx_monarch/nodes/consent_quarantine.py#L122-L140 "anchor:stock_reference_unavailable"),
+    help"), and, since 1.5 (2026-11-13), an `INCONCLUSIVE` of a gate that
+    compared nothing: its exercised row's `no_material` kind, or the
+    `no_material_revocation` marker on the Fleet and explicit-on rows written
+    with it, with no LoRA stack and no lever taken. That gate ran no slab
+    residency, so it holds nothing against a rescue; the marker grants no gate
+    skip. The newest row of each context decides: in one context a newer
+    verdict that compared nothing supersedes an older unproven one, as a newer
+    stock-reference row or PASS does; a FAIL is lifted only by a later bound
+    PASS
+    ([`test_consent_wiring.py:1607-1627`](../tests/test_consent_wiring.py#L1607-L1627 "anchor:test_the_newest_row_of_a_context_decides_and_only_a_pass_lifts_a_fail")).
+    That reading is
+    [`consent_quarantine.py:144-162`](../src/dgx_monarch/nodes/consent_quarantine.py#L144-L162 "anchor:compared_nothing"),
+    covered by
+    [`test_consent_wiring.py:1486-1495`](../tests/test_consent_wiring.py#L1486-L1495 "anchor:test_a_no_material_verdict_reads_clear_for_a_rescue") and
+    [`test_consent_wiring.py:1498-1513`](../tests/test_consent_wiring.py#L1498-L1513 "anchor:test_the_marker_rides_only_the_revocation_rows_and_grants_no_skip");
+    the capacity reading is
+    [`consent_quarantine.py:123-141`](../src/dgx_monarch/nodes/consent_quarantine.py#L123-L141 "anchor:stock_reference_unavailable"),
     covered by
     [`test_consent_rescue_keeps_slab.py:494-501`](../tests/test_consent_rescue_keeps_slab.py#L494-L501 "anchor:test_the_consent_reader_reads_through_only_a_typed_capacity_settlement") and
     [`test_consent_rescue_keeps_slab.py:387-420`](../tests/test_consent_rescue_keeps_slab.py#L387-L420 "anchor:test_a_consented_capacity_inconclusive_keeps_slab_and_renders_under_it").
@@ -755,7 +772,7 @@ copied from historical evidence.
     Pending/active API rows are projected against one such ledger scan, and
     a card whose first read is ambiguous is asked again under the load scope
     the refusal that raised it read, as `quarantine_decision_for_load` asks
-    ([`consent_quarantine.py:354-367`](../src/dgx_monarch/nodes/consent_quarantine.py#L354-L367 "anchor:offer_decisions"),
+    ([`consent_quarantine.py:377-390`](../src/dgx_monarch/nodes/consent_quarantine.py#L377-L390 "anchor:offer_decisions"),
     covered by
     [`test_consent_rescue_keeps_slab.py:518-541`](../tests/test_consent_rescue_keeps_slab.py#L518-L541 "anchor:test_the_card_is_offered_listed_and_accepted_after_a_capacity_verdict") and
     [`test_consent_rescue_keeps_slab.py:595-619`](../tests/test_consent_rescue_keeps_slab.py#L595-L619 "anchor:test_an_actor_offer_where_the_driver_holds_no_rank_becomes_a_card_to_accept")). GET
@@ -766,7 +783,7 @@ copied from historical evidence.
     governing FAIL preserves that state.
     A later current-source PASS permits a fresh consent, and the older FAIL
     then stays in the ledger only as audit history. These rules are implemented in
-    [`consent_quarantine.py:256-329`](../src/dgx_monarch/nodes/consent_quarantine.py#L256-L329 "anchor:quarantine_decisions") and
+    [`consent_quarantine.py:279-352`](../src/dgx_monarch/nodes/consent_quarantine.py#L279-L352 "anchor:quarantine_decisions") and
     [`consent_routes.py:144-172`](../src/dgx_monarch/nodes/consent_routes.py#L144-L172 "anchor:_live_rows"), and covered by
     [`test_consent_endpoints.py:479-497`](../tests/test_consent_endpoints.py#L479-L497 "anchor:test_accept_refuses_a_card_after_persisted_gate_fail"),
     [`test_consent_endpoints.py:500-521`](../tests/test_consent_endpoints.py#L500-L521 "anchor:test_consent_state_omits_quarantined_rows_without_mutating_them"),
@@ -777,7 +794,7 @@ copied from historical evidence.
     [`test_consent_endpoints.py:624-652`](../tests/test_consent_endpoints.py#L624-L652 "anchor:test_stale_contextual_pass_cannot_clear_compatible_historical_fail"),
     [`test_consent_endpoints.py:659-672`](../tests/test_consent_endpoints.py#L659-L672 "anchor:test_retesting_after_fail_preserves_quarantine_and_consumes_card"),
     [`test_consent_endpoints.py:675-696`](../tests/test_consent_endpoints.py#L675-L696 "anchor:test_inconclusive_after_fail_preserves_quarantine_and_revokes"),
-    [`test_consent_endpoints.py:699-729`](../tests/test_consent_endpoints.py#L699-L729 "anchor:test_foreign_source_terminal_cannot_mask_older_fail"),
+    [`test_consent_endpoints.py:725-755`](../tests/test_consent_endpoints.py#L725-L755 "anchor:test_foreign_source_terminal_cannot_mask_older_fail"),
     [`test_consent_wiring.py:399-421`](../tests/test_consent_wiring.py#L399-L421 "anchor:test_unscoped_pass_cannot_clear_unscoped_fail_for_live_projection"),
     [`test_consent_wiring.py:424-449`](../tests/test_consent_wiring.py#L424-L449 "anchor:test_stale_contextual_pass_cannot_clear_fail_for_live_projection"), and
     [`test_consent_wiring.py:453-475`](../tests/test_consent_wiring.py#L453-L475 "anchor:test_foreign_source_terminal_cannot_mask_fail_for_live_projection").
@@ -866,7 +883,7 @@ copied from historical evidence.
   uses stock residency rather than contradicting that revocation. This is
   enforced at
   [`auto_gate.py:286-495`](../src/dgx_monarch/nodes/auto_gate.py#L286-L495 "anchor:maybe_auto_gate") and, for the best-effort append,
-  [`gate_verdict.py:232-270`](../src/dgx_monarch/nodes/gate_verdict.py#L232-L270 "anchor:publish_ceremony_verdict"), covered by
+  [`gate_verdict.py:232-263`](../src/dgx_monarch/nodes/gate_verdict.py#L232-L263 "anchor:publish_ceremony_verdict"), covered by
   [`test_gate_ledger.py:491-526`](../tests/test_gate_ledger.py#L491-L526 "anchor:test_retest_guard_atomically_denies_every_context_until_exact_finals"),
   [`test_gate_ledger.py:1017-1044`](../tests/test_gate_ledger.py#L1017-L1044 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"),
   [`test_gate_orchestration.py:3278-3304`](../tests/test_gate_orchestration.py#L3278-L3304 "anchor:test_known_commit_pass_can_be_session_cached_when_persistence_fails"), and
@@ -885,7 +902,7 @@ copied from historical evidence.
   row. No-LoRA FSDP instead records only
   its exact normal `fsdp_clean_reload_v1` context; it cannot stamp Fleet or a
   residency sibling that the proof did not exercise. This is enforced at
-  [`gate_verdict.py:208-264`](../src/dgx_monarch/nodes/gate_verdict.py#L208-L264 "anchor:publish_ceremony_verdict") and
+  [`gate_verdict.py:208-257`](../src/dgx_monarch/nodes/gate_verdict.py#L208-L257 "anchor:publish_ceremony_verdict") and
   [`gate_identity.py:523-582`](../src/dgx_monarch/nodes/gate_identity.py#L523-L582 "anchor:equivalent_slab_mode_contexts"), with coverage
   in [`test_gate_orchestration.py:1767-1798`](../tests/test_gate_orchestration.py#L1767-L1798 "anchor:test_cross_mode_reference_passes_and_restores_slab")
   and
@@ -925,8 +942,13 @@ copied from historical evidence.
   ceremony had no material to compare also grants nothing: its render is
   submitted with both levers off by the same per-dispatch authorization, but it
   takes no lever from other combinations in the process, because it disproved
-  nothing about them
-  ([`gate_inconclusive.py:129-136`](../src/dgx_monarch/nodes/gate_inconclusive.py#L129-L136 "anchor:record_inconclusive"),
+  nothing about them. Since 1.5 (2026-11-13) the automatic path reaches that class without
+  proof renders where the driver reads no LoRA stack and no slab residency:
+  every rank unloads and loads the file inside the proof-cohort attestation,
+  and the Workers' empty-stack swap-cycle stamps go through the same v12
+  binding, `establish` and `classify` as a ceremony's; any other answer runs
+  the full ceremony
+  ([`gate_inconclusive.py:152-157`](../src/dgx_monarch/nodes/gate_inconclusive.py#L152-L157 "anchor:record_inconclusive"),
   [docs/TROUBLESHOOTING.md #66](TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)). Later renders read that classification from
   one of two stores. In this process it is a memo the verdict publication
   refreshes in the same locked step, for whichever ceremony published last, so
@@ -936,11 +958,11 @@ copied from historical evidence.
   proves: combination, artifact bytes, comfy commit, capability context, gate
   protocol, release, and package-source manifest. A row without the classification, a retest
   guard, and damage newer than the row each keep the ceremony
-  ([`gate_inconclusive.py:317-317`](../src/dgx_monarch/nodes/gate_inconclusive.py#L317-L317 "anchor:row_grants_skip")).
+  ([`gate_inconclusive.py:351-351`](../src/dgx_monarch/nodes/gate_inconclusive.py#L351-L351 "anchor:row_grants_skip")).
   Only the capability context the ceremony ran under is
   remembered; the Fleet scope and the explicit-on slab siblings revoked in the
   same transaction get no skip
-  ([`gate_inconclusive.py:265-265`](../src/dgx_monarch/nodes/gate_inconclusive.py#L265-L265 "anchor:remember_kind")).
+  ([`gate_inconclusive.py:286-286`](../src/dgx_monarch/nodes/gate_inconclusive.py#L286-L286 "anchor:remember_kind")).
   This is enforced at
   [`common.py:307-385`](../src/dgx_monarch/nodes/common.py#L307-L385 "anchor:run_render"),
   [`auto_gate.py:212-280`](../src/dgx_monarch/nodes/auto_gate.py#L212-L280 "anchor:auto_gate_required"),

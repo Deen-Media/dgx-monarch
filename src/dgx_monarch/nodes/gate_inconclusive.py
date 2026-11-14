@@ -114,6 +114,29 @@ def classify(
     return KIND_NO_MATERIAL
 
 
+# A no-material row the Workers' swap cycle stamped with no proof render
+# around it (nodes/gate_nothing_to_gate.py) says so under this key; a
+# ceremony's row carries none. Both are Worker evidence, and later queues read
+# them alike (row_grants_skip).
+BASIS_KEY = "no_material_basis"
+BASIS_NO_RENDER = "worker swap cycle, no proof render"
+
+
+def log_nothing_to_gate(origin: Any, model: Any, basis: str | None = None) -> None:
+    """The one INFO line for a no-material verdict, however it was reached.
+
+    ``basis`` is the driver's reason for taking the path with no proof render;
+    a ceremony that rendered passes none and logs the line it always did, word
+    for word.
+    """
+    decided = ("" if basis is None else
+               "; the Workers' swap cycle stamped this with no proof render, as the "
+               f"driver read the graph ({basis})")
+    log.info("identity gate: nothing to gate on this graph (%s, %s): no LoRA stack "
+             "and slab residency is not engaged, so there is nothing to compare%s; "
+             "INCONCLUSIVE recorded, residency levers unchanged", origin, model, decided)
+
+
 def record_inconclusive(
     result: dict,
     slab_proof: Any,
@@ -126,9 +149,7 @@ def record_inconclusive(
     result[RESULT_KEY] = kind
     origin, model = result.get("origin"), result.get("model")
     if kind == KIND_NO_MATERIAL:
-        log.info("identity gate: nothing to gate on this graph (%s, %s): no LoRA stack "
-                 "and slab residency is not engaged, so there is nothing to compare; "
-                 "INCONCLUSIVE recorded, residency levers unchanged", origin, model)
+        log_nothing_to_gate(origin, model)
         return kind
     reasons = "; ".join(result.get("inconclusive_reasons") or ())
     if result.get("proof_kind") == "slab_cross_residency":
@@ -306,6 +327,19 @@ def ledger_detail(detail: dict, ceremony: Mapping[str, Any]) -> dict:
     if not finished_no_material(ceremony):
         return detail
     return {**detail, RESULT_KEY: KIND_NO_MATERIAL}
+
+
+# On the Fleet and explicit-on slab rows a no-material ceremony writes. The
+# consent reader reads it as it reads the kind (consent_quarantine.compared_nothing);
+# row_grants_skip reads only the kind, so those contexts still re-gate on first use.
+REVOKED_BY_NO_MATERIAL = "no_material_revocation"
+
+
+def revocation_detail(detail: dict, ceremony: Mapping[str, Any]) -> dict:
+    """Mark the revocation rows of a ceremony that compared nothing."""
+    if not finished_no_material(ceremony):
+        return detail
+    return {**detail, REVOKED_BY_NO_MATERIAL: True}
 
 
 def row_grants_skip(lookup: GateLedgerLookup) -> bool:

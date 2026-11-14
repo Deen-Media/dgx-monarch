@@ -219,8 +219,17 @@ def _run_identity_ceremony_bound(model: ModelSpec, request: dict, latent: dict,
     # Both halves read this namespace at call time, which is why the imports
     # above stay bound here even where nothing in this file calls them.
     from .gate_ceremony import gather_ceremony_evidence
+    from .gate_nothing_to_gate import record_if_provable
     from .gate_verdict import publish_ceremony_verdict
 
+    # The automatic path only: where the driver reads nothing to compare, the
+    # Workers' empty-stack cycle settles it with no proof render (gate_nothing_to_gate).
+    skipped = record_if_provable(
+        runtime=globals(), model=model, request=request, latent=latent,
+        cfg_value=cfg_value, origin=origin, run_id=run_id, handle=handle,
+        fsdp_scope_state=fsdp_scope_state)
+    if skipped is not None:
+        return skipped
     evidence = gather_ceremony_evidence(
         runtime=globals(),
         model=model,

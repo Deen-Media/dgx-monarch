@@ -96,6 +96,77 @@ def test_each_custom_graph_gates_on_first_use_then_renders_and_skips_after(
     assert len(rows(tmp_path, REPORTS)) == 1
 
 
+def test_a_graph_the_driver_reads_as_nothing_to_compare_settles_with_no_proof_render(
+    monkeypatch, tmp_path,
+):
+    """The same queues as above with the driver's read answering (an unvouched
+    family, no consent): the Workers' empty-stack cycle settles the first use
+    and the later queues skip, through the real auto path and ledger
+    (nodes/gate_nothing_to_gate.py)."""
+    from dgx_monarch import first_render
+    from dgx_monarch.nodes import gate_nothing_to_gate
+
+    monkeypatch.setattr(gate_nothing_to_gate, "_family", lambda _model: ("ltx", False))
+    monkeypatch.setattr(gate_nothing_to_gate, "_rescue_consent_live", lambda _model: False)
+    notices: list[tuple[str, str]] = []
+    monkeypatch.setattr(first_render, "notice",
+                        lambda phase, message, note, **_kw: notices.append((phase, message)))
+    graph = doc(TEMPLATES / "dgx-monarch-ltx25-t2v.json")
+    latent = torch.zeros(1, 4, 8, 8)
+    handle, _topology, dispatched = mesh_rig(
+        monkeypatch, tmp_path, no_material_rows(), [latent.clone(), latent.clone()])
+    model = graph_model(graph)
+    # Each queue's gate decision through common._maybe_auto_gate: what it
+    # returned and the Worker calls it made.
+    decisions: list[tuple[str | None, list[str]]] = []
+    decide = common._maybe_auto_gate
+
+    def recorded(*args, **kwargs):
+        before = len(handle.calls)
+        verdict = decide(*args, **kwargs)
+        decisions.append((verdict, [method for method, _args in handle.calls[before:]]))
+        return verdict
+
+    monkeypatch.setattr(common, "_maybe_auto_gate", recorded)
+
+    queue(graph, model)
+
+    methods = [method for method, _args in handle.calls]
+    assert proof_renders(handle) == [] and dispatched[0]["proof_renders"] == []
+    assert methods.count("load_model") == 1 and methods.count("gate_swap_cycle") == 1
+    ((verdict, calls),) = decisions
+    assert verdict == gate_inconclusive.NO_MATERIAL_VERDICT
+    assert [call for call in calls if call in (
+        "provenance_baseline", "unload", "load_model", "gate_swap_cycle", "render")] == [
+        "provenance_baseline", "unload", "load_model", "gate_swap_cycle", "provenance_baseline"]
+    (report,) = rows(tmp_path, REPORTS)
+    assert report[gate_inconclusive.RESULT_KEY] == gate_inconclusive.KIND_NO_MATERIAL
+    assert report[gate_inconclusive.BASIS_KEY] == gate_inconclusive.BASIS_NO_RENDER
+    assert report["proof_renders"] == 0
+    (row,) = [row for row in rows(tmp_path, ledger_mod.LEDGER_NAME)
+              if row.get("verdict") == "INCONCLUSIVE"]
+    assert row[gate_inconclusive.RESULT_KEY] == gate_inconclusive.KIND_NO_MATERIAL
+    assert row[gate_inconclusive.BASIS_KEY] == gate_inconclusive.BASIS_NO_RENDER
+    (closing,) = [message for phase, message in notices if phase == "gate_done"]
+    assert "ran no proof render" in closing
+    (render,) = dispatched
+    assert render["request"]["kind"] == "custom"
+
+    # The next queue skips the gate, in this process and in a fresh one.
+    queue(graph, model)
+    fresh_process()
+    queue(graph, model)
+    methods = [method for method, _args in handle.calls]
+    assert methods.count("load_model") == 1 and methods.count("gate_swap_cycle") == 1
+    assert proof_renders(handle) == [] and len(dispatched) == 3
+    # The later decisions read the session verdict, then the real ledger row
+    # in a fresh process, and make no Worker call at all.
+    assert decisions[1:] == [(gate_inconclusive.NO_MATERIAL_VERDICT, [])] * 2
+    assert len(rows(tmp_path, REPORTS)) == 1
+    assert len([row for row in rows(tmp_path, ledger_mod.LEDGER_NAME)
+                if row.get("verdict") == "INCONCLUSIVE"]) == 1
+
+
 def test_a_lora_on_the_p_h3_image_route_earns_a_pass_and_a_residency_grant(
     monkeypatch, tmp_path,
 ):
