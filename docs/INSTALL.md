@@ -71,9 +71,10 @@ torch 2.15.0+cu132: on 2026-11-05 and 06 its ladder passed on the pair
 ([VALIDATION](VALIDATION.md#torch-2-15)) with cuDNN 9.26, Triton 3.9.0,
 torchvision 0.29.2 and torchaudio 2.11.1, and with NCCL 2.32.3 loaded through
 a symlink from the wheel's `libnccl.so.2` to a 2.32.3 build, in place of the
-2.30.7 torch 2.15 pins, and the template release test of dev `79bb47e`, the
-build of that day, then rendered 66 of 66 templates on it on 2026-11-06 and 07
-([VALIDATION](VALIDATION.md#release-test-2026-11-04)). Most of its other
+2.30.7 torch 2.15 pins, and release test v5, the release's own test, ran
+whole on it on dev `f297c70` on 2026-11-14: of 75 templates, 73 rendered in
+the main pass and the 2 LoRA templates in its second leg, with no error
+([VALIDATION](VALIDATION.md#release-test-v5-f297c70)). Most of its other
 hardware checks ran on torch 2.12.0+cu132, and the steps below complete with
 either build.
 

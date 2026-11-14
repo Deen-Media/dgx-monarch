@@ -296,14 +296,17 @@ see the later [selected-rail checks](#native-rdma).
 
 ## Release 1.5.0 checks
 
-**2026-10-28 to 2026-11-10, two DGX Sparks with GB10 GPUs, the head capped at
+**2026-10-28 to 2026-11-14, two DGX Sparks with GB10 GPUs, the head capped at
 2100 MHz throughout.** The hardware evidence for this release sits in the
 feature records below, each naming the commit it ran on. The first nine items
 ran through 2026-11-01, when the last code change was `4b71822`. The code has
 changed since, as the [changelog](../CHANGELOG.md) lists, and the later
-checks item names the records that followed. The release commit adds
-documentation and the version over them; it is not an exact-release-commit
-hardware retest.
+checks item names the records that followed. The release gate, release test
+v5, ran whole on dev `f297c70`, the last code change, on 2026-11-14 and
+passed ([record](#release-test-v5-f297c70)). The release commit differs from
+`f297c70` in documentation and in the version only: the version string in
+`src/dgx_monarch/__init__.py` and the test that pins it in
+`tests/test_cli.py`. It is not itself a hardware retest.
 
 - INT8 GEMM kernel, 2026-10-28 and 29
   ([record](#int8-gemm-kernel-comparison-2026-10-28-and-29)): the render
@@ -365,7 +368,10 @@ hardware retest.
   2026-11-06 a verified update moved both to `79bb47e`, with doctor at 50
   checks and 0 failures
   ([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
-- Later checks, 2026-11-03 to 2026-11-10, each on the commit its record
+  For release test v5 on 2026-11-14 both Workers ran `f297c70`, with doctor
+  at 51 checks and no failure before the pass, after its main pass and after
+  its second leg ([record](#release-test-v5-f297c70)).
+- Later checks, 2026-11-03 to 2026-11-14, each on the commit its record
   names: the other 32 cells of the 49-cell FP8 matrix
   ([record](#fp8-compute-paths-the-other-cells-2026-11-03)); Worker-assisted
   VAE decode on Wan 2.2 TI2V 5B and both HunyuanVideo VAEs
@@ -387,33 +393,33 @@ hardware retest.
   ([fused AdaLN](#fused-adaln-switch-other-families),
   [cfg2 rows](#campaign-k-equal-pairs)); the Anima reading of 2026-11-10
   against stock that led to its text branch fix
-  ([record](#anima-text-branch-fix)); and the
+  ([record](#anima-text-branch-fix)); the
   Studio browser round of 2026-11-03 on the bundle of that day
-  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-03)).
-- **NOT RUN:** the template release test on the build this release ships;
-  the build and install check on the build this release ships; the ComfyUI
-  0.45.0 rows, this release's floor ([record](#comfyui-0450)); every
-  MiniMax-H3-Image row ([record](#minimax-h3-image)); the Worker-assisted VAE
+  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-03));
+  the hardware of 2026-11-11 and the fixes it led to
+  ([record](#fixes-2026-11-11)); the passes and proof blocks on the dev builds
+  of 2026-11-11 to 14 ([record](#release-build-passes)); and release test v5,
+  first on `40af2d7`, where it found the p-h3-image regression
+  ([record](#release-test-v5-40af2d7)), then whole on `f297c70`, where it
+  passed: of 75 templates, 73 rendered in the main pass and the 2 LoRA
+  templates in its second leg, with no error
+  ([record](#release-test-v5-f297c70)).
+- **NOT RUN:** the build and install check on the build this release ships;
+  the ComfyUI 0.45.0 rows that compare against one GPU or run under
+  comfy-managed residency ([record](#comfyui-0450)); the MiniMax-H3-Image row
+  its record lists ([record](#minimax-h3-image)); the Worker-assisted VAE
   decode split for LTX 2.3, a MiniMax H3 decode with less than 512 MiB free
   on one side, and whether its 2 GiB reply budget binds; the BF16 rescue on
   the pair under `DGXM_AUTO_RESCUE=1`, and through the Auto-allow toggle on
   any layout; a Worker on ComfyUI 0.43 with context windows; a Studio browser
-  round on the bundle this release ships; UltraTex, which has no record on
-  this page; the Worker's context room and the driver's decode relief; the
-  swap credit and copy-free drop of a load that replaces a stock model; the
-  Ideogram 4 template with `sync_ulysses` on; the fixed Anima render against
-  stock and its uly2 speed against cfg2; the fused-norm re-read below 1024
-  square; the LoRA weights of a partly loaded one-GPU Worker; every layout at
-  world 4; and the full sweep runbook. The sample deadline, the actors' cache
-  release before a refusal, the gate's capacity check before its proof
-  render, compile_dit's eager families and the inductor cache have CPU tests
-  and no hardware record of their own. Each feature record below lists its
-  own rows that have not run. The hardware readings of 2026-11-11 and 12
-  that led to the driver's memory reading, its VAE encode and decode rules,
-  the Worker's context room and the classic bake price have no record on
-  this page; [DESIGN](DESIGN.md) and
-  [TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)
-  hold them.
+  round on the bundle this release ships; every layout at world 4; and the
+  full sweep runbook. The rows of the dev builds of 2026-11-11 to 14 that did
+  not run, the LoRA weights of a partly loaded one-GPU Worker among them, are
+  listed with their reasons ([record](#release-build-not-run)). The sample
+  deadline, the actors' cache release before a refusal, the gate's capacity
+  check before its proof render, compile_dit's eager families and the
+  inductor cache have CPU tests and no hardware record of their own. Each
+  feature record below lists its own rows that have not run.
 - Build and install, on `35f1486`, the release commit of 2026-11-01, in a
   disposable Python 3.12 venv that holds only `build` and `pip`:
   `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and
