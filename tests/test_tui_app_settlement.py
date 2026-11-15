@@ -6,10 +6,19 @@ import importlib
 import sys
 import types
 
+import pytest
+
+# Every test here imports the TUI under stand-in rich and textual modules (conftest says why it forgets them).
+pytestmark = pytest.mark.usefixtures("forget_modules_imported_here")
+
 
 def _app_module(monkeypatch):
     rich = types.ModuleType("rich")
     rich_text = types.ModuleType("rich.text")
+    # brand.py takes Console from rich.console; without it the file passed only where another collected test
+    # file had loaded brand with the real rich first.
+    rich_console = types.ModuleType("rich.console")
+    rich_console.Console = type("Console", (), {})
     textual = types.ModuleType("textual")
     textual_app = types.ModuleType("textual.app")
     textual_binding = types.ModuleType("textual.binding")
@@ -42,6 +51,7 @@ def _app_module(monkeypatch):
     textual_widgets.Static = Static
     monkeypatch.setitem(sys.modules, "rich", rich)
     monkeypatch.setitem(sys.modules, "rich.text", rich_text)
+    monkeypatch.setitem(sys.modules, "rich.console", rich_console)
     monkeypatch.setitem(sys.modules, "textual", textual)
     monkeypatch.setitem(sys.modules, "textual.app", textual_app)
     monkeypatch.setitem(sys.modules, "textual.binding", textual_binding)
