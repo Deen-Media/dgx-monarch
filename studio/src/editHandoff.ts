@@ -17,6 +17,7 @@ import {
   type GraphNode,
   type ObjectInfo,
 } from './workflowGraph.ts';
+import { freshGraphNotice } from './workflowInspector.ts';
 import { operationNeed, workflowTraits } from './workflowTraits.ts';
 
 const isObject = (value: unknown): value is Record<string, any> =>
@@ -242,6 +243,8 @@ export async function bindOutput(
     );
   const load = choice && workflow ? { workflow, name: choice.name } : null;
   const lineage = [artifact.id, receipt.id];
+  // A loaded workflow drops the draft's style input and insertion boundary; the notice says which.
+  const loaded = load ? freshGraphNotice(context.draft(), load.workflow, context.info()) : '';
   const next = editDraft(context.draft(), target, receipt.binding_value, lineage, load);
   await actions.importDraft(next, choice ? choice.id : context.workflowId());
   // An inspection that failed leaves no bindings and shows its own error.
@@ -253,7 +256,7 @@ export async function bindOutput(
   if (shown && !(shown.prominent || shown.display?.prominent)) actions.selectTab?.('advanced');
   actions.navigate('workspace');
   actions.setNotice(
-    `Send to edit put the output in the ${fieldLabel(target)} input on node ${target.node_id} of ${label} and set the Operation to Edit. Describe the change in the prompt, then Generate. Undo restores the previous draft.`,
+    `Send to edit put the output in the ${fieldLabel(target)} input on node ${target.node_id} of ${label} and set the Operation to Edit. Describe the change in the prompt, then Generate. Undo restores the previous draft.${loaded ? ` ${loaded}` : ''}`,
   );
 }
 

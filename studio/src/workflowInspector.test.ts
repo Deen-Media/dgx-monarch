@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { StudioClient } from './api.ts';
-import { bindingValues, inspectDraft, rebuildBindings } from './workflowInspector.ts';
+import { readFileSync } from 'node:fs';
+import {
+  bindingValues,
+  freshGraphNotice,
+  inspectDraft,
+  LORA_SLOT_CLASSES,
+  rebuildBindings,
+} from './workflowInspector.ts';
 import { componentFunctions } from './renderHarness.js';
+import { graph, recorded } from './workflowFixtures.js';
 import { droppedInspection, InspectionGuard } from './inspectionGuard.ts';
 import { emptyDraft } from './model.ts';
 import { loadWorkflow } from './workflowChoice.ts';
@@ -200,25 +208,30 @@ test('a rebuild yields to a newer inspection or another workflow and refuses a n
 });
 
 // Run the shipped App inspect and changeDraft, with the shipped loadWorkflow the picker calls.
-const pickCode = await componentFunctions('./App.svelte', ['changeDraft', 'inspect']);
+const pickCode = await componentFunctions('./App.svelte', ['changeDraft', 'inspect', 'setNotice']);
 const pickHarness = new Function(
   'inspectDraft',
   'InspectionGuard',
   'droppedInspection',
   'loadWorkflow',
+  'freshGraphNotice',
   'connection',
   'initial',
   `'use strict';
   const guard = new InspectionGuard();
-  let draft = initial, undoDraft = null, workflowId = '', dirty = false;
+  let draft = initial, undoDraft = null, workflowId = '', dirty = false, notice = '', error = '';
   let bindings = [], connections = [], bindingErrors = [], rawWorkflow = '', controlTab = '';
   const errors = [], submission = { preview: null };
   const $state = { snapshot: (value) => value };
   const fail = (cause) => errors.push(String(cause));
   const withBusy = async (action) => { try { await action(); } catch (cause) { fail(cause); } };
   ${pickCode}
-  return { inspect, pick: (entry) => loadWorkflow(entry, inspect), view: () => ({ draft, errors }) };`,
+  return { inspect, pick: (entry) => loadWorkflow(entry, inspect), view: () => ({ draft, errors, notice }) };`,
 );
+const BOTH_DROPPED =
+  'This workflow starts from its own values. Choose the prompt input for styles and the LoRA insertion boundary again.';
+const STACK_TAKES_OVER =
+  'This workflow has LoRAs of its own. At Generate, the LoRA stack replaces them by position, and those it does not reach run at strength 0. Remove the stack on the LoRAs tab to keep them.';
 
 test('a workflow picked by hand names none of the old graph; the same graph inspected again keeps its controls', async () => {
   const controls = {
@@ -254,17 +267,19 @@ test('a workflow picked by hand names none of the old graph; the same graph insp
     InspectionGuard,
     droppedInspection,
     loadWorkflow,
+    freshGraphNotice,
     connection,
     initial,
   );
   // A connect or a draft import inspects the current graph again with its values.
-  await app.inspect(old, 'Old', true);
+  assert.equal(await app.inspect(old, 'Old', true), '');
   let { draft } = app.view();
   assert.deepEqual(
     { style_bindings: draft.style_bindings, lora_insertion: draft.lora_insertion },
     controls,
   );
-  await app.pick({
+  assert.equal(app.view().notice, '', 'nothing is dropped, so nothing is said');
+  const said = await app.pick({
     id: 'new',
     name: 'New',
     title: 'New',
@@ -272,6 +287,9 @@ test('a workflow picked by hand names none of the old graph; the same graph insp
   });
   ({ draft } = app.view());
   assert.deepEqual(app.view().errors, []);
+  // The notice line names what the new workflow dropped, and the picker hands the same text on.
+  assert.equal(app.view().notice, BOTH_DROPPED);
+  assert.equal(said, BOTH_DROPPED);
   assert.equal(draft.workflowName, 'New');
   assert.deepEqual(draft.values, { 'new-graph:6:text': 'a fox', 'new-graph:7:text': '' });
   assert.equal(draft.style_bindings, undefined);
@@ -279,4 +297,110 @@ test('a workflow picked by hand names none of the old graph; the same graph insp
   const { styles, lora_stack, project_id, seed_policy } = draft;
   assert.deepEqual({ styles, lora_stack, project_id, seed_policy }, user);
   assert.equal(JSON.stringify(draft).includes('old-graph'), false);
+});
+
+test('the load notice names only the control the draft held, and a stack over LoRA slots of its own', () => {
+  const stack = [{ id: 'detail', name: 'detail', enabled: false, model_strength: 1 }];
+  const insertion = { loader: 'LoraLoader', model_targets: [], clip_targets: [] };
+  const slotless = graph('flux3-klein-base-edit');
+  const slotted = graph('kromoss-t2i-turbo');
+  const held = (change: object) => ({ ...emptyDraft(), ...change });
+  assert.equal(freshGraphNotice(held({}), slotless, recorded), '');
+  assert.equal(
+    freshGraphNotice(held({ style_bindings: { prompt: 'g:6:text' } }), slotless, recorded),
+    'This workflow starts from its own values. Choose the prompt input for styles again.',
+  );
+  // A choice cleared under Ordered prompt styles leaves an empty mapping, which holds nothing.
+  assert.equal(freshGraphNotice(held({ style_bindings: {} }), slotless, recorded), '');
+  assert.equal(
+    freshGraphNotice(held({ lora_insertion: insertion }), slotless, recorded),
+    'This workflow starts from its own values. Choose the LoRA insertion boundary again.',
+  );
+  assert.equal(
+    freshGraphNotice(
+      held({ style_bindings: { negative_prompt: 'g:7:text' }, lora_insertion: insertion }),
+      slotless,
+      recorded,
+    ),
+    BOTH_DROPPED,
+  );
+  // Any stack takes over the slots, even with every entry off; an empty one leaves them alone.
+  assert.equal(freshGraphNotice(held({ lora_stack: stack }), slotless, recorded), '');
+  assert.equal(freshGraphNotice(held({ lora_stack: stack }), slotted, recorded), STACK_TAKES_OVER);
+  assert.equal(freshGraphNotice(held({}), slotted, recorded), '');
+  // A workflow with LoRA loaders refuses or ignores a boundary, so the notice asks for none there.
+  const cleared =
+    'This workflow starts from its own values. This workflow has LoRAs of its own, so the LoRA insertion boundary is cleared.';
+  assert.equal(freshGraphNotice(held({ lora_insertion: insertion }), slotted, recorded), cleared);
+  assert.equal(
+    freshGraphNotice(held({ lora_insertion: insertion, lora_stack: stack }), slotted, recorded),
+    `${cleared} ${STACK_TAKES_OVER.replace('This workflow has LoRAs of its own. ', '')}`,
+  );
+  assert.equal(
+    freshGraphNotice(
+      held({ style_bindings: { prompt: 'g:6:text' }, lora_insertion: insertion }),
+      slotted,
+      recorded,
+    ),
+    'This workflow starts from its own values. Choose the prompt input for styles again. This workflow has LoRAs of its own, so the LoRA insertion boundary is cleared.',
+  );
+  // A bypassed loader is no slot: the companion compiles it out.
+  const bypassed = structuredClone(slotted);
+  for (const node of bypassed.nodes) if (LORA_SLOT_CLASSES.has(node.type)) node.mode = 4;
+  assert.equal(freshGraphNotice(held({ lora_stack: stack }), bypassed, recorded), '');
+});
+
+test("Studio's LoRA slot classes are the companion's", () => {
+  const source = readFileSync(
+    new URL('../../src/dgx_monarch/studio/lora_graph.py', import.meta.url),
+    'utf8',
+  );
+  const set = source.match(/^LORA_NODES = \{([^}]*)\}/m)![1];
+  assert.deepEqual(
+    [...set.matchAll(/"([^"]+)"/g)].map((match) => match[1]).sort(),
+    [...LORA_SLOT_CLASSES].sort(),
+  );
+});
+
+test('an edited workflow or a picked one says what it dropped and when the stack takes over its LoRAs', async () => {
+  const connection = {
+    client: {
+      request: async (_path: string, body: { workflow: { id: string } }) => ({
+        workflow: body.workflow,
+        bindings: [{ id: `${body.workflow.id}:6:text`, resolved: true, value: 'a fox' }],
+      }),
+    },
+    catalog: { object_info: recorded },
+  };
+  const stack = [{ id: 'detail', name: 'detail', enabled: true, model_strength: 0.8 }];
+  const old = { id: 'old-graph', nodes: [] };
+  const initial = {
+    ...emptyDraft(),
+    workflow: old,
+    workflowName: 'Old',
+    style_bindings: { prompt: 'old-graph:6:text' },
+    lora_stack: stack,
+  };
+  const app = pickHarness(
+    inspectDraft,
+    InspectionGuard,
+    droppedInspection,
+    loadWorkflow,
+    freshGraphNotice,
+    connection,
+    initial,
+  );
+  // Validate edited workflow with changed JSON inspects without the draft's values.
+  const edited = { id: 'old-graph', nodes: [], extra: { note: 'edited' } };
+  await app.inspect(edited, 'Old', false);
+  assert.equal(
+    app.view().notice,
+    'This workflow starts from its own values. Choose the prompt input for styles again.',
+  );
+  assert.equal(app.view().draft.style_bindings, undefined);
+  // A workflow with a LoRA loader of its own, loaded with the stack still in the draft.
+  const kromoss = graph('kromoss-t2i-turbo');
+  await app.pick({ id: 'k', name: 'Kromoss', title: 'Kromoss', workflow: kromoss });
+  assert.equal(app.view().notice, STACK_TAKES_OVER);
+  assert.deepEqual(app.view().draft.lora_stack, stack, 'the stack itself stays');
 });

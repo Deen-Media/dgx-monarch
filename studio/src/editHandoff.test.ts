@@ -272,6 +272,10 @@ test('a loaded editing workflow names none of the old graph, and a kept one keep
   assert.equal('style_bindings' in request, false);
   assert.equal('lora_insertion' in request, false);
   assert.equal(JSON.stringify(request).includes(old), false);
+  // The notice line says what the loaded workflow dropped; it has no LoRA slot of its own.
+  const dropped =
+    'Undo restores the previous draft. This workflow starts from its own values. Choose the prompt input for styles and the LoRA insertion boundary again.';
+  assert.ok(run.notices[0].endsWith(dropped), run.notices[0]);
 
   const own = 'flux.3-klein-base-image-editing';
   const controls = {
@@ -286,6 +290,10 @@ test('a loaded editing workflow names none of the old graph, and a kept one keep
   const kept = harness({ draft: editing, workflowId: entry('flux3-klein-base-edit').id, info });
   await kept.send(output);
   const [{ value: same }] = kept.imports;
+  assert.ok(
+    kept.notices[0].endsWith('Undo restores the previous draft.'),
+    'a kept one drops nothing',
+  );
   assert.deepEqual(same.workflow, editing.workflow);
   assert.deepEqual(
     { style_bindings: same.style_bindings, lora_insertion: same.lora_insertion },

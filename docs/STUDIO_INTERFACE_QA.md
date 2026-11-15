@@ -1,6 +1,6 @@
 # Studio interface QA
 
-Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22, on 2026-10-28 and on 2026-11-03, with two rows added on 2026-10-22, fourteen on 2026-10-28 and tester round 4 rows from 2026-10-30, checked again on 2026-11-03, and two apex review rows on 2026-11-15. Status: **scoped local validation; the 26 browser rows and the eleven tester round 4 rows ran headless on the 1.5.0 bundle on 2026-11-03 and passed; the three faults that the 2026-10-28 round found are fixed; the two apex review rows ran headless on the shipping bundle on 2026-11-15 and passed; Studio's acceptance remains incomplete, as [Remaining acceptance](#remaining-acceptance) lists**.
+Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22, on 2026-10-28 and on 2026-11-03, with two rows added on 2026-10-22, fourteen on 2026-10-28 and tester round 4 rows from 2026-10-30, checked again on 2026-11-03, and four apex review rows on 2026-11-15. Status: **scoped local validation; the 26 browser rows and the eleven tester round 4 rows ran headless on the 1.5.0 bundle on 2026-11-03 and passed; the three faults that the 2026-10-28 round found are fixed; the four apex review rows ran headless on the shipping bundle, `index-C-bf88vi.js`, on 2026-11-15 and passed; Studio's acceptance remains incomplete, as [Remaining acceptance](#remaining-acceptance) lists**.
 
 This pass inventoried every authored interactive control in `studio/src` and
 traced its handler, conditional visibility, disabled state and recovery path.
@@ -511,43 +511,68 @@ companion could refuse Generate over an input or node the new workflow does not
 have. The fix starts a workflow loaded by Send to edit, the Workflow list or an
 edited workflow JSON without them, and the companion now refuses a LoRA stack
 on a workflow with no LoRA chain and no insertion boundary as `lora_binding`.
-These rows check that change only, so the
+The independent review then asked for two notices: one naming the style input
+or insertion boundary a load drops, and one saying when the LoRA stack will
+replace a loaded workflow's own LoRAs. These rows check that change only, so the
 [browser procedure](../studio/tests/README.md#browser-checks) still lists the
 rows of the 2026-10-28 round.
 
-The rows ran on 2026-11-15 on `index-BERoqH-z.js`
-(`8783f2e35df91f3dd4950f0c73ae12b192af3237f2fe1ea8543e518f1d2825ab`),
-`index-DZRUgSeS.css`
-(`2b07ca82a5ce27a8f7853831d60d95e24ce8bd2040940d03a6e1ce79e0f9b854`) and
-`index.html` (`d80388e7b465f5464ad6ac0899e9bd938c35d13e1f159eac867100a37ace4d7a`),
-which a companion started from the change's tree served byte for byte, in
-Mozilla Firefox 159.0.1, headless on Ubuntu 24.04.5 LTS for arm64, driven
-through WebDriver BiDi with real pointer and key input, at 1440×900 and
-390×844. Selects took their value through a change event, since headless
-Firefox draws no native pop-up, and the one JSON edit went into the Layout box
-the same way. `studio/tests/event_driver.py` served the recorded schema of the
-packaged templates without `ConditioningZeroOut`, `TextEncodeMageFlowEdit` and
-`TextEncodeQwenImage21`, with 2-second jobs, so FLUX.3 Klein Base image editing
-was the one packaged editing workflow it ran. A second companion served the dev
-bundle at `35bb775`, `index-D8bgqF8A.js`, from a fixture of its own for the
-before readings at 1440×900. No screenshot was taken: each reading is the
-page's state, the autosaved draft and the companion's job records. The first
-Workflow list run at 1440×900 stopped at a script step, because Validate edited
-workflow returns Create to Inputs; the script then reopened Layout, and the run
-was repeated. No run logged a console error. The results file is kept in the
-maintainer's private evidence store, outside the repository and the packages,
-and its SHA-256 is
-`375a82c7629330cacf0e6cf0b622c384229af700560eac73b7d3bb99c29c9652`.
+The rows ran four times on 2026-11-15, in Mozilla Firefox 159.0.1, headless on
+Ubuntu 24.04.5 LTS for arm64, driven through WebDriver BiDi with real pointer
+and key input, at 1440×900 and 390×844. Selects took their value through a
+change event, since headless Firefox draws no native pop-up, and each JSON edit
+went into the Layout box the same way. No screenshot was taken: each reading is
+the page's state, the autosaved draft and the companion's job records. No run
+logged a console error. Each round's results file is kept in the maintainer's
+private evidence store, outside the repository and the packages.
+
+- The first round ran the first two rows on `index-BERoqH-z.js`
+  (`8783f2e35df91f3dd4950f0c73ae12b192af3237f2fe1ea8543e518f1d2825ab`), before
+  the notices. A second companion served the dev bundle at `35bb775`,
+  `index-D8bgqF8A.js`, for the before readings at 1440×900; every dev reading
+  below is from that round. Its first Workflow list run at 1440×900 stopped at
+  a script step, because Validate edited workflow returns Create to Inputs; the
+  script then reopened Layout, and the run was repeated. Results SHA-256
+  `375a82c7629330cacf0e6cf0b622c384229af700560eac73b7d3bb99c29c9652`.
+- The second and third rounds ran all four rows on two earlier builds of the
+  notices, `index-BijBSOvt.js` and `index-TUKjqnV0.js`, and passed. The first
+  was superseded to keep each source module under 500 lines, and the second
+  because its notice asked for an insertion boundary on a workflow with LoRA
+  loaders of its own, where the companion refuses or ignores one. The second
+  round's first LoRA slots run at 1440×900 stopped at a script step, because
+  Enter in the workflow filter loads nothing once a packaged workflow is chosen;
+  the script then chose through the select, and the run was repeated. Results
+  SHA-256 `76f838a3d25d91e99d7c10a20eaad193fbc9fcc54c9aa0bfdc38b5ec1187835e`
+  and `de2b603deb45e3c829d2a0ceb3f706f50a5dcc010e4856fcf084904fb864d09d`.
+- The fourth round ran all four rows on the shipping bundle, `index-C-bf88vi.js`
+  (`4d1337ad3193be91115ff824f74a548b6467ed7b9bcdf1cc86453db6bfc49951`),
+  `index-DZRUgSeS.css`
+  (`2b07ca82a5ce27a8f7853831d60d95e24ce8bd2040940d03a6e1ce79e0f9b854`) and
+  `index.html` (`dc6c0e9d7d16d97a6ec13544dfd32c87a5366813c6f01c824c0c58594ee5b376`),
+  which both companions, started from the change's tree, served; the served
+  bytes were kept and hash the same. Every run passed on its first try, and
+  every branch reading below is from this round. Results SHA-256
+  `c7b5c3df8cd78d9d984f9272d37aebfec61aaf57fdd1c58e8deed4b6bfa239c0`.
+
+`studio/tests/event_driver.py` served, with 2-second jobs, the recorded schema
+of the packaged templates without `ConditioningZeroOut`,
+`TextEncodeMageFlowEdit` and `TextEncodeQwenImage21`, so FLUX.3 Klein Base
+image editing was the one packaged editing workflow it ran. The LoRA slots row
+used a second fixture with the full recorded schema, where the packaged LoRA
+workflows run.
 
 | Check | Observed result and scope |
 |---|---|
-| Send to edit with a style and an inserted LoRA | PASS at 1440×900 and 390×844. On FLUX.3 Klein Base text to image, a saved style, "ink wash, {prompt}", was appended with node 6's prompt as its input, and the LoRA stack held `your_first_lora.safetensors` behind a `DGXMonarchLoraLoader` boundary on node 9's model input. Generate submitted a job whose node 6 text began "ink wash, " and whose node 9 read its model from the inserted loader. Send to edit on that output loaded FLUX.3 Klein Base image editing with the Operation Edit. Prompt input read "Choose the prompt binding", Loader type read "Use existing chain" with no consumer ticked, and the autosaved draft held no style input, no insertion target and no id of the text to image graph; the style card and the LoRA stayed. Generate opened the review on "Choose an explicit prompt input for the selected styles." with Error code style_binding and Open Inputs, and no job started. With node 6 chosen, Generate opened it on "Choose an explicit LoRA loader type." with Error code lora_binding and Open LoRAs, and no job started; each button opened its tab. With the loader and node 14's model input chosen, Generate submitted the edit with the style, the inserted loader before node 14 and the stored copy as node 8's image. No page or review scrolled sideways. On the dev bundle the same steps left the old prompt input and the node 9 target in the draft while Prompt input read blank and Loader type read `DGXMonarchLoraLoader` with no consumer ticked, and Generate was refused with "Styles require resolved STRING workflow input bindings." and then "Insertion target must be a connected DGXM_MODEL input.". Evidence: the row's entries in the results file. |
-| Workflow list and Validate edited workflow | PASS at 1440×900 and 390×844. With the same style input and boundary on the text to image draft, a reload kept both. Choosing FLUX.3 Klein Base image editing in the Workflow list started it with Prompt input at "Choose the prompt binding", Loader type at "Use existing chain" and neither control in the draft, and kept the style and the LoRA; Generate opened the review on the style refusal, and no job started. On the editing workflow, with node 6 as the style input, node 14's model input as the boundary and "a red fox, QA edit" typed as the prompt, Validate edited workflow on the unchanged JSON kept all three. After node 6's title changed in the JSON, Validate edited workflow showed Inputs with the graph's own prompt, Prompt input at "Choose the prompt binding" and no boundary, and kept the style and the LoRA; no notice appeared. No page scrolled sideways. On the dev bundle the Workflow list kept the old prompt input and the node 9 target, Generate was refused with "Styles require resolved STRING workflow input bindings.", and the edited JSON kept the style input and the boundary. Evidence: the row's entries in the results file. |
+| Send to edit with a style and an inserted LoRA | PASS at 1440×900 and 390×844 on `index-C-bf88vi.js`, as on `index-BERoqH-z.js`. On FLUX.3 Klein Base text to image, a saved style, "ink wash, {prompt}", was appended with node 6's prompt as its input, and the LoRA stack held `your_first_lora.safetensors` behind a `DGXMonarchLoraLoader` boundary on node 9's model input. Generate submitted a job whose node 6 text began "ink wash, " and whose node 9 read its model from the inserted loader. Send to edit on that output loaded FLUX.3 Klein Base image editing with the Operation Edit, and the notice line ended "This workflow starts from its own values. Choose the prompt input for styles and the LoRA insertion boundary again." Prompt input read "Choose the prompt binding", Loader type read "Use existing chain" with no consumer ticked, and the autosaved draft held no style input, no insertion target and no id of the text to image graph; the style card and the LoRA stayed. Generate opened the review on "Choose an explicit prompt input for the selected styles." with Error code style_binding and Open Inputs, and no job started. With node 6 chosen, Generate opened it on "Choose an explicit LoRA loader type." with Error code lora_binding and Open LoRAs, and no job started; each button opened its tab. With the loader and node 14's model input chosen, Generate submitted the edit with the style, the inserted loader before node 14 and the stored copy as node 8's image. No page or review scrolled sideways. On the dev bundle the same steps left the old prompt input and the node 9 target in the draft while Prompt input read blank and Loader type read `DGXMonarchLoraLoader` with no consumer ticked, and Generate was refused with "Styles require resolved STRING workflow input bindings." and then "Insertion target must be a connected DGXM_MODEL input.". Evidence: the row's entries in the results file. |
+| Workflow list and Validate edited workflow | PASS at 1440×900 and 390×844 on `index-C-bf88vi.js`, as on `index-BERoqH-z.js`. With the same style input and boundary on the text to image draft, a reload kept both. Choosing FLUX.3 Klein Base image editing in the Workflow list started it with Prompt input at "Choose the prompt binding", Loader type at "Use existing chain" and neither control in the draft, and kept the style and the LoRA; Generate opened the review on the style refusal, and no job started. On the editing workflow, with node 6 as the style input, node 14's model input as the boundary and "a red fox, QA edit" typed as the prompt, Validate edited workflow on the unchanged JSON kept all three. After node 6's title changed in the JSON, Validate edited workflow showed Inputs with the graph's own prompt, Prompt input at "Choose the prompt binding" and no boundary, and kept the style and the LoRA; the notice the next row records said so, where `index-BERoqH-z.js` showed none. No page scrolled sideways. On the dev bundle the Workflow list kept the old prompt input and the node 9 target, Generate was refused with "Styles require resolved STRING workflow input bindings.", and the edited JSON kept the style input and the boundary. Evidence: the row's entries in the results file. |
+| Notice for dropped controls | PASS at 1440×900 and 390×844 on `index-C-bf88vi.js`. Choosing the editing workflow in the Workflow list with a style input and a boundary held set the notice line to "This workflow starts from its own values. Choose the prompt input for styles and the LoRA insertion boundary again.", and Validate edited workflow after a JSON edit set the same words. With only a style input held, a second JSON edit set "This workflow starts from its own values. Choose the prompt input for styles again." A reload and Validate edited workflow on unchanged JSON, which drop nothing, set no notice. Send to edit appends the same words to its own notice, as the first row records. Evidence: the row's entries in the results file. |
+| Notice for a stack over a workflow's own LoRAs | PASS at 1440×900 and 390×844 on `index-C-bf88vi.js`, on the fixture with the full schema. With `your_second_lora.safetensors` in the LoRA stack of FLUX.3 Klein Base text to image, choosing LoRA stack with low-RSS mode, whose own loaders hold `your_first_lora.safetensors` at 0.8 on node 9 and `your_second_lora.safetensors` at 0.5 on node 10, set the notice line to "This workflow has LoRAs of its own. At Generate, the LoRA stack replaces them by position, and those it does not reach run at strength 0. Remove the stack on the LoRAs tab to keep them." The stack stayed on the LoRAs tab. Generate submitted node 9 as `your_second_lora.safetensors` at 1 and node 10 at strength 0, as the notice says. After the stack entry was removed, Generate submitted the workflow's own LoRAs, node 9 at 0.8 and node 10 at 0.5. Back on the text to image workflow, with a `DGXMonarchLoraLoader` boundary on node 9's model input and `your_first_lora.safetensors` in the stack, choosing the same LoRA workflow set "This workflow starts from its own values. This workflow has LoRAs of its own, so the LoRA insertion boundary is cleared." followed by the stack sentence above, and asked for no boundary; Generate submitted node 9 as `your_first_lora.safetensors` at 1 and node 10 at strength 0. No page scrolled sideways. Evidence: the row's entries in the results file. |
 
 **NOT RUN:** 1024×600 and 768×1024; Import JSON, the command palette, Fleet
 and a saved Library workflow, which load a workflow through the same inspection
-as the Workflow list; a workflow with LoRA slots of its own; the dev bundle at
-390×844; and Chromium, Safari, physical phones and assistive technology.
+as the Workflow list (a unit test holds Fleet's next step and the load notice
+together); the dev bundle at 390×844; and Chromium, Safari, physical phones and
+assistive technology.
 
 ## Remaining acceptance
 
