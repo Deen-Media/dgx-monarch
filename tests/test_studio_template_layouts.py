@@ -548,7 +548,7 @@ def test_the_ruled_readings_hold_in_the_layout_checks_walk():
     """
     readings = SHARED_CASES["readings"]
     assert [reading["rule"] for reading in readings] == [
-        "Soft Switch", "Text Concatenate", "wildcard_text", "positive", "row 5", "P1", "P1b", "P2", "P2b",
+        "Soft Switch", "Pack Join Text", "wildcard_text", "positive", "row 5", "P1", "P1b", "P2", "P2b",
         "P3", "P3b", "P4", "P5r", "P6", "P7", "P8", "P10", "P11", "P12", "P13", "encoder system_prompt"]
     for reading in readings:
         workflow = _reading_graph(reading["nodes"])

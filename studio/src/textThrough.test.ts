@@ -11,7 +11,7 @@ const { cases, readings } = JSON.parse(readFileSync(file, 'utf8'));
 /** The lead's ruled readings, in the file's order: each has one graph. */
 const RULED = [
   'Soft Switch',
-  'Text Concatenate',
+  'Pack Join Text',
   'wildcard_text',
   'positive',
   'row 5',
