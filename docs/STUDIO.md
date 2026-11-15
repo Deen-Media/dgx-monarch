@@ -951,7 +951,7 @@ refused with `lora_binding` when Generate checks the draft, naming the slot and
 input. A stack on a workflow without LoRA slots is refused with `lora_binding`:
 first with "Choose an explicit LoRA loader type.", then, once the loader is
 chosen, with "Choose an actual model consumer for the inserted LoRA chain.",
-until you choose both.
+until you choose the loader and its consumers.
 The LoRA list comes from the driver catalog Studio reads at connect. Studio
 reads it again when the driver connects again or the companion restarts, and
 once more after a failed read while the driver stays connected. Refresh list on

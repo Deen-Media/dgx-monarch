@@ -305,9 +305,10 @@ checks item names the records that followed. The release gate, release test
 v5, ran whole on dev `f297c70` on 2026-11-14 and passed
 ([record](#release-test-v5-f297c70)). Code has changed since: the apex
 review's fixes of 2026-11-15 touch the cond batch exchange, the `dpm_adaptive`
-refusal, the driver spend price, and Studio's field names and bundle. CPU
-tests and the Studio browser rounds hold them, and no Spark has run them (NOT
-RUN below). Release test v5 has not run on this code.
+refusal, the driver spend price, and Studio: what a workflow load keeps, the
+companion's LoRA refusal, the field names and the bundle. CPU tests and the
+Studio browser rounds hold them, and no Spark has run them (NOT RUN below).
+Release test v5 has not run on this code.
 
 - INT8 GEMM kernel, 2026-10-28 and 29
   ([record](#int8-gemm-kernel-comparison-2026-10-28-and-29)): the render
@@ -614,9 +615,8 @@ names reads the local file. The record is
 `out/review_round_2026-11-07/final_v045/rE_grant_inputs/` in the validation
 tree.
 
-The whole pass ran again on dev `f297c70`, the code that ships, on torch
-2.15.0+cu132, on 2026-11-14 and passed. The seven templates skipped here
-rendered there: the five whose demo inputs were absent in the main pass,
+The whole pass ran again on dev `f297c70`, on torch 2.15.0+cu132, on
+2026-11-14 and passed. The seven templates skipped here rendered there: the five whose demo inputs were absent in the main pass,
 and the two LoRA templates in its second leg
 ([release test v5 on f297c70](#release-test-v5-f297c70)).
 
@@ -4192,7 +4192,8 @@ second in dev `40af2d7`, which part B of that block read
 `40af2d7` does not ship either. Its fix merged as `f297c70` (#192), and
 that fix's proof block passed the next morning
 ([below](#proof-block-f297c70)), and v5 then passed whole on `f297c70`
-([below](#release-test-v5-f297c70)): the code that ships. The records are `out/review_round_2026-11-07/reverify_v1/`,
+([below](#release-test-v5-f297c70)). The records are
+`out/review_round_2026-11-07/reverify_v1/`,
 `blockA_v1/`, `blockB_v1/`, `blockC_v1/` and `blockD_v1/` in the validation
 tree.
 
@@ -5142,8 +5143,9 @@ both are recorded as readings:
   with compaction, not by the disk; that is a reading, not a proof, since
   the pass had no compaction sampler.
 
-The code that ships is dev `f297c70`'s, which this pass cleared on
-2026-11-14; what follows it on dev is documentation only.
+This pass cleared dev `f297c70` on 2026-11-14. Code has changed on dev
+since; [Release 1.5.0 checks](#release-1-5-0-checks) lists what has not run
+on a Spark.
 
 <a id="release-build-not-run"></a>
 
