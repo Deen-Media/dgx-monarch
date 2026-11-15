@@ -469,13 +469,13 @@ sections after them list every change.
   still refused at the old figure, a raised one let the spend go below it. It
   now reads the file the Init node names, as `get_mesh` does; where the Init
   node's `config_path` is a link, it reads the mesh the Init node's last run
-  attached, or, with none, the Init node's own reserve. And it took the first
-  DGX Monarch loader in the graph, even one behind a lazy switch's unselected
-  branch or feeding nothing that runs, and missed an Init node whose mesh
-  reached the loader through a switch, pricing at 5 GiB there; it now reads
-  only the loaders ComfyUI will run, follows a mesh through the switches
-  ComfyUI may run, and where two readings remain with different reserves,
-  keeps the larger. CPU tests; not run on hardware
+  attached, or, with none or several, the Init node's own reserve. And it took
+  the first DGX Monarch loader in the graph, even one behind a lazy switch's
+  unselected branch or feeding nothing that runs, and missed an Init node
+  whose mesh reached the loader through a switch, pricing at 5 GiB there; it
+  now reads only the loaders ComfyUI will run, follows a mesh through the
+  switches ComfyUI may run, and where two readings remain with different
+  reserves, keeps the larger. CPU tests; not run on hardware
   ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
 
 - The loader now charges a reference video's 40 GiB encode on a first queue
@@ -1836,15 +1836,14 @@ sections after them list every change.
   the leanest rank does, so two boxes with different free memory no longer
   stall on mismatched collectives
   ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
-- On four or more Sparks, a layout that both shards each model call and
-  splits the batch over data-parallel groups (`uly2`, `ring2` or `cfg2` with
-  dp2, which `auto` picks at world 4 for an even batch) no longer stalls
+- On four or more Sparks, a layout that shards each model call without FSDP
+  and splits the batch over data-parallel groups (`uly2`, `ring2` or `cfg2`
+  with dp2, which `auto` picks at world 4 for an even batch) no longer stalls
   under `dpm_adaptive`. Each group sizes its steps from its own slice and can
   make more model calls than the other, and the cond batch exchange on every
   call spanned all ranks, so the longer group waited for ranks that had
   finished until the timeout. The exchange now runs only among the ranks of
-  one data-parallel group, over a group the call's own all-gathers already
-  use. A pair of Sparks is unchanged.
+  one data-parallel group. A pair of Sparks is unchanged.
 - A data-parallel render keeps its progress bar and stall guard alive until
   the last group finishes. Each group's result leader sends its own done, and
   the driver stopped reading at the first one, so a slower group's steps were

@@ -948,9 +948,10 @@ the inserted node identities, connection boundaries, asset names and strengths.
 Multiple ambiguous chains or incompatible typed connections refuse execution.
 An invalid LoRA strength, a removed LoRA or an out-of-range inserted loader is
 refused with `lora_binding` when Generate checks the draft, naming the slot and
-input. A stack on a workflow without LoRA slots is refused with `lora_binding`
-and "Choose an explicit LoRA loader type." until you choose its loader and
-consumers.
+input. A stack on a workflow without LoRA slots is refused with `lora_binding`:
+first with "Choose an explicit LoRA loader type.", then, once the loader is
+chosen, with "Choose an actual model consumer for the inserted LoRA chain.",
+until you choose both.
 The LoRA list comes from the driver catalog Studio reads at connect. Studio
 reads it again when the driver connects again or the companion restarts, and
 once more after a failed read while the driver stays connected. Refresh list on

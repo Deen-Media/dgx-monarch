@@ -302,11 +302,12 @@ feature records below, each naming the commit it ran on. The first nine items
 ran through 2026-11-01, when the last code change was `4b71822`. The code has
 changed since, as the [changelog](../CHANGELOG.md) lists, and the later
 checks item names the records that followed. The release gate, release test
-v5, ran whole on dev `f297c70`, the last code change, on 2026-11-14 and
-passed ([record](#release-test-v5-f297c70)). The release commit differs from
-`f297c70` in documentation and in the version only: the version string in
-`src/dgx_monarch/__init__.py` and the test that pins it in
-`tests/test_cli.py`. It is not itself a hardware retest.
+v5, ran whole on dev `f297c70` on 2026-11-14 and passed
+([record](#release-test-v5-f297c70)). Code has changed since: the apex
+review's fixes of 2026-11-15 touch the cond batch exchange, the `dpm_adaptive`
+refusal, the driver spend price, and Studio's field names and bundle. CPU
+tests and the Studio browser rounds hold them, and no Spark has run them (NOT
+RUN below). Release test v5 has not run on this code.
 
 - INT8 GEMM kernel, 2026-10-28 and 29
   ([record](#int8-gemm-kernel-comparison-2026-10-28-and-29)): the render

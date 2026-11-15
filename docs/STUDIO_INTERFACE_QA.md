@@ -637,12 +637,12 @@ maintainer's private evidence store, outside the repository and the packages,
 and the merged file's SHA-256 is
 `76e6d494628e0f9965a367d6b9b63b9253990d32e208c07617d4dea1a5410942`.
 
-A first attempt at this run stopped at its first file upload in every session,
-because the browser-side copy of the fixtures had not been made, and the snap
-browser reads files only from its own folder. Every process was stopped, the
-copy was made, and the run started again from new profiles and new companion
-state. No reading of that attempt is cited; its files, kept with the evidence,
-are among the 648 the token scan read.
+In a first attempt at this run every session stopped, or its row failed, at its
+first file upload, because the browser-side copy of the fixtures had not been
+made, and the snap browser reads files only from its own folder. Every process
+was stopped, the copy was made, and the run started again from new profiles and
+new companion state. No reading of that attempt is cited; its files, kept with
+the evidence, are among the 648 the token scan read.
 
 This is the day's fourth full run. The first, on `index-C-bf88vi.js` (commit
 `9394b72`), passed every row but one: App Mode inputs at 1024×600, where three
