@@ -53,14 +53,24 @@ def referenced(workflows: list[dict[str, Any]]) -> dict[str, set[str]]:
     return names
 
 
+# Any short extension or a slash marks a file name. In a list that holds file names, every such
+# choice no workflow references goes, so a recorded file of a type FILE_SUFFIX lacks, such as a
+# .tif image or a .m4a sound, cannot carry a private name into the fixture.
+LOOKS_LIKE_FILE = re.compile(r"\.[A-Za-z0-9]{1,5}$")
+
+
 def _file_like(choice: Any) -> bool:
     return isinstance(choice, str) and (FILE_SUFFIX.search(choice) is not None or "/" in choice)
+
+
+def _looks_like_file(choice: Any) -> bool:
+    return _file_like(choice) or (isinstance(choice, str) and LOOKS_LIKE_FILE.search(choice) is not None)
 
 
 def _trim_choices(choices: list[Any], names: set[str], added: set[str]) -> list[Any]:
     if not any(_file_like(choice) for choice in choices):
         return choices
-    kept = [choice for choice in choices if not _file_like(choice) or choice in names]
+    kept = [choice for choice in choices if not _looks_like_file(choice) or choice in names]
     kept.extend(sorted(added - set(kept)))
     if not any(_file_like(choice) for choice in kept):
         suffix = next(FILE_SUFFIX.search(choice).group(0) for choice in choices
