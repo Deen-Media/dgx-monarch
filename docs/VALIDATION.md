@@ -395,7 +395,7 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   against stock that led to its text branch fix
   ([record](#anima-text-branch-fix)); the
   full Studio browser procedure of 2026-11-15 on the bundle this release
-  ships, `index-O8HuyxL5.js`
+  ships, `index-DFUxnqsH.js`
   ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-15));
   the hardware of 2026-11-11 and the fixes it led to
   ([record](#fixes-2026-11-11)); the passes and proof blocks on the dev builds

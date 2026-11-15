@@ -817,10 +817,10 @@ The prompt boxes read Prompt and Negative prompt. The inputs chosen under
 Ordered prompt styles take those roles; otherwise the graph decides: the text
 that reaches a sampler's `positive` input, or the one `conditioning` input of
 a Basic Guider, is the prompt, and the text that reaches its `negative` input
-is the negative prompt. Text passes a string node only on the input it works
-on, such as Replace Text's string, and a text generator passes none on, so a
-pattern, a replacement, an instruction or a system prompt is never named
-Prompt. A node that encodes both
+is the negative prompt. Text passes a node unless the input shapes it, such as
+a pattern, a replacement, a separator, an instruction or a system prompt, and a
+text generator passes none on unless nothing else feeds the prompt; so those
+inputs are never named Prompt. A node that encodes both
 texts, such as Qwen Image 2.1's, gives each the role its input name says. When
 several boxes share a role, each adds its input name or its node. Any other
 multi-line text box, and a text box whose input name another one repeats, reads

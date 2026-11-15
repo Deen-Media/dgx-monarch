@@ -745,6 +745,14 @@ sections after them list every change.
   boundary is now refused with "Choose an explicit LoRA loader type." and Open
   LoRAs, in place of "lora_insertion must be a JSON object."
   ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Studio names a workflow's text fields more exactly. A text box is called
+  Prompt only when its text reaches the sampler's positive input as content:
+  a typed prompt keeps the name through switches, text nodes of other node
+  packs and string nodes, but a find or replacement string, a pattern, a
+  separator, an instruction or a system prompt no longer reads Prompt. Before,
+  every text box on a string chain read "Prompt", often twice with the same
+  name. When the only way to the prompt is a text generator, the text you ask
+  it reads Prompt ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Over an image in Studio's output viewer, the mouse wheel zooms around the
   point under the pointer. Anywhere else the wheel still scrolls the page, and
   Fit, 1:1, the zoom buttons and drag to pan work as before, except that a
