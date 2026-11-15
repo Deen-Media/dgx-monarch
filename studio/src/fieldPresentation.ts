@@ -37,21 +37,30 @@ const NAMED_ROLES: Record<string, PromptRole> = {
 const MAX_HOPS = 8;
 /**
  * The inputs whose text a node passes on in its own output text. A node that makes conditioning
- * takes in all its text. Any other node passes on only the text it works on, never a pattern, a
- * find or replacement string, an instruction or a system prompt; an unlisted class passes on an
- * input named `string`, `text`, `value` or `prompt`. A text generator writes text of its own, so
- * neither what it is asked nor how passes through.
+ * takes in all its text, and so does a class with no row below, except an input whose name says
+ * it shapes or locates the text instead of holding it (DENIED_THROUGH): a system prompt, a
+ * pattern, a find or replacement string, a separator, an instruction, a path, file or URL. The
+ * rows are stock classes where that default is wrong or worth stating: a switch passes on its two
+ * branches, and a text generator writes text of its own, so neither what it is asked nor how
+ * passes through (graphRoles' fallback aside).
  */
 const TEXT_THROUGH: Record<string, readonly string[]> = {
-  StringConcatenate: ['string_a', 'string_b'],
   ComfySwitchNode: ['on_true', 'on_false'],
+  ComfySoftSwitchNode: ['on_true', 'on_false'],
+  StringConcatenate: ['string_a', 'string_b'],
   TextGenerate: [],
   TextGenerateV2: [],
 };
-const NAMED_THROUGH = new Set(['string', 'text', 'value', 'prompt']);
-const carries = (node: GraphNode, input: string) =>
+const DENIED_THROUGH =
+  /system|pattern|regex|find|replace|delimiter|separator|instruction|path|file|url/;
+const GENERATORS = new Set(['TextGenerate', 'TextGenerateV2']);
+type Carries = (node: Pick<GraphNode, 'type' | 'outputTypes'>, input: string) => boolean;
+export const carries: Carries = (node, input) =>
   node.outputTypes.includes('CONDITIONING') ||
-  (TEXT_THROUGH[node.type] ?? [...NAMED_THROUGH]).includes(input);
+  (TEXT_THROUGH[node.type]?.includes(input) ?? !DENIED_THROUGH.test(input));
+/** The same, with a text generator passing on what it is asked: for a prompt only it reaches. */
+const asked: Carries = (node, input) =>
+  carries(node, input) || (GENERATORS.has(node.type) && input === 'prompt');
 const FOLLOWED = new Set(['CONDITIONING', 'STRING']);
 const isObject = (value: unknown): value is Json =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -88,7 +97,7 @@ function inputReaders(nodes: GraphNode[]): Readers {
  * passes through a zeroed copy. Within one output the nearest input decides: a prompt whose zeroed
  * copy feeds the negative input reaches the positive input first, so it stays the prompt.
  */
-function reachedRoles(readers: Readers, start: GraphNode): Set<PromptRole> {
+function reachedRoles(readers: Readers, start: GraphNode, pass: Carries): Set<PromptRole> {
   const roles = new Set<PromptRole>();
   const first = readers.get(start.key) ?? [];
   for (const slot of new Set(first.map((reader) => reader.slot))) {
@@ -100,7 +109,7 @@ function reachedRoles(readers: Readers, start: GraphNode): Set<PromptRole> {
       for (const { node, input } of frontier) {
         const role = socketRole(node, input);
         if (role) found.add(role);
-        else if (!seen.has(node.key) && carries(node, input)) {
+        else if (!seen.has(node.key) && pass(node, input)) {
           seen.add(node.key);
           next.push(...(readers.get(node.key) ?? []));
         }
@@ -117,32 +126,40 @@ function reachedRoles(readers: Readers, start: GraphNode): Set<PromptRole> {
 
 /**
  * Each text input's role in the graph. A node whose text reaches one sampler input gives that
- * role to every text input it passes on (TEXT_THROUGH), so a typed prompt that reaches the
- * sampler through string nodes keeps it, and a string node's pattern or instruction never takes
- * it. When the text reaches both inputs, as a node that encodes a prompt and a negative prompt
- * together does, or neither, an input named after a role takes that role.
+ * role to every text input it passes on (`carries`), so a typed prompt that reaches the sampler
+ * through string nodes keeps it, and a string node's pattern or instruction never takes it. When
+ * the text reaches both inputs, as a node that encodes a prompt and a negative prompt together
+ * does, or neither, an input named after a role takes that role. A graph whose prompt comes only
+ * from a text generator gives the role to the text the generator is asked (`asked`).
  */
 export function graphRoles(
   workflow: Json | null | undefined,
   bindings: Binding[],
   info?: ObjectInfo,
 ): Map<string, PromptRole> {
-  const roles = new Map<string, PromptRole>();
-  if (!isObject(workflow)) return roles;
+  if (!isObject(workflow)) return new Map();
   const graph = workflowGraph(workflow, info);
   const readers = inputReaders(graph.nodes);
   const own = bindingIndex(bindings.filter(isText));
-  for (const node of graph.nodes) {
-    const texts = [...own(node).values()];
-    if (!texts.length) continue;
-    const reached = reachedRoles(readers, node);
-    for (const binding of texts) {
-      const input = binding.input_name ?? '';
-      if (!carries(node, input)) continue;
-      const role = reached.size === 1 ? [...reached][0] : NAMED_ROLES[input];
-      if (role) roles.set(binding.id, role);
+  const assign = (pass: Carries) => {
+    const roles = new Map<string, PromptRole>();
+    for (const node of graph.nodes) {
+      const texts = [...own(node).values()];
+      if (!texts.length) continue;
+      const reached = reachedRoles(readers, node, pass);
+      for (const binding of texts) {
+        const input = binding.input_name ?? '';
+        if (!pass(node, input)) continue;
+        const role = reached.size === 1 ? [...reached][0] : NAMED_ROLES[input];
+        if (role) roles.set(binding.id, role);
+      }
     }
-  }
+    return roles;
+  };
+  const roles = assign(carries);
+  if (![...roles.values()].includes('prompt'))
+    for (const [id, role] of assign(asked))
+      if (role === 'prompt' && !roles.has(id)) roles.set(id, role);
   return roles;
 }
 

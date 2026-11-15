@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { bundled, graph, recorded, widgetBindings } from './workflowFixtures.js';
-import { graphRoles, presentFields, promptRoles } from './fieldPresentation.ts';
+import { carries, graphRoles, presentFields, promptRoles } from './fieldPresentation.ts';
 import { fieldIssue, issueText } from './fieldIssues.ts';
 import type { Binding } from './model.ts';
 
@@ -212,15 +213,28 @@ test('each output finds its own role, so a zeroed negative branch keeps Negative
   );
 });
 
-test('only the text a string node works on keeps the prompt role, never its patterns or instructions', () => {
-  // A typed prompt through Replace Text and a node pack's styler (a class Studio has no row for,
-  // passing on its `text`) to an encoder; and an instruction to a text generator, whose own text
-  // reaches a second encoder.
-  const node = (class_type: string, inputs: Record<string, unknown>) => ({ class_type, inputs });
+const node = (class_type: string, inputs: Record<string, unknown>) => ({ class_type, inputs });
+const text = ['STRING', {}];
+/** The roles of the typed text inputs listed, as `node:input` pairs, in a synthetic API graph. */
+function roles(workflow: object, typed: Array<[number, string]>, info: Record<string, any>) {
+  const bindings = typed.map(([id, name]) => ({
+    id: `${id}:${name}`,
+    node_id: String(id),
+    input_name: name,
+    resolved: true,
+    schema: { type: 'STRING' },
+  })) as Binding[];
+  return Object.fromEntries(graphRoles(workflow, bindings, { ...recorded, ...info }));
+}
+
+test('text keeps the prompt role through a node unless its input shapes the text', () => {
+  // A typed prompt through Replace Text and a node pack's styler (a class Studio has no row for:
+  // its text and its style carry, its separator does not) to an encoder; and an instruction to a
+  // text generator, whose own text reaches a second encoder while a typed prompt exists.
   const workflow = {
     1: node('PrimitiveStringMultiline', { value: 'a red fox' }),
     2: node('StringReplace', { string: ['1', 0], find: 'fox', replace: 'cat' }),
-    3: node('PackStyle', { text: ['2', 0], style: 'oil painting' }),
+    3: node('PackStyle', { text: ['2', 0], style: 'oil painting', separator: ', ' }),
     4: node('CLIPTextEncode', { text: ['3', 0], clip: ['11', 0] }),
     5: node('DGXMonarchKSampler', { positive: ['4', 0], negative: ['6', 0] }),
     6: node('CLIPTextEncode', { text: 'blurry', clip: ['11', 0] }),
@@ -230,34 +244,111 @@ test('only the text a string node works on keeps the prompt role, never its patt
     10: node('DGXMonarchKSampler', { positive: ['9', 0], negative: ['6', 0] }),
     11: node('CLIPLoader', {}),
   };
-  const text = ['STRING', {}];
   const info = {
-    ...recorded,
-    PackStyle: { input: { required: { text, style: text } }, output: ['STRING'] },
+    PackStyle: { input: { required: { text, style: text, separator: text } }, output: ['STRING'] },
   };
   const typed: Array<[number, string]> = [
     [1, 'value'],
     [2, 'find'],
     [2, 'replace'],
     [3, 'style'],
+    [3, 'separator'],
     [6, 'text'],
     [7, 'value'],
     [8, 'system_prompt'],
   ];
-  const bindings = typed.map(([id, name]) => ({
-    id: `${id}:${name}`,
-    node_id: String(id),
-    input_name: name,
-    resolved: true,
-    schema: { type: 'STRING' },
-  })) as Binding[];
-  assert.deepEqual(
-    [...graphRoles(workflow, bindings, info)],
+  assert.deepEqual(roles(workflow, typed, info), {
+    '1:value': 'prompt',
+    '3:style': 'prompt',
+    '6:text': 'negative',
+  });
+});
+
+test('a typed prompt is the Prompt through Soft Switch, node pack text nodes and a lone generator', () => {
+  // The review's probes: each typed prompt reaches the sampler's positive input as shown.
+  const S = ['STRING', { multiline: true }];
+  const info = {
+    'Text Concatenate': {
+      input: { required: { delimiter: text, text_a: S, text_b: S } },
+      output: ['STRING'],
+    },
+    ImpactWildcardProcessor: {
+      input: { required: { wildcard_text: S, populated_text: S } },
+      output: ['STRING'],
+    },
+    PackPositive: { input: { required: { positive: S } }, output: ['STRING'] },
+    ComfySoftSwitchNode: {
+      input: { required: { switch: ['BOOLEAN'] }, optional: { on_true: S, on_false: S } },
+      output: ['STRING'],
+    },
+  };
+  const sampled = (source: unknown) => ({
+    20: node('CLIPTextEncode', { text: source, clip: ['30', 0] }),
+    21: node('CLIPTextEncode', { text: 'blurry', clip: ['30', 0] }),
+    22: node('DGXMonarchKSampler', { positive: ['20', 0], negative: ['21', 0] }),
+    30: node('CLIPLoader', {}),
+  });
+  const typed = (pairs: Array<[number, string]>) =>
+    [...pairs, [21, 'text']] as Array<[number, string]>;
+  const graphs: Array<[object, Array<[number, string]>, Record<string, string>]> = [
     [
-      ['1:value', 'prompt'],
-      ['6:text', 'negative'],
+      {
+        1: node('PrimitiveStringMultiline', { value: 'a red fox' }),
+        2: node('PrimitiveStringMultiline', { value: 'a blue fox' }),
+        3: node('ComfySoftSwitchNode', { switch: true, on_true: ['1', 0], on_false: ['2', 0] }),
+        ...sampled(['3', 0]),
+      },
+      typed([
+        [1, 'value'],
+        [2, 'value'],
+      ]),
+      { '1:value': 'prompt', '2:value': 'prompt' },
     ],
-  );
+    [
+      {
+        1: node('PrimitiveStringMultiline', { value: 'a red fox' }),
+        2: node('Text Concatenate', { delimiter: ', ', text_a: ['1', 0], text_b: 'detailed' }),
+        ...sampled(['2', 0]),
+      },
+      typed([
+        [1, 'value'],
+        [2, 'text_b'],
+        [2, 'delimiter'],
+      ]),
+      { '1:value': 'prompt', '2:text_b': 'prompt' },
+    ],
+    [
+      {
+        1: node('ImpactWildcardProcessor', { wildcard_text: 'a __animal__', populated_text: '' }),
+        ...sampled(['1', 0]),
+      },
+      typed([[1, 'wildcard_text']]),
+      { '1:wildcard_text': 'prompt' },
+    ],
+    [
+      { 1: node('PackPositive', { positive: 'a red fox' }), ...sampled(['1', 0]) },
+      typed([[1, 'positive']]),
+      { '1:positive': 'prompt' },
+    ],
+    [
+      {
+        1: node('PrimitiveStringMultiline', { value: 'a red fox' }),
+        2: node('TextGenerateV2', {
+          clip: ['30', 0],
+          prompt: ['1', 0],
+          system_prompt: 'Be brief.',
+        }),
+        ...sampled(['2', 0]),
+      },
+      typed([
+        [1, 'value'],
+        [2, 'system_prompt'],
+      ]),
+      { '1:value': 'prompt' },
+    ],
+  ];
+  for (const [workflow, pairs, expected] of graphs)
+    assert.deepEqual(roles(workflow, pairs, info), { ...expected, '21:text': 'negative' });
 });
 
 test('a Basic Guider takes one conditioning, so the text that reaches it is the prompt', () => {
@@ -318,4 +409,17 @@ test('a field issue uses the name its field shows, and its node only when that n
     issueText(fieldIssue(prompt, 'A value is required', workflow)),
     'text on node 5: A value is required.',
   );
+});
+
+test('the text-through cases hold for Studio, as they do for the layout check', () => {
+  // tests/test_studio_template_layouts.py runs the same file through its own walk.
+  const file = new URL('../../tests/fixtures/studio/text_through_cases.json', import.meta.url);
+  const { cases } = JSON.parse(readFileSync(file, 'utf8'));
+  assert.ok(cases.length >= 20);
+  for (const row of cases)
+    assert.equal(
+      carries({ type: row.class, outputTypes: row.outputs }, row.input),
+      row.carries,
+      JSON.stringify(row),
+    );
 });

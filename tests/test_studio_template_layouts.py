@@ -52,13 +52,14 @@ LEFT_OUT_NODES = {"DGXMonarchInit", "DGXMonarchSkipLayerGuidance", "VAELoader", 
 VIDEO_OR_SOUND = {"LoadVideo", "LoadAudio", "SaveVideo", "SaveAudioAdvanced"}
 # A sampler that takes an image from one of these edits or refines that image.
 IMAGE_SOURCES = {"LoadImage", "LoadImageMask", "VAEEncode"}
-# Studio's own rule for text that passes through a node (studio/src/fieldPresentation.ts, which
-# a test below holds equal): a node that makes conditioning takes in all its text; any other
-# passes on only the text it works on, from the inputs listed here or, for an unlisted class,
-# from an input named like NAMED_THROUGH. A text generator writes text of its own.
-TEXT_THROUGH = {"StringConcatenate": ("string_a", "string_b"), "ComfySwitchNode": ("on_true", "on_false"),
-                "TextGenerate": (), "TextGenerateV2": ()}
-NAMED_THROUGH = ("string", "text", "value", "prompt")
+# Studio's own rule for text that passes through a node (studio/src/fieldPresentation.ts; the
+# shared cases in tests/fixtures/studio/text_through_cases.json run through both): a node that
+# makes conditioning takes in all its text, and so does an unlisted class except an input whose
+# name DENIED_THROUGH matches; a listed class passes on only the inputs listed. A text generator
+# writes text of its own.
+TEXT_THROUGH = {"ComfySwitchNode": ("on_true", "on_false"), "ComfySoftSwitchNode": ("on_true", "on_false"),
+                "StringConcatenate": ("string_a", "string_b"), "TextGenerate": (), "TextGenerateV2": ()}
+DENIED_THROUGH = re.compile(r"system|pattern|regex|find|replace|delimiter|separator|instruction|path|file|url")
 # Guiders that sample one conditioning, on an input named `conditioning`: that is the prompt.
 ONE_CONDITIONING_GUIDERS = {"BasicGuider", "DGXMonarchBasicGuider"}
 
@@ -67,7 +68,9 @@ def carries(node: dict, name: str) -> bool:
     """Whether a node passes the text on one of its inputs on into its own output."""
     if any(output.get("type") == "CONDITIONING" for output in node.get("outputs") or []):
         return True
-    return name in TEXT_THROUGH.get(node["type"], NAMED_THROUGH)
+    if node["type"] in TEXT_THROUGH:
+        return name in TEXT_THROUGH[node["type"]]
+    return DENIED_THROUGH.search(name) is None
 # The length of a node that also sets a width and a height: the clip's frame count.
 FRAME_COUNT = "frame count"
 
@@ -416,14 +419,24 @@ def test_build_refuses_a_wired_widget_and_an_unknown_role(generator):
 
 
 def test_the_text_through_rule_is_studios_own():
-    """The walk above follows text as Studio names fields, so the two tables must not drift."""
+    """The walk above follows text as Studio names fields, so the two rules must not drift.
+
+    The tables are compared, quoted class names included, and the shared cases, which
+    studio/src/fieldPresentation.test.ts runs through Studio's `carries`, run through this one.
+    """
     source = (ROOT / "studio/src/fieldPresentation.ts").read_text()
     table = re.search(r"const TEXT_THROUGH: Record<string, readonly string\[\]> = \{(.*?)\};", source, re.S)
-    named = re.search(r"const NAMED_THROUGH = new Set\(\[(.*?)\]\);", source, re.S)
+    denied = re.search(r"const DENIED_THROUGH =\s*/(.*?)/;", source)
     guiders = re.search(r"const ONE_CONDITIONING_GUIDERS = new Set\(\[(.*?)\]\);", source, re.S)
-    assert table and named and guiders, "a rule table moved in fieldPresentation.ts"
-    rows = {key: tuple(re.findall(r"'([^']+)'", values))
-            for key, values in re.findall(r"(\w+): \[([^\]]*)\]", table.group(1))}
+    assert table and denied and guiders, "a rule table moved in fieldPresentation.ts"
+    rows = {key.strip(): tuple(re.findall(r"'([^']+)'", values))
+            for key, values in re.findall(r"""['"]?([\w .-]+?)['"]?: \[([^\]]*)\]""", table.group(1))}
+    assert len(rows) == table.group(1).count(": ["), "a row the pattern cannot read"
     assert rows == TEXT_THROUGH
-    assert tuple(re.findall(r"'([^']+)'", named.group(1))) == NAMED_THROUGH
+    assert denied.group(1) == DENIED_THROUGH.pattern
     assert set(re.findall(r"'([^']+)'", guiders.group(1))) == ONE_CONDITIONING_GUIDERS
+    cases = json.loads((ROOT / "tests/fixtures/studio/text_through_cases.json").read_text())["cases"]
+    assert len(cases) >= 20
+    for case in cases:
+        node = {"type": case["class"], "outputs": [{"type": kind} for kind in case["outputs"]]}
+        assert carries(node, case["input"]) is case["carries"], case
