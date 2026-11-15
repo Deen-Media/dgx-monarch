@@ -4,10 +4,12 @@ Each data-parallel group samples its own slice, and ``dpm_adaptive`` sizes its
 steps from that slice, so the groups can make different numbers of model
 calls; FSDP gathers every call's weights from every rank, so a group with
 more calls would wait for ranks that have finished until the sample deadline.
-``nodes/adaptive_steps.py`` refuses the combination, class P: at an explicit
-preset's UNET loader, before its setup and load, where the graph names the
-sampler, at the sampler and Identity Gate nodes before the first-use check,
-and at the render submit before setup. The real
+``nodes/adaptive_steps.py`` refuses the combination, class P. Only an
+explicit ``+fsdp`` preset reaches it (``auto`` never resolves FSDP), and that
+preset sets up and loads at its UNET loader, so the refusal comes there,
+before the setup and load, where the graph names the sampler; at the sampler
+and Identity Gate nodes before the first-use check otherwise; and at the
+render submit before setup (inside ``validate_render_topology``). The real
 ComfyUI readings (which samplers' call counts follow the latent, and the
 SAMPLER objects ComfyUI builds) are the comfy seam canary's
 "adaptive-step samplers"; here a stand-in ``comfy`` builds its SAMPLER the
@@ -26,7 +28,7 @@ import torch
 from dgx_monarch.adapters.base import UnsupportedModelError
 from dgx_monarch.nodes import adaptive_steps, common, h3_ring_pad, render_preflight
 from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
-from dgx_monarch.topology import Topology, topology_from_preset
+from dgx_monarch.topology import topology_from_preset
 
 
 @pytest.fixture
@@ -125,14 +127,30 @@ def test_dp_with_fsdp_refuses_class_p_and_names_the_remedies(stand_in_comfy, pre
 def test_the_pair_is_offered_the_presets_without_data_parallelism():
     with pytest.raises(UnsupportedModelError) as exc_info:
         adaptive_steps.refuse({"sampler_name": "dpm_adaptive"}, topology_from_preset("dp2+fsdp", 2))
-    # ring2+fsdp is no preset at all: ring cannot combine with FSDP.
-    assert "(uly2, ring2, cfg2, uly2+fsdp, cfg2+fsdp)" in str(exc_info.value)
+    # ring2+fsdp is a preset name that never validates: ring cannot combine with FSDP.
+    text = str(exc_info.value)
+    assert "(uly2, ring2, cfg2, uly2+fsdp, cfg2+fsdp)" in text
+    assert "from both ranks" in text and "needs another sampler" not in text
+
+
+def test_from_four_sparks_the_presets_without_dp_are_offered_only_where_the_model_fits():
+    """No preset shards the weights without data parallelism at world 4: those
+    offered hold the whole model on every rank, and a model that needs FSDP
+    there needs another sampler."""
+    with pytest.raises(UnsupportedModelError) as exc_info:
+        adaptive_steps.refuse({"sampler_name": "dpm_adaptive"}, topology_from_preset("uly2+fsdp", 4))
+    text = str(exc_info.value)
+    assert "(uly4, ring4, uly2+cfg2), only where the model fits resident" in text
+    assert "a model that needs FSDP here needs another sampler" in text
+    assert "from each of the 4 ranks" in text
+    assert "resident, where each" not in text  # one "where" to a clause
 
 
 def test_an_odd_world_with_no_such_preset_leaves_that_remedy_out():
     with pytest.raises(UnsupportedModelError) as exc_info:
         adaptive_steps.refuse({"sampler_name": "dpm_adaptive"}, topology_from_preset("dp2+fsdp", 3))
-    assert "without data parallelism" not in str(exc_info.value)
+    assert "a topology preset without data parallelism" not in str(exc_info.value)
+    assert "needs another sampler" in str(exc_info.value)
 
 
 @pytest.mark.parametrize(("preset", "world"), [
@@ -153,11 +171,11 @@ def test_a_fixed_step_sampler_renders_under_dp_with_fsdp(stand_in_comfy):
     adaptive_steps.refuse({"sampler_object": stand_in_comfy.ksampler("euler")}, topo)
 
 
-def test_auto_under_capacity_fsdp_at_four_refuses():
-    """auto at world 4 for an even batch, where the model does not fit resident."""
-    with pytest.raises(UnsupportedModelError):
-        adaptive_steps.refuse({"sampler_name": "dpm_adaptive"},
-                              Topology(ulysses=2, dp=2, fsdp=True, world=4))
+def test_auto_never_resolves_fsdp_so_it_never_refuses():
+    """The production call leaves fits_resident at True, so auto adds no FSDP."""
+    source = inspect.getsource(common.resolve_topology)
+    call = source[source.index("decision = choose_auto_topology("):]
+    assert "fits_resident" not in call[:call.index(")")]
 
 
 # --- where it runs -----------------------------------------------------------
@@ -220,10 +238,10 @@ def _run_render_until_the_gate(monkeypatch):
     monkeypatch.setattr(h3_ring_pad, "_family_and_path", lambda _model: None)
 
 
-def test_run_render_refuses_before_the_gate_setup_and_the_load(monkeypatch):
-    """The explicit dp2+fsdp preset on the pair: the refusal lands at the
-    gate's entry, before it reads its context or runs a proof render, and
-    before submit_render, which owns setup and the dispatch that loads."""
+def test_run_render_under_an_explicit_preset_refuses_before_the_gate(monkeypatch):
+    """dp2+fsdp on the pair, where the loader could not read the sampler: the
+    sampler-site refusal precedes the gate's context, any proof render and the
+    render submit. The loader has already set up and loaded by then."""
     _run_render_until_the_gate(monkeypatch)
     _forbid(monkeypatch, common, "_auto_gate_context", "_quarantine_unproven_paths",
             "submit_render")
@@ -232,6 +250,19 @@ def test_run_render_refuses_before_the_gate_setup_and_the_load(monkeypatch):
                           {"kind": "ksampler", "sampler_name": "dpm_adaptive", "cfg": 4.0},
                           _latent(), 4.0, 8)
     assert _refusal(exc_info).refusal_class is RefusalClass.PHYSICS
+
+
+def test_the_submit_check_rides_the_topology_validation():
+    from dgx_monarch.nodes.render_validation import validate_render_topology
+
+    model = _model(2, "dp2+fsdp")
+    topo = topology_from_preset("dp2+fsdp", 2)
+    with pytest.raises(UnsupportedModelError) as exc_info:
+        validate_render_topology(model, topo, torch.zeros(2, 4, 8, 8),
+                                 {"sampler_name": "dpm_adaptive"})
+    assert "#156" in str(exc_info.value)
+    validate_render_topology(model, topo, torch.zeros(2, 4, 8, 8))  # no request: no claim
+    validate_render_topology(model, topo, torch.zeros(2, 4, 8, 8), {"sampler_name": "euler"})
 
 
 @pytest.mark.parametrize(("preset", "world", "sampler"), [
@@ -278,7 +309,8 @@ def test_every_entry_checks_before_its_proof_render_and_setup():
     assert (gate.index("adaptive_steps.preflight_for_render(")
             < gate.index("run_identity_ceremony("))
     submit = inspect.getsource(render_submit._submit_render_guarded)
-    assert submit.index("adaptive_steps.refuse(request, topo)") < submit.index("ensure_request_setup(")
+    assert (submit.index('validate_render_topology(model, topo, latent["samples"], request)')
+            < submit.index("ensure_request_setup("))
 
 
 # --- at the loader of an explicit preset, which sets up and loads at once -----

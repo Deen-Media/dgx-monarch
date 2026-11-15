@@ -12,20 +12,24 @@ batch agreement before it, for ranks that have finished, until the sample
 deadline. No group of fewer ranks can carry those gathers, so nothing makes
 the calls line up, and the driver refuses the combination, class P. Pure
 data parallelism and the sharded layouts without FSDP keep rendering: their
-groups share no collective (``actor/cond_batch_agreement.py``).
+groups share no collective (``actor/cond_batch_agreement.py``). Only the
+explicit ``+fsdp`` presets reach it: ``auto`` never resolves FSDP
+(``nodes/common.resolve_topology`` leaves ``fits_resident`` at True), so the
+refusal never arises under ``auto``.
 
-It refuses at three points, each before the next can set up or load:
+An explicit preset sets up and loads at its UNET loader, so the refusal comes
+at three points:
 
-* the UNET loaders of an explicit preset, which set up and load at once
-  (``nodes/loaders.py``), read the graph: a dgx-monarch sampler ComfyUI is
-  sure to run, whose model provably comes from that loader, and whose sampler
-  is a literal ``sampler_name``, a KSamplerSelect naming one, or a
-  SamplerDPMAdaptative node. What the walk cannot read makes no claim there;
+* the UNET loader (``nodes/loaders.py``), before its setup and load, reads the
+  graph: a dgx-monarch sampler ComfyUI is sure to run, whose model provably
+  comes from that loader, and whose sampler is a literal ``sampler_name``, a
+  KSamplerSelect naming one, or a SamplerDPMAdaptative node. What the walk
+  cannot read makes no claim there;
 * the sampler and Identity Gate nodes, before the first-use check, with the
-  sampler in hand. Under ``auto`` the loader loads nothing, so this lands
-  before setup and the load; under an explicit preset it catches what the
-  loader could not read, after that loader's setup and load;
-* the render submit, with the topology the render resolves, before setup.
+  sampler in hand: they catch what the loader could not read, after that
+  loader's setup and load;
+* the render submit, with the topology the render resolves, before setup
+  (``render_validation.validate_render_topology``).
 
 ComfyUI has one sampler whose call count follows its data: ``dpm_adaptive``,
 ``DPMSolver.dpm_solver_adaptive`` in ``comfy/k_diffusion/sampling.py`` and the
@@ -106,17 +110,19 @@ def ties_data_parallel_groups(topo: Any) -> bool:
     return int(getattr(topo, "dp", 1) or 1) > 1 and bool(getattr(topo, "fsdp", False))
 
 
-def _presets_without_dp(world: int) -> list[str]:
+def _presets_without_dp(world: int) -> list[tuple[str, bool]]:
+    """Each preset that leaves one data-parallel group at ``world``, and whether it shards."""
     from ..topology import PRESETS, topology_from_preset
 
-    names = []
+    found = []
     for name in PRESETS:
         try:
-            if topology_from_preset(name, world).dp == 1:
-                names.append(name)
+            topo = topology_from_preset(name, world)
         except ValueError:
             continue  # does not tile this world
-    return names
+        if topo.dp == 1:
+            found.append((name, bool(topo.fsdp)))
+    return found
 
 
 def _refuse(label: str, topo: Any) -> None:
@@ -124,20 +130,30 @@ def _refuse(label: str, topo: Any) -> None:
 
     world = int(getattr(topo, "world", 0) or 0)
     without_dp = _presets_without_dp(world)
+    names = ", ".join(name for name, _shards in without_dp)
+    shards = any(sharded for _name, sharded in without_dp)
     remedies = ["a sampler with a fixed step count (any but dpm_adaptive, such as euler "
                 "or dpmpp_2m)"]
-    if without_dp:
-        remedies.append(f"a topology preset without data parallelism ({', '.join(without_dp)})")
-    remedies.append("a preset without +fsdp where the model fits resident, where each "
+    if shards:
+        remedies.append(f"a topology preset without data parallelism ({names})")
+    elif without_dp:
+        remedies.append(f"a topology preset without data parallelism ({names}), only where "
+                        "the model fits resident, since none of them shards it")
+    remedies.append("a preset without +fsdp where the model fits resident, so each "
                     "data-parallel group runs on its own")
+    needs_sampler = "" if shards else (
+        f" No preset shards the model without data parallelism on {world} ranks, so a model "
+        "that needs FSDP here needs another sampler.")
+    every_rank = "both ranks" if world == 2 else f"each of the {world} ranks"
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
         f"{label} cannot run under {topo.describe()} on {world} ranks. The layout splits "
         f"the batch over {int(topo.dp)} data-parallel groups, and FSDP gathers every model "
-        f"call's weights from all {world} ranks, so every rank must make the same number of "
+        f"call's weights from {every_rank}, so every rank must make the same number of "
         "model calls. dpm_adaptive picks its step sizes from the error of its own slice of "
         "the batch, so one group can make more calls than another and would wait for ranks "
-        f"that have finished until the sample deadline. Use {', or '.join(remedies)}.",
+        f"that have finished until the sample deadline. Use {', or '.join(remedies)}."
+        f"{needs_sampler}",
         troubleshooting=TROUBLESHOOTING,
     ))
 

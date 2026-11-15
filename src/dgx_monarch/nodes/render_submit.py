@@ -46,15 +46,7 @@ from ..mesh import MeshHandle, mark_defunct_on_supervision_failure
 from ..old_model import OldModelRefusal
 from ..progress import ProgressReceiver
 from ..transfer import pack_latent
-from . import (
-    adaptive_steps,
-    consent_waiver,
-    model_patch_preflight,
-    old_model_clear,
-    refusal_lead,
-    render_preflight,
-    render_rows,
-)
+from . import consent_waiver, model_patch_preflight, old_model_clear, refusal_lead, render_preflight, render_rows
 from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .gate_dual import forced_stock_state
 from .gate_identity import (
@@ -329,7 +321,6 @@ def _submit_render_guarded(
         resolved = _resolve_topology_for_latent(
             model, latent, cfg_value, world)
         topo, sage, reason = resolved
-        adaptive_steps.refuse(request, topo)  # on the world this render runs, before setup
         render_preflight.preflight_krea2_reference_latents(model, ref_summary, topo)
         model_patch_preflight.preflight_moss_image_reference_images(model, ref_summary, topo)
         model_patch_preflight.preflight_moss_image_attention_bias(model, request, topo)
@@ -371,7 +362,7 @@ def _submit_render_guarded(
         stamp_in_place_bake_permission(  # only an exact gate PASS lets a Worker bake a classic stack in place
             request, model, handle, resolved_topology=topo, resolved_attention=sample_attention)
         spec = model.mesh
-        validate_render_topology(model, topo, latent["samples"])
+        validate_render_topology(model, topo, latent["samples"], request)
         topology_label = topo.describe()
         log.info("render topology: %s (%s)", topology_label, reason)
         _collect_earlier_results_before_setup_change(handle, topo, spec)

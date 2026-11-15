@@ -34,14 +34,20 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 # Model calls each dp group's sampler makes, as two batch slices under
 # dpm_adaptive can.
 CALLS = [2, 3]
-STALL_S = 8  # the default group's timeout: a rank left waiting in an exchange fails here
+# The default group's timeout, which also bounds the rendezvous and every group
+# xFuser makes, so a slow runner does not fail there.
+INIT_S = 120
+# How long a rank whose group has finished waits for the others before it
+# exits. A rank still waiting in an exchange on it then fails on the closed
+# peer, well before INIT_S.
+WAIT_S = 8
 
 _RANK = r"""
 import datetime, json, os, sys, time
 from types import ModuleType, SimpleNamespace
 
 rank, port, scenario = int(sys.argv[1]), sys.argv[2], json.loads(sys.argv[3])
-world, topology, stall_s = len(scenario["free_gib"]), scenario["topology"], scenario["stall_s"]
+world, topology = len(scenario["free_gib"]), scenario["topology"]
 os.environ["MASTER_ADDR"], os.environ["MASTER_PORT"] = "127.0.0.1", port
 
 import torch
@@ -61,7 +67,7 @@ from xfuser.core.distributed import (
 # Imports first: the timeout below also bounds the rendezvous, so the ranks
 # reach it with their slow work done.
 dist.init_process_group("gloo", rank=rank, world_size=world,
-                        timeout=datetime.timedelta(seconds=stall_s))
+                        timeout=datetime.timedelta(seconds=scenario["init_s"]))
 init_distributed_environment(rank=rank, world_size=world, local_rank=0, backend="gloo")
 sp = int(topology.get("ulysses", 1)) * int(topology.get("ring", 1))
 cfg = int(topology.get("cfg", 1))
@@ -145,7 +151,7 @@ except Exception as exc:
 # A Worker whose group has finished waits for its next request, in no collective.
 done = os.path.join(scenario["done_dir"], "done-%d" % rank)
 open(done, "w").close()
-deadline = time.monotonic() + 3 * stall_s
+deadline = time.monotonic() + scenario["wait_s"]
 while time.monotonic() < deadline and not all(
         os.path.exists(os.path.join(scenario["done_dir"], "done-%d" % peer)) for peer in range(world)):
     time.sleep(0.05)
@@ -164,7 +170,7 @@ def _free_port() -> str:
 def _run(tmp_path, topology: dict, free_gib: list[float]) -> list[dict]:
     """Every rank, each in its own process; what each reported, rank 0 first."""
     scenario = {"topology": topology, "free_gib": free_gib, "calls": CALLS,
-                "stall_s": STALL_S, "done_dir": str(tmp_path)}
+                "init_s": INIT_S, "wait_s": WAIT_S, "done_dir": str(tmp_path)}
     port = _free_port()
     env = {**os.environ, "PYTHONPATH": str(SRC), "OMP_NUM_THREADS": "1", "CUDA_VISIBLE_DEVICES": ""}
     ranks = [subprocess.Popen([sys.executable, "-c", _RANK, str(rank), port, json.dumps(scenario)],
@@ -173,7 +179,7 @@ def _run(tmp_path, topology: dict, free_gib: list[float]) -> list[dict]:
     reports = []
     try:
         for process in ranks:
-            out, err = process.communicate(timeout=150)
+            out, err = process.communicate(timeout=INIT_S + 60)
             assert process.returncode == 0, err[-3000:]
             reports.append(json.loads(out.strip().splitlines()[-1]))
     finally:

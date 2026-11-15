@@ -7452,6 +7452,23 @@ def _assert_adaptive_step_samplers_seam() -> None:
 
     sampling = Sampling()
     sigmas = torch.tensor([*torch.linspace(14.6, 0.03, 11).tolist(), 0.0])
+    dpm_options = {"order": 3, "rtol": 0.05, "atol": 0.0078, "h_init": 0.05, "pcoeff": 0.0,
+                   "icoeff": 1.0, "dcoeff": 0.0, "accept_safety": 0.81, "eta": 0.0, "s_noise": 1.0}
+
+    # The node schemas first, so a moved input reads as such and not as a crash
+    # further down. The loader's graph walk reads both nodes by id, and
+    # KSamplerSelect by its one sampler_name input.
+    select = KSamplerSelect.define_schema()
+    adaptive_node = SamplerDPMAdaptative.define_schema()
+    select_inputs = [field.id for field in select.inputs]
+    assert (select.node_id, select_inputs) == (adaptive_steps.SAMPLER_SELECT_NODE, ["sampler_name"]), (
+        f"adaptive-step seam: KSamplerSelect is {select.node_id} with inputs {select_inputs}; the "
+        "loader's graph walk reads one sampler_name input on a node named KSamplerSelect")
+    required = sorted(field.id for field in adaptive_node.inputs if not getattr(field, "optional", False))
+    assert adaptive_node.node_id == adaptive_steps.ADAPTIVE_SAMPLER_NODE and set(required) <= set(
+        dpm_options), (
+        f"adaptive-step seam: SamplerDPMAdaptative is {adaptive_node.node_id} and requires {required}; "
+        f"this seam builds it with {sorted(dpm_options)}, and the loader's walk reads its node id")
 
     def calls(name: str, denoise) -> int:
         made = [0]
@@ -7478,8 +7495,17 @@ def _assert_adaptive_step_samplers_seam() -> None:
         return made[0]
 
     names = list(comfy.samplers.KSampler.SAMPLERS)
-    counts = {name: (calls(name, lambda x: x * 0.0), calls(name, lambda x: torch.sin(x * 3.0) * 2.0))
-              for name in names}
+    counts, undriven = {}, {}
+    for name in names:
+        try:
+            counts[name] = (calls(name, lambda x: x * 0.0),
+                            calls(name, lambda x: torch.sin(x * 3.0) * 2.0))
+        except Exception as exc:  # a sampler the stub cannot drive is a reading, not a crash
+            undriven[name] = f"{type(exc).__name__}: {exc}"[:160]
+    assert not undriven, (
+        f"adaptive-step seam: the stub denoiser cannot drive {sorted(undriven)} ({undriven}); read "
+        "whether each one's model call count follows the latent, then teach the stub its interface "
+        "or name it in nodes/adaptive_steps.ADAPTIVE_STEP_SAMPLERS")
     following = sorted(name for name, (first, second) in counts.items() if first != second)
     assert following == sorted(adaptive_steps.ADAPTIVE_STEP_SAMPLERS), (
         f"adaptive-step seam: the samplers whose call count follows the latent are {following}, "
@@ -7489,20 +7515,10 @@ def _assert_adaptive_step_samplers_seam() -> None:
     by_object = sorted(name for name in names if adaptive_steps.adaptive_sampler(
         {"sampler_object": comfy.samplers.sampler_object(name)}))
     assert by_object == following, f"adaptive-step seam: SAMPLER objects read as adaptive {by_object}"
-    node_output = SamplerDPMAdaptative.execute(
-        order=3, rtol=0.05, atol=0.0078, h_init=0.05, pcoeff=0.0, icoeff=1.0, dcoeff=0.0,
-        accept_safety=0.81, eta=0.0, s_noise=1.0)
+    node_output = SamplerDPMAdaptative.execute(**dpm_options)
     custom = getattr(node_output, "result", node_output)[0]
     assert adaptive_steps.adaptive_sampler({"sampler_object": custom}), (
         "adaptive-step seam: SamplerDPMAdaptative's SAMPLER no longer reads as the adaptive solver")
-    # The loader's graph walk reads these two nodes by class and input name.
-    select = KSamplerSelect.define_schema()
-    adaptive_node = SamplerDPMAdaptative.define_schema()
-    assert (select.node_id, [field.id for field in select.inputs]) == (
-        adaptive_steps.SAMPLER_SELECT_NODE, ["sampler_name"]), (
-        "adaptive-step seam: KSamplerSelect no longer names its sampler in one sampler_name input")
-    assert adaptive_node.node_id == adaptive_steps.ADAPTIVE_SAMPLER_NODE, (
-        "adaptive-step seam: SamplerDPMAdaptative's node id moved")
     selected = getattr(KSamplerSelect.execute("dpm_adaptive"), "result", None)
     assert selected and adaptive_steps.adaptive_sampler({"sampler_object": selected[0]}), (
         "adaptive-step seam: KSamplerSelect's dpm_adaptive SAMPLER no longer reads as the adaptive solver")
