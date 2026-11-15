@@ -35,6 +35,23 @@ const NAMED_ROLES: Record<string, PromptRole> = {
 // Text reaches a sampler through a text encoder and a few conditioning nodes, such as Flux
 // guidance or a zeroed copy; a longer path is not followed.
 const MAX_HOPS = 8;
+/**
+ * The inputs whose text a node passes on in its own output text. A node that makes conditioning
+ * takes in all its text. Any other node passes on only the text it works on, never a pattern, a
+ * find or replacement string, an instruction or a system prompt; an unlisted class passes on an
+ * input named `string`, `text`, `value` or `prompt`. A text generator writes text of its own, so
+ * neither what it is asked nor how passes through.
+ */
+const TEXT_THROUGH: Record<string, readonly string[]> = {
+  StringConcatenate: ['string_a', 'string_b'],
+  ComfySwitchNode: ['on_true', 'on_false'],
+  TextGenerate: [],
+  TextGenerateV2: [],
+};
+const NAMED_THROUGH = new Set(['string', 'text', 'value', 'prompt']);
+const carries = (node: GraphNode, input: string) =>
+  node.outputTypes.includes('CONDITIONING') ||
+  (TEXT_THROUGH[node.type] ?? [...NAMED_THROUGH]).includes(input);
 const FOLLOWED = new Set(['CONDITIONING', 'STRING']);
 const isObject = (value: unknown): value is Json =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -83,7 +100,7 @@ function reachedRoles(readers: Readers, start: GraphNode): Set<PromptRole> {
       for (const { node, input } of frontier) {
         const role = socketRole(node, input);
         if (role) found.add(role);
-        else if (!seen.has(node.key)) {
+        else if (!seen.has(node.key) && carries(node, input)) {
           seen.add(node.key);
           next.push(...(readers.get(node.key) ?? []));
         }
@@ -99,9 +116,11 @@ function reachedRoles(readers: Readers, start: GraphNode): Set<PromptRole> {
 }
 
 /**
- * Each text input's role in the graph. A node whose text reaches one sampler input gives every
- * text input it holds that role. When it reaches both, as a node that encodes a prompt and a
- * negative prompt together does, or neither, an input named after a role takes that role.
+ * Each text input's role in the graph. A node whose text reaches one sampler input gives that
+ * role to every text input it passes on (TEXT_THROUGH), so a typed prompt that reaches the
+ * sampler through string nodes keeps it, and a string node's pattern or instruction never takes
+ * it. When the text reaches both inputs, as a node that encodes a prompt and a negative prompt
+ * together does, or neither, an input named after a role takes that role.
  */
 export function graphRoles(
   workflow: Json | null | undefined,
@@ -118,7 +137,9 @@ export function graphRoles(
     if (!texts.length) continue;
     const reached = reachedRoles(readers, node);
     for (const binding of texts) {
-      const role = reached.size === 1 ? [...reached][0] : NAMED_ROLES[binding.input_name ?? ''];
+      const input = binding.input_name ?? '';
+      if (!carries(node, input)) continue;
+      const role = reached.size === 1 ? [...reached][0] : NAMED_ROLES[input];
       if (role) roles.set(binding.id, role);
     }
   }

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -51,6 +52,22 @@ LEFT_OUT_NODES = {"DGXMonarchInit", "DGXMonarchSkipLayerGuidance", "VAELoader", 
 VIDEO_OR_SOUND = {"LoadVideo", "LoadAudio", "SaveVideo", "SaveAudioAdvanced"}
 # A sampler that takes an image from one of these edits or refines that image.
 IMAGE_SOURCES = {"LoadImage", "LoadImageMask", "VAEEncode"}
+# Studio's own rule for text that passes through a node (studio/src/fieldPresentation.ts, which
+# a test below holds equal): a node that makes conditioning takes in all its text; any other
+# passes on only the text it works on, from the inputs listed here or, for an unlisted class,
+# from an input named like NAMED_THROUGH. A text generator writes text of its own.
+TEXT_THROUGH = {"StringConcatenate": ("string_a", "string_b"), "ComfySwitchNode": ("on_true", "on_false"),
+                "TextGenerate": (), "TextGenerateV2": ()}
+NAMED_THROUGH = ("string", "text", "value", "prompt")
+# Guiders that sample one conditioning, on an input named `conditioning`: that is the prompt.
+ONE_CONDITIONING_GUIDERS = {"BasicGuider", "DGXMonarchBasicGuider"}
+
+
+def carries(node: dict, name: str) -> bool:
+    """Whether a node passes the text on one of its inputs on into its own output."""
+    if any(output.get("type") == "CONDITIONING" for output in node.get("outputs") or []):
+        return True
+    return name in TEXT_THROUGH.get(node["type"], NAMED_THROUGH)
 # The length of a node that also sets a width and a height: the clip's frame count.
 FRAME_COUNT = "frame count"
 
@@ -79,6 +96,9 @@ OMITTED = {
     ("dgx-monarch-mage-flow-edit-turbo", 8, "denoise"): EMPTY_LATENT,
     ("dgx-monarch-qwen-image21-edit-rgba", 27, "denoise"): EMPTY_LATENT,
     ("dgx-monarch-qwen-image21-edit-mask-rgba", 10, "denoise"): EMPTY_LATENT,
+    # MiniMaxH3ImageConditioning hands the sampler a zeroed latent and the reference through
+    # the conditioning (comfy_extras/nodes_minimax_h3.py at 0.45.0).
+    ("dgx-monarch-minimax-h3-image-edit", 28, "denoise"): EMPTY_LATENT,
     ("dgx-monarch-pid-4k", 13, "denoise"): EMPTY_CANVAS,
 }
 # The layouts list these inputs although the rule does not ask for them.
@@ -93,10 +113,11 @@ def side(workflow: dict, node_id: int) -> str | None:
     """Whether a text node feeds a positive or a negative socket.
 
     Walk the CONDITIONING and STRING wires outward from the node, one hop at a
-    time. The nearest socket whose name says positive or negative decides; a
-    tie, or no such socket, gives None. Conditioning Zero Out keeps no text, so
-    the walk ends there: a prompt that reaches the sampler only through it, as
-    on the Fleet graph, is no prompt.
+    time, through the inputs that pass the text on (`carries`). The nearest
+    socket whose name says positive or negative, or a one-conditioning guider's
+    `conditioning`, decides; a tie, or no such socket, gives None. Conditioning
+    Zero Out keeps no text, so the walk ends there: a prompt that reaches the
+    sampler only through it, as on the Fleet graph, is no prompt.
     """
     nodes = {node["id"]: node for node in workflow["nodes"]}
     frontier, seen = [node_id], {node_id}
@@ -110,9 +131,10 @@ def side(workflow: dict, node_id: int) -> str | None:
             name = nodes[target]["inputs"][target_slot]["name"]
             if "negative" in name:
                 sides.add("negative")
-            elif "positive" in name:
+            elif "positive" in name or (name == "conditioning"
+                                        and nodes[target]["type"] in ONE_CONDITIONING_GUIDERS):
                 sides.add("prompt")
-            elif target not in seen:
+            elif target not in seen and carries(nodes[target], name):
                 seen.add(target)
                 following.append(target)
         if sides:
@@ -391,3 +413,17 @@ def test_build_refuses_a_wired_widget_and_an_unknown_role(generator):
         generator.build(spec)
     with pytest.raises(KeyError, match="colour"):
         generator._layout({"colour": ("pos.text",)})
+
+
+def test_the_text_through_rule_is_studios_own():
+    """The walk above follows text as Studio names fields, so the two tables must not drift."""
+    source = (ROOT / "studio/src/fieldPresentation.ts").read_text()
+    table = re.search(r"const TEXT_THROUGH: Record<string, readonly string\[\]> = \{(.*?)\};", source, re.S)
+    named = re.search(r"const NAMED_THROUGH = new Set\(\[(.*?)\]\);", source, re.S)
+    guiders = re.search(r"const ONE_CONDITIONING_GUIDERS = new Set\(\[(.*?)\]\);", source, re.S)
+    assert table and named and guiders, "a rule table moved in fieldPresentation.ts"
+    rows = {key: tuple(re.findall(r"'([^']+)'", values))
+            for key, values in re.findall(r"(\w+): \[([^\]]*)\]", table.group(1))}
+    assert rows == TEXT_THROUGH
+    assert tuple(re.findall(r"'([^']+)'", named.group(1))) == NAMED_THROUGH
+    assert set(re.findall(r"'([^']+)'", guiders.group(1))) == ONE_CONDITIONING_GUIDERS

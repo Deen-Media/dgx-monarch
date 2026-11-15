@@ -212,6 +212,54 @@ test('each output finds its own role, so a zeroed negative branch keeps Negative
   );
 });
 
+test('only the text a string node works on keeps the prompt role, never its patterns or instructions', () => {
+  // A typed prompt through Replace Text and a node pack's styler (a class Studio has no row for,
+  // passing on its `text`) to an encoder; and an instruction to a text generator, whose own text
+  // reaches a second encoder.
+  const node = (class_type: string, inputs: Record<string, unknown>) => ({ class_type, inputs });
+  const workflow = {
+    1: node('PrimitiveStringMultiline', { value: 'a red fox' }),
+    2: node('StringReplace', { string: ['1', 0], find: 'fox', replace: 'cat' }),
+    3: node('PackStyle', { text: ['2', 0], style: 'oil painting' }),
+    4: node('CLIPTextEncode', { text: ['3', 0], clip: ['11', 0] }),
+    5: node('DGXMonarchKSampler', { positive: ['4', 0], negative: ['6', 0] }),
+    6: node('CLIPTextEncode', { text: 'blurry', clip: ['11', 0] }),
+    7: node('PrimitiveStringMultiline', { value: 'Describe the picture in one line.' }),
+    8: node('TextGenerateV2', { clip: ['11', 0], prompt: ['7', 0], system_prompt: 'You caption.' }),
+    9: node('CLIPTextEncode', { text: ['8', 0], clip: ['11', 0] }),
+    10: node('DGXMonarchKSampler', { positive: ['9', 0], negative: ['6', 0] }),
+    11: node('CLIPLoader', {}),
+  };
+  const text = ['STRING', {}];
+  const info = {
+    ...recorded,
+    PackStyle: { input: { required: { text, style: text } }, output: ['STRING'] },
+  };
+  const typed: Array<[number, string]> = [
+    [1, 'value'],
+    [2, 'find'],
+    [2, 'replace'],
+    [3, 'style'],
+    [6, 'text'],
+    [7, 'value'],
+    [8, 'system_prompt'],
+  ];
+  const bindings = typed.map(([id, name]) => ({
+    id: `${id}:${name}`,
+    node_id: String(id),
+    input_name: name,
+    resolved: true,
+    schema: { type: 'STRING' },
+  })) as Binding[];
+  assert.deepEqual(
+    [...graphRoles(workflow, bindings, info)],
+    [
+      ['1:value', 'prompt'],
+      ['6:text', 'negative'],
+    ],
+  );
+});
+
 test('a Basic Guider takes one conditioning, so the text that reaches it is the prompt', () => {
   // p-h3-image: the request feeds the prompt upsampler and an If/Else switch, then the
   // conditioning node, then Basic Guider (DGX Monarch), whose one input is `conditioning`.
@@ -219,7 +267,10 @@ test('a Basic Guider takes one conditioning, so the text that reaches it is the 
   const bindings = textBindings(workflow);
   const names = presentFields({ workflow }, bindings, recorded);
   const request = bindings.find((b) => b.input_name === 'value')!;
-  assert.deepEqual([names.get(request.id)?.label, names.get(request.id)?.role], ['Prompt', 'prompt']);
+  assert.deepEqual(
+    [names.get(request.id)?.label, names.get(request.id)?.role],
+    ['Prompt', 'prompt'],
+  );
 });
 
 test('no packaged template shows two text boxes with one name, and each names its prompt', () => {
