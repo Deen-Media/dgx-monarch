@@ -3,8 +3,51 @@ import type { Inspection, Workflow } from './contracts';
 import { droppedInspection, type InspectionGuard } from './inspectionGuard.ts';
 import { stampIssues } from './issueRefresh.ts';
 import type { Binding, Draft } from './model';
-import type { ObjectInfo } from './workflowGraph.ts';
+import { freshGraphFields } from './model.ts';
+import { graphNodes, type ObjectInfo } from './workflowGraph.ts';
 import { fittedOperation, workflowTraits } from './workflowTraits.ts';
+
+/** The node classes the companion fills from the LoRA stack by position (lora_graph.LORA_NODES). */
+export const LORA_SLOT_CLASSES = new Set([
+  'LoraLoader',
+  'LoraLoaderModelOnly',
+  'DGXMonarchLoraLoader',
+]);
+
+/**
+ * The notice for a workflow loaded in place of the draft's, or ''. It names the style input and
+ * the LoRA insertion boundary the draft held, which a newly loaded workflow starts without
+ * (freshGraphFields), and says when a LoRA stack will replace the loaded workflow's own LoRAs.
+ */
+export function freshGraphNotice(
+  held: Pick<Draft, 'style_bindings' | 'lora_insertion' | 'lora_stack'>,
+  workflow: Workflow | null | undefined,
+  info?: ObjectInfo,
+): string {
+  const style = Object.values(held.style_bindings ?? {}).some(Boolean);
+  const boundary = !!held.lora_insertion;
+  const stack = held.lora_stack.length > 0;
+  const slots = graphNodes(workflow, info).some((node) => LORA_SLOT_CLASSES.has(node.type));
+  // A workflow with LoRA loaders takes the stack into its own chain and refuses or ignores a
+  // boundary (lora_graph.apply_loras), so the notice asks for a boundary only where one applies.
+  const choose = [
+    style ? 'the prompt input for styles' : '',
+    boundary && !slots ? 'the LoRA insertion boundary' : '',
+  ].filter(Boolean);
+  const lines = style || boundary ? ['This workflow starts from its own values.'] : [];
+  if (choose.length) lines.push(`Choose ${choose.join(' and ')} again.`);
+  if (slots && (boundary || stack))
+    lines.push(
+      `This workflow has LoRAs of its own${boundary ? ', so the LoRA insertion boundary is cleared' : ''}.`,
+    );
+  // A non-empty stack, even one with every entry off, takes over the slots: entry by entry, and
+  // strength 0 for each slot no enabled entry reaches.
+  if (slots && stack)
+    lines.push(
+      'At Generate, the LoRA stack replaces them by position, and those it does not reach run at strength 0. Remove the stack on the LoRAs tab to keep them.',
+    );
+  return lines.join(' ');
+}
 
 /**
  * Each resolved binding's value: the draft's edit first (by ID, then by a legacy alias), then the
@@ -30,10 +73,11 @@ export function bindingValues(bindings: Binding[], priorValues?: Draft['values']
 /**
  * Resolve editable bindings once; connected sockets stay owned by the graph. Prior draft values
  * travel with the workflow, so an edited dynamic choice lists its own child inputs. A newly loaded
- * workflow, which has no prior values, takes `fit`: the draft keeps its operation when the graph
- * supports it, and otherwise takes the graph's first supported one (fittedOperation). `fit` reads
- * the draft's operation when the request starts and again when the answer arrives, so a choice
- * made while the request runs stays as it is.
+ * workflow, which has no prior values, starts without the previous graph's style inputs and LoRA
+ * insertion targets (freshGraphFields), and takes `fit`: the draft keeps its operation when the
+ * graph supports it, and otherwise takes the graph's first supported one (fittedOperation).
+ * `fit` reads the draft's operation when the request starts and again when the answer arrives, so
+ * a choice made while the request runs stays as it is.
  */
 export async function inspectDraft(
   client: StudioClient,
@@ -60,7 +104,13 @@ export async function inspectDraft(
     bindings,
     connections: result.connections ?? [],
     errors: result.errors ?? [],
-    patch: { workflow: original, workflowName: name, values, ...(operation ? { operation } : {}) },
+    patch: {
+      ...(priorValues ? {} : freshGraphFields()),
+      workflow: original,
+      workflowName: name,
+      values,
+      ...(operation ? { operation } : {}),
+    },
     rawWorkflow: JSON.stringify(original, null, 2),
     controlTab: bindings.some((binding) => binding.prominent) ? 'inputs' : 'advanced',
   };

@@ -31,6 +31,7 @@ from ..old_model import OldModelRefusal, graph_loads
 from ..safetensors_header import SafetensorsFileIdentity
 from ..topology import Topology, topology_from_preset
 from . import (
+    adaptive_steps,
     consent_projection,
     expander_prompt,
     loader_gate_defer,
@@ -210,6 +211,9 @@ class DGXMonarchUNETLoader:
         expander_prompt.refuse_dead_expander(prompt)
         # This runs above the footprint card; preflight_graph_batch_divides_dp says why.
         render_validation.preflight_graph_batch_divides_dp(mesh, prompt, unique_id)
+        # An explicit preset sets up and loads below: an adaptive-step sampler
+        # under dp with FSDP refuses first (TROUBLESHOOTING #156).
+        adaptive_steps.preflight_loader_graph(mesh, prompt, unique_id)
         # Above the footprint card, which would otherwise offer slab residency
         # where slab is not a lever (see preflight_comfy_managed_topology).
         loader_preflight.preflight_comfy_managed_topology(mesh)

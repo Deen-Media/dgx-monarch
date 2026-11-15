@@ -384,6 +384,26 @@ def sp(monkeypatch):
     return set_rank
 
 
+@pytest.fixture
+def forget_modules_imported_here():
+    """Drop every ``dgx_monarch`` module first imported during the test, after it.
+
+    A test that imports the TUI under stand-in ``rich`` and ``textual`` modules
+    binds every TUI module it loads for the first time to the stand-ins. Its
+    monkeypatch restores ``rich`` and ``textual`` but not those modules, so a
+    later test that reloads only ``dgx_monarch.tui.app`` would draw with the
+    stand-ins, and whether it does depends on which test files the run
+    collected. Modules loaded before the test, with the real libraries, stay.
+    """
+    before = set(sys.modules)
+    yield
+    for name in [name for name in sys.modules if name not in before and name.split(".")[0] == "dgx_monarch"]:
+        module = sys.modules.pop(name, None)
+        parent, _, child = name.rpartition(".")
+        if parent in sys.modules and getattr(sys.modules[parent], child, None) is module:
+            delattr(sys.modules[parent], child)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_service_telemetry(monkeypatch):
     """Consumer tests must not probe the developer's configured Workers.

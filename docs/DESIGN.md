@@ -543,16 +543,32 @@ of the call then differs in size and count: on 2026-11-04 a Wan 2.2
 text-to-video proof render stalled for 600 s with rank 1's collectives carrying
 twice rank 0's elements. So wherever a model call is sharded (Ulysses times
 ring above 1, cfg above 1, or FSDP), a `CALC_COND_BATCH` wrapper takes the
-minimum of every rank's figure over the default process group once per call and
+minimum of the figures of the ranks that share the call, once per call, and
 lets ComfyUI's rule run against it (`actor/cond_batch_agreement.py`), installed
-beside the partial-load guard on every base either slot loads. Every rank takes
-the leanest rank's batch, for one 8-byte all-reduce per model call. A pure
+beside the partial-load guard on every base either slot loads. Each of them
+takes the leanest one's batch, for one 8-byte all-reduce per model call. A pure
 data-parallel call runs no collective, so its ranks need not agree, and there
 the exchange would only leave a rank's peer waiting until the stall budget when
-it stops early; it is not installed there. The pinned figure lasts through the
-whole call, so code in the forward that reads the patcher's free memory, such
-as Qwen Image 2.1's prefix-cache placement, reads the leanest rank's figure
-from the start of the call.
+it stops early; it is not installed there. The same holds between
+data-parallel groups when a layout also shards the call without FSDP (every
+such layout with dp above 1: `uly2`, `ring2` or `cfg2` with dp2 at four
+Sparks, `uly4+dp2`, `ring4+dp2` and `uly2+cfg2+dp2` at eight, and the dp3 and
+dp4 forms at six and eight): each group samples its own slice, and
+`dpm_adaptive` sizes its steps from that slice, so the groups can make
+different numbers of calls. There the exchange runs over the ranks of one
+data-parallel group only, on the sequence-parallel group when cfg is 1 and the
+cfg group when Ulysses times ring is 1, whose all-gathers the call already
+runs, and on xFuser's model replica group where both are above 1. With one
+data-parallel group, and under FSDP, it stays on the default process group:
+FSDP gathers every call's weights from all ranks, so there every rank shares
+every call, and the driver refuses `dpm_adaptive` under data parallelism with
+FSDP, which only the explicit `+fsdp` presets resolve (`auto` never adds
+FSDP): at the preset's UNET loader, before its setup and load, where the
+graph names the sampler, and at the sampler node otherwise
+(`nodes/adaptive_steps.py`, TROUBLESHOOTING #156). The pinned figure lasts
+through the whole call, so code in the forward that reads the patcher's free
+memory, such as Qwen Image 2.1's prefix-cache placement, reads the leanest
+rank's figure from the start of the call.
 
 The estimate behind ComfyUI's load decision must count the rows the forward
 holds. ComfyUI prices the whole latent and every reference, and with UltraTex
@@ -2369,19 +2385,28 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
   id, checking only its form, so an id sent again finds no earlier marks.
 - **When it prices nothing.** Without the running prompt's graph in hand: the
   executing context gives the prompt and node id, and the prompt queue's
-  running item with that id carries the graph. And in a graph whose DGX Monarch
-  UNET Loader is not of a family the loader prices a driver stack for.
+  running item with that id carries the graph. And in a graph none of whose
+  DGX Monarch UNET Loaders that ComfyUI will run is of a family the loader
+  prices a driver stack for.
 - **The loader's settings, from the graph.** The loader reads two settings from
   its mesh input, the Init node's output: the family forced there
   (`family_adapter`), which stands over the checkpoint's header and in place of
   one it cannot read, and its floor, `reserve_bytes` of the Init node's
   `uma_reserve_gb` over the configured policy. A wrap holds no mesh, so it reads
-  both from the running graph's Init node that the loader's mesh comes from, by
-  the loader's own rules, over the attached mesh's configured policy or, before
-  a mesh is up, the policy of the file the Init node names
-  (`driver_spend_settings.py`). A graph with no Init node reads the header
-  alone at the 5 GiB floor; a configuration it cannot read leaves the Init
-  node's own reserve.
+  both from the running graph's Init node that the loader's mesh comes from,
+  directly or through the lazy switches ComfyUI may run (one reading per Init
+  node a switch can pass), by the loader's own rules, over the policy of the
+  file the Init node names, read as `get_mesh` reads it
+  (`driver_spend_settings.py`). It never reads an attached mesh in the file's
+  place: a mesh keeps the contents it was built from until the Init node runs
+  again, and ComfyUI can run a spend first. Where the Init node's
+  `config_path` is a link, the graph cannot name the file, so the one
+  attached, live mesh answers, and with none or several the Init node's own
+  reserve stands; a linked `mode` still reads the file, since every mode takes
+  the same `[worker_args]` table. Only loaders ComfyUI will run count
+  (`graph_live.live_nodes`); where two readings remain, the larger reserve
+  stands. A graph with no Init node reads the header alone at the 5 GiB floor;
+  a configuration it cannot read leaves the Init node's own reserve.
 - **The promise.** A marked spend is never refused. An unmarked spend is refused
   only where it would take the box under its floor
   (`driver_footprint.reserve_bytes`, the loader's) after every rescue: the room is

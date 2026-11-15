@@ -143,13 +143,13 @@ function harness(setup: Setup) {
 test('the editing workflows are the packaged ones that load an image, make no video and run on the driver', () => {
   const editing = (info: Record<string, any>) =>
     entries.filter((row) => editingWorkflow(row.workflow, info)).map((row) => row.name);
-  // Of the 23 packaged graphs with an image input, image to video, motion transfer and the PiD
-  // upscale stay out.
+  // Of the 24 packaged graphs with an image input, image to video, motion transfer and PiD stay out.
   assert.deepEqual(editing(recorded), [
     'dgx-monarch-flux3-klein-base-edit',
     'dgx-monarch-flux3-klein-edit',
     'dgx-monarch-mage-flow-edit-turbo',
     'dgx-monarch-mage-flow-edit',
+    'dgx-monarch-minimax-h3-image-edit',
     'dgx-monarch-qwen-image21-edit-mask-rgba',
     'dgx-monarch-qwen-image21-edit-rgba',
   ]);
@@ -230,6 +230,77 @@ test('with one editing workflow on the driver, Send to edit loads it and binds t
   );
 });
 
+test('a loaded editing workflow names none of the old graph, and a kept one keeps its controls', async () => {
+  const old = 'flux.3-klein-base-text-to-image';
+  const user = {
+    styles: [{ id: 'style-ink', name: 'Ink', prompt: 'ink wash, {prompt}', enabled: true }],
+    lora_stack: [
+      {
+        id: 'detail.safetensors',
+        name: 'detail.safetensors',
+        enabled: true,
+        model_strength: 0.8,
+        source_node: 'DGXMonarchLoraLoader',
+      },
+    ],
+    project_id: 'project',
+    seed_policy: 'fixed',
+  };
+  const draft = loaded('flux3-klein-base-t2i', {
+    ...user,
+    style_bindings: { prompt: `${old}:6:text`, negative_prompt: `${old}:7:text` },
+    lora_insertion: {
+      loader: 'DGXMonarchLoraLoader',
+      model_targets: [{ node_id: '9', input_name: 'model' }],
+      clip_targets: [],
+    },
+  });
+  const info = without('ConditioningZeroOut', 'TextEncodeMageFlowEdit', 'TextEncodeQwenImage21');
+  const run = harness({ draft, info });
+  await run.send(output);
+  assert.deepEqual(run.errors, []);
+  const [{ value }] = run.imports;
+  assert.equal(value.workflowName, 'dgx-monarch-flux3-klein-base-edit');
+  assert.equal(value.style_bindings, undefined);
+  assert.equal(value.lora_insertion, undefined);
+  // Styles, the LoRA stack, the project and the seed policy name no graph input, so they stay.
+  const { styles, lora_stack, project_id, seed_policy } = value;
+  assert.deepEqual({ styles, lora_stack, project_id, seed_policy }, user);
+  // Generate sends the draft as JSON: no style input or insertion target of the old graph is left
+  // for the companion to refuse.
+  const request = JSON.parse(JSON.stringify(value));
+  assert.equal('style_bindings' in request, false);
+  assert.equal('lora_insertion' in request, false);
+  assert.equal(JSON.stringify(request).includes(old), false);
+  // The notice line says what the loaded workflow dropped; it has no LoRA slot of its own.
+  const dropped =
+    'Undo restores the previous draft. This workflow starts from its own values. Choose the prompt input for styles and the LoRA insertion boundary again.';
+  assert.ok(run.notices[0].endsWith(dropped), run.notices[0]);
+
+  const own = 'flux.3-klein-base-image-editing';
+  const controls = {
+    style_bindings: { prompt: `${own}:6:text` },
+    lora_insertion: {
+      loader: 'DGXMonarchLoraLoader',
+      model_targets: [{ node_id: '14', input_name: 'model' }],
+      clip_targets: [],
+    },
+  };
+  const editing = loaded('flux3-klein-base-edit', { ...user, ...controls });
+  const kept = harness({ draft: editing, workflowId: entry('flux3-klein-base-edit').id, info });
+  await kept.send(output);
+  const [{ value: same }] = kept.imports;
+  assert.ok(
+    kept.notices[0].endsWith('Undo restores the previous draft.'),
+    'a kept one drops nothing',
+  );
+  assert.deepEqual(same.workflow, editing.workflow);
+  assert.deepEqual(
+    { style_bindings: same.style_bindings, lora_insertion: same.lora_insertion },
+    controls,
+  );
+});
+
 test('with several editing workflows, Send to edit offers the choice and changes nothing', async () => {
   const draft = loaded('flux3-klein-base-t2i');
   const before = structuredClone(draft);
@@ -243,6 +314,7 @@ test('with several editing workflows, Send to edit offers the choice and changes
     'FLUX.3 Klein image editing',
     'Mage-Flow image editing quality',
     'Mage-Flow image editing Turbo',
+    'MiniMax-H3-Image image editing',
     'Qwen Image 2.1 masked RGBA reference edit',
     'Qwen Image 2.1 ten-reference RGBA edit',
   ]);

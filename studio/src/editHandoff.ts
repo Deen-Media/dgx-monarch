@@ -2,7 +2,13 @@ import type { StudioClient } from './api';
 import type { AssetReceipt } from './assetEditorState.svelte';
 import type { Artifact, Inspection, Workflow, WorkflowEntry } from './contracts';
 import type { Binding, Draft } from './model';
-import { bindingError, bindingOptions, bindingType, fieldLabel } from './model.ts';
+import {
+  bindingError,
+  bindingOptions,
+  bindingType,
+  fieldLabel,
+  freshGraphFields,
+} from './model.ts';
 import { byTitle, workflowTitle } from './workflowChoice.ts';
 import {
   bindingIndex,
@@ -11,6 +17,7 @@ import {
   type GraphNode,
   type ObjectInfo,
 } from './workflowGraph.ts';
+import { freshGraphNotice } from './workflowInspector.ts';
 import { operationNeed, workflowTraits } from './workflowTraits.ts';
 
 const isObject = (value: unknown): value is Record<string, any> =>
@@ -131,7 +138,8 @@ export function editPlan(
 
 /**
  * The draft with the output in the image input and the Operation set to Edit. A loaded workflow
- * starts from its own values and lineage; a kept one keeps its values and adds to its lineage.
+ * starts from its own values and lineage, without the previous graph's style inputs or LoRA
+ * insertion targets; a kept one keeps them all and adds to its lineage.
  */
 export function editDraft(
   draft: Draft,
@@ -140,10 +148,10 @@ export function editDraft(
   lineage: string[],
   load?: { workflow: Workflow; name: string } | null,
 ): Draft {
-  const kept = load ? { values: {}, parent_artifact_ids: [] } : draft;
+  const kept = load ? { ...freshGraphFields(), parent_artifact_ids: [] } : draft;
   return {
     ...draft,
-    ...(load ? { workflow: load.workflow, workflowName: load.name } : {}),
+    ...(load ? { ...kept, workflow: load.workflow, workflowName: load.name } : {}),
     values: { ...kept.values, [target.id]: value },
     parent_artifact_ids: [...new Set([...kept.parent_artifact_ids, ...lineage])],
     operation: 'edit',
@@ -235,6 +243,8 @@ export async function bindOutput(
     );
   const load = choice && workflow ? { workflow, name: choice.name } : null;
   const lineage = [artifact.id, receipt.id];
+  // A loaded workflow drops the draft's style input and insertion boundary; the notice says which.
+  const loaded = load ? freshGraphNotice(context.draft(), load.workflow, context.info()) : '';
   const next = editDraft(context.draft(), target, receipt.binding_value, lineage, load);
   await actions.importDraft(next, choice ? choice.id : context.workflowId());
   // An inspection that failed leaves no bindings and shows its own error.
@@ -246,7 +256,7 @@ export async function bindOutput(
   if (shown && !(shown.prominent || shown.display?.prominent)) actions.selectTab?.('advanced');
   actions.navigate('workspace');
   actions.setNotice(
-    `Send to edit put the output in the ${fieldLabel(target)} input on node ${target.node_id} of ${label} and set the Operation to Edit. Describe the change in the prompt, then Generate. Undo restores the previous draft.`,
+    `Send to edit put the output in the ${fieldLabel(target)} input on node ${target.node_id} of ${label} and set the Operation to Edit. Describe the change in the prompt, then Generate. Undo restores the previous draft.${loaded ? ` ${loaded}` : ''}`,
   );
 }
 

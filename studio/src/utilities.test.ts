@@ -21,6 +21,7 @@ import {
   hasFleetSampler,
 } from './fleetSetup.ts';
 import { componentFunctions, renderComponent, visibleText } from './renderHarness.js';
+import { loadWorkflow } from './workflowChoice.ts';
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const catalog: { workflows: WorkflowEntry[] } = JSON.parse(
@@ -193,31 +194,48 @@ test('the Fleet plan keeps a Fleet draft, loads the packaged workflow, or says i
 // Run the shipped Set up Fleet handler against fakes of App's callbacks. `leaves` closes the
 // Fleet page while the workflow loads, as choosing another page in the rail does.
 const setUpCode = await componentFunctions('./views/Fleet.svelte', ['setUp']);
-function fleetPage(start: Draft, loads: boolean, leaves = false) {
+function fleetPage(start: Draft, loads: boolean, leaves = false, said?: string) {
   return new Function(
     'start',
     'loads',
     'leaves',
+    'said',
     'helpers',
     `'use strict';
-    const { fleetPlan, fleetNextStep, hasFleetSampler, entry } = helpers;
+    const { fleetPlan, fleetNextStep, hasFleetSampler, loadWorkflow, entry } = helpers;
     const calls = [];
     let draft = start, loading = false, open = true;
     const plan = fleetPlan(start, [entry]);
     const changeDraft = (change) => { calls.push(['changeDraft', change]); draft = { ...draft, ...change }; };
-    // App's inspect reports a refusal itself and leaves the draft as it was.
+    // App's inspect reports a refusal itself and leaves the draft as it was; a load resolves with
+    // the notice it set, if any.
     const inspect = async (workflow, name, preserve, id) => {
       calls.push(['inspect', name, preserve, id]);
       if (leaves) open = false;
       if (loads) draft = { ...draft, workflow, workflowName: name };
+      return said;
     };
-    const loadWorkflow = (item, run) => run(item.workflow, item.name, false, item.id);
     const navigate = (view) => calls.push(['navigate', view]);
     const setNotice = (text) => calls.push(['notice', text]);
     ${setUpCode}
     return { setUp, calls, state: () => ({ draft, loading }) };`,
-  )(start, loads, leaves, { fleetPlan, fleetNextStep, hasFleetSampler, entry: fleetEntry });
+  )(start, loads, leaves, said, {
+    fleetPlan,
+    fleetNextStep,
+    hasFleetSampler,
+    loadWorkflow,
+    entry: fleetEntry,
+  });
 }
+
+test('Set up Fleet keeps the load notice after its next step', async () => {
+  const dropped =
+    'This workflow starts from its own values. Choose the prompt input for styles again.';
+  const page = fleetPage({ ...emptyDraft(), workflow: other }, true, false, dropped);
+  await page.setUp();
+  const next = fleetNextStep({ kind: 'load', entry: fleetEntry, replaces: true });
+  assert.deepEqual(page.calls.at(-1), ['notice', `${next} ${dropped}`]);
+});
 
 test('Set up Fleet loads the Fleet workflow, labels the draft, then opens Create with the next step', async () => {
   const page = fleetPage({ ...emptyDraft(), workflow: other, workflowName: 'mine' }, true);

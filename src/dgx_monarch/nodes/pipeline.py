@@ -285,6 +285,7 @@ class RenderPipeline:
         # without a module-import cycle.
         from .. import adoption_evidence
         from . import (
+            adaptive_steps,
             common,
             consent_waiver,
             gate_inconclusive,
@@ -308,6 +309,7 @@ class RenderPipeline:
         # path runs the same check at the gate's entry (auto_gate.maybe_auto_gate),
         # which a pipelined render reaches only when it needs a ceremony.
         h3_ring_pad.preflight_for_render(model, request, latent, cfg_value)
+        adaptive_steps.preflight_for_render(model, request, latent, cfg_value)
         # Before the risk read, not after it: a quarantine another
         # combination's abort wrote reads as no risk here, so a combination
         # the ceremony never saw would lose its ceremony too.

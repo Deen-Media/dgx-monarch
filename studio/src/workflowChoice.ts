@@ -58,7 +58,13 @@ export function paletteWorkflows(
   return query.trim() ? byTitle(entries).filter((entry) => matchesWorkflow(entry, query)) : [];
 }
 
-/** Load a packaged workflow into the draft; the select and the command palette both use this. */
-export function loadWorkflow(entry: WorkflowEntry, inspect: InspectWorkflow): Promise<void> {
+/**
+ * Load a packaged workflow into the draft; the select, the command palette and Fleet use this. It
+ * resolves with the notice the load set, if any.
+ */
+export function loadWorkflow(
+  entry: WorkflowEntry,
+  inspect: InspectWorkflow,
+): Promise<string | void> {
   return inspect(entry.workflow, entry.name, false, entry.id);
 }

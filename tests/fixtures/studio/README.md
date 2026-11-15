@@ -24,12 +24,20 @@ for graphs whose UI-only transformations are not implemented by Studio.
 ## Recorded driver schema
 
 `object_info_bundled.json` is not synthetic. It is trimmed from a real
-`/object_info` response that a driver returned on 2026-10-20, running ComfyUI
-commit d52a7a5ef (v0.42.0-14), ComfyUI frontend package 1.55.18 and the
-dgx-monarch tree that adds MOSS-Image on dev 61f446f, with the rig's other node
-packs loaded. It replaces a 2026-10-16 recording (ComfyUI 29e28e2b4, frontend
-1.55.17, dgx-monarch dab81e3bb02c) that lacked the MOSS-Image nodes, files and
-CLIP type; rebuilt, the two differ only in those additions.
+`/object_info` response that a driver returned on 2026-11-15, running ComfyUI
+0.45.0 at commit 4d64a8bc0, ComfyUI frontend package 1.58.5 and dgx-monarch
+dev f297c70, with the rig's other node packs loaded. It replaces a 2026-10-20
+recording (ComfyUI d52a7a5ef, v0.42.0-14, frontend 1.55.18, dgx-monarch dev
+61f446f) that lacked the node classes of the templates added since: Wan 2.2
+TI2V (`Wan22ImageToVideoLatent`), p-h3-image and MiniMax-H3-Image (their
+conditioning nodes, `DGXMonarchBasicGuider`,
+`DGXMonarchModelSamplingMiniMaxH3`, `ComfySwitchNode`, `TextGenerateV2`,
+`PreviewAny`, `ResizeImageMaskNode` and the string nodes `StringCompare`,
+`StringReplace`, `StringTrim`, `RegexExtract` and `RegexReplace`). Rebuilt,
+the two also differ where ComfyUI changed between the releases: Create Video's
+`chroma_subsampling` and `prores` codec, Save Video's `mov` format, the CLIP
+type `fibo2`, a hidden `prompt` input on the DGX Monarch samplers, the new
+templates' model files and the Init node's `minimax_h3_image` family.
 `tests/test_studio_bundled_workflows.py`
 inspects and compiles every bundled workflow against it, so it covers the
 frontend's upload helper slots, V3 dynamic combos, union widgets and Autogrow
@@ -49,15 +57,30 @@ again on a new recording replaces it. The script:
 - stops if a referenced name is missing from the recording, except for the
   example names it lists in `NOT_IN_RECORDING`.
 
-The recording rig had not installed thirteen example files that public
-workflows name, so the script adds them to their loader's choices:
+The recording rig had not installed two example files that public workflows
+name, so the script adds them to their loader's choices:
 `your_first_lora.safetensors` and `your_second_lora.safetensors`
-(DGXMonarchLoraLoader); `blue_dancer.png`, `qwen21_canvas_rgba.png`,
-`qwen21_mask_rgba.png`, `qwen21_source.png`, `reference_character.png` and
-`reference_character_mask.png` (LoadImage); `driving_video.mp4`,
-`driving_video_mask.mp4` and `source_video.mp4` (LoadVideo); and
-`wan_dancer_reference_audio.mp3` (LoadAudio). Whether a file exists stays the
-driver's check at execution.
+(DGXMonarchLoraLoader). The other example inputs the 2026-10-20 recording
+lacked, six images, three videos and one audio file, are installed on the rig
+now and come from the recording. Whether a file exists stays the driver's
+check at execution.
+
+The script also writes `stock_text_classes.json`: every stock class in the
+recording (its `python_module` is `nodes`, `comfy_extras.*` or
+`comfy_api_nodes.*`) with a text input and a text or conditioning output, with
+its text inputs and whether each box is multi-line. Studio's text-through rule
+(`studio/src/textThrough.ts`) holds a row for each, read from the class's
+source, and `tests/test_studio_template_layouts.py` fails when a listed class
+has no row. A new recording that adds a stock text class needs its row.
+
+`compiled_template_graphs.json` holds each bundled template as the API prompt
+a job records, the form Reuse settings and Upscale load back into a draft: per
+node its class, its links and its text inputs, with the values emptied.
+`build_compiled_template_graphs.py` writes it from the bundled workflows and
+`object_info_bundled.json`, and `tests/test_studio_fixture_builder.py` fails
+when it is stale, so run the script after a template or the recorded schema
+changes. `studio/src/fieldPresentation.test.ts` checks that every template
+names the same Prompt and Negative prompt fields in this form as saved.
 
 ## Recording a new driver schema
 
@@ -78,4 +101,7 @@ a new schema on a driver that has those nodes installed:
 3. Update the recording date and the ComfyUI, frontend and dgx-monarch
    versions in the section above, then run
    `pytest tests/test_studio_bundled_workflows.py` and check that nothing is
-   skipped.
+   skipped. Run `pytest tests/test_studio_template_layouts.py` too: a stock
+   class that the new `stock_text_classes.json` lists without a row in
+   `studio/src/textThrough.ts` and the layout test's copy fails it. Then run
+   `python tests/fixtures/studio/build_compiled_template_graphs.py`.

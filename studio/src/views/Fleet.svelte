@@ -59,11 +59,12 @@
     if (loading) return;
     const chosen = plan,
       previous = draft.operation;
+    let loaded: string | void = '';
     loading = true;
     try {
       if (previous !== 'fleet') changeDraft({ operation: 'fleet' });
       if (chosen.kind === 'load') {
-        await loadWorkflow(chosen.entry, inspect);
+        loaded = await loadWorkflow(chosen.entry, inspect);
         // A refused or superseded load leaves its error on this page and the draft as it was.
         if (!hasFleetSampler(draft.workflow)) {
           if (previous !== 'fleet' && draft.operation === 'fleet')
@@ -73,7 +74,8 @@
       }
       // The draft holds the workflow either way; only a Fleet page still open moves to Create.
       if (open) navigate('workspace');
-      setNotice(fleetNextStep(chosen));
+      // The load's own notice, naming what the new workflow dropped, follows the next step.
+      setNotice([fleetNextStep(chosen), loaded].filter(Boolean).join(' '));
     } finally {
       loading = false;
     }

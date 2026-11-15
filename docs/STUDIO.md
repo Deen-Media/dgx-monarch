@@ -801,7 +801,12 @@ VAE and text encoder files. The Layout tab changes which inputs are
 prominent, their labels and their order without changing binding identity, and
 its edits also update the workflow repair text. Validating unchanged source
 preserves edits made in typed controls; intentional JSON changes use the edited
-workflow's defaults. Changing a dynamic choice, such as the codec or encoding
+workflow's defaults. A workflow loaded from the Workflow list, Import JSON,
+Library or Send to edit, and a JSON change validated here, starts without the
+prompt inputs chosen for styles and without a LoRA insertion boundary; the
+styles and the LoRA stack stay with the draft. The notice line names what the
+load dropped, and says when the LoRA stack will replace the workflow's own
+LoRAs. Changing a dynamic choice, such as the codec or encoding
 mode of SaveVideo, inspects the workflow again with the draft's values: the
 controls for the new choice's inputs appear, those of the old choice leave the
 draft, and review accepts edits to the new inputs. Inside a subgraph, Studio
@@ -812,7 +817,21 @@ The prompt boxes read Prompt and Negative prompt. The inputs chosen under
 Ordered prompt styles take those roles; otherwise the graph decides: the text
 that reaches a sampler's `positive` input, or the one `conditioning` input of
 a Basic Guider, is the prompt, and the text that reaches its `negative` input
-is the negative prompt. A node that encodes both
+is the negative prompt. Text reaches the sampler through a node only by the
+inputs that hold its content. Each stock ComfyUI node that passes text or
+conditioning on has a list, read from its source: a switch, Branch or text node
+passes on the text it works on, but not a pattern, a find or replacement
+string, a separator, a template or a key, and ComfyUI's text generators pass on
+nothing, so what you ask one reads by its node. A node pack's node passes on
+linked text and multi-line typed text (a node pack's encoder takes its one-line
+text too) unless a word of the input's name says it shapes or locates the text,
+such as system, pattern, find, replace, separator, instruction, path, file,
+folder, key, format or template. An input named for the negative prompt keeps
+that name, and on a node with both a prompt and a negative prompt box each
+keeps its own. In the API prompt that Reuse settings and Upscale load, a
+switch's branches take any type, and Studio follows a branch when it comes
+straight from a text output, so a reused job of a packaged workflow names the
+same prompt as its workflow. A node that encodes both
 texts, such as Qwen Image 2.1's, gives each the role its input name says. When
 several boxes share a role, each adds its input name or its node. Any other
 multi-line text box, and a text box whose input name another one repeats, reads
@@ -929,7 +948,10 @@ the inserted node identities, connection boundaries, asset names and strengths.
 Multiple ambiguous chains or incompatible typed connections refuse execution.
 An invalid LoRA strength, a removed LoRA or an out-of-range inserted loader is
 refused with `lora_binding` when Generate checks the draft, naming the slot and
-input.
+input. A stack on a workflow without LoRA slots is refused with `lora_binding`:
+first with "Choose an explicit LoRA loader type.", then, once the loader is
+chosen, with "Choose an actual model consumer for the inserted LoRA chain.",
+until you choose the loader and its consumers.
 The LoRA list comes from the driver catalog Studio reads at connect. Studio
 reads it again when the driver connects again or the companion restarts, and
 once more after a failed read while the driver stays connected. Refresh list on

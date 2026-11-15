@@ -1,6 +1,6 @@
 # Studio interface QA
 
-Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22, on 2026-10-28 and on 2026-11-03, with two rows added on 2026-10-22, fourteen on 2026-10-28 and tester round 4 rows from 2026-10-30, checked again on 2026-11-03. Status: **scoped local validation; the 26 browser rows and the eleven tester round 4 rows ran headless on the 1.5.0 bundle on 2026-11-03 and passed; the three faults that the 2026-10-28 round found are fixed; Studio's acceptance remains incomplete, as [Remaining acceptance](#remaining-acceptance) lists**.
+Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22, on 2026-10-28 and on 2026-11-03, with two rows added on 2026-10-22, fourteen on 2026-10-28 and tester round 4 rows from 2026-10-30, checked again on 2026-11-03, and on 2026-11-15 five apex review rows and the 26 browser rows again. Status: **scoped local validation; the 26 browser rows and the five apex review rows ran headless on the shipping bundle, `index-BFnkXPeL.js`, on 2026-11-15 and passed; the eleven tester round 4 rows last ran on the 1.5.0 bundle of 2026-11-03 and passed; the three faults that the 2026-10-28 round found are fixed; Studio's acceptance remains incomplete, as [Remaining acceptance](#remaining-acceptance) lists**.
 
 This pass inventoried every authored interactive control in `studio/src` and
 traced its handler, conditional visibility, disabled state and recovery path.
@@ -371,9 +371,10 @@ technology.
 
 On 2026-11-03 the 26 rows of the
 [browser procedure](../studio/tests/README.md#browser-checks) ran on the 1.5.0
-bundle, the one dev builds at commit `14d7e90`. The release commit adds only
-documentation and the version over that commit, so this bundle is the
-release's. It is the set that `RESOURCE_SHA256` names there:
+bundle, the one dev builds at commit `14d7e90`. The release commit then added
+only documentation and the version over that commit, so this bundle was then to
+be the release's; the apex review fixes of 2026-11-15 rebuilt it. It is the set
+that `RESOURCE_SHA256` names there:
 `index-u89IKTnP.js`
 (`8d2b9a6fa6c18847bb64f5d3cdef82d596303b5f1e79063b538b242dc6493bd0`),
 `index-DZRUgSeS.css`
@@ -502,6 +503,206 @@ packages; the results file's SHA-256 is
 re-check did not repeat; a refresh the companion fails or answers late; a field
 issue inside a subgraph instance; arrow keys on a select; and Chromium, Safari,
 physical phones and assistive technology.
+
+## Apex review checks, 2026-11-15
+
+The apex review of the 1.5 release found that a workflow Send to edit loads
+kept the previous workflow's style input and LoRA insertion targets, so the
+companion could refuse Generate over an input or node the new workflow does not
+have. The fix starts a workflow loaded by Send to edit, the Workflow list or an
+edited workflow JSON without them, and the companion now refuses a LoRA stack
+on a workflow with no LoRA chain and no insertion boundary as `lora_binding`.
+The independent review then asked for two notices: one naming the style input
+or insertion boundary a load drops, and one saying when the LoRA stack will
+replace a loaded workflow's own LoRAs. The full browser procedure then found
+the recorded driver schema too old for three templates new in 1.5; recorded
+again on ComfyUI 0.45.0, it showed Studio naming the prompt expander's patterns
+and instructions Prompt, which was fixed, and it let Send to edit offer
+MiniMax-H3-Image image editing as a seventh editing workflow, which the fifth
+row checks. A later review widened that naming fix, so that a typed prompt
+keeps its name through node-pack text nodes and Soft Switch, and the reviews
+after it gave every stock text node a list of the inputs it passes on, kept a
+negative prompt box's name, and let a reused job of a packaged workflow name
+the same prompt as the workflow. These rows check those changes; the full
+procedure ran too, in
+[Browser evidence, 2026-11-15](#browser-evidence-2026-11-15).
+
+The rows ran seven times on 2026-11-15, in Mozilla Firefox 159.0.1, headless on
+Ubuntu 24.04.5 LTS for arm64, driven through WebDriver BiDi with real pointer
+and key input, at 1440×900 and 390×844. Selects took their value through a
+change event, since headless Firefox draws no native pop-up, and each JSON edit
+went into the Layout box the same way. No screenshot was taken: each reading is
+the page's state, the autosaved draft and the companion's job records. No run
+logged a console error. Each round's results file is kept in the maintainer's
+private evidence store, outside the repository and the packages.
+
+- The first round ran the first two rows on `index-BERoqH-z.js`
+  (`8783f2e35df91f3dd4950f0c73ae12b192af3237f2fe1ea8543e518f1d2825ab`), before
+  the notices. A second companion served the dev bundle at `35bb775`,
+  `index-D8bgqF8A.js`, for the before readings at 1440×900; every dev reading
+  below is from that round. Its first Workflow list run at 1440×900 stopped at
+  a script step, because Validate edited workflow returns Create to Inputs; the
+  script then reopened Layout, and the run was repeated. Results SHA-256
+  `375a82c7629330cacf0e6cf0b622c384229af700560eac73b7d3bb99c29c9652`.
+- The second and third rounds ran all four rows on two earlier builds of the
+  notices, `index-BijBSOvt.js` and `index-TUKjqnV0.js`, and passed. The first
+  was superseded to keep each source module under 500 lines, and the second
+  because its notice asked for an insertion boundary on a workflow with LoRA
+  loaders of its own, where the companion refuses or ignores one. The second
+  round's first LoRA slots run at 1440×900 stopped at a script step, because
+  Enter in the workflow filter loads nothing once a packaged workflow is chosen;
+  the script then chose through the select, and the run was repeated. Results
+  SHA-256 `76f838a3d25d91e99d7c10a20eaad193fbc9fcc54c9aa0bfdc38b5ec1187835e`
+  and `de2b603deb45e3c829d2a0ceb3f706f50a5dcc010e4856fcf084904fb864d09d`.
+- The fourth round ran all four rows on `index-C-bf88vi.js`
+  (`4d1337ad3193be91115ff824f74a548b6467ed7b9bcdf1cc86453db6bfc49951`), the
+  bundle of the notices, against the 2026-10-20 recorded schema, and passed on
+  every first try. It was superseded by the field naming fix. Results SHA-256
+  `c7b5c3df8cd78d9d984f9272d37aebfec61aaf57fdd1c58e8deed4b6bfa239c0`.
+- The fifth round ran all five rows on `index-O8HuyxL5.js`
+  (`49d0928e355c9a50ccedd5a6f72ace0a301c01740de9f1fb0464be3e269e95d0`), against
+  the schema recorded on 2026-11-15, and passed on every first try. It was
+  superseded by the wider naming rule. Results SHA-256
+  `389b758c6bc0a35362b7235969455e59019414e4fa2cf2fb71707dd81fa9054d`.
+- The sixth round ran all five rows on `index-DFUxnqsH.js`
+  (`2f989be06d7bfafdb4ea3082d6f6f1bae995123acb7287de4122c52250d661a0`),
+  against the schema recorded on 2026-11-15, and passed on every first try. It
+  was superseded by the rows for every stock text node and the review fixes
+  after them. Results SHA-256
+  `151909b98a388d84d10e29cf27944f19dc618d0fd55cf37a79ffe730fcf0aea5`.
+- The seventh round ran all five rows on the shipping bundle,
+  `index-BFnkXPeL.js`
+  (`4e272d22d305229fb86f0b8dfe6bcf41d7612b9718ade662ecaaa96395b23fd8`),
+  `index-DZRUgSeS.css`
+  (`2b07ca82a5ce27a8f7853831d60d95e24ce8bd2040940d03a6e1ce79e0f9b854`) and
+  `index.html` (`3d4bda1ce0c9ecc3d2b3f4486e6d3d9f2a7700440c7ee4219b8f14fbaba94cd2`),
+  against the schema recorded on 2026-11-15. Both companions, started from the
+  change's tree, served those bytes; the served copies were kept and hash the
+  same. Every run passed on its first try, and every branch reading below is
+  from this round. Results SHA-256
+  `98a88ecac0ff64d6e52b9f3d43796076c80efc4510a9025a17e1147dcd506727`.
+
+`studio/tests/event_driver.py` served, with 2-second jobs, the recorded schema
+of the packaged templates without `ConditioningZeroOut`,
+`TextEncodeMageFlowEdit` and `TextEncodeQwenImage21`, so FLUX.3 Klein Base
+image editing was the one packaged editing workflow it ran. The LoRA slots row
+and the MiniMax-H3-Image edit row used a second fixture with the full recorded
+schema, where the packaged LoRA workflows and all seven editing workflows run.
+
+| Check | Observed result and scope |
+|---|---|
+| Send to edit with a style and an inserted LoRA | PASS at 1440×900 and 390×844 on `index-BFnkXPeL.js`, as on `index-BERoqH-z.js`, `index-C-bf88vi.js`, `index-O8HuyxL5.js` and `index-DFUxnqsH.js`. On FLUX.3 Klein Base text to image, a saved style, "ink wash, {prompt}", was appended with node 6's prompt as its input, and the LoRA stack held `your_first_lora.safetensors` behind a `DGXMonarchLoraLoader` boundary on node 9's model input. Generate submitted a job whose node 6 text began "ink wash, " and whose node 9 read its model from the inserted loader. Send to edit on that output loaded FLUX.3 Klein Base image editing with the Operation Edit, and the notice line ended "This workflow starts from its own values. Choose the prompt input for styles and the LoRA insertion boundary again." Prompt input read "Choose the prompt binding", Loader type read "Use existing chain" with no consumer ticked, and the autosaved draft held no style input, no insertion target and no id of the text to image graph; the style card and the LoRA stayed. Generate opened the review on "Choose an explicit prompt input for the selected styles." with Error code style_binding and Open Inputs, and no job started. With node 6 chosen, Generate opened it on "Choose an explicit LoRA loader type." with Error code lora_binding and Open LoRAs, and no job started; each button opened its tab. With the loader and node 14's model input chosen, Generate submitted the edit with the style, the inserted loader before node 14 and the stored copy as node 8's image. No page or review scrolled sideways. On the dev bundle the same steps left the old prompt input and the node 9 target in the draft while Prompt input read blank and Loader type read `DGXMonarchLoraLoader` with no consumer ticked, and Generate was refused with "Styles require resolved STRING workflow input bindings." and then "Insertion target must be a connected DGXM_MODEL input.". Evidence: the row's entries in the results file. |
+| Workflow list and Validate edited workflow | PASS at 1440×900 and 390×844 on `index-BFnkXPeL.js`, as on `index-BERoqH-z.js`, `index-C-bf88vi.js`, `index-O8HuyxL5.js` and `index-DFUxnqsH.js`. With the same style input and boundary on the text to image draft, a reload kept both. Choosing FLUX.3 Klein Base image editing in the Workflow list started it with Prompt input at "Choose the prompt binding", Loader type at "Use existing chain" and neither control in the draft, and kept the style and the LoRA; Generate opened the review on the style refusal, and no job started. On the editing workflow, with node 6 as the style input, node 14's model input as the boundary and "a red fox, QA edit" typed as the prompt, Validate edited workflow on the unchanged JSON kept all three. After node 6's title changed in the JSON, Validate edited workflow showed Inputs with the graph's own prompt, Prompt input at "Choose the prompt binding" and no boundary, and kept the style and the LoRA; the notice the next row records said so, where `index-BERoqH-z.js` showed none. No page scrolled sideways. On the dev bundle the Workflow list kept the old prompt input and the node 9 target, Generate was refused with "Styles require resolved STRING workflow input bindings.", and the edited JSON kept the style input and the boundary. Evidence: the row's entries in the results file. |
+| Notice for dropped controls | PASS at 1440×900 and 390×844 on `index-BFnkXPeL.js`, as on `index-C-bf88vi.js`, `index-O8HuyxL5.js` and `index-DFUxnqsH.js`. Choosing the editing workflow in the Workflow list with a style input and a boundary held set the notice line to "This workflow starts from its own values. Choose the prompt input for styles and the LoRA insertion boundary again.", and Validate edited workflow after a JSON edit set the same words. With only a style input held, a second JSON edit set "This workflow starts from its own values. Choose the prompt input for styles again." A reload and Validate edited workflow on unchanged JSON, which drop nothing, set no notice. Send to edit appends the same words to its own notice, as the first row records. Evidence: the row's entries in the results file. |
+| Notice for a stack over a workflow's own LoRAs | PASS at 1440×900 and 390×844 on `index-BFnkXPeL.js`, as on `index-C-bf88vi.js`, `index-O8HuyxL5.js` and `index-DFUxnqsH.js`, on the fixture with the full schema. With `your_second_lora.safetensors` in the LoRA stack of FLUX.3 Klein Base text to image, choosing LoRA stack with low-RSS mode, whose own loaders hold `your_first_lora.safetensors` at 0.8 on node 9 and `your_second_lora.safetensors` at 0.5 on node 10, set the notice line to "This workflow has LoRAs of its own. At Generate, the LoRA stack replaces them by position, and those it does not reach run at strength 0. Remove the stack on the LoRAs tab to keep them." The stack stayed on the LoRAs tab. Generate submitted node 9 as `your_second_lora.safetensors` at 1 and node 10 at strength 0, as the notice says. After the stack entry was removed, Generate submitted the workflow's own LoRAs, node 9 at 0.8 and node 10 at 0.5. Back on the text to image workflow, with a `DGXMonarchLoraLoader` boundary on node 9's model input and `your_first_lora.safetensors` in the stack, choosing the same LoRA workflow set "This workflow starts from its own values. This workflow has LoRAs of its own, so the LoRA insertion boundary is cleared." followed by the stack sentence above, and asked for no boundary; Generate submitted node 9 as `your_first_lora.safetensors` at 1 and node 10 at strength 0. No page scrolled sideways. Evidence: the row's entries in the results file. |
+| Send to edit into MiniMax-H3-Image image editing | PASS at 1440×900 and 390×844 on `index-BFnkXPeL.js`, as on `index-O8HuyxL5.js` and `index-DFUxnqsH.js`, on the fixture with the full schema. Send to edit on a MiniMax-H3-Image text to image output opened the choice with the seven packaged editing workflows in title order, MiniMax-H3-Image image editing fifth. Choosing it loaded the workflow with the Operation Edit and put a `studio/` copy of the output on node 11's image, the input its layout lists, listed and valid; the notice named node 11 of MiniMax-H3-Image image editing, and Generate was on with nothing under it about an image. Generate submitted the edit with the copy as node 11's image. No page scrolled sideways. Evidence: the row's entries in the results file. |
+
+**NOT RUN:** 1024×600 and 768×1024; Import JSON, the command palette, Fleet
+and a saved Library workflow, which load a workflow through the same inspection
+as the Workflow list (a unit test holds Fleet's next step and the load notice
+together); the dev bundle at 390×844; and Chromium, Safari, physical phones and
+assistive technology.
+
+## Browser evidence, 2026-11-15
+
+On 2026-11-15 the 26 rows of the
+[browser procedure](../studio/tests/README.md#browser-checks) ran on the
+shipping bundle, the one commit `0f32d35` builds and `RESOURCE_SHA256` names:
+`index-BFnkXPeL.js`
+(`4e272d22d305229fb86f0b8dfe6bcf41d7612b9718ade662ecaaa96395b23fd8`),
+`index-DZRUgSeS.css`
+(`2b07ca82a5ce27a8f7853831d60d95e24ce8bd2040940d03a6e1ce79e0f9b854`) and
+`index.html` (`3d4bda1ce0c9ecc3d2b3f4486e6d3d9f2a7700440c7ee4219b8f14fbaba94cd2`).
+`npm run build` in that checkout wrote the same bytes, the inventory check
+passed, and every companion of the round served those bytes unchanged. The
+browser was Mozilla Firefox 159.0.1, build 20261102214503, the snap package,
+headless on Ubuntu 24.04.5 LTS for arm64, driven through WebDriver BiDi with
+real pointer and key input. Its profiles turned off hardware video decoding,
+WebGL and GPU compositing, and no process the round started could see a CUDA
+device. The harness and its fixtures are the 2026-11-03 round's, with only
+their folders changed, and the sessions, viewports and fixtures are the same:
+the four viewports, Gallery actions at 1440×900 too, a reduced-motion profile
+for the palette and job rows, the review expiry at 390×844 in a profile of its
+own, and the Sign-in link and Driver not running rows at 1440×900 and 390×844
+with companions, a fixture and new profiles of their own. The event fixture
+served the driver schema recorded on 2026-11-15, on ComfyUI 0.45.0.
+
+No row logged a console message. Fourteen capture self-tests, at the start and
+end of each of the four session browsers and in each of the six launch-row
+browsers, each caught both a `console.error` call and an uncaught exception. A scan of the evidence for the 14 owner tokens
+this round's companions issued found none outside the token files, in 648
+evidence files and the 51 browser-side files. Each row names its results files,
+`<row>_<viewport>.json`. They and the merged results file are kept in the
+maintainer's private evidence store, outside the repository and the packages,
+and the merged file's SHA-256 is
+`76e6d494628e0f9965a367d6b9b63b9253990d32e208c07617d4dea1a5410942`.
+
+In a first attempt at this run every session stopped, or its row failed, at its
+first file upload, because the browser-side copy of the fixtures had not been
+made, and the snap browser reads files only from its own folder. Every process
+was stopped, the copy was made, and the run started again from new profiles and
+new companion state. No reading of that attempt is cited; its files, kept with
+the evidence, are among the 648 the token scan read.
+
+This is the day's fourth full run. The first, on `index-C-bf88vi.js` (commit
+`9394b72`), passed every row but one: App Mode inputs at 1024×600, where three
+templates new in 1.5 showed two inputs each as missing from `object_info`,
+because the recorded schema of 2026-10-20 lacked their node classes. That run's
+bundle and the dev bundle at `35bb775` behaved the same, and the companion's own
+inspection gave the same answer, so the fault lay in the fixture. The schema was
+recorded again on ComfyUI 0.45.0, which also brought out a field naming fault on
+the H3-Image templates that was then fixed. The second run, on
+`index-O8HuyxL5.js` (commit `4f465fe`), passed every row; a review then widened
+the naming fix to node-pack text nodes and Soft Switch. The third run, on
+`index-DFUxnqsH.js` (commit `00fadf3`), passed every row; the reviews then gave
+every stock text node a list of the inputs it passes on and fixed three wrong
+or missing names (`9a762dc`, `e2f5fa5` and `0f32d35`), which gave this bundle.
+The superseded bundles of the day were `index-BERoqH-z.js`, `index-BijBSOvt.js`,
+`index-TUKjqnV0.js`, `index-C-bf88vi.js`, `index-O8HuyxL5.js`,
+`index-DFUxnqsH.js`, `index-DWF-livi.js` and `index-DpWxrJDL.js`; the last two
+were built for review and ran no browser round. This record cites this run
+only.
+
+The round found no Studio fault. Every row passed at each viewport where its
+check applies: 171 row results, 168 passing and three that record readings
+without a verdict by design (Phone controls at 768×1024 and 1024×600, where the
+phone rule does not apply, and the first half of the review expiry, whose
+second half passed).
+
+| Check | Observed result and scope |
+|---|---|
+| Responsive routes | PASS. Page and main-content horizontal overflow measured zero on all eight routes at all four viewports, after jobs, uploads, grids, styles, presets and operation reviews existed and with every disclosure closed. On the event fixture, with failed jobs, Create and Queue measured zero too: a consent request's status line wrapped inside 314 pixels at 360×800. Evidence: `responsive_<viewport>.json` and `responsive_failure_<viewport>.json`. |
+| Phone controls | PASS. At 360 and 390 pixels wide, all 34 visible inputs, selects and textareas across the eight routes used 16px text and at least 44px height. The 768×1024 and 1024×600 viewports keep desktop sizing, where the rule does not apply. Evidence: `phone_controls_<viewport>.json`. |
+| Palette and motion | PASS. Palette search held focus after a pointer click and after Ctrl+K, and took focus 4ms to 7ms after a scripted open. Escape closed the palette and returned focus to its button. The dialog reveal was declared at 200ms and finished 200ms to 202ms after opening; with reduced motion neither the dialog nor the backdrop animated. A disclosure-closing sample captured 35 or 36 frames with a longest interval of 17.2ms to 17.5ms. Evidence: `palette_<viewport>.json` in the default and the reduced-motion session. |
+| Image previews | PASS. The five test images filled their frames at every viewport, with at most 0.053 percent aspect-ratio error and no centering error. Evidence: `image_previews_<viewport>.json`. |
+| Image upload | PASS. At every viewport the uploaded portrait came back from the fixture as 120×480 RGBA, 230,400 decoded bytes, with pixels and file bytes identical to the source. Evidence: `image_upload_<viewport>.json`. |
+| Mask alignment | PASS. Canvas bounds matched the preview. A press at the canvas center gave a transparent box of `(44, 224, 76, 256)` at 768×1024 and 1024×600 and `(43, 224, 76, 256)` at 360×800 and 390×844, centered within 0.022 pixels of the press, with center alpha 0 and corner alpha 255. Evidence: `mask_alignment_<viewport>.json`. |
+| Video controls | PASS. The 320×240 clip decoded, played and paused in the viewer, and Mute and Loop each changed state. Frame stepping stayed disabled, with "Frame stepping needs valid duration and frame rate; use native seek controls", because ComfyUI reports no frame rate for the videos it saves, and Details opened the metadata panel at its full 260px. Evidence: `video_controls_<viewport>.json`. |
+| Generation activity | PASS. While a 30-second job ran, the viewer border ran its 2.4-second animation and passed clicks through to the viewer at every viewport, and the logo animated at 768 and 1024 pixels wide; the phone layout hides it. With reduced motion both stood still, and the status line's bar became a dim full-width bar at opacity 0.35. Evidence: `generation_activity_<viewport>.json` in both sessions. |
+| Editing and saved state | PASS. Editing a reviewed two-cell grid removed its confirmation and submit control. Renaming a preset while a different draft was active kept the preset's values. Enter kept two lines in the prompt field. Evidence: `editing_saved_state_<viewport>.json`. |
+| Operation review | PASS. The read-only version review and its durable record opened at every viewport, and each new receipt joined the end of the list. No host operation was applied. Evidence: `operation_review_<viewport>.json`. |
+| Sign-in link | PASS at 1440×900 and 390×844. The `sign-in.html` page connected the workspace without typing in 0.27 seconds at 1440×900 and 0.28 seconds at 390×844. `location.hash` was empty and the stored token matched the token file by SHA-256. None of the 30 requests recorded at each viewport carried the token in its request line or a `Referer` header. A reload stayed connected, an old link after a restart showed the stale-link sentence and the token form, the closed profile's history held one `token=` row for the old link, visited twice, and a companion started with `--allow-management` wrote no `sign-in.html` and showed the token form. Evidence: `sign_in_link_<viewport>.json`. |
+| Driver not running | PASS at 1440×900 and 390×844. With nothing on the driver port, the page showed the panel with `echo start-the-fixture`, the source line naming the configuration file, the paragraph about another address and disabled Generate and Review settings buttons, with no red banner. 1.78 seconds after the fixture listened at 1440×900 and 1.77 seconds at 390×844, the panel was gone, both buttons were enabled and the restored draft showed its inputs without a reload. Evidence: `driver_not_running_<viewport>.json`. |
+| Viewer status line | PASS. Generate started the job with no dialog. The line read Queued, then Running with the elapsed time as m:ss, counting from 0:00 or 0:01 to 0:29 or 0:30, beside a sweeping indeterminate bar, then "Finished in 0:30", and the bar went away. The telemetry panel's "This tab's job" row matched the line while running and after, and its raw sample stayed closed. Under reduced motion the bar stood still. Evidence: `status_line_<viewport>.json` and `telemetry_job_<viewport>.json`. |
+| Step bar | PASS. On the event fixture the line read Running with "step N of 20 on node 1" beside the elapsed time, rising to step 20, with a determinate bar whose fill matched the step share of its track to within a pixel's millionth. When node 2 began, the step text and the count went away and the bar swept until the job finished. Evidence: `status_line_steps_<viewport>.json`. |
+| Newest result | PASS. Within 0.02 to 0.07 seconds of "Finished", the viewer showed the job's last stored output without a click, and the metadata panel named the job. The recent outputs strip held up to eight job outputs and no upload or mask, marked the one in view, and showed 128×96 thumbnails for images and 320×240 posters marked "▶ 0:02" for the clip. Evidence: `newest_result_<viewport>.json` and `newest_result_steps_<viewport>.json`. |
+| Review summary and expiry | PASS. Generate started a job with no dialog, and a line under the button said it was submitted, named no identifier and cleared itself 5.08 to 5.12 seconds later; a second Generate started another job the same way. Review settings opened on "Ready to generate." with the workflow, model files, seeds, prompt text, topology, one checks line and "This review expires at 1:30:15 PM, 10 minutes after Studio made it, because it records the driver's runtime as it was then." and similar, with no checkbox and the immutable record closed until opened. A style appended without its prompt input opened the dialog on its refusal with Open Inputs, and no job started. A review left open past its 600 seconds at 390×844 then read "This review expired at 1:26:44 PM. Close it and generate again for a fresh one.", its Expiry line turned to the past tense, and Generate stayed off. Evidence: `review_summary_<viewport>.json`, `expiry_open_390x844.json` and `review_expiry_390x844.json`. |
+| Seeds | PASS. New drafts used the Random policy, with "Random: each job gets new seeds. Review settings shows them before it starts." After a run from Review settings, the review's seed, the viewer footer, the Queue row and the clipboard after Copy seed in the gallery held the same digits. Use this seed put them in the seed field with the Fixed policy, and one Undo restored Random. Evidence: `seeds_<viewport>.json`. |
+| Workflow filter and palette | PASS. Create listed all 75 packaged workflows by title in title order. "flux" kept the six that match by title or file name, a filter with no match said so, Escape cleared the filter, Enter loaded the first "z-image" match while no packaged workflow was chosen and did nothing once one was, and Clear emptied the box and kept focus there. The palette showed its LOAD A WORKFLOW group on an empty search, listed the 15 matches for "wan", and loaded the chosen one in Create. Evidence: `workflow_filter_<viewport>.json`. |
+| Prompt styles and Grids how-to | PASS. Create explained style order with its worked example. With two saved styles applied, the ends of the list had Move up or Move down off with "Already first" and "Already last", review showed each order's prompt text, and Undo restored the order. Grids opened on its how-to with empty value fields, and the line under Validate every cell named the missing workflow in a new profile ("Load a workflow in Create first. A grid varies the Create draft."), then no axis, empty, invalid, non-list and empty-list values and an empty style axis B, until the axes were valid. Evidence: `prompt_styles_<viewport>.json`, `grids_guide_<viewport>.json` and `grids_no_workflow_390x844.json`. |
+| App Mode inputs | PASS. At 1024×600, each of the 75 packaged templates opened Create on the Inputs tab with its App Mode inputs in the order of its layout, 6 to 21 inputs each, all typed controls and no alert, against the schema recorded on 2026-11-15; Flux 1 text to image did the same at the other three viewports. Against the CPU fixture, whose schema lacks the templates' nodes, Flux 1 text to image showed the same ten inputs in order, each marked as missing from `object_info`. Evidence: `app_mode_recorded_schema_<viewport>.json` and `app_mode_fixture_schema_<viewport>.json`. |
+| Failure details and Queue link | PASS. A class P refusal read "Failed after 0:10" with its refusal class and first sentence, Open Queue and "Troubleshooting #135". A class C rescue added the consent request, the panel button's name, "Load with slab residency", Review consent and why this companion cannot grant it; Review consent opened Operations on `consent.apply` with the job's request, and nothing was applied. Open Queue opened the job's row expanded with its summary in view within 0.32 to 0.33 seconds, and a second visit to Queue opened no row. At 1024×600, with 45 newer jobs Queue turned to History page 2 for it; with 105 it pinned the row above the history from the snapshot; with 205, past the companion's 200-job snapshot, the status line kept "Failed after 0:10" and its link made Queue read the job by its identity and pin its row, open and in view within 0.33 seconds. Evidence: `failure_p_<viewport>.json`, `failure_c_<viewport>.json`, `consent_review_<viewport>.json`, `open_queue_page2_1024x600.json`, `open_queue_pinned_1024x600.json` and `open_queue_identity_1024x600.json`. |
+| Queue thumbnails | PASS. With 37 and 40 rows, Queue fetched thumbnails only for the rows within reach when it opened, at most five, and none for the rest until scrolling brought them near. Where the page scrolls, at 360 and 390 pixels wide, a row's request began 135 to 193 pixels below the visible area. Where the main area scrolls, at 768 and 1024 pixels wide, it began only once the row was 8 to 66 pixels inside the visible area, as on 2026-10-28 and 2026-11-03. Thumbnails measured 64×64 pixels. Evidence: `queue_thumbnails_<viewport>.json` in both sessions. |
+| Large seeds | PASS. For the job with seed 18446744073709551615, Copy named inputs, Copy API prompt and Export provenance kept every digit: the 101-byte and 167-byte clipboard texts and the 1,528-byte exported file, which holds the seed twice, parsed back to the exact number, with no rounded form. Copy seed wrote the digits alone. Reuse settings, from the card and from the viewer, and Use this seed refused by name and left the draft unchanged. Evidence: `large_seed_<viewport>.json`. |
+| Gallery actions | PASS at the four viewports and 1440×900. A real click on Actions opened the menu above the card's buttons, 8 pixels or more below the card's top and inside its card, on an opaque background, and a second click on Actions closed it with no action. Evidence: `gallery_actions_<viewport>.json`. |
+| Grids style axes | PASS. With saved styles, the open Saved prompt-style axes list fit at all four viewports with zero page and main overflow, and every Use as axis button stayed in view and under the pointer. Evidence: `style_axes_<viewport>.json`. |
+| Panels | PASS. The telemetry panel has no close button and the event console only Clear view. The footer's Telemetry and Console toggles showed and hid them with matching `aria-expanded`, and the Settings checkboxes did the same at every viewport. Evidence: `panels_<viewport>.json`. |
+
+**NOT RUN:** a step count or a failure on the CPU fixture, which cannot produce
+either; Grant and retry, which needs `--allow-management` and a host operation;
+Reconcile in Queue for an unknown outcome; the review expiry at any viewport
+but 390×844; and Chromium, Safari, physical phones, assistive technology and GPU
+rendering, as before.
 
 ## Remaining acceptance
 

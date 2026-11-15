@@ -362,7 +362,7 @@ def _submit_render_guarded(
         stamp_in_place_bake_permission(  # only an exact gate PASS lets a Worker bake a classic stack in place
             request, model, handle, resolved_topology=topo, resolved_attention=sample_attention)
         spec = model.mesh
-        validate_render_topology(model, topo, latent["samples"])
+        validate_render_topology(model, topo, latent["samples"], request)
         topology_label = topo.describe()
         log.info("render topology: %s (%s)", topology_label, reason)
         _collect_earlier_results_before_setup_change(handle, topo, spec)

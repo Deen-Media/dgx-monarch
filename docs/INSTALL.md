@@ -1436,7 +1436,16 @@ Read this before the first update from 1.4.0, in this order. An install on
     first-use check that compared nothing no longer blocks a later capacity
     rescue for that model. The Identity Gate node always renders
     ([TROUBLESHOOTING #66](TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
-28. Studio is a supported interface from this release, beside the CLI, the
+28. A graph that renders `dpm_adaptive` under an explicit `+fsdp` preset that
+    leaves data parallelism now refuses: `dp2+fsdp` from two Sparks up, and
+    `uly2+fsdp` or `cfg2+fsdp` from four Sparks up. `auto` never resolves FSDP
+    and is not affected. On 1.4.0 such a render could wait until the sample
+    deadline once the data-parallel groups' step counts parted. Pick another
+    sampler; a preset without data parallelism, which on more than two Sparks
+    holds the whole model on every rank and so serves only where it fits
+    resident; or one without `+fsdp` where the model fits resident
+    ([TROUBLESHOOTING #156](TROUBLESHOOTING.md#156-dpm_adaptive-refuses-under-a-data-parallel-layout-with-fsdp)).
+29. Studio is a supported interface from this release, beside the CLI, the
     TUI and the ComfyUI panel. Generate now checks the draft and starts the
     job in one action, and Grids, Fleet and Operations sit under Utilities.
     The tester's fourth round renamed the Operation select Job category and

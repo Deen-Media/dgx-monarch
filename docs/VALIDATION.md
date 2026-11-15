@@ -302,11 +302,13 @@ feature records below, each naming the commit it ran on. The first nine items
 ran through 2026-11-01, when the last code change was `4b71822`. The code has
 changed since, as the [changelog](../CHANGELOG.md) lists, and the later
 checks item names the records that followed. The release gate, release test
-v5, ran whole on dev `f297c70`, the last code change, on 2026-11-14 and
-passed ([record](#release-test-v5-f297c70)). The release commit differs from
-`f297c70` in documentation and in the version only: the version string in
-`src/dgx_monarch/__init__.py` and the test that pins it in
-`tests/test_cli.py`. It is not itself a hardware retest.
+v5, ran whole on dev `f297c70` on 2026-11-14 and passed
+([record](#release-test-v5-f297c70)). Code has changed since: the apex
+review's fixes of 2026-11-15 touch the cond batch exchange, the `dpm_adaptive`
+refusal, the driver spend price, and Studio: what a workflow load keeps, the
+companion's LoRA refusal, the field names and the bundle. CPU tests and the
+Studio browser rounds hold them, and no Spark has run them (NOT RUN below).
+Release test v5 has not run on this code.
 
 - INT8 GEMM kernel, 2026-10-28 and 29
   ([record](#int8-gemm-kernel-comparison-2026-10-28-and-29)): the render
@@ -394,8 +396,9 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   [cfg2 rows](#campaign-k-equal-pairs)); the Anima reading of 2026-11-10
   against stock that led to its text branch fix
   ([record](#anima-text-branch-fix)); the
-  Studio browser round of 2026-11-03 on the bundle of that day
-  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-03));
+  full Studio browser procedure of 2026-11-15 on the bundle this release
+  ships, `index-BFnkXPeL.js`
+  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-15));
   the hardware of 2026-11-11 and the fixes it led to
   ([record](#fixes-2026-11-11)); the passes and proof blocks on the dev builds
   of 2026-11-11 to 14 ([record](#release-build-passes)); and release test v5,
@@ -415,8 +418,13 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   decode split for LTX 2.3, a MiniMax H3 decode with less than 512 MiB free
   on one side, and whether its 2 GiB reply budget binds; the BF16 rescue on
   the pair under `DGXM_AUTO_RESCUE=1`, and through the Auto-allow toggle on
-  any layout; a Worker on ComfyUI 0.43 with context windows; a Studio browser
-  round on the bundle this release ships; every layout at world 4; and the
+  any layout; a Worker on ComfyUI 0.43 with context windows; the Studio checks
+  the browser round could not make: a step count or a failure on the CPU
+  fixture, a grant and retry under `--allow-management`, Reconcile in Queue
+  for an unknown outcome, the review expiry at viewports other than 390×844,
+  and Chromium, Safari, physical phones, assistive technology and GPU
+  rendering; the eleven tester round 4 rows on this bundle; every layout at
+  world 4; and the
   full sweep runbook. The rows of the dev builds of 2026-11-11 to 14 that did
   not run, the LoRA weights of a partly loaded one-GPU Worker among them, are
   listed with their reasons ([record](#release-build-not-run)). The sample
@@ -426,6 +434,23 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   its proof render, compile_dit's eager families and the inductor cache have
   CPU tests and no hardware record of their own. Each
   feature record below lists its own rows that have not run.
+- **NOT RUN for the apex review's fixes of 2026-11-15**, each held by CPU
+  tests:
+  - The cond batch exchange over one data-parallel group on NCCL: over its
+    sequence-parallel or cfg group under `uly2`, `ring2` or `cfg2` with dp2
+    (four Sparks), and over xFuser's model replica group under
+    `uly2+cfg2+dp2` (eight Sparks), whose communicator the exchange opens
+    first. Two Sparks form neither layout; a multi-rank gloo test on one CPU
+    covers the grouping and the unequal call counts.
+  - A `dpm_adaptive` render to the end under `uly2`, `ring2` or `cfg2` with
+    dp2 on four Sparks.
+  - The driver spend price with a config file edited between queues, with an
+    Init node whose `config_path` is a link, and with two Init nodes behind a
+    lazy switch, before the loader or before its mesh input.
+  - Studio's five apex rows at 1024x600 and 768x1024; Import JSON, the
+    command palette, Fleet and a saved Library workflow, which load a workflow
+    through the same inspection as the Workflow list; and the dev bundle at
+    390x844 ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#apex-review-checks-2026-11-15)).
 - Build and install, on `35f1486`, the release commit of 2026-11-01, in a
   disposable Python 3.12 venv that holds only `build` and `pip`:
   `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and
@@ -590,9 +615,8 @@ names reads the local file. The record is
 `out/review_round_2026-11-07/final_v045/rE_grant_inputs/` in the validation
 tree.
 
-The whole pass ran again on dev `f297c70`, the code that ships, on torch
-2.15.0+cu132, on 2026-11-14 and passed. The seven templates skipped here
-rendered there: the five whose demo inputs were absent in the main pass,
+The whole pass ran again on dev `f297c70`, on torch 2.15.0+cu132, on
+2026-11-14 and passed. The seven templates skipped here rendered there: the five whose demo inputs were absent in the main pass,
 and the two LoRA templates in its second leg
 ([release test v5 on f297c70](#release-test-v5-f297c70)).
 
@@ -4168,7 +4192,8 @@ second in dev `40af2d7`, which part B of that block read
 `40af2d7` does not ship either. Its fix merged as `f297c70` (#192), and
 that fix's proof block passed the next morning
 ([below](#proof-block-f297c70)), and v5 then passed whole on `f297c70`
-([below](#release-test-v5-f297c70)): the code that ships. The records are `out/review_round_2026-11-07/reverify_v1/`,
+([below](#release-test-v5-f297c70)). The records are
+`out/review_round_2026-11-07/reverify_v1/`,
 `blockA_v1/`, `blockB_v1/`, `blockC_v1/` and `blockD_v1/` in the validation
 tree.
 
@@ -5118,8 +5143,9 @@ both are recorded as readings:
   with compaction, not by the disk; that is a reading, not a proof, since
   the pass had no compaction sampler.
 
-The code that ships is dev `f297c70`'s, which this pass cleared on
-2026-11-14; what follows it on dev is documentation only.
+This pass cleared dev `f297c70` on 2026-11-14. Code has changed on dev
+since; [Release 1.5.0 checks](#release-1-5-0-checks) lists what has not run
+on a Spark.
 
 <a id="release-build-not-run"></a>
 
