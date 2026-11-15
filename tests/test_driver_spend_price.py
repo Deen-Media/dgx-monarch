@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import sys
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -773,17 +774,67 @@ def test_a_sole_attached_mesh_from_the_files_older_contents_does_not_set_the_flo
     assert f"above its {floor}.0 GiB floor" in _refused(exc_info)
 
 
-@pytest.mark.parametrize("linked", ["config_path", "mode"])
 @pytest.mark.parametrize(("attached", "floor"), [(24.0, 24), (None, 5)],
                          ids=["a mesh attached at the Init node's last run", "no mesh attached"])
-def test_an_init_node_whose_file_is_a_link_reads_the_attached_mesh_or_nothing(rig, monkeypatch, linked, attached,
-                                                                            floor):
-    """A linked `config_path` or `mode` is a value another node computes at the Init node's run, so the graph
-    cannot name the file. The mesh that run attached holds its policy; with none attached, no configured policy
-    is read and the Init node's own reserve stands, as for a file that cannot be read. The default file, which
-    the link may not name, is never read in its place."""
-    _settings(rig, monkeypatch, {linked: ["11", 0]}, config_args={"uma_reserve_gb": 9.0},
+def test_an_init_node_whose_config_path_is_a_link_reads_the_attached_mesh_or_nothing(rig, monkeypatch, attached,
+                                                                                   floor):
+    """A linked `config_path` is a value another node computes at the Init node's run, so the graph cannot name
+    the file. The mesh that run attached holds its policy; with none attached, no configured policy is read and
+    the Init node's own reserve stands, as for a file that cannot be read. The default file, which the link may
+    not name, is never read in its place."""
+    _settings(rig, monkeypatch, {"config_path": ["11", 0]}, config_args={"uma_reserve_gb": 9.0},
               attached=None if attached is None else {"uma_reserve_gb": attached})
+    assert f"above its {floor}.0 GiB floor" in _floor_read(rig)
+
+
+@pytest.mark.parametrize("attached", [24.0, None], ids=["a stale mesh attached", "no mesh attached"])
+def test_an_init_node_whose_mode_is_a_link_reads_the_file(rig, monkeypatch, attached):
+    """Every mode takes the same `[worker_args]` table from the file, so a linked `mode` hides nothing: the file's
+    9 GiB stands, whatever a mesh built earlier holds."""
+    _settings(rig, monkeypatch, {"mode": ["11", 0]}, config_args={"uma_reserve_gb": 9.0},
+              attached=None if attached is None else {"uma_reserve_gb": attached})
+    assert "above its 9.0 GiB floor" in _floor_read(rig)
+
+
+@pytest.mark.parametrize("mode", ["auto", "cluster", "local", ["11", 0]],
+                         ids=["auto", "cluster", "local", "a linked mode"])
+def test_a_real_config_file_is_read_through_the_loaders_get_mesh_reads(rig, monkeypatch, tmp_path, mode):
+    """A real cluster file, the repository's example with a `[worker_args]` table, read through the real
+    `load_cluster_config` and `local_config`, as `get_mesh` reads it in each mode; a stale mesh at 40 GiB is
+    attached and not read."""
+    real_find, real_local = config.find_config_path, config.local_config
+    path = tmp_path / "cluster.toml"
+    example = (Path(__file__).resolve().parents[1] / "cluster.example.toml").read_text(encoding="utf-8")
+    path.write_text(example + "\n[worker_args]\numa_reserve_gb = 24.0\n", encoding="utf-8")
+    _settings(rig, monkeypatch, {"config_path": str(path), "mode": mode}, attached={"uma_reserve_gb": 40.0})
+    monkeypatch.setattr(config, "find_config_path", real_find)
+    monkeypatch.setattr(config, "local_config", real_local)
+    assert "above its 24.0 GiB floor" in _floor_read(rig)
+
+
+def _mesh_through_a_switch(rig, monkeypatch, choice: object, reserves: tuple[float, float]) -> None:
+    """Two Init nodes into a lazy switch whose output is the loader's mesh, as a switch passes any type."""
+    graph = {"1": {"class_type": "DGXMonarchInit",
+                   "inputs": {"topology": "auto", "mode": "auto", "uma_reserve_gb": reserves[0]}},
+             "3": {"class_type": "DGXMonarchInit",
+                   "inputs": {"topology": "auto", "mode": "auto", "uma_reserve_gb": reserves[1]}},
+             "8": {"class_type": "PrimitiveBoolean", "inputs": {"value": True}},
+             "5": {"class_type": "ComfySwitchNode", "inputs": {"switch": choice, "on_true": ["1", 0],
+                                                               "on_false": ["3", 0]}},
+             "2": {"class_type": "DGXMonarchUNETLoader", "inputs": {"mesh": ["5", 0], "unet_name": "h3.safetensors"}},
+             "6": {"class_type": "KSampler", "inputs": {"model": ["2", 0]}},
+             "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0]}}}
+    _loader_pair(rig, monkeypatch, graph)
+
+
+def test_two_init_nodes_through_an_undecided_switch_price_at_their_reserve(rig, monkeypatch):
+    _mesh_through_a_switch(rig, monkeypatch, ["8", 0], (24.0, 24.0))
+    assert "above its 24.0 GiB floor" in _floor_read(rig)
+
+
+@pytest.mark.parametrize(("choice", "floor"), [(True, 24), (False, 5)])
+def test_a_decided_switch_reads_only_the_selected_init_node(rig, monkeypatch, choice, floor):
+    _mesh_through_a_switch(rig, monkeypatch, choice, (24.0, 0.0))
     assert f"above its {floor}.0 GiB floor" in _floor_read(rig)
 
 

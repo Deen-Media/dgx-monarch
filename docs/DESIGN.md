@@ -2382,19 +2382,28 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
   id, checking only its form, so an id sent again finds no earlier marks.
 - **When it prices nothing.** Without the running prompt's graph in hand: the
   executing context gives the prompt and node id, and the prompt queue's
-  running item with that id carries the graph. And in a graph whose DGX Monarch
-  UNET Loader is not of a family the loader prices a driver stack for.
+  running item with that id carries the graph. And in a graph none of whose
+  DGX Monarch UNET Loaders that ComfyUI will run is of a family the loader
+  prices a driver stack for.
 - **The loader's settings, from the graph.** The loader reads two settings from
   its mesh input, the Init node's output: the family forced there
   (`family_adapter`), which stands over the checkpoint's header and in place of
   one it cannot read, and its floor, `reserve_bytes` of the Init node's
   `uma_reserve_gb` over the configured policy. A wrap holds no mesh, so it reads
-  both from the running graph's Init node that the loader's mesh comes from, by
-  the loader's own rules, over the attached mesh's configured policy or, before
-  a mesh is up, the policy of the file the Init node names
-  (`driver_spend_settings.py`). A graph with no Init node reads the header
-  alone at the 5 GiB floor; a configuration it cannot read leaves the Init
-  node's own reserve.
+  both from the running graph's Init node that the loader's mesh comes from,
+  directly or through the lazy switches ComfyUI may run (one reading per Init
+  node a switch can pass), by the loader's own rules, over the policy of the
+  file the Init node names, read as `get_mesh` reads it
+  (`driver_spend_settings.py`). It never reads an attached mesh in the file's
+  place: a mesh keeps the contents it was built from until the Init node runs
+  again, and ComfyUI can run a spend first. Where the Init node's
+  `config_path` is a link, the graph cannot name the file, so the one
+  attached, live mesh answers, and with none or several the Init node's own
+  reserve stands; a linked `mode` still reads the file, since every mode takes
+  the same `[worker_args]` table. Only loaders ComfyUI will run count
+  (`graph_live.live_nodes`); where two readings remain, the larger reserve
+  stands. A graph with no Init node reads the header alone at the 5 GiB floor;
+  a configuration it cannot read leaves the Init node's own reserve.
 - **The promise.** A marked spend is never refused. An unmarked spend is refused
   only where it would take the box under its floor
   (`driver_footprint.reserve_bytes`, the loader's) after every rescue: the room is

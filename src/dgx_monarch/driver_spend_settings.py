@@ -11,7 +11,7 @@ output (``nodes/loader_preflight``):
   node's or the config's ``uma_reserve_gb`` raises it above 5 GiB.
 
 A wrap holds no mesh. The running graph does hold the Init node the loader's
-``mesh`` input links to, whose inputs the Init node turns into those arguments
+``mesh`` input links to, directly or through a lazy switch, whose inputs the Init node turns into those arguments
 (``nodes/init.py``), so the wrap reads the same two values there. The configured
 policy is read from the file the Init node names, by ``get_mesh``'s rule (see
 ``configured``). No Init node gives no settings: the header alone, at the 5 GiB
@@ -40,14 +40,33 @@ def _literal(inputs: Mapping[str, Any], key: str, default: Any) -> Any:
     return default if isinstance(value, (list, tuple)) else value
 
 
-def init_inputs(graph: Mapping[str, Any], loader: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    """The inputs of the Init node the loader's mesh comes from; None where it does not come from one."""
-    link = (loader.get("inputs") or {}).get("mesh")
-    node = graph.get(str(link[0])) if isinstance(link, (list, tuple)) and link else None
-    if not isinstance(node, Mapping) or node.get("class_type") != INIT_CLASS:
-        return None
-    inputs = node.get("inputs")
-    return inputs if isinstance(inputs, Mapping) else {}
+def init_inputs(graph: Mapping[str, Any], loader: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The inputs of each Init node the loader's mesh can come from; empty where it comes from none.
+
+    The ``mesh`` link is followed through the lazy switches ``live_nodes`` keeps
+    (a switch passes any type): the unselected branch of a decided switch is
+    skipped, and both branches of an undecided one are kept, as ComfyUI may run
+    either. Any other node between the Init node and the loader ends the walk.
+    """
+    from .nodes.graph_live import BRANCH_INPUTS, SWITCH_CLASSES, links_in, skipped_branch
+
+    found: list[Mapping[str, Any]] = []
+    pending = links_in((loader.get("inputs") or {}).get("mesh"))
+    seen: set[str] = set()
+    while pending:
+        key = str(pending.pop()[0])
+        node = graph.get(key)
+        if key in seen or not isinstance(node, Mapping):
+            continue
+        seen.add(key)
+        raw = node.get("inputs")
+        inputs: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+        if node.get("class_type") == INIT_CLASS:
+            found.append(inputs)
+        elif node.get("class_type") in SWITCH_CLASSES:
+            skipped = skipped_branch(node)
+            pending.extend(link for name in sorted(BRANCH_INPUTS - {skipped}) for link in links_in(inputs.get(name)))
+    return found
 
 
 def spec_args(inputs: Mapping[str, Any]) -> dict[str, Any]:
@@ -77,15 +96,17 @@ def configured(inputs: Mapping[str, Any], spec: Mapping[str, Any]) -> dict[str, 
     file's place: one built from older contents, or from another file, would
     price a spend at a floor the next attach does not hold.
 
-    Where the Init node's ``config_path`` or ``mode`` is a link, another node
-    computes it at the Init node's run, and the graph cannot name the file. The
-    one attached mesh is then that run's, and its policy stands; with none
-    attached, or several, no configured policy is read, as for a file that
-    cannot be read. The default file, which the link may not name, is never
-    read in its place: it could sit above the floor the loader holds.
+    Where the Init node's ``config_path`` is a link, another node computes it at
+    the Init node's run, and the graph cannot name the file. The one attached
+    mesh is then that run's, and its policy stands; with none attached, or
+    several, no configured policy is read, as for a file that cannot be read.
+    The default file, which the link may not name, is never read in its place:
+    it could sit above the floor the loader holds. A linked ``mode`` does not
+    hide the file: every mode takes the same ``[worker_args]`` table from it,
+    so it is read as a local mesh reads it, which needs no cluster table.
     """
     try:
-        if any(isinstance(inputs.get(key), (list, tuple)) for key in ("config_path", "mode")):
+        if isinstance(inputs.get("config_path"), (list, tuple)):
             from .mesh import _MESH_LOCK, _MESHES
 
             with _MESH_LOCK:
@@ -96,7 +117,7 @@ def configured(inputs: Mapping[str, Any], spec: Mapping[str, Any]) -> dict[str, 
         from .config_schema import actor_worker_args
 
         resolved = find_config_path(str(_literal(inputs, "config_path", "") or "") or None)
-        mode = _literal(inputs, "mode", "auto")
+        mode = "local" if isinstance(inputs.get("mode"), (list, tuple)) else inputs.get("mode", "auto")
         if mode == "cluster" or (mode == "auto" and resolved is not None):
             if resolved is None:
                 return dict(spec)
@@ -115,9 +136,11 @@ def priced_loader(graph: Mapping[str, Any]) -> PricedLoader | None:
     forced family stands over the sniff, and an unreadable header is the forced
     family or nothing. Only a loader ComfyUI will run counts: one behind a lazy
     switch's unselected branch, or feeding nothing that runs, is skipped, as the
-    loader's own graph price skips it. Where two such loaders remain, both run
-    on this box in this prompt, so the one whose Init node asks the larger
-    reserve stands, the first of them on a tie.
+    loader's own graph price skips it. A mesh that reaches a loader through a
+    lazy switch gives one reading per Init node it can come from. Where two
+    readings remain, both run on this box in this prompt, or either may, so
+    the one whose Init node asks the larger reserve stands, the first of them
+    on a tie.
     """
     import folder_paths
 
@@ -139,15 +162,16 @@ def priced_loader(graph: Mapping[str, Any]) -> PricedLoader | None:
         path = folder_paths.get_full_path("diffusion_models", name)
         if not path or not _slab_capable_path(str(path)):
             continue
-        inputs = init_inputs(graph, node)
-        spec = spec_args(inputs) if inputs is not None else {}
-        forced = override_from_worker_args(spec)
         try:
-            family = effective_family(sniff_checkpoint(path)[0], forced)
+            sniffed: str | None = sniff_checkpoint(path)[0]
         except CheckpointSniffError:
-            if forced is None:
-                continue
-            family = forced
-        if family in DRIVER_STACK_FAMILIES:
-            found.append(PricedLoader(family, configured(inputs, spec) if inputs is not None else {}))
+            sniffed = None
+        # One reading per Init node the loader's mesh can come from; none reached is the header alone.
+        sources: list[Mapping[str, Any] | None] = [*init_inputs(graph, node)] or [None]
+        for inputs in sources:
+            spec = spec_args(inputs) if inputs is not None else {}
+            forced = override_from_worker_args(spec)
+            family = effective_family(sniffed, forced) if sniffed is not None else forced
+            if family in DRIVER_STACK_FAMILIES:
+                found.append(PricedLoader(family, configured(inputs, spec) if inputs is not None else {}))
     return max(found, key=lambda loader: reserve_bytes(loader.worker_args), default=None)
