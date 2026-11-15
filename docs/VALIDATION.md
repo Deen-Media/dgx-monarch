@@ -394,8 +394,9 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   [cfg2 rows](#campaign-k-equal-pairs)); the Anima reading of 2026-11-10
   against stock that led to its text branch fix
   ([record](#anima-text-branch-fix)); the
-  Studio browser round of 2026-11-03 on the bundle of that day
-  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-03));
+  full Studio browser procedure of 2026-11-15 on the bundle this release
+  ships, `index-O8HuyxL5.js`
+  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-15));
   the hardware of 2026-11-11 and the fixes it led to
   ([record](#fixes-2026-11-11)); the passes and proof blocks on the dev builds
   of 2026-11-11 to 14 ([record](#release-build-passes)); and release test v5,
@@ -415,8 +416,12 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   decode split for LTX 2.3, a MiniMax H3 decode with less than 512 MiB free
   on one side, and whether its 2 GiB reply budget binds; the BF16 rescue on
   the pair under `DGXM_AUTO_RESCUE=1`, and through the Auto-allow toggle on
-  any layout; a Worker on ComfyUI 0.43 with context windows; a Studio browser
-  round on the bundle this release ships; every layout at world 4; and the
+  any layout; a Worker on ComfyUI 0.43 with context windows; the Studio checks
+  a headless Firefox cannot read: Chromium, Safari, physical phones and
+  assistive technology, a grant and retry under `--allow-management`,
+  Reconcile in Queue for an unknown outcome, and the review expiry at
+  viewports other than 390×844; the eleven tester round 4 rows on this
+  bundle; every layout at world 4; and the
   full sweep runbook. The rows of the dev builds of 2026-11-11 to 14 that did
   not run, the LoRA weights of a partly loaded one-GPU Worker among them, are
   listed with their reasons ([record](#release-build-not-run)). The sample
@@ -426,6 +431,23 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   its proof render, compile_dit's eager families and the inductor cache have
   CPU tests and no hardware record of their own. Each
   feature record below lists its own rows that have not run.
+- **NOT RUN for the apex review's fixes of 2026-11-15**, each held by CPU
+  tests:
+  - The cond batch exchange over one data-parallel group on NCCL: over its
+    sequence-parallel or cfg group under `uly2`, `ring2` or `cfg2` with dp2
+    (four Sparks), and over xFuser's model replica group under
+    `uly2+cfg2+dp2` (eight Sparks), whose communicator the exchange opens
+    first. Two Sparks form neither layout; a multi-rank gloo test on one CPU
+    covers the grouping and the unequal call counts.
+  - A `dpm_adaptive` render to the end under `uly2`, `ring2` or `cfg2` with
+    dp2 on four Sparks.
+  - The driver spend price with a config file edited between queues, with an
+    Init node whose `config_path` is a link, and with two Init nodes behind a
+    lazy switch, before the loader or before its mesh input.
+  - Studio's five apex rows at 1024x600 and 768x1024; Import JSON, the
+    command palette, Fleet and a saved Library workflow, which load a workflow
+    through the same inspection as the Workflow list; and the dev bundle at
+    390x844 ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#apex-review-checks-2026-11-15)).
 - Build and install, on `35f1486`, the release commit of 2026-11-01, in a
   disposable Python 3.12 venv that holds only `build` and `pip`:
   `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and

@@ -309,6 +309,19 @@ sections after them list every change.
   the box it names. Turning `lora_low_rss` on does not help a model whose
   stack is already baked in
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- `dpm_adaptive`, by name or as Sampler Custom's SAMPLER, refuses under an
+  explicit `+fsdp` preset that leaves data parallelism: `dp2+fsdp` from two
+  Sparks up, and `uly2+fsdp` or `cfg2+fsdp` from four Sparks up; `auto` never
+  resolves FSDP and does not refuse. Every rank there shares each model call
+  while each data-parallel group samples its own slice, so the groups must
+  make the same number of calls, and `dpm_adaptive`'s count follows its
+  slice. It refuses class P at the preset's UNET loader, before setup and the
+  load, where the graph names the sampler, and at the sampler otherwise. It
+  asks for another sampler, a preset without data parallelism, or one
+  without `+fsdp`; on more than two Sparks no preset keeps FSDP without data
+  parallelism, so the presets without it serve only where the model fits
+  resident, and a model that needs FSDP there needs another sampler
+  ([TROUBLESHOOTING #156](docs/TROUBLESHOOTING.md#156-dpm_adaptive-refuses-under-a-data-parallel-layout-with-fsdp)).
 
 ### Everyday use
 
@@ -447,6 +460,23 @@ sections after them list every change.
   loader ran last, and on each re-queue it was cached
   ([VALIDATION](docs/VALIDATION.md#proof-block-0f133d8),
   [TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
+
+- Fix: the driver's price of what a node spends before the sampler reads the
+  floor and the forced family as the loader will. It took the configured
+  policy from the one attached mesh, which keeps the configuration it was built
+  from until the Init node runs again, so a `uma_reserve_gb` changed in the
+  config file was not read by a spend ComfyUI ran first: a lowered reserve
+  still refused at the old figure, a raised one let the spend go below it. It
+  now reads the file the Init node names, as `get_mesh` does; where the Init
+  node's `config_path` is a link, it reads the mesh the Init node's last run
+  attached, or, with none, the Init node's own reserve. And it took the first
+  DGX Monarch loader in the graph, even one behind a lazy switch's unselected
+  branch or feeding nothing that runs, and missed an Init node whose mesh
+  reached the loader through a switch, pricing at 5 GiB there; it now reads
+  only the loaders ComfyUI will run, follows a mesh through the switches
+  ComfyUI may run, and where two readings remain with different reserves,
+  keeps the larger. CPU tests; not run on hardware
+  ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
 
 - The loader now charges a reference video's 40 GiB encode on a first queue
   where ComfyUI already holds models. Its held-model credit took that encode
@@ -700,6 +730,21 @@ sections after them list every change.
   Generate stays off until the image input holds an image. Before, Send to
   edit reloaded the text to image graph as "Edit (not supported)" with only
   lineage attached and Generate on ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Loading another workflow in Studio, from the Workflow list, Send to edit or
+  an edited workflow JSON, no longer keeps the previous workflow's prompt
+  inputs for styles or its LoRA insertion targets. Before, an enabled style or
+  an inserted LoRA stack could have Generate refused, because the old input or
+  node did not exist in the new workflow. The notice line now names the
+  control the load dropped; choose the new workflow's prompt input under
+  Ordered prompt styles, and its insertion boundary on the LoRAs tab when it
+  has no LoRA chain. Styles and the LoRA stack stay with the draft. When the
+  loaded workflow has LoRA loaders of its own, the notice says a held boundary
+  is cleared rather than asking for it again, and that a LoRA stack replaces
+  those loaders by position at Generate, with those it does not reach running
+  at strength 0. A LoRA stack on a workflow without a LoRA chain or
+  boundary is now refused with "Choose an explicit LoRA loader type." and Open
+  LoRAs, in place of "lora_insertion must be a JSON object."
+  ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Over an image in Studio's output viewer, the mouse wheel zooms around the
   point under the pointer. Anywhere else the wheel still scrolls the page, and
   Fit, 1:1, the zoom buttons and drag to pan work as before, except that a
@@ -1787,6 +1832,15 @@ sections after them list every change.
   the leanest rank does, so two boxes with different free memory no longer
   stall on mismatched collectives
   ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
+- On four or more Sparks, a layout that both shards each model call and
+  splits the batch over data-parallel groups (`uly2`, `ring2` or `cfg2` with
+  dp2, which `auto` picks at world 4 for an even batch) no longer stalls
+  under `dpm_adaptive`. Each group sizes its steps from its own slice and can
+  make more model calls than the other, and the cond batch exchange on every
+  call spanned all ranks, so the longer group waited for ranks that had
+  finished until the timeout. The exchange now runs only among the ranks of
+  one data-parallel group, over a group the call's own all-gathers already
+  use. A pair of Sparks is unchanged.
 - A data-parallel render keeps its progress bar and stall guard alive until
   the last group finishes. Each group's result leader sends its own done, and
   the driver stopped reading at the first one, so a slower group's steps were
