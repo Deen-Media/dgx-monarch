@@ -76,8 +76,22 @@ def configured(inputs: Mapping[str, Any], spec: Mapping[str, Any]) -> dict[str, 
     refuses a change of transport). So an attached mesh is not read in the
     file's place: one built from older contents, or from another file, would
     price a spend at a floor the next attach does not hold.
+
+    Where the Init node's ``config_path`` or ``mode`` is a link, another node
+    computes it at the Init node's run, and the graph cannot name the file. The
+    one attached mesh is then that run's, and its policy stands; with none
+    attached, or several, no configured policy is read, as for a file that
+    cannot be read. The default file, which the link may not name, is never
+    read in its place: it could sit above the floor the loader holds.
     """
     try:
+        if any(isinstance(inputs.get(key), (list, tuple)) for key in ("config_path", "mode")):
+            from .mesh import _MESH_LOCK, _MESHES
+
+            with _MESH_LOCK:
+                attached = [handle for handle in _MESHES.values()
+                            if not (getattr(handle, "defunct", False) or getattr(handle, "teardown_complete", False))]
+            return dict(attached[0].effective_worker_args(dict(spec))) if len(attached) == 1 else dict(spec)
         from .config import find_config_path, load_cluster_config, local_config
         from .config_schema import actor_worker_args
 

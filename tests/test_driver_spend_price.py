@@ -773,6 +773,20 @@ def test_a_sole_attached_mesh_from_the_files_older_contents_does_not_set_the_flo
     assert f"above its {floor}.0 GiB floor" in _refused(exc_info)
 
 
+@pytest.mark.parametrize("linked", ["config_path", "mode"])
+@pytest.mark.parametrize(("attached", "floor"), [(24.0, 24), (None, 5)],
+                         ids=["a mesh attached at the Init node's last run", "no mesh attached"])
+def test_an_init_node_whose_file_is_a_link_reads_the_attached_mesh_or_nothing(rig, monkeypatch, linked, attached,
+                                                                            floor):
+    """A linked `config_path` or `mode` is a value another node computes at the Init node's run, so the graph
+    cannot name the file. The mesh that run attached holds its policy; with none attached, no configured policy
+    is read and the Init node's own reserve stands, as for a file that cannot be read. The default file, which
+    the link may not name, is never read in its place."""
+    _settings(rig, monkeypatch, {linked: ["11", 0]}, config_args={"uma_reserve_gb": 9.0},
+              attached=None if attached is None else {"uma_reserve_gb": attached})
+    assert f"above its {floor}.0 GiB floor" in _floor_read(rig)
+
+
 def _loader_pair(rig, monkeypatch, graph: dict, known_loader: bool = False) -> None:
     """The real reader on ``graph``, a prompt with two DGX Monarch loaders, each from its own Init node; with
     ``known_loader`` the node registry knows the loader class as one that is not an output, as a driver does."""
