@@ -1,5 +1,5 @@
 {
- "about": "Which inputs pass a node's text on into its own output text, and the roles that follow in whole graphs. studio/src/textThrough.test.ts runs both lists through Studio's rule, and tests/test_studio_template_layouts.py through the layout check's, so the two rules cannot drift. A case without `typed` is text that arrives by link; `typed` names the box of text typed on the node, `unflagged` when the schema gives it no multiline flag. A reading's node is [class, outputs, inputs], each input either its typed box or [source node, output slot, declared input type]; `roles` holds every typed input, with null for no role. A switch or Branch declares its branches and output as STRING, as a saved workflow types them, except in S3, which declares them as an API prompt does; `rule` names the lead's ruled reading each graph holds.",
+ "about": "Which inputs pass a node's text on into its own output text, and the roles that follow in whole graphs. studio/src/textThrough.test.ts runs both lists through Studio's rule, and tests/test_studio_template_layouts.py through the layout check's, so the two rules cannot drift. A case without `typed` is text that arrives by link; `typed` names the box of text typed on the node, `unflagged` when the schema gives it no multiline flag. A reading's node is [class, outputs, inputs], each input either its typed box or [source node, output slot, declared input type]; `roles` holds every typed input, with null for no role. A switch or Branch declares its branches and output as STRING, as a saved workflow types them, except in S3 and R1, which declare them as an API prompt does; `rule` names the lead's ruled reading each graph holds.",
  "cases": [
   {"class": "CLIPTextEncode", "outputs": ["CONDITIONING"], "input": "text", "carries": true},
   {"class": "CLIPTextEncode", "outputs": ["CONDITIONING"], "input": "text", "typed": "one-line", "carries": true},
@@ -250,6 +250,13 @@
     "20": ["CLIPTextEncode", ["CONDITIONING"], {"text": ["3", 0, "STRING"]}],
     "21": ["CLIPTextEncode", ["CONDITIONING"], {"text": "multiline"}],
     "22": ["KSampler", ["LATENT"], {"positive": ["20", 0, "CONDITIONING"], "negative": ["21", 0, "CONDITIONING"]}]},
-   "roles": {"1.value": "prompt", "2.value": "prompt", "21.text": "negative"}}
+   "roles": {"1.value": "prompt", "2.value": "prompt", "21.text": "negative"}},
+  {"rule": "R1", "nodes": {
+    "1": ["CLIPTextEncode", ["CONDITIONING"], {"text": "multiline"}],
+    "2": ["CLIPTextEncode", ["CONDITIONING"], {"text": "multiline"}],
+    "3": ["ComfySwitchNode", ["COMFY_MATCHTYPE_V3"], {"on_true": ["1", 0, "COMFY_MATCHTYPE_V3"], "on_false": ["2", 0, "COMFY_MATCHTYPE_V3"]}],
+    "21": ["CLIPTextEncode", ["CONDITIONING"], {"text": "multiline"}],
+    "22": ["KSampler", ["LATENT"], {"positive": ["3", 0, "CONDITIONING"], "negative": ["21", 0, "CONDITIONING"]}]},
+   "roles": {"1.text": null, "2.text": null, "21.text": "negative"}}
  ]
 }

@@ -33,6 +33,7 @@ const RULED = [
   'encoder system_prompt',
   'X2',
   'S3',
+  'R1',
 ];
 
 type Input = 'multiline' | 'one-line' | [string, number, string];
@@ -88,7 +89,7 @@ test('every ruled reading holds in its graph: Prompt, Negative prompt, or no rol
     assert.deepEqual(roles(nodes), expected, rule);
 });
 
-test('an input named for the negative prompt keeps that name, whichever input its text reaches', () => {
+test('negative prompt boxes, and both boxes of a two-name node, keep their names', () => {
   const tail = (source: [string, number, string]): Record<string, Node> => ({
     20: ['CLIPTextEncode', ['CONDITIONING'], { text: source }],
     21: ['CLIPTextEncode', ['CONDITIONING'], { text: 'multiline' }],
@@ -125,6 +126,21 @@ test('an input named for the negative prompt keeps that name, whichever input it
     ],
   };
   assert.deepEqual(roles(qwen), { '1.prompt': 'prompt', '1.negative_prompt': 'negative' });
+  // Q2: the same encoder with its negative output alone, the positive from another encoder.
+  const negativeOnly: Record<string, Node> = {
+    1: ['TextEncodeQwenImage21', ['CONDITIONING', 'CONDITIONING', 'LATENT'], both],
+    20: ['CLIPTextEncode', ['CONDITIONING'], { text: 'multiline' }],
+    22: [
+      'KSampler',
+      ['LATENT'],
+      { positive: ['20', 0, 'CONDITIONING'], negative: ['1', 1, 'CONDITIONING'] },
+    ],
+  };
+  assert.deepEqual(roles(negativeOnly), {
+    '1.prompt': 'prompt',
+    '1.negative_prompt': 'negative',
+    '20.text': 'prompt',
+  });
   // C3: a cloud node alone, whose text reaches no sampler, names both boxes by their inputs.
   const kling: Record<string, Node> = {
     1: ['KlingTextToVideoNode', ['VIDEO', 'STRING', 'STRING'], both],

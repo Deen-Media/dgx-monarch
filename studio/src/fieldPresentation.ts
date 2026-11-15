@@ -113,7 +113,9 @@ function reachedRoles(readers: Readers, start: GraphNode): Set<PromptRole> {
  * that encodes a prompt and a negative prompt together does, or neither, an input it passes on
  * that is named after a role takes that role. An input named for the negative prompt keeps that
  * role even when its node's text reaches only the positive input, as when a node's prompt
- * output alone is used. Any other input has no role.
+ * output alone is used, and on a node that holds inputs named for both roles each keeps its
+ * own, whichever output is used; the wires decide only for a node with one named side. Any
+ * other input has no role.
  */
 export function graphRoles(
   workflow: Json | null | undefined,
@@ -129,12 +131,16 @@ export function graphRoles(
     const texts = [...own(node).values()];
     if (!texts.length) continue;
     const reached = reachedRoles(readers, node);
+    const names = new Set(texts.map((b) => NAMED_ROLES[b.input_name ?? '']));
+    const both = names.has('prompt') && names.has('negative');
     for (const binding of texts) {
       const input = binding.input_name ?? '';
       if (!carries(node, input, { multiline: binding.schema?.multiline })) continue;
-      // One way only: an encoder's `prompt` input wired to the negative side is the negative.
+      // A negative prompt input keeps its name, and so does each named input of a node that
+      // holds both; one way only, so an encoder's lone `prompt` on the negative side is the negative.
       const named = NAMED_ROLES[input];
-      const role = reached.size === 1 && named !== 'negative' ? [...reached][0] : named;
+      const kept = named === 'negative' || (both && !!named);
+      const role = reached.size === 1 && !kept ? [...reached][0] : named;
       if (role) roles.set(binding.id, role);
     }
   }

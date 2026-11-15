@@ -203,9 +203,12 @@ def side(workflow: dict, node_id: int) -> str | None:
         for _link, origin, _slot, target, target_slot, kind in workflow["links"]:
             if origin not in frontier:
                 continue
-            # A wire typed as a match type, as from a switch in an API prompt, counts when the
-            # input it feeds takes text or conditioning (Studio's MATCH_TYPES rule, mirrored).
+            # Studio's MATCH_TYPES rule, mirrored: an input of a match type, as a switch's branch in
+            # an API prompt, takes only a text wire, and a wire typed as a match type counts when
+            # the input it feeds takes text or conditioning.
             declared = nodes[target]["inputs"][target_slot].get("type")
+            if declared in MATCH_TYPES and kind != "STRING":
+                continue
             if kind not in {"CONDITIONING", "STRING"} and not (
                     kind in MATCH_TYPES and declared in {"CONDITIONING", "STRING"}):
                 continue
@@ -563,7 +566,7 @@ def test_the_ruled_readings_hold_in_the_layout_checks_walk():
     assert [reading["rule"] for reading in readings] == [
         "Soft Switch", "Pack Join Text", "wildcard_text", "positive", "row 5", "P1", "P1b", "P2", "P2b",
         "P3", "P3b", "P4", "P5r", "P6", "P7", "P8", "P10", "P11", "P12", "P13", "encoder system_prompt",
-        "X2", "S3"]
+        "X2", "S3", "R1"]
     for reading in readings:
         workflow = _reading_graph(reading["nodes"])
         nodes = {node["id"]: node for node in workflow["nodes"]}
