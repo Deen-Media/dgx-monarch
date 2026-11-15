@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -56,3 +57,11 @@ def test_send_to_edit_binds_the_copy_and_the_draft_compiles(name):
     # The driver's own schema lists no stored upload, so the bound copy needs the view.
     with pytest.raises(WorkflowError, match=f"{node}.{input_name}: Value is not an available choice"):
         prepare_preview(copy.deepcopy(request), SCHEMA)
+
+
+def test_the_editing_workflows_are_the_ones_studio_offers():
+    """EDITING follows the list studio/src/editHandoff.test.ts holds Studio's editingWorkflow to."""
+    source = (ROOT / "studio/src/editHandoff.test.ts").read_text()
+    listed = re.search(r"assert\.deepEqual\(editing\(recorded\), \[(.*?)\]\);", source, re.S)
+    assert listed, "the editing workflow list moved in editHandoff.test.ts"
+    assert tuple(re.findall(r"'([^']+)'", listed.group(1))) == EDITING
