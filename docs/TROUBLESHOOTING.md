@@ -9151,7 +9151,7 @@ under these layouts it stalls the same way, until the sample deadline.
 as `euler` or `dpmpp_2m`; or a topology preset without data parallelism (the
 refusal lists the ones that fill this many Sparks); or a preset without
 `+fsdp` where the model fits resident. On a pair, `uly2+fsdp` and `cfg2+fsdp`
-keep FSDP without data parallelism. From four Sparks up no preset does: the
-presets without data parallelism hold the whole model on every rank, so they
+keep FSDP without data parallelism. On more than two Sparks no preset does:
+the presets without data parallelism hold the whole model on every rank, so they
 serve only where it fits resident, and a model that needs FSDP there needs
 another sampler.

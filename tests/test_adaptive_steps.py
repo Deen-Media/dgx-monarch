@@ -17,9 +17,11 @@ way ``comfy.samplers.ksampler`` does.
 """
 from __future__ import annotations
 
+import ast
 import functools
 import inspect
 import sys
+import textwrap
 import types
 
 import pytest
@@ -171,11 +173,84 @@ def test_a_fixed_step_sampler_renders_under_dp_with_fsdp(stand_in_comfy):
     adaptive_steps.refuse({"sampler_object": stand_in_comfy.ksampler("euler")}, topo)
 
 
-def test_auto_never_resolves_fsdp_so_it_never_refuses():
-    """The production call leaves fits_resident at True, so auto adds no FSDP."""
+def _keys_written(tree: ast.AST, name: str) -> set | None:
+    """The string keys a function writes into the dict ``name``; None for a
+    write this check cannot read."""
+    keys: set = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    value = node.value
+                    if (isinstance(value, ast.DictComp) and len(value.generators) == 1
+                            and isinstance(value.generators[0].iter, ast.Tuple)
+                            and all(isinstance(pair, ast.Tuple) and pair.elts
+                                    and isinstance(pair.elts[0], ast.Constant)
+                                    for pair in value.generators[0].iter.elts)):
+                        keys |= {pair.elts[0].value for pair in value.generators[0].iter.elts}
+                    elif isinstance(value, ast.Dict) and all(
+                            isinstance(key, ast.Constant) for key in value.keys):
+                        keys |= {key.value for key in value.keys}
+                    else:
+                        return None
+                elif (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
+                      and target.value.id == name):
+                    if not isinstance(target.slice, ast.Constant):
+                        return None
+                    keys.add(target.slice.value)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == name):
+            return None  # tags.update(...) and the like
+    return keys
+
+
+def _ways_auto_asks_for_fsdp(source: str) -> list[str]:
+    """Each way a resolve_topology source could set choose_auto_topology's
+    fits_resident: by position, by keyword, or through an unpacked dict."""
+    from dgx_monarch.topology import choose_auto_topology
+
+    tree = ast.parse(textwrap.dedent(source))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and getattr(node.func, "id", None) == "choose_auto_topology"]
+    if len(calls) != 1:
+        return [f"{len(calls)} choose_auto_topology calls"]
+    call, ways = calls[0], []
+    position = list(inspect.signature(choose_auto_topology).parameters).index("fits_resident")
+    if len(call.args) > position or any(isinstance(arg, ast.Starred) for arg in call.args):
+        ways.append("by position")
+    for keyword in call.keywords:
+        if keyword.arg == "fits_resident":
+            ways.append("by keyword")
+        elif keyword.arg is None:
+            name = keyword.value.id if isinstance(keyword.value, ast.Name) else None
+            keys = None if name is None else _keys_written(tree, name)
+            if keys is None:
+                ways.append("through a dict this check cannot read")
+            elif "fits_resident" in keys:
+                ways.append(f"through {name}")
+    return ways
+
+
+def test_auto_resolution_never_asks_the_auto_table_for_fsdp():
+    """resolve_topology, the one production caller of choose_auto_topology,
+    leaves fits_resident at its True default: by position, by keyword and
+    through the tags it unpacks, whose keys come from a fixed tuple. So auto
+    never resolves FSDP and never reaches the adaptive-step refusal."""
     source = inspect.getsource(common.resolve_topology)
-    call = source[source.index("decision = choose_auto_topology("):]
-    assert "fits_resident" not in call[:call.index(")")]
+    assert _ways_auto_asks_for_fsdp(source) == []
+    edits = {  # each edit the check must catch, on the real source
+        "by keyword": ("batch_size=shape[0]", "batch_size=int(shape[0]), fits_resident=False"),
+        "by position": ("cfg_value=cfg_value,", "cfg_value, False,"),
+        "through tags": ('tags["variant"] = variant',
+                         'tags["variant"] = variant\n        tags["fits_resident"] = False'),
+        "through a dict this check cannot read": (
+            'tags["variant"] = variant',
+            'tags["variant"] = variant\n        tags.update(fits_resident=False)'),
+    }
+    for way, (old, new) in edits.items():
+        assert old in source, way
+        assert _ways_auto_asks_for_fsdp(source.replace(old, new, 1)) == [way], way
 
 
 # --- where it runs -----------------------------------------------------------
