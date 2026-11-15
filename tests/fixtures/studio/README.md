@@ -65,6 +65,14 @@ lacked, six images, three videos and one audio file, are installed on the rig
 now and come from the recording. Whether a file exists stays the driver's
 check at execution.
 
+The script also writes `stock_text_classes.json`: every stock class in the
+recording (its `python_module` is `nodes`, `comfy_extras.*` or
+`comfy_api_nodes.*`) with a text input and a text or conditioning output, with
+its text inputs and whether each box is multi-line. Studio's text-through rule
+(`studio/src/textThrough.ts`) holds a row for each, read from the class's
+source, and `tests/test_studio_template_layouts.py` fails when a listed class
+has no row. A new recording that adds a stock text class needs its row.
+
 ## Recording a new driver schema
 
 A template that adds a node class the recording lacks does not fail the
@@ -84,4 +92,6 @@ a new schema on a driver that has those nodes installed:
 3. Update the recording date and the ComfyUI, frontend and dgx-monarch
    versions in the section above, then run
    `pytest tests/test_studio_bundled_workflows.py` and check that nothing is
-   skipped.
+   skipped. Run `pytest tests/test_studio_template_layouts.py` too: a stock
+   class that the new `stock_text_classes.json` lists without a row in
+   `studio/src/textThrough.ts` and the layout test's copy fails it.
