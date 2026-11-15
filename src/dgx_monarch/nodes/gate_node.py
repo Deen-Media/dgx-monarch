@@ -7,7 +7,7 @@ from typing import Any
 from ..adapters.flux_views import conditioning_carries_views
 from ..cfg_pair import text_rows_differ
 from ..constants import MODEL_TYPE, NODE_CATEGORY
-from . import h3_ring_pad
+from . import adaptive_steps, h3_ring_pad
 from .refusal_lead import lead_with_refusal
 from .render_preflight import sampler_latent
 from .samplers import _sampler_names, _scheduler_names
@@ -138,6 +138,8 @@ class DGXMonarchIdentityGate:
         # As before a sampler's gate: a padded MiniMax H3 ring, or a Wan SCAIL
         # ring above two, refuses here on the driver, before any proof render.
         h3_ring_pad.preflight_for_render(model, request, tagged, float(cfg))
+        # The proof renders this sampler: an adaptive one under dp with FSDP refuses first.
+        adaptive_steps.preflight_for_render(model, request, tagged, float(cfg))
         result = runtime.run_identity_ceremony(
             model,
             request,

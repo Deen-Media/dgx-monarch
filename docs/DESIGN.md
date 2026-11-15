@@ -543,16 +543,29 @@ of the call then differs in size and count: on 2026-11-04 a Wan 2.2
 text-to-video proof render stalled for 600 s with rank 1's collectives carrying
 twice rank 0's elements. So wherever a model call is sharded (Ulysses times
 ring above 1, cfg above 1, or FSDP), a `CALC_COND_BATCH` wrapper takes the
-minimum of every rank's figure over the default process group once per call and
+minimum of the figures of the ranks that share the call, once per call, and
 lets ComfyUI's rule run against it (`actor/cond_batch_agreement.py`), installed
-beside the partial-load guard on every base either slot loads. Every rank takes
-the leanest rank's batch, for one 8-byte all-reduce per model call. A pure
+beside the partial-load guard on every base either slot loads. Each of them
+takes the leanest one's batch, for one 8-byte all-reduce per model call. A pure
 data-parallel call runs no collective, so its ranks need not agree, and there
 the exchange would only leave a rank's peer waiting until the stall budget when
-it stops early; it is not installed there. The pinned figure lasts through the
-whole call, so code in the forward that reads the patcher's free memory, such
-as Qwen Image 2.1's prefix-cache placement, reads the leanest rank's figure
-from the start of the call.
+it stops early; it is not installed there. The same holds between
+data-parallel groups when a layout also shards the call (`uly2`, `ring2` or
+`cfg2` with dp2 from four Sparks up): each group samples its own slice, and
+`dpm_adaptive` sizes its steps from that slice, so the groups can make
+different numbers of calls. There the exchange runs over the ranks of one
+data-parallel group only, on the sequence-parallel group when cfg is 1 and the
+cfg group when Ulysses times ring is 1, whose all-gathers the call already
+runs, and on xFuser's model replica group where both are above 1. With one
+data-parallel group, and under FSDP, it stays on the default process group:
+FSDP gathers every call's weights from all ranks, so there every rank shares
+every call, and the driver refuses `dpm_adaptive` under data parallelism with
+FSDP: at an explicit preset's UNET loader, before its setup and load, where
+the graph names the sampler, and at the sampler node otherwise
+(`nodes/adaptive_steps.py`, TROUBLESHOOTING #156). The pinned figure lasts
+through the whole call, so code in the forward that reads the patcher's free
+memory, such as Qwen Image 2.1's prefix-cache placement, reads the leanest
+rank's figure from the start of the call.
 
 The estimate behind ComfyUI's load decision must count the rows the forward
 holds. ComfyUI prices the whole latent and every reference, and with UltraTex

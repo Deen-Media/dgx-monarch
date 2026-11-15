@@ -46,7 +46,15 @@ from ..mesh import MeshHandle, mark_defunct_on_supervision_failure
 from ..old_model import OldModelRefusal
 from ..progress import ProgressReceiver
 from ..transfer import pack_latent
-from . import consent_waiver, model_patch_preflight, old_model_clear, refusal_lead, render_preflight, render_rows
+from . import (
+    adaptive_steps,
+    consent_waiver,
+    model_patch_preflight,
+    old_model_clear,
+    refusal_lead,
+    render_preflight,
+    render_rows,
+)
 from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .gate_dual import forced_stock_state
 from .gate_identity import (
@@ -321,6 +329,7 @@ def _submit_render_guarded(
         resolved = _resolve_topology_for_latent(
             model, latent, cfg_value, world)
         topo, sage, reason = resolved
+        adaptive_steps.refuse(request, topo)  # on the world this render runs, before setup
         render_preflight.preflight_krea2_reference_latents(model, ref_summary, topo)
         model_patch_preflight.preflight_moss_image_reference_images(model, ref_summary, topo)
         model_patch_preflight.preflight_moss_image_attention_bias(model, request, topo)

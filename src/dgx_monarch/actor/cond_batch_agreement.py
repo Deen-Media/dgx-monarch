@@ -39,7 +39,8 @@ replica group, which nothing else runs over. xFuser builds all of them once at
 setup, on every rank in the same order (``actor/worker_env.py``), so no group
 is made here. Everywhere else the exchange stays on the default group: with
 one data-parallel group it is the same ranks, and FSDP gathers each call's
-weights over the whole world, so its data-parallel ranks share every call.
+weights over the whole world, so its data-parallel ranks share every call
+(the driver refuses an adaptive-step sampler there, ``nodes/adaptive_steps.py``).
 The pair never leaves the default group: at world 2 a layout with two
 data-parallel groups is pure data parallel or ``dp2+fsdp``.
 

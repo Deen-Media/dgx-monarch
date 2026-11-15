@@ -9112,3 +9112,44 @@ reads 1 (the console script) or 0, and the next `dgxm update --verify` passes.
 On 2026-11-06 the deploy of `79bb47e` succeeded on its first try after the
 reinstall on both hosts, with doctor at 50 checks and 0 failures
 ([VALIDATION](VALIDATION.md#host-memory-2026-11-06)).
+
+## 156. `dpm_adaptive` refuses under a data-parallel layout with FSDP
+
+**Symptom:** the driver refuses class P with "sampler dpm_adaptive cannot run
+under dp2+fsdp on 2 ranks" (or "Sampler Custom's SAMPLER, ComfyUI's
+dpm_adaptive solver, cannot run under uly2+dp2+fsdp on 4 ranks"), naming no
+guard, card or waiver. Under an explicit preset it comes at the UNET loader,
+before setup and the load, when the graph names the sampler there: a literal
+`sampler_name` on a DGX Monarch sampler, or a KSamplerSelect or
+SamplerDPMAdaptative node feeding Sampler Custom, on a sampler that takes that
+loader's model. Otherwise it comes at the sampler or Identity Gate node,
+before the first-use check: under `auto` that is before setup and the load,
+and under an explicit preset the loader has already set up and loaded.
+
+**Cause:** under data parallelism each group of ranks samples its own slice
+of the batch. `dpm_adaptive` picks its step sizes from the error of that
+slice, so two groups can make different numbers of model calls. With FSDP,
+every model call gathers the weights of each block from every rank, so every
+rank must make the same number of calls; a group with more calls would wait
+for ranks that have finished until the sample deadline. The layouts are the
+explicit `dp2+fsdp` preset from two Sparks up, `uly2+fsdp` and `cfg2+fsdp`
+from four Sparks up, and `auto` from four Sparks up when the model does not
+fit resident and the batch divides over the data-parallel groups. Pure data
+parallelism (`dp2`) and the sharded
+layouts without FSDP (`uly2`, `ring2` or `cfg2` with data parallelism, from
+four Sparks up) render `dpm_adaptive`: their groups share no collective, and
+each group agrees only within itself on how to batch its calls.
+
+`dpm_adaptive` is the only sampler in ComfyUI whose number of model calls
+follows the latent; the comfy seam canary checks that on every sampler
+ComfyUI registers. The driver recognises it by its KSampler name and as the
+SAMPLER object of Sampler Custom (from SamplerDPMAdaptative or
+KSamplerSelect). A third-party
+sampler whose number of calls follows its data cannot be recognised, and
+under these layouts it stalls the same way, until the sample deadline.
+
+**Fix:** use a sampler with a fixed step count, any but `dpm_adaptive`, such
+as `euler` or `dpmpp_2m`; or a topology preset without data parallelism (the
+refusal lists the ones that fill this many Sparks; on a pair, `uly2+fsdp` or
+`cfg2+fsdp` keep FSDP); or a preset without `+fsdp` where the model fits
+resident.

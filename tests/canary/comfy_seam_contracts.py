@@ -229,6 +229,12 @@ before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
                               wrapped load, and the running prompt's id and
                               graph, which price a re-queue's encode or load
                               the loader did not see
+ 65. adaptive-step samplers   the samplers whose model call count follows the
+                              latent, which the driver refuses under data
+                              parallelism with FSDP, by name, as the SAMPLER
+                              objects ComfyUI builds for them, and as the
+                              KSamplerSelect and SamplerDPMAdaptative nodes
+                              the loader's graph walk reads
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -7417,6 +7423,94 @@ def _assert_driver_spend_wraps_seam() -> None:
             nodes.NODE_CLASS_MAPPINGS.pop(name, None)
 
 
+def _assert_adaptive_step_samplers_seam() -> None:
+    """Which samplers make a number of model calls that follows the latent.
+
+    Under data parallelism with FSDP every rank shares each model call while
+    each group samples its own slice, so a sampler whose call count follows
+    its data stalls the fleet, and the driver refuses it there
+    (nodes/adaptive_steps.py). Every sampler ComfyUI registers runs here on a
+    stub denoiser over two latents: the ones whose call counts differ must be
+    exactly the ones the refusal names, and the SAMPLER objects ComfyUI builds
+    for them, SamplerDPMAdaptative's, KSamplerSelect's and a bare KSAMPLER of
+    the solver included, must read as that solver, and no other sampler's
+    object may. The loader's graph walk reads KSamplerSelect's sampler_name
+    input and SamplerDPMAdaptative's node id, so both are pinned too.
+    """
+    import types
+
+    import comfy.k_diffusion.sampling as k_sampling
+    import comfy.model_sampling
+    import comfy.samplers
+    import torch
+    from comfy_extras.nodes_custom_sampler import KSamplerSelect, SamplerDPMAdaptative
+
+    from dgx_monarch.nodes import adaptive_steps
+
+    class Sampling(comfy.model_sampling.EPS, comfy.model_sampling.ModelSamplingDiscrete):
+        pass
+
+    sampling = Sampling()
+    sigmas = torch.tensor([*torch.linspace(14.6, 0.03, 11).tolist(), 0.0])
+
+    def calls(name: str, denoise) -> int:
+        made = [0]
+
+        def model(x, sigma, **extra_args):
+            made[0] += 1
+            denoised = denoise(x)
+            options = extra_args.get("model_options", {})
+            for post in options.get("sampler_post_cfg_function", []):  # the cfg++ samplers
+                denoised = post({"denoised": denoised, "cond_denoised": denoised,
+                                 "uncond_denoised": denoised, "model": None, "sigma": sigma,
+                                 "input": x, "model_options": options, "cond": None,
+                                 "uncond": None, "cond_scale": 1.0})
+            return denoised
+
+        model.inner_model = types.SimpleNamespace(  # type: ignore[attr-defined]
+            inner_model=types.SimpleNamespace(model_sampling=sampling), model_sampling=sampling,
+            model_patcher=types.SimpleNamespace(get_model_object=lambda _name: sampling))
+        sampler = comfy.samplers.sampler_object(name)
+        latent = torch.randn(1, 4, 8, 8, generator=torch.Generator().manual_seed(0)) * 14.6
+        sampler.sampler_function(model, latent, sigmas.clone(),
+                                 extra_args={"model_options": {}, "seed": 0}, callback=None,
+                                 disable=True, **sampler.extra_options)
+        return made[0]
+
+    names = list(comfy.samplers.KSampler.SAMPLERS)
+    counts = {name: (calls(name, lambda x: x * 0.0), calls(name, lambda x: torch.sin(x * 3.0) * 2.0))
+              for name in names}
+    following = sorted(name for name, (first, second) in counts.items() if first != second)
+    assert following == sorted(adaptive_steps.ADAPTIVE_STEP_SAMPLERS), (
+        f"adaptive-step seam: the samplers whose call count follows the latent are {following}, "
+        f"the refusal names {list(adaptive_steps.ADAPTIVE_STEP_SAMPLERS)}; calls {counts}")
+    by_name = sorted(name for name in names if adaptive_steps.adaptive_sampler({"sampler_name": name}))
+    assert by_name == following, f"adaptive-step seam: KSampler names read as adaptive {by_name}"
+    by_object = sorted(name for name in names if adaptive_steps.adaptive_sampler(
+        {"sampler_object": comfy.samplers.sampler_object(name)}))
+    assert by_object == following, f"adaptive-step seam: SAMPLER objects read as adaptive {by_object}"
+    node_output = SamplerDPMAdaptative.execute(
+        order=3, rtol=0.05, atol=0.0078, h_init=0.05, pcoeff=0.0, icoeff=1.0, dcoeff=0.0,
+        accept_safety=0.81, eta=0.0, s_noise=1.0)
+    custom = getattr(node_output, "result", node_output)[0]
+    assert adaptive_steps.adaptive_sampler({"sampler_object": custom}), (
+        "adaptive-step seam: SamplerDPMAdaptative's SAMPLER no longer reads as the adaptive solver")
+    # The loader's graph walk reads these two nodes by class and input name.
+    select = KSamplerSelect.define_schema()
+    adaptive_node = SamplerDPMAdaptative.define_schema()
+    assert (select.node_id, [field.id for field in select.inputs]) == (
+        adaptive_steps.SAMPLER_SELECT_NODE, ["sampler_name"]), (
+        "adaptive-step seam: KSamplerSelect no longer names its sampler in one sampler_name input")
+    assert adaptive_node.node_id == adaptive_steps.ADAPTIVE_SAMPLER_NODE, (
+        "adaptive-step seam: SamplerDPMAdaptative's node id moved")
+    selected = getattr(KSamplerSelect.execute("dpm_adaptive"), "result", None)
+    assert selected and adaptive_steps.adaptive_sampler({"sampler_object": selected[0]}), (
+        "adaptive-step seam: KSamplerSelect's dpm_adaptive SAMPLER no longer reads as the adaptive solver")
+    bare = comfy.samplers.KSAMPLER(k_sampling.sample_dpm_adaptive)
+    assert adaptive_steps.adaptive_sampler({"sampler_object": bare}), (
+        "adaptive-step seam: a KSAMPLER of sample_dpm_adaptive no longer reads as the adaptive solver")
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -7482,6 +7576,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("per-node pool reset", _assert_per_node_pool_reset_seam),
     ("minimax h3 packed total", _assert_minimax_h3_packed_total_seam),
     ("driver spend wraps", _assert_driver_spend_wraps_seam),
+    ("adaptive-step samplers", _assert_adaptive_step_samplers_seam),
 )
 
 
