@@ -32,10 +32,6 @@ VIRTUAL = {"Note", "MarkdownNote", "PrimitiveNode", "Reroute"}
 # Example names that public bundled workflows ship and the recording rig lacked.
 NOT_IN_RECORDING = {
     "DGXMonarchLoraLoader": {"your_first_lora.safetensors", "your_second_lora.safetensors"},
-    "LoadImage": {"blue_dancer.png", "qwen21_canvas_rgba.png", "qwen21_mask_rgba.png", "qwen21_source.png",
-                  "reference_character.png", "reference_character_mask.png"},
-    "LoadVideo": {"driving_video.mp4", "driving_video_mask.mp4", "source_video.mp4"},
-    "LoadAudio": {"wan_dancer_reference_audio.mp3"},
 }
 
 

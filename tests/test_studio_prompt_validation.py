@@ -148,11 +148,14 @@ def test_dynamic_combo_inputs_are_finalized_from_the_prompt(info):
     bare = copy.deepcopy(prompt)
     bare["2"]["inputs"] = {"video": ["1", 0], "filename_prefix": "clip", "format": "mp4"}
     assert compile_workflow(copy.deepcopy(bare), info) == bare
-    for name, value, message in (("format.codec.encoding.crf", 99.0, "Value violates max=51.0"),
-                                 ("format", "mov", "Value is not an available choice")):
+    # A format no ComfyUI offers is refused by name. ComfyUI 0.45.0 offers mov, whose codec
+    # choices hold no h264, so the child is refused there in turn.
+    for name, value, message in (("format.codec.encoding.crf", 99.0, "2.format.codec.encoding.crf: Value violates max=51.0"),
+                                 ("format", "avi", "2.format: Value is not an available choice"),
+                                 ("format", "mov", "2.format.codec: Value is not an available choice")):
         broken = copy.deepcopy(prompt)
         broken["2"]["inputs"][name] = value
-        with pytest.raises(WorkflowError, match=re.escape(f"2.{name}: {message}")):
+        with pytest.raises(WorkflowError, match=re.escape(message)):
             compile_workflow(broken, info)
 
 

@@ -143,13 +143,13 @@ function harness(setup: Setup) {
 test('the editing workflows are the packaged ones that load an image, make no video and run on the driver', () => {
   const editing = (info: Record<string, any>) =>
     entries.filter((row) => editingWorkflow(row.workflow, info)).map((row) => row.name);
-  // Of the 23 packaged graphs with an image input, image to video, motion transfer and the PiD
-  // upscale stay out.
+  // Of the 24 packaged graphs with an image input, image to video, motion transfer and PiD stay out.
   assert.deepEqual(editing(recorded), [
     'dgx-monarch-flux3-klein-base-edit',
     'dgx-monarch-flux3-klein-edit',
     'dgx-monarch-mage-flow-edit-turbo',
     'dgx-monarch-mage-flow-edit',
+    'dgx-monarch-minimax-h3-image-edit',
     'dgx-monarch-qwen-image21-edit-mask-rgba',
     'dgx-monarch-qwen-image21-edit-rgba',
   ]);
@@ -314,6 +314,7 @@ test('with several editing workflows, Send to edit offers the choice and changes
     'FLUX.3 Klein image editing',
     'Mage-Flow image editing quality',
     'Mage-Flow image editing Turbo',
+    'MiniMax-H3-Image image editing',
     'Qwen Image 2.1 masked RGBA reference edit',
     'Qwen Image 2.1 ten-reference RGBA edit',
   ]);
