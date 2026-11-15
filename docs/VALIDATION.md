@@ -395,7 +395,7 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   against stock that led to its text branch fix
   ([record](#anima-text-branch-fix)); the
   full Studio browser procedure of 2026-11-15 on the bundle this release
-  ships, `index-DFUxnqsH.js`
+  ships, `index-BFnkXPeL.js`
   ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-15));
   the hardware of 2026-11-11 and the fixes it led to
   ([record](#fixes-2026-11-11)); the passes and proof blocks on the dev builds
@@ -417,11 +417,12 @@ passed ([record](#release-test-v5-f297c70)). The release commit differs from
   on one side, and whether its 2 GiB reply budget binds; the BF16 rescue on
   the pair under `DGXM_AUTO_RESCUE=1`, and through the Auto-allow toggle on
   any layout; a Worker on ComfyUI 0.43 with context windows; the Studio checks
-  a headless Firefox cannot read: Chromium, Safari, physical phones and
-  assistive technology, a grant and retry under `--allow-management`,
-  Reconcile in Queue for an unknown outcome, and the review expiry at
-  viewports other than 390×844; the eleven tester round 4 rows on this
-  bundle; every layout at world 4; and the
+  the browser round could not make: a step count or a failure on the CPU
+  fixture, a grant and retry under `--allow-management`, Reconcile in Queue
+  for an unknown outcome, the review expiry at viewports other than 390×844,
+  and Chromium, Safari, physical phones, assistive technology and GPU
+  rendering; the eleven tester round 4 rows on this bundle; every layout at
+  world 4; and the
   full sweep runbook. The rows of the dev builds of 2026-11-11 to 14 that did
   not run, the LoRA weights of a partly loaded one-GPU Worker among them, are
   listed with their reasons ([record](#release-build-not-run)). The sample

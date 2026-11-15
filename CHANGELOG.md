@@ -745,14 +745,6 @@ sections after them list every change.
   boundary is now refused with "Choose an explicit LoRA loader type." and Open
   LoRAs, in place of "lora_insertion must be a JSON object."
   ([Studio](docs/STUDIO.md#working-with-workflows)).
-- Studio names a workflow's text fields more exactly. A text box is called
-  Prompt only when its text reaches the sampler's positive input as content:
-  a typed prompt keeps the name through switches, text nodes of other node
-  packs and string nodes, but a find or replacement string, a pattern, a
-  separator, an instruction or a system prompt no longer reads Prompt. Before,
-  every text box on a string chain read "Prompt", often twice with the same
-  name. When the only way to the prompt is a text generator, the text you ask
-  it reads Prompt ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Over an image in Studio's output viewer, the mouse wheel zooms around the
   point under the pointer. Anywhere else the wheel still scrolls the page, and
   Fit, 1:1, the zoom buttons and drag to pan work as before, except that a
@@ -843,10 +835,14 @@ sections after them list every change.
   field list keeps a usable height and the pane scrolls instead, with Generate
   pinned at its foot ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Studio names the prompt boxes Prompt and Negative prompt, from the inputs
-  chosen for prompt styles or else the sampler inputs their text reaches, and
-  names other text boxes by their node. The prompt box starts taller and grows
-  with its text, an empty negative prompt waits behind Add negative prompt on
-  Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
+  chosen for prompt styles or else the sampler inputs their text reaches
+  through encoders, switches and text nodes. A text node passes on the text
+  it works on, not a pattern, a find or replacement string, a separator, a
+  template or a key, and ComfyUI's text generators pass on nothing, so those
+  boxes and what you ask a generator read as other text boxes do. The prompt
+  box starts taller and grows with its text, an empty negative prompt waits
+  behind Add negative prompt on Inputs, and raw types such as STRING show
+  only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
 - The UNET loader now prices every model the graph loads on the driver. Under
   `auto` the DiT loads at the first render, after the driver has loaded the
   text encoders, VAEs and any prompt upsampler, and the loader's load window
