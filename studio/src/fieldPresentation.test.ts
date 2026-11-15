@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { bundled, graph, recorded, widgetBindings } from './workflowFixtures.js';
+import { artifactDraft } from './artifactDraft.ts';
+import type { Artifact, Job } from './contracts.ts';
 import { graphRoles, presentFields, promptRoles } from './fieldPresentation.ts';
 import { fieldIssue, issueText } from './fieldIssues.ts';
 import type { Binding } from './model.ts';
@@ -223,6 +226,74 @@ test('a Basic Guider takes one conditioning, so the text that reaches it is the 
     [names.get(request.id)?.label, names.get(request.id)?.role],
     ['Prompt', 'prompt'],
   );
+});
+
+/** Each template as the API prompt a job records (tests/fixtures/studio/compiled_template_graphs.json). */
+const compiled: Record<string, Record<string, any>> = JSON.parse(
+  readFileSync(
+    new URL('../../tests/fixtures/studio/compiled_template_graphs.json', import.meta.url),
+    'utf8',
+  ),
+).graphs;
+/** The typed text inputs of an API prompt, shaped as the inspection lists them. */
+function promptBindings(prompt: Record<string, any>): Binding[] {
+  return Object.entries(prompt).flatMap(([id, node]) => {
+    const schema = recorded[node.class_type]?.input ?? {};
+    const spec = (name: string) => schema.required?.[name] ?? schema.optional?.[name];
+    return Object.entries(node.inputs)
+      .filter(([name, value]) => !Array.isArray(value) && spec(name)?.[0] === 'STRING')
+      .map(([name]) => ({
+        id: `root:${id}:${name}`,
+        graph_id: 'root',
+        node_id: id,
+        input_name: name,
+        label: name,
+        resolved: true,
+        schema: { ...(spec(name)[1] ?? {}), type: 'STRING' },
+      }));
+  });
+}
+/** Each field Studio gives a role, by node and input. */
+function roleMap(workflow: Record<string, any>, bindings: Binding[]) {
+  const names = presentFields({ workflow }, bindings, recorded);
+  return Object.fromEntries(
+    bindings
+      .filter((b) => names.get(b.id)?.role)
+      .map((b) => [`${b.node_id}.${b.input_name}`, names.get(b.id)!.role]),
+  );
+}
+
+test('each template names the same Prompt and Negative prompt compiled as saved', () => {
+  // A switch's branches take any type in an API prompt; the saved workflow types them as text.
+  assert.equal(Object.keys(compiled).length, bundled.length);
+  for (const row of bundled) {
+    const prompt = compiled[row.name];
+    assert.deepEqual(
+      roleMap(prompt, promptBindings(prompt)),
+      roleMap(row.workflow, textBindings(row.workflow)),
+      row.name,
+    );
+  }
+});
+
+test('Reuse settings and Upscale load the compiled prompt, where the H3-Image request is Prompt', () => {
+  const requests: Array<[string, string]> = [
+    ['minimax-h3-image-t2i', '7'],
+    ['minimax-h3-image-edit', '7'],
+    ['p-h3-image', '8'],
+  ];
+  for (const [stem, node] of requests) {
+    const prompt = compiled[`dgx-monarch-${stem}`];
+    const submission = { workflow: graph(stem), requested: { operation: 'image' }, prompt };
+    const job = { id: 'job', state: 'succeeded', created_at: 1, submission } as Job;
+    for (const operation of [undefined, 'upscale']) {
+      const draft = artifactDraft({ id: 'output', job_id: 'job' } as Artifact, job, operation);
+      assert.deepEqual(draft.workflow, prompt, stem);
+      const names = presentFields({ workflow: draft.workflow }, promptBindings(prompt), recorded);
+      const request = names.get(`root:${node}:value`);
+      assert.deepEqual([request?.label, request?.role], ['Prompt', 'prompt'], stem);
+    }
+  }
 });
 
 test('no packaged template shows two text boxes with one name, and each names its prompt', () => {

@@ -1,5 +1,5 @@
 {
- "about": "Which inputs pass a node's text on into its own output text, and the roles that follow in whole graphs. studio/src/textThrough.test.ts runs both lists through Studio's rule, and tests/test_studio_template_layouts.py through the layout check's, so the two rules cannot drift. A case without `typed` is text that arrives by link; `typed` names the box of text typed on the node. A reading's node is [class, outputs, inputs], each input either its typed box or [source node, output slot, declared input type]; `roles` holds every typed input, with null for no role. A switch or Branch declares its branches and output as STRING, as a saved workflow types them; `rule` names the lead's ruled reading each graph holds.",
+ "about": "Which inputs pass a node's text on into its own output text, and the roles that follow in whole graphs. studio/src/textThrough.test.ts runs both lists through Studio's rule, and tests/test_studio_template_layouts.py through the layout check's, so the two rules cannot drift. A case without `typed` is text that arrives by link; `typed` names the box of text typed on the node, `unflagged` when the schema gives it no multiline flag. A reading's node is [class, outputs, inputs], each input either its typed box or [source node, output slot, declared input type]; `roles` holds every typed input, with null for no role. A switch or Branch declares its branches and output as STRING, as a saved workflow types them, except in S3, which declares them as an API prompt does; `rule` names the lead's ruled reading each graph holds.",
  "cases": [
   {"class": "CLIPTextEncode", "outputs": ["CONDITIONING"], "input": "text", "carries": true},
   {"class": "CLIPTextEncode", "outputs": ["CONDITIONING"], "input": "text", "typed": "one-line", "carries": true},
@@ -25,6 +25,7 @@
   {"class": "StringConcatenate", "outputs": ["STRING"], "input": "string_a", "carries": true},
   {"class": "StringConcatenate", "outputs": ["STRING"], "input": "string_b", "typed": "multiline", "carries": true},
   {"class": "StringConcatenate", "outputs": ["STRING"], "input": "delimiter", "typed": "one-line", "carries": false},
+  {"class": "StringConcatenate", "outputs": ["STRING"], "input": "string_ab", "carries": false},
   {"class": "StringReplace", "outputs": ["STRING"], "input": "string", "carries": true},
   {"class": "StringReplace", "outputs": ["STRING"], "input": "find", "typed": "multiline", "carries": false},
   {"class": "StringReplace", "outputs": ["STRING"], "input": "replace", "carries": false},
@@ -60,6 +61,7 @@
   {"class": "PackNode", "outputs": ["STRING"], "input": "positive", "typed": "multiline", "carries": true},
   {"class": "PackNode", "outputs": ["STRING"], "input": "style", "typed": "multiline", "carries": true},
   {"class": "PackNode", "outputs": ["STRING"], "input": "style", "typed": "one-line", "carries": false},
+  {"class": "PackNode", "outputs": ["STRING"], "input": "text", "typed": "unflagged", "carries": false},
   {"class": "PackNode", "outputs": ["STRING"], "input": "System_Prompt", "typed": "multiline", "carries": false},
   {"class": "PackNode", "outputs": ["STRING"], "input": "Find", "carries": false},
   {"class": "PackNode", "outputs": ["STRING"], "input": "edit_instruction", "typed": "multiline", "carries": false},
@@ -236,6 +238,18 @@
     "1": ["PackEncoder", ["CONDITIONING"], {"prompt": "multiline", "system_prompt": "multiline"}],
     "2": ["PackEncoder", ["CONDITIONING"], {"prompt": "multiline", "system_prompt": "multiline"}],
     "22": ["KSampler", ["LATENT"], {"positive": ["1", 0, "CONDITIONING"], "negative": ["2", 0, "CONDITIONING"]}]},
-   "roles": {"1.prompt": "prompt", "1.system_prompt": null, "2.prompt": "negative", "2.system_prompt": null}}
+   "roles": {"1.prompt": "prompt", "1.system_prompt": null, "2.prompt": "negative", "2.system_prompt": null}},
+  {"rule": "X2", "nodes": {
+    "2": ["TextGenerateV2", ["STRING", "STRING"], {"prompt": "multiline"}],
+    "3": ["SaveText", ["STRING"], {"text": ["2", 0, "STRING"], "filename_prefix": "one-line"}]},
+   "roles": {"2.prompt": null, "3.filename_prefix": null}},
+  {"rule": "S3", "nodes": {
+    "1": ["PrimitiveStringMultiline", ["STRING"], {"value": "multiline"}],
+    "2": ["PrimitiveStringMultiline", ["STRING"], {"value": "multiline"}],
+    "3": ["ComfySwitchNode", ["COMFY_MATCHTYPE_V3"], {"on_true": ["1", 0, "COMFY_MATCHTYPE_V3"], "on_false": ["2", 0, "COMFY_MATCHTYPE_V3"]}],
+    "20": ["CLIPTextEncode", ["CONDITIONING"], {"text": ["3", 0, "STRING"]}],
+    "21": ["CLIPTextEncode", ["CONDITIONING"], {"text": "multiline"}],
+    "22": ["KSampler", ["LATENT"], {"positive": ["20", 0, "CONDITIONING"], "negative": ["21", 0, "CONDITIONING"]}]},
+   "roles": {"1.value": "prompt", "2.value": "prompt", "21.text": "negative"}}
  ]
 }

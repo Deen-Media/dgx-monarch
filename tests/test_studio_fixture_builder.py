@@ -84,3 +84,35 @@ def test_the_committed_stock_text_class_list_is_the_builders_output(tmp_path):
     out = tmp_path / "stock_text_classes.json"
     builder.write_stock_text_classes(classes, out)
     assert out.read_text() == committed.read_text()
+
+
+def _compiled_builder():
+    spec = importlib.util.spec_from_file_location(
+        "dgxm_build_compiled_template_graphs", ROOT / "tests/fixtures/studio/build_compiled_template_graphs.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_committed_compiled_template_graphs_are_a_fresh_build(tmp_path):
+    # Each bundled template compiled as a job's preview compiles it, the form Reuse settings loads;
+    # studio/src/fieldPresentation.test.ts names the fields of this form.
+    compiled = _compiled_builder()
+    graphs = compiled.build(json.loads(compiled.WORKFLOWS.read_text())["workflows"],
+                            json.loads(compiled.SCHEMA.read_text()))
+    assert len(graphs) == 75
+    out = tmp_path / "compiled_template_graphs.json"
+    compiled.write(graphs, out)
+    assert out.read_text() == (ROOT / "tests/fixtures/studio/compiled_template_graphs.json").read_text(), (
+        "a template or the recorded schema changed: run python tests/fixtures/studio/build_compiled_template_graphs.py")
+
+
+def test_the_compiled_graph_keeps_links_and_empties_text_only():
+    compiled = _compiled_builder()
+    schema = {"Encode": {"input": {"required": {"text": ["STRING", {"multiline": True}], "clip": ["CLIP", {}],
+                                                "mode": [["a", "b"], {}], "steps": ["INT", {}]}}}}
+    prompt = {"5": {"class_type": "Encode", "inputs": {"text": "a red fox", "clip": ["4", 0], "mode": "a",
+                                                        "steps": 20}}}
+    assert compiled.graph(prompt, schema) == {"5": {"class_type": "Encode",
+                                                    "inputs": {"text": "", "clip": ["4", 0]}}}

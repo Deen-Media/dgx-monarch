@@ -121,6 +121,8 @@ DENIED_WORDS = {"system", "pattern", "regex", "find", "replace", "delimiter", "s
 WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")
 # Guiders that sample one conditioning, on an input named `conditioning`: that is the prompt.
 ONE_CONDITIONING_GUIDERS = {"BasicGuider", "DGXMonarchBasicGuider"}
+# The types of an input that takes whatever its source gives, as an API prompt declares them.
+MATCH_TYPES = {"COMFY_MATCHTYPE_V3", "*"}
 
 
 def carries(node: dict, name: str, multiline: bool | None = None) -> bool:
@@ -199,7 +201,13 @@ def side(workflow: dict, node_id: int) -> str | None:
     while frontier:
         sides, following = set(), []
         for _link, origin, _slot, target, target_slot, kind in workflow["links"]:
-            if origin not in frontier or kind not in {"CONDITIONING", "STRING"}:
+            if origin not in frontier:
+                continue
+            # A wire typed as a match type, as from a switch in an API prompt, counts when the
+            # input it feeds takes text or conditioning (Studio's MATCH_TYPES rule, mirrored).
+            declared = nodes[target]["inputs"][target_slot].get("type")
+            if kind not in {"CONDITIONING", "STRING"} and not (
+                    kind in MATCH_TYPES and declared in {"CONDITIONING", "STRING"}):
                 continue
             if nodes[target]["type"] == "ConditioningZeroOut":
                 continue
@@ -497,16 +505,19 @@ def test_the_text_through_rule_is_studios_own():
     """The walk above follows text as Studio names fields, so the two rules must not drift.
 
     The rows, quoted class names included, the denied words, the pattern that splits a name into
-    words and the guiders are compared, and the shared cases, which studio/src/textThrough.test.ts
-    runs through Studio's `carries`, run through this one.
+    words, the guiders and the match types are compared, and the shared cases, which
+    studio/src/textThrough.test.ts runs through Studio's `carries`, run through this one.
     """
     source = (ROOT / "studio/src/textThrough.ts").read_text()
+    presentation = (ROOT / "studio/src/fieldPresentation.ts").read_text()
     table = re.search(r"const TEXT_THROUGH: Record<string, readonly string\[\]> = \{(.*?)\n\};", source, re.S)
     denied = re.search(r"const DENIED_WORDS = new Set\(\[(.*?)\]\);", source, re.S)
     words = re.search(r"const WORDS = /(.*?)/g;", source)
-    guiders = re.search(r"const ONE_CONDITIONING_GUIDERS = new Set\(\[(.*?)\]\);",
-                        (ROOT / "studio/src/fieldPresentation.ts").read_text(), re.S)
-    assert table and denied and words and guiders, "a rule table moved in textThrough.ts or fieldPresentation.ts"
+    guiders = re.search(r"const ONE_CONDITIONING_GUIDERS = new Set\(\[(.*?)\]\);", presentation, re.S)
+    matches = re.search(r"const MATCH_TYPES = new Set\(\[(.*?)\]\);", presentation, re.S)
+    assert table and denied and words and guiders and matches, \
+        "a rule table moved in textThrough.ts or fieldPresentation.ts"
+    assert set(re.findall(r"'([^']+)'", matches.group(1))) == MATCH_TYPES
     rows = {key.strip(): tuple(re.findall(r"'([^']+)'", values))
             for key, values in re.findall(r"""['"]?([\w .-]+?)['"]?: \[([^\]]*)\]""", table.group(1))}
     assert len(rows) == table.group(1).count(": ["), "a row the pattern cannot read"
@@ -516,25 +527,27 @@ def test_the_text_through_rule_is_studios_own():
     assert words.group(1) == WORDS.pattern
     assert set(re.findall(r"'([^']+)'", guiders.group(1))) == ONE_CONDITIONING_GUIDERS
     cases = SHARED_CASES["cases"]
-    assert len(cases) == 69
+    assert len(cases) == 71
     for case in cases:
         node = {"type": case["class"], "outputs": [{"type": kind} for kind in case["outputs"]]}
+        # A typed box the schema gives no multiline flag is a one-line box here.
         typed = None if "typed" not in case else case["typed"] == "multiline"
         assert carries(node, case["input"], typed) is case["carries"], case
 
 
 def _reading_graph(nodes: dict) -> dict:
-    """One shared reading's graph as a saved workflow: nodes with named sockets, and typed links."""
+    """One shared reading's graph as a workflow: nodes with named, declared sockets, and links typed
+    by the output they leave."""
     graph, links = [], []
     for node_id, (kind, outputs, inputs) in nodes.items():
         sockets = []
         for name, value in inputs.items():
-            link = None
+            link, declared = None, "STRING"
             if isinstance(value, list):
-                source, slot, _declared = value
+                source, slot, declared = value
                 link = len(links) + 1
                 links.append([link, int(source), slot, int(node_id), len(sockets), nodes[source][1][slot]])
-            sockets.append({"name": name, "link": link})
+            sockets.append({"name": name, "link": link, "type": declared})
         graph.append({"id": int(node_id), "type": kind, "inputs": sockets,
                       "outputs": [{"type": output} for output in outputs]})
     return {"nodes": graph, "links": links}
@@ -549,7 +562,8 @@ def test_the_ruled_readings_hold_in_the_layout_checks_walk():
     readings = SHARED_CASES["readings"]
     assert [reading["rule"] for reading in readings] == [
         "Soft Switch", "Pack Join Text", "wildcard_text", "positive", "row 5", "P1", "P1b", "P2", "P2b",
-        "P3", "P3b", "P4", "P5r", "P6", "P7", "P8", "P10", "P11", "P12", "P13", "encoder system_prompt"]
+        "P3", "P3b", "P4", "P5r", "P6", "P7", "P8", "P10", "P11", "P12", "P13", "encoder system_prompt",
+        "X2", "S3"]
     for reading in readings:
         workflow = _reading_graph(reading["nodes"])
         nodes = {node["id"]: node for node in workflow["nodes"]}

@@ -73,6 +73,15 @@ its text inputs and whether each box is multi-line. Studio's text-through rule
 source, and `tests/test_studio_template_layouts.py` fails when a listed class
 has no row. A new recording that adds a stock text class needs its row.
 
+`compiled_template_graphs.json` holds each bundled template as the API prompt
+a job records, the form Reuse settings and Upscale load back into a draft: per
+node its class, its links and its text inputs, with the values emptied.
+`build_compiled_template_graphs.py` writes it from the bundled workflows and
+`object_info_bundled.json`, and `tests/test_studio_fixture_builder.py` fails
+when it is stale, so run the script after a template or the recorded schema
+changes. `studio/src/fieldPresentation.test.ts` checks that every template
+names the same Prompt and Negative prompt fields in this form as saved.
+
 ## Recording a new driver schema
 
 A template that adds a node class the recording lacks does not fail the
@@ -94,4 +103,5 @@ a new schema on a driver that has those nodes installed:
    `pytest tests/test_studio_bundled_workflows.py` and check that nothing is
    skipped. Run `pytest tests/test_studio_template_layouts.py` too: a stock
    class that the new `stock_text_classes.json` lists without a row in
-   `studio/src/textThrough.ts` and the layout test's copy fails it.
+   `studio/src/textThrough.ts` and the layout test's copy fails it. Then run
+   `python tests/fixtures/studio/build_compiled_template_graphs.py`.
