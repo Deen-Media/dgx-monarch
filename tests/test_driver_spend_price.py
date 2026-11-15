@@ -827,8 +827,12 @@ def _mesh_through_a_switch(rig, monkeypatch, choice: object, reserves: tuple[flo
     _loader_pair(rig, monkeypatch, graph)
 
 
-def test_two_init_nodes_through_an_undecided_switch_price_at_their_reserve(rig, monkeypatch):
-    _mesh_through_a_switch(rig, monkeypatch, ["8", 0], (24.0, 24.0))
+@pytest.mark.parametrize("reserves", [(0.0, 24.0), (24.0, 0.0)],
+                         ids=["24 on the false branch", "24 on the true branch"])
+def test_two_init_nodes_through_an_undecided_switch_price_at_their_reserve(rig, monkeypatch, reserves):
+    """Either branch may run, so the stricter reserve prices; following one branch, or taking the first
+    reading, fails one of the two orders."""
+    _mesh_through_a_switch(rig, monkeypatch, ["8", 0], reserves)
     assert "above its 24.0 GiB floor" in _floor_read(rig)
 
 
