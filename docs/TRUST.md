@@ -750,14 +750,30 @@ copied from historical evidence.
     verdict that compared nothing supersedes an older unproven one, as a newer
     stock-reference row or PASS does; a FAIL is lifted only by a later bound
     PASS
-    ([`test_consent_wiring.py:1607-1627`](../tests/test_consent_wiring.py#L1607-L1627 "anchor:test_the_newest_row_of_a_context_decides_and_only_a_pass_lifts_a_fail")).
+    ([`test_consent_wiring.py:1608-1628`](../tests/test_consent_wiring.py#L1608-L1628 "anchor:test_the_newest_row_of_a_context_decides_and_only_a_pass_lifts_a_fail")).
+    An explicit-on row such a gate writes, of any build, speaks for a
+    residency it never ran: it never decides there, and beneath it only a
+    liftable copy goes, a row another check copied there that is a denial on
+    its own under this build, with the guard a later terminal row of the
+    guard's own version closed. An older verdict a check run with
+    `slab_weights` on left there stays
+    ([`test_consent_wiring.py:1664-1680`](../tests/test_consent_wiring.py#L1664-L1680 "anchor:test_a_rendering_check_that_compared_nothing_leaves_an_explicit_on_denial_standing")),
+    and so do a stamped PASS, a copy that reads clear and every other row of
+    another build
+    ([`test_consent_wiring.py:1764-1779`](../tests/test_consent_wiring.py#L1764-L1779 "anchor:test_a_check_that_compared_nothing_keeps_what_a_stamped_pass_lifted"),
+    [`test_consent_wiring.py:1782-1817`](../tests/test_consent_wiring.py#L1782-L1817 "anchor:test_what_each_stamped_row_decides_under_a_check_that_compared_nothing")),
+    and every ledger of one or two events, under three identities, reads by
+    these rules
+    ([`test_no_material_consent_enumeration.py:296-298`](../tests/test_no_material_consent_enumeration.py#L296-L298 "anchor:test_every_ledger_of_one_and_two_events_reads_by_the_rule")),
+    three events before a release
+    ([`test_no_material_consent_enumeration.py:301-305`](../tests/test_no_material_consent_enumeration.py#L301-L305 "anchor:test_every_ledger_of_up_to_three_events_reads_by_the_rule")).
     That reading is
-    [`consent_quarantine.py:144-162`](../src/dgx_monarch/nodes/consent_quarantine.py#L144-L162 "anchor:compared_nothing"),
+    [`consent_quarantine.py:147-166`](../src/dgx_monarch/nodes/consent_quarantine.py#L147-L166 "anchor:compared_nothing"),
     covered by
     [`test_consent_wiring.py:1486-1495`](../tests/test_consent_wiring.py#L1486-L1495 "anchor:test_a_no_material_verdict_reads_clear_for_a_rescue") and
-    [`test_consent_wiring.py:1498-1513`](../tests/test_consent_wiring.py#L1498-L1513 "anchor:test_the_marker_rides_only_the_revocation_rows_and_grants_no_skip");
+    [`test_consent_wiring.py:1498-1514`](../tests/test_consent_wiring.py#L1498-L1514 "anchor:test_the_marker_rides_only_the_revocation_rows_and_grants_no_skip");
     the capacity reading is
-    [`consent_quarantine.py:123-141`](../src/dgx_monarch/nodes/consent_quarantine.py#L123-L141 "anchor:stock_reference_unavailable"),
+    [`consent_quarantine.py:126-144`](../src/dgx_monarch/nodes/consent_quarantine.py#L126-L144 "anchor:stock_reference_unavailable"),
     covered by
     [`test_consent_rescue_keeps_slab.py:494-501`](../tests/test_consent_rescue_keeps_slab.py#L494-L501 "anchor:test_the_consent_reader_reads_through_only_a_typed_capacity_settlement") and
     [`test_consent_rescue_keeps_slab.py:387-420`](../tests/test_consent_rescue_keeps_slab.py#L387-L420 "anchor:test_a_consented_capacity_inconclusive_keeps_slab_and_renders_under_it").
@@ -772,7 +788,7 @@ copied from historical evidence.
     Pending/active API rows are projected against one such ledger scan, and
     a card whose first read is ambiguous is asked again under the load scope
     the refusal that raised it read, as `quarantine_decision_for_load` asks
-    ([`consent_quarantine.py:377-390`](../src/dgx_monarch/nodes/consent_quarantine.py#L377-L390 "anchor:offer_decisions"),
+    ([`consent_quarantine.py:444-457`](../src/dgx_monarch/nodes/consent_quarantine.py#L444-L457 "anchor:offer_decisions"),
     covered by
     [`test_consent_rescue_keeps_slab.py:518-541`](../tests/test_consent_rescue_keeps_slab.py#L518-L541 "anchor:test_the_card_is_offered_listed_and_accepted_after_a_capacity_verdict") and
     [`test_consent_rescue_keeps_slab.py:595-619`](../tests/test_consent_rescue_keeps_slab.py#L595-L619 "anchor:test_an_actor_offer_where_the_driver_holds_no_rank_becomes_a_card_to_accept")). GET
@@ -783,7 +799,7 @@ copied from historical evidence.
     governing FAIL preserves that state.
     A later current-source PASS permits a fresh consent, and the older FAIL
     then stays in the ledger only as audit history. These rules are implemented in
-    [`consent_quarantine.py:279-352`](../src/dgx_monarch/nodes/consent_quarantine.py#L279-L352 "anchor:quarantine_decisions") and
+    [`consent_quarantine.py:346-419`](../src/dgx_monarch/nodes/consent_quarantine.py#L346-L419 "anchor:quarantine_decisions") and
     [`consent_routes.py:144-172`](../src/dgx_monarch/nodes/consent_routes.py#L144-L172 "anchor:_live_rows"), and covered by
     [`test_consent_endpoints.py:479-497`](../tests/test_consent_endpoints.py#L479-L497 "anchor:test_accept_refuses_a_card_after_persisted_gate_fail"),
     [`test_consent_endpoints.py:500-521`](../tests/test_consent_endpoints.py#L500-L521 "anchor:test_consent_state_omits_quarantined_rows_without_mutating_them"),
@@ -958,7 +974,7 @@ copied from historical evidence.
   proves: combination, artifact bytes, comfy commit, capability context, gate
   protocol, release, and package-source manifest. A row without the classification, a retest
   guard, and damage newer than the row each keep the ceremony
-  ([`gate_inconclusive.py:351-351`](../src/dgx_monarch/nodes/gate_inconclusive.py#L351-L351 "anchor:row_grants_skip")).
+  ([`gate_inconclusive.py:354-354`](../src/dgx_monarch/nodes/gate_inconclusive.py#L354-L354 "anchor:row_grants_skip")).
   Only the capability context the ceremony ran under is
   remembered; the Fleet scope and the explicit-on slab siblings revoked in the
   same transaction get no skip
@@ -1182,7 +1198,7 @@ Passing this check grants no model-gate verdict or hardware acceptance.
 |---|---|
 | Unexpected pip output or exit status must fail. | [`test_check_dependencies.py:77-93`](../tests/test_check_dependencies.py#L77-L93 "anchor:test_other_results_fail_without_download") |
 | Platform, package, download and installed-file mismatches must fail. | [`test_check_dependencies.py:96-118`](../tests/test_check_dependencies.py#L96-L118 "anchor:test_exception_requires_original_wheel") |
-| CPU jobs must use the reviewed GitHub-hosted images. | [`test_release_surfaces.py:427-447`](../tests/test_release_surfaces.py#L427-L447 "anchor:test_public_source_has_no_hardware_route") |
+| CPU jobs must use the reviewed GitHub-hosted images. | [`test_release_surfaces.py:437-457`](../tests/test_release_surfaces.py#L437-L457 "anchor:test_public_source_has_no_hardware_route") |
 
 Verified-update file ownership follows [troubleshooting entry 110](TROUBLESHOOTING.md#110-verified-update-refuses-color-matcher-test-files).
 The color-matcher allowance applies to bundled test files only and grants

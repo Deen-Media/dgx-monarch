@@ -449,6 +449,34 @@ def priced(fit: Any, checkpoint_path: str, lora_stack: list | None, resolve_lora
                    avail_bytes=read)
 
 
+def _in_place_need(fit: Any, files: int, held: int, bare_load: bool) -> int:
+    """What the in-place bake takes above the floor: on the loaded base, or after a bare reload."""
+    need = in_place_bake_bytes(files)
+    if bare_load:
+        need = max(int(fit.required_bytes) - ABSOLUTE_HOST_FLOOR_BYTES, int(fit.resident_bytes) + need)
+        need = max(need - held, IN_PLACE_BAKE_FIXED_BYTES)  # the drop returns the resident first
+    return need
+
+
+def cleared_required_bytes(fit: Any, checkpoint_path: str, lora_stack: list | None,
+                           resolve_lora_path: Callable[[str], str], *, in_place: str | bool = "",
+                           comfy_reserve_bytes: int | None = None) -> int:
+    """The least reading a cleared box needs for this load, the fresh fleet's price (``old_model._numbers``).
+
+    A clear empties the slot: ``priced`` with nothing held and a bare load takes the classic bake, or
+    where the store may bake in place the lower in-place price. ``fit`` is the file's stock price.
+    """
+    if not lora_stack:
+        return int(fit.required_bytes)
+    classic = replace(fit, credit_bytes=0, bake_bytes=classic_charge(
+        checkpoint_path, lora_stack, resolve_lora_path, comfy_reserve_bytes=comfy_reserve_bytes))
+    if in_place is not True:
+        return int(classic.required_bytes)
+    taken = replace(classic, in_place_bytes=_in_place_need(
+        fit, stack_bytes(lora_stack, resolve_lora_path), 0, True))
+    return min(int(classic.required_bytes), int(taken.required_bytes))
+
+
 def _chosen(fit: Any, checkpoint_path: str, lora_stack: list, resolve_lora_path: Callable[[str], str],
             held: int, in_place: str | bool, bare_load: bool, reading_words: str,
             stack_on_host: bool = False, comfy_reserve_bytes: int | None = None) -> Any:
@@ -462,14 +490,10 @@ def _chosen(fit: Any, checkpoint_path: str, lora_stack: list, resolve_lora_path:
         return classic
     if in_place is not True:
         return replace(classic, in_place_note="; " + str(in_place))
-    need = in_place_bake_bytes(files)
-    if bare_load:
-        need = max(int(fit.required_bytes) - ABSOLUTE_HOST_FLOOR_BYTES, int(fit.resident_bytes) + need)
-        need = max(need - held, IN_PLACE_BAKE_FIXED_BYTES)  # the drop returns the resident first
-    taken = replace(classic, in_place_bytes=need)
+    taken = replace(classic, in_place_bytes=_in_place_need(fit, files, held, bare_load))
     if taken.required_bytes <= taken.avail_bytes:
         return replace(taken, fits=True)
-    beside = "" if bare_load else f" beside the {_gib(held)} GiB loaded copy"
+    beside = "" if bare_load else f" beside the {_gib(int(fit.resident_bytes))} GiB loaded copy"
     return replace(classic, in_place_note=f"; baking it in place would need {taken.required_gib} GiB{beside}, "
                    f"and {taken.avail_gib} GiB {reading_words}")
 
@@ -495,5 +519,5 @@ __all__ = ["CLASSIC_BAKE_BYTES_PER_WEIGHT", "CLASSIC_BAKE_FIXED_BYTES", "CLASSIC
            "MEASURED_LARGEST_WEIGHT_BYTES", "OTHER", "PLAIN_FP8", "RECORDED_WHOLE_LOAD_FAMILY",
            "RECORDED_WHOLE_LOAD_RESERVE_BYTES", "SMALL_KEY_BYTES",
            "UNREADABLE_STACK_WEIGHTS", "WHOLE_LOAD_BEYOND_COMFYUI_BYTES", "charge_from_weights",
-           "classic_bake_bytes", "classic_charge", "in_place_bake_bytes", "patched_weights", "priced", "probe",
+           "classic_bake_bytes", "classic_charge", "cleared_required_bytes", "in_place_bake_bytes", "patched_weights", "priced", "probe",
            "reserve_keeps_floor", "stack_bytes", "term_from_weights", "weight_class", "whole_load_recorded"]

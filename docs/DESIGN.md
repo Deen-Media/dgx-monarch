@@ -1101,7 +1101,10 @@ input-quantizing layer off the device is refused, class C, before its first
 forward (`partial_load_divergence`, raised at one rank by
 `lora_partial_load.check`), saying what was tried. `lora_low_rss` on, the Spark
 default, bakes at load time and never reaches this. Comfy-managed residency
-runs ComfyUI's own patcher and is not touched.
+runs ComfyUI's own patcher and is not touched, on one GPU and on a pair
+alike (`lora_partial_load.carries_stack`): its dynamic load fills ComfyUI's
+backup with the small weights it force-loads, with no stack, so neither
+check reads that backup as a stack's.
 
 A whole load is weighed by the same check. ComfyUI's classic bake keeps the
 host copy of every patched weight as its backup for the whole render (the
@@ -1109,7 +1112,9 @@ Worker held 17.7 GiB of anonymous memory beside a 15.5 GiB model on record,
 most of it that backup), and its whole-load condition leaves only its reserve
 for what the sampler takes beyond ComfyUI's own estimate, which grows with the
 latent. So where a patched model is loaded whole on a device that shares the
-host's memory, and the room above the 5 GiB floor is under 1.5 times ComfyUI's
+host's memory, and the room above the 5 GiB floor, with the device pool the
+Worker holds reserved and unused (its sampler takes that first, and
+MemAvailable does not show it), is under 1.5 times ComfyUI's
 full estimate for sampling this latent (`estimate_memory`'s first figure, the
 doubled batch; 1.5 is the share of free memory from which ComfyUI itself runs
 cond and uncond in one call),
@@ -1172,7 +1177,8 @@ trim 9.5 to 10.5
 On a pair the ranks free together or not at all
 (`actor/backup_agreement.py`). After the cross-rank guard has found every rank
 whole, each rank adds five integers to the guard's own exchange: whether it is
-short (it holds a backup and its room is under the same ask), whether it can
+short (it holds a backup and its room, its idle device pool counted as in the
+margin, is under the same ask), whether it can
 free, whether its switch is set, its margin with its rank in the low bits, and
 whether it holds a slot this agreement freed before. The margin is its room
 less 1.15 times ComfyUI's single-batch estimate plus 1 GiB (a rank added
@@ -2132,7 +2138,35 @@ still run their own gate on first use. A FAIL keeps precedence over both
 exceptions. The newest row of each context decides, as for every verdict: a
 later no-material verdict in the same context lifts an earlier unproven one,
 as a later stock-reference row or PASS does, and only a bound PASS lifts a
-FAIL. Rows from another release or source build were never read as denials
+FAIL. The explicit-on rows are the exception, because the check never ran
+there, and three rules read them. (1) The row such a check writes in an
+explicit-on context, of any build, never decides there and never hides what
+is under it: where it is the newest row of the context, the read looks
+beneath it, past every such row. (2) Beneath it a liftable copy goes: a row
+another check copied there (a row stamped by slab-mode equivalence, the
+RETESTING row of a ceremony that names the context from its third place on,
+or the repair of that row) that, read on its own under this build, is a
+denial. Such a guard goes too when a later terminal row of its own version
+closed it in that context, whatever source wrote that row. The row that closed
+it goes only when it is itself a liftable copy: a repair another source wrote
+reads unknown on its own and stays. A FAIL that no longer reads (a stamped one
+whose cross leg passed, or one of another version) closes nothing, so another
+version's guard it ended stays and reads unknown. (3) Nothing else goes: a row a check that ran there left, so
+a ceremony with `slab_weights` on that ended unproven, or was cut off, still
+denies the rescue; a stamped PASS, the auto graph's proof that the explicit-on
+residency is equivalent; a copy that reads clear on its own, such as a
+stock-reference row; and every other row of another build, which reads
+unknown as below. A stamped FAIL stands, as every FAIL does, until a later
+bound PASS (`consent_quarantine._liftable`, every ledger of up to three events
+in `tests/test_no_material_consent_enumeration.py`). One consequence is a
+decision: another build's such row no longer hides an own row of this build
+beneath it, so an explicit-on check of this build that was cut off, under
+another build's check that compared nothing, read unknown through 1.4, so the
+load's own scope cleared it, and now denies. Another follows from rule 2: a
+check of this build can read stricter than just before it, where its own row
+is the later terminal row that closes another source's guard of this version;
+that guard read unknown over an own unproven or cut-off row, which then
+denies. Rows from another release or source build were never read as denials
 here: they read unknown, and the load's own scope then decides.
 
 **What the loader asks the ledger, and in what order.** The loader checks the
@@ -3090,14 +3124,17 @@ recovers by itself, and the context's main buffer does not.
   step did or why it did nothing, and what to do. It carries the Worker's
   rank, and the driver names the box of any error a Worker raises at setup,
   as it does at a load (`worker_box.name` in
-  `mesh_setup_transition.ensure_setup`, from the rank whose answer it was
-  awaiting, which covers a Fleet's actors too). Any other error passes on
-  as it was raised. On a pair the refusal is not yet prompt, and only the
-  head's reaches the prompt. The rank that cannot make its context raises
-  before it joins the group (`worker_env.setup_impl` calls the bootstrap
-  ahead of `dist.init_process_group`), but the driver awaits the answers in
-  rank order. Where the head (rank 0) failed, the driver has its refusal at
-  once. The sibling is by then waiting to connect to the store the head
+  `mesh_setup_transition.ensure_setup`, from the rank whose answer was the
+  error, which covers a Fleet's actors too). Any other error passes on
+  as it was raised. On a pair the refusal is not prompt. The rank that
+  cannot make its context raises before it joins the group
+  (`worker_env.setup_impl` calls the bootstrap ahead of
+  `dist.init_process_group`). The driver awaits the answers in rank order,
+  a slice of `SETUP_POLL_S` (2 s) at a time, and between slices asks each
+  later rank, with no wait, whether it has answered; Monarch's
+  `Future.get(timeout)` leaves an endpoint's future running on a timeout, so
+  the passing path reads the same answers in the same order. Where the head
+  (rank 0) failed, the driver has its refusal at once. The sibling is by then waiting to connect to the store the head
   never opened; that wait holds the sibling's GPU lock (the connect has a
   600 s limit and then tries again), the rollback's `teardown_group` call
   queues behind it on that lock, and the driver raises the refusal, opening
@@ -3105,13 +3142,18 @@ recovers by itself, and the context's main buffer does not.
   rollback reaches its own limit (`rollback_cleanup_s`, 600 s, and a 10 s
   margin). On 2026-11-12 the raw error took 610 s to show that way, and the
   driver logged that the rollback had timed out. Where the sibling failed,
-  the head has opened its store and waits for the sibling to join, and the
-  driver is awaiting the head: what reaches the prompt about 600 s later is
-  a timeout (the driver's own setup limit, which starts at dispatch, or the
-  head's store's), and the sibling's refusal, returned at once, is never
-  read. Ending the wait at the first rank's failure, and raising the refusal
-  of the rank that failed, is a change to the
-  setup protocol and is not in this rule. The remedy it names is a reset of the attached
+  the head has opened its store and waits for the sibling to join. The
+  driver reads the sibling's refusal within a slice of its return, logs at
+  WARNING that the rollback waits, and rolls back; the rollback's
+  `teardown_group` call queues behind the head's wait at its store (600 s
+  from the head's own start). That rollback keeps what the setup's limit
+  had left on top of its own, so it ends no sooner than it did when the
+  driver awaited the head to the setup's limit first, and the driver then
+  raises the sibling's refusal, opening "On the sibling, this Worker could
+  not start on its GPU", where 1.4 raised a bare timeout (not run on a
+  pair). Ending the head's wait at the
+  sibling's failure is a change to the setup protocol and is not in this
+  rule. The remedy it names is a reset of the attached
   mesh after memory is freed: no record shows a second try in the same process
   making a context, and a setup that failed leaves the Worker marked as not
   torn down until a reset or a teardown settles it.
@@ -3405,7 +3447,11 @@ covers the whole load by itself. Three rules follow.
   loaded base is the default's own path and leaves almost none of that
   memory. So where the classic price, credited what dropping the slot's
   resident returns, does not fit, and the in-place price does (one copy of
-  the stack and 2 GiB of working memory), the store bakes in place. The term
+  the stack and 2 GiB of working memory), the store bakes in place. That
+  drop is credited only where it copies nothing to the host, the rule of the
+  swap credit below (`in_place_fallback.route`): elsewhere neither bake is
+  chosen or priced with it, so a reading that admits the change is never
+  followed, higher up, by one that refuses it. The term
   and the fallback belong to a change that ends in a fresh load. A change
   ComfyUI's classic hot swap makes in place (the held stack's backup covers
   the new one, as for a strength change, or the other slot holds a model)
@@ -3585,7 +3631,13 @@ head from 58.7 to 88.5 GiB, and from 57.9 to 88.5 GiB on a warm re-queue. Where
 the price already credited the slot's own resident (the swap credit below), a
 clear is weighed against the uncredited price, the row's figure plus its
 credit, because a cleared box holds no copy to drop, and the refusal says that
-figure is the whole price. When that resident is the only old model on a short
+figure is the whole price. With a LoRA stack and `lora_low_rss` off the
+Worker states that price itself (`cleared_required_bytes`, from
+`capacity_classic_bake.cleared_required_bytes`): a change ComfyUI's hot swap
+makes in place bakes nothing, but the fresh load on a cleared box bakes the
+stack, classic or, with the in-place permission, in place after a bare load,
+so the card is offered only where the fresh fleet's own price fits what the
+clear leaves. When that resident is the only old model on a short
 box, the card gives the memory earlier loads left behind there ("the head
 still holds about 12.0 GiB that earlier loads left behind") rather than the model, which
 the price already dropped; a refusal no clear can fix leaves that sentence out. A slab or comfy-managed resident
@@ -4580,6 +4632,9 @@ an enforced requirement. The current exceptions are:
 | `nodes/loader_preflight.py` | 593 | the loader-site capacity answer in one place: the two windows, the residency ladder they are priced against and the slab rescue offer |
 | `runtime_provenance.py` | 596 | stdlib-only exact Git/source inventory, loaded-origin validation, and runtime snapshot boundary |
 | `adapters/flux_family.py` | 560 | the flux-family adapters and the sharded forwards they install |
+| `actor/lora_partial_load.py` | 525 | the one-GPU LoRA load checks and the two rules the pair's vote shares with them: which load carries a stack (`carries_stack`) and the room a sampler draws on, the Worker's idle device pool included |
+| `capacity_classic_bake.py` | 523 | the classic bake's price, the in-place alternative chosen from the same reading, and the price a cleared box pays, one arithmetic for the quote, the store and the old-model card |
+| `actor/worker_capacity.py` | 518 | the Worker's quote endpoint: the snapshot facts, the classic bake's probe and the cleared box's price each row carries |
 
 Refusal-class ledger (enforced by `tests/test_refusal_classes.py`, doctrine in
 section 5.9): a typed refusal declares its class through `refusal.refusal()`.

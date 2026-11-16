@@ -1490,7 +1490,7 @@ def test_a_no_material_verdict_reads_clear_for_a_rescue(checkpoint, _rig, render
     combo, artifacts = _h3_combo(checkpoint)
     write_ceremony_rows(GateLedger(str(_rig)), combo, artifacts, rendered=rendered)
     entries, _damage = GateLedger(str(_rig)).entries_with_integrity()
-    assert len(entries) == (4 if rendered else 1)
+    assert len(entries) == (5 if rendered else 1)  # a rendering check opens with its RETESTING row
     assert consent_quarantine.quarantine_decision(combo, artifacts).state == "clear"
     assert _load_decision(checkpoint).state == "clear"
 
@@ -1502,7 +1502,8 @@ def test_the_marker_rides_only_the_revocation_rows_and_grants_no_skip(checkpoint
 
     combo, artifacts = _h3_combo(checkpoint)
     write_ceremony_rows(GateLedger(str(_rig)), combo, artifacts)
-    (_line, exercised), *revocations = GateLedger(str(_rig)).entries_with_integrity()[0]
+    (_line, opened), (_line, exercised), *revocations = GateLedger(str(_rig)).entries_with_integrity()[0]
+    assert opened["verdict"] == "RETESTING"
     assert exercised[gate_inconclusive.RESULT_KEY] == gate_inconclusive.KIND_NO_MATERIAL
     assert gate_inconclusive.REVOKED_BY_NO_MATERIAL not in exercised
     assert gate_inconclusive.row_grants_skip(GateLedgerLookup("inconclusive", exercised, True))
@@ -1625,3 +1626,221 @@ def test_the_newest_row_of_a_context_decides_and_only_a_pass_lifts_a_fail(
         assert decision.reason == consent_quarantine._QUARANTINE_REASON
         ledger.record(combo, artifacts, "deadbeef", "PASS", context=GATE_CONTEXT)
         assert _load_decision(checkpoint).state == "clear"
+
+
+# ---- A check that compared nothing leaves the contexts it never ran as it found them ----
+# A rendering check on the auto graph writes a row into each
+# explicit-on slab sibling, stamped by slab-mode equivalence and marked as a no-material
+# revocation. That row speaks for a context the check never ran, so it must not lift an
+# older unproven verdict a check that did run there left. The rows come from the real
+# writers: the RETESTING row a ceremony opens first, then its verdict rows.
+
+
+def _all_three_reads(checkpoint):
+    """The contextless read, the read for a load, and the panel's read of a rescue card."""
+    combo, artifacts = _h3_combo(checkpoint)
+    scope = consent_rescue.load_capability_context({"slab_weights": "auto"})
+    query = consent_quarantine.capacity_query(
+        "rescue-slab", combo, artifacts.current, artifacts.legacy, artifacts.legacy_complete, None)
+    fallback = consent_quarantine.capacity_query(
+        "rescue-slab", combo, artifacts.current, artifacts.legacy, artifacts.legacy_complete, scope)
+    return (consent_quarantine.quarantine_decision(combo, artifacts), _load_decision(checkpoint),
+            consent_quarantine.offer_decisions([(query, fallback)])[0])
+
+
+def _repair(output) -> None:
+    """``dgxm gate --repair --apply``'s own writer: it closes each open RETESTING row."""
+    from dgx_monarch.cli import gate_repair
+
+    assert gate_repair.repair(str(output), apply=True) == 0
+
+
+@pytest.mark.parametrize(("older", "reason"), [
+    ("repeat diverged", consent_quarantine._INCONCLUSIVE_REASON),
+    ("cross leg error", consent_quarantine._INCONCLUSIVE_REASON),
+    ("cut off", consent_quarantine._RETESTING_REASON),
+    ("cut off, then repaired", consent_quarantine._INCONCLUSIVE_REASON),
+], ids=["repeat diverged", "cross leg error", "cut off", "cut off then repaired"])
+def test_a_rendering_check_that_compared_nothing_leaves_an_explicit_on_denial_standing(
+        checkpoint, _rig, older, reason):
+    """A ceremony with slab_weights on ends unproven, or is cut off; then a check on the auto
+    graph compares nothing. Its rows in the explicit-on contexts say nothing about them, so the
+    older denial still decides there, and every read refuses the rescue in that denial's words."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import write_ceremony_rows, write_explicit_on_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    ledger = GateLedger(str(_rig))
+    write_explicit_on_rows(ledger, combo, artifacts, older.partition(",")[0])
+    if older.endswith("repaired"):
+        _repair(_rig)
+    before = _all_three_reads(checkpoint)
+    write_ceremony_rows(ledger, combo, artifacts)  # the Identity Gate node on the auto graph
+    for decision in (*before, *_all_three_reads(checkpoint)):
+        assert decision.state == "denied" and decision.reason == reason
+
+
+@pytest.mark.parametrize("older", [
+    "nothing", "an unproven check on the auto graph", "a cut-off check on the auto graph",
+    "a cut-off check on the auto graph, repaired",
+    "an explicit-on PASS", "an explicit-on denial a later explicit-on PASS lifted",
+])
+def test_a_rendering_check_that_compared_nothing_still_lifts_what_it_lifted(checkpoint, _rig, older):
+    """What the same check still clears: a clean ledger; what an earlier check on the same auto
+    graph left, in its own contexts and copied into the siblings, which this check supersedes as
+    the newer one; and a PASS a check that ran with slab_weights on recorded."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import open_auto_ceremony, write_ceremony_rows, write_explicit_on_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    ledger = GateLedger(str(_rig))
+    if older == "an unproven check on the auto graph":
+        write_ceremony_rows(ledger, combo, artifacts, kind="unproven")
+    elif older.startswith("a cut-off check on the auto graph"):
+        open_auto_ceremony(ledger, combo, artifacts)
+        if older.endswith("repaired"):
+            _repair(_rig)
+    elif older == "an explicit-on PASS":
+        write_explicit_on_rows(ledger, combo, artifacts, "PASS")
+    elif older == "an explicit-on denial a later explicit-on PASS lifted":
+        write_explicit_on_rows(ledger, combo, artifacts, "repeat diverged")
+        write_explicit_on_rows(ledger, combo, artifacts, "PASS")
+    write_ceremony_rows(ledger, combo, artifacts)
+    assert [decision.state for decision in _all_three_reads(checkpoint)] == ["clear"] * 3
+
+
+def test_the_no_render_path_and_a_real_pass_clear_as_they_did(checkpoint, _rig):
+    """The shipped templates' automatic path writes the exercised row alone: it lifts an older
+    unproven verdict in its own context, and leaves an explicit-on denial standing, as before.
+    A later explicit-on PASS then lifts that denial."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import write_ceremony_rows, write_explicit_on_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    ledger = GateLedger(str(_rig))
+    write_ceremony_rows(ledger, combo, artifacts, kind="unproven", rendered=False)
+    write_ceremony_rows(ledger, combo, artifacts, rendered=False)
+    assert [decision.state for decision in _all_three_reads(checkpoint)] == ["clear"] * 3
+    write_explicit_on_rows(ledger, combo, artifacts, "repeat diverged")
+    write_ceremony_rows(ledger, combo, artifacts, rendered=False)
+    assert [decision.state for decision in _all_three_reads(checkpoint)] == ["denied"] * 3
+    write_explicit_on_rows(ledger, combo, artifacts, "PASS")
+    assert [decision.state for decision in _all_three_reads(checkpoint)] == ["clear"] * 3
+
+
+def test_a_ceremony_opens_its_retest_with_its_own_contexts_first():
+    """The reader tells a context a ceremony ran in from a sibling it guards by the order the
+    ceremony gives them (consent_quarantine._copied_here): exercised, Fleet, then siblings."""
+    source = (Path(__file__).resolve().parents[1] / "src/dgx_monarch/nodes/gate_ceremony.py").read_text()
+    tree = ast.parse(source)
+    (assign,) = [node for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                 and any(getattr(target, "id", None) == "retest_contexts" for target in node.targets)]
+    text = ast.unparse(assign.value)
+    assert text.replace(" ", "").replace("\n", "") == (
+        "[capability_context]iffsdp_proof_scopeelse[capability_context,fleet_capability_context,"
+        "*potential_sibling_contexts]"), text
+
+
+def test_an_older_builds_explicit_on_row_under_a_no_material_check_reads_as_that_row_does(
+        checkpoint, _rig, monkeypatch):
+    """A verdict an older release recorded with slab_weights on is not bound to this build and reads
+    unknown. A later check that compared nothing on the auto graph says nothing about that context,
+    so the contextless read stays unknown there, and the load's own scope then decides, as it does
+    for any older row (test_rows_an_older_release_wrote_read_as_they_did_before_the_marker)."""
+    from dgx_monarch import gate_ledger as ledger_mod
+    from no_material_ledger_rows import write_ceremony_rows, write_explicit_on_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    with monkeypatch.context() as older:
+        older.setattr(ledger_mod, "__version__", "an-older-release")
+        write_explicit_on_rows(ledger_mod.GateLedger(str(_rig)), combo, artifacts, "repeat diverged")
+    write_ceremony_rows(ledger_mod.GateLedger(str(_rig)), combo, artifacts)
+    contextless, for_load, offered = _all_three_reads(checkpoint)
+    assert contextless.state == "unknown"
+    assert contextless.reason == consent_quarantine._UNKNOWN_UNBOUND_REASON
+    assert (for_load.state, offered.state) == ("clear", "clear")
+
+
+@pytest.mark.parametrize("older", ["repeat diverged", "cross leg failed"])
+def test_a_check_that_compared_nothing_keeps_what_a_stamped_pass_lifted(checkpoint, _rig, older):
+    """A check with slab_weights on ends unproven, or FAILs on its cross leg; a later check on the
+    auto graph PASSes, which proves the explicit-on residency equivalent and stamps that PASS into
+    the siblings, lifting the older row; then the Identity Gate node on the auto graph compares
+    nothing. That last check holds nothing against the context, so it reads as before it: clear."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import write_ceremony_rows, write_explicit_on_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    ledger = GateLedger(str(_rig))
+    write_explicit_on_rows(ledger, combo, artifacts, older)
+    write_ceremony_rows(ledger, combo, artifacts, kind="PASS")
+    assert [decision.state for decision in _all_three_reads(checkpoint)] == ["clear"] * 3
+    write_ceremony_rows(ledger, combo, artifacts)
+    assert [decision.state for decision in _all_three_reads(checkpoint)] == ["clear"] * 3
+
+
+@pytest.mark.parametrize(("stamped", "older_build", "under", "states"), [
+    ("PASS", False, True, ["clear"] * 3),
+    ("PASS", True, False, ["unknown", "clear", "clear"]),
+    ("unproven", False, True, ["denied"] * 3),
+    ("FAIL", False, True, ["fail"] * 3),
+    ("stock reference", False, True, ["clear"] * 3),
+    ("unproven", True, True, ["unknown", "clear", "clear"]),
+    ("guard", True, True, ["unknown", "clear", "clear"]),
+], ids=["a PASS", "a lone PASS from another build", "an unproven INCONCLUSIVE", "a FAIL on the cross leg",
+        "a stock-reference INCONCLUSIVE", "another build's unproven INCONCLUSIVE", "another build's open guard"])
+def test_what_each_stamped_row_decides_under_a_check_that_compared_nothing(
+        checkpoint, _rig, monkeypatch, stamped, older_build, under, states):
+    """A check on the auto graph stamped its verdict into the explicit-on siblings (or left its open
+    guard there), above an explicit-on check of this build that ended unproven ("under"); then a
+    check on the auto graph compared nothing. Every read is what it was before that last check,
+    which lifts only a copy that reads as a denial on its own under this build. A stamped PASS
+    decides: clear when bound, unknown from another build, the load's own scope then deciding. A
+    stamped unproven copy is lifted, so the explicit-on row under it decides. A stamped FAIL on a
+    diverged cross leg stands until a later bound PASS. A stock-reference copy reads clear on its
+    own, and stays. Another build's copy or open guard reads unknown, and stays."""
+    from dgx_monarch import gate_ledger as ledger_mod
+    from no_material_ledger_rows import open_auto_ceremony, write_ceremony_rows, write_explicit_on_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    if under:
+        write_explicit_on_rows(ledger_mod.GateLedger(str(_rig)), combo, artifacts, "repeat diverged")
+    with monkeypatch.context() as build:
+        if older_build:
+            build.setattr(ledger_mod, "__version__", "an-older-release")
+        if stamped == "guard":
+            open_auto_ceremony(ledger_mod.GateLedger(str(_rig)), combo, artifacts)
+        else:
+            write_ceremony_rows(ledger_mod.GateLedger(str(_rig)), combo, artifacts, kind=stamped)
+    before = [decision.state for decision in _all_three_reads(checkpoint)]
+    write_ceremony_rows(ledger_mod.GateLedger(str(_rig)), combo, artifacts)
+    assert [decision.state for decision in _all_three_reads(checkpoint)] == states == before
+
+
+@pytest.mark.parametrize("case", ["another version's check that compared nothing",
+                                  "another source's cut-off check, repaired here, then the check"])
+def test_an_own_explicit_on_denial_is_never_hidden_by_another_builds_rows(checkpoint, _rig, monkeypatch, case):
+    """A check run with slab_weights on, of this build, was cut off or ended unproven. Another
+    build's check that compared nothing never decides over it (a decision: through 1.4 that row
+    read unknown and the load's own scope cleared it), and another source's cut-off check, once
+    `dgxm gate --repair` of this build has closed its guard here, goes with that repair."""
+    from dgx_monarch import gate_ledger as ledger_mod
+    from dgx_monarch import runtime_provenance
+    from dgx_monarch.cli import gate_repair
+    from no_material_ledger_rows import open_auto_ceremony, write_ceremony_rows, write_explicit_on_rows
+
+    combo, artifacts = _h3_combo(checkpoint)
+    ledger = ledger_mod.GateLedger(str(_rig))
+    if case.startswith("another version"):
+        write_explicit_on_rows(ledger, combo, artifacts, "cut off")
+        with monkeypatch.context() as build:
+            build.setattr(ledger_mod, "__version__", "an-older-release")
+            write_ceremony_rows(ledger, combo, artifacts)
+    else:
+        write_explicit_on_rows(ledger, combo, artifacts, "repeat diverged")
+        with monkeypatch.context() as build:
+            build.setattr(runtime_provenance, "cached_dgx_source_manifest_sha256", lambda: "another-source")
+            open_auto_ceremony(ledger, combo, artifacts)
+        assert gate_repair.repair(str(_rig), apply=True) == 0
+        write_ceremony_rows(ledger, combo, artifacts)
+    assert [decision.state for decision in _all_three_reads(checkpoint)] == ["denied"] * 3

@@ -58,7 +58,7 @@ def rig(monkeypatch):
     monkeypatch.setattr(backup_agreement, "_single_estimate",
                         lambda patcher, shape, conds: None if state.estimate is None else int(state.estimate * GIB))
     monkeypatch.setattr(lora_partial_load, "_free_backup", free)
-    monkeypatch.setattr(backup_agreement, "_idle_pool", lambda patcher: int(state.pool * GIB))
+    monkeypatch.setattr(lora_partial_load, "_idle_pool", lambda patcher: int(state.pool * GIB))
     monkeypatch.setattr(lora_partial_load, "_what_is_wrong_after_the_route", lambda patcher, was: state.wrong)
     return state
 
@@ -366,6 +366,27 @@ def test_a_warm_workers_next_render_is_weighed_with_the_pool_it_already_holds(ri
     with pytest.raises(backup_agreement.PairBackupRoomError) as raised:
         backup_agreement.settle(cold, _answer(cold.elements, _peer(not_freed=0)), lambda values: values)
     assert "its idle device pool counted" in str(raised.value)
+
+
+def test_a_warm_worker_whose_pool_covers_the_ask_is_not_short_and_frees_nothing(rig, caplog):
+    """The short test weighs the room as the margin does, with the device pool the Worker already holds.
+
+    Render 1 on fresh Workers reads 16.4 GiB of room against a 14 GiB ask and keeps its backup. Render 2
+    at the same box state finds 6.4 GiB of that in the Worker's idle pool, which MemAvailable does not
+    show: the room the sampler can draw on is the same, so the backup is kept again.
+    """
+    patcher = _patcher()
+    rig.ask, rig.room, rig.pool = 14.0, 10.0, 6.4
+    warm = backup_agreement.vote((patcher,), SAMPLING, 0)
+    assert warm.short is False and warm.elements[0] == 1
+    calls = []
+    with caplog.at_level("INFO"):
+        backup_agreement.settle(warm, _answer(warm.elements, _peer()), lambda values: calls.append(values) or values)
+    assert rig.freed == [] and calls == [] and patcher.backup and patcher.slot.base_baked is False
+    assert "pair backup" not in caplog.text
+    # The same room with no pool is short, as before.
+    rig.pool = 0.0
+    assert backup_agreement.vote((patcher,), SAMPLING, 0).short is True
 
 
 def _own_memory_patcher(monkeypatch):

@@ -494,3 +494,37 @@ def test_the_partial_load_route_declines_when_the_bakes_room_is_missing(monkeypa
     why_not = lora_partial_load.make_whole(patcher)
     assert why_not is not None and "patched layer(s) still off the device needs" in why_not
     assert stored.base_baked is False
+
+
+# A slot that holds another model: the drop's credit, the same in the choice and in the price.
+
+@pytest.mark.parametrize(("copy_free", "partly"), [(True, True), (False, True), (False, False)],
+                         ids=["the drop copies nothing", "the drop copies a partly loaded model to the host",
+                              "a whole model under the global unload"])
+def test_admission_never_falls_as_the_reading_rises_over_a_slot_holding_another_model(
+        quote, monkeypatch, copy_free, partly):
+    """The classic bake and the in-place bake are chosen with the credit the quote then gives.
+
+    The slot holds another file. Where the Worker's drop of it copies nothing, both the choice
+    and the price credit the copy it returns. Where the drop copies its weights to the host
+    first (here ComfyUI's global unload, ``DGXM_DISABLE_COPY_FREE_DROP=1``, on a partly loaded
+    model; a discrete GPU, or the other slot held, alike), the price credits nothing, so the
+    choice must not either: a reading that admits the load is never followed, higher up, by
+    one that refuses it. A whole model with nothing beside it is dropped with no copy either way.
+    """
+    from dgx_monarch.actor import resident_ledger
+
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    monkeypatch.setenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, "" if copy_free else "1")
+    other = "flux-2-klein.safetensors"
+    store = _b3_store(stack=(), base__backup={}, model__model_lowvram=partly,
+                      stored__base_key=(other, ()), stored__request_key=(other, (), (), "bf16"))
+    spec = {"unet_name": BASE, "options": {}, "loras": [{"name": LORA, "strength": 1.0}], "slot": "cond"}
+    verdicts = {gib: _rows(store, monkeypatch, [spec], gib * GIB, proven=True)[0]["verdict"]
+                for gib in range(10, 131, 2)}
+    admitted = sorted(gib for gib, verdict in verdicts.items() if verdict == cq.VERDICT_FITS)
+    assert admitted, verdicts
+    assert all(verdicts[gib] == cq.VERDICT_FITS for gib in verdicts if gib >= admitted[0]), verdicts
+    # The in-place bake after a bare reload fits at 46 GiB once the drop's 30.5 GiB is credited,
+    # and needs about 70 without it: credited exactly where the swap credit's rule credits it.
+    assert (verdicts[46] == cq.VERDICT_FITS) is not (partly and not copy_free), verdicts

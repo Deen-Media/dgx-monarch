@@ -771,17 +771,14 @@ and then makes its context straight away. What you may see:
   memory, or wait for a large download or file copy to end, then click Reset
   attached mesh and queue again. If nothing can be closed, a root shell can
   drop the page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`). On a pair
-  it takes about ten minutes to show, and it shows only when the head's
-  Worker is the one that failed: it then opens "On the head, ...". The
-  Worker that failed answers at once, but the sibling goes on waiting for
-  the head to open the group, the driver's clean-up of the failed setup
-  waits behind that, and the driver reports only when the clean-up reaches
-  its own limit. When the sibling's Worker is the one that failed, the head
-  waits for it to join until the setup's limit, and what shows after about
-  ten minutes is a timeout with no word of memory, not this refusal. If a
-  pair's start ends that way, read the free memory on the sibling (`grep
-  MemFree /proc/meminfo`) and the make-room line in the sibling Worker's
-  journal. A render that sits
+  it takes about ten minutes to show, and it opens with the box that
+  failed: "On the head, ..." or "On the sibling, ...". The Worker that
+  failed answers at once, but the other one goes on waiting at the group's
+  rendezvous for it, and the driver's clean-up of the failed setup waits
+  behind that until the wait gives up. When the sibling's Worker is the one
+  that failed, the driver's log says at once, at WARNING, `rank 1's setup
+  failed while rank 0 had not answered` and how long the clean-up may wait;
+  the refusal follows when the clean-up ends. A render that sits
   with no progress right after a reset or a restart, on a box that is short
   of free memory, is this wait. A render with `comfy_managed` on that stops
   inside its first step on a roomy box is another matter
@@ -886,7 +883,9 @@ you may see:
   clip well past the shipped length on a box with little memory to spare, turn
   `lora_low_rss` on, which keeps no such copy, or free memory first. On one GPU
   the Worker now frees that copy by itself before the first step when a whole
-  load leaves less room than the sampler is estimated to need; it logs a line
+  load leaves less room than the sampler is estimated to need, the room
+  counting the device memory the Worker already holds idle from its last
+  render (its sampler takes that first); it logs a line
   that starts `LoRA bake: ComfyUI loaded this model whole`, and the next LoRA
   change on that model reloads it from disk. On a pair the ranks do the same together: any rank short, and
   every rank frees; a rank that cannot free keeps the whole fleet as it is; and where a rank would still be
@@ -894,7 +893,9 @@ you may see:
   figures. The refusal leads with the words of the rank that was short, or whose model was wrong after
   the free, and names its box, whichever box's error reaches the driver; that box's Worker journal logs
   the same refusal at WARNING, and has its cause whole where the refusal's copy ends "cut to fit the
-  ranks' exchange". What a rank needs counts, beside ComfyUI's estimate, the shared memory a
+  ranks' exchange". Comfy-managed residency carries no LoRA, and neither one GPU nor a pair
+  weighs its model's backup, which holds only the small weights ComfyUI's own loader keeps
+  loaded. What a rank needs counts, beside ComfyUI's estimate, the shared memory a
   fresh Worker still maps in its first forward, about 2.7 GiB (about 0.1 on a warm Worker); the figures say
   how much of the need it is. Where a Spark is short enough that the Workers free the backup, the
   kernel can spend up to about a minute compacting that box's freed memory during the first forward,
@@ -2765,6 +2766,13 @@ it ran no slab residency, so it holds nothing against loading the checkpoint
 slab-resident. The newest row of each context decides: in one context a newer
 verdict that compared nothing supersedes an older unproven one, as a newer
 stock-reference row or PASS does; a FAIL is lifted only by a later bound PASS.
+The rows such a check writes for `slab_weights` on, a residency it never ran,
+of any build, never decide there, and beneath them only a denial another
+check copied there goes, with a guard that a later row of its own version
+closed there: an unproven or cut-off check run with the switch on
+still denies, under another build's such row too; a PASS or a stock-reference
+row a check on the auto graph stamped there still clears; and another build's
+other rows read unknown, as they did.
 List and
 accept read a card's evidence as the refusal that raised it did, so an unknown
 read is asked again under the load's own capability and a card the refusal
@@ -4050,7 +4058,14 @@ fit, the loader offers the card and the panel accepts it as if the model had
 never been checked; the standing auto-rescue toggle and the rescue variables
 apply too. Since 1.5 the consent read treats a verdict that compared nothing,
 and the Fleet and explicit-on rows written with it (they carry
-`"no_material_revocation": true`), as clear. Through 1.4 such a row refused the
+`"no_material_revocation": true`), as clear. An explicit-on row of that kind
+says nothing about `slab_weights` on, whichever build wrote it, and the
+read looks past it; beneath it only a refusal another check copied there is
+lifted, with a guard that a later row of its own version closed there. Where
+a check you ran with the switch on ended unproven or was cut off, that older verdict still refuses the rescue until a later explicit PASS,
+even where another build's check had since compared nothing; where a check on
+the auto graph had passed and proved the switch's residency equivalent, or had
+a stock reference that could not load, that row still clears it. Through 1.4 such a row refused the
 rescue with "the identity gate was INCONCLUSIVE for these exact artifacts ...
 until a later explicit PASS", and running the Identity Gate node did not lift
 it.

@@ -201,8 +201,48 @@ def test_fused_residual_calls_and_other_attributes_stay_on_the_real_extension():
     proxy = vendored.CProxy(real, _Gemm(), lambda exc: None)
     assert proxy.cutlass_int8_dequant_residual is real.cutlass_int8_dequant_residual
     assert proxy.HAS_CUBLASLT is True
+    # The extension's private functions are its own too: comfy-kitchen's INT8 decode cache
+    # asks for these two by hasattr (comfy_kitchen/int8_decode.py, 0.2.40 and 0.2.41), and a
+    # proxy that hid them turned that cache off.
+    real._int8_decode_update, real._int8_decode = object(), object()
+    for name in ("_private", "_int8_decode_update", "_int8_decode"):
+        assert hasattr(proxy, name) and getattr(proxy, name) is getattr(real, name)
+    # What the proxy keeps to itself: Python's own protocol names, and its own fields
+    # before they are set, which would otherwise recurse through __getattr__.
     with pytest.raises(AttributeError):
-        proxy._private  # noqa: B018 - private names never fall through
+        proxy.__wrapped__  # noqa: B018
+    half_built = object.__new__(vendored.CProxy)
+    for name in ("_real", "_gemm", "_on_failure", "_broken"):
+        with pytest.raises(AttributeError):
+            getattr(half_built, name)
+
+
+def test_comfy_kitchens_int8_decode_cache_is_available_through_the_proxy(monkeypatch):
+    """The real reader on the real extension: ``int8_decode.is_available`` with the proxy installed
+    answers as it does on stock comfy-kitchen, so ComfyUI keeps its INT8 decode KV cache."""
+    int8_decode = pytest.importorskip("comfy_kitchen.int8_decode")
+    backend = int8_decode.backend
+    real = backend._C
+    if isinstance(real, vendored.CProxy):
+        real = real._real
+    if real is None or not hasattr(real, "_int8_decode_update"):
+        pytest.skip("this comfy-kitchen has no INT8 decode extension functions")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (12, 1))
+    monkeypatch.setattr(backend, "_EXT_AVAILABLE", True)
+    monkeypatch.setattr(backend, "_C", real)  # put back after the test, whatever it installed
+    assert int8_decode.is_available() is True
+    # The option's own install on the real backend module, with its prerequisites stubbed.
+    # Only the backend module is touched: no import hook and no int8_linear wrap.
+    state = int8_gemm._State()
+    state.mode = int8_gemm.TRITON
+    monkeypatch.setattr(int8_gemm, "_STATE", state)
+    monkeypatch.setattr(vendored, "kitchen_version", lambda: "0.2.41")
+    monkeypatch.setattr(int8_gemm, "python_headers", lambda: (True, "/include"))
+    monkeypatch.setattr(vendored, "build_triton_gemm", lambda: _Gemm())
+    int8_gemm._apply_backend(backend)
+    assert isinstance(backend._C, vendored.CProxy) and backend._C._real is real
+    assert int8_decode.is_available() is True
 
 
 def test_a_kernel_failure_hands_that_call_and_every_later_one_to_cutlass():

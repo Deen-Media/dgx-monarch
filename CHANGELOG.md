@@ -109,14 +109,16 @@ sections after them list every change.
 - With `lora_low_rss` off, as three Wan-Animate 2 templates ship it, a Worker
   that loads a model whole under a classic LoRA bake now frees ComfyUI's
   weight backup before the first step where the load leaves less room than
-  the sampler is estimated to need. It logs a line that starts
+  the sampler is estimated to need, the room counting the device memory the
+  Worker already holds idle from its last render. It logs a line that starts
   `LoRA bake: ComfyUI loaded this model whole`, and the next LoRA change on
   that model reloads it from disk. On a pair the ranks decide together: one
   rank short and every rank frees, and a rank that cannot free keeps the fleet
-  as it is. On a Spark short enough to free, the first step can take up to
-  about a minute longer while the kernel compacts the freed memory, and the
-  latent is the same. `DGXM_DISABLE_BACKUP_FREE=1` in the Worker's
-  `worker.env` turns the step off
+  as it is. Comfy-managed residency carries no LoRA, and neither one GPU nor
+  a pair weighs its model's backup. On a Spark short enough to free, the
+  first step can take up to about a minute longer while the kernel compacts
+  the freed memory, and the latent is the same. `DGXM_DISABLE_BACKUP_FREE=1`
+  in the Worker's `worker.env` turns the step off
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On a pair, the room a rank needs to sample now also counts the shared
   memory a fresh Worker maps in its first forward, about 2.7 GiB on a fresh
@@ -259,8 +261,8 @@ sections after them list every change.
   ([TROUBLESHOOTING #154](docs/TROUBLESHOOTING.md#154-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
 - A Worker that still cannot make its CUDA context refuses in plain words,
   `this Worker could not start on its GPU`, with its box's free and available
-  memory, where it showed a traceback. On a pair the words show only when the
-  head's Worker failed, after about ten minutes
+  memory, where it showed a traceback. On a pair the words show after about
+  ten minutes, naming the box whose Worker failed
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A checkpoint whose safetensors header the gate reads with no verdict refuses
   before it loads, where it loaded as if the gate were not there, and a
@@ -375,7 +377,16 @@ sections after them list every change.
   marker for that read and still grant no skip; an unproven INCONCLUSIVE that
   is the newest row of its context, and every FAIL, deny as before, in the
   same words. In one context a newer verdict that compared nothing supersedes
-  an older unproven one; a FAIL is lifted only by a later bound PASS. CPU
+  an older unproven one; a FAIL is lifted only by a later bound PASS. An
+  explicit-on row of such a check, of any build, speaks for a residency it
+  never ran: it never decides there, and beneath it only a denial another
+  check copied there goes, with a guard that a later row of its own version
+  closed there. An
+  older unproven or cut-off verdict that a check run with `slab_weights` on
+  left there still denies, also under another build's such row, which used
+  to hide it; a PASS a check on the auto graph stamped there still clears;
+  and a copy that reads clear on its own, or any other row of another build,
+  stays as it read. CPU
   tests on the real ledger. On 2026-11-13 the rows such checks wrote on dev
   `40af2d7` read clear three ways, contextless, under their own context and
   as the loader reads them for a load, where the old reader denied the same
@@ -977,7 +988,8 @@ sections after them list every change.
   and a fresh load of base and LoRA 17 s. And a change refused because the host copy the held LoRA keeps holds the
   memory now offers the Old model in the way card, "The model loaded earlier
   (wan_animate_2_bf16) holds about 29.6 GiB on the head that this change needs.
-  Clear the Sparks and run again?", when a cleared box would hold a fresh load.
+  Clear the Sparks and run again?", when a cleared box would hold a fresh load,
+  with `lora_low_rss` off the stack's bake included.
   This is the LoRA case of the credit for a load that replaces the stock model
   in its own slot
   ([TROUBLESHOOTING #18](docs/TROUBLESHOOTING.md#18-first-lora-change-on-a-quant-model-is-one-time-slow-historical),
@@ -1381,9 +1393,9 @@ sections after them list every change.
   still cannot be made, the render refuses in plain words (class C) with
   the box it came from, that box's free and available memory, what the
   Worker did first and what to do, where it used to show a traceback. On a
-  pair it shows only after about ten minutes, and only where the head's
-  Worker failed; where the sibling's failed, the start still ends in a
-  timeout after about ten minutes, without the refusal. Any other error a
+  pair it shows only after about ten minutes, while the other Worker gives
+  up waiting for the one that failed; where the sibling's failed, the
+  driver's log says so at once. Any other error a
   Worker raises at its setup and the driver reads now opens with its box as
   well ("On the head, ..."), as a load error does. Nothing to set.
   `DGXM_DISABLE_CONTEXT_ROOM=1` on the Worker (in its `worker.env`, then a
@@ -1401,6 +1413,14 @@ sections after them list every change.
   text was not seen on hardware
   ([VALIDATION](docs/VALIDATION.md#worker-context-starts),
   [TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- Fix: on a pair, a setup error the sibling's Worker raises while the head's
+  Worker still waits for it now reaches the prompt in its own words, named
+  "On the sibling, ...", where the driver, awaiting the head first, ended in
+  a bare timeout and never read it. The driver reads the later rank between
+  slices of its wait and logs at once that the rollback waits; the rollback
+  keeps the setup's unspent wait, so it ends when it did before. Not run on
+  a pair
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On a DGX Spark, a LoRA stack loaded with `lora_low_rss` off is now priced
   at what its bake takes, and where that does not fit the Worker bakes the
   stack in place when the identity gate has passed the combination. This
@@ -1445,7 +1465,12 @@ sections after them list every change.
   `LoRA bake: the classic bake of this stack needs`. It does that only when
   the identity gate holds a PASS for the combination's in-place bake, which a
   render of it with `lora_low_rss` on records; with no PASS the refusal says
-  so and names both prices. The default (`lora_low_rss` on) is priced as
+  so and names both prices. Where dropping the slot's model copies weights
+  to the host first (a model held only partly, or a model held in the other
+  slot, wherever the Worker's own drop cannot avoid the copy), neither bake
+  is chosen or priced with what that drop returns, as the swap credit counts
+  nothing for it. The
+  default (`lora_low_rss` on) is priced as
   before. Nothing to set. Run on hardware on 2026-11-12 with every format on
   the one line and its files; the charge by format rests on that day's loads.
   On that build (dev `45ffb36`, the first Spark under its stability clock

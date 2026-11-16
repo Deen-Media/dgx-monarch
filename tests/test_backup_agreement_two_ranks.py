@@ -71,8 +71,12 @@ class Slot:
 slot = Slot()
 model = SimpleNamespace(current_weight_patches_uuid="stack", model_lowvram=False)
 setattr(model, lora_partial_load.STORED, weakref.ref(slot))
+# "dynamic": ComfyUI's own dynamic patcher after a load with no LoRA, as comfy-managed residency
+# holds it: a backup of the small weights its load force-loads and a patches uuid, no patch
+# (tests/test_lora_partial_load.py runs that load on stock ComfyUI).
+dynamic = bool(mine.get("dynamic"))
 patcher = SimpleNamespace(model=model, backup={"w": object()} if mine.get("stack", True) else {},
-                          patches={"w": [1]}, is_dynamic=lambda: False,
+                          patches={} if dynamic else {"w": [1]}, is_dynamic=lambda: dynamic,
                           load_device=SimpleNamespace(type="cuda" if mine.get("own_memory") else "cpu"))
 
 
@@ -91,6 +95,7 @@ def free(freed_patcher, stored):
 
 
 lora_partial_load._host_room = host_room
+lora_partial_load._idle_pool = lambda patcher: int(mine.get("pool", 0.0) * GIB)
 lora_partial_load._sampling_ask = lambda patcher, shape, conds: int(18.6 * GIB)
 backup_agreement._single_estimate = lambda patcher, shape, conds: int(6.2 * GIB)
 lora_partial_load._free_backup = free
@@ -127,6 +132,12 @@ SCENARIOS = {
         2, None, "PairBackupRoomError"),
     "a free and a refusal": (
         {"0": {"room": 2.0, "room_after": 6.0}, "1": {"room": 40.0}}, 2, 1, "PairBackupRoomError"),
+    # Comfy-managed residency carries no LoRA: a rank far under the ask holds no backup to weigh.
+    "a comfy-managed pair with no LoRA": (
+        {"0": {"room": 3.0, "dynamic": True}, "1": {"room": 40.0, "dynamic": True}}, 1, 0, "ran"),
+    # A warm Worker's idle pool is room its sampler takes first: 14.0 + 6.4 covers the 18.6 ask.
+    "a warm rank whose pool covers the ask": (
+        {"0": {"room": 14.0, "pool": 6.4}, "1": {"room": 40.0}}, 1, 0, "ran"),
 }
 
 

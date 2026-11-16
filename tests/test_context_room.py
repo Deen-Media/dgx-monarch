@@ -16,13 +16,14 @@ from __future__ import annotations
 import ast
 import logging
 import sys
+import time
 import types
 from pathlib import Path
 
 import pytest
 
 import test_worker_box as boxes
-from dgx_monarch import box_names, residency_mode, worker_box
+from dgx_monarch import box_names, mesh_setup, mesh_setup_transition, residency_mode, worker_box
 from dgx_monarch.actor import context_room, worker_env
 from dgx_monarch.log import get_logger
 from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag, read_rank
@@ -651,29 +652,109 @@ def test_setup_names_the_box_of_the_rank_whose_answer_it_awaited(monkeypatch):
     assert len(workers.teardown_group.calls) == 2, "the rollback still runs"
 
 
-def test_on_a_pair_a_peer_s_refusal_behind_rank_0_s_answer_is_not_read(monkeypatch):
-    """Today's limit (DESIGN, the pair's wait): the driver raises the answer it awaits.
+class _Waiting:
+    """A rank's setup that has not answered: each get waits out its timeout, as Monarch's
+    ``Future.get(timeout)`` does, and leaves the future usable. ``answer`` after ``after``
+    gets, if given; never otherwise."""
 
-    When the sibling cannot make its context, the head waits at its store, and the
-    driver, awaiting the head, raises the head's answer; the sibling's refusal is
-    never read. The first-failure item turns this test around.
-    """
-    from topology_transition_helpers import _acks, _Future, _handle, _Workers
+    def __init__(self, answer=None, error: BaseException | None = None, after: int | None = None):
+        self.answer, self.error, self.after = answer, error, after
+        self.timeouts: list[float] = []
 
+    def get(self, timeout=None):
+        self.timeouts.append(timeout)
+        if self.after is not None and len(self.timeouts) > self.after:
+            if self.error is not None:
+                raise self.error
+            return self.answer
+        time.sleep(min(timeout or 0, 0.2))  # a driver that waits the whole setup out sees its timeout at once
+        raise TimeoutError("not answered within the slice")
+
+
+@pytest.fixture
+def short_slices(monkeypatch):
+    """The driver's slice on one rank's setup, short so a test does not wait out the real one."""
+    monkeypatch.setattr(mesh_setup_transition, "SETUP_POLL_S", 0.05, raising=False)
+
+
+def _sibling_refusal(monkeypatch):
     monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
     monkeypatch.setattr(context_room, "meminfo", lambda: (int(4.6 * _GIB), int(47.4 * _GIB)))
     with pytest.raises(context_room.ContextMemoryError) as raised:
         context_room.refuse_unmade_context(RuntimeError(OOM), MADE, (1, 2))
-    timeout = boxes._remote(RuntimeError(
-        "Timed out after 600 seconds waiting for clients. 1/2 clients joined."), "setup")
-    workers = _Workers([_Future(_acks()), _Future(_acks())],
-                       setup_futures=[_Future(error=timeout),
-                                      _Future(error=boxes._remote(raised.value, "setup"))])
+    return boxes._remote(raised.value, "setup")
+
+
+@pytest.mark.usefixtures("short_slices")
+def test_on_a_pair_the_sibling_s_refusal_is_raised_though_the_head_still_waits_for_it(monkeypatch, caplog):
+    """The sibling cannot make its context and answers at once; the head waits at its store for
+    a client that never comes. The driver reads the later rank between slices of its wait on the
+    head, logs at once that the rollback waits, and raises the sibling's own refusal, named, after
+    the rollback has run. The rollback keeps the setup's unspent wait, so it ends no sooner than
+    it did when the driver waited the setup out first."""
+    from topology_transition_helpers import _acks, _Future, _handle, _Workers
+
+    refusal_from_sibling = _sibling_refusal(monkeypatch)
+    head = _Waiting()
+    teardown = _Future(_acks())
+    workers = _Workers([_Future(_acks()), teardown],
+                       setup_futures=[head, _Future(error=refusal_from_sibling)])
     handle, _old, new = _handle(workers)
-    with pytest.raises(type(timeout)) as failed:
+    with caplog.at_level("WARNING", logger="dgx_monarch.mesh"), pytest.raises(type(refusal_from_sibling)) as failed:
         handle.ensure_setup(new, "TORCH_FLASH")
-    assert failed.value is timeout
-    assert "could not start on its GPU" not in str(failed.value.exception)
+    assert failed.value is refusal_from_sibling
+    words = box_names.on_box(box_names.fleet_labels(handle, 2)[1])
+    assert str(failed.value.exception).startswith(
+        "[dgxm:C guard=gpu_context_memory waivable=0] " + words + "this Worker could not start on its GPU")
+    assert len(head.timeouts) == 1 and 0 < head.timeouts[0] <= mesh_setup_transition.SETUP_POLL_S
+    assert len(workers.teardown_group.calls) == 2, "the rollback still runs"
+    budget = mesh_setup.SetupTransitionBudget()
+    assert budget.rollback_cleanup_s < teardown.timeouts[0] <= budget.rollback_cleanup_s + budget.rank_setup_s
+    assert "rank 1's setup failed while rank 0 had not answered" in caplog.text
+
+
+@pytest.mark.usefixtures("short_slices")
+def test_the_head_s_own_failure_is_raised_as_before(monkeypatch):
+    from topology_transition_helpers import _acks, _Future, _handle, _Workers
+
+    wrapper = boxes._remote(RuntimeError("the head's own setup error"), "setup")
+    teardown = _Future(_acks())
+    sibling = _Waiting()
+    workers = _Workers([_Future(_acks()), teardown], setup_futures=[_Future(error=wrapper), sibling])
+    handle, _old, new = _handle(workers)
+    with pytest.raises(type(wrapper)) as failed:
+        handle.ensure_setup(new, "TORCH_FLASH")
+    assert failed.value is wrapper and str(wrapper.exception).startswith("On GPU 0 on ")
+    assert sibling.timeouts == [] and teardown.timeouts == [mesh_setup.SetupTransitionBudget().rollback_cleanup_s]
+
+
+@pytest.mark.usefixtures("short_slices")
+def test_both_ranks_answering_late_are_read_in_rank_order(monkeypatch):
+    """The passing path: each rank's answer as it arrives, in rank order, and no rollback."""
+    from topology_transition_helpers import _acks, _Future, _handle, _Workers
+
+    head, sibling = _Waiting({"rank": 0}, after=2), _Waiting({"rank": 1}, after=3)
+    workers = _Workers([_Future(_acks())], setup_futures=[head, sibling])
+    handle, _old, new = _handle(workers)
+    assert handle.ensure_setup(new, "TORCH_FLASH") == [{"rank": 0}, {"rank": 1}]
+    assert len(workers.teardown_group.calls) == 1, "no rollback"
+    assert handle.setup_cleanup_state is None and handle.setup_key is not None
+    assert all(0 <= wait <= mesh_setup_transition.SETUP_POLL_S for wait in head.timeouts + sibling.timeouts)
+
+
+@pytest.mark.usefixtures("short_slices")
+def test_a_rank_that_never_answers_ends_at_the_setup_s_deadline(monkeypatch):
+    from topology_transition_helpers import _acks, _Future, _handle, _Workers
+
+    head, sibling = _Waiting(), _Waiting()
+    teardown = _Future(_acks())
+    workers = _Workers([_Future(_acks()), teardown], setup_futures=[head, sibling])
+    handle, _old, new = _handle(workers)
+    with pytest.raises(TimeoutError, match="distributed setup exceeded its shared deadline"):
+        handle.ensure_setup(new, "TORCH_FLASH", timeout_s=0.2)
+    assert sum(head.timeouts) <= 0.2 + 1e-6 and head.timeouts
+    assert len(workers.teardown_group.calls) == 2, "the rollback still runs"
+    assert teardown.timeouts == [mesh_setup.SetupTransitionBudget().rollback_cleanup_s]
 
 
 def test_a_fault_in_the_naming_never_stops_the_setup_rollback(monkeypatch):
@@ -822,3 +903,38 @@ def test_the_worker_status_carries_the_step():
             if isinstance(node, ast.Constant) and isinstance(node.value, str)}
     assert "context_room" in keys
     assert context_room.status_block() == {"state": "not_run"}
+
+
+def test_monarchs_future_outlives_a_timed_out_slice_and_reads_an_answer_at_no_wait(monkeypatch):
+    """What the sliced setup wait rests on, read from a real pending Monarch Handle (no mesh):
+    a get that times out leaves the future usable, a get with no wait reads an answer already
+    there (a rank's own error included), and the timeout is the builtin one, which the
+    supervision classifier leaves alone. ``call_one``'s future observes the same Handle."""
+    import monarch._rust_bindings.monarch_hyperactor.handle as handle_module  # torchmonarch: a runtime dependency
+    import monarch._src.actor.future as future_module
+
+    from dgx_monarch import mesh_helpers
+
+    pair = getattr(handle_module, "_new_handle_pair", None)
+    if pair is None:
+        pytest.skip("this Monarch build has no handle pair to stand a pending future on")
+    published: list = []
+    monkeypatch.setattr(mesh_helpers, "_publish_defunct", lambda *args, **kwargs: published.append(args))
+    for answer in ({"rank": 1}, RuntimeError("the rank's own error")):
+        handle, completer = pair()
+        future = future_module.Future._from_handle(handle)
+        with pytest.raises(TimeoutError) as timed_out:
+            future.get(timeout=0.01)
+        assert type(timed_out.value) is TimeoutError
+        with pytest.raises(TimeoutError):
+            future.get(timeout=0.0)
+        mesh_helpers.mark_defunct_preserving_primary(types.SimpleNamespace(), timed_out.value,
+                                                     holding_lock=True)
+        if isinstance(answer, BaseException):
+            completer.set_exception(answer)
+            with pytest.raises(RuntimeError, match="the rank's own error"):
+                future.get(timeout=0.0)
+        else:
+            completer.set_result(answer)
+            assert future.get(timeout=0.0) == answer
+    assert published == [], "a slice's timeout is no supervision failure"
