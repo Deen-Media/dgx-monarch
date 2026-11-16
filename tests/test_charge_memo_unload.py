@@ -61,8 +61,9 @@ def _refusing() -> None:
 
 def _second_queue_refuses(mesh: _Mesh, monkeypatch) -> str:
     """The next queue runs the loader again (an Init widget changed) with nothing held, on a box
-    with room for the resident DiT's floor and not for the encoder and the VAE beside it."""
-    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 15 * _GIB)
+    with room for the resident DiT's floor and the graph's render activations (12.6 GiB), and
+    not for the encoder and the VAE beside them: a stale memo would credit those two and admit."""
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 25 * _GIB)
     with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
         loader_preflight.preflight_loader_footprint(mesh, DIT, {}, _graph())
     return str(raised.value)
@@ -75,7 +76,7 @@ def test_a_render_site_unload_forgets_what_the_loader_charged(monkeypatch):
         driver_unload.check_with_unload([_refusing], subject="this render")
     assert calls.unload == 1 and "Before refusing, the driver unloaded the 1 model" in str(refused.value)
     text = _second_queue_refuses(mesh, monkeypatch)
-    assert "need 20.0 GiB on this box and 15.0 GiB is available" in text
+    assert "need 32.5 GiB on this box and 25.0 GiB is available" in text
     assert "an earlier loader node charged this stack" not in text
     assert "text encoder 9.8 GiB (p-h3-image_text_encoder_bf16.safetensors" in text
 

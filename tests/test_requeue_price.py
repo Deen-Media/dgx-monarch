@@ -270,21 +270,33 @@ def test_a_swap_credit_at_the_sampler_does_not_wait_for_encoders_that_ran(_promp
     """The Worker on this box holds the INT8 twin in the slot this load takes, and drops it
     first, which the swap credit counts. The encodes ran in an earlier queue and ComfyUI
     holds neither encoder. The credit made room for the DiT, but the price still waited
-    for both encoders beside the old model, in the load window, and refused."""
+    for both encoders beside the old model, in the load window, and refused. The price runs
+    in the real sampler node over the loader's own ModelSpec, whose slot asks the Worker."""
     from dgx_monarch import capacity_agreement
+    from dgx_monarch.nodes.common import ModelSpec
     from test_capacity_old_model import _answer, _LiveHandle
     from test_loader_swap_credit import _held
+
+    class Rendered(Exception):
+        pass
+
+    def rendered(*_args, **_kwargs):
+        raise Rendered
 
     mesh = _switch_on_renders(_prompt, monkeypatch)
     mesh.handle = _LiveHandle()
     recycle_drain.drop_residency_memos()
     calls = _comfy_holds(monkeypatch)
-    monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k: [
+    asked: list = []
+    monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k: asked.append(1) or [
         _answer(0, _held(DIT_INT8, SIZES[("diffusion_models", DIT_INT8)] / _GIB), box="this box")])
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(70.0 * _GIB))
-    model = types.SimpleNamespace(mesh=mesh, unet_name=DIT, options={}, slot="cond")
-    requeue_price.price_cached_loader(model, _graph(True))
-    assert calls.unload == 0 and consent_pending.pending_cards() == []
+    monkeypatch.setattr(samplers, "run_render", rendered)
+    with pytest.raises(Rendered):
+        samplers.DGXMonarchKSampler().sample(
+            ModelSpec(mesh=mesh, unet_name=DIT), 42, 8, 4.0, "euler", "simple", [], [],
+            {"samples": None}, prompt=_graph(True))
+    assert asked and calls.unload == 0 and consent_pending.pending_cards() == []
 
 
 def test_held_encoders_count_at_their_resident_size_and_the_decode_vae_waits(_prompt, monkeypatch):
