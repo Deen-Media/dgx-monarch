@@ -312,6 +312,43 @@ def test_a_fleet_marked_defunct_drains_before_the_next_renders_checks(
         assert "Charged: DiT weights 19.5 GiB (not yet loaded)" in _refused(model, _h3_latent())
 
 
+@pytest.mark.parametrize("latch_fails", [True, False])
+def test_an_fsdp_gate_cleanup_that_retires_the_fleet_drains_before_the_next_renders_checks(
+        monkeypatch, tmp_path, box, latch_fails):
+    """The FSDP Gate's cleanup after an aborted proof: where the all-rank unload
+    and the DIRTY latch both fail, it marks the handle defunct itself
+    (``gate_fsdp._latch_or_retire_failed_cleanup``), so the next render's checks
+    charge the DiT the replacement lacks. A latched handle stays as it was."""
+    from dgx_monarch.nodes import gate_fsdp
+
+    rig_ = _h3_rig(monkeypatch, tmp_path, preset="auto")
+    box.mem = _h3_need(weights=0) + 4 * _GIB
+    _comfy(monkeypatch, box, models=())
+    model = ModelSpec(mesh=rig_.model.mesh, unet_name=UNET)
+    render_preflight.note_successful_render(UNET)
+    _render(model, _h3_latent())
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    latches: list = []
+
+    def latch(*args):
+        latches.append(args)
+        if latch_fails:
+            raise RuntimeError("the DIRTY latch was not published")
+
+    def unload(*_a, **_k):
+        raise TimeoutError("the all-rank unload was not confirmed")
+
+    handle = SimpleNamespace(world=2, defunct=False, teardown_complete=False,
+                             replacement_blocked=None, setup_cleanup_state=None,
+                             call_all=unload, _latch_ambiguous_mutation=latch)
+    logger = SimpleNamespace(error=lambda *_a: None, info=lambda *_a: None)
+    assert gate_fsdp.cleanup_aborted_fsdp_proof(
+        handle, RuntimeError("proof aborted"), logger=logger, state={}) is False
+    assert (len(latches), handle.defunct) == ((2, True) if latch_fails else (1, False))
+    if latch_fails:
+        assert "Charged: DiT weights 19.5 GiB (not yet loaded)" in _refused(model, _h3_latent())
+
+
 def test_a_new_fleet_in_place_of_a_retired_one_marks_the_load_still_to_come(
         monkeypatch, isolated_environ, h3):
     """A fleet marked defunct outside result collection: ensure_live respawns it."""

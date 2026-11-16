@@ -520,12 +520,14 @@ have run only in CPU tests and the Studio browser rounds (NOT RUN below).
   - The sample deadline per model call: MiniMax H3's 15 second clip on the
     pair, 20 steps, at CFG 2 with a negative, whose `sample deadline:` line
     should read `and 2 model calls a step` and 12000 s, where it read 6000 s.
-  - The credit for the identity gate's no-render load under `auto`: a MiniMax
-    H3 template's first use on the pair (the no-render path loads the model),
-    a render that then fails after the load, and a retry on a box whose
-    reading holds the DiT and is short of it beside the activations. The
-    retry's H3 check should credit the DiT ("resident, credited") and its
-    pending-load step should ask no quote; it used to charge the file again.
+  - The credit for the identity gate's no-render load under `auto`: a Wan
+    SCAIL BF16 template's first use (the no-render path unloads every rank and
+    loads the model), a render that then fails after the load, and a retry on
+    a box whose reading holds the DiT, with room for the activations and not
+    for the file beside them. The retry's reference and pose check (#47) and
+    the gate's capacity stop should credit the file ("weights resident,
+    credited") and let the render run; they used to charge the file again and
+    refuse.
 - Build and install, on `35f1486`, the release commit of 2026-11-01, in a
   disposable Python 3.12 venv that holds only `build` and `pip`:
   `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and

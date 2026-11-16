@@ -192,7 +192,9 @@ def _fall_through_unloaded(handle: Any, term: str) -> None:
     this costs nothing, and the stop then reads what the ceremony's first leg
     meets: this unload drains the residency memos the stop reads
     (``gate_capacity_stop.dit_already_loaded``), so it prices the load as still
-    to come against a reading that no longer holds the model this path loaded.
+    to come (under an explicit preset the driver footprint and MiniMax H3
+    checks still credit it) against a reading that no longer holds the model
+    this path loaded.
     """
     from . import pending_load_relief
 

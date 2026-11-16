@@ -2433,9 +2433,11 @@ Direct headless calls need their own budget
 
 **Render-time estimate:** both `run_render` and pipelined depth>1 submissions
 check before dispatch or mesh effects. Only pending rank-0 weights on the
-driver host are charged. `auto` defers loading to this point; explicit presets
-load eagerly, so their weights are already in `MemAvailable`; that credit
-ends at an operator's drop (a Clear VRAM node at `hard`, a configuration
+driver host are charged. `auto` defers loading to this point. Explicit presets
+load eagerly, so their weights are already in `MemAvailable`; where the loader
+leaves the load to the identity gate's ceremony they are not, and the check
+credits them all the same, a decision DESIGN.md records ("A placement the
+ceremony would drop is not made"). That credit ends at an operator's drop (a Clear VRAM node at `hard`, a configuration
 change, the capacity rescue's slot drop) until the loader node runs again for
 the checkpoint or a load of it completes, and a recycle leaves it. Under `auto` a checkpoint that a
 finished render, a pipelined submission, a load or this check's own cleared
@@ -3106,8 +3108,8 @@ submission or a load that succeeded placed it and nothing dropped every rank's
 models since, or, for this guard and the driver footprint, an explicit
 preset's loader node placed it or left it to the ceremony and no operator's
 drop (a Clear VRAM node at `hard`, a configuration change, the capacity
-rescue's slot drop) came since the loader node last ran. A
-request that cannot fit gets no proof render. The ceremony records one
+rescue's slot drop) came since the loader node last ran for it or a load of
+it last completed. A request that cannot fit gets no proof render. The ceremony records one
 INCONCLUSIVE capacity row and takes no lever, the driver log carries one
 `identity gate skipped` line with this refusal, the render runs on stock
 residency, and the next request of the combination checks again. Each proof
@@ -3162,7 +3164,8 @@ memos: a successful recycle, an eviction that retires the fleet, a fleet the
 driver marks defunct and a new fleet in place of a retired one, a
 configuration change, a topology change or the
 rollback of a failed setup, a worker-policy change that unloads every resident
-(`compile_dit`, `family_adapter`, `shared_act_scale`, `fp8_matrix_mult`), a
+(`compile_dit`, `family_adapter` (`family_override`), `shared_act_scale`,
+`fp8_matrix_mult`), a
 Clear VRAM node at `hard`, the capacity rescue's slot drop, an identity
 ceremony's clean reload and the gate's other unloads. Until 1.5 only the first
 two did, so a re-queue after a hard Clear VRAM under `auto` was priced with its
