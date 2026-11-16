@@ -9118,12 +9118,14 @@ reinstall on both hosts, with doctor at 50 checks and 0 failures
 **Symptom:** the driver refuses class P with "sampler dpm_adaptive cannot run
 under dp2+fsdp on 2 ranks" (or "Sampler Custom's SAMPLER, ComfyUI's
 dpm_adaptive solver, cannot run under uly2+dp2+fsdp on 4 ranks"), naming no
-guard, card or waiver. It comes at the UNET loader, before setup and the
-load, when the graph names the sampler there: a literal `sampler_name` on a
-DGX Monarch sampler, or a KSamplerSelect or SamplerDPMAdaptative node feeding
-Sampler Custom, on a sampler that takes that loader's model. Otherwise it
-comes at the sampler or Identity Gate node, before the first-use check, after
-the loader's setup and load.
+guard, card or waiver. It comes at the UNET loader, before the loader's own
+setup step and before its model loads, when the graph names the sampler
+there: a literal `sampler_name` on a DGX Monarch sampler, or a KSamplerSelect
+or SamplerDPMAdaptative node feeding Sampler Custom, on a sampler that takes
+that loader's model. Otherwise it comes at the sampler or Identity Gate node,
+before the first-use check, after the loader's setup and load. The Init node
+of an explicit preset sets the actors up when it runs, so at the loader they
+may already be set up.
 
 **Cause:** under data parallelism each group of ranks samples its own slice
 of the batch. `dpm_adaptive` picks its step sizes from the error of that
@@ -9155,3 +9157,15 @@ keep FSDP without data parallelism. On more than two Sparks no preset does:
 the presets without data parallelism hold the whole model on every rank, so they
 serve only where it fits resident, and a model that needs FSDP there needs
 another sampler.
+
+**Check:** the next queue with one of the fixes above renders. On
+2026-11-15, on dev `07cc636` on two Sparks, the shipped
+`dgx-monarch-flux3-klein-base-t2i` with `dp2+fsdp`, a literal `dpm_adaptive`
+and a batch of 2 refused at the UNET loader in these words, after the Init
+node had set the actors up, with no model load, sampling line or traceback in
+either Worker's journal; the same graph with the template's own `euler`
+rendered and its first-use check passed
+([VALIDATION](VALIDATION.md#release-test-v5-07cc636)). Of the fixes, only
+the sampler change has run on hardware. The Sampler Custom form, the refusal
+at the sampler and the Identity Gate node, and `dp2+fsdp`, `uly2+fsdp` and
+`cfg2+fsdp` on four Sparks or more have not.

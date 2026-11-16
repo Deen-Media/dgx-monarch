@@ -563,8 +563,9 @@ data-parallel group, and under FSDP, it stays on the default process group:
 FSDP gathers every call's weights from all ranks, so there every rank shares
 every call, and the driver refuses `dpm_adaptive` under data parallelism with
 FSDP, which only the explicit `+fsdp` presets resolve (`auto` never adds
-FSDP): at the preset's UNET loader, before its setup and load, where the
-graph names the sampler, and at the sampler node otherwise
+FSDP): at the preset's UNET loader, before the loader's own setup step and
+before its model loads, where the graph names the sampler, and at the sampler
+node otherwise
 (`nodes/adaptive_steps.py`, TROUBLESHOOTING #156). The pinned figure lasts
 through the whole call, so code in the forward that reads the patcher's free
 memory, such as Qwen Image 2.1's prefix-cache placement, reads the leanest
@@ -3519,10 +3520,11 @@ fresh Worker's after its second load of the INT8 Wan-Animate 2 file, until a
 drop, a hard clear or a recycle. A small block freed from another thread still waits for that thread's
 next allocations. The cost is about 20 percent on a loop that does nothing but
 allocate and free host memory (0.44 s against 0.36 s for ten rounds of 16
-blocks of 128 MiB). Release test v5 ran on this setting on dev `f297c70`
-on 2026-11-14, as v4 did, so its walls are renders with the setting in
-place ([VALIDATION](VALIDATION.md#release-test-v5-f297c70)); no pass read
-the same renders without it.
+blocks of 128 MiB). Release test v5 ran on this setting on dev `07cc636`
+on 2026-11-15, as it did on `f297c70` and as v4 did, so its walls are
+renders with the setting in place
+([VALIDATION](VALIDATION.md#release-test-v5-07cc636)); no pass read the
+same renders without it.
 Each actor logs the value it started with in its `UMA posture` line.
 
 **A model in the way offers a clear, not a credit.** A refusal priced over a

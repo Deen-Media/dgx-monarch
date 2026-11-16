@@ -296,19 +296,26 @@ see the later [selected-rail checks](#native-rdma).
 
 ## Release 1.5.0 checks
 
-**2026-10-28 to 2026-11-14, two DGX Sparks with GB10 GPUs, the head capped at
+**2026-10-28 to 2026-11-15, two DGX Sparks with GB10 GPUs, the head capped at
 2100 MHz throughout.** The hardware evidence for this release sits in the
 feature records below, each naming the commit it ran on. The first nine items
 ran through 2026-11-01, when the last code change was `4b71822`. The code has
 changed since, as the [changelog](../CHANGELOG.md) lists, and the later
 checks item names the records that followed. The release gate, release test
-v5, ran whole on dev `f297c70` on 2026-11-14 and passed
-([record](#release-test-v5-f297c70)). Code has changed since: the apex
-review's fixes of 2026-11-15 touch the cond batch exchange, the `dpm_adaptive`
-refusal, the driver spend price, and Studio: what a workflow load keeps, the
-companion's LoRA refusal, the field names and the bundle. CPU tests and the
-Studio browser rounds hold them, and no Spark has run them (NOT RUN below).
-Release test v5 has not run on this code.
+v5, first passed whole on dev `f297c70` on 2026-11-14
+([record](#release-test-v5-f297c70)). The apex review's fixes of 2026-11-15
+then merged as dev `07cc636`. They touch the cond batch exchange, the
+`dpm_adaptive` refusal, the driver spend price, and Studio: what a workflow
+load keeps, the companion's LoRA refusal, the field names and the bundle.
+Release test v5 ran whole on `07cc636` on 2026-11-15 and passed
+([record](#release-test-v5-07cc636)), and the commit that ships differs from
+`07cc636` in documentation only. The gate renders every shipped template at
+one step on the pair, so it shows that no shipped template changed status,
+first-use path or verdict with these fixes. Of the fixes themselves it ran
+one path, in its added cell: `dpm_adaptive` refused at the UNET loader under
+`dp2+fsdp`. The main pass also ran the reworked spend price on its plain
+path and the exchange on the pair's default group; the cases the fixes change
+have run only in CPU tests and the Studio browser rounds (NOT RUN below).
 
 - INT8 GEMM kernel, 2026-10-28 and 29
   ([record](#int8-gemm-kernel-comparison-2026-10-28-and-29)): the render
@@ -372,8 +379,11 @@ Release test v5 has not run on this code.
   ([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
   For release test v5 on 2026-11-14 both Workers ran `f297c70`, with doctor
   at 51 checks and no failure before the pass, after its main pass and after
-  its second leg ([record](#release-test-v5-f297c70)).
-- Later checks, 2026-11-03 to 2026-11-14, each on the commit its record
+  its second leg ([record](#release-test-v5-f297c70)). For its pass on
+  2026-11-15 both ran `07cc636`, with doctor at 51 checks and no failure four
+  times: before the pass, after the main pass, after the second leg and after
+  the added cell ([record](#release-test-v5-07cc636)).
+- Later checks, 2026-11-03 to 2026-11-15, each on the commit its record
   names: the other 32 cells of the 49-cell FP8 matrix
   ([record](#fp8-compute-paths-the-other-cells-2026-11-03)); Worker-assisted
   VAE decode on Wan 2.2 TI2V 5B and both HunyuanVideo VAEs
@@ -406,7 +416,9 @@ Release test v5 has not run on this code.
   ([record](#release-test-v5-40af2d7)), then whole on `f297c70`, where it
   passed: of 75 templates, 73 rendered in the main pass and the 2 LoRA
   templates in its second leg, with no error
-  ([record](#release-test-v5-f297c70)).
+  ([record](#release-test-v5-f297c70)); and again whole on `07cc636`, the
+  commit with the apex review's fixes, on 2026-11-15, with the same counts
+  ([record](#release-test-v5-07cc636)).
 - **NOT RUN:** the build and install check on the build this release ships;
   the ComfyUI 0.45.0 rows that compare against one GPU or run under
   comfy-managed residency ([record](#comfyui-0450)); the MiniMax-H3-Image rows
@@ -435,7 +447,14 @@ Release test v5 has not run on this code.
   CPU tests and no hardware record of their own. Each
   feature record below lists its own rows that have not run.
 - **NOT RUN for the apex review's fixes of 2026-11-15**, each held by CPU
-  tests:
+  tests. One path of those fixes ran on hardware, in the added cell of release
+  test v5 on `07cc636` on two Sparks: `dpm_adaptive` named by a literal
+  `sampler_name`, refused at the UNET loader under `dp2+fsdp`
+  ([record](#release-test-v5-07cc636)). These did not:
+  - The `dpm_adaptive` refusal in its other forms: Sampler Custom's SAMPLER,
+    from KSamplerSelect or SamplerDPMAdaptative; the refusal at the sampler
+    and at the Identity Gate node; and `dp2+fsdp`, `uly2+fsdp` and
+    `cfg2+fsdp` on four Sparks or more.
   - The cond batch exchange over one data-parallel group on NCCL: over its
     sequence-parallel or cfg group under `uly2`, `ring2` or `cfg2` with dp2
     (four Sparks), and over xFuser's model replica group under
@@ -515,9 +534,10 @@ retest.
 
 ## Template release test (2026-11-04)
 
-This release's own test is release test v5 on dev `f297c70`, passed on
-2026-11-14 ([below](#release-test-v5-f297c70)); the passes here are the
-earlier ones it is compared against.
+This release's own test is release test v5 on dev `07cc636`, passed on
+2026-11-15 ([below](#release-test-v5-07cc636)). The pass on `f297c70`
+([below](#release-test-v5-f297c70)) is the one before it, and the passes here
+are the earlier ones they are compared against.
 
 The release test renders every shipped template once on the pair: one step at
 seed 1031 on uly2, or ring2 for Omnigen2, which Ulysses cannot run, in one
@@ -616,9 +636,12 @@ names reads the local file. The record is
 tree.
 
 The whole pass ran again on dev `f297c70`, on torch 2.15.0+cu132, on
-2026-11-14 and passed. The seven templates skipped here rendered there: the five whose demo inputs were absent in the main pass,
-and the two LoRA templates in its second leg
-([release test v5 on f297c70](#release-test-v5-f297c70)).
+2026-11-14 and passed, and once more on dev `07cc636` on 2026-11-15, where
+it passed with the same counts. The seven templates skipped here rendered in
+both: the five whose demo inputs were absent here in the main pass, and the
+two LoRA templates in the second leg
+([release test v5 on f297c70](#release-test-v5-f297c70),
+[on 07cc636](#release-test-v5-07cc636)).
 
 ## Comparison method
 
@@ -4052,7 +4075,7 @@ passed at 08:11 on 2026-11-06. The rows below cite the passing runs.
 | 10. Sol | `dgxm sol-smoke --idle-maintenance` exits 0 | PASS: exit 0, the dense kernel control on `cute_sm120` at relative L2 0.00298337 on both hosts, the figure of 2026-10-11. It runs no render and says nothing of sparse-attention or model accuracy |
 | 11. The way back | after the switch back to torch 2.12, doctor shows no new FAIL row, and a combination this release proved under torch 2.12 reads PASS again without a new gate | NOT RUN: the commands were printed and not run, because the release ships on torch 2.15; the torch 2.12 environment stays parked on both hosts |
 
-**The template release test on torch 2.15:** release test v5 ran whole on dev `f297c70` on 2026-11-14 and passed ([below](#release-test-v5-f297c70)).
+**The template release test on torch 2.15:** release test v5 ran whole on dev `f297c70` on 2026-11-14 and passed ([below](#release-test-v5-f297c70)), and again on dev `07cc636` on 2026-11-15, where it passed ([below](#release-test-v5-07cc636)).
 
 <a id="fixes-2026-11-11"></a>
 
@@ -4192,7 +4215,9 @@ second in dev `40af2d7`, which part B of that block read
 `40af2d7` does not ship either. Its fix merged as `f297c70` (#192), and
 that fix's proof block passed the next morning
 ([below](#proof-block-f297c70)), and v5 then passed whole on `f297c70`
-([below](#release-test-v5-f297c70)). The records are
+([below](#release-test-v5-f297c70)). The apex review's fixes then merged as
+`07cc636` (#195), and v5 passed whole on it on 2026-11-15
+([below](#release-test-v5-07cc636)). The records are
 `out/review_round_2026-11-07/reverify_v1/`,
 `blockA_v1/`, `blockB_v1/`, `blockC_v1/` and `blockD_v1/` in the validation
 tree.
@@ -5062,7 +5087,7 @@ freed and where it had nothing to free.
 
 <a id="release-test-v5-f297c70"></a>
 
-**Release test v5 on dev `f297c70`: the release's test, passed**
+**Release test v5 on dev `f297c70`: passed, before the apex review's fixes**
 (2026-11-14, 03:29 to 06:33 MST; both Workers on the commit, ComfyUI
 `4d64a8bc0`; the first Spark under its clock cap, max 2100 MHz, highest
 reading 2093 MHz for the whole pass; the second Spark uncapped; neither box
@@ -5081,8 +5106,12 @@ validation tree.
   the second leg. p-h3-image, the one error of the pass on `40af2d7`,
   rendered. No template refused, stalled or ended in an error where v4
   rendered it, and the one `ring2` template rendered as before. Every
-  template's first-use path matched what was written down before the pass,
-  and no `driver spend price` refusal came.
+  template's first-use path matched what was written down before the pass
+  but two, `dgx-monarch-kroma-t2i-upscale` and
+  `dgx-monarch-minimax-h3-t2va`, written down as keeping a verdict, which
+  logged no gate line, and no `driver spend price` refusal came. The record
+  of the pass on `07cc636` gives the reason for each
+  ([below](#release-test-v5-07cc636)).
 - **Memory:** no reading under 8.0 GiB on either box, and no watchdog
   event. The lowest were 17.85 GiB on the first Spark and 35.76 on the
   second, both in `dgx-monarch-wan-animate2-memory-saver`; the pass on
@@ -5100,12 +5129,11 @@ validation tree.
   absent inputs, and the two MiniMax-H3-Image templates new since v4, all
   rendered.
 - **The first-use check:** 45 templates ran it with no proof render, 7 ran
-  the full check, 15 kept a verdict an earlier template of the pass wrote,
-  and 8 ran none, the two skipped templates among them, as written down
-  before the pass. On FLUX.2, Krea 2,
-  Kroma and Kroma INT8 the check passed on slab residency and the user's
-  render then ran on the stock copy, as designed (the C2 control of part B,
-  above).
+  the full check, 13 kept a verdict an earlier template of the pass wrote,
+  and 10 logged no gate line, the two skipped templates among them. On
+  FLUX.2, Krea 2, Kroma and Kroma INT8 the check passed on slab residency
+  and the user's render then ran on the stock copy, as designed (the C2
+  control of part B, above).
 - **Two changes of path against `40af2d7`, both from #192:** p-h3-image went
   from the full check's one proof render and a refusal to no proof render
   and INCONCLUSIVE, and `dgx-monarch-flux2-t2i` from 4 proof renders to 3:
@@ -5143,9 +5171,171 @@ both are recorded as readings:
   with compaction, not by the disk; that is a reading, not a proof, since
   the pass had no compaction sampler.
 
-This pass cleared dev `f297c70` on 2026-11-14. Code has changed on dev
-since; [Release 1.5.0 checks](#release-1-5-0-checks) lists what has not run
-on a Spark.
+This pass cleared dev `f297c70` on 2026-11-14. The apex review's fixes then
+merged as `07cc636`, and the release's test is the pass on that commit
+([below](#release-test-v5-07cc636)).
+
+<a id="release-test-v5-07cc636"></a>
+
+**Release test v5 on dev `07cc636`: the release's test, passed**
+(2026-11-15, 16:40 to 19:46 MST; both Workers on the commit, ComfyUI
+`4d64a8bc0`; the first Spark under its clock cap, max 2100 MHz, its highest
+reading under load 2093 MHz and its highest of the whole pass 2099 MHz, read
+twice, at 18:45:29 and 19:32:12, each with the GPU at 1 percent use, none
+above 2100; the second Spark uncapped). `07cc636` is the release commit
+`35bb775` with the apex review's fixes (#195), and the commit that ships
+differs from it in documentation only. Both Sparks lost power at 15:06 MST
+that day, came back, took a system upgrade that moved libc6 from
+2.39-0ubuntu8.9 to 8.12 on both and left the kernel as it was, and
+rebooted. When the pass began the first Spark had been up since 15:30:01
+and the second since 15:31:40, so each file was read from a cold page cache
+at its first touch. The main pass and the second leg sent the same graphs as
+the pass on `f297c70`, byte for byte: every shipped template once on the
+pair with the runner's own topology (`uly2`, or `ring2` for Omnigen2), then
+the two LoRA templates with the same public LoRA, removed after. One added
+cell for the fixes followed. `dgxm doctor` read 51 checks and
+no failure four times: before the pass, after the main pass, after the
+second leg and after the added cell. No row of the rig's ledger carried this
+release, so every combination was checked again. The record is
+`out/vetting_2026-11-03/acceptance_v5_07cc636/` in the validation tree.
+
+- **The result:** of 75 templates, 73 rendered and none ended in an error;
+  the 2 LoRA templates were skipped in the main pass and both rendered in
+  the second leg. No template refused or stalled, the one `ring2` template
+  rendered as before, and no `driver spend price` refusal came: the driver's
+  ten spend price lines each admitted what it priced.
+- **Memory:** no reading under 8.0 GiB on either box, and no watchdog
+  event. The lowest were 20.98 GiB on the first Spark and 36.55 on the
+  second, both in `dgx-monarch-wan-animate2-bfloat16-warm`; the pass on
+  `f297c70` read 17.85 and 35.76. The second leg's lowest were 56.02 and
+  70.26.
+- **Against the pass on `f297c70`:** no template changed status, first-use
+  path, proof render count or verdict. On the 73 templates both passes
+  rendered the walls came to 4717 s against 4872 (155 s less), and no
+  template took more than twice its `f297c70` wall. Six walls moved by more
+  than 15 s, three each way: `dgx-monarch-kroma-t2i` 140.0 to 50.2 s,
+  `dgx-monarch-hunyuan-video` 310.1 to 225.1, and
+  `dgx-monarch-qwen-image21-edit-rgba` 145.1 to 110.0; and
+  `dgx-monarch-quickstart` 35.0 to 60.0, `dgx-monarch-qwen-image-t2i` 40.0 to
+  65.0, and `dgx-monarch-wan22-i2v` 105.0 to 140.1 (below).
+- **The first-use check:** 45 templates ran it with no proof render, 7 ran
+  the full check, 13 kept a verdict an earlier template of the pass wrote,
+  and 10 logged no gate line. Every template's path matched what was written
+  down before the pass but two: `dgx-monarch-kroma-t2i-upscale` and
+  `dgx-monarch-minimax-h3-t2va` were written down as keeping a verdict and
+  logged no gate line, as both did on `f297c70`. The t2va graph equals the
+  mp4 graph up to the decode, so ComfyUI served it from its cache and its
+  sampler did not run. `dgx-monarch-kroma-t2i-upscale` rendered on the PASS
+  that `dgx-monarch-kroma-t2i`'s full check wrote earlier in the pass for
+  the same model with no LoRA. The driver applies a ledger PASS without a
+  gate line, and each Worker logged the grant for both sampler calls. The
+  other 8 with no gate line are the two skipped templates, Fleet and the five
+  Wan-Animate 2 templates, as written down.
+
+**The walls that moved.** `wall_s` sits on a 5 s grid, so these are
+execution times, split by the listener's node times, the driver's sampling
+lines and the Workers' load lines, against the same records of the pass on
+`f297c70`. Sampling times are the first rank's, by the driver's sampling
+lines; the second rank's are within 0.1 s of them. Three got faster:
+- `dgx-monarch-kroma-t2i`, 138.0 to 49.9 s, its first-use check 34.6 s
+  against 122.6. The first Spark's stock load of the checkpoint in the
+  cross-residency leg took 12.5 s against 100.6, so the slow load the
+  `f297c70` record describes did not come back. Its slab load took 11.8 s
+  against 11.5, the second Spark's two loads 11.6 s each, and each sampling
+  within 0.03 s of its `f297c70` time.
+- `dgx-monarch-hunyuan-video`, 305.5 to 224.6 s. Its sampler node's span was
+  105.97 s against 178.38. It sampled in 95.01 s, against the 166.2 s and
+  97.8 s the `f297c70` record holds for that pass and its two re-reads, so
+  the slow sampling of the pass on `f297c70` did not come back here. The
+  decode node took 91.10 s against 99.99; no cause was found for that 8.9 s.
+- `dgx-monarch-qwen-image21-edit-rgba`, 142.6 to 108.6 s. Its sampler node's
+  span was 40.45 s against 74.74. It sampled in 20.29 s against 52.17, where
+  the pass on `40af2d7` read 29.97, and the first Spark's load took 4.8 s
+  against 7.0. No cause found.
+
+**Three walls that got slower, read again after the pass.** None failed,
+and all three are recorded as readings. The re-read ran from 20:04 to 20:26
+MST the same day, right after the pass, both Workers still on `07cc636`:
+seven one-step renders in three driver sessions, each on a fresh or a
+recycled mesh, wan22-i2v three times and the other two twice each, each
+session starting with wan22-i2v. All seven rendered,
+`dgxm doctor` read 51 checks and no failure before and after, and the first
+Spark stayed under its cap, highest reading under load 2093 MHz. Samplers
+read MemAvailable, the GPU's clock, power and use, and the kernel's reclaim
+and compaction counters at 1 Hz on both boxes, and each RDMA rail's counters
+were read before and after every render. The record is
+`out/vetting_2026-11-03/acceptance_v5_07cc636/reread/`.
+- `dgx-monarch-wan22-i2v`, 101.9 to 135.6 s. In the pass both experts loaded
+  within 0.1 s of their `f297c70` times on both boxes. The high-noise
+  expert's one-step sample took 56.11 s against 23.12 on `f297c70`, and the
+  low-noise expert's 24.47 s against 22.91. Over the high-noise sampling the
+  first Spark's GPU read 96.0 percent busy on average, against 95.5 on
+  `f297c70`, at a mean draw of 31.1 W against 59.5 W. On each rank the cond
+  batch exchange finished within 0.1 s of the start of that sampling, as in
+  the other runs, so the extra seconds came after it, and both experts'
+  latents were bit-identical across the pass on `f297c70`, this pass and the
+  three re-reads. In the re-reads the high-noise expert sampled in 23.37 to
+  23.52 s on both ranks, with the first Spark drawing 57.9 to 59.8 W on
+  average and the second 78.1 to 79.1 W, no page reclaim or compaction
+  during that sampling on either box, and the same RDMA byte counts in all
+  three, 56.76 GB sent and received on each box. The 56.11 s did not come
+  back and its cause is not found: the pass sampled the second Spark's
+  memory but not its GPU's use, clock or power. It is the same kind of
+  reading as hunyuan-video's on `f297c70`, which this pass did not repeat.
+- `dgx-monarch-qwen-image-t2i`, 38.0 to 62.7 s, and
+  `dgx-monarch-quickstart`, 33.8 to 56.4 s. In the pass the first Spark's
+  load of the model file took 33.2 s and 33.1 s, against 11.2 and 11.7 on
+  `f297c70`, inside a sampler node of 44.87 s against 19.93 and a loader node
+  of 46.73 s against 24.71. The second Spark's loads held, 9.3 and 8.2 s
+  against 9.6 and 10.5. Sampling held for quickstart, 2.95 s against 3.04,
+  and took 9.28 s against 6.39 for qwen-image-t2i. The quickstart load was
+  not the first Spark's first read of its file since the reboot: it had
+  loaded the same file four times earlier in the pass, in 8.2 to 12.9 s. The
+  qwen-image-t2i load was that box's first load of its file in the pass, but
+  of the other 58 files the first Spark loaded in both passes, 53 took within
+  1.3 s of their `f297c70` time at their first load. Read twice more each,
+  the first Spark's loads took 11.3 and 14.8 s for qwen-image-t2i and 14.1
+  and 18.0 s for quickstart, and sampling took 6.32 and 6.36 s, and 3.07 and
+  3.06 s. Across each of those loads the first Spark's direct reclaim and
+  compaction counters rose: across the 11.3 s load, `compact_stall` by
+  19835, `pgscan_direct` by 5244180 and `allocstall_movable` by 5120. They
+  did not move during sampling. The second Spark's counters rose across its
+  loads too, which took 7.7 to 12.1 s. The `f297c70` record read
+  kroma-t2i's slow load as bound by page allocation with compaction; here a
+  sampler saw the reclaim and compaction during the loads. The pass itself
+  ran no such sampler, so its 33 s loads stay readings.
+
+**The added cell.** It stages one path of the apex review's fixes on the
+pair. The shipped template
+`dgx-monarch-flux3-klein-base-t2i`, as the runner sends it, changed only in
+its Init node's preset (`dp2+fsdp`), its sampler (`dpm_adaptive`, a literal
+`sampler_name` on the DGX Monarch KSampler) and a batch of 2, ran on the
+pair; then the same graph with the template's own sampler, `euler`, as the
+control.
+- With `dpm_adaptive` the render refused class P at node 3, the DGX Monarch
+  UNET loader, with the refusal of
+  [TROUBLESHOOTING #156](TROUBLESHOOTING.md#156-dpm_adaptive-refuses-under-a-data-parallel-layout-with-fsdp),
+  word for word the text the checkout's loader preflight raises on that
+  graph. It took 17.6 s of execution, in a wall of 20.0 s. ComfyUI ran the
+  VAE loader, the text encoder and the Init node first, and the Init node
+  started the actors and set them up. The driver's log holds both ranks'
+  `worker up` lines with the `dp2+fsdp` topology, which it writes when the
+  Init node's setup returns, before the refusal. Each Worker's journal holds
+  the Init node's setup lines and nothing after the refusal: no setup step of
+  the loader's own, no model load, no sampling line and no traceback. Across
+  the render MemAvailable fell from 112.1 GiB at submit to 102.2 GiB at the
+  end on the first Spark, where the driver staged its 8463 MB text encoder
+  and the VAE before the loader ran and an actor started, and from 114.9 to
+  113.9 GiB on the second, where only an actor started.
+- The control rendered in 33.0 s of execution, with the full first-use
+  check, 2 proof renders and verdict PASS, and the model loaded on both
+  Workers. Its Init node came from ComfyUI's cache, and the loader's own
+  setup step set the actors up.
+- So the cell read one path: a literal `sampler_name` refused at the UNET
+  loader under `dp2+fsdp` on two Sparks. It did not read the Sampler Custom
+  SAMPLER form, the refusal at the sampler or the Identity Gate node, or
+  `dp2+fsdp`, `uly2+fsdp` and `cfg2+fsdp` on four Sparks or more; those stay
+  NOT RUN ([above](#release-1-5-0-checks)).
 
 <a id="release-build-not-run"></a>
 

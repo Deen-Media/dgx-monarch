@@ -315,13 +315,19 @@ sections after them list every change.
   resolves FSDP and does not refuse. Every rank there shares each model call
   while each data-parallel group samples its own slice, so the groups must
   make the same number of calls, and `dpm_adaptive`'s count follows its
-  slice. It refuses class P at the preset's UNET loader, before setup and the
-  load, where the graph names the sampler, and at the sampler otherwise. It
-  asks for another sampler, a preset without data parallelism, or one
-  without `+fsdp`; on more than two Sparks no preset keeps FSDP without data
-  parallelism, so the presets without it serve only where the model fits
-  resident, and a model that needs FSDP there needs another sampler
+  slice. It refuses class P at the preset's UNET loader, before the loader's
+  own setup step and before its model loads, where the graph names the
+  sampler, and at the sampler otherwise. It asks for another sampler, a
+  preset without data parallelism, or one without `+fsdp`; on more than two
+  Sparks no preset keeps FSDP without data parallelism, so the presets
+  without it serve only where the model fits resident, and a model that needs
+  FSDP there needs another sampler
   ([TROUBLESHOOTING #156](docs/TROUBLESHOOTING.md#156-dpm_adaptive-refuses-under-a-data-parallel-layout-with-fsdp)).
+  In the added cell of release test v5 on dev `07cc636`, on two Sparks under
+  `dp2+fsdp`, a literal `dpm_adaptive` refused at the loader with no model
+  loaded on either Worker; the other forms, and `dp2+fsdp`, `uly2+fsdp` and
+  `cfg2+fsdp` on four Sparks or more, have not run on hardware
+  ([VALIDATION](docs/VALIDATION.md#release-test-v5-07cc636)).
 
 ### Everyday use
 
@@ -1073,10 +1079,11 @@ sections after them list every change.
   torch 2.15.0+cu132. Ideogram4's MODELS row now says its fp8_scaled pair
   reads 0.161 against the BF16 pair, from the file's quantization, and the
   p-h3-image template's note says what its edit's hardware record shows.
-  The template release test on torch 2.15 ran whole on dev `f297c70` on
-  2026-11-14 and passed: of 75 templates 73 rendered and 2 were skipped and
-  rendered in a second leg with a public LoRA, with no reading under 8 GiB
-  ([VALIDATION](docs/VALIDATION.md#release-test-v5-f297c70)). Still NOT RUN:
+  The template release test on torch 2.15, the release's own test, ran whole
+  on dev `07cc636` on 2026-11-15 and passed, as it had on dev `f297c70` on
+  2026-11-14: of 75 templates 73 rendered and 2 were skipped and rendered in
+  a second leg with a public LoRA, with no reading under 8 GiB
+  ([VALIDATION](docs/VALIDATION.md#release-test-v5-07cc636)). Still NOT RUN:
   LTX 2.3's decode split, a Worker on ComfyUI 0.43 with context windows,
   every layout at world 4 and the full sweep runbook
   ([VALIDATION](docs/VALIDATION.md#release-test-2026-11-04),
