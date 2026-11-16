@@ -500,6 +500,26 @@ have run only in CPU tests and the Studio browser rounds (NOT RUN below).
   - The Studio browser procedure on the bundle that holds these fixes,
     `index-Ct66OJHZ.js`
     ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#review-fixes-2026-11-16)).
+- **NOT RUN for the render-site fixes of the review of 2026-11-16** (the
+  request and what the Workers hold), each held by CPU tests through the real
+  sampler and guider nodes:
+  - The swap credit at the render site: a change of model in one session
+    under `auto` (FLUX.1 rendered, then a MiniMax H3 or LTX 2.3 template),
+    where the render-time check should log `render preflight: ... fits once
+    the Worker on the head drops ...` and unload nothing, where it used to
+    log `driver unload: ... fits after unloading`.
+  - The pending-load relief's quote with the render's LoRA stack: a Wan
+    Animate 2 BF16 template with `lora_low_rss` off, its load pending on a
+    fleet set up by another model, where the relief should log `driver
+    unload: the pending load of ...` before the agreement, which used to
+    refuse at dispatch.
+  - The reference and pose check crediting an explicit preset's eager load:
+    Wan SCAIL or Animate 2 BF16 under `uly2` with `auto_gate` off, a clip
+    long enough that its activations fit the head's reading and the file
+    beside them does not; it should render where it used to refuse.
+  - The sample deadline per model call: MiniMax H3's 15 second clip on the
+    pair, 20 steps, at CFG 2 with a negative, whose `sample deadline:` line
+    should read `and 2 model calls a step` and 12000 s, where it read 6000 s.
 - Build and install, on `35f1486`, the release commit of 2026-11-01, in a
   disposable Python 3.12 venv that holds only `build` and `pip`:
   `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and

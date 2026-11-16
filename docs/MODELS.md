@@ -1056,7 +1056,9 @@ to `uly2+fsdp`, which `auto` never picks, whose first render runs the gate's
 clean-reload proof, where the head holds half the DiT. On the pair under `auto` the head's
 Worker holds the whole DiT, as on one Spark, so the pair alone does not fit it.
 The refusal also offers the Load with slab residency card: slab places no host
-copy, so that load prices at 78.3 GiB and fits. On 2026-11-05 on one Spark the
+copy, so that load prices at 78.3 GiB, and at 90.9 GiB once the render's own
+activations (12.6 GiB at one rank, for the 8,285 rows of its 2912x2912 frame)
+are counted beside it, and fits. On 2026-11-05 on one Spark the
 refusal came 4.7 s after the queue with nothing loaded, 119.8 GiB against
 109.6 GiB, 10.2 GiB short, and each way it names but the INT8 ConvRot DiT rendered:
 the slab card, whose image was pixel-identical to the same graph on stock

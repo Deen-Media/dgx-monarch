@@ -2046,16 +2046,21 @@ A refusal that stands quotes the last reading and names what was unloaded and
 released. `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both steps off.
 
 **Warm re-renders:** a checkpoint that already rendered in this driver
-session, or that a pipeline sampler has submitted, is credited: its weight
-bytes already sit inside the lower `MemAvailable` reading, the message says
-"weights resident, credited", and only the activation term is estimated.
-Every successful Recycle drops that credit, and so does a render that fails
-while its result is collected and evicts the fleet. Other evictions do not,
-for example a fleet that dies during submit or in a Fleet wave. If the
-workers lose the model another way, for example when a different slot
-replaced it, the credit is stale and the estimate omits the weight term. That
-case can still end in an allocator OOM, as it would with no preflight, but it
-never blocks a render that fits.
+session, that a pipeline sampler has submitted, or that a load placed (an
+explicit preset's loader at its node, or the identity gate's no-render path)
+is credited: its weight bytes already sit inside the lower `MemAvailable`
+reading, the message says "weights resident, credited", and only the
+activation term is estimated. A load the loader deferred to the first render
+is not credited. Every unload of every rank drops that credit: a successful
+Recycle, a Clear VRAM node at `hard`, an identity ceremony's clean reload and
+the gate's other unloads, and a render that fails while its result is
+collected and evicts the fleet. Other evictions do not, for example a fleet
+that dies during submit or in a Fleet wave. If the workers lose the model
+another way, for example when a different slot replaced it, the credit is
+stale and the estimate omits the weight term. That case can still end in an
+allocator OOM, as it would with no preflight, but it never blocks a render
+that fits. Until 1.5 an explicit preset's eager load was charged here a
+second time, and the credit outlived a hard Clear VRAM.
 
 **Minimal-footprint gate runbook (first SCAIL attempt on new hardware):**
 build a `WanSCAILToVideo` graph with a small, 32-divisible `width`/`height`
@@ -2420,7 +2425,11 @@ Direct headless calls need their own budget
 **Render-time estimate:** both `run_render` and pipelined depth>1 submissions
 check before dispatch or mesh effects. Only pending rank-0 weights on the
 driver host are charged. `auto` defers loading to this point; explicit presets
-load eagerly, so their weights are already in `MemAvailable`. The reserve is
+load eagerly, so their weights are already in `MemAvailable`. Under `auto` a
+checkpoint that a finished render, a pipelined submission, a load or this
+check's own cleared charge placed is credited as well, until the next unload
+of every rank (a hard Clear VRAM, an identity ceremony's clean reload, a
+recycle) drops the credit. The reserve is
 5 GiB or a larger configured `uma_reserve_gb`.
 
 * Pending weights cost the checkpoint's file size, a conservative upper bound.
@@ -3116,13 +3125,20 @@ staging is charged for the full packed total on every rank at any degree.
 
 **Warm re-renders and residency.** The weight term is credited, not charged,
 when an explicit topology preset means the loader node already performed the
-load, or when one of three session memos names this checkpoint: the last
-completed render, the last pipelined submission, and the last pending load the
+load, or when one of four session memos names this checkpoint: the last
+completed render, the last pipelined submission, the last load that
+succeeded (the loader's eager placement or the identity gate's no-render
+path), and the last pending load the
 driver footprint check cleared. The memos are sampled before that check runs,
 or a render would credit itself for its own charge. A `weight_dtype` cast also
 stands the weight term down, because after a cast the file size does not price
-the resident weights; the activations are still charged. A successful recycle,
-and an eviction that retires the fleet, clear all three memos. A memo that
+the resident weights; the activations are still charged. Every unload of every
+rank clears all four memos: a successful recycle, an eviction that retires the
+fleet, a Clear VRAM node at `hard`, an identity ceremony's clean reload and
+the gate's other unloads. Until 1.5 only the first two did, so a re-queue
+after a hard Clear VRAM was priced with its DiT credited although the Workers
+had dropped it. The gate's capacity check before a ceremony reads the same
+memos, without the cleared charge. A memo that
 still goes stale can only drop the weight term: it can admit a render that
 should refuse, never refuse one that fits.
 
@@ -3131,7 +3147,12 @@ render the graph declares ([#52](#52-driver-side-footprint-preflight-refused-a-r
 happens when the render behind it cannot then run. The graph shows only video
 and audio rows: text, keyframe and reference rows do not exist until their
 nodes run. That under-count errs toward admitting, and the render site catches
-what the loader site misses one node later.
+what the loader site misses one node later: it reads the text, keyframe and
+reference rows of every positive entry, a Sampler Custom guider's included.
+p-h3-image's conditioning node (`PH3ImageConditioning`) is one of the graph's
+canvases: one frame and the two audio latents it spans, 8,285 rows at the
+template's 2912x2912, read at 2912 on a side the node leaves at 0 or takes
+from a link, as the MiniMax-H3-Image read takes 2048.
 
 **Escape hatch.** `DGXM_DISABLE_ACTIVATION_PREFLIGHT=1` on the driver. It is the
 same variable [#47](#47-wan-scailscail-2-render-refused-activation-footprint-preflight) documents, because a kill switch belongs to its guard and this
@@ -8361,7 +8382,19 @@ token count their activation preflight prices
 For those families the deadline is the step count times an allowance per
 step. The allowance is 600 s per step at 109,466 packed rows per rank, the
 15 second clip's rows on one Spark, and scales linearly with rows per rank,
-but is never less than 120 s per step. Rows per rank are the packed total
+but is never less than 120 s per step. That clip made one model call a step
+(CFG 1, one prompt), so the allowance is one call's. A MiniMax H3 step makes
+one call for each positive conditioning entry, and one more for each negative
+entry where the sampler runs the negative (CFG other than 1, or a sampler that
+keeps it at 1), since H3 runs each as its own batch of one. A two-checkpoint
+guider (Dual Model Guider (DGX Monarch) with its second model) runs its
+negative on the second model, and that call counts too, one where no negative
+is wired. The driver reads that count from the request and gives the step one
+allowance per call. An entry that ComfyUI may skip at
+some steps or call on part of the latent (a step window short of the whole
+schedule, an area) is not counted. Wan SCAIL, SCAIL-2 and Animate 2 run the
+positive and the negative as one batch and keep one allowance per step.
+Rows per rank are the packed total
 divided by the sequence-parallel degree, ulysses times ring; cfg and dp give
 each rank whole sequences. The product is capped at 21600 s (six hours), so a
 hung actor that keeps reporting progress is still caught. Above 180 steps the
@@ -8397,7 +8430,8 @@ suite ([BENCHMARKS](BENCHMARKS.md)).
 
 - Read the failed render's `sample deadline:` line against the time it ran.
   The line names the term that set the deadline: the floor, the steps or the
-  ceiling.
+  ceiling. A MiniMax H3 step that makes more than one model call says how
+  many, for example `and 2 model calls a step`.
 - To give a render longer, start ComfyUI with a higher floor, in seconds,
   for example `DGXM_SAMPLE_TIMEOUT=14400`. The floor applies to every render
   and wins over the cap, so a hung render then holds the queue that long;
@@ -8405,7 +8439,8 @@ suite ([BENCHMARKS](BENCHMARKS.md)).
 - Past the table the margin shrinks. A step's time grows faster than its rows,
   because attention grows with the square of the sequence: on one Spark, 1.48
   times the rows took 2.06 times as long per step, while the allowance grew
-  1.48 times. At 20 steps the cap binds from about 197,000 rows per rank.
+  1.48 times. At 20 steps the cap binds from about 197,000 rows per rank,
+  at one model call a step; at two calls a step it binds from about 98,500.
   Raise the floor for a clip longer than the table's longest.
 - A render whose single step outlasts the stall budget ends as a stall, not
   at this deadline: the stall guard stops the wait when the fleet sends no

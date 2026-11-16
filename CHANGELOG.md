@@ -1752,10 +1752,37 @@ sections after them list every change.
   the whole request before its proof render: a request that cannot fit the
   slab path gets one INCONCLUSIVE capacity row and no proof render, renders on
   stock residency, and the next request checks again ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Fix: after an unload of every rank, such as a Clear VRAM node at `hard` or
+  an identity ceremony's clean reload, the render-site capacity checks charge
+  the DiT again. The memos that credit a model a finished render or a
+  pipelined submission placed outlived that unload, so a re-queue after a
+  hard Clear VRAM was priced with its DiT credited although the Workers had
+  dropped it, and could admit a render whose DiT and activations do not fit
+  together. Every such unload now drains them, and every check, the gate's
+  capacity check included, reads one rule. CPU tests; not run on hardware
+  ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Fix: the Wan SCAIL, SCAIL-2 and Animate 2 activation check credits an
+  explicit preset's eager load, as the driver footprint and MiniMax H3 checks
+  do. It charged the file a second time against a reading that already held
+  it, so a long clip or a busy box whose activations fit was refused. CPU
+  tests; not run on hardware
+  ([TROUBLESHOOTING #47](docs/TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight)).
+- Fix: the MiniMax H3 activation check, the reference and pose check and the
+  driver footprint's reference report read a Sampler Custom render's
+  conditioning from its guider. They read only a KSampler request's own, so a
+  Sampler Custom render, p-h3-image's among them, was priced on its latent
+  alone: a p-h3-image edit with nine large pictures counted 8,285 rows where
+  the same conditioning on KSampler counts 83,714. The sample deadline reads
+  the guider's rows too. CPU tests; not run on hardware
+  ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
 - The driver's deadline for a render's sample call grows with the work. For
   MiniMax H3 and Wan SCAIL, SCAIL-2 and Animate 2 it allows 600 s per step at
   109,466 packed rows per rank, scaled linearly with the rows on each rank, at
-  least 120 s per step and at most six hours in all. `DGXM_SAMPLE_TIMEOUT`
+  least 120 s per step and at most six hours in all. A MiniMax H3 step gets
+  that once for each model call the request states: each positive entry, and
+  each negative where the sampler runs the negative (CFG other than 1, or a
+  sampler that keeps it at 1), on a two-checkpoint guider's second model too.
+  `DGXM_SAMPLE_TIMEOUT`
   stays the floor, 3600 s unless set, and wins over the cap. A 15 second H3
   clip on one Spark, which sampled for 80 minutes and was cut off at the hour,
   now gets 200 minutes; other families keep the larger of the floor and 120 s

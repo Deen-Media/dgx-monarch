@@ -144,10 +144,11 @@ class Handle:
         return []
 
 
-def _model(handle, *, preset="auto", worker_args=None, unet=UNET):
+def _model(handle, *, preset="auto", worker_args=None, unet=UNET, loras=()):
+    """The loader's model handle; its LoRA stack is the one the render dispatches."""
     mesh = types.SimpleNamespace(handle=handle, topology_preset=preset,
                                  worker_args=dict(worker_args or {}))
-    return types.SimpleNamespace(mesh=mesh, unet_name=unet, options={}, loras=())
+    return types.SimpleNamespace(mesh=mesh, unet_name=unet, options={}, loras=tuple(loras))
 
 
 def _relieve(model, checkpoint, family="minimax_h3", request=None, weights_loaded=None):
@@ -216,17 +217,19 @@ def test_a_stop_of_the_workers_makes_an_eager_placement_pending_again():
 
 def test_an_unload_makes_the_load_pending_over_the_memos_until_a_load_succeeds(
         monkeypatch, checkpoint):
-    """The memos still name a model the Workers no longer hold. The mark stays
-    through the next render's check, which places nothing, and through a load
-    that fails; only a load that succeeds clears it: a successful render or a
-    loader's placement. The memo drain at a reset is not a load."""
+    """The memos named a model the Workers no longer hold; the unload drains
+    them. The mark stays through the next render's check, which places
+    nothing, and through a load that fails; only a load that succeeds clears
+    it: a successful render or a loader's placement. The memo drain at a reset
+    is not a load, and no word beats the mark, the capacity check's included."""
     driver = Driver(monkeypatch, reading_gib=100.1)
     monkeypatch.setattr(render_preflight, "_LAST_RENDERED_UNET", UNET)
     auto, explicit = _model(Handle(driver)), _model(Handle(driver), preset="uly2")
     pending_load_relief.note_unloaded()
+    assert render_preflight._LAST_RENDERED_UNET is None
     assert pending_load_relief.load_pending(auto, None)
     assert pending_load_relief.load_pending(explicit, None)
-    assert not pending_load_relief.load_pending(auto, True)  # the capacity check's own word
+    assert pending_load_relief.load_pending(auto, True)  # a stale word from the capacity check
     _relieve(explicit, checkpoint)                           # the next render's check
     assert pending_load_relief.load_pending(explicit, None)  # its load may still fail
     render_preflight.note_successful_render(None)            # a memo drain places nothing
@@ -341,9 +344,8 @@ def test_a_slab_loras_bake_is_priced_as_the_worker_prices_it(monkeypatch, checkp
     driver = Driver(monkeypatch, reading_gib=50.0)
     priced = _slab_price(monkeypatch, driver)
     worker_args = dict(SLAB_ON, **({} if low_rss is None else {"lora_low_rss": low_rss}))
-    request = {"kind": "custom", "model": {"unet_name": UNET, "loras": STACK}}
-    _relieve(_model(Handle(driver), worker_args=worker_args), checkpoint, family="krea2",
-             request=request)
+    _relieve(_model(Handle(driver), worker_args=worker_args, loras=STACK), checkpoint,
+             family="krea2")
     assert driver.steps == ["quote", "comfy-unload"]
     assert priced[0] == (checkpoint, STACK, True)
 
@@ -354,9 +356,8 @@ def test_slab_asked_for_with_lora_low_rss_off_is_priced_stock(monkeypatch, check
     the stack's classic bake, which only the Worker prices: it is asked."""
     driver = Driver(monkeypatch, reading_gib=100.1, workers_admit=True)
     priced = _slab_price(monkeypatch, driver)
-    request = {"kind": "custom", "model": {"unet_name": UNET, "loras": STACK}}
-    _relieve(_model(Handle(driver), worker_args=dict(SLAB_ON, lora_low_rss=False)), checkpoint,
-             family="krea2", request=request)
+    _relieve(_model(Handle(driver), worker_args=dict(SLAB_ON, lora_low_rss=False), loras=STACK),
+             checkpoint, family="krea2")
     assert priced == [] and driver.steps == ["quote"] and driver.held
 
 
@@ -384,11 +385,10 @@ def test_a_stock_loads_classic_bake_asks_the_workers_however_the_local_price_rea
     monkeypatch.setattr(pending_load_relief, "workers_stop", lambda *_args, **_kwargs: (
         driver.steps.append("quote"), driver.reading < 90.0 * _GIB)[1])
     classic = {"lora_low_rss": False}
-    request = {"kind": "custom", "model": {"unet_name": UNET, "loras": STACK}}
-    _relieve(_model(Handle(driver), worker_args=classic), checkpoint, request=request)
+    _relieve(_model(Handle(driver), worker_args=classic, loras=STACK), checkpoint)
     assert driver.steps == ["quote"] and driver.held
     driver.reading = 80.0 * _GIB  # the bake does not fit: the rescue runs
-    _relieve(_model(Handle(driver), worker_args=classic), checkpoint, request=request)
+    _relieve(_model(Handle(driver), worker_args=classic, loras=STACK), checkpoint)
     assert driver.steps == ["quote", "quote", "comfy-unload", "quote"]
     driver.steps.clear()
     _relieve(_model(Handle(driver), worker_args=classic), checkpoint)  # no stack: as before
@@ -400,8 +400,7 @@ def test_a_stock_loads_lora_stack_under_lora_low_rss_prices_as_the_file(monkeypa
     LoRA term (in_place_fallback.route returns None), so a load that fits
     locally asks nothing, stack or no stack."""
     driver = Driver(monkeypatch, reading_gib=100.1)
-    request = {"kind": "custom", "model": {"unet_name": UNET, "loras": STACK}}
-    _relieve(_model(Handle(driver)), checkpoint, request=request)
+    _relieve(_model(Handle(driver), loras=STACK), checkpoint)
     assert driver.steps == [] and driver.held
 
 
@@ -512,12 +511,14 @@ def test_what_the_workers_quote_counts_as_a_stop(monkeypatch, rows, stops):
         return None if rows is None else _answers(*rows)
 
     monkeypatch.setattr(old_model_clear, "driver_host_answers", answers)
-    request = {"model": {"unet_name": UNET, "options": {"weight_dtype": "default"},
-                         "loras": [["a.safetensors", 1.0]]}}
+    model = types.SimpleNamespace(unet_name=UNET, options={"weight_dtype": "default"},
+                                  loras=({"name": "a.safetensors", "strength": 1.0},))
     mesh = types.SimpleNamespace(handle=types.SimpleNamespace(setup_key=("set up",)))
-    assert pending_load_relief.workers_stop(mesh, request, UNET, {}) is stops
-    # The request's own spec, LoRA stack included, as the agreement asks it.
-    assert asked == [(UNET, {"weight_dtype": "default"}, "cond", [["a.safetensors", 1.0]])]
+    spec = pending_load_relief.model_spec(model)
+    assert pending_load_relief.workers_stop(mesh, spec, UNET, {}) is stops
+    # The model's own spec, LoRA stack included, as the agreement asks it.
+    assert asked == [(UNET, {"weight_dtype": "default"}, "cond",
+                      [{"name": "a.safetensors", "strength": 1.0}])]
 
 
 class Fleet:
@@ -637,15 +638,15 @@ def test_with_no_quote_an_unread_price_frees_nothing_on_a_box_with_room(
 
     driver = Driver(monkeypatch, reading_gib=110.0)
     handle = _no_quote(monkeypatch, driver, where)
-    request = {"kind": "custom"}
     worker_args: dict = {}
+    loras: list = []
     if unread == "classic bake":
-        request["model"] = {"unet_name": UNET, "loras": STACK}
+        loras = STACK
         worker_args["lora_low_rss"] = False
     else:
         monkeypatch.setattr(store_detect, "_to_comfy_model_options",
                             lambda _options: (_ for _ in ()).throw(ValueError("unknown")))
-    _relieve(_model(handle, worker_args=worker_args), checkpoint, request=request)
+    _relieve(_model(handle, worker_args=worker_args, loras=loras), checkpoint)
     assert driver.steps == [] and driver.held
 
 

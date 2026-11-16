@@ -28,7 +28,7 @@ from ..fsdp_reload_price import (
     capacity_classification,
 )
 from ..log import get_logger
-from . import render_preflight
+from . import pending_load_relief, render_preflight
 
 log = get_logger(__name__)
 
@@ -44,13 +44,12 @@ class CeremonyCapacityStop(RuntimeError):
 
 
 def dit_already_loaded(model: Any) -> bool:
-    """Whether the render site's memos say this DiT is loaded on the Workers:
-    a finished render left it there, or a pipelined submission dispatched it.
-    The memo of a pending load the driver cleared never counts, because that
-    load may not have happened."""
-    unet_name = getattr(model, "unet_name", None)
-    return isinstance(unet_name, str) and unet_name in (
-        render_preflight._LAST_RENDERED_UNET, render_preflight._LAST_SUBMITTED_UNET)
+    """Whether this DiT is loaded on the Workers, by the render site's one
+    residency rule (``pending_load_relief.dit_resident``): a finished render
+    left it there, a pipelined submission dispatched it or a load placed it,
+    and no unload of every rank came since. The memo of a pending load the
+    driver cleared never counts, because that load may not have happened."""
+    return pending_load_relief.dit_resident(getattr(model, "unet_name", None))
 
 
 def ceremony_activation_preflight(model: Any, request: dict, latent: dict) -> None:

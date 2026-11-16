@@ -28,14 +28,14 @@ log = get_logger(__name__)
 
 def ref_pose_shapes(request: dict) -> tuple[list, Any]:
     """The reference latent shapes and the pose latent shape in every positive
-    entry's extras: the SCAIL pose path can land on a later entry, and
-    reference_latents append. Malformed extras degrade to shape-only
-    estimation. The negative mirrors the positive and runs as its own model
-    call, so the positive bounds the peak."""
-    positive = request.get("positive") if isinstance(request, dict) else None
+    entry's extras, a Sampler Custom guider's included (``h3_rows.positive_entries``):
+    the SCAIL pose path can land on a later entry, and reference_latents
+    append. Malformed extras degrade to shape-only estimation. The negative
+    mirrors the positive and runs as its own model call, so the positive
+    bounds the peak."""
     ref_latents: list = []
     pose_latent = None
-    for entry in positive if isinstance(positive, (list, tuple)) else ():
+    for entry in h3_rows.positive_entries(request):
         extra = entry[1] if isinstance(entry, (list, tuple)) and len(entry) > 1 else None
         if not isinstance(extra, dict):
             continue
@@ -102,14 +102,44 @@ def packed_rows_for_request(model: Any, request: dict, latent: dict) -> tuple[in
         return None
 
 
+def h3_calls_per_step(request: dict, latent: dict, cfg_value: float | None) -> int:
+    """The model calls one MiniMax H3 step makes, as the request states them.
+
+    H3 conditionings are separate batch-1 calls (cfg and dp are refused for
+    it), so each positive entry is a call, and so is each negative where the
+    sampler runs the uncond pass (CFG other than 1, or a sampler that keeps it
+    at 1): ``h3_ring_pad.model_calls``, which reads the same entries for the
+    ring pad check. An entry that check leaves out, one ComfyUI may skip at
+    some steps or call on part of the latent, is not counted, so the count
+    never exceeds what every step runs. At least one.
+
+    A two-checkpoint guider runs its negative on its second model, which the
+    ring pad check leaves out because it reads this model's layout alone. The
+    step waits for that call too, so it is counted here as a cfg guider's
+    negative is, the image-only call included where no negative is wired.
+    """
+    from .h3_ring_pad import model_calls
+
+    guider = request.get("guider") if isinstance(request, dict) else None
+    if isinstance(guider, dict) and guider.get("kind") == "dual_model":
+        request = {**request, "guider": {**guider, "kind": "cfg",
+                                         "negative": guider.get("negative") or [[None, {}]]}}
+    try:
+        return max(len(model_calls(request, latent, cfg_value)), 1)
+    except Exception as exc:
+        log.debug("model call count unavailable for the sample deadline: %r", exc)
+        return 1
+
+
 def sample_deadline_s(model: Any, request: dict, latent: dict,
-                      topo: Topology, steps_hint: int) -> float:
+                      topo: Topology, steps_hint: int, cfg_value: float | None = None) -> float:
     """The seconds this render's collect waits, logged once at INFO.
 
     The rows divide by the sequence-parallel degree, the only axis that splits
     a sequence: cfg and dp give each rank whole sequences. For MiniMax H3 this
     is the world size its activation preflight divides by, since H3 refuses
-    cfg and dp.
+    cfg and dp, and each model call of a step gets its own allowance. The
+    reference and pose families batch their cond and uncond, and keep one.
     """
     counted = packed_rows_for_request(model, request, latent)
     rows, source = counted if counted is not None else (None, None)
@@ -117,6 +147,7 @@ def sample_deadline_s(model: Any, request: dict, latent: dict,
         ranks = max(int(getattr(topo, "sequence_parallel", 1)), 1)
     except (TypeError, ValueError):
         ranks = 1
-    deadline = sample_deadline.sample_deadline(steps_hint, rows, ranks, source=source)
+    calls = h3_calls_per_step(request, latent, cfg_value) if source == H3_FAMILY else 1
+    deadline = sample_deadline.sample_deadline(steps_hint, rows, ranks, source=source, calls=calls)
     log.info("%s", sample_deadline.describe(deadline))
     return deadline.seconds

@@ -4,7 +4,8 @@
 collect stops waiting once it passes, asks the actors to cancel and abandons
 the result. The deadline grows with the work: the step count times a per-step
 allowance that scales with the packed rows each rank samples, for the families
-whose rows the driver counts (``nodes/render_rows.packed_rows_for_request``).
+whose rows the driver counts (``nodes/render_rows.packed_rows_for_request``),
+once for each model call a MiniMax H3 step makes.
 A render with no row count keeps the older rule, the larger of the floor and
 ``STEP_FLOOR_S`` per step. The stall guard in ``mesh_lease`` still catches a
 silent fleet long before any of these bounds (docs/TROUBLESHOOTING.md #86).
@@ -34,10 +35,11 @@ DEFAULT_FLOOR_S: Final = 3600.0
 # render whose rows the driver does not count.
 STEP_FLOOR_S: Final = 120.0
 
-# The per-step allowance at the anchor row count, scaled linearly in rows per
-# rank. The anchor is the 15 s MiniMax H3 clip on one Spark (1344x768, 362
-# frames, exact attention): it sampled at 239 s per step with 109,466 packed
-# rows on its one rank (2026-10-30), and 600 s is 2.5 times that pace.
+# The allowance for one model call at the anchor row count, scaled linearly in
+# rows per rank. The anchor is the 15 s MiniMax H3 clip on one Spark
+# (1344x768, 362 frames, exact attention, CFG 1, one call a step): it sampled at
+# 239 s per step with 109,466 packed rows on its one rank (2026-10-30), and
+# 600 s is 2.5 times that pace. A step that makes more calls gets one each.
 ANCHOR_ROWS_PER_RANK: Final = 109_466
 ANCHOR_STEP_S: Final = 600.0
 
@@ -60,6 +62,7 @@ class SampleDeadline:
     rows_per_rank: int | None = None
     source: str | None = None         # the family whose count gave the rows
     capped: bool = False              # the ceiling cut steps times step_s
+    calls: int = 1                    # the model calls one step makes
 
     @property
     def counted(self) -> bool:
@@ -86,12 +89,14 @@ def floor_s() -> tuple[float, bool]:
     return value, True
 
 
-def step_allowance_s(rows_per_rank: int) -> float:
-    """Seconds per step for this many packed rows on one rank, at least the step floor."""
-    return max(STEP_FLOOR_S, ANCHOR_STEP_S * rows_per_rank / ANCHOR_ROWS_PER_RANK)
+def step_allowance_s(rows_per_rank: int, calls: int = 1) -> float:
+    """Seconds per step for ``calls`` model calls over this many packed rows on
+    one rank, each at least the step floor."""
+    return max(int(calls), 1) * max(
+        STEP_FLOOR_S, ANCHOR_STEP_S * rows_per_rank / ANCHOR_ROWS_PER_RANK)
 
 
-def deadline_s(steps: int, rows_per_rank: int | None, floor: float) -> float:
+def deadline_s(steps: int, rows_per_rank: int | None, floor: float, calls: int = 1) -> float:
     """The deadline for ``steps`` steps at ``rows_per_rank``, without the env read.
 
     No rows: the larger of the floor and the step floor per step, uncapped, as
@@ -101,16 +106,17 @@ def deadline_s(steps: int, rows_per_rank: int | None, floor: float) -> float:
     steps = max(int(steps), 0)
     if rows_per_rank is None:
         return max(floor, steps * STEP_FLOOR_S)
-    return max(floor, min(steps * step_allowance_s(rows_per_rank), CEILING_S))
+    return max(floor, min(steps * step_allowance_s(rows_per_rank, calls), CEILING_S))
 
 
 def sample_deadline(steps: int, rows: int | None = None, ranks: int = 1, *,
-                    source: str | None = None) -> SampleDeadline:
+                    source: str | None = None, calls: int = 1) -> SampleDeadline:
     """The deadline for one render: ``steps`` steps over ``rows`` packed rows.
 
     ``rows`` divides over ``ranks``, the sequence-parallel degree, rounding up,
-    because a pad row costs a step like any other. A missing or non-positive
-    count takes the older rule.
+    because a pad row costs a step like any other. ``calls`` is the model calls
+    each step makes over those rows, as the request states them. A missing or
+    non-positive count takes the older rule.
     """
     floor, from_env = floor_s()
     steps = max(int(steps), 0)
@@ -119,13 +125,14 @@ def sample_deadline(steps: int, rows: int | None = None, ranks: int = 1, *,
             seconds=deadline_s(steps, None, floor), steps=steps, floor_s=floor,
             floor_from_env=from_env, step_s=STEP_FLOOR_S)
     ranks = max(int(ranks), 1)
+    calls = max(int(calls), 1)
     rows_per_rank = -(-int(rows) // ranks)
-    step_s = step_allowance_s(rows_per_rank)
+    step_s = step_allowance_s(rows_per_rank, calls)
     return SampleDeadline(
-        seconds=deadline_s(steps, rows_per_rank, floor), steps=steps,
+        seconds=deadline_s(steps, rows_per_rank, floor, calls), steps=steps,
         floor_s=floor, floor_from_env=from_env, step_s=step_s, rows=int(rows),
         ranks=ranks, rows_per_rank=rows_per_rank, source=source,
-        capped=steps * step_s > CEILING_S)
+        capped=steps * step_s > CEILING_S, calls=calls)
 
 
 def _clock(seconds: float) -> str:
@@ -144,9 +151,11 @@ def describe(deadline: SampleDeadline) -> str:
     if deadline.counted:
         bound = min(work, CEILING_S)
         counted_by = f"{deadline.source}: " if deadline.source else ""
+        calls, unit = ((f" and {deadline.calls} model calls a step", "model call")
+                       if deadline.calls > 1 else ("", "step"))
         terms = (f"{steps_term} = {work:.0f} s for {deadline.rows_per_rank} packed "
-                 f"rows per rank ({counted_by}{deadline.rows} rows over "
-                 f"{deadline.ranks} rank(s); {ANCHOR_STEP_S:g} s per step at "
+                 f"rows per rank{calls} ({counted_by}{deadline.rows} rows over "
+                 f"{deadline.ranks} rank(s); {ANCHOR_STEP_S:g} s per {unit} at "
                  f"{ANCHOR_ROWS_PER_RANK} rows per rank, at least {STEP_FLOOR_S:g} s), "
                  f"ceiling {CEILING_S:g} s")
         rule = "the ceiling" if deadline.capped else steps_term

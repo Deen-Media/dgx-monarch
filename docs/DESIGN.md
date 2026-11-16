@@ -2191,10 +2191,14 @@ Nor can the ceremony help a request that cannot fit the path it would prove.
 Before its `RETESTING` row, an ordinary residency ceremony runs the render
 site's capacity checks for the whole request under its own worker policy
 (`gate_capacity_stop.ceremony_activation_preflight`). It credits the DiT only
-when a finished render or a pipelined submission loaded it, or an explicit
-preset loaded it at the loader node; a pending load that the render site's own
+when a finished render, a pipelined submission or a load that succeeded
+placed it and no unload of every rank came since, or an explicit preset loaded
+it at the loader node; a pending load that the render site's own
 check cleared a moment earlier is charged, because the ceremony's load has not
-happened. The checks free what they can first, as at the render site. If one
+happened. That is the render site's one residency rule
+(`pending_load_relief.dit_resident`): every unload of every rank drains the
+memos it reads, so after a hard Clear VRAM a re-queue's checks charge the DiT
+the Workers dropped. The checks free what they can first, as at the render site. If one
 still refuses, no proof render could finish, so none runs
 (`nodes/gate_capacity_stop.py`). The ceremony writes one terminal INCONCLUSIVE
 row with the FSDP stop's fields (`cross_mode` `CAPACITY`, a bounded class of
@@ -2761,7 +2765,8 @@ which the driver cannot read, vouches it. A stock load's LoRA stack with
 (under `lora_low_rss` its stock price takes no LoRA term), and an option the driver
 cannot map are never read as a fit: they go to the Workers.
 Where that reads short it asks the Workers on this box the agreement's own
-read-only quote, and where one of them says its price refuses the load or
+read-only quote, with the model's own spec and LoRA stack
+(`pending_load_relief.model_spec`), and where one of them says its price refuses the load or
 offers the slab card, it runs the rescue above: unload, then trim. Under
 `auto` the fleet sets up at the first render, and before setup no quote can be
 asked; a status read can, and where it shows every rank on this box holding no
@@ -2779,20 +2784,24 @@ Where that price fits, or an input could not be read, the step frees nothing
 and reads nothing. It
 refuses nothing. Whatever the rescue freed, the render goes on to the ranks'
 agreement, which offers the card or refuses as before. A load is still to come
-under `auto` unless a finished render or a pipelined submission in this
-process placed the checkpoint, and under an explicit preset only where the
-loader deferred the placement; inside the gate's capacity check that check
-says itself whether the load ran. When the driver unloads every rank (an
+under `auto` unless a finished render, a pipelined submission or a load that
+succeeded (the no-render path's) in this process placed the checkpoint, and
+under an explicit preset only where the loader deferred the placement; inside
+the gate's capacity check that check says itself whether the load ran. When
+the driver unloads every rank (an
 identity ceremony's clean reload, the no-render path, the slab proof, the
 cross-mode reference, the FSDP cleanup, a rescue's dropped slot, a hard Clear
 VRAM) or a reset or restart stops the Workers' processes, the load is still to
 come again whatever this process placed before (ComfyUI's cached loader node
-does not place it again), and it stays so until a load succeeds: a successful
-render, the loader's placement or the no-render path's load. A check that
+does not place it again), whatever the capacity check says, and it stays so
+until a load succeeds: a successful
+render, the loader's placement or the no-render path's load. The unload also
+drains the render-site memos that named the model, so the checks that refuse
+charge it too (`dit_resident`, the rule they all read). A check that
 reads it does not clear it, since the load it lets through may still fail. The
 no-render path, which loads with no render, runs the same step between its
 unload and its load agreement. So a render whose model a finished render, a
-pipelined submission or the loader placed asks nothing. Where the memos do not
+pipelined submission or a load placed asks nothing. Where the memos do not
 know what the Workers hold (a retry after a failed or interrupted render, a
 swap), a render that reads short pays
 one quote with a 10 s deadline, or before setup one status read, and frees
@@ -3721,7 +3730,10 @@ available with 22.2 GiB about to be dropped, and MiniMax-H3-Image INT8 after
 BF16 needed 46.0 GiB against 34.1 with the 37.5 GiB BF16 DiT in the same slot.
 Now a price that does not fit asks the Workers on the driver host the
 agreement's own quote and counts the copy the load's own slot drops first
-(`swap_credit.py`, `nodes/loader_relief.py`). It counts only what the
+(`swap_credit.py`, `nodes/loader_relief.py`). At the render site the quote
+carries the model's own spec, LoRA stack included, read from the model as the
+dispatch reads it (`pending_load_relief.model_spec`), since a request carries
+it only once dispatch sets it, after these checks. It counts only what the
 Worker's own price credited, the row that names the drop and its bytes, so the
 driver never admits on a drop the agreement would not count: a stock resident
 only, never a slab-priced row, a reuse or a LoRA change that keeps its base.

@@ -388,7 +388,7 @@ copied from historical evidence.
    Classification and verdict logic are
    [`mesh_safety.py:261-262`](../src/dgx_monarch/mesh_safety.py#L261-L262 "anchor:StockLoadCapacityError"),
    [`mesh_safety.py:265-269`](../src/dgx_monarch/mesh_safety.py#L265-L269 "anchor:is_stock_load_capacity_error"),
-   [`driver_footprint.py:103-103`](../src/dgx_monarch/driver_footprint.py#L103-L103 "anchor:DriverFootprintCapacityError"), and
+   [`driver_footprint.py:104-104`](../src/dgx_monarch/driver_footprint.py#L104-L104 "anchor:DriverFootprintCapacityError"), and
    [`gate_verdict.py:74-102`](../src/dgx_monarch/nodes/gate_verdict.py#L74-L102 "anchor:publish_ceremony_verdict"). A driver-side
    refusal raised inside a first-use leg is covered by
    [`test_driver_footprint_preflight.py:536-585`](../tests/test_driver_footprint_preflight.py#L536-L585 "anchor:test_a_gate_leg_reports_it_as_capacity_with_the_numbers_intact").
@@ -983,7 +983,7 @@ copied from historical evidence.
   capacity checks refuse before its `RETESTING` row has not aborted: it writes
   one terminal INCONCLUSIVE row, publishes no process-local verdict and takes
   no lever, and the render it gates dispatches stock
-  ([`gate_capacity_stop.py:104-151`](../src/dgx_monarch/nodes/gate_capacity_stop.py#L104-L151 "anchor:record_capacity_stop"),
+  ([`gate_capacity_stop.py:103-150`](../src/dgx_monarch/nodes/gate_capacity_stop.py#L103-L150 "anchor:record_capacity_stop"),
   [`test_gate_capacity_stop.py:103-130`](../tests/test_gate_capacity_stop.py#L103-L130 "anchor:test_a_request_that_cannot_fit_runs_no_proof_render"),
   [`test_gate_capacity_stop.py:273-308`](../tests/test_gate_capacity_stop.py#L273-L308 "anchor:test_the_automatic_path_renders_stock_and_the_next_request_checks_again")).
   Early aborts, late post-A

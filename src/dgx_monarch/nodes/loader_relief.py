@@ -287,14 +287,17 @@ def render_credit(model: Any, request: Any) -> swap_credit.SwapCredit:
     """The swap credit for a render whose DiT load is still pending; never raises.
 
     The render-site checks that charge a pending load read it through
-    ``driver_unload.check_with_unload``. The question carries the request's own
-    model spec, LoRA stack included, so the Worker's answer is the one its
+    ``driver_unload.check_with_unload``. The question carries the model's own
+    spec, LoRA stack included (``pending_load_relief.model_spec``: no request
+    carries it while these checks run), so the Worker's answer is the one its
     sample-time agreement will give.
     """
+    from . import pending_load_relief
+
     try:
         mesh = getattr(model, "mesh", None)
-        spec = request.get("model") if isinstance(request, dict) else None
-        if (mesh is None or not isinstance(spec, dict) or not spec.get("unet_name")
+        spec = pending_load_relief.model_spec(model)
+        if (mesh is None or not spec.get("unet_name")
                 or mesh_safety.env_enabled(swap_credit.DISABLE_ENV)):
             return swap_credit.NONE
         name = str(spec["unet_name"])
@@ -304,7 +307,7 @@ def render_credit(model: Any, request: Any) -> swap_credit.SwapCredit:
             return swap_credit.NONE
         credit = swap_credit.from_answers(asked.mine, "cond", box=graph_load_price.driver_box(mesh))
         # A dual-model guider's second DiT, as the request carries it.
-        uncond = request.get("uncond_model")
+        uncond = request.get("uncond_model") if isinstance(request, dict) else None
         others: list[dict[str, Any]] | None = [] if uncond is None else None
         if isinstance(uncond, dict) and isinstance(uncond.get("unet_name"), str) and uncond["unet_name"]:
             others = [{"unet_name": uncond["unet_name"], "options": uncond.get("options"),

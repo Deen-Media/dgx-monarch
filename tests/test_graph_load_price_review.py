@@ -88,8 +88,12 @@ def _kromoss(lora: bool) -> dict:
 
 def test_a_twin_the_fsdp_launch_refuses_is_never_named(monkeypatch):
     """W4A8 refuses FSDP at launch, class P (cell 6 w4a8); on uly2+fsdp at 58 GiB
-    a26122b named it as the file that would fit."""
-    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 58 * _GIB)
+    a26122b named it as the file that would fit. The loader now charges the
+    template's render activations too (12.1 GiB at sp 2), so the W4A8 DiT fits
+    by size only from about 65.2 GiB, and the load itself from about 72.8; at
+    68 GiB only the FSDP rule keeps the W4A8 DiT out, and the W4A8 upsampler
+    fits and is named."""
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 68 * _GIB)
     text = _refuse(_pair("uly2+fsdp"), _template())
     assert W4A8 not in text
     assert "p-h3-image_prompt_upsampler_w4a8.safetensors" in text  # driver models still are

@@ -17,6 +17,7 @@ from typing import Any
 
 from . import capacity_fit, mesh_safety, residency_mode
 from .capacity_floor import ABSOLUTE_HOST_FLOOR_BYTES
+from .h3_rows import positive_entries
 from .loader_options import weight_dtype_from_options
 from .log import get_logger
 from .refusal import RefusalClass, refusal
@@ -481,11 +482,10 @@ def ref_pixel_volume_from_latents(
 
     ``pack_conditioning`` preserves shape through ``tree_to_cpu``. These bytes
     are already allocated, so report them without charging them again. Malformed
-    extras contribute zero and do not abort the render.
+    extras contribute zero; a guider's entries count (``h3_rows.positive_entries``).
     """
-    positive = request.get("positive") if isinstance(request, Mapping) else None
     pixels = blocks = frames = 0
-    for cond in positive if isinstance(positive, (list, tuple)) else ():
+    for cond in positive_entries(request):
         extra = cond[1] if isinstance(cond, (list, tuple)) and len(cond) > 1 else None
         if not isinstance(extra, Mapping):
             continue

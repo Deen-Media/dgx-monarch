@@ -186,9 +186,10 @@ def _live(rig_) -> None:
     handle.config = SimpleNamespace(hosts=(), worker_args={})
 
 
-def _request(loras=(), uncond: dict | None = None) -> dict:
-    request = {**_h3_request(),
-               "model": {"unet_name": UNET, "options": {}, "loras": [dict(entry) for entry in loras]}}
+def _request(uncond: dict | None = None) -> dict:
+    """The request as a sampler hands it to the checks: no ``"model"`` key, which
+    render_submit sets only after them, and a dual-model guider's second spec."""
+    request = _h3_request()
     return {**request, "uncond_model": uncond} if uncond is not None else request
 
 
@@ -203,10 +204,12 @@ def test_an_h3_render_whose_load_replaces_an_old_model_proceeds(monkeypatch, tmp
     requests: list = []
     monkeypatch.setattr(capacity_agreement, "collect", lambda handle, request, world, *, deadline_s:
                         requests.append(request) or [_answer(0, held, box="this box")])
-    # The question carries the render's own LoRA stack: without it the Worker would read a
-    # reuse of the held base and stack as a swap, and credit a drop that never happens.
+    # The question carries the render's own LoRA stack, read from the model as the dispatch
+    # reads it: without it the Worker would read a reuse of the held base and stack as a
+    # swap, and credit a drop that never happens.
     stack = ({"name": "style.safetensors", "strength": 0.8},)
-    render_preflight.activation_footprint_preflight_for_request(rig_.model, _request(stack), _h3_latent())
+    rig_.model.loras = stack
+    render_preflight.activation_footprint_preflight_for_request(rig_.model, _request(), _h3_latent())
     assert calls.unload == 0 and rig_.rpc == []
     assert requests[0]["specs"] == [{"unet_name": UNET, "options": {}, "loras": list(stack), "slot": "cond"}]
     assert len(requests) == 1, "a render with one DiT asks once"

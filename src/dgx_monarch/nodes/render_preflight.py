@@ -277,7 +277,7 @@ def _driver_footprint_preflight_for_request(
                 model, handle, requested_worker_args=worker_args)
         weights_resident = (
             str(getattr(mesh, "topology_preset", "auto") or "auto") != "auto"
-            or (unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET, _LAST_DRIVER_CHARGED_UNET)
+            or (pending_load_relief.dit_resident(unet_name, charged=True)
                 if weights_loaded is None else weights_loaded)
             or driver_footprint.weights_owned_by_activation_preflight(family))
         pixels, blocks, frames = driver_footprint.ref_pixel_volume_from_latents(
@@ -341,10 +341,10 @@ def activation_footprint_preflight_for_request(
     if forced_family is not None:
         family_select.assert_override_admits_checkpoint(forced_family, path)
     family_select.warn_auto_admits_checkpoint(family, path)
-    # Sample memo credit before any check, so this render cannot credit its
-    # own newly cleared pending load.
-    memo_credit = (unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET, _LAST_DRIVER_CHARGED_UNET)
-                   if weights_loaded is None else weights_loaded)
+    # Sampled before any check, so this render cannot credit its own newly cleared pending load.
+    resident = pending_load_relief.dit_resident  # the one residency rule
+    memo_credit = resident(unet_name, charged=True) if weights_loaded is None else weights_loaded
+    placed = resident(unet_name) if weights_loaded is None else weights_loaded
     from ..render_memory_price import preflight_render_memory
 
     # The grid the workers will sample, size tags applied, computed once for
@@ -361,17 +361,17 @@ def activation_footprint_preflight_for_request(
     ]
     if family in mesh_safety.REF_POSE_TOKEN_FAMILIES:
         steps.append(lambda: _ref_pose_activation_preflight(
-            family, path, unet_name, request, video_shape))
+            family, path, unet_name, request, video_shape, placed))
     driver_unload.check_with_unload(steps, subject=unet_name, swap=(model, request), handle=getattr(
         getattr(model, "mesh", None), "handle", None))
     pending_load_relief.relieve(model, request, family=family, path=path, weights_loaded=weights_loaded)
 
 
 def _ref_pose_activation_preflight(family: str, path: str, unet_name: str,
-                                   request: dict, video_shape: Any) -> None:
+                                   request: dict, video_shape: Any, placed: bool) -> None:
     """The reference/pose check (#47) over every positive entry's extras, as
     ``render_rows.ref_pose_shapes`` reads them; the sample deadline counts the
-    same rows."""
+    same rows. ``placed``: the residency rule's word, an eager load included."""
     ref_shapes, pose_shape = ref_pose_shapes(request)
     mesh_safety.activation_footprint_preflight(
         family, path, unet_name,
@@ -380,14 +380,14 @@ def _ref_pose_activation_preflight(family: str, path: str, unet_name: str,
         pose_shape=pose_shape,
         sp_degree=1,  # sharding only shrinks the true footprint: never a
                       # false pass, at worst an over-eager refusal.
-        weights_resident=(unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET)),
+        weights_resident=placed,
     )
 
 
-# Session lifetime, as are the two memos below; nodes/recycle_drain drains all
-# three with the loader-site memos. A stale value in any of them can omit a
-# charge but never causes a false refusal. A successful render proves its
-# checkpoint is already in ``MemAvailable``.
+# Session lifetime, as are the two memos below; every unload of every rank
+# drains all three (pending_load_relief.note_unloaded, which recycle_drain runs
+# too). A stale value can omit a charge but never causes a false refusal. A
+# successful render proves its checkpoint is already in ``MemAvailable``.
 _LAST_RENDERED_UNET: str | None = None
 
 # Session lifetime. Stamped when preflight clears a pending load, before either
