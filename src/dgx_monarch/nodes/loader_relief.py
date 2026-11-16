@@ -23,7 +23,10 @@ is raised:
    with the graph's driver models charged whole, since none of them is held
    any more. The loader's price already counts held models against this
    graph's own (``loader_graph.credited_terms``), so the unload makes room
-   only by what ComfyUI held beyond them: another graph's larger encoder.
+   only by what ComfyUI held beyond them: another graph's larger encoder. At
+   a render site the encodes have run, so the price keeps those models out
+   of the DiT's load window (``graph_load_price.load_window_models``), and
+   there the unload makes room by all it frees.
    Where ComfyUI holds no model the same step still returns the allocator's
    cached blocks, and the load is priced again if the reading rose: the
    driver's ComfyUI keeps that cache for longer since its free-memory reading
@@ -190,10 +193,9 @@ def _unload_driver_models(mesh: Any) -> tuple[driver_unload.Unloaded | None, str
     # ComfyUI's own /free sequence. With no model held it still returns the
     # allocator's cached blocks, which the driver's ComfyUI keeps for longer
     # since its free-memory reading follows MemAvailable (driver_uma_memory.py).
+    # It empties the loader's charge memo where a model left (driver_unload.unload).
     outcome = driver_unload.unload(mm, held)
     if outcome.names:
-        # Nothing ComfyUI held is loaded now, so no earlier charge stands for it.
-        loader_graph.reset_charged_artifacts()
         return outcome, ""
     # No model left ComfyUI: worth a second price only where the released cache shows in the reading.
     return (outcome if outcome.gain >= _CACHE_WORTH_BYTES else None), ""

@@ -2304,8 +2304,11 @@ first render, which charges the host copy as well: the render site then frees
 the driver's models first ("A model load still to come", below).
 Held models credit what ComfyUI holds and no more: it cannot say which files
 they came from, so a held encoder stands in for this graph's, never for its
-upsampler too. The stack counts against MemAvailable even when no DiT is left
-to place. The refusal leads with one plain sentence, the figures inside its
+upsampler too. A held text encoder, whose patcher ComfyUI marks `is_clip`,
+counts at the 1.144 resident ratio measured on 2026-08-05, which the charge
+rounds up to 1.15, and any other held model at its own size, against the
+graph's encoders first. The stack counts against MemAvailable even when no
+DiT is left to place. The refusal leads with one plain sentence, the figures inside its
 first 200 characters, and then names what would fit, each tried in both
 windows: same-stem files on disk here in place of the DiT or a driver model, a
 switch whose other setting skips a model, and a pair with the Init node's
@@ -2328,19 +2331,24 @@ p-h3-image upsampler on rendered unpriced, only because the box had room. The
 first DGX Monarch node that renders such a queue, a sampler or Identity Gate
 (DGX Monarch), which ComfyUI runs on every queue, runs the same price before
 any session or Worker call and at every world, for a checkpoint the loader did
-not price in this prompt (each price records the ComfyUI prompt id it ran for),
-under `auto` only, and only for what is not yet held. The DiT is charged while
-its deferred load is pending, as the loader memo reads it: Reset attached mesh,
-Clear and retry and a Clear VRAM node set to `recycle` drain that memo, a
-Worker restart drains it only when a Worker call fails, after this price, and a
-Clear VRAM node at `soft` or `hard` does not, so after those two the DiT reads
-as held and the render-site checks price it. The driver models are charged
-beyond what ComfyUI holds. By then ComfyUI holds the encoders and the
-upsampler, and MemAvailable counts them at their resident size, so held bytes
-are credited as encoders at the 1.144 ratio measured on 2026-08-05, which the
-charge rounds up to 1.15, and never above it. A VAE still charged is not held,
-so it loads for the decode after the DiT places: it stays in the settled window
-and leaves the load window. The reference and guide encodes have run by then
+not price in this queue (each price records the ComfyUI prompt id it ran for
+and the running queue item's number, since a client may send its own id
+twice), under `auto` only, and only for what is not yet held. The DiT is
+charged while its deferred load is pending, as the loader memo reads it: Reset
+attached mesh, Clear and retry and a Clear VRAM node set to `recycle` drain
+that memo, a Worker restart drains it only when a Worker call fails, after this
+price, and a Clear VRAM node at `soft` or `hard` does not, so after those two
+the DiT reads as held and the render-site checks price it. The driver models
+are charged beyond what ComfyUI holds, held encoders at their resident size as
+above. None of them is in the load window: the encodes have run, and the DiT
+loads inside this node's own render, before any other node runs. So a model
+still charged is one ComfyUI no longer holds although its encode ran (the
+driver unloaded it since, or an earlier queue's output stands in for it), or
+one that loads after the DiT places, as the VAE does for the decode. The
+settled window keeps them all, since the next queue's encode can load them
+again beside the DiT; where that window binds, a small DiT beside large
+encoders, the price still refuses for encoders this queue will not load. The
+reference and guide encodes have run by then
 too, and the render activations belong to the render-site checks that run next,
 which credit what the Workers retain and free what ComfyUI can reload, so this
 price leaves all three out; charged here, they would refuse a re-queue of a
@@ -2366,9 +2374,10 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
   Reference to Video (MiniMax H3) with a reference video, at the loader's
   40 GiB; and the stock loader nodes whose
   inputs the loader charges (Load CLIP, the dual, triple and quadruple CLIP
-  loaders, LTX's audio-video text encoder loader, the checkpoint loaders and
-  Load Diffusion Model), at what the loader charges for those inputs: a text
-  encoder's file at 1.15, a model's whole, several files summed. It wraps those
+  loaders, LTX's audio-video text encoder loader, Load CLIP Vision, the
+  checkpoint loaders and Load Diffusion Model), at what the loader charges for
+  those inputs: a text encoder's or a CLIP Vision file at 1.15, a model's
+  whole, several files summed. It wraps those
   classes' node methods on the class objects in ComfyUI's node mapping, so
   ComfyUI's own internal reloads, other packs' loaders and every Worker path
   are out by construction; a Worker, by its environment marker, installs
@@ -2410,12 +2419,16 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
   a configuration it cannot read leaves the Init node's own reserve.
 - **The promise.** A marked spend is never refused. An unmarked spend is refused
   only where it would take the box under its floor
-  (`driver_footprint.reserve_bytes`, the loader's) after every rescue: the room is
-  MemAvailable plus what this process's torch pool holds unallocated, and before
-  it refuses it unloads what ComfyUI holds and trims the Workers' idle caches,
-  as the render-site checks do. That is a new refusal for a queue that today
-  renders only by dipping under the floor. The loader's held-model credit and
-  its credits for a model a later load drops are not this room's, so a spend
+  (`driver_footprint.reserve_bytes`, the loader's) after every rescue that can
+  run: the room is MemAvailable plus what this process's torch pool holds
+  unallocated, and before it refuses it unloads what ComfyUI holds, as the
+  render-site checks do, unless a render is running in this driver or
+  `DGXM_DISABLE_DRIVER_UNLOAD=1` is set, and where a live mesh has completed
+  setup it also has the Workers release their idle caches. That is a new
+  refusal for a queue that today renders only by dipping under the floor. The
+  loader's held-model
+  credit and its credits for a model a later load drops are not this room's,
+  so a spend
   ComfyUI runs before the loader can be refused where the loader-first order
   would have admitted it, for example under an explicit preset with another
   model still in the Worker's slot; the refusal is still true of the box.
@@ -2446,11 +2459,15 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
 - **The refusal.** Class C under `driver_footprint_preflight`, the driver-host
   guard of the frozen vocabulary, with no card, as its own type, so no consent
   card matching the stock-load family offers a slab load for an encode. It
-  names the spend, its charge and the room above the floor, says whether this
-  prompt reached the loader (the loader priced it but did not charge this spend
-  at its size, or it has not priced this prompt at all), and that nothing was
-  spent. Its remedies are a shorter clip, a smaller canvas or file, and memory
-  freed on the box; clearing the Sparks frees what the Workers hold there, and
+  names the spend, its charge rounded up and the room above the floor rounded
+  down, so a room short of the charge never prints as the charge, says whether
+  this prompt reached the loader (the loader priced it but did not charge this
+  spend at its size, or it has not priced this prompt at all), and that nothing
+  was spent. What the driver unloaded or released before it, or why it kept
+  ComfyUI's models, it says only where that ran, as every render-site refusal
+  does (`driver_unload.py`). Its remedies are a shorter clip, a smaller canvas
+  or file, and memory freed on the box; clearing the Sparks frees what the
+  Workers hold there, and
   the next queue then runs the loader, whose refusal itemises the whole graph.
   A spend it admits logs one line with its charge and room.
   `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for
@@ -2461,8 +2478,8 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
   references and frame anchors, which the loader charges 0 on every queue by an
   earlier ruling, so a re-queue is no worse than a first queue there (filed for
   a loader charge with its own measurement); LTX's guide and image-to-video
-  encodes, CLIP vision, ControlNet and IP-adapter loads, and the prompt
-  expander's generation, none of them charged at the loader either; and a text
+  encodes, ControlNet and IP-adapter loads, and the prompt expander's
+  generation, none of them charged at the loader either; and a text
   encoder ComfyUI faults back into a CLIP it already built, which returns the
   box to the state the last render held. The render activations stay with the
   render-site checks.
@@ -2470,7 +2487,16 @@ driver prices the spend at the node that makes it (`driver_spend_price.py`):
 The loader's reference encode survives its held-model credit, as the guide's
 does: it is a transient, and a held model does not show that it has run. A
 first queue of a video-reference graph with ComfyUI's models held is charged
-its 40 GiB. LTX's audio-video text encoder loader (`LTXAVTextEncoderLoader`) is
+its 40 GiB. So is a re-queue that runs the loader again (its DiT or an Init
+node widget changed) while ComfyUI serves Reference to Video's output from its
+cache, though nothing encodes then: ComfyUI lists the outputs it serves from
+cache before any node runs, but only in its executor's own messages
+(`execution_cached`), sent to the client and written to the history when the
+queue ends. No node can read them, so the loader cannot tell that encode from
+one still to run. On a box short of those
+40 GiB the loader refuses such a re-queue; a re-queue that leaves the loader's
+inputs as they were keeps its output, and the sampler then prices it without
+the encode. LTX's audio-video text encoder loader (`LTXAVTextEncoderLoader`) is
 charged for what it loads: its `text_encoder` file as a text encoder, and of
 the LTX checkpoint it names only the text projection ComfyUI keeps, read from
 the file's header (`nodes/driver_model_charge.py`, cached by path), since with
@@ -3557,7 +3583,9 @@ now reuses the backup and is credited it (below); a LoRA the held stack lacks
 still meets this card. That slot is
 weighed like any credited one, and the card names the model asked for: "The
 model loaded earlier (wan_animate_2_bf16) holds about 29.6 GiB on the head that
-this change needs." Only a row the price credited the slot's own stock copy
+this change needs." A loader `weight_dtype` cast of the file the slot holds
+is the same change, priced as a swap, and gets the same card at the agreement
+and at the loader. Only a row the price credited the slot's own stock copy
 counts: a slab, comfy-managed or FSDP resident of the same file keeps the plain
 rule. The rule reads the file the agreement names, which at the sampler is the
 cond model's, so an uncond row counts only when it holds that same file. A model an earlier sampler of the same graph loaded is
@@ -3773,10 +3801,19 @@ rescue; `DGXM_DISABLE_SWAP_CREDIT=1` turns the credit off at both. The loader's
 price already counts held models against the graph's own, so the unload makes
 room only by what ComfyUI held beyond them, another graph's larger encoder;
 in the two records above it would have added nothing, and the credit alone
-makes the room. Where ComfyUI holds no model the same step still returns the
-allocator's cached blocks, and the load is priced again if the reading rose
-by a tenth of a GiB or more. The driver's ComfyUI keeps that cache for longer
-since its free-memory reading follows MemAvailable
+makes the room. At a render site, where a sampler or Identity Gate (DGX
+Monarch) prices a re-queue whose loader ComfyUI kept, the graph's encodes have
+run, so the price after the unload keeps the encoders out of the load window
+(above), and there the unload makes room by all it frees. Every unload that
+takes a model from ComfyUI empties the loader's memo of driver models it
+charged, at the loader, at a render site and at a Clear VRAM node set to
+`hard`: nothing ComfyUI held is loaded then, so no earlier charge stands for
+it. ComfyUI's own `/free` route leaves the memo,
+as it did in 1.4.0, so a loader after it with nothing held can still credit a
+stack an earlier loader charged. Where ComfyUI holds no model the same step
+still returns the allocator's cached blocks, and the load is priced again if
+the reading rose by a tenth of a GiB or more. The driver's ComfyUI keeps that
+cache for longer since its free-memory reading follows MemAvailable
 (`driver_uma_memory.install_driver`, above), and on the driver host the kept
 blocks count against the Worker's load.
 

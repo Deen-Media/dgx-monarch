@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from dgx_monarch import consent_pending, driver_footprint, mesh_safety, old_model
+from dgx_monarch import consent_pending, driver_footprint, driver_unload, mesh_safety, old_model
 from dgx_monarch.nodes import (
     gate_node,
     graph_live,
@@ -35,8 +35,11 @@ from dgx_monarch.refusal import RefusalClass, parse_refusal_tag, refusal
 from test_graph_load_price import (  # noqa: F401  # the rig is an autouse fixture
     _GIB,
     DIT,
+    DIT_INT8,
     SIZES,
+    TE,
     UPSAMPLER,
+    VAE,
     _Mesh,
     _pair,
     _rig,
@@ -180,28 +183,58 @@ def test_a_held_encoder_credits_its_own_bytes_not_the_upsampler(monkeypatch):
     """The hardware's first one-rank session: the switch-false render left the DiT
     resident and ComfyUI holding the text encoder and VAE; cell 9 then took the
     head to 7.6 GiB. a26122b credited the whole stack and admitted at 14.6 GiB."""
+    from test_requeue_price import _comfy_holds
+
     graph = _template()
     switch = next(key for key, node in graph.items() if node["class_type"] == "ComfySwitchNode")
     graph[switch]["inputs"]["switch"] = False
     assert loader_preflight.preflight_loader_footprint(_Mesh(), DIT, {}, graph) is None
-    held = SIZES[("text_encoders", "p-h3-image_text_encoder_bf16.safetensors")] + SIZES[
-        ("vae", "p-h3-image_vae_bf16.safetensors")]
-    loaded = types.SimpleNamespace(model=object(), model_memory=lambda: held)
-    management = types.ModuleType("comfy.model_management")
-    management.current_loaded_models = [loaded]  # type: ignore[attr-defined]
-    comfy = types.ModuleType("comfy")
-    comfy.model_management = management  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "comfy", comfy)
-    monkeypatch.setitem(sys.modules, "comfy.model_management", management)
+    _comfy_holds(monkeypatch, TE, VAE)
+    monkeypatch.setenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, "1")    # the first price's words
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(14.6 * _GIB))
     text = _refuse(_Mesh(), _template())
     assert "comfy already holds 13.7 GiB of loaded models" in text
     graph[switch]["inputs"]["switch"] = True
-    terms = loader_graph.credited_terms(loader_graph.driver_stack_terms(graph, family="minimax_h3"))
-    encoders = SIZES[("text_encoders", UPSAMPLER)] + SIZES[
-        ("text_encoders", "p-h3-image_text_encoder_bf16.safetensors")]
-    assert terms.models_bytes == int(encoders * loader_graph.TE_RESIDENT_RATIO) + SIZES[
-        ("vae", "p-h3-image_vae_bf16.safetensors")] - held
+    site = graph_load_price.site_terms(loader_graph.driver_stack_terms(
+        graph, family="minimax_h3"), graph_load_price.SITE_LOADER)
+    # The review of the 1.5.0 promotion (a2#3): the held encoder counts at its measured
+    # resident size, as it does at the sampler, and the held VAE at its own, against the
+    # graph's encoders first; the graph's VAE stays charged. So what stays charged is the
+    # upsampler's charge and the encoder's 0.006 of its size the 1.15 rounds up.
+    te = SIZES[("text_encoders", TE)]
+    assert site.models_bytes == int((SIZES[("text_encoders", UPSAMPLER)] + te)
+                                    * loader_graph.TE_RESIDENT_RATIO) - int(
+        te * graph_load_price.HELD_ENCODER_RATIO)
+
+
+def test_a_loader_run_again_beside_the_held_encoders_is_not_short_by_their_rounding(monkeypatch):
+    """Review of the 1.5.0 promotion, a2#3: p-h3-image rendered, ComfyUI holds its two encoders
+    and its VAE, and the next queue changes only the DiT, to the INT8 file, so the loader runs.
+    It credited the held encoders at their raw size against a 1.15 charge, so 3.97 GiB of models
+    stayed charged that MemAvailable already counts: at 48 GiB the load was 2.5 GiB short, the
+    driver unloaded all three models, and the price with them charged whole refused again. At
+    the measured 1.144, as the sampler credits them, 0.16 GiB stays and the load fits."""
+    from test_requeue_price import _comfy_holds
+
+    graph = _template()
+    loader = next(key for key, node in graph.items() if node["class_type"] == "DGXMonarchUNETLoader")
+    graph[loader]["inputs"]["unet_name"] = DIT_INT8
+    calls = _comfy_holds(monkeypatch, TE, UPSAMPLER, VAE)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 48 * _GIB)
+    assert loader_preflight.preflight_loader_footprint(_Mesh(), DIT_INT8, {}, graph) is None
+    assert calls.unload == 0 and consent_pending.pending_cards() == []
+
+
+def test_a_held_model_comfyui_does_not_mark_as_an_encoder_counts_at_its_own_size(monkeypatch):
+    """The wall a2#3's credit keeps: a VAE ComfyUI holds before the graph's encoders load is
+    no encoder, so it is not read at the encoders' ratio. The price is the one before."""
+    from test_requeue_price import _comfy_holds
+
+    _comfy_holds(monkeypatch, VAE)
+    terms = loader_graph.driver_stack_terms(_template(), family="minimax_h3")
+    site = graph_load_price.site_terms(terms, graph_load_price.SITE_LOADER)
+    assert site.models_bytes == terms.models_bytes - SIZES[("vae", VAE)]
+    assert site.models_bytes == loader_graph.credited_terms(terms).models_bytes
 
 
 # --- 3 and 8. every stock fallback says why, with a remedy that works -------

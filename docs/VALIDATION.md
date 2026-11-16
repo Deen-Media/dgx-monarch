@@ -470,6 +470,15 @@ have run only in CPU tests and the Studio browser rounds (NOT RUN below).
     command palette, Fleet and a saved Library workflow, which load a workflow
     through the same inspection as the Workflow list; and the dev bundle at
     390x844 ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#apex-review-checks-2026-11-15)).
+- **NOT RUN for the loader-price fixes of the review of the 1.5.0 promotion
+  (2026-11-16)**, which admit, or offer a clear, where the commit before them
+  refused, each held by CPU tests alone: a re-queue whose loader ComfyUI
+  kept, priced at the sampler after the driver unloaded its encoders, with
+  those encoders out of the load window; the same price beside a swap credit;
+  a loader that runs
+  again while ComfyUI holds the graph's encoders, crediting them at 1.144; and
+  the Old model in the way card for a loader `weight_dtype` change on the file
+  a Worker holds stock.
 - Build and install, on `35f1486`, the release commit of 2026-11-01, in a
   disposable Python 3.12 venv that holds only `build` and `pip`:
   `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and

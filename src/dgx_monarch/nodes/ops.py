@@ -63,7 +63,11 @@ def _free_driver_models(level: str) -> dict:
     before = psutil.virtual_memory().available
     unloaded = False
     if level == "hard":
-        mm.unload_all_models()
+        # The driver's own unload, ComfyUI's /free sequence: where a model left, no
+        # earlier loader charge stands for it, so it also empties that memo.
+        from ..driver_unload import held_models, unload
+
+        unload(mm, held_models(mm))
         unloaded = True
     mm.soft_empty_cache()
     after = psutil.virtual_memory().available

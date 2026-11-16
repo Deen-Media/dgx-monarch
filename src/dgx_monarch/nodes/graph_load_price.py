@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any
 
-from .. import box_names, consent_pending, driver_footprint
+from .. import box_names, consent_pending, driver_footprint, driver_spend_marks
 from ..log import get_logger
 from .graph_live import SWITCH_TITLES, is_link, live_nodes
 from .graph_twins import _SHARDED_KINDS, _gib, _join, dit_twins, model_twins
@@ -57,25 +57,29 @@ def _site_words(site: str) -> str:
     node = _SITE_NODES.get(site)
     return (f"at {node} (the UNET Loader's output came from an earlier queue)" if node
             else "at the loader node")
-# Session lifetime, FIFO-capped through loader_graph.remember: the ComfyUI prompt
-# id and checkpoint of each price that ran, so a sampler prices only a prompt
-# whose loader did not. A lost entry prices a prompt twice; it never skips one.
+# Session lifetime, FIFO-capped through loader_graph.remember: the queue (the
+# ComfyUI prompt id and the running item's number, ``driver_spend_marks.queue_key``)
+# and checkpoint of each price that ran, so a sampler prices only a queue whose
+# loader did not. A client may send its own prompt id again, and ComfyUI takes it,
+# so the id alone would carry one queue's price to the next. A lost entry prices
+# a queue twice; it never skips one.
 _PRICED_PROMPTS: dict[str, None] = {}
 
 
 def site_terms(terms: DriverStackTerms, site: str) -> DriverStackTerms:
     """The terms the price charges at ``site``, held models credited.
 
-    At a render site the graph's encoders have run, so ComfyUI's held bytes are
-    read as encoders at their measured resident size, which MemAvailable already
-    counts. The encodes have run too, and the render-site checks that run next
-    price the activations, crediting what the Workers retain and freeing what
-    ComfyUI can reload (``render_preflight``), so charging them here would refuse
-    a re-queue the box just rendered.
+    At every site a text encoder ComfyUI holds is credited at its measured
+    resident size, which MemAvailable already counts, and any other held model
+    at its own. At a render site the encodes have run, and the render-site
+    checks that run next price the activations, crediting what the Workers
+    retain and freeing what ComfyUI can reload (``render_preflight``), so
+    charging them here would refuse a re-queue the box just rendered.
     """
+    credited = credited_terms(terms, HELD_ENCODER_RATIO)
     if site not in RENDER_SITES:
-        return credited_terms(terms)
-    return replace(credited_terms(terms, HELD_ENCODER_RATIO), ref_bytes=0, guide_bytes=0,
+        return credited
+    return replace(credited, ref_bytes=0, guide_bytes=0,
                    activation_bytes=0, guide_note=f"encoded before {_SITE_NODES[site]}",
                    activation_note="the render-site checks price them next")
 
@@ -104,12 +108,16 @@ def log_alternatives(terms: DriverStackTerms, unet_name: str, avail: int, sum_fi
 def load_window_models(terms: DriverStackTerms, site: str) -> tuple[int, tuple[str, ...]]:
     """The driver models a deferred load meets, in bytes and by name.
 
-    At a render site a VAE still charged is not held, so it loads for the decode,
-    after the DiT places: the settled window carries it, and the load window not.
+    At a render site none: every node upstream of it has run, and the DiT loads
+    inside its own render, before any other node runs. A model still charged
+    there is not held, so either its encode ran (ComfyUI unloaded it since, or
+    an earlier queue's cached output stands in for it) or it loads after the
+    DiT places (a VAE, for the decode): the settled window carries it, and the
+    load window not.
     """
-    if site not in RENDER_SITES:
-        return terms.models_bytes, terms.models
-    return terms.models_bytes - terms.vae_bytes, (*terms.te_artifacts, *terms.model_artifacts)
+    if site in RENDER_SITES:
+        return 0, ()
+    return terms.models_bytes, terms.models
 
 
 def executing_prompt_id() -> str | None:
@@ -124,24 +132,26 @@ def executing_prompt_id() -> str | None:
 
 
 def note_priced(unet_name: str) -> None:
-    """Record that the graph price ran for this checkpoint in the executing prompt."""
+    """Record that the graph price ran for this checkpoint in the executing queue."""
     from .. import driver_spend_price
 
     driver_spend_price.warn_if_unwrapped()
     prompt_id = executing_prompt_id()
     if prompt_id is not None:
-        remember(_PRICED_PROMPTS, f"{prompt_id}\x00{unet_name}")
+        remember(_PRICED_PROMPTS, f"{driver_spend_marks.queue_key(prompt_id)}\x00{unet_name}")
 
 
 def priced_this_prompt(unet_name: str) -> bool | None:
-    """Whether the graph price ran for this checkpoint in this prompt; None without a prompt id."""
+    """Whether the graph price ran for this checkpoint in this queue; None without a prompt id."""
     prompt_id = executing_prompt_id()
-    return None if prompt_id is None else f"{prompt_id}\x00{unet_name}" in _PRICED_PROMPTS
+    return (None if prompt_id is None
+            else f"{driver_spend_marks.queue_key(prompt_id)}\x00{unet_name}" in _PRICED_PROMPTS)
 
 
 def priced_any_this_prompt(prompt_id: str) -> bool:
-    """Whether the graph price ran for any checkpoint in the prompt with this id."""
-    return any(key.startswith(f"{prompt_id}\x00") for key in list(_PRICED_PROMPTS))
+    """Whether the graph price ran for any checkpoint in the running queue of the prompt with this id."""
+    queue = f"{driver_spend_marks.queue_key(prompt_id)}\x00"
+    return any(key.startswith(queue) for key in list(_PRICED_PROMPTS))
 
 
 def note_admitted(terms: DriverStackTerms, site: str, prompt: object = None) -> None:
@@ -150,8 +160,6 @@ def note_admitted(terms: DriverStackTerms, site: str, prompt: object = None) -> 
     note_stack_charged(terms)
     prompt_id = executing_prompt_id()
     if site == SITE_LOADER and terms.resolved and prompt_id is not None:
-        from .. import driver_spend_marks
-
         driver_spend_marks.note_charged(prompt_id, terms, prompt)
 
 
@@ -220,9 +228,13 @@ def unstable_identity_clause(names: tuple[str, ...]) -> str:
             "copy to finish, then queue the render again.")
 
 
-def _budget_note(window: str, terms: DriverStackTerms, load_models: int | None) -> str:
+def _budget_note(window: str, terms: DriverStackTerms, load_models: int | None,
+                 site: str = SITE_LOADER) -> str:
     if window != WINDOW_TRANSIENT:
         return terms.budget_clause
+    if site in RENDER_SITES:
+        return (f"no driver model, since this graph's encodes ran before {_SITE_NODES[site]} "
+                "and a model it loads again loads after the DiT places")
     if load_models is None:
         return ("the driver stack is not in this window: the eager load peaks before "
                 "the text encoder, the VAEs and the reference encodes are built")
@@ -261,7 +273,7 @@ def loader_refusal(
         f"{_gib(estimate.projected)} GiB to place on the driver host, "
         f"{_gib(estimate.usable)} GiB usable ({_gib(estimate.mem_available)} GiB "
         f"MemAvailable minus a {_gib(floor_reserve)} GiB reserve and "
-        f"{_budget_note(window, terms, load_models)}). Refuses {unet_name} at the {window} "
+        f"{_budget_note(window, terms, load_models, site)}). Refuses {unet_name} at the {window} "
         f"window. Charged: DiT weights "
         f"{_gib(estimate.weight_bytes)} GiB ({notes.get('weights', 'not charged')}); "
         f"stock host copy {_gib(estimate.arena_bytes)} GiB "

@@ -64,9 +64,17 @@ def running_item(prompt_id: str | None) -> Any:
         return None
 
 
-def _key(prompt_id: str, term: str) -> str:
+def queue_key(prompt_id: str) -> str:
+    """This queue of this prompt: its id and the running item's number (empty where none runs).
+
+    Every per-queue memo keys by it (``graph_load_price`` records each graph price under it too).
+    """
     item = running_item(prompt_id)
-    return f"{prompt_id}\x00{'' if item is None else item[0]}\x00{term}"
+    return f"{prompt_id}\x00{'' if item is None else item[0]}"
+
+
+def _key(prompt_id: str, term: str) -> str:
+    return f"{queue_key(prompt_id)}\x00{term}"
 
 
 def load_bytes(inputs: Mapping[str, Any], class_type: str = "") -> int:

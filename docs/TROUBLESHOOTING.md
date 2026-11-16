@@ -2379,15 +2379,18 @@ unselected branch of an If/Else or Soft Switch with a fixed value reaches, or
 that no output node reaches, never loads and is not charged. When ComfyUI
 already holds models, the price credits only the bytes ComfyUI holds against
 the graph's models, never more, since it cannot tell which files they came
-from; until 2026-11-05 any one held model credited the whole stack. ComfyUI
+from; until 2026-11-05 any one held model credited the whole stack. A held
+text encoder counts at its measured resident size, any other held model at
+its own. ComfyUI
 does not run a node again while nothing upstream of it changed, so a re-queue in
 the same driver can skip the UNET loader; under `auto` the sampler, or
 Identity Gate (DGX Monarch), then runs this price, for what is not yet held: the
 DiT while its load is pending, and the models beyond what ComfyUI holds, which
-by then include the encoders and any upsampler, counted at their measured
-resident size. A VAE ComfyUI does not hold yet loads for the decode, after the
-DiT, so it is charged in the resident window only. The DiT counts as pending
-after Reset attached mesh, Clear and retry or a Clear VRAM node set to
+by then include the encoders and any upsampler. Their encodes have run, so a
+model still charged there, a VAE that loads for the decode after the DiT or an
+encoder ComfyUI no longer holds, is charged in the resident window only. The
+DiT counts as pending after Reset attached mesh, Clear and retry or a Clear
+VRAM node set to
 `recycle`; after a Worker restart, or a Clear VRAM node at `soft` or `hard`, it
 reads as held, and the render-time estimate below prices it. Encodes have run
 by then, and that estimate prices the activations too. A re-queue whose box is
@@ -2436,8 +2439,11 @@ allocator caches
 both steps), so the text encoder and VAEs the message lists as spent are freed
 first, and a refusal that stands quotes the last reading. Encoded
 references are outputs this render still needs, so they stay. The loader
-windows never unload: the graph still needs its text encoder and VAEs before
-sampling, so freeing them there would only move the charge.
+windows unload too, once a load, and price the whole load again from the new
+reading: at the loader with the graph's driver models charged whole, since it
+still needs them before sampling, and at a sampler or Identity Gate (DGX
+Monarch) that prices a re-queue whose loader ComfyUI kept, with the encoders
+out of the load window, since their encodes have run.
 `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both steps off.
 
 Explicit eager loading can therefore pass before reference work exhausts the
@@ -2473,11 +2479,26 @@ cluster host resolution uses `getfqdn`, plus `getaddrinfo` for a hostname.
 Those calls have no timeout and cache once per configured name per driver.
 
 Only a complete over-budget estimate refuses. Unresolved files, unreadable
-headers, non-Linux/discrete hardware, unsupported families, loader dtype casts,
-previously cleared loads, or estimator exceptions proceed without this check.
-A cast changes resident size, so charging file size could falsely refuse it.
+headers, non-Linux/discrete hardware, unsupported families, a loader dtype cast
+under slab, comfy-managed residency or a declared FSDP preset, previously
+cleared loads, or estimator exceptions proceed without this check. A cast
+stages in those ways as no leg has measured, so no price claims it there.
 Cleared-load caches avoid charging weights again after a sampling failure;
-stale entries can undercount, but cannot create a false refusal.
+stale entries can undercount, but cannot create a false refusal. Every unload
+the driver makes, a Clear VRAM node at `hard` included, forgets the driver
+models a loader charged where a model left ComfyUI; ComfyUI's own `/free` does
+not, so a loader right after it with nothing held can credit them. Two more
+limits: one refuses where the box has room, and one, not measured, can credit
+too much. A loader that runs again while ComfyUI serves a Reference to Video
+(MiniMax H3) output from its cache charges that 40 GiB encode though nothing
+encodes: ComfyUI lists the outputs it serves from cache only in its executor's
+own messages, sent to the client and written to the history when the queue
+ends, and no node can read them; leave the loader's inputs as they were and
+the sampler prices the re-queue without it. And a held model is credited at
+its whole size: after a decode relief (#12) took pages from a DynamicVRAM text
+encoder that ComfyUI still lists, a loader that prices before that encoder
+runs again credits those pages too, though MemAvailable counts them as free
+again; no shipped template orders its loader that way.
 
 The error lists projected/usable totals, reserve, artifact, charges and their
 provenance, omitted terms, fitting artifact size, and shortfall. If nothing
@@ -3028,13 +3049,15 @@ Like the unload, the release runs only after a refusal, never while a render is
 live, and `DGXM_DISABLE_DRIVER_UNLOAD=1` turns it off too.
 
 **A load on the driver that the loader did not charge.** On a re-queue whose
-UNET Loader ComfyUI kept, a text encoder, upsampler, checkpoint or diffusion
-model the queue newly loads through a stock loader node (a changed file, or a
-branch a switch newly selects) loads before the sampler, where nothing priced
-it until 1.5.0. Since then the driver prices it at the loader node: what the
-loader charges for its inputs, a text encoder's file at 1.15, a model's whole,
-several files summed, against MemAvailable above the loader's floor, after the
-same unload and release as above. The refusal starts `CLIPLoader loading <file> needs ... GiB on the
+UNET Loader ComfyUI kept, a text encoder, upsampler, CLIP Vision file,
+checkpoint or diffusion model the queue newly loads through a stock loader node
+(a changed file, or a branch a switch newly selects) loads before the sampler,
+where nothing priced it until 1.5.0. Since then the driver prices it at the
+loader node: what the loader charges for its inputs, a text encoder's or CLIP
+Vision file at 1.15, a model's whole, several files summed, against
+MemAvailable above the loader's floor, after the same unload and release as
+above where they can run, and the refusal says which ran. The refusal starts
+`CLIPLoader loading <file> needs ... GiB on the
 driver's box` (or the node it is), under this guard's driver-host twin
 `driver_footprint_preflight`, and nothing was loaded; pick a smaller file, or
 free memory on the box. It prices only a graph whose DGX Monarch UNET Loader is
@@ -4881,13 +4904,15 @@ Since 1.5.0 the driver prices that encode at Add Guide (MiniMax H3) itself,
 where the loader did not charge it: on the canvas and frame count the node
 holds, at the charge above, a clip with 1 GiB more, against MemAvailable above
 the loader's floor (5 GiB, or the Init node's `uma_reserve_gb` where larger)
-after ComfyUI's models are unloaded and the Workers' idle caches released.
-Where ComfyUI runs without DynamicVRAM a clip carries 6 GiB more, and a VAE
-ComfyUI does not hold is charged too. The refusal is
-`[dgxm:C guard=driver_footprint_preflight waivable=0]`, starts
+after ComfyUI's models are unloaded and the Workers' idle caches released,
+where the driver may do either. Where ComfyUI runs without DynamicVRAM a clip
+carries 6 GiB more, and a VAE ComfyUI does not hold is charged too. The
+refusal is `[dgxm:C guard=driver_footprint_preflight waivable=0]`, starts
 `Add Guide (MiniMax H3) for this 5-frame clip at 448x256 needs ... GiB on the
-driver's box`, says whether this prompt reached the loader, and nothing was
-encoded. Use a shorter clip or a smaller canvas, or free memory on the box.
+driver's box`, gives the room above the floor rounded down, says whether this
+prompt reached the loader, and nothing was encoded, and then says what the
+driver unloaded or released before it, only where it did. Use a shorter clip
+or a smaller canvas, or free memory on the box.
 Clearing the Sparks (Reset attached mesh) frees what the Workers hold there,
 and the next queue then runs the loader, whose refusal itemises the whole
 graph. The same check prices Reference to Video (MiniMax H3)'s reference video
@@ -5676,7 +5701,9 @@ Six shapes reach the operator:
   BF16 Wan-Animate 2 warm template was refused 13.3 GiB short on the head with
   the card ("holds about 33.0 GiB on the head"); Clear and retry cleared both
   Sparks in 4.45 s and the next queue rendered, and with Always clear and
-  retry on, a queue cleared once and rendered.
+  retry on, a queue cleared once and rendered. A loader `weight_dtype` change
+  on the file a Worker holds stock is the same change in place: the agreement
+  and the loader both offer this card where a clear would make room.
 * **World 1 is a no op.** The one box prices its own load.
 
 **When the short box is the head, the driver frees its own models first.**

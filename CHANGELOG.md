@@ -279,13 +279,15 @@ sections after them list every change.
 - The driver now prices what a node spends on its box before the sampler
   where the loader did not price it: Add Guide (MiniMax H3), Reference to
   Video (MiniMax H3) with a reference video, and the stock loader nodes of a
-  text encoder, checkpoint or model. That covers a re-queue that changes only
-  a guide's file, canvas or length, a reference video, or a text encoder or
+  text encoder, a CLIP Vision file, a checkpoint or model. That covers a
+  re-queue that changes only a guide's file, canvas or length, a reference
+  video, or a text encoder or
   upsampler, and a first queue where ComfyUI runs those nodes before the
   loader. Where the spend would
   take the box under the loader's floor (5 GiB, or the Init node's
   `uma_reserve_gb` where larger) after the driver's unload and the Workers'
-  release, it refuses before anything is spent, class C. That is a new
+  release where they can run, it refuses before anything is spent, class C.
+  That is a new
   refusal for a queue that renders today only by dipping under the floor. It
   asks for a shorter clip, a smaller canvas or file, or memory freed on the
   box; `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for
@@ -443,13 +445,16 @@ sections after them list every change.
   a still swapped for a clip at 1344x768 encodes for 94 GiB or more, which takes
   the host down. The driver now prices such a spend where it happens, at Add
   Guide (MiniMax H3), at Reference to Video (MiniMax H3) for a reference video,
-  and at the stock loader nodes of a text encoder, checkpoint or model, at what
-  the loader charges for it, and refuses before anything is spent where the
-  spend would take the box under the loader's floor (5 GiB, or the Init node's
-  `uma_reserve_gb` where larger) after ComfyUI's models are unloaded and the
-  Workers' idle caches released. That is a new refusal for a queue that today
-  renders only by dipping under the floor. Nothing the loader charged at its
-  size in the same prompt is priced again, and nothing in a graph of a family
+  and at the stock loader nodes of a text encoder, a CLIP Vision file, a
+  checkpoint or model, at what the loader charges for it, and refuses before
+  anything is spent where the spend would take the box under the loader's
+  floor (5 GiB, or the Init node's `uma_reserve_gb` where larger) after
+  ComfyUI's models are unloaded and the Workers' idle caches released, where
+  the driver may do either; the refusal says which of them ran, and rounds the
+  room down so it never prints as the need. That is a new refusal for a queue
+  that today renders only by dipping under the floor. Nothing the loader
+  charged at its size in the same prompt is priced again, and nothing in a
+  graph of a family
   the loader does not price, a family forced on the Init node counting as at
   the loader. The same holds where ComfyUI runs such a
   node before the loader on a first queue. On 2026-11-13 (dev `0f133d8`,
@@ -866,7 +871,8 @@ sections after them list every change.
   file that pins an attention kernel off Ulysses and ring, and no DiT file no
   graph here names. It also offers the Load with slab residency card, whose
   render of this graph has no hardware record yet. Models ComfyUI already
-  holds are credited up to their size, where any one held model used to credit
+  holds are credited up to what they take, a text encoder at its measured
+  resident size, where any one held model used to credit
   the whole stack, so a second graph's upsampler is priced too. On a fresh
   driver the price errs high: LTX 2.3 text to video now needs 80.9 GiB where
   it needed 65.8. A model only a fixed switch's other branch reaches, or no
@@ -982,7 +988,8 @@ sections after them list every change.
   latent. A LoRA the held stack lacks keeps the old price and the card. And a
   re-queue whose UNET loader ComfyUI kept from an earlier queue is now priced
   at the sampler or at Identity Gate (DGX Monarch), by the loader's own price
-  for what is not yet held, so a short box gets the loader's refusal and what
+  for what is not yet held, with the encoders whose encodes have run out of
+  the load window, so a short box gets the loader's refusal and what
   would fit, where only the Worker's wall answered before ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
 - The Ideogram 4 template keeps its JSON caption in a Text (Multiline) node
@@ -1964,6 +1971,11 @@ sections after them list every change.
   ambiguous" names a package whose pip RECORD lists bytecode outside
   site-packages, from an install under `PYTHONPYCACHEPREFIX`; reinstall that
   package without the prefix ([TROUBLESHOOTING #155](docs/TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+- Fix: a Clear VRAM node set to `hard` now unloads through the driver's own
+  unload, so where a model left ComfyUI it forgets the driver models a loader
+  charged, and the next loader with nothing held charges them again rather
+  than none
+  ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)).
 
 ### Development
 

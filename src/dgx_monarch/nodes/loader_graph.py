@@ -429,29 +429,34 @@ def _comfy_has_loaded_models() -> bool:
         return False
 
 
-def _comfy_held_bytes() -> int | None:
-    """The bytes of the models ComfyUI holds, or None when it cannot say.
+def _comfy_held_bytes() -> tuple[int, int] | None:
+    """What ComfyUI holds, and the share its text encoders (``is_clip`` patchers) hold, or None.
 
-    It cannot say which files they came from, so the credit below never
-    exceeds this: a held encoder can stand in for this graph's, never for more.
+    It cannot say which files they came from, so the credit never exceeds this, the encoder
+    share at its resident ratio: a held encoder stands in for this graph's, never for more.
+    An unreadable mark is no encoder; an encoder the decode relief partly freed reads whole (#52).
     """
     try:
         import comfy.model_management as mm
 
-        return sum(int(loaded.model_memory()) for loaded in mm.current_loaded_models
-                   if loaded.model is not None)
+        sizes = [(int(loaded.model_memory()), getattr(loaded.model, "is_clip", False) is True)
+                 for loaded in mm.current_loaded_models if loaded.model is not None]
+        return sum(size for size, _clip in sizes), sum(size for size, clip in sizes if clip)
     except Exception:  # an unreadable size credits as before, the whole stack
         return None
 
 
-def _credit_held(terms: DriverStackTerms, held: int, ratio: float = 1.0) -> DriverStackTerms:
+def _credit_held(terms: DriverStackTerms, held: int, ratio: float, encoders: int) -> DriverStackTerms:
     """Credit ``held`` bytes against the graph's models; the rest stays charged.
 
-    The reference encode stays charged too: with models still to load, it has
-    not run either. ``ratio`` reads held bytes as encoders resident at that ratio.
+    The reference encode stays charged too: with models still to load, it has not run either.
+    ``ratio`` reads the ``encoders`` share as encoders resident at that ratio, against the
+    text encoders first; every other held byte counts at its size.
     """
-    te = max(terms.te_bytes - int(held * ratio), 0)
-    left = max(held - int(terms.te_bytes / ratio), 0)
+    encoders = min(encoders, held)
+    te = max(terms.te_bytes - int(encoders * ratio), 0)
+    left = max(encoders - int(terms.te_bytes / ratio), 0) + held - encoders
+    left, te = max(left - te, 0), max(te - left, 0)
     vae = max(terms.vae_bytes - left, 0)
     left = max(left - terms.vae_bytes, 0)
     return replace(terms, te_bytes=te, vae_bytes=vae,
@@ -468,14 +473,14 @@ def credited_terms(terms: DriverStackTerms, ratio: float = 1.0) -> DriverStackTe
     each is a transient, and a held model does not show that it has run. The
     first credit fires on any loaded model. It credits the whole stack only
     where what ComfyUI holds covers it (MemAvailable already counts that much),
-    and otherwise only the bytes held.
+    and otherwise only the bytes held, a held text encoder's at ``ratio``.
     """
     if not terms.resolved:
         return terms
     if _comfy_has_loaded_models():
-        held = _comfy_held_bytes()
-        if held is not None and held < terms.models_bytes:
-            return _credit_held(terms, held, ratio)
+        read = _comfy_held_bytes()
+        if read is not None and read[0] < terms.models_bytes:
+            return _credit_held(terms, read[0], ratio, encoders=read[1])
         return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0,
                        credited=True,
                        credit_reason="comfy already holds loaded models, so "

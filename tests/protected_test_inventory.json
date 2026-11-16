@@ -531,6 +531,7 @@
       "test_a_dtype_change_on_the_held_file_is_a_swap_not_a_lora_change": "6957572c63518fad",
       "test_a_header_the_parser_cannot_read_prices_the_widest_copy_the_cast_can_build": "8f2ea7b279076d34",
       "test_a_hot_swap_on_a_cast_resident_credits_the_cast_copy_it_holds": "babb281641945666",
+      "test_a_loader_that_reads_the_cast_as_placed_offers_no_clear_for_it": "5cc9999975a721ac",
       "test_a_refusal_no_clear_can_fix_never_claims_memory_was_left_behind": "c6fce1d062cb6764",
       "test_a_rescue_card_on_a_credited_swap_names_the_model_the_worker_drops": "24884a14f664ecd8",
       "test_a_resident_that_changes_under_the_quote_gets_no_credit": "3ee0b8a49697165a",
@@ -545,6 +546,7 @@
       "test_the_agreement_no_longer_admits_a_cast_load_with_headroom_unstated": "a25cd689b0918874",
       "test_the_held_head_still_refuses_after_the_credit": "c6fe1e16a77fbdc1",
       "test_the_last_wall_reprices_a_cast_and_never_falls_back_to_the_bare_file_check": "93e720e2a80268aa",
+      "test_the_loaders_refusal_of_a_dtype_change_on_the_held_file_offers_the_clear": "bcaf58cdca3f0ed3",
       "test_the_release_cell_swap_is_priced_after_the_drop_and_admitted": "d311803fda6ad643",
       "test_the_stock_probe_applies_to_a_cast_and_says_so_in_its_block": "85aae2f1d7e31435",
       "test_the_target_width_reads_torch_dtypes_and_names_and_an_unknown_one_prices_high": "0729324199189c83"
@@ -609,6 +611,12 @@
       "test_trim_uniform_trailing_run_is_maskless": "cc508dc5be91e8e5",
       "test_two_conds_on_different_controls_keep_the_slice": "911f089080b81bb8",
       "test_two_conds_that_never_fold_run_one_per_rank": "f14531f689f016e8"
+    },
+    "tests/test_charge_memo_unload.py": {
+      "test_a_clear_vram_node_at_hard_forgets_what_the_loader_charged": "ce809e3bdd5c7c15",
+      "test_a_clear_vram_node_at_hard_with_nothing_held_keeps_the_charge": "8283d1c79cb537dd",
+      "test_a_render_site_unload_forgets_what_the_loader_charged": "b2a23ca6f8a44519",
+      "test_an_unload_that_frees_nothing_keeps_the_charge": "6aae65534eb5f723"
     },
     "tests/test_comfy_managed_bringup.py": {
       "test_a_classic_worker_is_untouched_by_the_latch": "fc58e15c9567c565",
@@ -936,9 +944,10 @@
       "test_unregistered_family_is_a_hard_no_op": "07eea90bb9dd03ff"
     },
     "tests/test_driver_spend_price.py": {
-      "test_a_24_gib_reserve_moves_the_line_and_the_words_state_it": "129391270c78e2d8",
+      "test_a_24_gib_reserve_moves_the_line_and_the_words_state_it": "e09cf85d2ab342f1",
       "test_a_class_another_pack_registered_over_a_wrapped_name_is_named_once": "af2720f0a75affff",
-      "test_a_clip_short_of_room_refuses_before_anything_encodes": "d02309d25dad1d33",
+      "test_a_clip_short_of_room_refuses_before_anything_encodes": "a34d3a45a866c801",
+      "test_a_clip_vision_file_is_priced_as_the_loader_charges_it": "73159aa38369840e",
       "test_a_clip_whose_activations_do_not_resolve_carries_no_margin": "56bba98001219761",
       "test_a_config_that_cannot_be_read_leaves_the_init_nodes_reserve": "d6365a2679882d3c",
       "test_a_decided_switch_reads_only_the_selected_init_node": "f534468fdaf31da1",
@@ -962,6 +971,7 @@
       "test_a_refusal_with_models_held_is_true_of_the_box_after_the_unload_and_the_trim": "b9907a68623d4822",
       "test_a_rescue_runs_before_the_refusal_and_its_room_admits": "a3ae65d26a65c38c",
       "test_a_reused_prompt_id_does_not_carry_an_earlier_queues_marks": "49715f4ef1299bbb",
+      "test_a_room_a_byte_short_of_the_need_never_prints_as_the_need": "abe337cd07756d82",
       "test_a_second_install_wraps_nothing_more": "1f504984111f578d",
       "test_a_sole_attached_mesh_from_the_files_older_contents_does_not_set_the_floor": "a474ebc78934ef47",
       "test_a_still_with_room_is_admitted_with_one_line_and_runs_as_stock": "a25bc6ffb3f2038e",
@@ -980,6 +990,7 @@
       "test_the_line_is_the_floor_after_the_rescues": "b6728d8a0a8a06cc",
       "test_the_loader_records_only_where_it_admits_a_graph_it_read": "f5aa0480d0d308e2",
       "test_the_refusal_is_one_the_driver_rescues_and_not_the_stock_load_family": "2e94f520b93117d5",
+      "test_the_refusal_says_what_the_driver_did_before_it_and_nothing_else": "f0d86ef23a63443b",
       "test_the_running_graph_is_read_from_comfys_queue_by_prompt_id": "59858c00e3c54999",
       "test_two_init_nodes_through_an_undecided_switch_price_at_their_reserve": "f543a34b034a744f",
       "test_two_live_loaders_price_at_the_stricter_floor_whatever_their_order": "342e7c6119a2e7c9",
@@ -1608,8 +1619,10 @@
       "test_a_driver_twin_takes_the_held_credit_once": "3d8cbd5d8e17ea9f",
       "test_a_dual_model_refusal_names_its_cause_and_no_gate": "706d6e48ea0f6e41",
       "test_a_file_no_graph_here_names_is_never_named": "100d7f409837efbd",
-      "test_a_held_encoder_credits_its_own_bytes_not_the_upsampler": "5796e1e2a10aa1ad",
+      "test_a_held_encoder_credits_its_own_bytes_not_the_upsampler": "72ad08878957de62",
+      "test_a_held_model_comfyui_does_not_mark_as_an_encoder_counts_at_its_own_size": "520ef446a695d5c7",
       "test_a_loader_no_output_node_reaches_is_not_priced": "b6d681b3b14ed81b",
+      "test_a_loader_run_again_beside_the_held_encoders_is_not_short_by_their_rounding": "663bfe4e9590b714",
       "test_a_pair_whose_config_lists_only_the_driver_box_reads_this_box": "2d0b6d1165f7fa85",
       "test_a_twin_that_pins_attention_is_named_only_where_its_pins_ask_nothing": "aa1304b0c2327889",
       "test_a_twin_the_fsdp_launch_refuses_is_never_named": "94289ecfb0a1aa6b",
@@ -2528,19 +2541,24 @@
       "test_the_unload_switch_leaves_the_credit_on_and_unloads_nothing": "24982761bcf6ea87"
     },
     "tests/test_requeue_price.py": {
+      "test_a_client_that_sends_its_prompt_id_again_is_priced_at_the_sampler": "cca7cefd110f0fc8",
       "test_a_dual_model_guider_prices_its_second_checkpoint_too": "b35f405c5246a408",
       "test_a_first_run_whose_loader_priced_the_prompt_gets_no_second_price": "6799eb55ef561ef1",
-      "test_a_short_box_refuses_at_the_sampler_with_the_loaders_sentence": "1bb29825cf13d7c7",
-      "test_always_clear_and_retry_clears_once_and_prices_again": "841e0d04b45c3365",
+      "test_a_requeue_whose_encodes_an_earlier_queue_ran_is_not_charged_them_in_the_load_window": "9cdd4e51e809afef",
+      "test_a_short_box_refuses_at_the_sampler_with_the_loaders_sentence": "be06548fe9874a68",
+      "test_a_swap_credit_at_the_sampler_does_not_wait_for_encoders_that_ran": "8e3efa1ee826424b",
+      "test_always_clear_and_retry_clears_once_and_prices_again": "bbd64970408a7200",
       "test_design_names_the_doors_that_drain_the_memo_and_every_render_site": "62eef25e1e761879",
-      "test_encodes_and_activations_stay_with_the_render_site_checks": "b64137056f896e81",
-      "test_held_encoders_count_at_their_resident_size_and_the_decode_vae_waits": "0b40c66b225fb3c7",
-      "test_identity_gate_prices_a_cached_loader_requeue_before_its_ceremony": "6dae94836bcc358b",
+      "test_encodes_and_activations_stay_with_the_render_site_checks": "4a63ad2d5638eb7a",
+      "test_held_encoders_count_at_their_resident_size_and_the_decode_vae_waits": "71a39cd5889ab182",
+      "test_identity_gate_admits_the_cell_9_requeue_the_unload_makes_room_for": "4dc984632c811efb",
+      "test_identity_gate_prices_a_cached_loader_requeue_before_its_ceremony": "fc9402dbdc787dd5",
+      "test_the_cell_9_requeue_the_unload_makes_room_for_renders": "9afc7fe2a060330c",
       "test_the_new_design_paragraph_is_wrapped": "77a6c69a92b45b84",
-      "test_the_replay_with_the_dit_held_is_priced_at_the_sampler_and_renders": "39a57acc2d99fc7e",
-      "test_the_same_short_box_with_room_renders": "b937aed1ed15305f",
-      "test_the_sampler_node_refuses_before_any_render_or_worker_call": "96e024673bff6851",
-      "test_the_sampler_prices_nothing_it_cannot_tie_to_a_deferred_load": "20c280d337fdb1fe"
+      "test_the_replay_with_the_dit_held_is_priced_at_the_sampler_and_renders": "b82af8ef84d3c6f2",
+      "test_the_same_short_box_with_room_renders": "e69c1e9e664be08b",
+      "test_the_sampler_node_refuses_before_any_render_or_worker_call": "0d712f4183d39dea",
+      "test_the_sampler_prices_nothing_it_cannot_tie_to_a_deferred_load": "44a69fb6a49b74b4"
     },
     "tests/test_rescue_card_need.py": {
       "test_rescue_card_states_the_priced_need_beside_the_file_size": "620b00c24d8ab375",
