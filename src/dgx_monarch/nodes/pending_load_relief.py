@@ -43,8 +43,8 @@ The load is still to come (``load_pending``):
 - under an explicit preset, only where the loader deferred its placement
   (``note_deferred``, at the identity gate's or the dual-model deferral), since
   otherwise the loader placed it at its node;
-- after every rank unloaded (each ``call_all("unload")`` site and a hard Clear
-  VRAM) or the Workers' processes stopped (``recycle_drain.drop_residency_memos``),
+- after every rank unloaded (each ``call_all("unload")`` site, a hard Clear VRAM
+  and the mesh's doors, ``residency_doors``) or the Workers' processes stopped,
   which ``note_unloaded`` marks, whatever the memos, an explicit preset's
   eager placement and a caller's ``weights_loaded`` say, until a load succeeds
   (``note_placed``: the loader's eager placement, the no-render path's load,
@@ -109,6 +109,7 @@ from typing import Any
 
 from ..log import get_logger
 from ..transfer_utils import safe_call
+from . import recycle_drain
 
 log = get_logger(__name__)
 
@@ -120,9 +121,10 @@ _DEFERRED: set[str] = set()
 # Session lifetime: every rank unloaded or stopped since the last load that
 # succeeded (note_placed).
 _UNLOADED = False
-# Session lifetime: the checkpoint the last load that succeeded placed, until
-# every rank unloads or stops (note_unloaded), like the render-site memos.
-_PLACED: str | None = None
+# Session lifetime: the checkpoint the last load that succeeded placed in each
+# model slot, until every rank unloads or stops (note_unloaded), like the
+# render-site memos.
+_PLACED: dict[str, str] = {}
 # A status read before setup, on the short path only (nodes/routes.py reads it at 10 s too).
 _STATUS_TIMEOUT_S = 10.0
 
@@ -135,16 +137,18 @@ def note_deferred(unet_name: object) -> None:
     """The loader left this checkpoint's placement to a later load (nodes/loaders.py)."""
     if isinstance(unet_name, str):
         _DEFERRED.add(unet_name)
+        recycle_drain.note_loader_ran(unet_name)
 
 
-def note_placed(unet_name: object) -> None:
-    """A load of this checkpoint succeeded: the loader's eager placement, the
-    no-render path's load, or a successful render (render_preflight)."""
-    global _UNLOADED, _PLACED
+def note_placed(unet_name: object, slot: str = "cond") -> None:
+    """A load of this checkpoint into ``slot`` succeeded: the loader's eager
+    placement, the no-render path's load, or a successful render (render_preflight)."""
+    global _UNLOADED
     if isinstance(unet_name, str):
         _UNLOADED = False
-        _PLACED = unet_name
+        _PLACED[slot] = unet_name
         _DEFERRED.discard(unet_name)
+        recycle_drain.note_loader_ran(unet_name)
 
 
 def note_unloaded() -> None:
@@ -156,38 +160,35 @@ def note_unloaded() -> None:
     """
     from . import render_preflight
 
-    global _UNLOADED, _PLACED
+    global _UNLOADED
     _UNLOADED = True
-    _PLACED = None
+    _PLACED.clear()
     render_preflight.note_successful_render(None)
     render_preflight.note_submitted_render(None)
     render_preflight.note_driver_charged_render(None)
 
 
 def reset() -> None:
-    """Forget every deferral, unload and placement (tests only)."""
-    global _UNLOADED, _PLACED
+    """Forget every deferral, unload, placement and loader run (tests only)."""
+    global _UNLOADED
     _UNLOADED = False
-    _PLACED = None
+    _PLACED.clear()
     _DEFERRED.clear()
+    recycle_drain.reset_drops()
 
 
 def dit_resident(unet_name: object, *, charged: bool = False) -> bool:
-    """Whether this driver knows the Workers hold this checkpoint now.
-
-    The one residency rule every render-site check and ``load_pending`` read:
-    a finished render, a pipelined submission or a load that succeeded
-    (``note_placed``: the loader's eager placement, the no-render path's load)
-    placed it, and no unload of every rank came since, since each one drains
-    these memos (``note_unloaded``). ``charged`` also counts a pending load the
-    driver footprint cleared, which a render that failed after loading leaves
-    placed (``render_preflight._LAST_DRIVER_CHARGED_UNET``); the gate's capacity
-    stop and the reference and pose check never count it.
-    """
+    """Whether this driver knows the Workers hold this checkpoint now: the one
+    residency rule the render-site checks and ``load_pending`` read. A finished
+    render, a pipelined submission or a load that succeeded in either slot
+    placed it, and no drop of every rank's models came since (each drains these
+    memos through ``note_unloaded``). ``charged`` also counts a pending load the
+    driver footprint cleared (``render_preflight._LAST_DRIVER_CHARGED_UNET``),
+    which the gate's capacity stop and the reference and pose check never count."""
     from . import render_preflight
 
     memos: tuple[str | None, ...] = (
-        render_preflight._LAST_RENDERED_UNET, render_preflight._LAST_SUBMITTED_UNET, _PLACED)
+        render_preflight._LAST_RENDERED_UNET, render_preflight._LAST_SUBMITTED_UNET, *_PLACED.values())
     if charged:
         memos += (render_preflight._LAST_DRIVER_CHARGED_UNET,)
     return isinstance(unet_name, str) and unet_name in memos

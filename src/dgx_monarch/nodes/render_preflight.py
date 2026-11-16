@@ -20,7 +20,7 @@ from ..adapters.detect import CheckpointSniffError, sniff_checkpoint
 from ..adapters.flux_views import VIEWS_METADATA_KEY
 from ..refusal import RefusalClass, refusal
 from ..sampling_contract import latent_size_tags
-from . import pending_load_relief
+from . import pending_load_relief, recycle_drain
 from .latent_outputs import is_direct_nested_tensor
 from .render_rows import ref_pose_shapes
 from .render_validation import validate_render_topology
@@ -251,8 +251,8 @@ def _driver_footprint_preflight_for_request(
 
     Packed conditioning proves the driver stack is already in ``MemAvailable``,
     so this site reports but does not charge it. An explicit topology counts
-    the weights as resident (the loader site priced its eager load), and a
-    dtype cast skips the check. A cleared estimate is memoized (see
+    the weights as resident until an operator's drop (``recycle_drain.preset_placed``:
+    the loader site priced its eager load), and a dtype cast skips the check. A cleared estimate is memoized (see
     ``_LAST_DRIVER_CHARGED_UNET``); only a complete over-budget one refuses.
     """
     try:
@@ -276,7 +276,7 @@ def _driver_footprint_preflight_for_request(
             worker_args = resolve_effective_worker_args(
                 model, handle, requested_worker_args=worker_args)
         weights_resident = (
-            str(getattr(mesh, "topology_preset", "auto") or "auto") != "auto"
+            recycle_drain.preset_placed(model)
             or (pending_load_relief.dit_resident(unet_name, charged=True)
                 if weights_loaded is None else weights_loaded)
             or driver_footprint.weights_owned_by_activation_preflight(family))
@@ -342,8 +342,8 @@ def activation_footprint_preflight_for_request(
         family_select.assert_override_admits_checkpoint(forced_family, path)
     family_select.warn_auto_admits_checkpoint(family, path)
     # Sampled before any check, so this render cannot credit its own newly cleared pending load.
-    resident = pending_load_relief.dit_resident  # the one residency rule
-    memo_credit = resident(unet_name, charged=True) if weights_loaded is None else weights_loaded
+    resident, preset = pending_load_relief.dit_resident, recycle_drain.preset_placed(model)
+    memo_credit = (resident(unet_name, charged=True) if weights_loaded is None else weights_loaded) or preset
     placed = resident(unet_name) if weights_loaded is None else weights_loaded
     from ..render_memory_price import preflight_render_memory
 

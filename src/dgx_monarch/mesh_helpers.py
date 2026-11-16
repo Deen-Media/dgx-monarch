@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from . import absorb_fire as _absorb
 from . import client_lease as _client_lease
 from . import mesh_runtime as _mesh_runtime
-from . import mesh_safety, mesh_teardown, native_return_latch
+from . import mesh_safety, mesh_teardown, native_return_latch, residency_doors
 from .error_utils import (
     exception_chain,
     failure_summary,
@@ -331,9 +331,8 @@ def mark_defunct_deliberate(handle, exc: BaseException, *,
 
     The stall guard (mesh_lease.collect_with_liveness) reaches a verdict the
     classifier cannot: no supervision event fired and the actor may still
-    answer health queries, but the fleet said nothing for the whole stall
-    budget. Publication uses the supervision path's own machinery, so process
-    state that cannot be confirmed stays visible as after a supervision failure.
+    answer health queries, but the fleet said nothing for the whole stall budget.
+    Publication uses the supervision path's machinery, so unconfirmed process state stays visible.
     """
     text = f"deliberate-eviction {failure_summary(exc)}"
     _publish_defunct(handle, exc, text, holding_lock=holding_lock,
@@ -342,6 +341,8 @@ def mark_defunct_deliberate(handle, exc: BaseException, *,
 
 def _publish_defunct(handle, exc: BaseException, text: str, *,
                      holding_lock: bool, deliberate_route: bool = False) -> None:
+    if not getattr(handle, "defunct", False):  # its replacement holds no model; the next render's checks run first
+        residency_doors.announce(residency_doors.UNLOADED)
     if (mesh_safety.is_reason_marked_teardown(text)
             or getattr(handle, "teardown_complete", False)
             or (mesh_safety.token_within_authority(id(handle))

@@ -1,12 +1,74 @@
 """Drain the driver-side state a recycle invalidates: residency estimates,
-the grant-audit set, and the telemetry caches; and the one operator reset."""
+the grant-audit set, and the telemetry caches; the one operator reset; and
+what each announced door, through which every rank's models go, makes untrue
+(``residency_doors``)."""
 from __future__ import annotations
 
 from typing import Any
 
+from .. import residency_doors
 from ..log import get_logger
 
 log = get_logger(__name__)
+
+# Session lifetime, emptied by each operator's drop (a Clear VRAM node at hard,
+# a configuration change, the capacity rescue's slot drop): the checkpoints the
+# loader node has run for, or a load has placed, since the last one (``preset_placed``).
+_LOADER_RAN: set[str] = set()
+
+
+def note_loader_ran(unet_name: object) -> None:
+    """The loader node ran for this checkpoint, placing it or leaving it to a
+    later load, or a load placed it (``pending_load_relief.note_placed`` and
+    ``note_deferred``)."""
+    if isinstance(unet_name, str):
+        _LOADER_RAN.add(unet_name)
+
+
+def note_dropped() -> None:
+    """An operator dropped every rank's models: a Clear VRAM node at hard, a
+    configuration change or the capacity rescue's slot drop. The load is still
+    to come (``pending_load_relief.note_unloaded``), and an explicit preset's
+    credit holds again only for a checkpoint whose loader node runs, or whose
+    load completes, since."""
+    from . import pending_load_relief
+
+    pending_load_relief.note_unloaded()
+    _LOADER_RAN.clear()
+
+
+def reset_drops() -> None:
+    """Forget every loader run (tests only)."""
+    _LOADER_RAN.clear()
+
+
+def preset_placed(model: Any) -> bool:
+    """Whether the driver footprint and MiniMax H3 checks credit this render's DiT
+    for its explicit preset: since the last operator's drop its loader node has
+    run for the checkpoint, placing it at the node or leaving it to a ceremony
+    that loads it before any render (both always credited), or a load of it has
+    completed. After a hard clear,
+    ComfyUI's cached loader node does not run again, so nothing places the
+    model and it is charged. A recycle, a Worker restart and the gate's own
+    unloads leave the credit standing, as before 1.5.
+    """
+    preset = str(getattr(getattr(model, "mesh", None), "topology_preset", "auto") or "auto")
+    return preset != "auto" and getattr(model, "unet_name", None) in _LOADER_RAN
+
+
+def _ranks_unloaded() -> None:
+    from . import pending_load_relief
+
+    pending_load_relief.note_unloaded()
+
+
+def _config_replaced() -> None:
+    drop_residency_memos()
+    note_dropped()
+
+
+residency_doors.register(residency_doors.UNLOADED, _ranks_unloaded)
+residency_doors.register(residency_doors.REPLACED, _config_replaced)
 
 
 def drop_residency_memos() -> None:

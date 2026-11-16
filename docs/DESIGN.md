@@ -2226,13 +2226,27 @@ Before its `RETESTING` row, an ordinary residency ceremony runs the render
 site's capacity checks for the whole request under its own worker policy
 (`gate_capacity_stop.ceremony_activation_preflight`). It credits the DiT only
 when a finished render, a pipelined submission or a load that succeeded
-placed it and no unload of every rank came since, or an explicit preset loaded
-it at the loader node; a pending load that the render site's own
-check cleared a moment earlier is charged, because the ceremony's load has not
+placed it and nothing dropped every rank's models since, or, in the driver
+footprint and MiniMax H3 checks, when an explicit preset's loader node placed
+it at the node or left it to the ceremony and no operator's drop came since
+the loader node last ran or a load of it last completed; a pending load that the render site's own check
+cleared a moment earlier is charged, because the ceremony's load has not
 happened. That is the render site's one residency rule
-(`pending_load_relief.dit_resident`): every unload of every rank drains the
-memos it reads, so after a hard Clear VRAM a re-queue's checks charge the DiT
-the Workers dropped. The checks free what they can first, as at the render site. If one
+(`pending_load_relief.dit_resident`, with `recycle_drain.preset_placed` for an
+explicit preset). These doors, through which every rank's models go, drain the
+memos it reads: the gate's own unloads, a recycle, a fleet the driver marks
+defunct and a new fleet in place of a retired one, a configuration change, a
+topology change or a failed setup's
+rollback, a worker-policy change that unloads every resident, a hard Clear
+VRAM and the capacity rescue's slot drop (the mesh layer announces its doors
+through `residency_doors`). An operator's drop (a hard Clear VRAM, a
+configuration change, the capacity rescue's slot drop) also ends an explicit
+preset's credit until the loader node runs again or a load of it completes,
+so after a hard Clear VRAM a
+re-queue's checks charge the DiT the Workers dropped, under `auto` and under
+an explicit preset alike. A recycle does not end it: a cached loader node does
+not place the model again after a recycle, and its DiT is still credited
+there, as before 1.5. The checks free what they can first, as at the render site. If one
 still refuses, no proof render could finish, so none runs
 (`nodes/gate_capacity_stop.py`). The ceremony writes one terminal INCONCLUSIVE
 row with the FSDP stop's fields (`cross_mode` `CAPACITY`, a bounded class of
@@ -2383,7 +2397,10 @@ charged while its deferred load is pending, as the loader memo reads it: Reset
 attached mesh, Clear and retry and a Clear VRAM node set to `recycle` drain
 that memo, a Worker restart drains it only when a Worker call fails, after this
 price, and a Clear VRAM node at `soft` or `hard` does not, so after those two
-the DiT reads as held and the render-site checks price it. The driver models
+the DiT reads as held here. After a hard clear the render-site checks that
+charge a DiT price it under `auto`: the driver footprint for LTX and
+MOSS-Image, the MiniMax H3 check and the Wan SCAIL and Animate 2 check; no
+other family has a render-site check that charges it. The driver models
 are charged beyond what ComfyUI holds, held encoders at their resident size as
 above. None of them is in the load window: the encodes have run, and the DiT
 loads inside this node's own render, before any other node runs. So a model
@@ -2822,16 +2839,25 @@ under `auto` unless a finished render, a pipelined submission or a load that
 succeeded (the no-render path's) in this process placed the checkpoint, and
 under an explicit preset only where the loader deferred the placement; inside
 the gate's capacity check that check says itself whether the load ran. When
-the driver unloads every rank (an
+every rank's models go (an
 identity ceremony's clean reload, the no-render path, the slab proof, the
 cross-mode reference, the FSDP cleanup, a rescue's dropped slot, a hard Clear
-VRAM) or a reset or restart stops the Workers' processes, the load is still to
-come again whatever this process placed before (ComfyUI's cached loader node
-does not place it again), whatever the capacity check says, and it stays so
-until a load succeeds: a successful
-render, the loader's placement or the no-render path's load. The unload also
-drains the render-site memos that named the model, so the checks that refuse
-charge it too (`dit_resident`, the rule they all read). A check that
+VRAM, a topology change or a failed setup's rollback, a worker-policy change
+that unloads every resident, a configuration change, a fleet the driver marks
+defunct, a new fleet in place of a retired one) or a reset or restart stops the
+Workers' processes, the load is
+still to come again whatever this process placed before (ComfyUI's cached
+loader node does not place it again), whatever the capacity check says, and it
+stays so until a load succeeds: a successful
+render, the loader's placement or the no-render path's load. The drop also
+drains the render-site memos that named the model (`dit_resident`, the rule
+they all read), so under `auto` the checks that refuse charge it too. Under an
+explicit preset the driver footprint and MiniMax H3 checks keep crediting the
+loader node's placement through every one of these but an operator's drop (a
+hard Clear VRAM, a configuration change, a rescue's dropped slot), after which
+they charge it until the loader node runs again or a load of it completes
+(`recycle_drain.preset_placed`);
+after a recycle or a Worker restart they still credit it, as before 1.5. A check that
 reads it does not clear it, since the load it lets through may still fail. The
 no-render path, which loads with no render, runs the same step between its
 unload and its load agreement. So a render whose model a finished render, a
@@ -4407,6 +4433,8 @@ dgx-monarch/
 │   │                          #   observer lease; never runtime authority
 │   ├── runtime_observer.py    # render, Fleet and RDMA hooks that publish to
 │   │                          #   that journal only while a lease holds
+│   ├── residency_doors.py     # the mesh layer's doors through which every rank's
+│   │                          #   models go, announced to the memos nodes/ keeps
 │   ├── finite_json.py         # dependency-free non-finite-to-null JSON
 │   │                          #   normalization for the driver and companion
 │   ├── studio_resource_validation.py # data-only check of packaged Studio files,

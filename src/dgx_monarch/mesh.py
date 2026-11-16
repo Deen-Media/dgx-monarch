@@ -24,6 +24,7 @@ from . import (
     mesh_setup,
     mesh_setup_transition,
     mesh_teardown,
+    residency_doors,
 )
 from .config import ClusterConfig, find_config_path, load_cluster_config, local_config
 from .config_schema import actor_worker_args
@@ -530,6 +531,7 @@ def get_mesh(
                 with _MESH_LOCK:
                     if _MESHES.get(key) is old:
                         _MESHES.pop(key, None)
+            residency_doors.announce(residency_doors.REPLACED if old is not None else residency_doors.UNLOADED)
             src = _src_pythonpath()
             os.environ["DGXM_PYTHONPATH"] = src
             client_lease.plant_driver_marker()  # so the CLI sweep can see the owner
@@ -632,11 +634,9 @@ def ensure_live(
     handle: MeshHandle, *,
     mesh_preflight: mesh_helpers.MeshPreflight | None = None,
 ) -> MeshHandle:
-    """Swap a defunct handle for a fresh mesh on the same config.
-
-    ComfyUI caches node outputs, so a MeshSpec built before a worker death
-    keeps referencing the evicted handle; routing through here lets a
-    re-queue heal instead of wedging until a ComfyUI restart."""
+    """Swap a defunct handle for a fresh mesh on the same config: ComfyUI caches
+    node outputs, so a MeshSpec built before a worker death keeps referencing the
+    evicted handle, and routing through here heals a re-queue without a restart."""
     mesh_liveness.try_release(handle)
     verdict = _coherent_lifecycle_verdict(handle)
     if verdict in ("blocked", "unresolved"):

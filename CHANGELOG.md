@@ -1777,14 +1777,22 @@ sections after them list every change.
   the whole request before its proof render: a request that cannot fit the
   slab path gets one INCONCLUSIVE capacity row and no proof render, renders on
   stock residency, and the next request checks again ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
-- Fix: after an unload of every rank, such as a Clear VRAM node at `hard` or
-  an identity ceremony's clean reload, the render-site capacity checks charge
+- Fix: after the Workers' models go, the render-site capacity checks charge
   the DiT again. The memos that credit a model a finished render or a
-  pipelined submission placed outlived that unload, so a re-queue after a
-  hard Clear VRAM was priced with its DiT credited although the Workers had
-  dropped it, and could admit a render whose DiT and activations do not fit
-  together. Every such unload now drains them, and every check, the gate's
-  capacity check included, reads one rule. CPU tests; not run on hardware
+  pipelined submission placed outlived a Clear VRAM node at `hard`, an
+  identity ceremony's clean reload and the driver's other drops of every
+  rank's models, so under `auto` a re-queue after a hard Clear VRAM was priced
+  with its DiT credited although the Workers had dropped it, and could admit a
+  render whose DiT and activations do not fit together. These doors now
+  drain them, the mesh's own included (a fleet marked defunct and a new
+  fleet in place of a retired one, a configuration change, a topology change or a failed setup's rollback, a
+  worker-policy change that unloads every resident), and every check, the
+  gate's capacity check included, reads one rule. Under an explicit preset the
+  driver footprint and MiniMax H3 checks credited the DiT after a hard clear
+  too, since ComfyUI's cached loader node does not place it again; an
+  operator's drop (a hard clear, a configuration change, the capacity rescue's
+  slot drop) now ends that credit until the loader node runs again or a load
+  of the checkpoint completes. A recycle leaves it, as before. CPU tests; not run on hardware
   ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
 - Fix: the Wan SCAIL, SCAIL-2 and Animate 2 activation check credits an
   explicit preset's eager load, as the driver footprint and MiniMax H3 checks

@@ -29,7 +29,7 @@ from dgx_monarch import (
     telemetry,
 )
 from dgx_monarch.log import get_logger
-from dgx_monarch.nodes import render_preflight
+from dgx_monarch.nodes import recycle_drain, render_preflight
 from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag, refusal
 from dgx_monarch.render_memory_price import RenderMemoryPriceError
 
@@ -856,6 +856,8 @@ def _h3_rig(monkeypatch, tmp_path, *, preset: str) -> SimpleNamespace:
                      effective_worker_args=lambda requested=None: dict(requested or {}),
                      call_all=lambda *a, **k: rpc.append(a))
     mesh = SimpleNamespace(topology_preset=preset, worker_args={}, world=2, handle=handle)
+    if preset != "auto":
+        recycle_drain.note_loader_ran(UNET)  # an explicit preset's loader node ran for it
     return SimpleNamespace(
         model=SimpleNamespace(unet_name=UNET, mesh=mesh, options={}), rpc=rpc)
 

@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from . import mesh_helpers, mesh_safety, mesh_setup
+from . import mesh_helpers, mesh_safety, mesh_setup, residency_doors
 from .constants import DEFAULT_NCCL_MASTER_PORT
 from .log import get_logger
 from .topology import Topology
@@ -70,13 +70,45 @@ def _await_setup(handle: Any, futures: list[Any], deadline: float, failed: dict[
     return results
 
 
+def drops_residents(previous: dict | None, new: dict) -> bool:
+    """Whether every Worker drops every resident model on this policy change.
+
+    A Worker does so when ``compile_dit``, the forced family, the shared
+    activation scale or the FP8 matmul setting changes, since each binds at
+    model load (``actor/worker_env.apply_worker_args_impl``), and its reply
+    reports none of them. So the driver reads the policy it last published
+    (``previous``) and the new one by the Worker's own rule: a
+    ``shared_act_scale`` the last policy carried and this one drops returns to
+    on. Two cases it cannot read, so it marks them: a policy that adds that key
+    (the Worker's own environment held the setting before) and an unknown last
+    policy (``None``: a failed or torn apply). Such a mark may charge a model a
+    Worker still holds; an unmarked drop would credit one it lost.
+    """
+    from .adapters.quant_activation_scale import ENABLE_ARG
+    from .family_select import override_from_worker_args
+    from .fp8_compute import setting as fp8_setting
+
+    if previous is None or (ENABLE_ARG in new and ENABLE_ARG not in previous):
+        return True
+
+    def scale_on(args: dict) -> bool:
+        return bool(args[ENABLE_ARG]) if ENABLE_ARG in args else True
+
+    return (bool(previous.get("compile_dit")) is not bool(new.get("compile_dit"))
+            or override_from_worker_args(previous) != override_from_worker_args(new)
+            or fp8_setting(previous)[0] != fp8_setting(new)[0]
+            or scale_on(previous) is not scale_on(new))
+
+
 def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
                       merge_config: bool = True) -> list[dict]:
     """Broadcast a worker policy and publish its driver key only on success.
 
     A failed broadcast may have changed a subset of ranks, so the cached
     key is invalidated. Callers can then compensate or force the next
-    render to re-apply the complete policy.
+    render to re-apply the complete policy. A policy whose change drops every
+    resident (``drops_residents``) tells the driver's residency memos so
+    before it is sent.
     """
     effective = (handle.effective_worker_args(worker_args) if merge_config
                  else dict(worker_args))
@@ -88,6 +120,9 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
             raise RuntimeError("cannot apply worker arguments before setup is READY")
         mesh_setup.require_no_sample_leases(handle, "change worker arguments")
         require_mutation_authority(handle, "change worker arguments")
+        known = getattr(handle, "worker_args_key", None) is not None  # the last apply published
+        drops = drops_residents(
+            dict(getattr(handle, "active_worker_args", None) or {}) if known else None, effective)
         # Retire the old policy marker and publish DIRTY before the first
         # remote side effect. A timeout, lost dispatch return, or async
         # interruption cannot leave stale READY policy authorization.
@@ -100,6 +135,8 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
         future = None
         try:
             send_started = True
+            if drops:  # every Worker unloads its residents (actor/worker_env.py)
+                residency_doors.announce(residency_doors.UNLOADED)
             future = handle.workers.apply_worker_args.call(effective)
             value_mesh = handle._await_or_evict(
                 future, timeout_s=timeout_s, holding_lock=True)
@@ -220,6 +257,8 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
             # torn transition.
             handle.setup_key = None
             handle.topology = None
+            # The teardown releases every rank's models (actor/worker_env.py).
+            residency_doors.announce(residency_doors.UNLOADED)
             try:
                 cleaned = handle._await_or_evict(
                     handle.workers.teardown_group.call(),
@@ -288,6 +327,7 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
             handle.setup_key = None
             handle.worker_args_key = None
             handle.topology = None
+            residency_doors.announce(residency_doors.UNLOADED)  # the rollback releases them too
             try:
                 cleaned = mesh_helpers.get_off_loop(
                     handle.workers.teardown_group.call(), rollback_s)

@@ -179,10 +179,13 @@ def test_every_unload_of_every_rank_marks_the_load_still_to_come():
     """Each driver site that unloads every rank marks the next load as still to
     come, so a placement it undid is never read as standing: the ceremonies, the
     no-render path and its fall-through, the slab proof, the cross-mode
-    reference, the FSDP cleanup, a rescue's dropped slot, and a hard Clear VRAM."""
+    reference, the FSDP cleanup, a rescue's dropped slot, and a hard Clear VRAM.
+    The last two are an operator's drop, which marks through ``note_unloaded``
+    too (``recycle_drain.note_dropped``)."""
     import re
     from pathlib import Path
 
+    marks = ("pending_load_relief.note_unloaded()", "recycle_drain.note_dropped()")
     nodes = Path(pending_load_relief.__file__).parent
     sites = []
     for source in sorted(nodes.glob("*.py")):
@@ -193,11 +196,11 @@ def test_every_unload_of_every_rank_marks_the_load_still_to_come():
             if re.search(r"call_all\(\s*\"unload\"", line):
                 sites.append(source.name)
                 after = "\n".join(lines[index:index + 5])
-                assert "pending_load_relief.note_unloaded()" in after, f"{source.name}:{index + 1}"
+                assert any(mark in after for mark in marks), f"{source.name}:{index + 1}"
     assert len(sites) >= 7
     ops = (nodes / "ops.py").read_text()
     workers = ops.index('handle.call_all("clear_vram", level')
-    assert "pending_load_relief.note_unloaded()" in ops[workers:workers + 300]
+    assert "recycle_drain.note_dropped()" in ops[workers:workers + 300]
 
 
 def test_a_stop_of_the_workers_makes_an_eager_placement_pending_again():

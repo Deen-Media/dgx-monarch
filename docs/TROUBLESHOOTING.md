@@ -2052,11 +2052,14 @@ explicit preset's loader at its node, or the identity gate's no-render path)
 is credited: its weight bytes already sit inside the lower `MemAvailable`
 reading, the message says "weights resident, credited", and only the
 activation term is estimated. A load the loader deferred to the first render
-is not credited. Every unload of every rank drops that credit: a successful
-Recycle, a Clear VRAM node at `hard`, an identity ceremony's clean reload and
-the gate's other unloads, and a render that fails while its result is
-collected and evicts the fleet. Other evictions do not, for example a fleet
-that dies during submit or in a Fleet wave. If the workers lose the model
+is not credited. These doors, through which every rank's models go, drop that
+credit: a successful Recycle, a Clear VRAM node at `hard`, an identity
+ceremony's clean reload and the gate's other unloads, a configuration change,
+a topology change or a failed setup's rollback, a worker-policy change that
+unloads every resident, the capacity rescue's slot drop, a render that fails
+while its result is collected and evicts the fleet, a fleet the driver marks
+defunct (a dead Worker, a stall), whose replacement holds no model, and a new
+fleet started in place of a retired one. If the workers lose the model
 another way, for example when a different slot replaced it, the credit is
 stale and the estimate omits the weight term. That case can still end in an
 allocator OOM, as it would with no preflight, but it never blocks a render
@@ -2398,7 +2401,12 @@ encoder ComfyUI no longer holds, is charged in the resident window only. The
 DiT counts as pending after Reset attached mesh, Clear and retry or a Clear
 VRAM node set to
 `recycle`; after a Worker restart, or a Clear VRAM node at `soft` or `hard`, it
-reads as held, and the render-time estimate below prices it. Encodes have run
+reads as held. After a hard clear the render-site checks that charge a DiT
+price it under `auto`: this render-time estimate for LTX and MOSS-Image, the
+MiniMax H3 check ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight))
+and the Wan SCAIL and Animate 2 check
+([#47](#47-wan-scailscail-2-render-refused-activation-footprint-preflight)); every
+other family has no render-site check that charges it. Encodes have run
 by then, and that estimate prices the activations too. A re-queue whose box is
 short for the upsampler's own load beside a held DiT is not caught: that load
 runs before any DGX Monarch node. On a fresh
@@ -2426,11 +2434,15 @@ Direct headless calls need their own budget
 **Render-time estimate:** both `run_render` and pipelined depth>1 submissions
 check before dispatch or mesh effects. Only pending rank-0 weights on the
 driver host are charged. `auto` defers loading to this point; explicit presets
-load eagerly, so their weights are already in `MemAvailable`. Under `auto` a
-checkpoint that a finished render, a pipelined submission, a load or this
-check's own cleared charge placed is credited as well, until the next unload
-of every rank (a hard Clear VRAM, an identity ceremony's clean reload, a
-recycle) drops the credit. The reserve is
+load eagerly, so their weights are already in `MemAvailable`; that credit
+ends at an operator's drop (a Clear VRAM node at `hard`, a configuration
+change, the capacity rescue's slot drop) until the loader node runs again for
+the checkpoint or a load of it completes, and a recycle leaves it. Under `auto` a checkpoint that a
+finished render, a pipelined submission, a load or this check's own cleared
+charge placed is credited as well, until the next door through which every
+rank's models go drops the credit
+([#56](#56-minimax-h3-render-refused-activation-footprint-preflight) lists them).
+The reserve is
 5 GiB or a larger configured `uma_reserve_gb`.
 
 * Pending weights cost the checkpoint's file size, a conservative upper bound.
@@ -3089,8 +3101,12 @@ off, for diagnosis.
 **The identity gate checks before its proof render.** A first-use ceremony
 runs this guard, with the render site's other capacity checks, for the whole
 request before it writes its `RETESTING` row, priced for the slab path it would
-prove: the DiT counts as resident only if a finished render or a pipelined
-submission loaded it, or an explicit preset loaded it at the loader node. A
+prove: the DiT counts as resident only if a finished render, a pipelined
+submission or a load that succeeded placed it and nothing dropped every rank's
+models since, or, for this guard and the driver footprint, an explicit
+preset's loader node placed it or left it to the ceremony and no operator's
+drop (a Clear VRAM node at `hard`, a configuration change, the capacity
+rescue's slot drop) came since the loader node last ran. A
 request that cannot fit gets no proof render. The ceremony records one
 INCONCLUSIVE capacity row and takes no lever, the driver log carries one
 `identity gate skipped` line with this refusal, the render runs on stock
@@ -3133,22 +3149,34 @@ staging is charged for the full packed total on every rank at any degree.
 
 **Warm re-renders and residency.** The weight term is credited, not charged,
 when an explicit topology preset means the loader node already performed the
-load, or when one of four session memos names this checkpoint: the last
-completed render, the last pipelined submission, the last load that
-succeeded (the loader's eager placement or the identity gate's no-render
-path), and the last pending load the
-driver footprint check cleared. The memos are sampled before that check runs,
-or a render would credit itself for its own charge. A `weight_dtype` cast also
-stands the weight term down, because after a cast the file size does not price
-the resident weights; the activations are still charged. Every unload of every
-rank clears all four memos: a successful recycle, an eviction that retires the
-fleet, a Clear VRAM node at `hard`, an identity ceremony's clean reload and
-the gate's other unloads. Until 1.5 only the first two did, so a re-queue
-after a hard Clear VRAM was priced with its DiT credited although the Workers
-had dropped it. The gate's capacity check before a ceremony reads the same
-memos, without the cleared charge. A memo that
-still goes stale can only drop the weight term: it can admit a render that
-should refuse, never refuse one that fits.
+load or left it to the identity gate's ceremony, or when one of four session
+memos names this checkpoint: the last completed render, the last pipelined
+submission, the last load that succeeded in each model slot (the loader's
+eager placement or the identity gate's no-render path), and the last pending
+load the driver footprint check cleared. The memos are sampled before that
+check runs, or a render would credit itself for its own charge. A
+`weight_dtype` cast also stands the weight term down, because after a cast the
+file size does not price the resident weights; the activations are still
+charged. These doors, through which every rank's models go, clear all four
+memos: a successful recycle, an eviction that retires the fleet, a fleet the
+driver marks defunct and a new fleet in place of a retired one, a
+configuration change, a topology change or the
+rollback of a failed setup, a worker-policy change that unloads every resident
+(`compile_dit`, `family_adapter`, `shared_act_scale`, `fp8_matrix_mult`), a
+Clear VRAM node at `hard`, the capacity rescue's slot drop, an identity
+ceremony's clean reload and the gate's other unloads. Until 1.5 only the first
+two did, so a re-queue after a hard Clear VRAM under `auto` was priced with its
+DiT credited although the Workers had dropped it. The explicit preset's credit
+ends only at an operator's drop (a Clear VRAM node at `hard`, a configuration
+change, the capacity rescue's slot drop), until the loader node runs again for
+that checkpoint or a load of it completes: ComfyUI's cached loader node does not run after a hard clear,
+so the re-queue is charged. A recycle, a Worker restart, a new fleet and the
+gate's own unloads leave it, as before 1.5: after a recycle a cached loader
+node does not place the model again, and its DiT is still credited. The gate's
+capacity check before a ceremony reads the same memos, without the cleared
+charge. A memo or a preset credit that still goes stale can only drop the
+weight term: it can admit a render that should refuse, never refuse one that
+fits.
 
 **The loader-node half.** The loader node's settled window also charges the
 render the graph declares ([#52](#52-driver-side-footprint-preflight-refused-a-render)), so a 61.7 GiB eager load is refused before it
