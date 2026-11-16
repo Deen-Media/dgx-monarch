@@ -22,6 +22,8 @@ import {
 } from './fleetSetup.ts';
 import { componentFunctions, renderComponent, visibleText } from './renderHarness.js';
 import { loadWorkflow } from './workflowChoice.ts';
+import { InspectionGuard, droppedInspection } from './inspectionGuard.ts';
+import { freshGraphNotice, inspectDraft } from './workflowInspector.ts';
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const catalog: { workflows: WorkflowEntry[] } = JSON.parse(
@@ -207,12 +209,12 @@ function fleetPage(start: Draft, loads: boolean, leaves = false, said?: string) 
     let draft = start, loading = false, open = true;
     const plan = fleetPlan(start, [entry]);
     const changeDraft = (change) => { calls.push(['changeDraft', change]); draft = { ...draft, ...change }; };
-    // App's inspect reports a refusal itself and leaves the draft as it was; a load resolves with
-    // the notice it set, if any.
-    const inspect = async (workflow, name, preserve, id) => {
-      calls.push(['inspect', name, preserve, id]);
+    // App's inspect reports a refusal itself and leaves the draft as it was; a load takes the
+    // operation it asks for and resolves with the notice it set, if any.
+    const inspect = async (workflow, name, preserve, id, operation) => {
+      calls.push(['inspect', name, preserve, id, operation]);
       if (leaves) open = false;
-      if (loads) draft = { ...draft, workflow, workflowName: name };
+      if (loads) draft = { ...draft, workflow, workflowName: name, operation };
       return said;
     };
     const navigate = (view) => calls.push(['navigate', view]);
@@ -240,25 +242,21 @@ test('Set up Fleet keeps the load notice after its next step', async () => {
 test('Set up Fleet loads the Fleet workflow, labels the draft, then opens Create with the next step', async () => {
   const page = fleetPage({ ...emptyDraft(), workflow: other, workflowName: 'mine' }, true);
   await page.setUp();
+  // The load itself carries the Fleet label: one draft change, so one Undo takes both back.
   assert.deepEqual(page.calls, [
-    ['changeDraft', { operation: 'fleet' }],
-    ['inspect', 'dgx-monarch-fleet', false, FLEET_WORKFLOW],
+    ['inspect', 'dgx-monarch-fleet', false, FLEET_WORKFLOW, 'fleet'],
     ['navigate', 'workspace'],
     ['notice', fleetNextStep({ kind: 'load', entry: fleetEntry, replaces: true })],
   ]);
   assert.equal(page.state().draft.operation, 'fleet');
   assert.equal(page.state().loading, false);
-  // A refused load stays on Fleet, where App shows its error, puts the label back and posts no
-  // notice.
+  // A refused load stays on Fleet, where App shows its error, changes nothing in the draft and
+  // posts no notice.
   const refused = fleetPage({ ...emptyDraft(), workflow: other }, false);
   await refused.setUp();
   assert.deepEqual(
     refused.calls.map((call) => call.slice(0, 2)),
-    [
-      ['changeDraft', { operation: 'fleet' }],
-      ['inspect', 'dgx-monarch-fleet'],
-      ['changeDraft', { operation: 'image' }],
-    ],
+    [['inspect', 'dgx-monarch-fleet']],
   );
   assert.equal(refused.state().draft.operation, 'image');
   assert.equal(refused.state().loading, false);
@@ -280,8 +278,7 @@ test('leaving Fleet while the workflow loads keeps the page the user chose', asy
   // The draft still takes the Fleet workflow and label, and the notice names the next step, but
   // nothing moves the user to Create.
   assert.deepEqual(page.calls, [
-    ['changeDraft', { operation: 'fleet' }],
-    ['inspect', 'dgx-monarch-fleet', false, FLEET_WORKFLOW],
+    ['inspect', 'dgx-monarch-fleet', false, FLEET_WORKFLOW, 'fleet'],
     ['notice', fleetNextStep({ kind: 'load', entry: fleetEntry, replaces: true })],
   ]);
   assert.equal(page.state().draft.workflow, fleetEntry.workflow);
@@ -289,6 +286,79 @@ test('leaving Fleet while the workflow loads keeps the page the user chose', asy
   assert.equal(page.state().loading, false);
   const fleet = readFileSync(new URL('./views/Fleet.svelte', import.meta.url), 'utf8');
   assert.match(fleet, /onDestroy\(\(\) => \(open = false\)\);/);
+});
+
+// Run the shipped Set up Fleet handler with the shipped App changeDraft, inspect, undo and
+// importDraft, the shipped loadWorkflow and inspectDraft, so the draft history is App's own.
+const appCode = await componentFunctions('./App.svelte', [
+  'changeDraft',
+  'inspect',
+  'undo',
+  'importDraft',
+  'setNotice',
+]);
+function fleetApp(start: Draft, refuse = false) {
+  return new Function(
+    'start',
+    'refuse',
+    'helpers',
+    `'use strict';
+    const { fleetPlan, fleetNextStep, hasFleetSampler, loadWorkflow, inspectDraft, InspectionGuard,
+      droppedInspection, freshGraphNotice, entry } = helpers;
+    const guard = new InspectionGuard();
+    let draft = start, undoDraft = null, workflowId = '', dirty = false, notice = '', error = '';
+    let bindings = [], connections = [], bindingErrors = [], rawWorkflow = '', controlTab = '';
+    let loading = false, open = true, plan;
+    const submission = { preview: null };
+    const $state = { snapshot: (value) => value };
+    // The companion lists the graph's inputs, or refuses it.
+    const connection = { catalog: {}, client: { request: async (_path, body) => {
+      if (refuse) throw new Error('The companion refused the workflow.');
+      return { workflow: body.workflow, bindings: [{ id: 'g:1:text', resolved: true, value: '' }] };
+    } } };
+    const fail = (cause) => (error = String(cause));
+    const withBusy = async (action) => { try { await action(); } catch (cause) { fail(cause); } };
+    const navigate = () => {};
+    ${appCode}
+    ${setUpCode}
+    return {
+      setUp: () => ((plan = fleetPlan(draft, [entry])), setUp()),
+      undo,
+      view: () => ({ draft, undoDraft, dirty, error }),
+    };`,
+  )(start, refuse, {
+    fleetPlan,
+    fleetNextStep,
+    hasFleetSampler,
+    loadWorkflow,
+    inspectDraft,
+    InspectionGuard,
+    droppedInspection,
+    freshGraphNotice,
+    entry: fleetEntry,
+  });
+}
+
+test('one Undo after Set up Fleet brings back the old workflow with its own operation', async () => {
+  const start = { ...emptyDraft(), workflow: other, workflowName: 'mine', operation: 'image' };
+  const app = fleetApp(structuredClone(start));
+  await app.setUp();
+  assert.equal(app.view().error, '');
+  assert.deepEqual(app.view().draft.workflow, fleetEntry.workflow);
+  assert.equal(app.view().draft.operation, 'fleet');
+  await app.undo();
+  const { draft } = app.view();
+  assert.deepEqual(
+    { workflow: draft.workflow, workflowName: draft.workflowName, operation: draft.operation },
+    { workflow: other, workflowName: 'mine', operation: 'image' },
+  );
+  // A refused load leaves the draft, its Undo and its unsaved mark as they were.
+  const refused = fleetApp(structuredClone(start), true);
+  await refused.setUp();
+  assert.match(refused.view().error, /refused the workflow/);
+  assert.deepEqual(refused.view().draft, start);
+  assert.equal(refused.view().undoDraft, null);
+  assert.equal(refused.view().dirty, false);
 });
 
 test('the Fleet page labels retained host readings stale with their age', async () => {

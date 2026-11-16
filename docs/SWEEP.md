@@ -473,7 +473,7 @@ one rank's work.
 | bar | what it compares | floor |
 |---|---|---|
 | `step-nrms` | this cell's one-step probe against the reference's own | 0.10, over it reads CHECK |
-| `bit-identical` | an FSDP cell against its resident twin, or a residency or inert lever against its auto cell, on the full warm render | any difference is a FINDING |
+| `bit-identical` | an FSDP cell against its resident twin, or a residency or inert lever against its auto cell, on the full warm render's frames | any frame difference is a FINDING; audio samples are reported, not scored (see Audio below) |
 | `waived-nrms` | a render the runtime already knows to be wrong, against the reference: a kernel the matrix names as approximate, a reference that runs a checkpoint's pinned approximate kernel, or any leg that rendered under a granted class K card, whether this cell granted it or an earlier cell of the same shape left it live | none, the number is the deliverable |
 | `full-render-nrms` | two full warm renders, where no probe leg is available | none; the number is reported, and the cell reads CHECK unless the two renders match to the pixel |
 
@@ -505,7 +505,14 @@ the loudness envelope of each channel of each file on its own, keeps the
 lowest, and says whether every sample matched. Envelope correlation is not a
 calibrated fidelity threshold, and none is defined for audio yet, so the
 number never changes a verdict. It rides in the record's notes and in the
-report's audio section, apart from the pixel bars above.
+report's audio section, apart from the pixel bars above, and when the samples
+differ the line says so first ("samples differ"). The `bit-identical` bar
+holds the frames only, and its note says so: MiniMax H3's audio decode gives
+different samples from identical latents
+([VALIDATION](VALIDATION.md#minimax-h3-context-windows) records 18 of 964,800
+samples differing behind identical audio latents),
+so a sample difference on that bar is not a fault the sweep can name. A cell
+whose frames match and whose samples differ keeps its PASS, with the note.
 
 **What a step-nrms number contains above cfg 1.0.** The probe scores the latent
 one step produces, which is the cfg combination of the cond legs, so the number

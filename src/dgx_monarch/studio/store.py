@@ -196,6 +196,14 @@ class Store:
             return {row["prompt_id"]: {"id": row["id"], "prompt_id": row["prompt_id"], "state": row["state"],
                                        **({"reconciliation": True} if row["reconciled"] else {})} for row in rows}
 
+    def upload_copy(self, source_artifact_id: str) -> dict[str, Any] | None:
+        """The input copy Send to edit stored of this output, the first if there are several."""
+        with self.lock:
+            row = self.db.execute("SELECT document FROM objects WHERE kind='artifacts' "
+                                  "AND json_extract(document,'$.source_artifact_id')=? ORDER BY updated,id LIMIT 1",
+                                  (source_artifact_id,)).fetchone()
+        return None if row is None else json.loads(row[0])
+
     def artifacts_for_jobs(self, identities: builtins.list[str]) -> builtins.list[dict[str, Any]]:
         result: builtins.list[dict[str, Any]] = []
         with self.lock:

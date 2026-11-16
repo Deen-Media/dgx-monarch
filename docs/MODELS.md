@@ -2467,7 +2467,11 @@ in one pass, the p-h3-image VAE, which decodes one frame, and on 0.45.0 and
 later the MiniMax-H3-Image VAE, which decodes one frame too, and a VAE that went
 through the VAE Compute Dtype node with a dtype other than `default`: that
 node keeps the weights the loader built and changes only the compute dtype,
-while a Worker builds its VAE in one dtype, so its decode may differ. Each
+while a Worker builds its VAE in one dtype, so its decode may differ. So does
+a VAE with quantized layers, which Load VAE builds to compute in a dtype of its
+own (float16 unless it is given one) while a Worker builds them in the VAE
+dtype, and any decode on a driver whose ComfyUI decodes on the CPU
+(`--cpu-vae` or `--cpu`), since a Worker decodes on its GPU. Each
 decode
 logs one line saying whether it split and why not
 ([TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
@@ -2476,7 +2480,9 @@ logs one line saying whether it split and why not
 
 - Each Worker needs the driver's VAE file under the same name in its own
   `models/vae` folder with the same artifact signature, and the same ComfyUI
-  commit, torch and CUDA build and comfy-kitchen release. A Worker adopts the
+  commit, torch and CUDA build and comfy-kitchen release. The name is the one
+  Load VAE lists, so a file or folder under `models/vae` that is a symlink to
+  other storage splits under that name. A Worker adopts the
   driver's VAE dtype, attention functions and torch backend flags for the
   decode, so a driver started with `--use-sage-attention` needs the sage
   package on every Worker host. Any difference makes that rank decline, and

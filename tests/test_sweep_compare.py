@@ -164,7 +164,7 @@ def test_a_mismatched_audio_leg_reads_check_and_a_correlation_is_only_a_note(tmp
     assert record["findings"] == [] and run.settle_verdict(record) == "PASS"
     assert record["fidelity"]["audio"]["envelope_correlation"] < 0
     assert len(record["notes"]) == 1 and record["notes"][0].startswith(
-        "audio: lowest channel envelope correlation -")
+        "audio: samples differ; lowest channel envelope correlation -")
     assert record["notes"][0].endswith("; no audio threshold applies")
 
 
@@ -188,8 +188,8 @@ def test_the_report_lists_audio_apart_from_the_pixel_columns():
         record("av0002", {"error": "audio file count 2 != reference 1"}),
         record("im0003", None)], "cluster")
     assert payload["audio"] == [
-        "- `av0001` ltx uly2 TORCH_FLASH: lowest channel envelope correlation 0.97 over "
-        "2 channel(s); 1 file(s), the first 2 channel(s) at 48000 Hz for 1.0 s",
+        "- `av0001` ltx uly2 TORCH_FLASH: samples differ; lowest channel envelope correlation "
+        "0.97 over 2 channel(s); 1 file(s), the first 2 channel(s) at 48000 Hz for 1.0 s",
         "- `av0002` ltx uly2 TORCH_FLASH: not compared: audio file count 2 != reference 1"]
     text = report.render(payload)
     section = text.split("## audio comparisons", 1)[1]
@@ -206,3 +206,29 @@ def test_a_record_written_before_the_shapes_were_kept_still_reads():
     old = {"envelope_correlation": 0.93, "envelope_points": 46,
            "candidate_file": "cand.flac", "reference_file": "ref.flac"}
     assert compare.audio_line(old) == "envelope correlation 0.93 (cand.flac); shape not recorded"
+
+
+def test_on_the_bit_identical_bar_audio_whose_samples_differ_says_so(tmp_path):
+    """The bar holds the frames only: an audio decode can differ between identical latents
+    (docs/SWEEP.md), so samples that differ never score, and the note says they differ."""
+    from benchmark.sweep import run
+    from PIL import Image
+
+    frame = Image.new("RGB", (8, 8), (10, 20, 30))
+    for prefix in ("sweep_abc123_warm", "sweep_ref456_warm"):
+        frame.save(tmp_path / f"{prefix}_00001_.png")
+    tone = np.stack([_tone(), _tone(rising=False)], axis=1)
+    moved = tone.copy()
+    moved[1000:1010, 0] += 0.001
+    soundfile.write(str(tmp_path / "sweep_abc123_warm_00001_.flac"), moved, RATE)
+    soundfile.write(str(tmp_path / "sweep_ref456_warm_00001_.flac"), tone, RATE)
+    cell = {"id": "abc123", "audio": True, "probe": False, "probe_reason": "",
+            "reference": {"kind": "cell", "cell": "ref456", "bar": "bit-identical", "probe_steps": 0}}
+    record = {"verdict": "PASS", "findings": [], "notes": []}
+    run._fidelity(record, cell, tmp_path, 0.10)
+    fidelity = record["fidelity"]
+    assert fidelity["identical"] is True and fidelity["audio"]["identical"] is False
+    assert record["findings"] == [] and run.settle_verdict(record) == "PASS"
+    (note,) = record["notes"]
+    assert note.startswith("audio: samples differ; lowest channel envelope correlation "), note
+    assert note.endswith("; the bit-identical bar holds the frames only"), note

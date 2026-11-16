@@ -1493,7 +1493,12 @@ it for the mesh it attaches (`vae_decode_route.py`). Six rules hold it:
   (`vae_decode_env.py`). A driver VAE whose compute dtype ComfyUI's VAE
   Compute Dtype node set stays on the driver: that node keeps the weights the
   loader built, and a Worker builds its VAE in one dtype
-  (`vae_decode_remote.vae_source`).
+  (`vae_decode_remote.vae_source`). So does a VAE with quantized layers, which
+  Load VAE builds to compute in a dtype of its own and a Worker would build in
+  the VAE dtype (`vae_decode_families.classify`), and every decode on a driver
+  whose ComfyUI decodes the VAE on the CPU, since a Worker decodes on its GPU
+  (`vae_decode_route._open`). The Worker resolves the file by the name Load VAE
+  lists, not by where a symlink under the vae folder points.
 - **What an actor may hold.** One decode VAE beside its DiT, placed on the GPU
   directly rather than through ComfyUI's model manager, so loading it never
   evicts the DiT. Its load is priced against MemAvailable before any byte is
@@ -1508,7 +1513,9 @@ it for the mesh it attaches (`vae_decode_route.py`). Six rules hold it:
   declines, times out or answers with the wrong dtype or shape (every
   dimension is checked against what the stock function returns for that
   unit) is retired for that decode, and its units are decoded on the driver with one WARNING naming
-  the cause: a failure costs time, never a wrong image. `worker_vae_decode`
+  the cause: a failure costs time, never a wrong image. An error while the
+  driver plans the split ends the split, never the decode: the whole decode
+  runs on the driver with one WARNING. `worker_vae_decode`
   never reaches an actor, so it stays out of the published worker policy,
   every Gate capability context and the trust fingerprint, because a decode
   changes no DiT math.
@@ -2522,8 +2529,8 @@ off. The two shipped templates carry this project's own task prompt and
 system prompt in the chain's text boxes, because the text ComfyUI's templates
 carry there is MiniMax's and this project does not ship it; the testing graph
 keeps both boxes empty. With the switch on and the task prompt box empty,
-Replace Text hands on an empty text whatever the request says, and the
-expander answers nothing the user asked. A task prompt without the marker
+Replace Text, whose `find` holds the marker, hands on an empty text whatever
+the request says, and the expander answers nothing the user asked. A task prompt without the marker
 Replace Text fills loses the request the same way, and ComfyUI raises no
 error for either.
 Neither is a render the user asked for, on any world or budget: the first
@@ -2540,7 +2547,10 @@ Only what the graph states is read: a Generate Text node ComfyUI is sure to
 run for a DGX Monarch sampler, Fleet sampler or Identity Gate
 (`nodes/graph_live.py`, its `sure` walk from those nodes, so an expander that
 runs only for a Preview as Text beside the path refuses nothing), fed by a
-Replace Text node whose text is typed or comes from a Text box. The live walk
+Replace Text node whose text is typed or comes from a Text box and whose
+`find`, typed or from a Text box, does not occur in that text. An empty `find`
+occurs in any text, even an empty one, so Replace Text then hands on the
+request and nothing refuses. The live walk
 keeps both branches of a switch it cannot decide, the safe side for a price;
 here that side would refuse a render whose expander is off. So the sure walk
 follows a switch's branch only when the switch states its choice, typed,

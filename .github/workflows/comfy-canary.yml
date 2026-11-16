@@ -81,6 +81,9 @@ on:
       - "tests/test_compile_surface.py"
       - "tests/test_int8_gemm_kitchen_version.py"
       - "tests/test_vae_decode_split_comfy.py"
+      - "tests/test_vae_decode_driver_side.py"
+      - "tests/test_driver_uma_memory.py"
+      - "tests/test_load_renames.py"
       - "tests/test_minimax_h3_image_comfy_detection.py"
       - "tests/test_attention_pin_slab_comfy.py"
       - "tests/test_cond_batch_agreement.py"
@@ -464,12 +467,24 @@ jobs:
         run: pytest -q tests/test_compile_surface.py
       # Worker-assisted VAE decode replays ComfyUI's own tile loop and MiniMax
       # H3's chunked decode with simulated ranks, and the bytes must match
-      # stock; the file also pins the stock seams the split replays. The
-      # regular CI job has no ComfyUI, so it skips there.
+      # stock; the first file also pins the stock seams the split replays. The
+      # second loads a small real Wan VAE through Load VAE and holds what the
+      # driver decides before a split: the file name a Worker loads, a keyword
+      # latent, a CPU decode, an unreadable environment and quantized layers.
+      # The regular CI job has no ComfyUI, so they skip there.
       - name: Worker-assisted VAE decode split vs comfy master (CPU)
         env:
           COMFYUI_DIR: ../ComfyUI
-        run: pytest -q tests/test_vae_decode_split_comfy.py
+        run: pytest -q tests/test_vae_decode_split_comfy.py tests/test_vae_decode_driver_side.py
+      # The driver's unified-memory reading (driver_uma_memory.py) adds stock's
+      # cached-free term to MemAvailable: on a device that answers as a GB10,
+      # stock's term must still be reserved less active bytes. The load-rename
+      # file holds the key renames ComfyUI's model configs make at load. The
+      # regular CI job has no ComfyUI, so their real-ComfyUI cases skip there.
+      - name: Driver memory reading and load renames vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_driver_uma_memory.py tests/test_load_renames.py
       # ComfyUI names MiniMax-H3-Image by two key paths and the absence of H3's
       # audio path, and builds it from a sigma grid it has no default for. The
       # detector's row and the upstream gate's grid refusal rest on those facts.
@@ -523,7 +538,9 @@ jobs:
           tests/test_render_memory_price.py::test_the_bound_mirrors_comfys_own_formula
       # Run the real-ComfyUI files and canary wrappers in one process to expose
       # sys.modules leaks that isolated runs miss. conftest.py identifies the
-      # leaking file. Set both environment names because tests use both.
+      # leaking file. Set both environment names because tests use both. Every
+      # test file another step runs is listed here too, which
+      # tests/test_canary_path_filter.py checks.
       # After green per-file and ci.yml runs, failures here can reflect cross-file
       # leaks, CPU-wheel or ComfyUI dependency differences, or the current-ComfyUI
       # case in test_int8_linear_layout.py, which runs only in this step.
@@ -580,5 +597,14 @@ jobs:
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py
           tests/test_vae_decode_split_comfy.py
+          tests/test_vae_decode_driver_side.py
+          tests/test_driver_uma_memory.py
+          tests/test_load_renames.py
           tests/test_minimax_h3_image_comfy_detection.py
           tests/test_attention_pin_slab_comfy.py
+          tests/test_compile_surface.py
+          tests/test_int8_gemm_kitchen_version.py
+          tests/test_fp8_paths_tool.py
+          tests/test_cond_batch_agreement.py
+          tests/test_anima_cond_branch.py
+          tests/test_h3_image_row_check_tool.py

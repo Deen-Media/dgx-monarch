@@ -4966,10 +4966,16 @@ load, renders suddenly ~3x slower after an OTA update, and "GPU reads 11 W at
 44 C while a workload is running." A hard power-off leaves nothing in any log:
 the absence of a kernel panic, Xid or OOM record across an unclean boot is the
 signature. After a crash the GPU can stay pinned at ~650 MHz and 5-9 W across
-normal reboots. `dgxm doctor` warns when the last 30 boot records hold more
-than one reboot with no clean shutdown before it (row `unexpected shutdowns`).
-It discounts one, because the oldest reboot in the window often lacks its
-pair. Doctor reports its `GPU clock under load` row as **NOT RUN** and gives no
+normal reboots. `dgxm doctor` warns when the last 30 boot records hold a
+reboot with no clean shutdown before it (row `unexpected shutdowns`). It leaves
+out the oldest record shown when that is a reboot whose pair it cannot see: in
+a full window of 30 the shutdown may lie past the window, and a wtmp with no
+rotated predecessor starts at the install's first boot. When logrotate started
+the current wtmp, which happens while the box is up, and `last` shows all of
+it, a reboot as its first record does count: the boot before it ended without
+a shutdown. A `/var/log/wtmp.1` left from before the current wtmp began, as a
+reinstall that keeps the old one leaves it, makes doctor count the current
+wtmp's first boot as unexpected until 30 boot records fill the window. Doctor reports its `GPU clock under load` row as **NOT RUN** and gives no
 PD-state verdict. During a workload you already authorized, compare
 its clock and power readings with a healthy host; do not start a diagnostic
 load beside a render. The community-confirmed remedy is a full cold
@@ -8441,7 +8447,9 @@ decode, or one unit of it, on the driver. The line names the reason:
 | `stills at or under 1.2 MP` | a small still decodes in about a second | none |
 | `no live DGX Monarch mesh`, `has not finished setup` | no Init node ran in this ComfyUI process, or no render has set the mesh up | queue the graph with its Init node and sampler |
 | `no Worker rank sits on a GPU other than this driver's` | every rank shares the driver's GPU | none |
-| `did not come from a VAE loader file`, `outside ComfyUI's vae folders` | no Worker can name the VAE's bytes | load the VAE with Load VAE from `models/vae` |
+| `did not come from a VAE loader file`, `outside ComfyUI's vae folders` | no Worker can name the VAE's bytes | load the VAE with Load VAE from `models/vae`; a file or folder there that is a symlink to other storage counts, under the name Load VAE lists |
+| `decodes this VAE on the CPU` | the driver's ComfyUI runs with `--cpu-vae` or `--cpu`, and a Worker decodes on its GPU, a different result | none while the driver decodes on the CPU; drop the flag to split |
+| `holds quantized layers` | Load VAE builds a quantized VAE's layers to compute in a dtype of its own, and a Worker builds them in the VAE dtype, so a Worker's decode could differ | none: it decodes on the driver |
 | `the mesh is busy or not ready` | another render session held the mesh | queue again once it ends |
 | `one tile`, `one temporal chunk` | the decode has a single unit | none |
 | `the Sol-H3-VAE decoder decodes the whole clip in one pass`, `the p-h3-image VAE decodes single frames` | two MiniMax H3 VAEs in ComfyUI 0.44.0 or newer that this project does not split: one has no temporal chunks, the other decodes one frame ([MODELS](MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av)) | none: it decodes on the driver |
@@ -8462,6 +8470,12 @@ The WARNING names the rank and its first cause:
 - `no answer for unit`, `TimeoutError` or a supervision error: the Worker was
   slow, stuck or gone; a dead actor evicts the fleet, and the next render
   respawns it.
+
+A WARNING with no decode line before it, `VAE decode not split: planning the
+split failed (<error>), so the whole decode runs here`, means the driver could
+not read what a Worker must match, for example torch's matmul precision after
+code in the driver process mixed torch's legacy and new TF32 settings. The
+decode runs as ComfyUI's own; restart ComfyUI without that code to split.
 
 **Fix:** act on the reason, then queue again. A fallback never changes the
 image: every unit a rank did not decode was decoded on the driver by
@@ -9040,9 +9054,9 @@ means someone replaced the text and left the marker out. The testing graph
 `dgx-monarch-test-minimax-h3-image-grid` ships both boxes empty on purpose,
 and refuses this way if its switch is set to true.
 
-With the switch true and the task prompt box empty, Replace Text hands on an
-empty text whatever the request says, and Generate Text answers an empty
-prompt. If a caption can be read from that answer the model renders from it,
+With the switch true and the task prompt box empty, Replace Text, whose `find`
+holds `{input text}`, hands on an empty text whatever the request says, and
+Generate Text answers an empty prompt. If a caption can be read from that answer the model renders from it,
 and if none can the graph falls back to the request, after the expander has
 spent its time on nothing. A task prompt that lacks `{input text}` is worse: the
 expander writes a caption for the task prompt alone, and the render ignores
@@ -9058,7 +9072,10 @@ Only what the graph states is read. Generate Text must be a node ComfyUI is
 sure to run for a DGX Monarch sampler, Fleet sampler or Identity Gate, so an
 expander that runs only for an extra Preview as Text, with the switch false,
 refuses nothing. It must be fed by a Replace Text node whose text is typed or
-comes from a Text box. A switch counts by what it states, typed on the node
+comes from a Text box, and whose `find`, typed or from a Text box, does not
+occur in that text. An empty `find` occurs in any text, even an empty one, so
+Replace Text then hands on the request and nothing refuses. A switch counts by
+what it states, typed on the node
 or through a Boolean box wired to it. An expander behind an If/Else Switch or
 Soft Switch that states no choice, or behind a Branch node, is not sure to
 run, and refuses nothing. The templates' own skip of an empty request is an

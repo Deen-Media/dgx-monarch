@@ -737,7 +737,11 @@ sections after them list every change.
   Edit, loads the one editing workflow the driver runs, lists them when there
   are several, and says why and changes nothing when there is none. The
   companion copies the output into the driver's input store, so the 2 MiB
-  upload limit does not apply, and the Operation becomes Edit. Under Edit,
+  upload limit does not apply, and the Operation becomes Edit. Each output gets
+  one copy, so pressing Send to edit again, after the browser stopped waiting
+  for a slow copy or while it runs, binds that copy and makes no other, once
+  the driver answers that it still serves the file; when the driver answers
+  that the file is gone, the copy is made again in the same record. Under Edit,
   Generate stays off until the image input holds an image. Before, Send to
   edit reloaded the text to image graph as "Edit (not supported)" with only
   lineage attached and Generate on ([Studio](docs/STUDIO.md#working-with-workflows)).
@@ -793,7 +797,8 @@ sections after them list every change.
 - Studio's Grids page explains what a grid compares with a worked example and
   walks a first comparison, 20 steps against 40. The Fleet page says what Fleet
   does, when to use it and how to start. Its button, now Set up Fleet in
-  Create, loads the packaged Fleet workflow and names the next step; before,
+  Create, loads the packaged Fleet workflow with the Fleet label as one draft
+  change, which one Undo takes back, and names the next step; before,
   Configure Fleet workflow only set the draft's Operation label and opened
   Create with nothing to act on ([Studio](docs/STUDIO.md#run-many-prompts-with-fleet)).
 - Studio's viewer shows an image chosen after a video at once. Before, it could
@@ -1789,8 +1794,10 @@ sections after them list every change.
   decode loop runs once on the driver with only its per-unit decode swapped,
   so the output is byte-identical to the one-host tiled decode: MiniMax H3
   through both nodes, and the Wan 2.1 and 2.2, HunyuanVideo 1.0 and 1.5 and LTX
-  video VAEs through VAE Decode (Tiled). A Worker loads the driver's VAE file
-  in the driver's dtype, decodes under the driver's attention and torch
+  video VAEs through VAE Decode (Tiled). A VAE with quantized layers, and any
+  decode on a driver whose ComfyUI decodes on the CPU, stay on the driver. A
+  Worker loads the driver's VAE file, by the name Load VAE lists, in the
+  driver's dtype, decodes under the driver's attention and torch
   backend flags, holds one decode VAE that `status()` reports and `clear_vram`
   drops, and declines any unit it cannot decode exactly, which the driver then
   decodes with one WARNING; a reply of any other shape or dtype than the stock
@@ -2035,6 +2042,25 @@ sections after them list every change.
   error, not the broken barrier its peer was left with. The dual-model cfg
   test now hands its gather a non-contiguous view, so it fails if the
   production conversion goes.
+
+### Fixed
+
+- `dgxm doctor`'s `unexpected shutdowns` row no longer leaves out one reboot
+  always: it leaves out the oldest record only when that is a reboot whose
+  pair it cannot see, so after a wtmp rotation, or in a full window with an
+  even count, a hard power-off is counted
+  ([TROUBLESHOOTING](docs/TROUBLESHOOTING.md#pd-stuck-state)).
+- The sweep runner reads a driver answer that urllib cannot parse, such as a
+  body cut short or a malformed status line, as a transport error at every
+  call, so it ends the session with its summary instead of a traceback
+  ([SWEEP](docs/SWEEP.md)).
+- The sweep's audio note says when the samples differ, and the bit-identical
+  bar says it holds the frames only ([SWEEP](docs/SWEEP.md#5-reading-results)).
+- The protected-test digest now covers module-level xunit hooks,
+  `__test__`, `pytest_generate_tests`, a module-level skip or importorskip
+  under any name and a module-level raise such as `unittest.SkipTest`, any of
+  which could turn off every protected test of a module with the check still
+  green.
 
 ## [1.4.0] - 2026-10-28
 

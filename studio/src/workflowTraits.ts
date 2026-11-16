@@ -76,6 +76,8 @@ const CONTAINERS: Record<string, string> = {
   gif: 'GIF',
   webp: 'WebP',
 };
+// The container Save Video writes at format auto, by codec, as ComfyUI chooses it.
+const AUTO_CONTAINERS: Record<string, string> = { av1: 'webm', prores: 'mov' };
 const AUDIO_FORMATS: Record<string, string> = { flac: 'FLAC', mp3: 'MP3', opus: 'Opus' };
 
 /** One node whose result the job keeps or shows. */
@@ -178,9 +180,11 @@ function formatOf(
   if (saver.kind === 'audio') return AUDIO_FORMATS[format];
   // Video Combine names a format such as video/h264-mp4 or image/gif.
   if (node.type === 'VHS_VideoCombine') return CONTAINERS[format.split(/[/-]/).pop() ?? ''];
-  // Save Video's auto container is MP4, or WebM when the codec is AV1.
-  if (format === 'auto')
-    return currentValue(own.get('format.codec'), values) === 'av1' ? 'WebM' : 'MP4';
+  // Save Video's auto container follows its codec: WebM for AV1, MOV for ProRes, otherwise MP4.
+  if (format === 'auto') {
+    const codec = String(currentValue(own.get('format.codec'), values));
+    return CONTAINERS[AUTO_CONTAINERS[codec] ?? 'mp4'];
+  }
   return CONTAINERS[format];
 }
 

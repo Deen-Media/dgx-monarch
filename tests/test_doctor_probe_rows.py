@@ -276,7 +276,7 @@ def _command_answers(monkeypatch, name, returncode, stdout):
 
 
 @pytest.mark.parametrize(("returncode", "stdout", "observed"), [
-    (0, "\nwtmp begins Fri Oct  9 04:18:18 2026\n", True),   # an empty history
+    (0, "\nwtmp begins Sun Mar  1 08:00:00 2026\n", True),   # an empty history
     (1, "", False),                                         # last failed and printed nothing
     (1, "last: cannot open /var/log/wtmp\n", False),
 ])
@@ -290,6 +290,51 @@ def test_unexpected_shutdown_row_reads_only_a_successful_last(monkeypatch, retur
         assert row["status"] == doctor._WARN
         assert row["detail"].startswith("unobserved:")
         assert f"exited {returncode}" in row["detail"]
+
+
+_REBOOT = "reboot   system boot  6.1.0-42-example Tue Mar  3 09:20:00 2026 - Tue Mar  3 09:27:00 2026  (00:07)"
+_SHUTDOWN = "shutdown system down  6.1.0-42-example Tue Mar  3 09:05:00 2026 - Tue Mar  3 09:20:00 2026  (00:15)"
+
+
+def _last(newest_first: str) -> str:
+    """`last -Fxn30 shutdown reboot` output for records written R (reboot) and S (shutdown)."""
+    lines = [_REBOOT if mark == "R" else _SHUTDOWN for mark in newest_first]
+    return "\n".join(lines) + "\n\nwtmp begins Sun Mar  1 08:00:00 2026\n"
+
+
+@pytest.mark.parametrize(("records", "rotated", "crashes"), [
+    # A wtmp that starts at the install's first boot: that first reboot has no shutdown before it.
+    ("RSRSR", False, 0),
+    ("RRSR", False, 1),
+    # logrotate started this wtmp while the box was up. A clean end of that boot logs a shutdown
+    # first; a reboot first is the boot after one that never logged its shutdown.
+    ("RRS", True, 1),
+    ("RSR", True, 1),
+    ("RRRS", True, 2),
+    ("RSRS", True, 0),
+    # A full window: the oldest reboot shown may have its shutdown past the window.
+    ("RS" * 15, True, 0),
+    ("RR" + "RS" * 13 + "RR", False, 3),
+    ("RR" + "RS" * 13 + "RR", True, 3),
+    ("RR" + "RS" * 14, False, 2),
+])
+def test_unexpected_shutdown_row_counts_each_reboot_that_followed_no_shutdown(
+        monkeypatch, tmp_path, records, rotated, crashes):
+    from dgx_monarch.cli import doctor_probes
+
+    assert records.count("R") + records.count("S") == len(records) <= 30
+    _stub_no_cuda_torch(monkeypatch)
+    _command_answers(monkeypatch, "last", 0, _last(records))
+    predecessor = tmp_path / "wtmp.1"
+    if rotated:
+        predecessor.write_bytes(b"\0" * 384)
+    monkeypatch.setattr(doctor_probes, "_ROTATED_WTMP", str(predecessor), raising=False)
+    row = _row(doctor._spark_health_rows(None), "unexpected shutdowns")
+    if crashes:
+        assert row["status"] == doctor._WARN, row
+        assert row["detail"].startswith(f"{crashes} reboot(s) without a clean shutdown"), row
+    else:
+        assert (row["status"], row["detail"]) == (doctor._OK, "none in recent boot records")
 
 
 @pytest.mark.parametrize(("returncode", "stdout", "expected"), [

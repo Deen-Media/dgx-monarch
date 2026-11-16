@@ -5,8 +5,14 @@ Each protected test is recorded with a digest of its normalized source: its
 decorators (parametrize names, rows and ids included), signature and body
 without the docstring, plus every module-level definition it reaches by name
 inside its own module (case tables, helpers, same-module fixtures, autouse
-fixtures and ``pytestmark``). Removing a row from a table that a protected test
-is parametrized over therefore changes that test's digest.
+fixtures and ``pytestmark``), and every module-level hook or statement pytest
+applies to it unnamed: the xunit module and function hooks
+(``setup_module``, ``setUpModule``, ``setup_function`` and their teardowns),
+``__test__``, ``pytest_generate_tests``, and a ``pytest.skip`` or
+``pytest.importorskip`` (by any name the module imports them under) or a
+``raise`` that runs at import. Removing a row from a table that
+a protected test is parametrized over therefore changes that test's digest, and
+so does a hook that skips every test of a module.
 
 CI runs ``--check`` (the default): a missing, renamed or edited protected test
 fails until ``--write`` re-baselines the inventory in the same diff. ``--write``
@@ -85,8 +91,16 @@ _DOCUMENTED = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 # follows from the syntax, ``kind`` records a redundant ``u`` prefix and
 # ``type_comment`` is a comment.
 _OMITTED_FIELDS = frozenset({"ctx", "kind", "type_comment"})
-# Names pytest applies to a test without the test naming them.
-_IMPLICIT_MODULE_NAMES = frozenset({"pytestmark"})
+# Names pytest applies to a test without the test naming them: marks, the
+# xunit module and function hooks it runs as autouse fixtures, the flag that
+# turns collection off and the hook that parametrizes a module's tests.
+_IMPLICIT_MODULE_NAMES = frozenset({
+    "pytestmark", "setup_module", "teardown_module", "setUpModule", "tearDownModule",
+    "setup_function", "teardown_function", "__test__", "pytest_generate_tests",
+})
+# A module-level call of either skips the whole module at import, whatever
+# name, if any, takes its result.
+_IMPORT_TIME_SKIPS = frozenset({"skip", "importorskip"})
 _IMPLICIT_CLASS_NAMES = frozenset({
     "pytestmark", "setup_method", "teardown_method", "setup_class", "teardown_class",
 })
@@ -300,6 +314,46 @@ def _references(unit: _Unit) -> set[str]:
     return names
 
 
+def _skip_names(statements: Iterable[ast.stmt]) -> frozenset[str]:
+    """The names a module calls pytest's skip and importorskip by, its own aliases included."""
+    names = set(_IMPORT_TIME_SKIPS)
+    for statement in statements:
+        if isinstance(statement, ast.ImportFrom) and (statement.module or "").split(".")[0] in {"pytest", "_pytest"}:
+            names.update(alias.asname or alias.name for alias in statement.names if alias.name in _IMPORT_TIME_SKIPS)
+    return frozenset(names)
+
+
+def _is_main_guard(statement: ast.stmt) -> bool:
+    """``if __name__ == "__main__":``."""
+    test = statement.test if isinstance(statement, ast.If) else None
+    return (isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "__name__"
+            and len(test.comparators) == 1 and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value == "__main__")
+
+
+def _skips_at_import(statement: ast.stmt, skip_names: frozenset[str] = _IMPORT_TIME_SKIPS) -> bool:
+    """Whether a module-level statement can skip the module as it runs: a call of pytest's
+    skip or importorskip by any name the module gives them, or any raise, such as
+    ``raise unittest.SkipTest(...)``.
+
+    A definition's body runs later, if at all, so only statements that run at
+    import count, with every block they hold.
+    """
+    if isinstance(statement, (*_DOCUMENTED, ast.Import, ast.ImportFrom)):
+        return False
+    if _is_main_guard(statement):  # its body runs only as a script, never as pytest imports it
+        return any(_skips_at_import(child, skip_names) for child in statement.orelse)
+    for child in ast.walk(statement):
+        if isinstance(child, ast.Raise):
+            return True
+        if isinstance(child, ast.Call):
+            func = child.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name in skip_names:
+                return True
+    return False
+
+
 class _Scope:
     """The definitions of one module or class body, with per-unit memos.
 
@@ -307,12 +361,17 @@ class _Scope:
     the scope's lifetime, so ``id(unit)`` is a stable memo key.
     """
 
-    def __init__(self, statements: Iterable[ast.stmt], implicit_names: frozenset[str]):
+    def __init__(self, statements: Iterable[ast.stmt], implicit_names: frozenset[str], *,
+                 module: bool = False):
+        statements = list(statements)
         self.definitions = _definitions(statements)
         self.implicit = [
             unit for name, units in self.definitions.items() for unit in units
             if name in implicit_names or _is_autouse_fixture(unit)
         ]
+        if module:
+            skip_names = _skip_names(statements)
+            self.implicit += [statement for statement in statements if _skips_at_import(statement, skip_names)]
         self._names: dict[int, set[str]] = {}
 
     def references(self, unit: _Unit) -> set[str]:
@@ -338,7 +397,7 @@ class _Scope:
 
 def digest_tests(tree: ast.Module) -> dict[str, str]:
     """Digest every collected test in one parsed test module."""
-    module = _Scope(tree.body, _IMPLICIT_MODULE_NAMES)
+    module = _Scope(tree.body, _IMPLICIT_MODULE_NAMES, module=True)
     classes: dict[int, _Scope] = {}
     texts: dict[int, str] = {}
     digests: dict[str, str] = {}

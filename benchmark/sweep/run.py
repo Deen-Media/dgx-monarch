@@ -685,8 +685,13 @@ def _fidelity(record: dict, cell: dict, output_dir: Path, floor: float,
         record["findings"].append(f"reference compare: audio envelope: {audio['error']}")
     elif "envelope_correlation" in audio:
         # No calibrated audio threshold exists, so the number scores nothing;
-        # it rides as a note, apart from the pixel bar above.
-        record["notes"].append(f"audio: {audio_line(audio)}; no audio threshold applies")
+        # it rides as a note, apart from the pixel bar above. Bit-identical
+        # holds the frames only: MiniMax H3's audio decode gives different
+        # samples from identical latents (docs/VALIDATION.md), so samples that
+        # differ are said, never scored (docs/SWEEP.md section 5).
+        held = ("the bit-identical bar holds the frames only" if bar == "bit-identical"
+                else "no audio threshold applies")
+        record["notes"].append(f"audio: {audio_line(audio)}; {held}")
     if out is not None and (split := cfg_split_note(record, cell, out)):
         # A cfg cell that never split renders the right pixels on both ranks,
         # so no fidelity bar can see it; only the wall shows it.

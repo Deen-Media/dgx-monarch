@@ -438,9 +438,9 @@ def get_mesh(
             config_mtime = os.path.getmtime(resolved)
         except OSError:
             pass
-        # A local mesh consumes [worker_args], so it needs a digest of its own.
+        # A local mesh consumes the [worker_args] its actors read, so it needs a digest of its own.
         config_digest = (config_fingerprint(resolved) if use_cluster
-                         else mesh_helpers.local_worker_args_fingerprint(config.worker_args, config.monarch))
+                         else mesh_helpers.local_worker_args_fingerprint(actor_worker_args(config.worker_args), config.monarch))
     key = _mesh_cache_key(config.source, comfy, use_cluster)
     # The provisional claim is releasable until the fail-closed publication
     # immediately before the first native transport/fleet call below.

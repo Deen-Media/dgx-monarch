@@ -871,7 +871,9 @@ records still use the file name.
 Under the list, an Output line says what a run saves. Studio reads it from the
 graph's save nodes and the draft's format choices, for example "PNG image",
 "PNG frames plus separate FLAC audio" or "one MP4 video with sound". Save Image
-writes frames when the graph makes video. A saved video has sound when the
+writes frames when the graph makes video. Save Video at format auto writes the
+container its codec picks, as ComfyUI does: WebM for AV1, MOV for ProRes and
+MP4 otherwise. A saved video has sound when the
 Create Video node that feeds it takes an audio input; when another node makes
 the video, the line does not say. A preview node saves no file.
 
@@ -1011,8 +1013,10 @@ something needs a person:
 - **A refused draft.** When the companion refuses the draft, the dialog says no
   job started and shows the refusal with its error code. Its button opens the
   Create tab that holds the cause: LoRAs for `lora_binding`, Inputs for a
-  style, seed or lineage refusal, All inputs for a refused workflow input and
-  Layout for any other workflow refusal.
+  style, seed or lineage refusal, All inputs for a refused workflow input,
+  including an input of a node inside a subgraph and a dynamic option's input
+  such as Save Video's `format.codec`, and Layout for any other workflow
+  refusal.
 - **An error in the record.** The status line reads Blocked with the error, and
   Generate stays off.
 
@@ -1226,9 +1230,11 @@ The page says this and gives the first step. Set up Fleet in Create loads the
 packaged workflow "Fleet: many prompts, one per GPU" into Create, unless the
 draft already holds a Fleet sampler, sets the draft's Operation to Fleet and
 opens Create. A notice there names the next step: put your prompts in the
-prompts input, one per line, then generate as usual. When the load replaces a
-workflow, Undo in Create brings that workflow back, and when the load fails
-the page stays on Fleet with the error and leaves the draft as it was. If you
+prompts input, one per line, then generate as usual. The load and the Fleet
+label are one draft change: when the load replaces a workflow, one Undo in
+Create brings that workflow back with the Job category it had, and when the
+load fails the page stays on Fleet with the error and leaves the draft, and
+what Undo restores, as they were. If you
 leave Fleet while the workflow loads, the draft still takes it, the notice
 still appears, and Studio stays on the page you chose.
 Operation only labels the job, for the
@@ -1496,7 +1502,18 @@ decodes. Input uploads accept PNG, JPEG or WebP files of at most 2 MiB, keep
 mask alpha, and store an orientation-normalized RGBA PNG; a larger image is
 refused with a request to downscale it. Send to edit stores its copy of an
 output the same way, read from the driver's file, so the 2 MiB limit on what a
-browser sends does not apply to it. Thumbnails return at most 320 pixels per
+browser sends does not apply to it. The copy waits for one of the two decode
+slots that thumbnails also use. Studio keeps one copy per output: Send to edit
+again on the same output, while its copy runs or after, binds that copy and
+makes no other. The browser stops waiting for a companion request after 20
+seconds, and the companion finishes a copy the browser stopped waiting for, so
+on a busy driver the first press can end with the browser's abort message and
+the next press binds the copy it made. Before it binds a stored copy, Studio
+asks the driver whether it still serves that file. When the driver answers that
+the file is gone, as after a cleanup of ComfyUI's input folder, Studio copies
+the output again into the same record. When the driver cannot be asked, or
+answers anything but the file or that it is gone, Send to edit fails and binds
+nothing. Thumbnails return at most 320 pixels per
 edge and run at most two decodes at once. A 65 MiB ceiling on the normalized
 upload and on a thumbnail's source file is only a backstop that no 8-bit image
 within the pixel limit reaches. Live previews retain at most 16 identity-bound

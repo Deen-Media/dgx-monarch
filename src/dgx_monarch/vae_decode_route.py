@@ -51,17 +51,31 @@ _INSTALL_LOCK = threading.Lock()
 _ARMED: tuple[weakref.ref, str] | None = None
 
 
-def knob(handle: Any) -> str:
-    """The ``worker_vae_decode`` setting of the handle's cluster.toml; absent is off."""
-    value = dict(getattr(getattr(handle, "config", None), "worker_args", None) or {}).get(KNOB, "off")
+def knob(handle: Any, worker_args: dict | None = None) -> str:
+    """The ``worker_vae_decode`` setting, from ``worker_args`` or the handle's cluster.toml; absent is off."""
+    if worker_args is None:
+        worker_args = getattr(getattr(handle, "config", None), "worker_args", None)
+    value = dict(worker_args or {}).get(KNOB, "off")
     return value if value in ("off", "auto") else "off"
 
 
-def arm(handle: Any) -> None:
-    """Called by the Init node for the mesh it attached; never raises into Init."""
+def arm(handle: Any, config_path: str | None = None) -> None:
+    """Called by the Init node for the mesh it attached; never raises into Init.
+
+    The Init node passes its own ``config_path`` widget, and the setting is read from the file
+    it names, resolved as the Init node's mesh read it. A local mesh that a driver-only key
+    leaves alone comes back as the handle of its first attach, whose config does not hold the
+    edit; the route keeps the setting in its own armed state and reads no handle's copy.
+    """
     global _ARMED
     try:
-        on = knob(handle) == "auto"
+        if config_path is None:
+            on = knob(handle) == "auto"
+        else:
+            from .config import find_config_path
+            from .monarch_policy_io import local_settings
+
+            on = knob(handle, local_settings(find_config_path(config_path or None))[0]) == "auto"
         with _LOCK:
             previous = _ARMED
             _ARMED = (weakref.ref(handle), str(getattr(handle.config, "source", "") or "")) if on else None
@@ -73,6 +87,8 @@ def arm(handle: Any) -> None:
         elif previous is not None:
             log.info("Worker-assisted VAE decode is off ([worker_args] %s); decodes stay on the driver", KNOB)
     except Exception as exc:
+        with _LOCK:
+            _ARMED = None  # as the warning says, whatever an earlier Init armed
         log.warning("Worker-assisted VAE decode could not arm, so decodes stay on the driver: %r", exc)
 
 
@@ -121,14 +137,28 @@ def install() -> None:
 
 
 def _entry_wrapper(original: Callable[..., Any], entry: str) -> Callable[..., Any]:
+    # ComfyUI names the latent samples_in on VAE.decode and samples on VAE.decode_tiled, and a
+    # caller may pass it by either position or name, so it is read through the stock signature.
+    signature = inspect.signature(original)
+
     @functools.wraps(original)
-    def decode(self: Any, samples: Any, *args: Any, **kwargs: Any) -> Any:
+    def decode(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _ACTIVE.get() is not None or _ARMED is None:
-            return original(self, samples, *args, **kwargs)
-        route = _open(self, samples, entry)
+            return original(self, *args, **kwargs)
+        try:
+            bound = signature.bind(self, *args, **kwargs)
+        except TypeError:
+            return original(self, *args, **kwargs)  # stock's own error for the caller's arguments
+        samples = list(bound.arguments.values())[1] if len(bound.arguments) > 1 else None
+        try:
+            route = _open(self, samples, entry)
+        except Exception as exc:
+            log.warning("VAE decode not split: planning the split failed (%s: %s), so the whole decode "
+                        "runs here", type(exc).__name__, exc)
+            route = None
         if route is None:
-            return original(self, samples, *args, **kwargs)
-        return route.run(lambda: original(self, samples, *args, **kwargs))
+            return original(self, *args, **kwargs)
+        return route.run(lambda: original(self, *args, **kwargs))
 
     setattr(decode, _KEY, True)
     return decode
@@ -173,6 +203,9 @@ def _open(vae: Any, samples: Any, entry: str) -> _Route | None:
                   "under 1.2 MP keep the one-host decode")
     elif family is not None and family.kind == H3_CHUNK and _frames(samples) == 1:
         reason = "a MiniMax H3 still is one temporal chunk, so there is nothing to split"
+    elif family is not None and (device := _decode_device(vae) or "cuda") != "cuda":
+        reason = (f"this driver decodes this VAE on the {device.upper()} (ComfyUI's --cpu-vae or --cpu), "
+                  "and a Worker decodes on its GPU, a different result")
     handle = armed_handle() if not reason else None
     if not reason and handle is None:
         reason = "no live DGX Monarch mesh: the Init node attaches one and the first render sets it up"
@@ -196,6 +229,16 @@ def _open(vae: Any, samples: Any, entry: str) -> _Route | None:
     from .vae_decode_env import describe
 
     return _Route(handle, family, vae, ranks, source, describe(vae), record)
+
+
+def _decode_device(vae: Any) -> str | None:
+    """The kind of device ComfyUI decodes this VAE on (``cuda`` or ``cpu``), or None when unset."""
+    device = getattr(vae, "device", None)
+    if device is None:
+        return None
+    import torch
+
+    return torch.device(device).type
 
 
 def _frames(samples: Any) -> int:

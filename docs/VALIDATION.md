@@ -406,8 +406,8 @@ have run only in CPU tests and the Studio browser rounds (NOT RUN below).
   [cfg2 rows](#campaign-k-equal-pairs)); the Anima reading of 2026-11-10
   against stock that led to its text branch fix
   ([record](#anima-text-branch-fix)); the
-  full Studio browser procedure of 2026-11-15 on the bundle this release
-  ships, `index-BFnkXPeL.js`
+  full Studio browser procedure of 2026-11-15 on the bundle of that day,
+  `index-BFnkXPeL.js`
   ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-15));
   the hardware of 2026-11-11 and the fixes it led to
   ([record](#fixes-2026-11-11)); the passes and proof blocks on the dev builds
@@ -479,6 +479,27 @@ have run only in CPU tests and the Studio browser rounds (NOT RUN below).
   again while ComfyUI holds the graph's encoders, crediting them at 1.144; and
   the Old model in the way card for a loader `weight_dtype` change on the file
   a Worker holds stock.
+- **NOT RUN for the review fixes of 2026-11-16** that change what a Spark
+  or Studio does, each held by CPU tests:
+  - A symlinked VAE file now splits under Worker-assisted VAE decode:
+    `dgx-monarch-ltx25-t2v.json` on the pair with `worker_vae_decode = "auto"`
+    and `models/vae/ltx-2.5-video-vae-bf16.safetensors` a symlink to other
+    storage on both boxes, its split line and its bytes against the one-host
+    decode.
+  - A local fleet kept over a driver-only key: one Spark, the Init node in
+    `local` mode with a `[worker_args]` table and the DiT loaded, then
+    `worker_vae_decode = "auto"` added and the graph queued again, with no
+    recycle line and the DiT still loaded.
+  - The empty-find graph no longer refused: `dgx-monarch-minimax-h3-image-t2i.json`
+    with the expander switch on, the task prompt box empty and Replace Text's
+    `find` cleared, rendering with no #153 refusal.
+  - A planning error that ends the split and not the decode:
+    `dgx-monarch-ltx25-t2v.json` with `worker_vae_decode = "auto"` in a driver
+    where other code mixed torch's legacy and new TF32 settings, its WARNING
+    and a decoded video.
+  - The Studio browser procedure on the bundle that holds these fixes,
+    `index-Ct66OJHZ.js`
+    ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#review-fixes-2026-11-16)).
 - Build and install, on `35f1486`, the release commit of 2026-11-01, in a
   disposable Python 3.12 venv that holds only `build` and `pip`:
   `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and

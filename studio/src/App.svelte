@@ -143,12 +143,13 @@
     name: string,
     preserveValues = false,
     templateId = '',
+    asked = '',
   ) {
     const ticket = guard.begin(connection.client);
     const values = preserveValues ? structuredClone($state.snapshot(draft.values)) : undefined;
     let loaded = '';
     await withBusy(async () => {
-      const fit = { operation: () => draft.operation, info: connection.catalog.object_info };
+      const fit = { operation: () => draft.operation, asked, info: connection.catalog.object_info };
       const result = await inspectDraft(connection.client, workflow, name, values, fit);
       const state = guard.inspected(ticket, connection.client);
       if (state !== 'current')
@@ -163,7 +164,6 @@
     if (loaded) setNotice(loaded);
     return loaded;
   }
-
   /** A dynamic choice changes which inputs exist, so inspect again with the edited values. */
   async function rebind(values: Draft['values']) {
     changeDraft({ values });
