@@ -224,7 +224,7 @@ def test_a_short_box_refuses_at_the_sampler_with_the_loaders_sentence(_prompt, m
     assert len(text) < 4000
 
 
-# Review of the 1.5.0 promotion, finding a2#1: after the unload, the encodes have still run.
+# Review of the 1.5.0 promotion: after the unload, the encodes have still run.
 
 def test_the_cell_9_requeue_the_unload_makes_room_for_renders(_prompt, monkeypatch):
     """The switch-off graph rendered, a reset left the DiT pending, and the switch-on re-queue
@@ -305,7 +305,7 @@ def test_held_encoders_count_at_their_resident_size_and_the_decode_vae_waits(_pr
     charged it again at the 1.15 ratio and put the decode VAE in the load window, so it
     needed 90.6 GiB where the Worker's wall needs 84.1. A held encoder is credited at
     its measured 1.144 and the VAE, which loads after the DiT places, waits for the
-    settled window, so 88 GiB admits. The review of the 1.5.0 promotion (a2#1): the
+    settled window, so 88 GiB admits. The review of the 1.5.0 promotion: the
     held encoder's last 0.006 of its size, charged at 1.15 and credited at 1.144, still
     sat in the load window, though nothing loads it there; the load window now holds the
     DiT alone, at the Worker's wall, and 84.17 GiB admits with nothing unloaded."""
@@ -332,7 +332,7 @@ def test_held_encoders_count_at_their_resident_size_and_the_decode_vae_waits(_pr
 
 
 def test_a_client_that_sends_its_prompt_id_again_is_priced_at_the_sampler(_prompt, monkeypatch):
-    """Review of the 1.5.0 promotion, a2#2: ComfyUI takes a client's own prompt id, checking only
+    """Review of the 1.5.0 promotion: ComfyUI takes a client's own prompt id, checking only
     its form, so an outside client can send one id twice. The record of the loader's price was keyed
     by the id alone, so the second queue, whose loader ComfyUI kept, read as priced and the sampler
     priced nothing. Each record now names the running queue item's number, as the spend marks do;
@@ -462,7 +462,7 @@ def test_identity_gate_prices_a_cached_loader_requeue_before_its_ceremony(_promp
 
 
 def test_identity_gate_admits_the_cell_9_requeue_the_unload_makes_room_for(_prompt, monkeypatch):
-    """Review of the 1.5.0 promotion, a2#1, at the gate: its ceremony's conditioning is encoded
+    """Review of the 1.5.0 promotion, at the gate: its ceremony's conditioning is encoded
     and the proof renders load the DiT inside the node, before any other node runs, so after
     the unload the price keeps the encoders out of the load window there too and the ceremony
     runs. It was refused 114.6 GiB against 106.8."""

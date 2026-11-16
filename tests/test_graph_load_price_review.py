@@ -201,7 +201,7 @@ def test_a_held_encoder_credits_its_own_bytes_not_the_upsampler(monkeypatch):
     graph[switch]["inputs"]["switch"] = True
     site = graph_load_price.site_terms(loader_graph.driver_stack_terms(
         graph, family="minimax_h3"), graph_load_price.SITE_LOADER)
-    # The review of the 1.5.0 promotion (a2#3): the held encoder counts at its measured
+    # The review of the 1.5.0 promotion: the held encoder counts at its measured
     # resident size, as it does at the sampler, and the held VAE at its own, against the
     # graph's encoders first; the graph's VAE stays charged. So what stays charged is the
     # upsampler's charge and the encoder's 0.006 of its size the 1.15 rounds up.
@@ -212,7 +212,7 @@ def test_a_held_encoder_credits_its_own_bytes_not_the_upsampler(monkeypatch):
 
 
 def test_a_loader_run_again_beside_the_held_encoders_is_not_short_by_their_rounding(monkeypatch):
-    """Review of the 1.5.0 promotion, a2#3: p-h3-image rendered, ComfyUI holds its two encoders
+    """Review of the 1.5.0 promotion: p-h3-image rendered, ComfyUI holds its two encoders
     and its VAE, and the next queue changes only the DiT, to the INT8 file, so the loader runs.
     It credited the held encoders at their raw size against a 1.15 charge, so 3.97 GiB of models
     stayed charged that MemAvailable already counts: at 48 GiB the load was 2.5 GiB short, the
@@ -230,7 +230,7 @@ def test_a_loader_run_again_beside_the_held_encoders_is_not_short_by_their_round
 
 
 def test_a_held_model_comfyui_does_not_mark_as_an_encoder_counts_at_its_own_size(monkeypatch):
-    """The wall a2#3's credit keeps: a VAE ComfyUI holds before the graph's encoders load is
+    """The wall that credit keeps: a VAE ComfyUI holds before the graph's encoders load is
     no encoder, so it is not read at the encoders' ratio. The price is the one before."""
     from test_requeue_price import _comfy_holds
 

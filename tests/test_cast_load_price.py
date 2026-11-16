@@ -523,7 +523,7 @@ def _cast_at_the_loader(monkeypatch, tmp_path, available: float):
 
 
 def test_the_loaders_refusal_of_a_dtype_change_on_the_held_file_offers_the_clear(tmp_path, monkeypatch):
-    """Review of the 1.5.0 promotion, a2#4: the agreement's card drops the slot a cast changes
+    """Review of the 1.5.0 promotion: the agreement's card drops the slot a cast changes
     in place from those it keeps, and offers the clear. The loader kept the slot as a file this
     graph loads, named no old model and raised the plain refusal, whose remedies free none of
     the Worker's memory. Here the driver reads 22 GiB: 24.3 GiB short of the cast's load before
@@ -543,7 +543,7 @@ def test_the_loaders_refusal_of_a_dtype_change_on_the_held_file_offers_the_clear
 
 
 def test_a_loader_that_reads_the_cast_as_placed_offers_no_clear_for_it(tmp_path, monkeypatch):
-    """The wall a2#4 keeps: where the loader's memo reads this cast as placed, its windows charge
+    """The wall that fix keeps: where the loader's memo reads this cast as placed, its windows charge
     no load, so they do not price the reload a clear would need. The slot stays kept and no card
     promises room; the refusal is the plain one, as before."""
     from dgx_monarch import consent_pending, driver_footprint, old_model

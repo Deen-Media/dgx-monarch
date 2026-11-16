@@ -2517,9 +2517,10 @@ too much. A loader that runs again while ComfyUI serves a Reference to Video
 (MiniMax H3) output from its cache charges that 40 GiB encode though nothing
 encodes: ComfyUI lists the outputs it serves from cache only in its executor's
 own messages, sent to the client and written to the history when the queue
-ends, and no node can read them; leave the loader's inputs as they were and
-the sampler prices the re-queue without it. And a held model is credited at
-its whole size: after a decode relief (#12) took pages from a DynamicVRAM text
+ends, and no code in the driver reads them; leave the loader's inputs as they
+were and the sampler prices the re-queue without it. And a held model is
+credited at its whole size: after a decode relief (#12) took pages from a
+DynamicVRAM text
 encoder that ComfyUI still lists, a loader that prices before that encoder
 runs again credits those pages too, though MemAvailable counts them as free
 again; no shipped template orders its loader that way.
@@ -2782,8 +2783,8 @@ verdict that compared nothing supersedes an older unproven one, as a newer
 stock-reference row or PASS does; a FAIL is lifted only by a later bound PASS.
 The rows such a check writes for `slab_weights` on, a residency it never ran,
 of any build, never decide there, and beneath them only a denial another
-check copied there goes, with a guard that a later row of its own version
-closed there: an unproven or cut-off check run with the switch on
+check copied there goes, with a guard that a later terminal row of its own
+version closed there: an unproven or cut-off check run with the switch on
 still denies, under another build's such row too; a PASS or a stock-reference
 row a check on the auto graph stamped there still clears; and another build's
 other rows read unknown, as they did.
@@ -4092,8 +4093,9 @@ and the Fleet and explicit-on rows written with it (they carry
 `"no_material_revocation": true`), as clear. An explicit-on row of that kind
 says nothing about `slab_weights` on, whichever build wrote it, and the
 read looks past it; beneath it only a refusal another check copied there is
-lifted, with a guard that a later row of its own version closed there. Where
-a check you ran with the switch on ended unproven or was cut off, that older verdict still refuses the rescue until a later explicit PASS,
+lifted, with a guard that a later terminal row of its own version closed
+there. Where a check you ran with the switch on ended unproven or was cut off,
+that older verdict still refuses the rescue until a later explicit PASS,
 even where another build's check had since compared nothing; where a check on
 the auto graph had passed and proved the switch's residency equivalent, or had
 a stock reference that could not load, that row still clears it. Through 1.4 such a row refused the

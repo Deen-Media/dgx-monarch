@@ -3596,7 +3596,7 @@ def _assert_held_encoder_mark_seam() -> None:
 
     ``nodes/loader_graph._comfy_held_bytes`` reads a held model's bytes as a text
     encoder's, credited at its measured resident ratio, only where its patcher
-    carries ``is_clip`` (review of the 1.5.0 promotion, a2#3); any other held
+    carries ``is_clip`` (review of the 1.5.0 promotion); any other held
     model counts at its size. It leans on ComfyUI: a plain ModelPatcher is not
     marked, a clone keeps the mark, ``comfy.sd.CLIP`` marks the patcher it
     builds, and a loaded entry's ``model_memory`` is its patcher's size.

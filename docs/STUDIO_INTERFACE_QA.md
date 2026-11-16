@@ -570,7 +570,7 @@ private evidence store, outside the repository and the packages.
   was superseded by the rows for every stock text node and the review fixes
   after them. Results SHA-256
   `151909b98a388d84d10e29cf27944f19dc618d0fd55cf37a79ffe730fcf0aea5`.
-- The seventh round ran all five rows on the shipping bundle,
+- The seventh round ran all five rows on the shipping bundle of that day,
   `index-BFnkXPeL.js`
   (`4e272d22d305229fb86f0b8dfe6bcf41d7612b9718ade662ecaaa96395b23fd8`),
   `index-DZRUgSeS.css`
@@ -607,7 +607,7 @@ assistive technology.
 
 On 2026-11-15 the 26 rows of the
 [browser procedure](../studio/tests/README.md#browser-checks) ran on the
-shipping bundle, the one commit `0f32d35` builds and `RESOURCE_SHA256` names:
+shipping bundle of that day, which commit `0f32d35` builds and `RESOURCE_SHA256` then named:
 `index-BFnkXPeL.js`
 (`4e272d22d305229fb86f0b8dfe6bcf41d7612b9718ade662ecaaa96395b23fd8`),
 `index-DZRUgSeS.css`

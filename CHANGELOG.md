@@ -380,8 +380,8 @@ sections after them list every change.
   an older unproven one; a FAIL is lifted only by a later bound PASS. An
   explicit-on row of such a check, of any build, speaks for a residency it
   never ran: it never decides there, and beneath it only a denial another
-  check copied there goes, with a guard that a later row of its own version
-  closed there. An
+  check copied there goes, with a guard that a later terminal row of its own
+  version closed there. An
   older unproven or cut-off verdict that a check run with `slab_weights` on
   left there still denies, also under another build's such row, which used
   to hide it; a PASS a check on the auto graph stamped there still clears;
@@ -2043,6 +2043,11 @@ sections after them list every change.
   charged, and the next loader with nothing held charges them again rather
   than none
   ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)).
+- Fix: `dgxm doctor`'s `unexpected shutdowns` row no longer leaves out one
+  reboot always: it leaves out the oldest record only when that is a reboot
+  whose pair it cannot see, so after a wtmp rotation, or in a full window with
+  an even count, a hard power-off is counted
+  ([TROUBLESHOOTING](docs/TROUBLESHOOTING.md#pd-stuck-state)).
 
 ### Development
 
@@ -2102,21 +2107,14 @@ sections after them list every change.
   error, not the broken barrier its peer was left with. The dual-model cfg
   test now hands its gather a non-contiguous view, so it fails if the
   production conversion goes.
-
-### Fixed
-
-- `dgxm doctor`'s `unexpected shutdowns` row no longer leaves out one reboot
-  always: it leaves out the oldest record only when that is a reboot whose
-  pair it cannot see, so after a wtmp rotation, or in a full window with an
-  even count, a hard power-off is counted
-  ([TROUBLESHOOTING](docs/TROUBLESHOOTING.md#pd-stuck-state)).
-- The sweep runner reads a driver answer that urllib cannot parse, such as a
-  body cut short or a malformed status line, as a transport error at every
-  call, so it ends the session with its summary instead of a traceback
+- Fix: the sweep runner reads a driver answer that urllib cannot parse, such
+  as a body cut short or a malformed status line, as a transport error at
+  every call, so it ends the session with its summary instead of a traceback
   ([SWEEP](docs/SWEEP.md)).
-- The sweep's audio note says when the samples differ, and the bit-identical
-  bar says it holds the frames only ([SWEEP](docs/SWEEP.md#5-reading-results)).
-- The protected-test digest now covers module-level xunit hooks,
+- Fix: the sweep's audio note says when the samples differ, and the
+  bit-identical bar says it holds the frames only
+  ([SWEEP](docs/SWEEP.md#5-reading-results)).
+- Fix: the protected-test digest now covers module-level xunit hooks,
   `__test__`, `pytest_generate_tests`, a module-level skip or importorskip
   under any name and a module-level raise such as `unittest.SkipTest`, any of
   which could turn off every protected test of a module with the check still

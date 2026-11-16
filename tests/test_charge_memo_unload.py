@@ -3,7 +3,7 @@
 The loader's memo of charged driver models (``loader_graph._CHARGED_STACK_ARTIFACTS``)
 lets a second loader node credit a stack an earlier one charged. Once ComfyUI's
 models are unloaded, nothing it held is loaded, so no earlier charge stands for
-them. Review of the 1.5.0 promotion, finding c1#3: only the loader's own unload
+them. Review of the 1.5.0 promotion: only the loader's own unload
 emptied the memo. The render-site unload (``driver_unload._after_refusal``, which
 the render-site checks, the pending-load relief, the driver spend price and the
 gate's stock reference reach) and a Clear VRAM node at ``hard`` left it standing,

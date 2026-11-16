@@ -2554,8 +2554,8 @@ node widget changed) while ComfyUI serves Reference to Video's output from its
 cache, though nothing encodes then: ComfyUI lists the outputs it serves from
 cache before any node runs, but only in its executor's own messages
 (`execution_cached`), sent to the client and written to the history when the
-queue ends. No node can read them, so the loader cannot tell that encode from
-one still to run. On a box short of those
+queue ends. No code in the driver reads them, so the loader cannot tell that
+encode from one still to run. On a box short of those
 40 GiB the loader refuses such a re-queue; a re-queue that leaves the loader's
 inputs as they were keeps its output, and the sampler then prices it without
 the encode. LTX's audio-video text encoder loader (`LTXAVTextEncoderLoader`) is

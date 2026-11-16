@@ -423,7 +423,7 @@ copied from historical evidence.
    LoRA/slab quarantine lever. The worker cycle, complete-rank proof, and
    verdict binding are
    [`gate_fsdp_cycle.py:59-193`](../src/dgx_monarch/actor/gate_fsdp_cycle.py#L59-L193 "anchor:run"),
-   [`gate_fsdp.py:308-472`](../src/dgx_monarch/nodes/gate_fsdp.py#L308-L472 "anchor:establish"), and
+   [`gate_fsdp.py:313-477`](../src/dgx_monarch/nodes/gate_fsdp.py#L313-L477 "anchor:establish"), and
    [`gate_verdict.py:128-236`](../src/dgx_monarch/nodes/gate_verdict.py#L128-L236 "anchor:publish_ceremony_verdict"), with coverage in
    [`test_gate_fsdp_cycle_unit.py:61-87`](../tests/test_gate_fsdp_cycle_unit.py#L61-L87 "anchor:test_fsdp_reload_cycle_proves_one_fresh_ready_non_slab_load"),
    [`test_gate_fsdp_proof.py:63-67`](../tests/test_gate_fsdp_proof.py#L63-L67 "anchor:test_fsdp_reload_proof_accepts_complete_exact_rank_evidence"), and
@@ -1021,8 +1021,8 @@ copied from historical evidence.
   [`gate_ceremony.py:192-231`](../src/dgx_monarch/nodes/gate_ceremony.py#L192-L231 "anchor:gather_ceremony_evidence"),
   [`fsdp_reload_price.py:247-288`](../src/dgx_monarch/fsdp_reload_price.py#L247-L288 "anchor:price_fsdp_clean_reload") and
   [`gate_session.py:20-179`](../src/dgx_monarch/nodes/gate_session.py#L20-L179 "anchor:run_identity_ceremony"),
-  [`gate_fsdp.py:179-238`](../src/dgx_monarch/nodes/gate_fsdp.py#L179-L238 "anchor:cleanup_aborted_fsdp_proof"),
-  [`gate_fsdp.py:244-267`](../src/dgx_monarch/nodes/gate_fsdp.py#L244-L267 "anchor:cleanup_rejected_fsdp_pass"), and
+  [`gate_fsdp.py:184-243`](../src/dgx_monarch/nodes/gate_fsdp.py#L184-L243 "anchor:cleanup_aborted_fsdp_proof"),
+  [`gate_fsdp.py:249-272`](../src/dgx_monarch/nodes/gate_fsdp.py#L249-L272 "anchor:cleanup_rejected_fsdp_pass"), and
   [`auto_gate.py:286-496`](../src/dgx_monarch/nodes/auto_gate.py#L286-L496 "anchor:maybe_auto_gate"), covered by
   [`test_gate_orchestration.py:2385-2421`](../tests/test_gate_orchestration.py#L2385-L2421 "anchor:test_aborted_fsdp_gate_unloads_every_rank_before_refusing"),
   [`test_gate_orchestration.py:2424-2452`](../tests/test_gate_orchestration.py#L2424-L2452 "anchor:test_aborted_fsdp_gate_latches_dirty_when_all_rank_unload_fails"),

@@ -308,14 +308,20 @@ then merged as dev `07cc636`. They touch the cond batch exchange, the
 `dpm_adaptive` refusal, the driver spend price, and Studio: what a workflow
 load keeps, the companion's LoRA refusal, the field names and the bundle.
 Release test v5 ran whole on `07cc636` on 2026-11-15 and passed
-([record](#release-test-v5-07cc636)), and the commit that ships differs from
-`07cc636` in documentation only. The gate renders every shipped template at
-one step on the pair, so it shows that no shipped template changed status,
-first-use path or verdict with these fixes. Of the fixes themselves it ran
+([record](#release-test-v5-07cc636)). A review of the whole 1.5.0 diff on
+2026-11-16 then found faults in the driver's capacity prices, the consent
+reader, the Workers' backup vote, Studio and the tools. Their fixes follow
+`07cc636`, and release test v5 has not run on this code: it runs again
+before the release, and until then those fixes are held by CPU tests alone
+(NOT RUN below). The gate renders every shipped template at
+one step on the pair, so on `07cc636` it showed that no shipped template
+changed status, first-use path or verdict with the apex review's fixes. Of
+the apex review's fixes themselves it ran
 one path, in its added cell: `dpm_adaptive` refused at the UNET loader under
 `dp2+fsdp`. The main pass also ran the reworked spend price on its plain
-path and the exchange on the pair's default group; the cases the fixes change
-have run only in CPU tests and the Studio browser rounds (NOT RUN below).
+path and the exchange on the pair's default group; the cases the apex
+review's fixes change have run only in CPU tests and the Studio browser
+rounds (NOT RUN below).
 
 - INT8 GEMM kernel, 2026-10-28 and 29
   ([record](#int8-gemm-kernel-comparison-2026-10-28-and-29)): the render
@@ -524,10 +530,9 @@ have run only in CPU tests and the Studio browser rounds (NOT RUN below).
     SCAIL BF16 template's first use (the no-render path unloads every rank and
     loads the model), a render that then fails after the load, and a retry on
     a box whose reading holds the DiT, with room for the activations and not
-    for the file beside them. The retry's reference and pose check (#47) and
-    the gate's capacity stop should credit the file ("weights resident,
-    credited") and let the render run; they used to charge the file again and
-    refuse.
+    for the file beside them. The retry's reference and pose check (#47)
+    should credit the file ("weights resident, credited") and let the render
+    run; it used to charge the file again and refuse.
 - Build and install, on `35f1486`, the release commit of 2026-11-01, in a
   disposable Python 3.12 venv that holds only `build` and `pip`:
   `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and
@@ -5241,8 +5246,8 @@ merged as `07cc636`, and the release's test is the pass on that commit
 reading under load 2093 MHz and its highest of the whole pass 2099 MHz, read
 twice, at 18:45:29 and 19:32:12, each with the GPU at 1 percent use, none
 above 2100; the second Spark uncapped). `07cc636` is the release commit
-`35bb775` with the apex review's fixes (#195), and the commit that ships
-differs from it in documentation only. Both Sparks lost power at 15:06 MST
+`35bb775` with the apex review's fixes (#195). The fixes of the review of
+2026-11-16 came after this pass. Both Sparks lost power at 15:06 MST
 that day, came back, took a system upgrade that moved libc6 from
 2.39-0ubuntu8.9 to 8.12 on both and left the kernel as it was, and
 rebooted. When the pass began the first Spark had been up since 15:30:01

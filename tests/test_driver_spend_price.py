@@ -322,7 +322,7 @@ def test_the_line_is_the_floor_after_the_rescues(rig, monkeypatch):
 
 
 def test_a_room_a_byte_short_of_the_need_never_prints_as_the_need(rig):
-    """Review of the 1.5.0 promotion, reuse#6: both figures were rounded to the nearest tenth, so a
+    """Review of the 1.5.0 promotion: both figures were rounded to the nearest tenth, so a
     box a byte short of 14.0 GiB above its floor read "needs 14.0 GiB ... has 14.0 GiB"."""
     rig.box.value = rig.floor + 14 * GIB - 1
     with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
@@ -365,7 +365,7 @@ _RAISE_PATHS = {
 
 @pytest.mark.parametrize("path", list(_RAISE_PATHS))
 def test_the_refusal_says_what_the_driver_did_before_it_and_nothing_else(rig, monkeypatch, path):
-    """Review of the 1.5.0 promotion, a1#2: every spend refusal said the room was read "after
+    """Review of the 1.5.0 promotion: every spend refusal said the room was read "after
     ComfyUI's models were unloaded and the Workers' idle caches released", on paths where neither
     ran, beside a tail saying the models were kept. ComfyUI's model list here is a stand-in whose
     ``unload_all_models`` frees 1 GiB; the driver's own unload runs over it."""
@@ -616,7 +616,7 @@ class _ClipVision:
 
 
 def test_a_clip_vision_file_is_priced_as_the_loader_charges_it(rig, monkeypatch, tmp_path):
-    """Review of the 1.5.0 promotion, a1#3: the loader charges a CLIP Vision file as an encoder,
+    """Review of the 1.5.0 promotion: the loader charges a CLIP Vision file as an encoder,
     resolved in its own folder, but this price left Load CLIP Vision unwrapped on the premise that
     the loader did not, so a re-queue that loaded one ran unpriced where Load CLIP is priced."""
     _ClipVision.calls = []

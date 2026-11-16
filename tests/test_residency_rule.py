@@ -105,7 +105,7 @@ def h3(monkeypatch, tmp_path, box):
     return ModelSpec(mesh=rig_.model.mesh, unet_name=UNET)
 
 
-# --- a1#1, altitude#1: an all-rank unload ends the memos' credit ---------------------------
+# --- an all-rank unload ends the memos' credit ---------------------------
 
 
 def test_the_render_site_charges_a_dit_a_hard_clear_dropped(monkeypatch, h3):
@@ -243,7 +243,7 @@ def test_a_ceremony_leg_after_its_unload_is_priced_on_the_reading_that_holds_the
     _ltx_render(ltx)
 
 
-# --- altitude#2: the reference and pose check credits an explicit preset's eager load ------
+# --- the reference and pose check credits an explicit preset's eager load ------
 
 
 SCAIL = "wan_scail_bf16.safetensors"
