@@ -36,6 +36,28 @@ EDITS = {
     "raised SkipTest": "\n\nimport unittest\n\nraise unittest.SkipTest('module off')\n",
     "skip imported by another name": (
         "\n\nfrom pytest import skip as _off\n\n_off('module off', allow_module_level=True)\n"),
+    "skip assigned to another name": "\n\n_off = pytest.skip\n_off('module off', allow_module_level=True)\n",
+    "helper that skips, called at import": (
+        "\n\ndef _needs():\n    _check()\n\n\ndef _check():\n    pytest.importorskip('no_such_module')\n\n\n_needs()\n"),
+    "skip in a class body": "\n\nclass TestLate:\n    pytest.skip('module off', allow_module_level=True)\n",
+    "skipping helper as a decorator on a helper": (
+        "\n\ndef _needs(f):\n    pytest.importorskip('no_such_module')\n    return f\n\n\n"
+        "@_needs\ndef _helper():\n    pass\n"),
+    "skipping helper as a decorator on a class": (
+        "\n\ndef _needs(cls):\n    pytest.importorskip('no_such_module')\n    return cls\n\n\n"
+        "@_needs\nclass _Holder:\n    pass\n"),
+    "skipping helper in an argument default": (
+        "\n\ndef _needs():\n    pytest.importorskip('no_such_module')\n\n\ndef _helper(value=_needs()):\n    return value\n"),
+    "skipping helper in a keyword-only default": (
+        "\n\ndef _needs():\n    pytest.importorskip('no_such_module')\n\n\n"
+        "def _helper(*, value=_needs()):\n    return value\n"),
+    "skip under a not-main guard": (
+        "\n\nif __name__ != '__main__':\n    pytest.skip('module off', allow_module_level=True)\n"),
+    "skip in a main guard's else": (
+        "\n\nif __name__ == '__main__':\n    pass\nelse:\n    pytest.skip('module off', allow_module_level=True)\n"),
+    "skipping helper in a class's bases": (
+        "\n\ndef _needs():\n    pytest.importorskip('no_such_module')\n    return object\n\n\n"
+        "class _Holder(_needs()):\n    pass\n"),
 }
 
 
@@ -76,3 +98,27 @@ def test_a_module_level_statement_that_skips_nothing_moves_no_digest():
     # A script entry point runs only when the file runs as a script, never when pytest imports it.
     script = source + "\nif __name__ == '__main__':\n    raise SystemExit(0)\n"
     assert guard.digest_tests(guard.ast.parse(script)) == baseline
+    reversed_guard = source + "\nif '__main__' == __name__:\n    raise SystemExit(0)\n"
+    assert guard.digest_tests(guard.ast.parse(reversed_guard)) == baseline
+    # A helper called at import that skips nothing reaches no test that does not name it.
+    helper = source + "\ndef _build():\n    return [1, 2]\n\n\nROWS = _build()\n"
+    assert guard.digest_tests(guard.ast.parse(helper)) == baseline
+    held = source + "\nclass Holder:\n    rows = [1, 2]\n"
+    assert guard.digest_tests(guard.ast.parse(held)) == baseline
+    # A skip mark skips one test, never the module, by any name and wherever it is written.
+    for marked in (
+        "\nclass Holder:\n    ROWS = [pytest.param(1, marks=pytest.mark.skip(reason='x'))]\n",
+        "\n_mark = pytest.mark.skip\n_mark(reason='x')\n",
+        "\npytest.mark.skip(reason='x')\n",
+        "\nfrom pytest import mark as _marks\n\n_marks.skip(reason='x')\n",
+    ):
+        assert guard.digest_tests(guard.ast.parse(source + marked)) == baseline, marked
+    # A decorator whose wrapper skips skips the one test it wraps, when that test runs.
+    for gated in (
+        "\nimport functools\n\n\ndef _requires_x(fn):\n    @functools.wraps(fn)\n    def wrapper(*a, **k):\n"
+        "        pytest.skip('no x')\n    return wrapper\n\n\n@_requires_x\ndef test_gated():\n    pass\n",
+        "\ndef _needs(name):\n    def decorate(fn):\n        def wrapper(*a, **k):\n            pytest.skip(name)\n"
+        "        return wrapper\n    return decorate\n\n\n@_needs('x')\ndef test_gated():\n    pass\n",
+    ):
+        digests = guard.digest_tests(guard.ast.parse(source + gated))
+        assert {name: digests[name] for name in baseline} == baseline, gated

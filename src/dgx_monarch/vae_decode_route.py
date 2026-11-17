@@ -136,9 +136,31 @@ def install() -> None:
             comfy.utils.tiled_scale_multidim = _tiled_wrapper(current)
 
 
+_LATENT_NAMES = ("samples_in", "samples")
+_NAMED = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+
+
+def _latent(signature: inspect.Signature, bound: inspect.BoundArguments, args: tuple, kwargs: dict) -> Any:
+    """The latent a decode was called with.
+
+    ComfyUI names it samples_in on VAE.decode and samples on VAE.decode_tiled, and a caller
+    may pass it by position or by name. Under the stock signature it is the parameter after
+    self. Under another custom node's wrapper shaped (self, *args, **kwargs) that parameter
+    holds the caller's arguments, so the latent is the first positional value; and a wrapper
+    that names it with a default leaves it unbound when the caller passes the stock name. Where
+    neither gives a value, the stock name does.
+    """
+    after_self = list(signature.parameters.values())[1:2]
+    if after_self and after_self[0].kind in _NAMED:
+        value = bound.arguments.get(after_self[0].name)
+    else:
+        value = args[0] if args else None
+    if value is None:
+        value = next((kwargs[name] for name in _LATENT_NAMES if name in kwargs), None)
+    return value
+
+
 def _entry_wrapper(original: Callable[..., Any], entry: str) -> Callable[..., Any]:
-    # ComfyUI names the latent samples_in on VAE.decode and samples on VAE.decode_tiled, and a
-    # caller may pass it by either position or name, so it is read through the stock signature.
     signature = inspect.signature(original)
 
     @functools.wraps(original)
@@ -149,7 +171,7 @@ def _entry_wrapper(original: Callable[..., Any], entry: str) -> Callable[..., An
             bound = signature.bind(self, *args, **kwargs)
         except TypeError:
             return original(self, *args, **kwargs)  # stock's own error for the caller's arguments
-        samples = list(bound.arguments.values())[1] if len(bound.arguments) > 1 else None
+        samples = _latent(signature, bound, args, kwargs)
         try:
             route = _open(self, samples, entry)
         except Exception as exc:

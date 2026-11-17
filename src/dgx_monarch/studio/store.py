@@ -117,6 +117,8 @@ class Store:
                 cursor INTEGER PRIMARY KEY AUTOINCREMENT, document TEXT NOT NULL, size INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS artifacts_by_job ON objects(json_extract(document,'$.job_id')) WHERE kind='artifacts';
             CREATE INDEX IF NOT EXISTS jobs_by_prompt ON objects(json_extract(document,'$.prompt_id')) WHERE kind='jobs';
+            CREATE INDEX IF NOT EXISTS artifacts_by_source ON objects(json_extract(document,'$.source_artifact_id'))
+                WHERE kind='artifacts';
         """)
         row = self.db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
         if row is not None and row[0] != "1":

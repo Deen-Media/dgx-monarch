@@ -579,6 +579,160 @@ def test_only_a_404_means_the_driver_lost_the_copy(tmp_path, answer):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("held_in", ["driver read", "image conversion",
+                                     "image conversion, let go once the session closed"])
+def test_a_copy_alive_at_shutdown_sends_nothing_after_the_driver_session_closes_and_writes_nothing(
+        tmp_path, monkeypatch, caplog, held_in):
+    """A Send to edit copy outlives its request and is still running when the companion shuts
+    down as dgxm-studio does: web.run_app's runner.cleanup() (site stop, the graceful wait for
+    requests, then the app's cleanup, which stops the copies still running and then closes the
+    driver session), then run_app's cancel of every task still alive, and only then the store's
+    close. After the session closes nothing reaches the driver, nothing writes to the store
+    during or after shutdown, the copy ends cancelled, and nothing is logged as an error, even
+    when the copy is let go between the session closing and run_app's last cancel."""
+    import logging
+    import socket
+    import threading
+
+    import aiohttp
+
+    from dgx_monarch.studio import media_assets
+
+    caplog.set_level(logging.ERROR)
+    events: list[str] = []  # every one appended on the event loop, so its order is the events'
+    driver = Driver()
+    # The copy is held by events, not by time: until the test lets it go, the driver does not
+    # answer the output read, or the image conversion does not end.
+    converting, let_go = threading.Event(), threading.Event()
+    convert = media_assets.normalized
+
+    def held_conversion(raw):
+        converting.set()
+        let_go.wait(30)
+        return convert(raw)
+
+    if held_in.startswith("image conversion"):
+        monkeypatch.setattr(media_assets, "normalized", held_conversion)
+    assets: list = []
+    make_assets = media_assets.MediaAssets.__init__
+
+    def recorded(self, *args, **kwargs):
+        make_assets(self, *args, **kwargs)
+        assets.append(self)
+    monkeypatch.setattr(media_assets.MediaAssets, "__init__", recorded)
+    copies: list[asyncio.Future] = []
+
+    @web.middleware
+    async def logged(request, handler):
+        events.append(f"driver {request.method} {request.path}")
+        if held_in == "driver read" and request.path == "/view":
+            await asyncio.get_running_loop().run_in_executor(None, let_go.wait, 30)
+        return await handler(request)
+
+    async def until(condition):
+        for _ in range(3000):
+            if condition():
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("the copy never reached the point the test holds it at")
+
+    async def scenario():
+        upstream_app = driver.app()
+        upstream_app.middlewares.append(logged)
+        async with TestServer(upstream_app) as upstream:
+            store = Store(tmp_path / "state")
+            client = ComfyClient(str(upstream.make_url("/")).rstrip("/"))
+            output = saved_output(SimpleNamespace(driver=driver, store=store))
+            close = client.close
+
+            async def logged_close():
+                events.append("client.close")
+                await close()
+                if held_in.endswith("closed"):
+                    # A copy that resumes now, before run_app's last cancel, meets a closed session.
+                    let_go.set()
+                    await until(copies[0].done)
+                    for _ in range(20):  # let a request handler waiting on the copy answer
+                        await asyncio.sleep(0)
+            client.close = logged_close
+            for name in ("create", "update"):
+                def logged_write(*args, _write=getattr(store, name), _name=name, **kwargs):
+                    events.append(f"store.{_name}")
+                    return _write(*args, **kwargs)
+                monkeypatch.setattr(store, name, logged_write)
+            listener = socket.socket()
+            listener.bind(("127.0.0.1", 0))
+            host = f"127.0.0.1:{listener.getsockname()[1]}"
+            token = "shutdown-" + "x" * 32
+            app = create_app(store, client, token, allowed_hosts={host}, poll=False)
+            # web.run_app's own runner: handlers run on when their client leaves; a short graceful wait.
+            runner = web.AppRunner(app, handler_cancellation=False, shutdown_timeout=0.3)
+            await runner.setup()
+            await web.SockSite(runner, listener).start()
+            headers = {"Authorization": "Bearer " + token, "X-DGXM-Schema": SCHEMA_VERSION}
+            async with aiohttp.ClientSession() as browser:
+                with pytest.raises(TimeoutError):
+                    await browser.post(f"http://{host}/api/v1/assets", headers=headers,
+                                       json={"kind": "input", "artifact_id": output},
+                                       timeout=aiohttp.ClientTimeout(total=0.2))
+            await until(converting.is_set if held_in.startswith("image conversion")
+                        else lambda: "driver GET /view" in events)
+            copies.extend(assets[0].copying.values())
+            events.append("shutdown")
+            try:
+                await runner.cleanup()
+                alive = [task for task in asyncio.all_tasks()
+                         if task is not asyncio.current_task() and not task.done()]
+                for task in alive:
+                    task.cancel()
+                await asyncio.gather(*alive, return_exceptions=True)
+                store.close()
+                events.append("store.close")
+            finally:
+                let_go.set()
+
+    asyncio.run(scenario())
+    shutdown, closed = events.index("shutdown"), events.index("client.close")
+    # The copy had started before shutdown and had not finished: it read the output, uploaded nothing.
+    assert "driver GET /view" in events[:shutdown], events
+    assert "driver POST /upload/image" not in events, events
+    assert not [event for event in events[closed:] if event.startswith("driver ")], events
+    assert not [event for event in events[shutdown:] if event.startswith("store.") and event != "store.close"], events
+    (copy,) = copies
+    assert copy.cancelled()
+    assert not [record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR]
+
+
+def _lookup_plan(store: Store) -> str:
+    """The query plan of the lookup Store.upload_copy runs, read from the statement it executes."""
+    statements: list[str] = []
+    store.db.set_trace_callback(statements.append)
+    try:
+        assert store.upload_copy("output-x") is None
+    finally:
+        store.db.set_trace_callback(None)
+    (lookup,) = [statement for statement in statements if "source_artifact_id" in statement]
+    return " ".join(str(row["detail"]) for row in store.db.execute("EXPLAIN QUERY PLAN " + lookup))
+
+
+def test_the_stored_copy_lookup_reads_an_index_in_a_new_store_and_in_an_older_one(tmp_path):
+    # Every Send to edit press looks up its output's copy; without an index that scans every
+    # stored document under the store lock.
+    store = Store(tmp_path / "fresh")
+    try:
+        assert "artifacts_by_source" in _lookup_plan(store)
+    finally:
+        store.close()
+    older = Store(tmp_path / "older")
+    older.db.execute("DROP INDEX IF EXISTS artifacts_by_source")
+    older.close()
+    reopened = Store(tmp_path / "older")
+    try:
+        assert "artifacts_by_source" in _lookup_plan(reopened)
+    finally:
+        reopened.close()
+
+
 def test_send_to_edit_keeps_the_pixel_rule(tmp_path, monkeypatch):
     from dgx_monarch.studio import media_assets
     monkeypatch.setattr(media_assets, "IMAGE_PIXELS", 10)

@@ -2122,10 +2122,13 @@ sections after them list every change.
   bit-identical bar says it holds the frames only
   ([SWEEP](docs/SWEEP.md#5-reading-results)).
 - Fix: the protected-test digest now covers module-level xunit hooks,
-  `__test__`, `pytest_generate_tests`, a module-level skip or importorskip
-  under any name and a module-level raise such as `unittest.SkipTest`, any of
-  which could turn off every protected test of a module with the check still
-  green.
+  `__test__`, `pytest_generate_tests`, a skip or importorskip that runs at
+  import under any name, through a helper of the module, in a class body or
+  in a definition's decorators, defaults or bases, and a raise at import such
+  as `unittest.SkipTest`, any of which could turn off every protected test of
+  a module with the check still green. A skip mark does not count
+  ([CONTRIBUTING](CONTRIBUTING.md) names the import-time skips the digest does
+  not see).
 
 ## [1.4.0] - 2026-10-28
 

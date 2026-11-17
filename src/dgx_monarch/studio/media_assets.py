@@ -141,6 +141,17 @@ class MediaAssets:
         # A press the browser gave up on leaves its copy running for the next press.
         return await asyncio.shield(running)
 
+    async def stop(self) -> None:
+        """Cancel the copies still running and wait for them, before the driver session closes.
+
+        A copy outlives the request that started it, so without this one could resume after
+        the session closed and end in an error the request it served would log.
+        """
+        running = list(self.copying.values())
+        for copy in running:
+            copy.cancel()
+        await asyncio.gather(*running, return_exceptions=True)
+
     async def _live_copy(self, identity: str, source: dict[str, Any]) -> dict[str, Any]:
         """The stored copy if the driver still serves its file, else a new copy in its record."""
         stored = self.store.upload_copy(identity)

@@ -9,10 +9,22 @@ fixtures and ``pytestmark``), and every module-level hook or statement pytest
 applies to it unnamed: the xunit module and function hooks
 (``setup_module``, ``setUpModule``, ``setup_function`` and their teardowns),
 ``__test__``, ``pytest_generate_tests``, and a ``pytest.skip`` or
-``pytest.importorskip`` (by any name the module imports them under) or a
-``raise`` that runs at import. Removing a row from a table that
+``pytest.importorskip`` (by any name the module imports or assigns them to,
+or through a function of the module that calls one) or a ``raise`` that runs
+at import: in a statement at module level or in a class body, or in a
+definition's decorators, argument defaults, or a class's bases and keywords.
+A skip mark (``pytest.mark.skip``, by any name) skips one test, never the
+module, and does not count. Removing a row from a table that
 a protected test is parametrized over therefore changes that test's digest, and
 so does a hook that skips every test of a module.
+
+The import-time part is a tripwire for the common ways a module gets switched
+off, not a proof that none happened. These import-time skips are not seen: one
+through ``getattr(pytest, "skip")(...)``; one reached through an attribute call
+on a module the test module imports (``helpers.require()``); one reached
+through a class of the module: its constructor or a method called at import,
+that method used as a decorator, or the class given as a metaclass; and one in
+a function or lambda that a module function defines and calls itself.
 
 CI runs ``--check`` (the default): a missing, renamed or edited protected test
 fails until ``--write`` re-baselines the inventory in the same diff. ``--write``
@@ -33,7 +45,7 @@ import ast
 import hashlib
 import json
 import sys
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 MANIFEST = Path("tests/protected_test_inventory.json")
@@ -314,44 +326,133 @@ def _references(unit: _Unit) -> set[str]:
     return names
 
 
-def _skip_names(statements: Iterable[ast.stmt]) -> frozenset[str]:
-    """The names a module calls pytest's skip and importorskip by, its own aliases included."""
-    names = set(_IMPORT_TIME_SKIPS)
+def _from_pytest(statement: ast.stmt) -> list[ast.alias]:
+    if isinstance(statement, ast.ImportFrom) and (statement.module or "").split(".")[0] in {"pytest", "_pytest"}:
+        return list(statement.names)
+    return []
+
+
+class _ImportSkips:
+    """How one module can skip itself as it imports.
+
+    ``names`` are pytest's skip and importorskip by every name the module gives them: a
+    name imported from pytest and a module-level assignment of one (``_off = pytest.skip``).
+    ``marks`` are pytest's ``mark`` by every name the module gives it: an attribute reached
+    through one, such as ``pytest.mark.skip``, skips one test and never the module, so it
+    never counts. ``functions`` are the module's own functions that call a skip, directly or
+    through each other.
+    """
+
+    def __init__(self, statements: Iterable[ast.stmt]):
+        statements = list(statements)
+        self.marks = frozenset({"mark"} | {alias.asname or alias.name for statement in statements
+                                           for alias in _from_pytest(statement) if alias.name == "mark"}
+                               | self._assigned(statements, lambda value: isinstance(value, ast.Attribute)
+                                                and value.attr == "mark"))
+        self.names = frozenset(_IMPORT_TIME_SKIPS | {alias.asname or alias.name for statement in statements
+                                                     for alias in _from_pytest(statement)
+                                                     if alias.name in _IMPORT_TIME_SKIPS})
+        while found := self._assigned(statements, lambda value: self._names(value, self.names)) - self.names:
+            self.names |= found
+        defined = {statement.name: statement for statement in statements if isinstance(statement, _FUNCTIONS)}
+        self.functions: frozenset[str] = frozenset()
+        while found := {name for name, function in defined.items()
+                        if name not in self.functions and self.skips_when_called(function)}:
+            self.functions |= found
+
+    def skips_when_called(self, function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        """Whether a call of ``function`` calls a skip as it runs. A function, lambda or method
+        it defines runs only when called, so of each only the decorators, applied as calls, and
+        the defaults count; a class it defines runs its body, as at import. A runtime-skip
+        decorator, whose returned wrapper skips, therefore skips only the test it wraps."""
+        pending: list[ast.AST] = list(function.body)
+        while pending:
+            node = pending.pop()
+            if isinstance(node, ast.Call) and self.calls(node.func):
+                return True
+            decorators: list[ast.expr] = list(getattr(node, "decorator_list", ()))
+            if any(self.calls(decorator) for decorator in decorators):
+                return True
+            if isinstance(node, (*_FUNCTIONS, ast.Lambda)):
+                pending += [*decorators, *node.args.defaults, *(default for default in node.args.kw_defaults if default)]
+            else:
+                pending.extend(ast.iter_child_nodes(node))
+        return False
+
+    @staticmethod
+    def _assigned(statements: list[ast.stmt], wanted: Callable[[ast.expr], bool]) -> frozenset[str]:
+        return frozenset(target.id for statement in statements if isinstance(statement, ast.Assign)
+                         and wanted(statement.value)
+                         for target in statement.targets if isinstance(target, ast.Name))
+
+    def _names(self, value: ast.expr, names: frozenset[str]) -> bool:
+        """Whether an expression is one of ``names``, bare or as an attribute not reached through a mark."""
+        if isinstance(value, ast.Name):
+            return value.id in names
+        if not isinstance(value, ast.Attribute) or value.attr not in names:
+            return False
+        base = value.value
+        return not ((isinstance(base, ast.Attribute) and base.attr == "mark")
+                    or (isinstance(base, ast.Name) and base.id in self.marks))
+
+    def calls(self, func: ast.expr) -> bool:
+        """Whether calling ``func`` calls a skip: one of its names, or one of the module's skipping functions."""
+        return self._names(func, self.names) or (isinstance(func, ast.Name) and func.id in self.functions)
+
+    def called_in(self, node: ast.AST) -> bool:
+        return any(isinstance(child, ast.Call) and self.calls(child.func) for child in ast.walk(node))
+
+
+def _definition_skips(statement: ast.stmt, skips: _ImportSkips) -> bool:
+    """Whether the part of a definition that runs as the module imports calls a skip: its
+    decorators, each applied as a call, its argument defaults, positional and keyword-only, and
+    a class's bases and keywords. A function's body runs later, if at all."""
+    decorators: list[ast.expr] = list(getattr(statement, "decorator_list", ()))
+    if isinstance(statement, _FUNCTIONS):
+        evaluated = [*statement.args.defaults, *(default for default in statement.args.kw_defaults if default)]
+    else:
+        assert isinstance(statement, ast.ClassDef)  # noqa: S101  # the only other definition here
+        evaluated = [*statement.bases, *(keyword.value for keyword in statement.keywords)]
+    return (any(skips.calls(decorator) or skips.called_in(decorator) for decorator in decorators)
+            or any(skips.called_in(part) for part in evaluated))
+
+
+def _import_time_units(statements: Iterable[ast.stmt], skips: _ImportSkips) -> Iterator[ast.stmt]:
+    """The module-level and class-body statements whose import-time code can skip the module:
+    a plain statement run whole, or a definition by the part of it that runs at import. A
+    class's body runs at import too, so its statements are read in turn."""
     for statement in statements:
-        if isinstance(statement, ast.ImportFrom) and (statement.module or "").split(".")[0] in {"pytest", "_pytest"}:
-            names.update(alias.asname or alias.name for alias in statement.names if alias.name in _IMPORT_TIME_SKIPS)
-    return frozenset(names)
+        if isinstance(statement, (*_FUNCTIONS, ast.ClassDef)):
+            if _definition_skips(statement, skips):
+                yield statement
+            if isinstance(statement, ast.ClassDef):
+                yield from _import_time_units(statement.body, skips)
+        elif _skips_at_import(statement, skips):
+            yield statement
 
 
 def _is_main_guard(statement: ast.stmt) -> bool:
-    """``if __name__ == "__main__":``."""
+    """``if __name__ == "__main__":``, its operands either way round; ``!=`` and any other
+    comparison run their body at import."""
     test = statement.test if isinstance(statement, ast.If) else None
-    return (isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "__name__"
-            and len(test.comparators) == 1 and isinstance(test.comparators[0], ast.Constant)
-            and test.comparators[0].value == "__main__")
+    if not (isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
+            and len(test.comparators) == 1):
+        return False
+    operands = (test.left, test.comparators[0])
+    return (any(isinstance(operand, ast.Name) and operand.id == "__name__" for operand in operands)
+            and any(isinstance(operand, ast.Constant) and operand.value == "__main__" for operand in operands))
 
 
-def _skips_at_import(statement: ast.stmt, skip_names: frozenset[str] = _IMPORT_TIME_SKIPS) -> bool:
-    """Whether a module-level statement can skip the module as it runs: a call of pytest's
-    skip or importorskip by any name the module gives them, or any raise, such as
-    ``raise unittest.SkipTest(...)``.
-
-    A definition's body runs later, if at all, so only statements that run at
-    import count, with every block they hold.
+def _skips_at_import(statement: ast.stmt, skips: _ImportSkips) -> bool:
+    """Whether a plain statement, which runs whole at import, can skip the module: a call of
+    pytest's skip or importorskip by any name the module gives them, a call of one of the
+    module's own functions that calls one, or any raise, such as ``raise unittest.SkipTest(...)``.
     """
-    if isinstance(statement, (*_DOCUMENTED, ast.Import, ast.ImportFrom)):
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
         return False
     if _is_main_guard(statement):  # its body runs only as a script, never as pytest imports it
-        return any(_skips_at_import(child, skip_names) for child in statement.orelse)
-    for child in ast.walk(statement):
-        if isinstance(child, ast.Raise):
-            return True
-        if isinstance(child, ast.Call):
-            func = child.func
-            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-            if name in skip_names:
-                return True
-    return False
+        return any(_skips_at_import(child, skips) for child in statement.orelse)
+    return any(isinstance(child, ast.Raise) for child in ast.walk(statement)) or skips.called_in(statement)
 
 
 class _Scope:
@@ -370,8 +471,7 @@ class _Scope:
             if name in implicit_names or _is_autouse_fixture(unit)
         ]
         if module:
-            skip_names = _skip_names(statements)
-            self.implicit += [statement for statement in statements if _skips_at_import(statement, skip_names)]
+            self.implicit += list(_import_time_units(statements, _ImportSkips(statements)))
         self._names: dict[int, set[str]] = {}
 
     def references(self, unit: _Unit) -> set[str]:

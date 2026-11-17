@@ -449,6 +449,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
             for pending in [*jobs.tasks, *ops.tasks]:
                 pending.cancel()
             await asyncio.gather(*jobs.tasks, *ops.tasks, return_exceptions=True)
+            await media_assets.stop()  # Send to edit copies, which outlive their requests
         finally:
             await client.close()
 

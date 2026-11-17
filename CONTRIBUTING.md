@@ -122,7 +122,14 @@ marks and tables they use. After reviewing a deliberate change, run
 `python tools/check_protected_tests.py --write`, include the inventory diff,
 and list added, removed or changed protected tests in the PR. A digest detects
 change; it does not prove equivalent coverage or track imported helpers,
-conftest fixtures or runtime code.
+conftest fixtures or runtime code. It counts the common ways a skip runs as the
+module imports, as a tripwire and not a proof. These import-time skips are not
+seen: one through `getattr(pytest, "skip")(...)`; one reached through an
+attribute call on a module the test module imports, such as
+`helpers.require()`; one reached through a class of the module, by its
+constructor or a method called at import, that method used as a decorator, or
+the class given as a metaclass; and one in a function or lambda that a module
+function defines and calls itself.
 
 For moved source or test citations, run
 `python tools/repin_trust_citations.py --base <rev>` and review the

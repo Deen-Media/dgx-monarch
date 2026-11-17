@@ -185,6 +185,55 @@ def test_a_keyword_samples_in_reaches_comfyuis_decode_through_both_wrappers(comf
         assert same_bytes(vae.decode(samples_in=latent), positional)
 
 
+def _plain(stock):
+    def wrapper(self, *args, **kwargs):
+        return stock(self, *args, **kwargs)
+    return wrapper
+
+
+def _named_default(stock):
+    def wrapper(self, x=None, *args, **kwargs):
+        return stock(self, *((x,) if x is not None else ()), *args, **kwargs)
+    return wrapper
+
+
+@pytest.mark.parametrize("shape", [_plain, _named_default], ids=["(self, *a, **k)", "(self, x=None, *a, **k)"])
+def test_the_latent_is_read_under_another_custom_nodes_plain_wrapper(comfy, vae_file, vae_folder, armed,
+                                                                      monkeypatch, caplog, shape):
+    """Another custom node wrapped VAE.decode and VAE.decode_tiled before the split installed, with
+    wrappers that set no __wrapped__, so the signature the split reads is theirs: (self, *args,
+    **kwargs), or one that names the latent with a default and so leaves it unbound when the
+    caller passes samples_in or samples by name. The latent is still the one the caller passed,
+    by position or by name."""
+    import comfy.utils
+
+    for entry in ("decode", "decode_tiled"):
+        monkeypatch.setattr(comfy.sd.VAE, entry, shape(getattr(comfy.sd.VAE, entry)))
+    monkeypatch.setattr(comfy.utils, "tiled_scale_multidim", comfy.utils.tiled_scale_multidim)
+    vae_decode_route.install()
+    seen = []
+    real_open = vae_decode_route._open
+
+    def recorded(vae, samples, entry):
+        seen.append(samples)
+        return real_open(vae, samples, entry)
+
+    monkeypatch.setattr(vae_decode_route, "_open", recorded)
+    (vae_folder / "wan_small.safetensors").write_bytes(vae_file.read_bytes())
+    vae = load_vae("wan_small.safetensors")
+    # A still of 96x96 pixels: the split keeps it on the driver by the small-still rule.
+    still = torch.randn(1, 16, 1, 12, 12, generator=torch.Generator().manual_seed(9))
+    caplog.set_level(logging.INFO, logger="dgx_monarch.vae_decode")
+    with torch.inference_mode():
+        vae.decode(still)
+        vae.decode(samples_in=still)
+        vae.decode_tiled(still, **TILED)
+        vae.decode_tiled(samples=still, **TILED)
+    assert len(seen) == 4 and all(samples is still for samples in seen), [type(item) for item in seen]
+    tiled = [line for line in not_split_lines(caplog) if "(wan21, VAE Decode (Tiled))" in line]
+    assert len(tiled) == 2 and all("stills at or under 1.2 MP" in line for line in tiled), tiled
+
+
 def test_a_driver_vae_on_the_cpu_keeps_the_whole_decode(comfy, vae_file, vae_folder, wrappers, armed, caplog):
     (vae_folder / "wan_small.safetensors").write_bytes(vae_file.read_bytes())
     vae = load_vae("wan_small.safetensors")
