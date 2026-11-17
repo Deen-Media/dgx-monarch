@@ -1844,3 +1844,50 @@ def test_an_own_explicit_on_denial_is_never_hidden_by_another_builds_rows(checkp
         assert gate_repair.repair(str(_rig), apply=True) == 0
         write_ceremony_rows(ledger, combo, artifacts)
     assert [decision.state for decision in _all_three_reads(checkpoint)] == ["denied"] * 3
+
+
+def test_guards_beneath_a_check_that_compared_nothing_cost_a_read_rows_in_proportion(checkpoint, _rig, monkeypatch):
+    """Each guard copied beneath a check that compared nothing looks up the newest terminal row of
+    its own version, found once per scope read. A search of the scope per guard grew the row reads
+    of one read with the square of the guards; doubling the guards now about doubles them."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import open_auto_ceremony, write_ceremony_rows
+
+    reads = [0]
+
+    class CountedRow(dict):
+        def get(self, *args):
+            reads[0] += 1
+            return super().get(*args)
+
+        def __getitem__(self, field):
+            reads[0] += 1
+            return super().__getitem__(field)
+
+    scan = GateLedger.entries_with_integrity
+
+    def counted(self):
+        entries, damage = scan(self)
+        return [(line, CountedRow(entry)) for line, entry in entries], damage
+
+    monkeypatch.setattr("os.fsync", lambda _fd: None)
+    combo, artifacts = _h3_combo(checkpoint)
+
+    def cost(guards: int) -> int:
+        """Row reads of one contextless read: ``guards`` cut-off checks on the auto graph, then a
+        check that compared nothing, whose explicit-on rows lift every guard beneath them."""
+        output = _rig.parent / f"guards_{guards}"
+        output.mkdir()
+        monkeypatch.setattr(sys.modules["folder_paths"], "get_output_directory", lambda: str(output))
+        ledger = GateLedger(str(output))
+        for _guard in range(guards):
+            open_auto_ceremony(ledger, combo, artifacts)
+        write_ceremony_rows(ledger, combo, artifacts)
+        with monkeypatch.context() as patch:
+            patch.setattr(GateLedger, "entries_with_integrity", counted)
+            reads[0] = 0
+            assert consent_quarantine.quarantine_decision(combo, artifacts).state == "clear"
+            return reads[0]
+
+    small, doubled = cost(100), cost(200)
+    assert doubled < 2.5 * small, (small, doubled)

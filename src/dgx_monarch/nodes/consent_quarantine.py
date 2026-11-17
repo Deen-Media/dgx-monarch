@@ -248,7 +248,7 @@ def _sibling_revocation(entry: dict[str, Any]) -> bool:
 _TERMINAL = frozenset({"PASS", "FAIL", "INCONCLUSIVE"})
 
 
-def _liftable(line: int, entry: dict[str, Any], rows: Sequence[tuple[int, dict[str, Any]]],
+def _liftable(line: int, entry: dict[str, Any], closed: dict[tuple[object, object], int],
               scope: str | None, retests: dict[int, dict[str, Any]], source: str | None,
               protocol: int, version: str) -> bool:
     """Whether a check that compared nothing takes this row out from beneath its own.
@@ -256,16 +256,14 @@ def _liftable(line: int, entry: dict[str, Any], rows: Sequence[tuple[int, dict[s
     Only a row another check copied here (``_copied_here``): one that, read
     alone under this build, is a denial, or a guard that a later terminal row
     of the guard's own version, whatever source wrote it, closed here (the row
-    that closed it goes only as a liftable copy itself). ``rows`` are the rows
-    this scope reads, so a FAIL that no longer reads closes nothing.
+    that closed it goes only as a liftable copy itself). ``closed`` holds the
+    newest terminal line of each (protocol, version) among the rows this scope
+    reads, so a FAIL that no longer reads closes nothing.
     """
     if not _copied_here(entry, scope, retests):
         return False
-    if entry.get("verdict") == "RETESTING" and any(
-            later > line and other.get("verdict") in _TERMINAL
-            and other.get("gate_protocol") == entry.get("gate_protocol")
-            and other.get("dgx_monarch") == entry.get("dgx_monarch")
-            for later, other in rows):
+    pair = (entry.get("gate_protocol"), entry.get("dgx_monarch"))
+    if entry.get("verdict") == "RETESTING" and pair in closed and closed[pair] > line:
         return True
     return _scope_decision([(line, entry)], 0, scope, source, protocol, version).state == "denied"
 
@@ -304,9 +302,11 @@ def _scope_decision(rows: Sequence[tuple[int, dict[str, Any]]], damage: int,
         # else is taken out: a row a check that ran here left, a stamped PASS, a copy that
         # reads clear and every other row of another build read by the rules below.
         retests = {line: entry for line, entry in rows if entry.get("verdict") == "RETESTING"}
+        closed = {(entry.get("gate_protocol"), entry.get("dgx_monarch")): line  # in ledger order: newest wins
+                  for line, entry in rows if entry.get("verdict") in _TERMINAL}
         rows = [(line, entry) for line, entry in rows[:-1]
                 if not _sibling_revocation(entry)
-                and not _liftable(line, entry, rows, scope, retests, source, protocol, version)]
+                and not _liftable(line, entry, closed, scope, retests, source, protocol, version)]
     if not rows:
         # No matching row, so nothing here is above one.
         return _UNKNOWN_UNSCOPED_DAMAGE if damage else _CLEAR
