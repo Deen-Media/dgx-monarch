@@ -70,19 +70,61 @@ def _await_setup(handle: Any, futures: list[Any], deadline: float, failed: dict[
     return results
 
 
-def drops_residents(previous: dict | None, new: dict) -> bool:
-    """Whether every Worker drops every resident model on this policy change.
+def residency_modes(args: dict, *, integrated: bool, fsdp: bool) -> tuple[bool | str, bool, bool]:
+    """The (slab mode, low-RSS LoRA, comfy-managed) a Worker resolves from ``args``.
 
-    A Worker does so when ``compile_dit``, the forced family, the shared
-    activation scale or the FP8 matmul setting changes, since each binds at
-    model load (``actor/worker_env.apply_worker_args_impl``), and its reply
-    reports none of them. So the driver reads the policy it last published
-    (``previous``) and the new one by the Worker's own rule: a
-    ``shared_act_scale`` the last policy carried and this one drops returns to
-    on. Two cases it cannot read, so it marks them: a policy that adds that key
-    (the Worker's own environment held the setting before) and an unknown last
-    policy (``None``: a failed or torn apply). Such a mark may charge a model a
-    Worker still holds; an unmarked drop would credit one it lost.
+    The Worker's own chain, read on the driver: comfy-managed turns low-RSS and
+    slab off (``actor/comfy_dynamic.apply_policy``); on unified memory an absent
+    ``lora_low_rss`` is on, an absent ``slab_weights`` is ``auto``, and slab is
+    off where low-RSS is (``actor/comfy_bridge._uma_memory_defaults``); FSDP
+    turns slab off (``actor/worker_env.slab_mode_effective``).
+    """
+    managed = args.get("comfy_managed") is True
+    lora = False if managed else args.get("lora_low_rss", True if integrated else None)
+    slab = False if managed else args.get("slab_weights", "auto" if integrated else None)
+    if integrated and slab and not lora:
+        slab = False
+    mode: bool | str = False if not slab or fsdp else ("auto" if slab == "auto" else True)
+    return mode, bool(lora), managed
+
+
+def _store_drops(previous: dict, new: dict, fsdp: bool) -> bool:
+    """Whether the store's residency setters may drop a resident on this change.
+
+    ``set_slab_mode`` drops a resident whose storage class the new mode no
+    longer keeps (``store_residency.policy_keeps_resident``): a slab one under
+    off, a stock one under on, a comfy-managed one on any change; ``auto``
+    keeps slab and stock alike. ``set_lora_mode`` drops one with unbaked LoRA
+    patches on any flip. The driver knows neither the class nor the patches,
+    so it marks every change but a move to ``auto`` outside comfy-managed. It
+    cannot read the Worker's ``is_integrated``, so either reading counts.
+    """
+    for integrated in (True, False):
+        old_slab, old_lora, old_managed = residency_modes(previous, integrated=integrated, fsdp=fsdp)
+        new_slab, new_lora, new_managed = residency_modes(new, integrated=integrated, fsdp=fsdp)
+        if old_lora is not new_lora:
+            return True
+        if old_slab != new_slab and (new_slab != "auto" or old_managed or new_managed):
+            return True
+    return False
+
+
+def drops_residents(previous: dict | None, new: dict, *, fsdp: bool = False) -> bool:
+    """Whether a Worker may drop a resident model on this policy change: the
+    driver's inference, which answers only where no reply names the drops
+    (``reported_drop``).
+
+    Every Worker drops every resident when ``compile_dit``, the forced family,
+    the shared activation scale or the FP8 matmul setting changes, since each
+    binds at model load (``actor/worker_env.apply_worker_args_impl``), and it
+    drops some on a residency change (``_store_drops``). So the driver reads the
+    policy it last published (``previous``) and the new one by the Worker's own
+    rule: a ``shared_act_scale`` the last policy carried and this one drops
+    returns to on. Cases it cannot read it marks: a policy that adds that key
+    (the Worker's own environment held the setting before), an unknown last
+    policy (``None``: a failed or torn apply), and a residency change that may
+    leave the resident in place. Such a mark may charge a model a Worker still
+    holds; an unmarked drop would credit one it lost.
     """
     from .adapters.quant_activation_scale import ENABLE_ARG
     from .family_select import override_from_worker_args
@@ -97,7 +139,24 @@ def drops_residents(previous: dict | None, new: dict) -> bool:
     return (bool(previous.get("compile_dit")) is not bool(new.get("compile_dit"))
             or override_from_worker_args(previous) != override_from_worker_args(new)
             or fp8_setting(previous)[0] != fp8_setting(new)[0]
-            or scale_on(previous) is not scale_on(new))
+            or scale_on(previous) is not scale_on(new)
+            or _store_drops(previous, new, fsdp))
+
+
+def reported_drop(replies: list, inferred: bool) -> bool:
+    """Whether an apply marks the load still to come.
+
+    Each Worker's reply names the slots that apply really dropped
+    (``residency_doors.DROPPED``); one rank's drop marks, though another kept
+    its model, since the load is then pending on that rank. A reply without
+    the key comes from a Worker of an older build (the fleet check compares
+    the Workers' builds with each other, not with the driver's:
+    ``mesh_builds.refuse_two_builds``), so the inference answers for it.
+    """
+    if any(isinstance(reply, dict) and reply.get(residency_doors.DROPPED) for reply in replies):
+        return True
+    named = all(isinstance(reply, dict) and residency_doors.DROPPED in reply for reply in replies)
+    return inferred and not named
 
 
 def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
@@ -106,9 +165,10 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
 
     A failed broadcast may have changed a subset of ranks, so the cached
     key is invalidated. Callers can then compensate or force the next
-    render to re-apply the complete policy. A policy whose change drops every
-    resident (``drops_residents``) tells the driver's residency memos so
-    before it is sent.
+    render to re-apply the complete policy. Where a Worker's reply names a
+    slot it dropped (``reported_drop``), the driver's residency memos are told
+    before the policy is published; an apply whose reply is lost marks where
+    the inference (``drops_residents``) says a Worker may have dropped one.
     """
     effective = (handle.effective_worker_args(worker_args) if merge_config
                  else dict(worker_args))
@@ -121,8 +181,12 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
         mesh_setup.require_no_sample_leases(handle, "change worker arguments")
         require_mutation_authority(handle, "change worker arguments")
         known = getattr(handle, "worker_args_key", None) is not None  # the last apply published
-        drops = drops_residents(
-            dict(getattr(handle, "active_worker_args", None) or {}) if known else None, effective)
+        topology = getattr(handle, "topology", None)
+        fsdp = bool(topology.get("fsdp") if isinstance(topology, dict)
+                    else getattr(topology, "fsdp", False))
+        inferred = drops_residents(
+            dict(getattr(handle, "active_worker_args", None) or {}) if known else None,
+            effective, fsdp=fsdp)
         # Retire the old policy marker and publish DIRTY before the first
         # remote side effect. A timeout, lost dispatch return, or async
         # interruption cannot leave stale READY policy authorization.
@@ -135,15 +199,17 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
         future = None
         try:
             send_started = True
-            if drops:  # every Worker unloads its residents (actor/worker_env.py)
-                residency_doors.announce(residency_doors.UNLOADED)
             future = handle.workers.apply_worker_args.call(effective)
             value_mesh = handle._await_or_evict(
                 future, timeout_s=timeout_s, holding_lock=True)
             rpc_complete = True
+            if reported_drop([value for _point, value in value_mesh.items()], inferred):
+                residency_doors.announce(residency_doors.UNLOADED)
             mesh_helpers.publish_worker_args(
                 handle, effective, handle._worker_args_key(effective))
         except BaseException as exc:
+            if not rpc_complete and inferred:  # no reply names the drops: the inference stands
+                residency_doors.announce(residency_doors.UNLOADED)
             ambiguous = (
                 not rpc_complete
                 and send_started

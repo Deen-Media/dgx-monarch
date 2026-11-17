@@ -2020,7 +2020,14 @@ its own row algebra and its own calibrated constants: see [#56](#56-minimax-h3-r
 **Reading the error:** the message splits the estimate into weights and
 activations, gives the token count of each stream (video+ref and pose), and
 names a `tokens/rank <= N` bound. The driver prices the render as one rank, so
-the bound applies to the render's whole token count.
+the bound applies to the render's whole token count. Where the positive
+conditioning holds more than one entry, it counts the references and pose of
+the entries that can run in one step: entries whose timestep windows
+(ConditioningSetTimestepRange) never overlap never share a model call, so the
+largest set whose windows share a point is priced, with its references summed
+and the largest pose of its entries (which can raise the price of a graph whose
+entries carry poses of different sizes), and entries with no window, or a
+window bound that is not a finite number, count throughout.
 
 **Fix:** shrink resolution, frame count or reference-image count until the
 token count is under that bound, or free memory (`sync && echo 3 | sudo tee
@@ -2055,11 +2062,17 @@ activation term is estimated. A load the loader deferred to the first render
 is not credited. These doors, through which every rank's models go, drop that
 credit: a successful Recycle, a Clear VRAM node at `hard`, an identity
 ceremony's clean reload and the gate's other unloads, a configuration change,
-a topology change or a failed setup's rollback, a worker-policy change that
-unloads every resident, the capacity rescue's slot drop, a render that fails
+a topology change or a failed setup's rollback, a worker-policy change on
+which a Worker reports a dropped model (`compile_dit`, the forced family, the
+shared activation scale and the FP8 matmul setting drop every resident; a
+`slab_weights` or `lora_low_rss` change drops one whose storage class or
+LoRA patches no longer fit), the capacity rescue's slot drop, a render that fails
 while its result is collected and evicts the fleet, a fleet the driver marks
 defunct (a dead Worker, a stall), whose replacement holds no model, and a new
-fleet started in place of a retired one. If the workers lose the model
+fleet started in place of a retired one. A Worker that keeps its model across
+a policy change, as it keeps a stock model across the gate's stock policy over
+the Init node's `auto` residency widgets, reports no drop, and the credit
+stands. If the workers lose the model
 another way, for example when a different slot replaced it, the credit is
 stale and the estimate omits the weight term. That case can still end in an
 allocator OOM, as it would with no preflight, but it never blocks a render
@@ -2441,8 +2454,7 @@ ceremony would drop is not made"). That credit ends at an operator's drop (a Cle
 change, the capacity rescue's slot drop) until the loader node runs again for
 the checkpoint or a load of it completes, and a recycle leaves it. Under `auto` a checkpoint that a
 finished render, a pipelined submission, a load or this check's own cleared
-charge placed is credited as well, until the next door through which every
-rank's models go drops the credit
+charge placed is credited as well, until the next door drops the credit
 ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight) lists them).
 The reserve is
 5 GiB or a larger configured `uma_reserve_gb`.
@@ -3176,7 +3188,8 @@ driver marks defunct and a new fleet in place of a retired one, a
 configuration change, a topology change or the
 rollback of a failed setup, a worker-policy change that unloads every resident
 (`compile_dit`, `family_adapter` (`family_override`), `shared_act_scale`,
-`fp8_matrix_mult`), a
+`fp8_matrix_mult`), a residency change (`slab_weights`, `lora_low_rss`) on
+which a Worker reports a dropped model (its reply names the slot), a
 Clear VRAM node at `hard`, the capacity rescue's slot drop, an identity
 ceremony's clean reload and the gate's other unloads. Until 1.5 only the first
 two did, so a re-queue after a hard Clear VRAM under `auto` was priced with its

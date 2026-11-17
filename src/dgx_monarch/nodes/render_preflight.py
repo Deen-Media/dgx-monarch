@@ -390,9 +390,9 @@ def _ref_pose_activation_preflight(family: str, path: str, unet_name: str,
 # successful render proves its checkpoint is already in ``MemAvailable``.
 _LAST_RENDERED_UNET: str | None = None
 
-# Session lifetime. Stamped when preflight clears a pending load, before either
-# submission path: a render can fail after loading but before the submitted or
-# success memo is set, and this keeps a retry from charging that resident file.
+# Session lifetime. Stamped when preflight clears a pending load: a render can fail after
+# loading, before its submitted or success memo is set, and this keeps a retry from charging
+# that file, unless a door marked the load still to come since (a residency change included).
 _LAST_DRIVER_CHARGED_UNET: str | None = None
 
 # Session lifetime. Do not charge a checkpoint already loading in a pipeline.

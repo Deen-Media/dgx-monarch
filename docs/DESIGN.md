@@ -2237,7 +2237,10 @@ explicit preset). These doors, through which every rank's models go, drain the
 memos it reads: the gate's own unloads, a recycle, a fleet the driver marks
 defunct and a new fleet in place of a retired one, a configuration change, a
 topology change or a failed setup's
-rollback, a worker-policy change that unloads every resident, a hard Clear
+rollback, a worker-policy change on which a Worker drops a model (its
+`apply_worker_args` reply names each slot it dropped, so an adopted resident
+marks nothing; a reply from a Worker of an older build names none, and the
+driver's inference, `drops_residents`, answers for it), a hard Clear
 VRAM and the capacity rescue's slot drop (the mesh layer announces its doors
 through `residency_doors`). An operator's drop (a hard Clear VRAM, a
 configuration change, the capacity rescue's slot drop) also ends an explicit
@@ -2843,7 +2846,7 @@ every rank's models go (an
 identity ceremony's clean reload, the no-render path, the slab proof, the
 cross-mode reference, the FSDP cleanup, a rescue's dropped slot, a hard Clear
 VRAM, a topology change or a failed setup's rollback, a worker-policy change
-that unloads every resident, a configuration change, a fleet the driver marks
+on which a Worker reports a dropped model, a configuration change, a fleet the driver marks
 defunct, a new fleet in place of a retired one) or a reset or restart stops the
 Workers' processes, the load is
 still to come again whatever this process placed before (ComfyUI's cached

@@ -11,6 +11,7 @@ docs/TROUBLESHOOTING.md #139).
 """
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
 from .. import family_select, h3_rows, latent_scale, mesh_safety, sample_deadline
@@ -26,28 +27,70 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
+def _percent(value: Any) -> float:
+    """A window bound as a float; anything but an int or a float (a bool, a
+    string, None) raises TypeError, and the window is then read as throughout."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"window bound {value!r} is not a number")
+    return float(value)
+
+
+def _window(extra: dict) -> tuple[float, float]:
+    """The share of the schedule a conditioning entry runs in, as ComfyUI reads
+    it (``comfy/samplers.calculate_start_end_timesteps``, the clip pair applied
+    in its order; ``get_area_and_mult`` skips an entry only outside it, so both
+    ends count), held to 0 to 1, where ``percent_to_sigma`` saturates. A bound
+    that is not a finite number never skips the entry in ComfyUI (a NaN sigma
+    compares false), so such a window, and an unreadable one, is throughout."""
+    try:
+        start = _percent(extra.get("start_percent", 0.0))
+        end = _percent(extra.get("end_percent", 1.0))
+        if "clip_start_percent" in extra:
+            start = max(_percent(extra["clip_start_percent"]), start)
+            end = min(_percent(extra["clip_end_percent"]), end)
+    except (KeyError, TypeError):
+        return 0.0, 1.0
+    if not (math.isfinite(start) and math.isfinite(end)):
+        return 0.0, 1.0
+    return min(max(start, 0.0), 1.0), min(max(end, 0.0), 1.0)
+
+
+def _pose_rows(pose: Any) -> int:
+    shape = getattr(pose, "shape", None) if pose is not None else None
+    return mesh_safety.ref_pose_token_counts((1, 0, 0, 0, 0), (), shape)[1] if shape is not None else -1
+
+
 def ref_pose_shapes(request: dict) -> tuple[list, Any]:
-    """The reference latent shapes and the pose latent shape in every positive
-    entry's extras, a Sampler Custom guider's included (``h3_rows.positive_entries``):
-    the SCAIL pose path can land on a later entry, and reference_latents
-    append. Malformed extras degrade to shape-only estimation. The negative
-    mirrors the positive and runs as its own model call, so the positive
-    bounds the peak."""
-    ref_latents: list = []
-    pose_latent = None
+    """The reference latent shapes and the pose latent shape of the positive
+    entries that can run in one step, a Sampler Custom guider's included
+    (``h3_rows.positive_entries``): the SCAIL pose path can land on a later
+    entry, and reference_latents append. Entries whose timestep windows do not
+    overlap never run together, so the price is the largest set whose windows
+    share a point (every set ComfyUI can run at once starts at an entry's own
+    start), with its references summed and its largest pose. Entries with no
+    window run throughout, as all of them did here before. Malformed extras
+    degrade to shape-only estimation."""
+    entries = []
     for entry in h3_rows.positive_entries(request):
         extra = entry[1] if isinstance(entry, (list, tuple)) and len(entry) > 1 else None
         if not isinstance(extra, dict):
             continue
-        ref_latents.extend(extra.get("reference_latents") or ())
-        if pose_latent is None:
-            pose_latent = extra.get("pose_video_latent")
-    ref_shapes = [
-        shape for t in ref_latents
-        if (shape := getattr(t, "shape", None)) is not None
-    ]
-    return ref_shapes, (getattr(pose_latent, "shape", None)
-                        if pose_latent is not None else None)
+        refs = [shape for t in extra.get("reference_latents") or ()
+                if (shape := getattr(t, "shape", None)) is not None]
+        pose = extra.get("pose_video_latent")
+        entries.append((_window(extra), refs, pose))
+    best: tuple[int, list, Any] = (-1, [], None)
+    for at, _end in (window for window, _refs, _pose in entries):
+        active = [(refs, pose) for (start, end), refs, pose in entries if start <= at <= end]
+        refs = [shape for shapes, _pose in active for shape in shapes]
+        # The largest pose of the set, so the count only grows with the set and
+        # covers every entry's own call; the first in entry order may be smaller.
+        pose = max((pose for _shapes, pose in active), key=_pose_rows, default=None)
+        pose_shape = getattr(pose, "shape", None) if pose is not None else None
+        rows = sum(mesh_safety.ref_pose_token_counts((1, 0, 0, 0, 0), refs, pose_shape))
+        if rows > best[0]:
+            best = (rows, refs, pose_shape)
+    return best[1], best[2]
 
 
 def packed_rows_for_request(model: Any, request: dict, latent: dict) -> tuple[int, str] | None:

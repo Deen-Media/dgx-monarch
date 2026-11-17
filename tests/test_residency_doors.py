@@ -16,6 +16,11 @@ code:
   every resident, a fleet marked defunct and a new fleet in place of a retired
   one drain the render memos and mark the load still to come, and leave the
   loader's memo and the preset credit;
+- a worker-policy change marks the same exactly where a Worker's reply names a
+  slot it dropped (an adopted resident marks nothing), through
+  ``apply_worker_args``, a render's own setup and the cross-mode leg's
+  restore; a reply without that key leaves it to the driver's inference,
+  which reads the Worker's own mode chain;
 - the loader node writes its own placement, in each slot, so a dual-model
   graph's second loader does not hide the first's.
 
@@ -444,14 +449,17 @@ _LAST = {"slab_weights": True, "lora_low_rss": True}
     ({**_LAST, "shared_act_scale": False}, _LAST, True),  # dropped: back to on
     (_LAST, {**_LAST, "shared_act_scale": True}, True),   # added: the Worker's environment held it
     (None, {"slab_weights": True}, True),                 # the last apply did not publish
-    (_LAST, {**_LAST, "slab_weights": False}, False),
-    (_LAST, {**_LAST, "lora_low_rss": False}, False),
+    (_LAST, {**_LAST, "slab_weights": False}, True),      # the store may drop a slab resident
+    (_LAST, {**_LAST, "lora_low_rss": False}, True),      # or one with unbaked LoRA patches
+    (_LAST, {**_LAST, "mmap_fallback": True}, False),
     ({**_LAST, "fp8_matrix_mult": "auto"}, _LAST, False),  # absent is auto
     ({**_LAST, "shared_act_scale": True}, _LAST, False),   # dropped: still on
-    ({"compile_dit": False}, {"compile_dit": False, "slab_weights": False}, False),
+    ({"compile_dit": False}, {"compile_dit": False, "mmap_fallback": True}, False),
 ])
-def test_a_worker_policy_change_that_unloads_every_resident_drains_the_render_memos(
+def test_a_reply_without_the_drop_key_leaves_the_inference_to_mark(
         monkeypatch, h3, last, new, drops):
+    """A Worker of an older build names no drops in its reply (``{}`` here), so
+    the driver's inference answers (``drops_residents``)."""
     _stamp(monkeypatch)
     workers = _Workers([])
     values = _ValueMesh([{}, {}])
@@ -465,3 +473,206 @@ def test_a_worker_policy_change_that_unloads_every_resident_drains_the_render_me
     assert _render_memos_drained() is drops
     assert loader_preflight._CLEARED_UNETS == {UNET: None}
     _render(h3, _h3_latent())  # not an operator's drop: the preset credit stands
+
+
+# --- D. a residency change the model store acts on ----------------------------------------
+
+
+_POLICIES = [
+    {},                                                  # the Init node's auto widgets
+    {"slab_weights": False, "lora_low_rss": False},      # stock residency, as the gate forces it
+    {"slab_weights": True, "lora_low_rss": True},
+    {"slab_weights": "auto", "lora_low_rss": True},
+    {"slab_weights": True, "lora_low_rss": False},
+    {"lora_low_rss": False},
+    {"slab_weights": False},
+    {"comfy_managed": True, "slab_weights": False, "lora_low_rss": False},
+]
+
+
+def _worker_modes(monkeypatch, args: dict, integrated: bool, fsdp: bool) -> tuple:
+    """What a Worker's apply resolves: its defaults (``_uma_memory_defaults``),
+    then the slab rule (``slab_mode_effective``), as ``apply_worker_args_impl`` reads them."""
+    from dgx_monarch import residency_mode
+    from dgx_monarch.actor import comfy_bridge, comfy_dynamic, worker_env
+
+    monkeypatch.setattr(comfy_dynamic, "_REQUESTED", None, raising=False)  # the process latch
+    wa = comfy_bridge._uma_memory_defaults(dict(args), integrated=integrated)
+    return (worker_env.slab_mode_effective(wa, {"fsdp": fsdp}), bool(wa.get("lora_low_rss")),
+            residency_mode.requested(wa))
+
+
+@pytest.mark.parametrize("fsdp", [False, True])
+@pytest.mark.parametrize("integrated", [True, False])
+@pytest.mark.parametrize("args", _POLICIES)
+def test_the_driver_reads_the_workers_residency_modes(monkeypatch, args, integrated, fsdp):
+    from dgx_monarch import mesh_setup_transition
+
+    driver = mesh_setup_transition.residency_modes(args, integrated=integrated, fsdp=fsdp)
+    assert driver == _worker_modes(monkeypatch, args, integrated, fsdp)
+
+
+@pytest.mark.parametrize("integrated", [True, False])
+@pytest.mark.parametrize("new", _POLICIES)
+@pytest.mark.parametrize("last", _POLICIES)
+def test_no_drop_of_the_model_store_goes_unmarked(monkeypatch, last, new, integrated):
+    """The real store's setters, in the Worker's order, over every resident a
+    policy can hold: whatever they drop, the driver has marked."""
+    from dgx_monarch import mesh_setup_transition
+    from dgx_monarch.actor import model_store, store_residency
+
+    if (last.get("comfy_managed") is True) is not (new.get("comfy_managed") is True):
+        pytest.skip("comfy_managed is a bootstrap policy: a live Worker refuses the change")
+    marked = mesh_setup_transition.drops_residents(last, new)
+    old_slab, old_lora, managed = _worker_modes(monkeypatch, last, integrated, False)
+    new_slab, new_lora, _ = _worker_modes(monkeypatch, new, integrated, False)
+    kinds = ({"comfy-managed": {"residency_rung": store_residency.RUNG_COMFY_MANAGED}} if managed
+             else {"slab": {"slab": SimpleNamespace(certificate=None)}, "stock": {},
+                   "stock with unbaked LoRA patches": {"lora_sig": "lora"},
+                   "slab with unbaked LoRA patches": {"slab": SimpleNamespace(certificate=None),
+                                                      "lora_sig": "lora"}})
+    for kind, fields in kinds.items():
+        store = model_store.ModelStore()
+        store.slab_weights, store.lora_low_rss = old_slab, old_lora
+        store.current = SimpleNamespace(**{
+            "slab": None, "residency_rung": "", "lora_sig": "", "base_baked": False,
+            "base_key": ("model.safetensors",), "slab_auto_retry": True, **fields})
+        dropped: list = []
+        monkeypatch.setattr(store, "_drop", lambda slot, everything=False, d=dropped: d.append(slot))
+        store.set_lora_mode(new_lora)
+        store.set_slab_mode(new_slab)
+        assert marked or not dropped, f"{kind}: dropped on {last} to {new}, and nothing marked it"
+
+
+@pytest.mark.parametrize(("last", "new", "fsdp", "drops"), [
+    ({}, {"slab_weights": False, "lora_low_rss": False}, False, True),  # the gate's stock policy
+    ({"slab_weights": False, "lora_low_rss": False}, {}, False, True),  # and back
+    ({"slab_weights": True, "lora_low_rss": True}, {"slab_weights": "auto", "lora_low_rss": True},
+     False, False),                                                     # auto keeps either class
+    ({"slab_weights": True, "lora_low_rss": True}, {"slab_weights": False, "lora_low_rss": True},
+     True, False),                                                      # under FSDP slab is off
+    ({"slab_weights": False, "lora_low_rss": False},
+     {"slab_weights": False, "lora_low_rss": False, "mmap_fallback": True}, False, False),
+])
+def test_without_the_drop_key_a_residency_change_the_store_may_act_on_marks(
+        monkeypatch, h3, last, new, fsdp, drops):
+    """The inference's residency rows, for a reply without the key (``{}`` here)."""
+    _stamp(monkeypatch)
+    workers = _Workers([])
+    workers.apply_worker_args = _Endpoint(_Future(_ValueMesh([{}, {}])))
+    handle, _old, _new = _handle(workers)
+    handle.active_worker_args = dict(last)
+    if fsdp:
+        handle.topology = SimpleNamespace(fsdp=True)
+    handle.apply_worker_args(new, merge_config=False)
+    assert len(workers.apply_worker_args.calls) == 1
+    assert _render_memos_drained() is drops
+    assert loader_preflight._CLEARED_UNETS == {UNET: None}
+    _render(h3, _h3_latent())  # not an operator's drop: the preset credit stands
+
+
+DROPPED = "dropped_slots"  # the reply key (residency_doors.DROPPED, pinned in test_worker_drop_report)
+
+
+def _reply(*dropped: str) -> dict:
+    """A Worker's reply that names the slots its apply dropped."""
+    return {"lora_low_rss": False, "slab_weights": False, DROPPED: list(dropped)}
+
+
+GATE_STOCK = {"slab_weights": False, "lora_low_rss": False}
+
+
+@pytest.mark.parametrize(("replies", "new", "drops"), [
+    pytest.param([_reply("cond"), _reply("cond")], {"mmap_fallback": True}, True,
+                 id="reported, where the inference sees no drop"),
+    pytest.param([_reply("cond"), _reply()], {"mmap_fallback": True}, True,
+                 id="one rank's drop: the load is pending on that rank"),
+    pytest.param([_reply(), _reply()], GATE_STOCK, False,
+                 id="adopted, where the inference would mark"),
+    pytest.param([{}, _reply()], GATE_STOCK, True, id="one reply without the key: the inference"),
+    pytest.param([{}, {}], {"mmap_fallback": True}, False, id="no key, no inferred drop"),
+])
+def test_the_driver_marks_exactly_where_a_rank_reports_a_drop(monkeypatch, h3, replies, new, drops):
+    _stamp(monkeypatch)
+    workers = _Workers([])
+    workers.apply_worker_args = _Endpoint(_Future(_ValueMesh(replies)))
+    handle, _old, _new = _handle(workers)
+    applied = handle.apply_worker_args(new, merge_config=False)
+    assert applied == replies                     # the reply reaches every reader unchanged
+    assert _render_memos_drained() is drops
+    assert loader_preflight._CLEARED_UNETS == {UNET: None}
+    _render(h3, _h3_latent())  # not an operator's drop: the preset credit stands
+
+
+@pytest.mark.parametrize("inferred", [True, False])
+def test_an_apply_whose_reply_is_lost_marks_where_the_inference_says(monkeypatch, h3, inferred):
+    _stamp(monkeypatch)
+    workers = _Workers([])
+    workers.apply_worker_args = _Endpoint(_Future(error=TimeoutError("the reply did not come")))
+    handle, _old, _new = _handle(workers)
+    with pytest.raises(TimeoutError):
+        handle.apply_worker_args(GATE_STOCK if inferred else {"mmap_fallback": True}, merge_config=False)
+    assert _render_memos_drained() is inferred
+
+
+@pytest.mark.parametrize(("restore", "drops"), [((_reply("cond"), _reply("cond")), True),
+                                                ((_reply(), _reply()), False)])
+def test_the_cross_mode_references_restore_marks_what_the_workers_dropped(
+        monkeypatch, h3, restore, drops):
+    """The identity gate's cross-mode leg runs its stock reference under
+    ``gate_identity.temporary_worker_policy`` (slab off) and restores slab on
+    leaving it. Where the Workers drop the stock reference's resident on the
+    restore, the next render's checks charge it; where they keep it, they do not.
+    ``gate_cross_mode``'s still-slab check reads the entry's reply as before."""
+    from dgx_monarch.nodes import gate_identity
+
+    _stamp(monkeypatch)
+    workers = _Workers([])
+    workers.apply_worker_args = _Endpoint(_Future(_ValueMesh([_reply(), _reply()])),
+                                          _Future(_ValueMesh(list(restore))))
+    handle, _old, _new = _handle(workers)
+    asked = {"lora_low_rss": True, "slab_weights": True}
+    handle.active_worker_args = dict(asked)
+    with gate_identity.temporary_worker_policy(handle, asked, {"slab_weights": False}) as applied:
+        assert not [row for row in applied if row and row.get("slab_weights")]
+        assert not _render_memos_drained()           # the entry dropped nothing
+        render_preflight.note_successful_render(UNET)  # the stock reference rendered
+    sent = [args[0]["slab_weights"] for args, _kwargs in workers.apply_worker_args.calls]
+    assert sent == [False, True]
+    assert _render_memos_drained() is drops
+    assert loader_preflight._CLEARED_UNETS == {UNET: None}
+
+
+def test_a_renders_own_policy_through_setup_marks_a_reported_drop(monkeypatch, h3):
+    """The route every render takes: ``ensure_setup`` on the live topology sends
+    the request's policy where its key differs, through ``apply_worker_args``."""
+    _stamp(monkeypatch)
+    workers = _Workers([])
+    workers.apply_worker_args = _Endpoint(_Future(_ValueMesh([_reply("cond"), _reply("cond")])))
+    handle, old, _new = _handle(workers)
+    handle.ensure_setup(old, "TORCH_FLASH", True, GATE_STOCK)
+    assert len(workers.apply_worker_args.calls) == 1
+    assert _render_memos_drained()
+    assert loader_preflight._CLEARED_UNETS == {UNET: None}
+    _render(h3, _h3_latent())  # not an operator's drop: the preset credit stands
+
+
+def test_a_stock_resident_the_workers_adopt_keeps_the_no_render_loads_credit(
+        monkeypatch, tmp_path, box):
+    """The path the release test runs on every first use without a PASS: the
+    no-render path loads the model under the Init node's auto widgets, the
+    user's render goes out under the gate's stock policy (``ensure_setup``),
+    the Workers adopt their stock resident and say so, nothing is marked, and a
+    retry after that render failed still credits the DiT under ``auto``."""
+    rig_ = _h3_rig(monkeypatch, tmp_path, preset="auto")
+    box.mem = _h3_need(weights=0) + 4 * _GIB
+    _comfy(monkeypatch, box, models=())
+    model = ModelSpec(mesh=rig_.model.mesh, unet_name=UNET)
+    pending_load_relief.note_unloaded()     # the no-render path: every rank unloads
+    pending_load_relief.note_placed(UNET)   # and loads the model
+    workers = _Workers([])
+    workers.apply_worker_args = _Endpoint(_Future(_ValueMesh([_reply(), _reply()])))
+    handle, old, _new = _handle(workers)
+    handle.ensure_setup(old, "TORCH_FLASH", True, GATE_STOCK)
+    assert len(workers.apply_worker_args.calls) == 1
+    _render(model, _h3_latent())            # the retry: credited, so it admits

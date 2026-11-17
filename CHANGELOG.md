@@ -1786,7 +1786,8 @@ sections after them list every change.
   render whose DiT and activations do not fit together. These doors now
   drain them, the mesh's own included (a fleet marked defunct and a new
   fleet in place of a retired one, a configuration change, a topology change or a failed setup's rollback, a
-  worker-policy change that unloads every resident), and every check, the
+  worker-policy change on which a Worker drops a model, which its
+  `apply_worker_args` reply now names), and every check, the
   gate's capacity check included, reads one rule. Under an explicit preset the
   driver footprint and MiniMax H3 checks credited the DiT after a hard clear
   too, since ComfyUI's cached loader node does not place it again; an
@@ -1808,6 +1809,14 @@ sections after them list every change.
   the same conditioning on KSampler counts 83,714. The sample deadline reads
   the guider's rows too. CPU tests; not run on hardware
   ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Fix: the reference and pose check counts only the positive entries that can
+  run in one step. It summed every entry's references, so two entries whose
+  timestep windows never overlap, sharing one reference, were priced as one
+  call holding both (7.19 GiB where either needs 6.88). Overlapping windows,
+  and entries with no window, keep the sum. It prices the largest pose of the
+  entries that can share a step; it took the first, which could be smaller
+  than a later entry's own. CPU tests; not run on hardware
+  ([TROUBLESHOOTING #47](docs/TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight)).
 - The driver's deadline for a render's sample call grows with the work. For
   MiniMax H3 and Wan SCAIL, SCAIL-2 and Animate 2 it allows 600 s per step at
   109,466 packed rows per rank, scaled linearly with the rows on each rank, at
