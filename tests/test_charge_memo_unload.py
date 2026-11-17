@@ -1,4 +1,4 @@
-"""Every unload of ComfyUI's models forgets the driver models a loader charged.
+"""Every unload the driver makes forgets the driver models a loader charged.
 
 The loader's memo of charged driver models (``loader_graph._CHARGED_STACK_ARTIFACTS``)
 lets a second loader node credit a stack an earlier one charged. Once ComfyUI's

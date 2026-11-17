@@ -2510,8 +2510,18 @@ stages in those ways as no leg has measured, so no price claims it there.
 Cleared-load caches avoid charging weights again after a sampling failure;
 stale entries can undercount, but cannot create a false refusal. Every unload
 the driver makes, a Clear VRAM node at `hard` included, forgets the driver
-models a loader charged where a model left ComfyUI; ComfyUI's own `/free` does
-not, so a loader right after it with nothing held can credit them. Two more
+models a loader charged where a model left ComfyUI. ComfyUI's own unloads do
+not: its `/free` route and the models it evicts itself during execution. A
+loader that runs again after one of them with nothing held still credits those
+models, so whatever of them loads again in that queue goes uncharged there: on
+a shipped template the VAE, at the decode. Unload Models (`/free` without
+`free_memory`) and an eviction keep ComfyUI's node cache, so the encodes come
+from it and the encoders do not load; Free Model and Node Cache (`/free` with
+`free_memory`) empties it, so the CLIP loaders run again and each encoder is
+either held when the loader prices or priced at its loader node by the driver
+spend price. The encoders go uncharged too only after Unload Models or an
+eviction, in a graph whose loader runs before an encode that has to run again.
+Two more
 limits: one refuses where the box has room, and one, not measured, can credit
 too much. A loader that runs again while ComfyUI serves a Reference to Video
 (MiniMax H3) output from its cache charges that 40 GiB encode though nothing

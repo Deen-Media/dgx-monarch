@@ -3904,13 +3904,28 @@ in the two records above it would have added nothing, and the credit alone
 makes the room. At a render site, where a sampler or Identity Gate (DGX
 Monarch) prices a re-queue whose loader ComfyUI kept, the graph's encodes have
 run, so the price after the unload keeps the encoders out of the load window
-(above), and there the unload makes room by all it frees. Every unload that
-takes a model from ComfyUI empties the loader's memo of driver models it
-charged, at the loader, at a render site and at a Clear VRAM node set to
-`hard`: nothing ComfyUI held is loaded then, so no earlier charge stands for
-it. ComfyUI's own `/free` route leaves the memo,
-as it did in 1.4.0, so a loader after it with nothing held can still credit a
-stack an earlier loader charged. Where ComfyUI holds no model the same step
+(above), and there the unload makes room by all it frees. Every unload the
+driver makes that takes a model from ComfyUI empties the loader's memo of
+driver models it charged, at the loader, at a render site and at a Clear VRAM
+node set to `hard`: nothing ComfyUI held is loaded then, so no earlier charge
+stands for it. ComfyUI's own unloads leave the memo, as they did in 1.4.0: its
+`/free` route and the models it evicts itself during execution. A loader that
+runs again after one of them with nothing held still credits the stack an
+earlier loader charged, so whatever of that stack loads again in that queue
+goes uncharged there. On a shipped template that is the VAE, at the decode.
+Unload Models in the frontend (`/free` without `free_memory`) and an eviction
+keep ComfyUI's node cache, so the encodes come from it and the encoders do not
+load. Free Model and Node Cache (`/free` with `free_memory`) empties it, so the
+CLIP loaders run again, and each encoder is either held when the loader prices
+or priced at its loader node by the driver spend price: a CLIP loader that runs
+before the loader prices finds no mark, and one that runs after it finds none
+either, since a stack the memo credited writes no node marks
+(`driver_spend_marks.note_charged`). The VAE loader is outside the spend
+price, so the VAE still goes uncharged. The
+encoders go uncharged too only after Unload Models or an eviction, in a graph
+whose loader runs before an encode that has to run again: its CLIP loader keeps
+its cached output and does not run, so the encoder loads back inside the
+encode, which nothing prices. Where ComfyUI holds no model the same step
 still returns the allocator's cached blocks, and the load is priced again if
 the reading rose by a tenth of a GiB or more. The driver's ComfyUI keeps that
 cache for longer since its free-memory reading follows MemAvailable

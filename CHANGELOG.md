@@ -2041,7 +2041,14 @@ sections after them list every change.
 - Fix: a Clear VRAM node set to `hard` now unloads through the driver's own
   unload, so where a model left ComfyUI it forgets the driver models a loader
   charged, and the next loader with nothing held charges them again rather
-  than none
+  than none. ComfyUI's own unloads, its `/free` route and the models it evicts
+  during execution, still leave that memo, as in 1.4.0: a loader that runs
+  again after one of them with nothing held does not charge what of that stack
+  loads again in that queue, on a shipped template the VAE at the decode. After
+  Unload Models (`/free` without `free_memory`) or an eviction the encodes come
+  from ComfyUI's node cache; after Free Model and Node Cache (`/free` with
+  `free_memory`) each encoder is held when the loader prices or priced at its
+  loader node by the driver spend price
   ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)).
 - Fix: `dgxm doctor`'s `unexpected shutdowns` row no longer leaves out one
   reboot always: it leaves out the oldest record only when that is a reboot

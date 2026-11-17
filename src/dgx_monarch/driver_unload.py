@@ -283,7 +283,7 @@ def unload(mm: Any, held: Sequence[tuple[Any, str]]) -> Unloaded:
     after = mesh_safety.mem_available_bytes() or 0
     kept = {id(entry) for entry in list(getattr(mm, "current_loaded_models", None) or ())}
     names = tuple(name for entry, name in held if id(entry) not in kept)
-    if names:  # every door that unloads comes here, so the loader's charge memo empties here
+    if names:  # the driver's own unloads come here; ComfyUI's /free and its evictions do not
         from .nodes.loader_graph import reset_charged_artifacts
         reset_charged_artifacts()
     return Unloaded(names, before, after)

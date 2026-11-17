@@ -140,9 +140,9 @@ _MEMO_LIMIT = 64
 # preflight's fail-open handler then drops the memo entry.
 # Reads are single membership tests and take no lock.
 _MEMO_LOCK = threading.Lock()
-# Session lifetime, keyed by artifact names already charged. This avoids double
-# charging dual-model graphs. FIFO eviction and recycle reset are safe: stale
-# entries omit a charge, while lost entries only create a loud over-charge refusal.
+# Session lifetime, keyed by artifact names already charged, so a dual-model graph's second loader does
+# not charge the stack again. A lost entry only over-charges. The driver's unloads and a recycle empty it;
+# ComfyUI's /free and its own evictions do not, so an entry can go stale and omit a charge (#52).
 _CHARGED_STACK_ARTIFACTS: dict[str, None] = {}
 
 
