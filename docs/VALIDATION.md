@@ -308,14 +308,20 @@ then merged as dev `07cc636`. They touch the cond batch exchange, the
 `dpm_adaptive` refusal, the driver spend price, and Studio: what a workflow
 load keeps, the companion's LoRA refusal, the field names and the bundle.
 Release test v5 ran whole on `07cc636` on 2026-11-15 and passed
-([record](#release-test-v5-07cc636)), and the commit that ships differs from
-`07cc636` in documentation only. The gate renders every shipped template at
-one step on the pair, so it shows that no shipped template changed status,
-first-use path or verdict with these fixes. Of the fixes themselves it ran
+([record](#release-test-v5-07cc636)). A review of the whole 1.5.0 diff on
+2026-11-16 then found faults in the driver's capacity prices, the consent
+reader, the Workers' backup vote, Studio and the tools. Their fixes follow
+`07cc636`, and release test v5 has not run on this code: it runs again
+before the release, and until then those fixes are held by CPU tests alone
+(NOT RUN below). The gate renders every shipped template at
+one step on the pair, so on `07cc636` it showed that no shipped template
+changed status, first-use path or verdict with the apex review's fixes. Of
+the apex review's fixes themselves it ran
 one path, in its added cell: `dpm_adaptive` refused at the UNET loader under
 `dp2+fsdp`. The main pass also ran the reworked spend price on its plain
-path and the exchange on the pair's default group; the cases the fixes change
-have run only in CPU tests and the Studio browser rounds (NOT RUN below).
+path and the exchange on the pair's default group; the cases the apex
+review's fixes change have run only in CPU tests and the Studio browser
+rounds (NOT RUN below).
 
 - INT8 GEMM kernel, 2026-10-28 and 29
   ([record](#int8-gemm-kernel-comparison-2026-10-28-and-29)): the render
@@ -406,8 +412,8 @@ have run only in CPU tests and the Studio browser rounds (NOT RUN below).
   [cfg2 rows](#campaign-k-equal-pairs)); the Anima reading of 2026-11-10
   against stock that led to its text branch fix
   ([record](#anima-text-branch-fix)); the
-  full Studio browser procedure of 2026-11-15 on the bundle this release
-  ships, `index-BFnkXPeL.js`
+  full Studio browser procedure of 2026-11-15 on the bundle of that day,
+  `index-BFnkXPeL.js`
   ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-11-15));
   the hardware of 2026-11-11 and the fixes it led to
   ([record](#fixes-2026-11-11)); the passes and proof blocks on the dev builds
@@ -470,6 +476,63 @@ have run only in CPU tests and the Studio browser rounds (NOT RUN below).
     command palette, Fleet and a saved Library workflow, which load a workflow
     through the same inspection as the Workflow list; and the dev bundle at
     390x844 ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#apex-review-checks-2026-11-15)).
+- **NOT RUN for the loader-price fixes of the review of the 1.5.0 promotion
+  (2026-11-16)**, which admit, or offer a clear, where the commit before them
+  refused, each held by CPU tests alone: a re-queue whose loader ComfyUI
+  kept, priced at the sampler after the driver unloaded its encoders, with
+  those encoders out of the load window; the same price beside a swap credit;
+  a loader that runs
+  again while ComfyUI holds the graph's encoders, crediting them at 1.144; and
+  the Old model in the way card for a loader `weight_dtype` change on the file
+  a Worker holds stock.
+- **NOT RUN for the review fixes of 2026-11-16** that change what a Spark
+  or Studio does, each held by CPU tests:
+  - A symlinked VAE file now splits under Worker-assisted VAE decode:
+    `dgx-monarch-ltx25-t2v.json` on the pair with `worker_vae_decode = "auto"`
+    and `models/vae/ltx-2.5-video-vae-bf16.safetensors` a symlink to other
+    storage on both boxes, its split line and its bytes against the one-host
+    decode.
+  - A local fleet kept over a driver-only key: one Spark, the Init node in
+    `local` mode with a `[worker_args]` table and the DiT loaded, then
+    `worker_vae_decode = "auto"` added and the graph queued again, with no
+    recycle line and the DiT still loaded.
+  - The empty-find graph no longer refused: `dgx-monarch-minimax-h3-image-t2i.json`
+    with the expander switch on, the task prompt box empty and Replace Text's
+    `find` cleared, rendering with no #153 refusal.
+  - A planning error that ends the split and not the decode:
+    `dgx-monarch-ltx25-t2v.json` with `worker_vae_decode = "auto"` in a driver
+    where other code mixed torch's legacy and new TF32 settings, its WARNING
+    and a decoded video.
+  - The Studio browser procedure on the bundle that holds these fixes,
+    `index-Ct66OJHZ.js`
+    ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#review-fixes-2026-11-16)).
+- **NOT RUN for the render-site fixes of the review of 2026-11-16** (the
+  request and what the Workers hold), each held by CPU tests through the real
+  sampler and guider nodes:
+  - The swap credit at the render site: a change of model in one session
+    under `auto` (FLUX.1 rendered, then a MiniMax H3 or LTX 2.3 template),
+    where the render-time check should log `render preflight: ... fits once
+    the Worker on the head drops ...` and unload nothing, where it used to
+    log `driver unload: ... fits after unloading`.
+  - The pending-load relief's quote with the render's LoRA stack: a Wan
+    Animate 2 BF16 template with `lora_low_rss` off, its load pending on a
+    fleet set up by another model, where the relief should log `driver
+    unload: the pending load of ...` before the agreement, which used to
+    refuse at dispatch.
+  - The reference and pose check crediting an explicit preset's eager load:
+    Wan SCAIL or Animate 2 BF16 under `uly2` with `auto_gate` off, a clip
+    long enough that its activations fit the head's reading and the file
+    beside them does not; it should render where it used to refuse.
+  - The sample deadline per model call: MiniMax H3's 15 second clip on the
+    pair, 20 steps, at CFG 2 with a negative, whose `sample deadline:` line
+    should read `and 2 model calls a step` and 12000 s, where it read 6000 s.
+  - The credit for the identity gate's no-render load under `auto`: a Wan
+    SCAIL BF16 template's first use (the no-render path unloads every rank and
+    loads the model), a render that then fails after the load, and a retry on
+    a box whose reading holds the DiT, with room for the activations and not
+    for the file beside them. The retry's reference and pose check (#47)
+    should credit the file ("weights resident, credited") and let the render
+    run; it used to charge the file again and refuse.
 - Build and install, on `35f1486`, the release commit of 2026-11-01, in a
   disposable Python 3.12 venv that holds only `build` and `pip`:
   `python -m build` wrote the sdist and the wheel (540 files, the `dgxm` and
@@ -5183,8 +5246,8 @@ merged as `07cc636`, and the release's test is the pass on that commit
 reading under load 2093 MHz and its highest of the whole pass 2099 MHz, read
 twice, at 18:45:29 and 19:32:12, each with the GPU at 1 percent use, none
 above 2100; the second Spark uncapped). `07cc636` is the release commit
-`35bb775` with the apex review's fixes (#195), and the commit that ships
-differs from it in documentation only. Both Sparks lost power at 15:06 MST
+`35bb775` with the apex review's fixes (#195). The fixes of the review of
+2026-11-16 came after this pass. Both Sparks lost power at 15:06 MST
 that day, came back, took a system upgrade that moved libc6 from
 2.39-0ubuntu8.9 to 8.12 on both and left the kernel as it was, and
 rebooted. When the pass began the first Spark had been up since 15:30:01
@@ -5358,7 +5421,10 @@ control.
 | The step switched off in the state of the first failure, tries 2 and 3 | Not run: the one try could not build the state |
 | A stack of a Worker stalled under comfy-managed residency | Not caught on dev `48e0509`: in the one session that stalled with the stack tool attached, the tool wrote no file before the session's stop ended it. Three more tries in another form, each render submitted as its driver came up, ran the same morning (2026-11-13, 04:51 to 04:58) with no stall, so they caught none. The stall's cause is read from source, not proven by a stack. On dev `45e07cc` no render of the proof block stalled, so none was taken there either |
 | A second route free after a reload | Not reached: the stack loaded whole at its reading |
-| A rank's failed setup reaching the prompt at once on the pair | Not built in this release. On the pair a Worker's failed setup shows only after about ten minutes, and only the first Spark's Worker's own error shows; where the second Spark's Worker fails, the start ends in a timeout (read from the code: no pass had that Worker fail) ([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)). Held as today's behaviour by a CPU test |
+| The second Spark's Worker's failed setup reaching the prompt in its own words on the pair | NOT RUN. In 1.5 the driver reads the second Spark's failure between slices of its wait on the first, logs at once that the rollback waits, and raises that failure named after the rollback, still about ten minutes after the start; no pass had that Worker fail ([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)). Held by CPU tests |
+| A comfy-managed pair render with no LoRA on a rank short of 1.5 times ComfyUI's estimate | NOT RUN. In 1.5 neither rank weighs ComfyUI's dynamic patcher's backup, as one GPU never did: no `pair backup` line and no `pair_backup_room` refusal. Held by CPU tests on stock ComfyUI's dynamic load |
+| A warm Worker's next render where its idle device pool covers the ask its room alone does not | NOT RUN. In 1.5 the pool counts in the short test, on one GPU and on the pair: the backup is kept and no `freed ComfyUI's weight backup` line shows. Held by CPU tests |
+| A classic LoRA stack change over a slot whose drop copies weights to the host first | NOT RUN. In 1.5 neither bake is chosen or priced with what that drop returns, so a higher reading never refuses what a lower one admitted. Held by CPU tests through the Worker's quote |
 | A strength change on a quantized file as a hot swap on the pair; a loader option changed on a held file | Neither ran as staged in the third pass: the first was refused at the swap's price for lack of room on the first Spark, the second at the driver's loader before any Worker priced it ([above](#in-place-bake-rows)) |
 
 ## Memory calibration

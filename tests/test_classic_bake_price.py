@@ -501,6 +501,16 @@ def test_the_route_is_the_same_arguments_for_every_caller(monkeypatch):
         "held_bytes": HELD, "bare_load": True, "in_place": True, "comfy_reserve_bytes": reserve}
     assert fallback.route(_store(), _stored(base_baked=True), True, True)["bare_load"] is True
     assert fallback.route(_store(low_rss=True), bare, True, True) is None  # the default: no classic bake
+    # A drop that copies the resident's weights to the host first returns nothing the choice may
+    # count, as the quote's swap credit counts nothing for it: ComfyUI's global unload copies a
+    # partly loaded resident; a whole one with nothing beside it is dropped with no copy.
+    from dgx_monarch.actor import resident_ledger
+
+    monkeypatch.setenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, "1")
+    assert fallback.route(_store(), bare, False, True)["held_bytes"] == HELD
+    partly = _stored()
+    partly.base_patcher.model.model_lowvram = True
+    assert fallback.route(_store(), partly, False, True)["held_bytes"] == 0
 
 
 def _comfy_mm(reserve=3 * GIB, state="NORMAL_VRAM", lowvram_available=True):

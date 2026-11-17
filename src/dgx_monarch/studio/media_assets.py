@@ -95,6 +95,8 @@ class MediaAssets:
         self.cache: OrderedDict[str, bytes] = OrderedDict()
         self.cache_bytes = 0
         self.semaphore = asyncio.Semaphore(2)
+        # Send to edit's copies still running, by the output they copy.
+        self.copying: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
     async def upload(self, body: dict[str, Any]) -> dict[str, Any]:
         if "artifact_id" in body:
@@ -110,6 +112,15 @@ class MediaAssets:
         the browser, so the 2 MiB upload limit does not apply; the pixel rule and
         the 65 MiB backstop do. The copy is an upload record of its own, so a
         job output never widens a choice list.
+
+        One copy per output: a press while that output's copy runs waits for the
+        same copy, and a later press returns the copy already stored once the
+        driver answers that it still serves that file. The browser stops waiting
+        for a companion request after 20 seconds and the companion finishes the
+        copy anyway, so the next press binds that copy instead of making another.
+        When the driver answers that a stored copy's file is gone, the output is
+        copied again into the same record, so no binding names the missing file;
+        any other answer than that or the file binds nothing.
         """
         identity = body.get("artifact_id")
         if body.get("kind") != "input" or not isinstance(identity, str):
@@ -117,6 +128,60 @@ class MediaAssets:
         source = self.store.get("artifacts", identity)
         if source.get("job_id") is None or source.get("kind") != "image" or source.get("source") == "live_preview":
             raise StudioError("asset_source", "Only a saved image output of a job can become an input image.")
+        running = self.copying.get(identity)
+        if running is None:
+            running = self.copying[identity] = asyncio.ensure_future(self._live_copy(identity, source))
+
+            def finished(done: asyncio.Future[dict[str, Any]]) -> None:
+                self.copying.pop(identity, None)
+                if not done.cancelled():
+                    done.exception()  # read here, so a failure no press waited for logs nothing
+
+            running.add_done_callback(finished)
+        # A press the browser gave up on leaves its copy running for the next press.
+        return await asyncio.shield(running)
+
+    async def stop(self) -> None:
+        """Cancel the copies still running and wait for them, before the driver session closes.
+
+        A copy outlives the request that started it, so without this one could resume after
+        the session closed and end in an error the request it served would log.
+        """
+        running = list(self.copying.values())
+        for copy in running:
+            copy.cancel()
+        await asyncio.gather(*running, return_exceptions=True)
+
+    async def _live_copy(self, identity: str, source: dict[str, Any]) -> dict[str, Any]:
+        """The stored copy if the driver still serves its file, else a new copy in its record."""
+        stored = self.store.upload_copy(identity)
+        if stored is not None and await self._driver_serves(stored):
+            return stored
+        return await self._copy(identity, source, replace=stored["id"] if stored else None)
+
+    async def _driver_serves(self, record: dict[str, Any]) -> bool:
+        """Whether the driver still serves a stored copy's file; one request, its body unread.
+
+        ComfyUI's /view answers 200 for a file it holds and 404 for one it does not. Only
+        a 404 says the file is gone; any other answer, like no answer, says the driver
+        could not be asked, and the press binds nothing.
+        """
+        if self.client.session is None:
+            raise StudioError("driver_offline", "Driver is unavailable.", 503)
+        try:
+            async with self.client.session.get(self.client.origin + "/view", params=safe_descriptor(record),
+                                               allow_redirects=False) as response:
+                status = response.status
+        except (aiohttp.ClientError, TimeoutError, OSError):
+            status = None
+        if status in (200, 404):
+            return status == 200
+        raise StudioError(
+            "asset_copy",
+            "The driver could not be asked whether it still holds this output's copy, so none was "
+            "used. Check the driver connection and use Send to edit again.", 503)
+
+    async def _copy(self, identity: str, source: dict[str, Any], replace: str | None = None) -> dict[str, Any]:
         async with self.semaphore:
             # A dropped driver connection, a read that stops or the driver's own timeout is a copy
             # failure the user can act on, not an internal error; the limits keep their own codes.
@@ -140,10 +205,15 @@ class MediaAssets:
                     "The output could not be read from the driver, so no copy was made. "
                     "Check the driver connection and use Send to edit again.", 503) from exc
             data, metadata = await asyncio.to_thread(normalized, bytes(raw))
-            return await self._store(data, metadata, "input", source_artifact_id=identity)
+            return await self._store(data, metadata, "input", replace=replace, source_artifact_id=identity)
 
-    async def _store(self, data: bytes, metadata: dict[str, Any], kind: str, **extra: Any) -> dict[str, Any]:
-        """Upload a normalized PNG to the driver's input store and record it as an upload."""
+    async def _store(self, data: bytes, metadata: dict[str, Any], kind: str, *, replace: str | None = None,
+                     **extra: Any) -> dict[str, Any]:
+        """Upload a normalized PNG to the driver's input store and record it as an upload.
+
+        ``replace`` names a record whose file the driver no longer serves; the new
+        file takes its place in that record, under the same identity.
+        """
         if self.client.session is None:
             raise StudioError("driver_offline", "Connect the driver before uploading inputs.", 503)
         name = identifier() + ".png"
@@ -173,6 +243,9 @@ class MediaAssets:
                 raise
             raise StudioError("asset_upload_unknown", "Upload was interrupted; no job was submitted.", 503) from exc
         binding = "/".join(filter(None, (descriptor["subfolder"], descriptor["filename"])))
+        if replace is not None:
+            return self.store.update("artifacts", replace, {**descriptor, **metadata, **extra, "metadata": metadata,
+                                                            "binding_value": binding})
         return self.store.create("artifacts", {"id": identifier(), **descriptor, **metadata, **extra,
                                  "metadata": metadata, "kind": kind, "job_id": None,
                                  "binding_value": binding, "created_at": timestamp()})

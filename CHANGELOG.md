@@ -109,14 +109,16 @@ sections after them list every change.
 - With `lora_low_rss` off, as three Wan-Animate 2 templates ship it, a Worker
   that loads a model whole under a classic LoRA bake now frees ComfyUI's
   weight backup before the first step where the load leaves less room than
-  the sampler is estimated to need. It logs a line that starts
+  the sampler is estimated to need, the room counting the device memory the
+  Worker already holds idle from its last render. It logs a line that starts
   `LoRA bake: ComfyUI loaded this model whole`, and the next LoRA change on
   that model reloads it from disk. On a pair the ranks decide together: one
   rank short and every rank frees, and a rank that cannot free keeps the fleet
-  as it is. On a Spark short enough to free, the first step can take up to
-  about a minute longer while the kernel compacts the freed memory, and the
-  latent is the same. `DGXM_DISABLE_BACKUP_FREE=1` in the Worker's
-  `worker.env` turns the step off
+  as it is. Comfy-managed residency carries no LoRA, and neither one GPU nor
+  a pair weighs its model's backup. On a Spark short enough to free, the
+  first step can take up to about a minute longer while the kernel compacts
+  the freed memory, and the latent is the same. `DGXM_DISABLE_BACKUP_FREE=1`
+  in the Worker's `worker.env` turns the step off
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On a pair, the room a rank needs to sample now also counts the shared
   memory a fresh Worker maps in its first forward, about 2.7 GiB on a fresh
@@ -259,8 +261,8 @@ sections after them list every change.
   ([TROUBLESHOOTING #154](docs/TROUBLESHOOTING.md#154-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
 - A Worker that still cannot make its CUDA context refuses in plain words,
   `this Worker could not start on its GPU`, with its box's free and available
-  memory, where it showed a traceback. On a pair the words show only when the
-  head's Worker failed, after about ten minutes
+  memory, where it showed a traceback. On a pair the words show after about
+  ten minutes, naming the box whose Worker failed
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A checkpoint whose safetensors header the gate reads with no verdict refuses
   before it loads, where it loaded as if the gate were not there, and a
@@ -279,13 +281,15 @@ sections after them list every change.
 - The driver now prices what a node spends on its box before the sampler
   where the loader did not price it: Add Guide (MiniMax H3), Reference to
   Video (MiniMax H3) with a reference video, and the stock loader nodes of a
-  text encoder, checkpoint or model. That covers a re-queue that changes only
-  a guide's file, canvas or length, a reference video, or a text encoder or
+  text encoder, a CLIP Vision file, a checkpoint or model. That covers a
+  re-queue that changes only a guide's file, canvas or length, a reference
+  video, or a text encoder or
   upsampler, and a first queue where ComfyUI runs those nodes before the
   loader. Where the spend would
   take the box under the loader's floor (5 GiB, or the Init node's
   `uma_reserve_gb` where larger) after the driver's unload and the Workers'
-  release, it refuses before anything is spent, class C. That is a new
+  release where they can run, it refuses before anything is spent, class C.
+  That is a new
   refusal for a queue that renders today only by dipping under the floor. It
   asks for a shorter clip, a smaller canvas or file, or memory freed on the
   box; `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for
@@ -373,7 +377,16 @@ sections after them list every change.
   marker for that read and still grant no skip; an unproven INCONCLUSIVE that
   is the newest row of its context, and every FAIL, deny as before, in the
   same words. In one context a newer verdict that compared nothing supersedes
-  an older unproven one; a FAIL is lifted only by a later bound PASS. CPU
+  an older unproven one; a FAIL is lifted only by a later bound PASS. An
+  explicit-on row of such a check, of any build, speaks for a residency it
+  never ran: it never decides there, and beneath it only a denial another
+  check copied there goes, with a guard that a later terminal row of its own
+  version closed there. An
+  older unproven or cut-off verdict that a check run with `slab_weights` on
+  left there still denies, also under another build's such row, which used
+  to hide it; a PASS a check on the auto graph stamped there still clears;
+  and a copy that reads clear on its own, or any other row of another build,
+  stays as it read. CPU
   tests on the real ledger. On 2026-11-13 the rows such checks wrote on dev
   `40af2d7` read clear three ways, contextless, under their own context and
   as the loader reads them for a load, where the old reader denied the same
@@ -443,13 +456,16 @@ sections after them list every change.
   a still swapped for a clip at 1344x768 encodes for 94 GiB or more, which takes
   the host down. The driver now prices such a spend where it happens, at Add
   Guide (MiniMax H3), at Reference to Video (MiniMax H3) for a reference video,
-  and at the stock loader nodes of a text encoder, checkpoint or model, at what
-  the loader charges for it, and refuses before anything is spent where the
-  spend would take the box under the loader's floor (5 GiB, or the Init node's
-  `uma_reserve_gb` where larger) after ComfyUI's models are unloaded and the
-  Workers' idle caches released. That is a new refusal for a queue that today
-  renders only by dipping under the floor. Nothing the loader charged at its
-  size in the same prompt is priced again, and nothing in a graph of a family
+  and at the stock loader nodes of a text encoder, a CLIP Vision file, a
+  checkpoint or model, at what the loader charges for it, and refuses before
+  anything is spent where the spend would take the box under the loader's
+  floor (5 GiB, or the Init node's `uma_reserve_gb` where larger) after
+  ComfyUI's models are unloaded and the Workers' idle caches released, where
+  the driver may do either; the refusal says which of them ran, and rounds the
+  room down so it never prints as the need. That is a new refusal for a queue
+  that today renders only by dipping under the floor. Nothing the loader
+  charged at its size in the same prompt is priced again, and nothing in a
+  graph of a family
   the loader does not price, a family forced on the Init node counting as at
   the loader. The same holds where ComfyUI runs such a
   node before the loader on a first queue. On 2026-11-13 (dev `0f133d8`,
@@ -732,7 +748,11 @@ sections after them list every change.
   Edit, loads the one editing workflow the driver runs, lists them when there
   are several, and says why and changes nothing when there is none. The
   companion copies the output into the driver's input store, so the 2 MiB
-  upload limit does not apply, and the Operation becomes Edit. Under Edit,
+  upload limit does not apply, and the Operation becomes Edit. Each output gets
+  one copy, so pressing Send to edit again, after the browser stopped waiting
+  for a slow copy or while it runs, binds that copy and makes no other, once
+  the driver answers that it still serves the file; when the driver answers
+  that the file is gone, the copy is made again in the same record. Under Edit,
   Generate stays off until the image input holds an image. Before, Send to
   edit reloaded the text to image graph as "Edit (not supported)" with only
   lineage attached and Generate on ([Studio](docs/STUDIO.md#working-with-workflows)).
@@ -788,7 +808,8 @@ sections after them list every change.
 - Studio's Grids page explains what a grid compares with a worked example and
   walks a first comparison, 20 steps against 40. The Fleet page says what Fleet
   does, when to use it and how to start. Its button, now Set up Fleet in
-  Create, loads the packaged Fleet workflow and names the next step; before,
+  Create, loads the packaged Fleet workflow with the Fleet label as one draft
+  change, which one Undo takes back, and names the next step; before,
   Configure Fleet workflow only set the draft's Operation label and opened
   Create with nothing to act on ([Studio](docs/STUDIO.md#run-many-prompts-with-fleet)).
 - Studio's viewer shows an image chosen after a video at once. Before, it could
@@ -866,7 +887,8 @@ sections after them list every change.
   file that pins an attention kernel off Ulysses and ring, and no DiT file no
   graph here names. It also offers the Load with slab residency card, whose
   render of this graph has no hardware record yet. Models ComfyUI already
-  holds are credited up to their size, where any one held model used to credit
+  holds are credited up to what they take, a text encoder at its measured
+  resident size, where any one held model used to credit
   the whole stack, so a second graph's upsampler is priced too. On a fresh
   driver the price errs high: LTX 2.3 text to video now needs 80.9 GiB where
   it needed 65.8. A model only a fixed switch's other branch reaches, or no
@@ -966,7 +988,8 @@ sections after them list every change.
   and a fresh load of base and LoRA 17 s. And a change refused because the host copy the held LoRA keeps holds the
   memory now offers the Old model in the way card, "The model loaded earlier
   (wan_animate_2_bf16) holds about 29.6 GiB on the head that this change needs.
-  Clear the Sparks and run again?", when a cleared box would hold a fresh load.
+  Clear the Sparks and run again?", when a cleared box would hold a fresh load,
+  with `lora_low_rss` off the stack's bake included.
   This is the LoRA case of the credit for a load that replaces the stock model
   in its own slot
   ([TROUBLESHOOTING #18](docs/TROUBLESHOOTING.md#18-first-lora-change-on-a-quant-model-is-one-time-slow-historical),
@@ -982,7 +1005,8 @@ sections after them list every change.
   latent. A LoRA the held stack lacks keeps the old price and the card. And a
   re-queue whose UNET loader ComfyUI kept from an earlier queue is now priced
   at the sampler or at Identity Gate (DGX Monarch), by the loader's own price
-  for what is not yet held, so a short box gets the loader's refusal and what
+  for what is not yet held, with the encoders whose encodes have run out of
+  the load window, so a short box gets the loader's refusal and what
   would fit, where only the Worker's wall answered before ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
 - The Ideogram 4 template keeps its JSON caption in a Text (Multiline) node
@@ -1369,9 +1393,9 @@ sections after them list every change.
   still cannot be made, the render refuses in plain words (class C) with
   the box it came from, that box's free and available memory, what the
   Worker did first and what to do, where it used to show a traceback. On a
-  pair it shows only after about ten minutes, and only where the head's
-  Worker failed; where the sibling's failed, the start still ends in a
-  timeout after about ten minutes, without the refusal. Any other error a
+  pair it shows only after about ten minutes, while the other Worker gives
+  up waiting for the one that failed; where the sibling's failed, the
+  driver's log says so at once. Any other error a
   Worker raises at its setup and the driver reads now opens with its box as
   well ("On the head, ..."), as a load error does. Nothing to set.
   `DGXM_DISABLE_CONTEXT_ROOM=1` on the Worker (in its `worker.env`, then a
@@ -1389,6 +1413,14 @@ sections after them list every change.
   text was not seen on hardware
   ([VALIDATION](docs/VALIDATION.md#worker-context-starts),
   [TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- Fix: on a pair, a setup error the sibling's Worker raises while the head's
+  Worker still waits for it now reaches the prompt in its own words, named
+  "On the sibling, ...", where the driver, awaiting the head first, ended in
+  a bare timeout and never read it. The driver reads the later rank between
+  slices of its wait and logs at once that the rollback waits; the rollback
+  keeps the setup's unspent wait, so it ends when it did before. Not run on
+  a pair
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On a DGX Spark, a LoRA stack loaded with `lora_low_rss` off is now priced
   at what its bake takes, and where that does not fit the Worker bakes the
   stack in place when the identity gate has passed the combination. This
@@ -1433,7 +1465,12 @@ sections after them list every change.
   `LoRA bake: the classic bake of this stack needs`. It does that only when
   the identity gate holds a PASS for the combination's in-place bake, which a
   render of it with `lora_low_rss` on records; with no PASS the refusal says
-  so and names both prices. The default (`lora_low_rss` on) is priced as
+  so and names both prices. Where dropping the slot's model copies weights
+  to the host first (a model held only partly, or a model held in the other
+  slot, wherever the Worker's own drop cannot avoid the copy), neither bake
+  is chosen or priced with what that drop returns, as the swap credit counts
+  nothing for it. The
+  default (`lora_low_rss` on) is priced as
   before. Nothing to set. Run on hardware on 2026-11-12 with every format on
   the one line and its files; the charge by format rests on that day's loads.
   On that build (dev `45ffb36`, the first Spark under its stability clock
@@ -1740,10 +1777,54 @@ sections after them list every change.
   the whole request before its proof render: a request that cannot fit the
   slab path gets one INCONCLUSIVE capacity row and no proof render, renders on
   stock residency, and the next request checks again ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Fix: after the Workers' models go, the render-site capacity checks charge
+  the DiT again. The memos that credit a model a finished render or a
+  pipelined submission placed outlived a Clear VRAM node at `hard`, an
+  identity ceremony's clean reload and the driver's other drops of every
+  rank's models, so under `auto` a re-queue after a hard Clear VRAM was priced
+  with its DiT credited although the Workers had dropped it, and could admit a
+  render whose DiT and activations do not fit together. These doors now
+  drain them, the mesh's own included (a fleet marked defunct and a new
+  fleet in place of a retired one, a configuration change, a topology change or a failed setup's rollback, a
+  worker-policy change on which a Worker drops a model, which its
+  `apply_worker_args` reply now names), and every check, the
+  gate's capacity check included, reads one rule. Under an explicit preset the
+  driver footprint and MiniMax H3 checks credited the DiT after a hard clear
+  too, since ComfyUI's cached loader node does not place it again; an
+  operator's drop (a hard clear, a configuration change, the capacity rescue's
+  slot drop) now ends that credit until the loader node runs again or a load
+  of the checkpoint completes. A recycle leaves it, as before. CPU tests; not run on hardware
+  ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Fix: the Wan SCAIL, SCAIL-2 and Animate 2 activation check credits an
+  explicit preset's eager load, as the driver footprint and MiniMax H3 checks
+  do. It charged the file a second time against a reading that already held
+  it, so a long clip or a busy box whose activations fit was refused. CPU
+  tests; not run on hardware
+  ([TROUBLESHOOTING #47](docs/TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight)).
+- Fix: the MiniMax H3 activation check, the reference and pose check and the
+  driver footprint's reference report read a Sampler Custom render's
+  conditioning from its guider. They read only a KSampler request's own, so a
+  Sampler Custom render, p-h3-image's among them, was priced on its latent
+  alone: a p-h3-image edit with nine large pictures counted 8,285 rows where
+  the same conditioning on KSampler counts 83,714. The sample deadline reads
+  the guider's rows too. CPU tests; not run on hardware
+  ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Fix: the reference and pose check counts only the positive entries that can
+  run in one step. It summed every entry's references, so two entries whose
+  timestep windows never overlap, sharing one reference, were priced as one
+  call holding both (7.19 GiB where either needs 6.88). Overlapping windows,
+  and entries with no window, keep the sum. It prices the largest pose of the
+  entries that can share a step; it took the first, which could be smaller
+  than a later entry's own. CPU tests; not run on hardware
+  ([TROUBLESHOOTING #47](docs/TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight)).
 - The driver's deadline for a render's sample call grows with the work. For
   MiniMax H3 and Wan SCAIL, SCAIL-2 and Animate 2 it allows 600 s per step at
   109,466 packed rows per rank, scaled linearly with the rows on each rank, at
-  least 120 s per step and at most six hours in all. `DGXM_SAMPLE_TIMEOUT`
+  least 120 s per step and at most six hours in all. A MiniMax H3 step gets
+  that once for each model call the request states: each positive entry, and
+  each negative where the sampler runs the negative (CFG other than 1, or a
+  sampler that keeps it at 1), on a two-checkpoint guider's second model too.
+  `DGXM_SAMPLE_TIMEOUT`
   stays the floor, 3600 s unless set, and wins over the cap. A 15 second H3
   clip on one Spark, which sampled for 80 minutes and was cut off at the hour,
   now gets 200 minutes; other families keep the larger of the floor and 120 s
@@ -1782,8 +1863,10 @@ sections after them list every change.
   decode loop runs once on the driver with only its per-unit decode swapped,
   so the output is byte-identical to the one-host tiled decode: MiniMax H3
   through both nodes, and the Wan 2.1 and 2.2, HunyuanVideo 1.0 and 1.5 and LTX
-  video VAEs through VAE Decode (Tiled). A Worker loads the driver's VAE file
-  in the driver's dtype, decodes under the driver's attention and torch
+  video VAEs through VAE Decode (Tiled). A VAE with quantized layers, and any
+  decode on a driver whose ComfyUI decodes on the CPU, stay on the driver. A
+  Worker loads the driver's VAE file, by the name Load VAE lists, in the
+  driver's dtype, decodes under the driver's attention and torch
   backend flags, holds one decode VAE that `status()` reports and `clear_vram`
   drops, and declines any unit it cannot decode exactly, which the driver then
   decodes with one WARNING; a reply of any other shape or dtype than the stock
@@ -1964,6 +2047,23 @@ sections after them list every change.
   ambiguous" names a package whose pip RECORD lists bytecode outside
   site-packages, from an install under `PYTHONPYCACHEPREFIX`; reinstall that
   package without the prefix ([TROUBLESHOOTING #155](docs/TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+- Fix: a Clear VRAM node set to `hard` now unloads through the driver's own
+  unload, so where a model left ComfyUI it forgets the driver models a loader
+  charged, and the next loader with nothing held charges them again rather
+  than none. ComfyUI's own unloads, its `/free` route and the models it evicts
+  during execution, still leave that memo, as in 1.4.0: a loader that runs
+  again after one of them with nothing held does not charge what of that stack
+  loads again in that queue, on a shipped template the VAE at the decode. After
+  Unload Models (`/free` without `free_memory`) or an eviction the encodes come
+  from ComfyUI's node cache; after Free Model and Node Cache (`/free` with
+  `free_memory`) each encoder is held when the loader prices or priced at its
+  loader node by the driver spend price
+  ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)).
+- Fix: `dgxm doctor`'s `unexpected shutdowns` row no longer leaves out one
+  reboot always: it leaves out the oldest record only when that is a reboot
+  whose pair it cannot see, so after a wtmp rotation, or in a full window with
+  an even count, a hard power-off is counted
+  ([TROUBLESHOOTING](docs/TROUBLESHOOTING.md#pd-stuck-state)).
 
 ### Development
 
@@ -2023,6 +2123,21 @@ sections after them list every change.
   error, not the broken barrier its peer was left with. The dual-model cfg
   test now hands its gather a non-contiguous view, so it fails if the
   production conversion goes.
+- Fix: the sweep runner reads a driver answer that urllib cannot parse, such
+  as a body cut short or a malformed status line, as a transport error at
+  every call, so it ends the session with its summary instead of a traceback
+  ([SWEEP](docs/SWEEP.md)).
+- Fix: the sweep's audio note says when the samples differ, and the
+  bit-identical bar says it holds the frames only
+  ([SWEEP](docs/SWEEP.md#5-reading-results)).
+- Fix: the protected-test digest now covers module-level xunit hooks,
+  `__test__`, `pytest_generate_tests`, a skip or importorskip that runs at
+  import under any name, through a helper of the module, in a class body or
+  in a definition's decorators, defaults or bases, and a raise at import such
+  as `unittest.SkipTest`, any of which could turn off every protected test of
+  a module with the check still green. A skip mark does not count
+  ([CONTRIBUTING](CONTRIBUTING.md) names the import-time skips the digest does
+  not see).
 
 ## [1.4.0] - 2026-10-28
 

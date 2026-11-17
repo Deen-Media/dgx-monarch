@@ -76,6 +76,8 @@ export function bindingValues(bindings: Binding[], priorValues?: Draft['values']
  * workflow, which has no prior values, starts without the previous graph's style inputs and LoRA
  * insertion targets (freshGraphFields), and takes `fit`: the draft keeps its operation when the
  * graph supports it, and otherwise takes the graph's first supported one (fittedOperation).
+ * `fit.asked`, when a load asks for an operation, as Set up Fleet does, is fitted in place of the
+ * draft's, so the workflow and its operation are one draft change.
  * `fit` reads the draft's operation when the request starts and again when the answer arrives, so
  * a choice made while the request runs stays as it is.
  */
@@ -84,7 +86,7 @@ export async function inspectDraft(
   workflow: Workflow,
   name: string,
   priorValues?: Draft['values'],
-  fit?: { operation: () => string; info?: ObjectInfo },
+  fit?: { operation: () => string; asked?: string; info?: ObjectInfo },
 ) {
   const started = fit?.operation();
   const result = await client.request<Inspection>(
@@ -94,11 +96,17 @@ export async function inspectDraft(
   const bindings = result.bindings ?? [];
   const original = result.workflow ?? workflow;
   const values = bindingValues(bindings, priorValues);
-  // A graph the inspection could not read lists no inputs, so its operations stay unknown.
+  // A graph the inspection could not read lists no inputs, so its operations stay unknown and only
+  // an operation the load asks for applies.
   const current = fit?.operation();
   const operation =
-    fit && current === started && !priorValues && bindings.length
-      ? fittedOperation(current!, workflowTraits(original, bindings, values, fit.info))
+    fit && current === started && !priorValues
+      ? bindings.length
+        ? fittedOperation(
+            fit.asked || current!,
+            workflowTraits(original, bindings, values, fit.info),
+          )
+        : fit.asked || undefined
       : undefined;
   return {
     bindings,

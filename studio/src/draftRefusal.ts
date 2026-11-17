@@ -33,7 +33,9 @@ const TARGETS: Record<string, AdjustTarget> = {
   artifact_lineage: INPUTS,
 };
 // The companion names a refused value by its node and input, as in "5.steps: Value violates max=100".
-const VALUE = /^[\w:-]+\.\w+: /;
+// A node inside a subgraph has an execution id such as "__studio_subgraph__12/5", whose parts are
+// URL-quoted, and a dynamic option's input is dotted, as in "13.format.codec".
+const VALUE = /^[\w:%/~-]+(?:\.\w+)+: /;
 
 /**
  * Where to fix a refusal, or null when no one tab holds the cause. A workflow refusal that names

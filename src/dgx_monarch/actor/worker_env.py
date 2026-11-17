@@ -5,7 +5,7 @@ import os
 import socket
 import time
 
-from .. import fp8_compute, gate_runtime, mesh_builds
+from .. import fp8_compute, gate_runtime, mesh_builds, residency_doors
 from ..accuracy_waiver import RESULT_KEY as _ACCURACY_WAIVER_RESULT_KEY
 from ..log import get_logger
 from ..transfer import LatentReturn
@@ -51,6 +51,7 @@ def apply_worker_args_impl(worker, worker_args: dict) -> dict:
             "before changing it"
         )
 
+    held = residency_doors.residents(worker.store)  # the reply names what this apply drops
     wa = _uma_memory_defaults(dict(worker_args or {}))
     _apply_worker_args(wa)
     compile_changed = (os.environ.get("DGXM_COMPILE_DIT") == "1") is not bool(wa.get("compile_dit"))
@@ -93,8 +94,8 @@ def apply_worker_args_impl(worker, worker_args: dict) -> dict:
     else:
         worker.store.release_retained_cleanup()
     worker._active_worker_args = dict(worker_args or {})
-    return {"lora_low_rss": worker.store.lora_low_rss,
-            "slab_weights": worker.store.slab_weights}
+    return {"lora_low_rss": worker.store.lora_low_rss, "slab_weights": worker.store.slab_weights,
+            residency_doors.DROPPED: residency_doors.dropped(held, residency_doors.residents(worker.store))}
 
 
 def nccl_launch_order_needed(topo: dict) -> bool:

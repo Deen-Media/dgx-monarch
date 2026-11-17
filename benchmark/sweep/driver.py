@@ -49,18 +49,28 @@ class SessionWedged(RuntimeError):
     """A timed-out prompt would not clear, so nothing after it is measurable."""
 
 
+def _answer(request: urllib.request.Request | str, timeout: float) -> dict:
+    """The driver's JSON answer. An answer urllib cannot read, such as a body cut short or a
+    malformed status line, raises ConnectionError like any other transport fault: urllib
+    raises http.client's IncompleteRead and BadStatusLine as they are, and neither is an
+    OSError, which is what every caller here catches."""
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            return json.loads(resp.read().decode() or "{}")
+    except http.client.HTTPException as exc:
+        raise ConnectionError(f"{type(exc).__name__}: {exc}") from exc
+
+
 def post(url: str, body: dict, headers: dict | None = None, timeout: float = 120.0) -> dict:
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
     request.add_header("Content-Type", "application/json")
     for key, value in (headers or {}).items():
         request.add_header(key, value)
-    with urllib.request.urlopen(request, timeout=timeout) as resp:
-        return json.loads(resp.read().decode() or "{}")
+    return _answer(request, timeout)
 
 
 def get(url: str, timeout: float = 60.0) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
-        return json.loads(resp.read().decode() or "{}")
+    return _answer(url, timeout)
 
 
 def action_headers(driver: str, action: str) -> dict:

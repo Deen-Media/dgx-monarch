@@ -228,7 +228,8 @@ def test_a_forced_stock_policy_leaves_resident_eviction_to_the_setters(monkeypat
         worker, {"slab_weights": False, "lora_low_rss": False})
 
     assert store.events == ["release"]
-    assert result == {"lora_low_rss": False, "slab_weights": False}
+    # The two modes as before, and the slots this apply dropped: none here.
+    assert result == {"lora_low_rss": False, "slab_weights": False, "dropped_slots": []}
 
 
 def test_a_compile_policy_change_still_evicts_every_resident(monkeypatch):

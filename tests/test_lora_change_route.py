@@ -188,9 +188,12 @@ def test_the_worker_quote_for_b3s_state_reaches_the_card(monkeypatch, tmp_path):
     monkeypatch.setattr(actor_footprint, "arena_bytes", lambda *_a: HEAD_ARENA)
     worker = types.SimpleNamespace(rank=0, world=2, topology={}, _setup_key=("ready",),
                                    store=store, uma_reserve_gb=0.0)
+    # With the in-place permission: a cleared box then pays the stock price, which the card weighs.
+    # Without it the fresh load pays the classic bake too, and no clear would make room here
+    # (tests/test_lora_backup_credit.py::test_a_card_never_offers_a_clear_the_fresh_fleet_then_refuses).
     envelope = worker_capacity.quote(worker, {"specs": [
         {"unet_name": BASE, "options": {}, "loras": [{"name": LORA, "strength": 0.8}],
-         "slot": "cond"}], "rescue_consent": None})
+         "slot": "cond"}], "rescue_consent": None, "in_place_bake_proven": True})
     head = cq.RankPrice.from_row(envelope["quotes"][0])
     assert (head.would_load, head.verdict) == ("swap", "refuse")
     assert head.measured["credit_bytes"] == BF16_BYTES and head.measured["headroom_gib"] == -14.3

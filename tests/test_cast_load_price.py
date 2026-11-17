@@ -491,6 +491,74 @@ def test_a_dtype_change_on_the_held_file_is_a_swap_not_a_lora_change(tmp_path, m
     assert "LoRA" not in text
 
 
+def _cast_at_the_loader(monkeypatch, tmp_path, available: float):
+    """The loader on the box whose Worker holds the plain fp8 file stock, with a 15 GiB arena from its
+    load, asked for the same file cast to bf16. The Worker answers from its own quote endpoint."""
+    import types
+
+    from dgx_monarch import consent_pending, driver_footprint
+    from dgx_monarch.adapters import detect
+    from dgx_monarch.nodes import loader_preflight
+    from test_capacity_old_model import _LiveHandle
+
+    head = _swap(monkeypatch, tmp_path, 20.0, want=PLAIN_FP8, held=PLAIN_FP8, want_options=CAST,
+                 slab_weights=False, arena=15.0)
+    monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k: [
+        RankAnswer(0, "this-host", (head,), elapsed_s=0.01, box=box_names.LOCAL)])
+    path = str(tmp_path / PLAIN_FP8)
+    (tmp_path / "output").mkdir()
+    folder_paths = types.ModuleType("folder_paths")
+    folder_paths.get_full_path = lambda folder, name: (  # type: ignore[attr-defined]
+        path if folder == "diffusion_models" and name == PLAIN_FP8 else None)
+    folder_paths.get_output_directory = lambda: str(tmp_path / "output")  # type: ignore[attr-defined]
+    monkeypatch.setitem(__import__("sys").modules, "folder_paths", folder_paths)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(available * _GIB))
+    monkeypatch.setattr(detect, "sniff_checkpoint", lambda _path: ("minimax_h3", "fp8"))
+    monkeypatch.delenv(driver_footprint.DRIVER_PREFLIGHT_DISABLE_ENV, raising=False)
+    monkeypatch.setattr("dgx_monarch.consent_store.MEMO_PATH", str(tmp_path / "memo.json"))
+    loader_preflight.reset_memos()
+    consent_pending.clear_all()
+    return types.SimpleNamespace(handle=_LiveHandle(), topology_preset="auto", world=1,
+                                 worker_args={"slab_weights": False})
+
+
+def test_the_loaders_refusal_of_a_dtype_change_on_the_held_file_offers_the_clear(tmp_path, monkeypatch):
+    """Review of the 1.5.0 promotion: the agreement's card drops the slot a cast changes
+    in place from those it keeps, and offers the clear. The loader kept the slot as a file this
+    graph loads, named no old model and raised the plain refusal, whose remedies free none of
+    the Worker's memory. Here the driver reads 22 GiB: 24.3 GiB short of the cast's load before
+    the 13.3 GiB the drop frees, so a clear, which also returns the arena, would make room."""
+    from dgx_monarch import consent_pending, old_model
+    from dgx_monarch.nodes import loader_preflight, old_model_clear
+
+    mesh = _cast_at_the_loader(monkeypatch, tmp_path, 22.0)
+    with pytest.raises(old_model.OldModelRefusal) as raised:
+        loader_preflight.preflight_loader_footprint(mesh, PLAIN_FP8, CAST, None, slot="cond")
+    offer = old_model.offer_of(raised.value)
+    assert offer is not None and offer.same_file and offer.helps
+    assert old_model.card_body(offer).startswith(
+        "The model loaded earlier (plain_fp8) holds about 15.0 GiB on this box that this change needs.")
+    assert [card["kind"] for card in consent_pending.pending_cards()] == [old_model_clear.KIND_CLEAR_RETRY]
+    consent_pending.clear_all()
+
+
+def test_a_loader_that_reads_the_cast_as_placed_offers_no_clear_for_it(tmp_path, monkeypatch):
+    """The wall that fix keeps: where the loader's memo reads this cast as placed, its windows charge
+    no load, so they do not price the reload a clear would need. The slot stays kept and no card
+    promises room; the refusal is the plain one, as before."""
+    from dgx_monarch import consent_pending, driver_footprint, old_model
+    from dgx_monarch.nodes import loader_graph, loader_preflight
+
+    mesh = _cast_at_the_loader(monkeypatch, tmp_path, 4.0)     # under the 5 GiB floor
+    loader_graph.remember(loader_preflight._CLEARED_UNETS,
+                          f"{loader_preflight._memo_key(PLAIN_FP8, 0)}\x00{CAST['weight_dtype']}")
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        loader_preflight.preflight_loader_footprint(mesh, PLAIN_FP8, CAST, None, slot="cond")
+    assert not isinstance(raised.value, old_model.OldModelRefusal)
+    assert consent_pending.pending_cards() == []
+    loader_preflight.reset_memos()
+
+
 def test_a_card_on_a_credited_swap_names_what_the_dropped_model_left_behind(tmp_path, monkeypatch):
     """R2-3: the price already took flux1-dev out, so what a clear returns beyond the
     drop is the memory its load left behind (a 12 GiB arena here)."""

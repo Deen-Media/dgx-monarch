@@ -11,7 +11,10 @@ whose slab legs agreed and whose stock reference a typed class C capacity
 refusal kept from loading, with no LoRA stack, holds nothing against slab
 residency; it records the premise of a capacity rescue (docs/DESIGN.md, "Where
 the ceremony cannot help"). A gate that had nothing to compare (no LoRA stack,
-no slab residency) holds nothing against it either (``compared_nothing``).
+no slab residency) holds nothing against it either (``compared_nothing``); its
+row in an explicit-on sibling, a residency it never ran, of any build, never
+decides there, and beneath it only the copies other checks made there that
+read as a denial on their own under this build go (``_liftable``).
 """
 from __future__ import annotations
 
@@ -148,9 +151,10 @@ def compared_nothing(entry: Mapping[str, Any]) -> bool:
     and explicit-on slab rows the same ceremony wrote carry its revocation
     marker (``gate_inconclusive.revocation_detail``). That ceremony ran no slab
     residency and no LoRA stack, so the row holds nothing against a rescue: it
-    says less than no row at all, which reads clear. A row from before the
-    marker, or from another build, is not bound to this one and reads unknown
-    as before.
+    says less than no row at all, which reads clear. An explicit-on row never
+    reaches this: it never decides there, and the read looks beneath it
+    (``_scope_decision``). A row from before the marker, or from another
+    build, is not bound to this one and reads unknown as before.
     """
     from .gate_inconclusive import KIND_NO_MATERIAL, RESULT_KEY, REVOKED_BY_NO_MATERIAL
 
@@ -232,6 +236,57 @@ def _fail_still_speaks(entry: dict[str, Any], scope: str | None,
             and entry.get("dgx_monarch") == version)
 
 
+def _sibling_revocation(entry: dict[str, Any]) -> bool:
+    """Whether one row is a no-material check's row, of any build, in an explicit-on sibling it never ran."""
+    from .gate_inconclusive import REVOKED_BY_NO_MATERIAL
+
+    return (entry.get("verdict") == "INCONCLUSIVE"
+            and entry.get("stamped") == _SLAB_EQUIVALENCE_STAMP
+            and entry.get(REVOKED_BY_NO_MATERIAL) is True)
+
+
+_TERMINAL = frozenset({"PASS", "FAIL", "INCONCLUSIVE"})
+
+
+def _liftable(line: int, entry: dict[str, Any], closed: dict[tuple[object, object], int],
+              scope: str | None, retests: dict[int, dict[str, Any]], source: str | None,
+              protocol: int, version: str) -> bool:
+    """Whether a check that compared nothing takes this row out from beneath its own.
+
+    Only a row another check copied here (``_copied_here``): one that, read
+    alone under this build, is a denial, or a guard that a later terminal row
+    of the guard's own version, whatever source wrote it, closed here (the row
+    that closed it goes only as a liftable copy itself). ``closed`` holds the
+    newest terminal line of each (protocol, version) among the rows this scope
+    reads, so a FAIL that no longer reads closes nothing.
+    """
+    if not _copied_here(entry, scope, retests):
+        return False
+    pair = (entry.get("gate_protocol"), entry.get("dgx_monarch"))
+    if entry.get("verdict") == "RETESTING" and pair in closed and closed[pair] > line:
+        return True
+    return _scope_decision([(line, entry)], 0, scope, source, protocol, version).state == "denied"
+
+
+def _copied_here(entry: dict[str, Any], scope: str | None,
+                 retests: dict[int, dict[str, Any]]) -> bool:
+    """Whether one row speaks for this context only as a sibling of the context its check ran.
+
+    Such a row is a verdict stamped by slab-mode equivalence, the RETESTING row
+    of a ceremony that names this context among its siblings, or the row
+    ``dgxm gate --repair`` closed that RETESTING row with. A ceremony opens its
+    retest with its own context first, its Fleet context second and its
+    siblings after (``gate_ceremony``), so a sibling is any later place.
+    """
+    if entry.get("stamped") == _SLAB_EQUIVALENCE_STAMP:
+        return True
+    repaired = entry.get("repaired_from_line")
+    guard = (entry if entry.get("verdict") == "RETESTING"
+             else retests.get(repaired) if type(repaired) is int else None)
+    blocked = (guard or {}).get("blocked_contexts")
+    return isinstance(blocked, list) and scope in blocked and blocked.index(scope) >= 2
+
+
 def _scope_decision(rows: Sequence[tuple[int, dict[str, Any]]], damage: int,
                     scope: str | None, source: str | None, protocol: int,
                     version: str) -> QuarantineDecision:
@@ -240,6 +295,18 @@ def _scope_decision(rows: Sequence[tuple[int, dict[str, Any]]], damage: int,
     rows = [(line, entry) for line, entry in rows
             if entry.get("verdict") != "FAIL"
             or _fail_still_speaks(entry, scope, protocol, version)]
+    if rows and _sibling_revocation(rows[-1][1]):
+        # A check that compared nothing on the auto graph never ran this sibling. Its row,
+        # of any build, never decides here and never hides what is under it, nor does any
+        # older such row; beneath them the liftable copies go too (``_liftable``). Nothing
+        # else is taken out: a row a check that ran here left, a stamped PASS, a copy that
+        # reads clear and every other row of another build read by the rules below.
+        retests = {line: entry for line, entry in rows if entry.get("verdict") == "RETESTING"}
+        closed = {(entry.get("gate_protocol"), entry.get("dgx_monarch")): line  # in ledger order: newest wins
+                  for line, entry in rows if entry.get("verdict") in _TERMINAL}
+        rows = [(line, entry) for line, entry in rows[:-1]
+                if not _sibling_revocation(entry)
+                and not _liftable(line, entry, closed, scope, retests, source, protocol, version)]
     if not rows:
         # No matching row, so nothing here is above one.
         return _UNKNOWN_UNSCOPED_DAMAGE if damage else _CLEAR

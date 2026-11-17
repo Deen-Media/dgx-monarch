@@ -367,6 +367,19 @@ def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | No
     return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
 
 
+def drop_copies_to_host(partial: bool, other_held: bool, copy_free: bool) -> bool:
+    """Whether dropping a slot's stock resident copies weights to the host before it frees any.
+
+    One rule for the swap credit (``credit_stock_swap``) and for the choice
+    between a classic and an in-place LoRA bake (``in_place_fallback.route``).
+    ComfyUI's global unload copies a partly loaded resident's device weights,
+    and a model the other slot holds, to the host first; a whole resident
+    with nothing beside it is dropped with no copy. The Worker's own drop
+    (``resident_ledger.drop_copies_nothing``, ``copy_free``) copies neither.
+    """
+    return bool(partial or other_held) and not copy_free
+
+
 def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
     """The stock price of a load that replaces the slot's own stock resident.
 
@@ -396,8 +409,8 @@ def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
     # copies nothing (``drop_copy_free``, actor/resident_ledger.drop_copies_nothing).
     holds = (context or {}).get("holds_resident") or {}
     other_held = any(word for name, word in holds.items() if name != (context or {}).get("slot"))
-    copies = isinstance(held, dict) and bool(held.get("resident_partial") or other_held) \
-        and not held.get("drop_copy_free")
+    copies = isinstance(held, dict) and drop_copies_to_host(
+        bool(held.get("resident_partial")), other_held, bool(held.get("drop_copy_free")))
     if (getattr(fit, "credit_bytes", 0) > 0 or (context or {}).get("would_load") != "swap"
             or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None
             or not isinstance(held, dict) or held.get("residency") != "stock" or copies
@@ -407,5 +420,5 @@ def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
     return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
 
 
-__all__ = ["credit_hot_swap", "credit_stock_swap", "held_backup_credit", "lora_bake_bytes",
-           "patched_base_keys", "stack_file_bytes", "swap_credit_bytes"]
+__all__ = ["credit_hot_swap", "credit_stock_swap", "drop_copies_to_host", "held_backup_credit",
+           "lora_bake_bytes", "patched_base_keys", "stack_file_bytes", "swap_credit_bytes"]

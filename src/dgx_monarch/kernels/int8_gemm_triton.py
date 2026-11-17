@@ -52,6 +52,9 @@ dgx-monarch:
   (docs/VALIDATION.md, "INT8 GEMM kernel comparison").
 - A failed Triton build or launch reports through a callback instead of
   printing a traceback; the import hook calls back instead of applying a mode.
+- The proxy refuses only Python's protocol names and its own fields. Upstream
+  refused every name with a leading underscore, which hid the extension's
+  private functions, and with them comfy-kitchen's INT8 decode cache.
 - Names lost their leading underscore, and the code gained type hints.
 
 The top level imports the standard library only: actors register the import
@@ -149,6 +152,9 @@ def build_triton_gemm() -> Callable[..., None]:
     return gemm
 
 
+_OWN_FIELDS = frozenset({"_real", "_gemm", "_on_failure", "_broken"})
+
+
 class CProxy:
     """Stands in for comfy_kitchen.backends.cuda._C and takes over cutlass_int8_dequant."""
 
@@ -160,7 +166,12 @@ class CProxy:
         self._broken = False
 
     def __getattr__(self, name: str) -> Any:
-        if name.startswith("_"):
+        # Only a name the proxy lacks reaches here. Its own fields are refused, so a
+        # proxy read before __init__ set them cannot recurse, and so are Python's
+        # protocol names, which describe the proxy and not the module. The
+        # extension's private functions fall through: comfy-kitchen's INT8 decode
+        # cache asks for _int8_decode_update and _int8_decode by hasattr.
+        if name in _OWN_FIELDS or (name.startswith("__") and name.endswith("__")):
             raise AttributeError(name)
         return getattr(self._real, name)
 

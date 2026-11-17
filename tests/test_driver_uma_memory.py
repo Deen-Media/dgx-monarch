@@ -387,21 +387,44 @@ def test_the_surface_canary_holds_the_order_the_wrapper_calls_with():
     comfy_surface._assert_touchpoint(lambda dev=None, torch_free_too=False, for_dynamic=False: 0, touchpoint)
 
 
-def test_real_comfyuis_reading_is_the_shape_the_wrapper_replaces(comfy_cpu):
-    """A pin on the device term the wrapper replaces.
+def test_real_comfyuis_cached_term_on_a_gb10_is_the_one_the_wrapper_adds(comfy_cpu, monkeypatch):
+    """A pin, by behaviour, on the term the wrapper reads from stock.
 
     The surface canary (comfy_surface.py) holds the call shape: the two leading
-    positional parameters, in the order the wrapper passes them. A touchpoint
-    reads a signature and cannot see a function body, so the three lines of
-    the term are held here, by source.
+    positional parameters, in the order the wrapper passes them. The wrapper
+    replaces stock's first figure with MemAvailable less a floor and adds
+    stock's second, the allocator's cached-free bytes (``stock[1]``). On a
+    device that answers as a GB10 does, torch's CUDA readers stubbed, that
+    second figure must be reserved less active bytes. An upstream branch that
+    read the host's memory there, or counted reserved bytes as free, would make
+    the wrapper count the same memory twice, past the device's total.
     """
-    import inspect
+    import torch
 
-    assert list(inspect.signature(comfy_cpu.get_free_memory).parameters) == ["dev", "torch_free_too"]
-    source = inspect.getsource(comfy_cpu.get_free_memory)
-    assert "mem_free_cuda, _ = torch.cuda.mem_get_info(dev)" in source
-    assert "mem_free_total = mem_free_cuda + mem_free_torch" in source
-    assert "return (mem_free_total, mem_free_torch)" in source
+    device = torch.device("cuda", 0)
+    active, reserved, cuda_free, available = 3 * GIB, 5 * GIB, 61 * GIB, 66 * GIB
+    gb10 = SimpleNamespace(name="NVIDIA GB10", is_integrated=1, total_memory=SPARK_TOTAL, major=12,
+                           minor=1, multi_processor_count=48)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda dev=None: gb10)
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda dev=None: gb10.name)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda dev=None: (12, 1))
+    monkeypatch.setattr(torch.cuda, "memory_stats", lambda dev=None: {
+        "active_bytes.all.current": active, "reserved_bytes.all.current": reserved})
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda dev=None: (cuda_free, SPARK_TOTAL))
+    monkeypatch.setattr(comfy_cpu, "get_torch_device", lambda: device)
+
+    total, cached = comfy_cpu.get_free_memory(device, True)
+    assert cached == reserved - active
+    assert comfy_cpu.get_free_memory(device) == total
+    wrapped = uma.corrected_reading(comfy_cpu.get_free_memory,
+                                    lambda dev: uma.integrated_total_bytes(torch, dev),
+                                    comfy_cpu.get_torch_device, lambda: available)
+    free, kept = wrapped(device, True)
+    assert kept == reserved - active
+    assert free == uma.device_free_bytes(available, SPARK_TOTAL) + reserved - active <= SPARK_TOTAL
 
 
 def test_real_comfyuis_reading_keeps_its_signature_and_its_allocator_term(comfy_cpu):

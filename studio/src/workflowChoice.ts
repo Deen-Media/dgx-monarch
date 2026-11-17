@@ -60,11 +60,14 @@ export function paletteWorkflows(
 
 /**
  * Load a packaged workflow into the draft; the select, the command palette and Fleet use this. It
- * resolves with the notice the load set, if any.
+ * resolves with the notice the load set, if any. Fleet passes its operation, so the workflow and
+ * the Fleet label are one draft change, which one Undo takes back.
  */
 export function loadWorkflow(
   entry: WorkflowEntry,
   inspect: InspectWorkflow,
+  operation?: string,
 ): Promise<string | void> {
-  return inspect(entry.workflow, entry.name, false, entry.id);
+  const load = [entry.workflow, entry.name, false, entry.id] as const;
+  return operation ? inspect(...load, operation) : inspect(...load);
 }

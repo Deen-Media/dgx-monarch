@@ -418,7 +418,7 @@ def _submit_render_guarded(
                 "sync_ulysses": spec.sync_ulysses,
             }
 
-    timeout = render_rows.sample_deadline_s(model, request, latent, topo, steps_hint)
+    timeout = render_rows.sample_deadline_s(model, request, latent, topo, steps_hint, cfg_value)
     from ..telemetry import render_progress
 
     # What the finished render's summary records beside its wall time: the

@@ -10,16 +10,153 @@ patched handle method still takes effect. The logger keeps the
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from . import mesh_helpers, mesh_safety, mesh_setup
+from . import mesh_helpers, mesh_safety, mesh_setup, residency_doors
 from .constants import DEFAULT_NCCL_MASTER_PORT
 from .log import get_logger
 from .topology import Topology
 
 log = get_logger("dgx_monarch.mesh")
+
+# How long the driver waits on one rank's setup before it asks the later ranks,
+# with no wait, whether one of them has already failed.
+SETUP_POLL_S = 2.0
+
+
+def _answer(handle: Any, future: Any, wait: float) -> Any:
+    """One rank's setup answer within ``wait`` seconds, or ``TimeoutError`` while it has none.
+
+    Monarch's ``Future.get(timeout)`` leaves an endpoint's future running on a
+    timeout, so a later get still reads the answer (every future but a
+    ``@returns_future`` one; ``call_one`` returns an endpoint's). A timeout is
+    no supervision failure, so ``_await_or_evict`` evicts nothing for it.
+    """
+    return handle._await_or_evict(future, wait, holding_lock=True)
+
+
+def _await_setup(handle: Any, futures: list[Any], deadline: float, failed: dict[str, Any]) -> list[dict]:
+    """Every rank's setup answer, in rank order, and a later rank's failure as soon as it is seen.
+
+    The ranks are awaited in order, a slice at a time; between slices each
+    later rank is asked, with no wait, whether it has answered. A rank that
+    cannot start answers at once while its peer waits at the rendezvous for
+    it, so without this the driver read the peer's wait to the deadline and
+    never the rank's own refusal. ``failed`` receives the rank whose error is
+    raised; for one seen ahead of the rank being awaited, that rank
+    (``ahead``) and what was left of the setup's wait (``spare``).
+    """
+    results: list[dict] = []
+    for index, future in enumerate(futures):
+        failed["rank"] = index
+        while True:
+            wait = min(SETUP_POLL_S, mesh_setup.remaining(deadline, "distributed setup"))
+            try:
+                results.append(_answer(handle, future, wait))
+                break
+            except TimeoutError:
+                pass
+            for later in range(index + 1, len(futures)):
+                try:
+                    _answer(handle, futures[later], 0.0)
+                except TimeoutError:
+                    continue
+                except Exception:
+                    failed.update(rank=later, ahead=index, spare=max(0.0, deadline - time.monotonic()))
+                    raise
+    return results
+
+
+def residency_modes(args: dict, *, integrated: bool, fsdp: bool) -> tuple[bool | str, bool, bool]:
+    """The (slab mode, low-RSS LoRA, comfy-managed) a Worker resolves from ``args``.
+
+    The Worker's own chain, read on the driver: comfy-managed turns low-RSS and
+    slab off (``actor/comfy_dynamic.apply_policy``); on unified memory an absent
+    ``lora_low_rss`` is on, an absent ``slab_weights`` is ``auto``, and slab is
+    off where low-RSS is (``actor/comfy_bridge._uma_memory_defaults``); FSDP
+    turns slab off (``actor/worker_env.slab_mode_effective``).
+    """
+    managed = args.get("comfy_managed") is True
+    lora = False if managed else args.get("lora_low_rss", True if integrated else None)
+    slab = False if managed else args.get("slab_weights", "auto" if integrated else None)
+    if integrated and slab and not lora:
+        slab = False
+    mode: bool | str = False if not slab or fsdp else ("auto" if slab == "auto" else True)
+    return mode, bool(lora), managed
+
+
+def _store_drops(previous: dict, new: dict, fsdp: bool) -> bool:
+    """Whether the store's residency setters may drop a resident on this change.
+
+    ``set_slab_mode`` drops a resident whose storage class the new mode no
+    longer keeps (``store_residency.policy_keeps_resident``): a slab one under
+    off, a stock one under on, a comfy-managed one on any change; ``auto``
+    keeps slab and stock alike. ``set_lora_mode`` drops one with unbaked LoRA
+    patches on any flip. The driver knows neither the class nor the patches,
+    so it marks every change but a move to ``auto`` outside comfy-managed. It
+    cannot read the Worker's ``is_integrated``, so either reading counts.
+    """
+    for integrated in (True, False):
+        old_slab, old_lora, old_managed = residency_modes(previous, integrated=integrated, fsdp=fsdp)
+        new_slab, new_lora, new_managed = residency_modes(new, integrated=integrated, fsdp=fsdp)
+        if old_lora is not new_lora:
+            return True
+        if old_slab != new_slab and (new_slab != "auto" or old_managed or new_managed):
+            return True
+    return False
+
+
+def drops_residents(previous: dict | None, new: dict, *, fsdp: bool = False) -> bool:
+    """Whether a Worker may drop a resident model on this policy change: the
+    driver's inference, which answers only where no reply names the drops
+    (``reported_drop``).
+
+    Every Worker drops every resident when ``compile_dit``, the forced family,
+    the shared activation scale or the FP8 matmul setting changes, since each
+    binds at model load (``actor/worker_env.apply_worker_args_impl``), and it
+    drops some on a residency change (``_store_drops``). So the driver reads the
+    policy it last published (``previous``) and the new one by the Worker's own
+    rule: a ``shared_act_scale`` the last policy carried and this one drops
+    returns to on. Cases it cannot read it marks: a policy that adds that key
+    (the Worker's own environment held the setting before), an unknown last
+    policy (``None``: a failed or torn apply), and a residency change that may
+    leave the resident in place. Such a mark may charge a model a Worker still
+    holds; an unmarked drop would credit one it lost.
+    """
+    from .adapters.quant_activation_scale import ENABLE_ARG
+    from .family_select import override_from_worker_args
+    from .fp8_compute import setting as fp8_setting
+
+    if previous is None or (ENABLE_ARG in new and ENABLE_ARG not in previous):
+        return True
+
+    def scale_on(args: dict) -> bool:
+        return bool(args[ENABLE_ARG]) if ENABLE_ARG in args else True
+
+    return (bool(previous.get("compile_dit")) is not bool(new.get("compile_dit"))
+            or override_from_worker_args(previous) != override_from_worker_args(new)
+            or fp8_setting(previous)[0] != fp8_setting(new)[0]
+            or scale_on(previous) is not scale_on(new)
+            or _store_drops(previous, new, fsdp))
+
+
+def reported_drop(replies: list, inferred: bool) -> bool:
+    """Whether an apply marks the load still to come.
+
+    Each Worker's reply names the slots that apply really dropped
+    (``residency_doors.DROPPED``); one rank's drop marks, though another kept
+    its model, since the load is then pending on that rank. A reply without
+    the key comes from a Worker of an older build (the fleet check compares
+    the Workers' builds with each other, not with the driver's:
+    ``mesh_builds.refuse_two_builds``), so the inference answers for it.
+    """
+    if any(isinstance(reply, dict) and reply.get(residency_doors.DROPPED) for reply in replies):
+        return True
+    named = all(isinstance(reply, dict) and residency_doors.DROPPED in reply for reply in replies)
+    return inferred and not named
 
 
 def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
@@ -28,7 +165,10 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
 
     A failed broadcast may have changed a subset of ranks, so the cached
     key is invalidated. Callers can then compensate or force the next
-    render to re-apply the complete policy.
+    render to re-apply the complete policy. Where a Worker's reply names a
+    slot it dropped (``reported_drop``), the driver's residency memos are told
+    before the policy is published; an apply whose reply is lost marks where
+    the inference (``drops_residents``) says a Worker may have dropped one.
     """
     effective = (handle.effective_worker_args(worker_args) if merge_config
                  else dict(worker_args))
@@ -40,6 +180,13 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
             raise RuntimeError("cannot apply worker arguments before setup is READY")
         mesh_setup.require_no_sample_leases(handle, "change worker arguments")
         require_mutation_authority(handle, "change worker arguments")
+        known = getattr(handle, "worker_args_key", None) is not None  # the last apply published
+        topology = getattr(handle, "topology", None)
+        fsdp = bool(topology.get("fsdp") if isinstance(topology, dict)
+                    else getattr(topology, "fsdp", False))
+        inferred = drops_residents(
+            dict(getattr(handle, "active_worker_args", None) or {}) if known else None,
+            effective, fsdp=fsdp)
         # Retire the old policy marker and publish DIRTY before the first
         # remote side effect. A timeout, lost dispatch return, or async
         # interruption cannot leave stale READY policy authorization.
@@ -56,9 +203,13 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
             value_mesh = handle._await_or_evict(
                 future, timeout_s=timeout_s, holding_lock=True)
             rpc_complete = True
+            if reported_drop([value for _point, value in value_mesh.items()], inferred):
+                residency_doors.announce(residency_doors.UNLOADED)
             mesh_helpers.publish_worker_args(
                 handle, effective, handle._worker_args_key(effective))
         except BaseException as exc:
+            if not rpc_complete and inferred:  # no reply names the drops: the inference stands
+                residency_doors.announce(residency_doors.UNLOADED)
             ambiguous = (
                 not rpc_complete
                 and send_started
@@ -172,6 +323,8 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
             # torn transition.
             handle.setup_key = None
             handle.topology = None
+            # The teardown releases every rank's models (actor/worker_env.py).
+            residency_doors.announce(residency_doors.UNLOADED)
             try:
                 cleaned = handle._await_or_evict(
                     handle.workers.teardown_group.call(),
@@ -196,17 +349,16 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
             handle.setup_generation, "distributed setup", budget.rank_setup_s)
         fabric_env = handle.config.resolved_fabric_env()
         master_addr = handle.config.resolved_master_addr()
-        futures: list[Any] = []
         results: list[dict] = []
+        # The rank whose error is raised, None once every rank has answered.
+        failed: dict[str, Any] = {"rank": None, "ahead": None, "spare": 0.0}
         try:
             deadline = mesh_setup.deadline_after(budget.rank_setup_s)
             futures = mesh_setup.dispatch_setup(
                 handle, topology, attention, sync_ulysses, worker_args,
                 fabric_env, master_addr, master_port, fleet)
-            for future in futures:  # in rank order: len(results) is the rank awaited
-                results.append(handle._await_or_evict(
-                    future, mesh_setup.remaining(deadline, "distributed setup"),
-                    holding_lock=True))
+            results = _await_setup(handle, futures, deadline, failed)
+            failed["rank"] = None
             # READY publication is part of this same rollback transaction.
             # A BaseException at the call boundary after every worker has
             # accepted setup must still tear those groups back down rather
@@ -216,29 +368,40 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
                 budget.rank_setup_s)
         except BaseException as setup_exc:
             # A rank's own setup error says which box it came from (worker_box.py):
-            # the rank whose answer was being awaited, in a Fleet too, where
-            # every actor is rank 0 of its own world and can mark nothing.
+            # the rank whose answer failed, in a Fleet too, where every actor is
+            # rank 0 of its own world and can mark nothing.
             from . import worker_box
 
-            worker_box.name(setup_exc, handle,
-                            len(results) if len(results) < len(futures) else None)
+            worker_box.name(setup_exc, handle, failed["rank"])
+            # A failure seen ahead of the rank being awaited leaves that rank in
+            # setup, waiting at its rendezvous for a peer that will not come, and
+            # the rollback's teardown queues behind it. The rollback keeps what
+            # the setup's wait did not spend, so it ends no sooner than it did
+            # when the driver waited the setup out before rolling back.
+            rollback_s = budget.rollback_cleanup_s + float(failed["spare"])
+            if failed["ahead"] is not None:
+                log.warning(
+                    "distributed setup: rank %d's setup failed while rank %d had not answered; the "
+                    "rollback waits until the ranks still in setup end it (up to %.0f s; on a pair "
+                    "a rank waits for its peer to join), then this setup raises rank %d's error",
+                    failed["rank"], failed["ahead"], rollback_s, failed["rank"])
             # Some ranks may have completed setup before a peer failed.
             # Tear all of them back to the common uninitialized state;
             # otherwise a retry can mix generations of NCCL groups.
             handle.setup_cleanup_state = mesh_setup.cleanup_in_progress(
-                handle.setup_generation, "setup rollback",
-                budget.rollback_cleanup_s)
+                handle.setup_generation, "setup rollback", rollback_s)
             handle.setup_key = None
             handle.worker_args_key = None
             handle.topology = None
+            residency_doors.announce(residency_doors.UNLOADED)  # the rollback releases them too
             try:
                 cleaned = mesh_helpers.get_off_loop(
-                    handle.workers.teardown_group.call(), budget.rollback_cleanup_s)
+                    handle.workers.teardown_group.call(), rollback_s)
                 mesh_setup.validate_cleanup_result(cleaned, handle.world)
             except BaseException as cleanup_exc:
                 handle.setup_cleanup_state = mesh_setup.cleanup_failure(
                     handle.setup_generation, "setup rollback",
-                    budget.rollback_cleanup_s, cleanup_exc)
+                    rollback_s, cleanup_exc)
                 handle.defunct = True
                 stop_exc = mesh_setup.stop_failed_setup_procs(handle)
                 if stop_exc is not None:
@@ -251,7 +414,7 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
                     else mesh_setup.cleanup_failure(
                         handle.setup_generation,
                         "setup rollback",
-                        budget.rollback_cleanup_s,
+                        rollback_s,
                         setup_exc,
                     )
                 )

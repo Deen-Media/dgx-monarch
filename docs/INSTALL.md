@@ -1410,10 +1410,12 @@ Read this before the first update from 1.4.0, in this order. An install on
 25. The driver prices what a node spends on its box before the sampler where
     the loader did not: Add Guide (MiniMax H3), Reference to Video (MiniMax
     H3) with a reference video, and the stock loader nodes of a text encoder,
-    checkpoint or model, on a re-queue whose loader ComfyUI kept and on a
-    first queue where ComfyUI runs those nodes first. A spend that would take
+    CLIP Vision file, checkpoint or model, on a re-queue whose loader ComfyUI
+    kept and on a first queue where ComfyUI runs those nodes first. A spend
+    that would take
     the box under the loader's floor after the driver's unload and the
-    Workers' release refuses before anything is spent. That is a new refusal
+    Workers' release where they can run refuses before anything is spent.
+    That is a new refusal
     for a queue that renders today only by dipping under the floor; use a
     shorter clip, a smaller canvas or file, or free memory on the box.
     `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for

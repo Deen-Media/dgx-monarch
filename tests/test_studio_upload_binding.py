@@ -38,6 +38,13 @@ class Driver:
         self.outputs: dict[str, bytes] = {}
         # When set, /view drops the connection mid-request, as a driver going away does.
         self.drop_view = False
+        # Seconds /view waits before it answers, as a busy driver does.
+        self.view_delay = 0.0
+        # The type of each /view request, in order.
+        self.views: list[str] = []
+        # When set, /view answers a held input file with this status, as a server fault or a
+        # proxy in front of the driver can.
+        self.input_status: int | None = None
 
     def object_info(self):
         files = sorted(self.inputs)
@@ -70,9 +77,20 @@ class Driver:
             return web.json_response({"name": fields["image"], "subfolder": fields["subfolder"], "type": "input"})
 
         async def view(request):
+            self.views.append(request.query.get("type", ""))
+            await asyncio.sleep(self.view_delay)
             if self.drop_view:
                 request.transport.close()
                 return web.Response(status=500)
+            if request.query.get("type") == "input":
+                # The files its input store holds, as ComfyUI serves them.
+                held = {(upload["subfolder"], upload["image"]): upload["bytes"] for upload in self.uploads}
+                data = held.get((request.query.get("subfolder", ""), request.query.get("filename", "")))
+                if data is None:
+                    return web.json_response({"error": "missing"}, status=404)
+                if self.input_status is not None:
+                    return web.json_response({"error": "unavailable"}, status=self.input_status)
+                return web.Response(body=data, content_type="image/png")
             data = self.outputs.get(request.query.get("filename", ""))
             if request.query.get("type") != "output" or data is None:
                 return web.json_response({"error": "missing"}, status=404)
@@ -99,6 +117,14 @@ class Driver:
         return app
 
 
+class CompanionServer(TestServer):
+    """The companion as `dgxm-studio` serves it (web.run_app): a handler runs on when its client
+    goes away, where aiohttp's test server would cancel it."""
+
+    async def _make_runner(self, **kwargs):
+        return await super()._make_runner(**{**kwargs, "handler_cancellation": False})
+
+
 @asynccontextmanager
 async def companion(tmp_path, form="legacy"):
     driver = Driver(form)
@@ -109,7 +135,7 @@ async def companion(tmp_path, form="legacy"):
         hosts: set[str] = set()
         app = create_app(store, client, token, allowed_hosts=hosts, poll=False)
         try:
-            async with TestClient(TestServer(app)) as browser:
+            async with TestClient(CompanionServer(app)) as browser:
                 hosts.add(str(browser.make_url("/")).split("://", 1)[1].rstrip("/"))
                 headers = {"Authorization": "Bearer " + token, "X-DGXM-Schema": SCHEMA_VERSION}
 
@@ -409,6 +435,302 @@ def test_send_to_edit_names_a_dropped_driver_connection(tmp_path):
             assert "Send to edit again" in refused["error"]["message"]
             assert system.driver.uploads == []
     asyncio.run(scenario())
+
+
+def _copies(system, output):
+    return [row for row in system.store.all("artifacts") if row.get("source_artifact_id") == output]
+
+
+def test_a_copy_the_browser_gave_up_on_is_bound_by_the_next_press_and_never_made_twice(tmp_path):
+    # The browser abandons a companion request after 20 seconds (studio/src/api.ts), queued
+    # behind thumbnails or not, and the companion finishes the handler it left. Send to edit
+    # stores one copy per output, so the next press binds the copy that finished.
+    import aiohttp
+
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            system.driver.view_delay = 0.5
+            body = {"kind": "input", "artifact_id": output}
+            with pytest.raises(TimeoutError):
+                await system.call("POST", "/assets", json=body, timeout=aiohttp.ClientTimeout(total=0.1))
+            await asyncio.sleep(1.0)
+            (stored,) = _copies(system, output)
+            status, copied = await system.call("POST", "/assets", json=body)
+            assert status == 201 and copied["id"] == stored["id"], copied
+            assert len(system.driver.uploads) == 1 and len(_copies(system, output)) == 1
+            status, preview = await system.call("POST", "/jobs/preview", json=draft(copied["binding_value"]))
+            assert status == 200, preview
+    asyncio.run(scenario())
+
+
+def test_two_presses_for_one_output_make_one_copy_and_both_name_it(tmp_path):
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            system.driver.view_delay = 0.3
+            body = {"kind": "input", "artifact_id": output}
+            answers = await asyncio.gather(*(system.call("POST", "/assets", json=body) for _ in range(2)))
+            assert [status for status, _ in answers] == [201, 201], answers
+            assert answers[0][1]["id"] == answers[1][1]["id"]
+            assert len(system.driver.uploads) == 1 and len(_copies(system, output)) == 1
+    asyncio.run(scenario())
+
+
+def test_a_copy_that_failed_leaves_nothing_the_next_press_reuses(tmp_path):
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            body = {"kind": "input", "artifact_id": output}
+            system.driver.drop_view = True
+            status, refused = await system.call("POST", "/assets", json=body)
+            assert (status, refused["error"]["code"]) == (503, "asset_copy"), refused
+            system.driver.drop_view = False
+            status, copied = await system.call("POST", "/assets", json=body)
+            assert status == 201 and _copies(system, output) == [copied]
+            assert len(system.driver.uploads) == 1
+    asyncio.run(scenario())
+
+
+def test_a_stored_copy_the_driver_still_serves_costs_one_check_and_no_copy(tmp_path):
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            body = {"kind": "input", "artifact_id": output}
+            status, first = await system.call("POST", "/assets", json=body)
+            assert status == 201, first
+            system.driver.views.clear()
+            status, again = await system.call("POST", "/assets", json=body)
+            assert status == 201 and again == first
+            assert system.driver.views == ["input"] and len(system.driver.uploads) == 1
+    asyncio.run(scenario())
+
+
+def test_a_stored_copy_the_driver_lost_is_copied_again_once_and_the_next_press_reuses_it(tmp_path):
+    # The driver's input folder was cleaned, or ComfyUI was reinstalled: the copy's file is gone.
+    # The new copy takes the old record's place, so no binding names the missing file.
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            body = {"kind": "input", "artifact_id": output}
+            status, first = await system.call("POST", "/assets", json=body)
+            assert status == 201, first
+            system.driver.uploads.clear()
+            status, renewed = await system.call("POST", "/assets", json=body)
+            assert status == 201, renewed
+            assert renewed["id"] == first["id"] and renewed["binding_value"] != first["binding_value"]
+            assert len(system.driver.uploads) == 1 and _copies(system, output) == [renewed]
+            system.driver.views.clear()
+            status, again = await system.call("POST", "/assets", json=body)
+            assert status == 201 and again == renewed
+            assert system.driver.views == ["input"] and len(system.driver.uploads) == 1
+            status, preview = await system.call("POST", "/jobs/preview", json=draft(renewed["binding_value"]))
+            assert status == 200, preview
+    asyncio.run(scenario())
+
+
+def test_two_presses_after_the_driver_lost_the_copy_make_one_check_and_one_copy(tmp_path):
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            body = {"kind": "input", "artifact_id": output}
+            status, first = await system.call("POST", "/assets", json=body)
+            assert status == 201, first
+            system.driver.uploads.clear()
+            system.driver.views.clear()
+            system.driver.view_delay = 0.2
+            answers = await asyncio.gather(*(system.call("POST", "/assets", json=body) for _ in range(2)))
+            assert [status for status, _ in answers] == [201, 201], answers
+            assert answers[0][1] == answers[1][1] and answers[0][1]["id"] == first["id"]
+            assert system.driver.views == ["input", "output"] and len(system.driver.uploads) == 1
+    asyncio.run(scenario())
+
+
+def test_a_stored_copy_is_not_used_when_the_driver_cannot_be_asked(tmp_path):
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            body = {"kind": "input", "artifact_id": output}
+            status, first = await system.call("POST", "/assets", json=body)
+            assert status == 201, first
+            system.driver.drop_view = True
+            status, refused = await system.call("POST", "/assets", json=body)
+            assert (status, refused["error"]["code"]) == (503, "asset_copy"), refused
+            assert "Send to edit again" in refused["error"]["message"]
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("answer", [500, 403])
+def test_only_a_404_means_the_driver_lost_the_copy(tmp_path, answer):
+    # Stock ComfyUI's /view answers 404 for a missing input file. Any other answer to the check,
+    # with the file still held, means the driver could not be asked: the press fails, binds
+    # nothing and makes no second copy.
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            body = {"kind": "input", "artifact_id": output}
+            status, first = await system.call("POST", "/assets", json=body)
+            assert status == 201, first
+            system.driver.input_status = answer
+            status, refused = await system.call("POST", "/assets", json=body)
+            assert (status, refused["error"]["code"]) == (503, "asset_copy"), refused
+            assert "could not be asked" in refused["error"]["message"]
+            assert len(system.driver.uploads) == 1 and _copies(system, output) == [first]
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("held_in", ["driver read", "image conversion",
+                                     "image conversion, let go once the session closed"])
+def test_a_copy_alive_at_shutdown_sends_nothing_after_the_driver_session_closes_and_writes_nothing(
+        tmp_path, monkeypatch, caplog, held_in):
+    """A Send to edit copy outlives its request and is still running when the companion shuts
+    down as dgxm-studio does: web.run_app's runner.cleanup() (site stop, the graceful wait for
+    requests, then the app's cleanup, which stops the copies still running and then closes the
+    driver session), then run_app's cancel of every task still alive, and only then the store's
+    close. After the session closes nothing reaches the driver, nothing writes to the store
+    during or after shutdown, the copy ends cancelled, and nothing is logged as an error, even
+    when the copy is let go between the session closing and run_app's last cancel."""
+    import logging
+    import socket
+    import threading
+
+    import aiohttp
+
+    from dgx_monarch.studio import media_assets
+
+    caplog.set_level(logging.ERROR)
+    events: list[str] = []  # every one appended on the event loop, so its order is the events'
+    driver = Driver()
+    # The copy is held by events, not by time: until the test lets it go, the driver does not
+    # answer the output read, or the image conversion does not end.
+    converting, let_go = threading.Event(), threading.Event()
+    convert = media_assets.normalized
+
+    def held_conversion(raw):
+        converting.set()
+        let_go.wait(30)
+        return convert(raw)
+
+    if held_in.startswith("image conversion"):
+        monkeypatch.setattr(media_assets, "normalized", held_conversion)
+    assets: list = []
+    make_assets = media_assets.MediaAssets.__init__
+
+    def recorded(self, *args, **kwargs):
+        make_assets(self, *args, **kwargs)
+        assets.append(self)
+    monkeypatch.setattr(media_assets.MediaAssets, "__init__", recorded)
+    copies: list[asyncio.Future] = []
+
+    @web.middleware
+    async def logged(request, handler):
+        events.append(f"driver {request.method} {request.path}")
+        if held_in == "driver read" and request.path == "/view":
+            await asyncio.get_running_loop().run_in_executor(None, let_go.wait, 30)
+        return await handler(request)
+
+    async def until(condition):
+        for _ in range(3000):
+            if condition():
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("the copy never reached the point the test holds it at")
+
+    async def scenario():
+        upstream_app = driver.app()
+        upstream_app.middlewares.append(logged)
+        async with TestServer(upstream_app) as upstream:
+            store = Store(tmp_path / "state")
+            client = ComfyClient(str(upstream.make_url("/")).rstrip("/"))
+            output = saved_output(SimpleNamespace(driver=driver, store=store))
+            close = client.close
+
+            async def logged_close():
+                events.append("client.close")
+                await close()
+                if held_in.endswith("closed"):
+                    # A copy that resumes now, before run_app's last cancel, meets a closed session.
+                    let_go.set()
+                    await until(copies[0].done)
+                    for _ in range(20):  # let a request handler waiting on the copy answer
+                        await asyncio.sleep(0)
+            client.close = logged_close
+            for name in ("create", "update"):
+                def logged_write(*args, _write=getattr(store, name), _name=name, **kwargs):
+                    events.append(f"store.{_name}")
+                    return _write(*args, **kwargs)
+                monkeypatch.setattr(store, name, logged_write)
+            listener = socket.socket()
+            listener.bind(("127.0.0.1", 0))
+            host = f"127.0.0.1:{listener.getsockname()[1]}"
+            token = "shutdown-" + "x" * 32
+            app = create_app(store, client, token, allowed_hosts={host}, poll=False)
+            # web.run_app's own runner: handlers run on when their client leaves; a short graceful wait.
+            runner = web.AppRunner(app, handler_cancellation=False, shutdown_timeout=0.3)
+            await runner.setup()
+            await web.SockSite(runner, listener).start()
+            headers = {"Authorization": "Bearer " + token, "X-DGXM-Schema": SCHEMA_VERSION}
+            async with aiohttp.ClientSession() as browser:
+                with pytest.raises(TimeoutError):
+                    await browser.post(f"http://{host}/api/v1/assets", headers=headers,
+                                       json={"kind": "input", "artifact_id": output},
+                                       timeout=aiohttp.ClientTimeout(total=0.2))
+            await until(converting.is_set if held_in.startswith("image conversion")
+                        else lambda: "driver GET /view" in events)
+            copies.extend(assets[0].copying.values())
+            events.append("shutdown")
+            try:
+                await runner.cleanup()
+                alive = [task for task in asyncio.all_tasks()
+                         if task is not asyncio.current_task() and not task.done()]
+                for task in alive:
+                    task.cancel()
+                await asyncio.gather(*alive, return_exceptions=True)
+                store.close()
+                events.append("store.close")
+            finally:
+                let_go.set()
+
+    asyncio.run(scenario())
+    shutdown, closed = events.index("shutdown"), events.index("client.close")
+    # The copy had started before shutdown and had not finished: it read the output, uploaded nothing.
+    assert "driver GET /view" in events[:shutdown], events
+    assert "driver POST /upload/image" not in events, events
+    assert not [event for event in events[closed:] if event.startswith("driver ")], events
+    assert not [event for event in events[shutdown:] if event.startswith("store.") and event != "store.close"], events
+    (copy,) = copies
+    assert copy.cancelled()
+    assert not [record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR]
+
+
+def _lookup_plan(store: Store) -> str:
+    """The query plan of the lookup Store.upload_copy runs, read from the statement it executes."""
+    statements: list[str] = []
+    store.db.set_trace_callback(statements.append)
+    try:
+        assert store.upload_copy("output-x") is None
+    finally:
+        store.db.set_trace_callback(None)
+    (lookup,) = [statement for statement in statements if "source_artifact_id" in statement]
+    return " ".join(str(row["detail"]) for row in store.db.execute("EXPLAIN QUERY PLAN " + lookup))
+
+
+def test_the_stored_copy_lookup_reads_an_index_in_a_new_store_and_in_an_older_one(tmp_path):
+    # Every Send to edit press looks up its output's copy; without an index that scans every
+    # stored document under the store lock.
+    store = Store(tmp_path / "fresh")
+    try:
+        assert "artifacts_by_source" in _lookup_plan(store)
+    finally:
+        store.close()
+    older = Store(tmp_path / "older")
+    older.db.execute("DROP INDEX IF EXISTS artifacts_by_source")
+    older.close()
+    reopened = Store(tmp_path / "older")
+    try:
+        assert "artifacts_by_source" in _lookup_plan(reopened)
+    finally:
+        reopened.close()
 
 
 def test_send_to_edit_keeps_the_pixel_rule(tmp_path, monkeypatch):

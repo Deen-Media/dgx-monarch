@@ -1056,7 +1056,9 @@ to `uly2+fsdp`, which `auto` never picks, whose first render runs the gate's
 clean-reload proof, where the head holds half the DiT. On the pair under `auto` the head's
 Worker holds the whole DiT, as on one Spark, so the pair alone does not fit it.
 The refusal also offers the Load with slab residency card: slab places no host
-copy, so that load prices at 78.3 GiB and fits. On 2026-11-05 on one Spark the
+copy, so that load prices at 78.3 GiB, and at 90.9 GiB once the render's own
+activations (12.6 GiB at one rank, for the 8,285 rows of its 2912x2912 frame)
+are counted beside it, and fits. On 2026-11-05 on one Spark the
 refusal came 4.7 s after the queue with nothing loaded, 119.8 GiB against
 109.6 GiB, 10.2 GiB short, and each way it names but the INT8 ConvRot DiT rendered:
 the slab card, whose image was pixel-identical to the same graph on stock
@@ -2467,7 +2469,11 @@ in one pass, the p-h3-image VAE, which decodes one frame, and on 0.45.0 and
 later the MiniMax-H3-Image VAE, which decodes one frame too, and a VAE that went
 through the VAE Compute Dtype node with a dtype other than `default`: that
 node keeps the weights the loader built and changes only the compute dtype,
-while a Worker builds its VAE in one dtype, so its decode may differ. Each
+while a Worker builds its VAE in one dtype, so its decode may differ. So does
+a VAE with quantized layers, which Load VAE builds to compute in a dtype of its
+own (float16 unless it is given one) while a Worker builds them in the VAE
+dtype, and any decode on a driver whose ComfyUI decodes on the CPU
+(`--cpu-vae` or `--cpu`), since a Worker decodes on its GPU. Each
 decode
 logs one line saying whether it split and why not
 ([TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
@@ -2476,7 +2482,9 @@ logs one line saying whether it split and why not
 
 - Each Worker needs the driver's VAE file under the same name in its own
   `models/vae` folder with the same artifact signature, and the same ComfyUI
-  commit, torch and CUDA build and comfy-kitchen release. A Worker adopts the
+  commit, torch and CUDA build and comfy-kitchen release. The name is the one
+  Load VAE lists, so a file or folder under `models/vae` that is a symlink to
+  other storage splits under that name. A Worker adopts the
   driver's VAE dtype, attention functions and torch backend flags for the
   decode, so a driver started with `--use-sage-attention` needs the sage
   package on every Worker host. Any difference makes that rank decline, and

@@ -88,7 +88,7 @@ def test_the_reference_encode_survives_the_held_model_credit_and_is_marked(admit
     """A first queue of a video-reference graph with ComfyUI's models held: before 1.5.0 the credit
     charged its 40 GiB encode at 0; now it is charged and marked, and the loads are not."""
     monkeypatch.setattr(loader_graph, "_comfy_has_loaded_models", lambda: True)
-    monkeypatch.setattr(loader_graph, "_comfy_held_bytes", lambda: 10 ** 13)
+    monkeypatch.setattr(loader_graph, "_comfy_held_bytes", lambda: (10 ** 13, 0))
     graph = _graph(dit=REF2VA_INT8_PRUNED, refs="video", width=448, height=256)
     terms = loader_graph.credited_terms(loader_graph.driver_stack_terms(graph))
     assert terms.credited and terms.ref_bytes == loader_graph.REF_VIDEO_ENCODE_BYTES

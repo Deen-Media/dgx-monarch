@@ -15,10 +15,12 @@ interactive writer.
 In cluster mode the Init node checks a fingerprint of the file's bytes on
 every Queue, and any byte change, a comment included, retires the old fleet
 before attaching a replacement. An edit the driver refuses keeps the old fleet
-attached, and reverting the edit reuses it. In local mode the Init node does
-not fingerprint the file, and a local mesh reads only `[worker_args]`. An edit
-there does not reach a live local mesh on the next Queue; it applies when the
-Init node runs again (a changed widget or a new ComfyUI process). If the old
+attached, and reverting the edit reuses it. A local mesh reads only
+`[worker_args]` and `[monarch]`, and in local mode the Init node checks a
+fingerprint of those two tables on every Queue. An edit to a key the Workers
+read retires the live local fleet before attaching a replacement; an edit to
+`worker_vae_decode`, which only the driver reads, keeps the fleet and the
+models it holds, and the Init node arms the new value. If the old
 processes are not confirmed stopped, replacement is blocked to prevent two
 fleets from holding models or rendezvous ports at once.
 
@@ -449,7 +451,8 @@ every decode stays on the driver. It is the one key here only the driver
 reads: it never reaches an actor, so it stays out of the worker policy, every
 identity-gate capability context and the trust fingerprint, and writing it
 re-proves no PASS. The Init node arms it when it runs, which a change to the
-file triggers in cluster mode. Each decode logs one line saying whether it
+key triggers in either mode; in local mode the change keeps the live fleet and
+its models. Each decode logs one line saying whether it
 split, and `dgxm doctor` shows the last one
 ([docs/TROUBLESHOOTING.md #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
 

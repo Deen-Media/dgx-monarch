@@ -34,7 +34,7 @@ from dgx_monarch import (
     h3_calibration,
     mesh_safety,
 )
-from dgx_monarch.nodes import gate_cross_mode, render_preflight
+from dgx_monarch.nodes import gate_cross_mode, recycle_drain, render_preflight
 
 REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src" / "dgx_monarch"
@@ -747,6 +747,8 @@ def _h3_rig(monkeypatch, tmp_path, *, size: int, mem: int, preset="auto",
     mesh = types.SimpleNamespace(
         topology_preset=preset, worker_args=dict(worker_args or {}),
         handle=handle or types.SimpleNamespace(owns_hosts=False))
+    if preset != "auto":
+        recycle_drain.note_loader_ran(unet_name)  # an explicit preset's loader node ran for it
     model = types.SimpleNamespace(unet_name=unet_name, mesh=mesh, options={})
     latent = {"samples": types.SimpleNamespace(shape=(1, 24, 2, 20, 32))}
     return model, latent

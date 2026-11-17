@@ -38,6 +38,11 @@ H3_EMPTY_LATENT_CLASS: Final = "EmptyMiniMaxH3LatentAV"
 # without images (comfy_extras/nodes_minimax_h3.py), the stand-in used here.
 H3_IMAGE_CANVAS_CLASS: Final = "MiniMaxH3ImageConditioning"
 H3_IMAGE_DEFAULT_SIDE: Final = 2048
+# p-h3-image (family minimax_h3) samples its conditioning node's latent: one frame
+# and the two audio latents it spans; a side at 0 or linked reads as 2912.
+PH3_IMAGE_CANVAS_CLASS: Final = "PH3ImageConditioning"
+PH3_IMAGE_DEFAULT_SIDE: Final = 2912
+PH3_IMAGE_AUDIO_T: Final = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,8 +184,14 @@ def _ref_block_rows(block: Mapping[str, Any]) -> int:
     return audio_rows + (latent_t * grid if latent_t else grid)
 
 
-def _positive_entries(request: Any) -> tuple[Any, ...]:
-    positive = request.get("positive") if isinstance(request, Mapping) else None
+def positive_entries(request: Any) -> tuple[Any, ...]:
+    """A render request's positive entries: a KSampler request's own, or, on
+    Sampler Custom, its guider's (basic, cfg and dual model all keep them there).
+    Every driver count of the positive entries reads them here."""
+    if not isinstance(request, Mapping):
+        return ()
+    guider = request.get("guider")
+    positive = (guider if isinstance(guider, Mapping) else request).get("positive")
     if not isinstance(positive, (list, tuple)):
         return ()
     return tuple(positive)
@@ -208,7 +219,7 @@ def rows_from_request(request: Any, latent: Any, *,
     # Extras are copied to every positive entry, not appended. Each entry is a
     # separate model call, as are cond and mirrored uncond, so peak memory is
     # the largest entry. Summing would multiply references and falsely refuse.
-    for entry in _positive_entries(request):
+    for entry in positive_entries(request):
         if not isinstance(entry, (list, tuple)) or not entry:
             continue
         shape = _dims(getattr(entry[0], "shape", None))
@@ -425,20 +436,41 @@ def _image_canvas_rows(inputs: Mapping[str, Any]) -> H3Rows:
     return H3Rows(video=rows_per_frame, frame_rows=rows_per_frame, latent_t=1, resolved=True)
 
 
+def _ph3_canvas_rows(node: object) -> H3Rows | None:
+    """p-h3-image's one frame and the two audio latents it spans, from its
+    conditioning node's canvas; None for any other node."""
+    if not isinstance(node, Mapping) or node.get("class_type") != PH3_IMAGE_CANVAS_CLASS:
+        return None
+    inputs = node.get("inputs")
+    if not isinstance(inputs, Mapping):
+        return None
+    width = _dim(inputs.get("width")) or PH3_IMAGE_DEFAULT_SIDE
+    height = _dim(inputs.get("height")) or PH3_IMAGE_DEFAULT_SIDE
+    rows_per_frame = frame_rows(height // H3_VAE_SPATIAL, width // H3_VAE_SPATIAL)
+    return H3Rows(video=rows_per_frame, audio=2 * PH3_IMAGE_AUDIO_T,
+                  frame_rows=rows_per_frame, latent_t=1, resolved=True)
+
+
 def rows_from_prompt_graph(prompt: Any, *, image: bool = False) -> H3Rows:
     """Return the largest canvas's loader-time packed estimate.
 
     Graph literals resolve target video and audio only; linked keyframe and
     reference geometry remains zero, a permissive undercount. Canvases are
     alternative renders, so peak memory is their maximum rather than their sum.
-    ``image`` reads MiniMax-H3-Image's conditioning nodes instead: one target
-    frame each, at 2048 on a side the node leaves at 0 (an edit that sizes from
-    its first picture may differ), text and reference rows unseen.
+    A p-h3-image conditioning node is one of H3's canvases: one frame and two
+    audio latents, at 2912 on a side the node leaves at 0 or links. ``image``
+    reads MiniMax-H3-Image's conditioning nodes instead: one target frame each,
+    at 2048 on such a side, text and reference rows unseen. An edit that sizes
+    from its first picture, or a link, may differ from either stand-in.
     """
     if not isinstance(prompt, Mapping):
         return H3Rows()
     best = H3Rows()
     for node in prompt.values():
+        ph3 = None if image else _ph3_canvas_rows(node)
+        if ph3 is not None:
+            best = ph3 if ph3.total > best.total else best
+            continue
         inputs = _canvas_node(node)
         if inputs is None:
             continue

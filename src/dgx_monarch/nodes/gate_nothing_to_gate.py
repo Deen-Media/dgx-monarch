@@ -188,11 +188,13 @@ def _resolved(runtime: Mapping[str, Any], ceremony_model: Any, latent: dict,
 def _fall_through_unloaded(handle: Any, term: str) -> None:
     """Leave the Workers empty before the full ceremony runs.
 
-    That ceremony's capacity stop charges the DiT as a load still to come
-    (``gate_capacity_stop.dit_already_loaded`` reads only the render site's
-    memos), so a model this path loaded would be counted twice and could stop
-    a request today's ceremony runs. Its first step after the stop is the same
-    unload, so this costs nothing.
+    That ceremony's first step after its capacity stop is the same unload, so
+    this costs nothing, and the stop then reads what the ceremony's first leg
+    meets: this unload drains the residency memos the stop reads
+    (``gate_capacity_stop.dit_already_loaded``), so it prices the load as still
+    to come (under an explicit preset the driver footprint and MiniMax H3
+    checks still credit it) against a reading that no longer holds the model
+    this path loaded.
     """
     from . import pending_load_relief
 

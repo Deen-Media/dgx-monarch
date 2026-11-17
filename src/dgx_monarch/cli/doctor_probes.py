@@ -194,6 +194,23 @@ _CO_RESIDENT = "co-resident GPU procs"
 _POOL_UNKNOWN = "so who else shares the render pool is unknown"
 
 
+_BOOT_RECORDS = 30
+# The wtmp that logrotate moved aside when it started the current one (Ubuntu keeps one).
+_ROTATED_WTMP = "/var/log/wtmp.1"
+
+
+def _first_record_follows_a_crash(shown: int) -> bool:
+    """Whether the oldest reboot `last` shows is the boot after one that logged no shutdown.
+
+    Below a full window `last` shows the whole wtmp, so that reboot is its first record.
+    logrotate starts a new wtmp while the box is up, and a clean end of that boot logs its
+    shutdown there first; a reboot first means that boot ended without one. A wtmp with no
+    predecessor starts at the install's first boot, whose reboot has no shutdown before it,
+    and in a full window the oldest reboot's shutdown may lie past the window.
+    """
+    return shown < _BOOT_RECORDS and os.path.exists(_ROTATED_WTMP)
+
+
 def boot_record_row() -> tuple[str, str, str]:
     """`(status, name, detail)` for unexpected shutdowns, from `last`'s boot records.
 
@@ -204,7 +221,7 @@ def boot_record_row() -> tuple[str, str, str]:
     """
     name = "unexpected shutdowns"
     try:
-        result = subprocess.run(["last", "-Fxn30", "shutdown", "reboot"],
+        result = subprocess.run(["last", f"-Fxn{_BOOT_RECORDS}", "shutdown", "reboot"],
                                 capture_output=True, text=True, timeout=10)
     except Exception:
         return (WARN, name, "unobserved: the `last` boot-record probe did not complete, so "
@@ -217,9 +234,11 @@ def boot_record_row() -> tuple[str, str, str]:
     # Newest first: every reboot should have a shutdown below it.
     crashes = sum(1 for i, event in enumerate(events) if event == "reboot"
                   and (i + 1 >= len(events) or events[i + 1] != "shutdown"))
-    if crashes > 1:  # the oldest reboot in the window often lacks its pair
+    if events and events[-1] == "reboot" and not _first_record_follows_a_crash(len(events)):
+        crashes -= 1
+    if crashes > 0:
         return (WARN, name,
-                f"{crashes - 1} reboot(s) without a clean shutdown in the last 30 boot records. "
+                f"{crashes} reboot(s) without a clean shutdown in the last {_BOOT_RECORDS} boot records. "
                 "On a Spark this matches the power-delivery fault, a hard power-off that logs nothing. "
                 "Doctor runs no load test, so it cannot tell if the GPU stayed stuck at a low clock; "
                 "a stuck GPU needs a cold power cycle, not a reboot (TROUBLESHOOTING, PD-stuck state)")

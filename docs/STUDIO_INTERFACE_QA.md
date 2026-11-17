@@ -1,6 +1,6 @@
 # Studio interface QA
 
-Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22, on 2026-10-28 and on 2026-11-03, with two rows added on 2026-10-22, fourteen on 2026-10-28 and tester round 4 rows from 2026-10-30, checked again on 2026-11-03, and on 2026-11-15 five apex review rows and the 26 browser rows again. Status: **scoped local validation; the 26 browser rows and the five apex review rows ran headless on the shipping bundle, `index-BFnkXPeL.js`, on 2026-11-15 and passed; the eleven tester round 4 rows last ran on the 1.5.0 bundle of 2026-11-03 and passed; the three faults that the 2026-10-28 round found are fixed; Studio's acceptance remains incomplete, as [Remaining acceptance](#remaining-acceptance) lists**.
+Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22, on 2026-10-28 and on 2026-11-03, with two rows added on 2026-10-22, fourteen on 2026-10-28 and tester round 4 rows from 2026-10-30, checked again on 2026-11-03, and on 2026-11-15 five apex review rows and the 26 browser rows again. Status: **scoped local validation; the 26 browser rows and the five apex review rows ran headless on the bundle of 2026-11-15, `index-BFnkXPeL.js`, and passed; the bundle with the review fixes of 2026-11-16, `index-Ct66OJHZ.js`, has no browser run; the eleven tester round 4 rows last ran on the 1.5.0 bundle of 2026-11-03 and passed; the three faults that the 2026-10-28 round found are fixed; Studio's acceptance remains incomplete, as [Remaining acceptance](#remaining-acceptance) lists**.
 
 This pass inventoried every authored interactive control in `studio/src` and
 traced its handler, conditional visibility, disabled state and recovery path.
@@ -570,7 +570,7 @@ private evidence store, outside the repository and the packages.
   was superseded by the rows for every stock text node and the review fixes
   after them. Results SHA-256
   `151909b98a388d84d10e29cf27944f19dc618d0fd55cf37a79ffe730fcf0aea5`.
-- The seventh round ran all five rows on the shipping bundle,
+- The seventh round ran all five rows on the shipping bundle of that day,
   `index-BFnkXPeL.js`
   (`4e272d22d305229fb86f0b8dfe6bcf41d7612b9718ade662ecaaa96395b23fd8`),
   `index-DZRUgSeS.css`
@@ -607,7 +607,7 @@ assistive technology.
 
 On 2026-11-15 the 26 rows of the
 [browser procedure](../studio/tests/README.md#browser-checks) ran on the
-shipping bundle, the one commit `0f32d35` builds and `RESOURCE_SHA256` names:
+shipping bundle of that day, which commit `0f32d35` builds and `RESOURCE_SHA256` then named:
 `index-BFnkXPeL.js`
 (`4e272d22d305229fb86f0b8dfe6bcf41d7612b9718ade662ecaaa96395b23fd8`),
 `index-DZRUgSeS.css`
@@ -703,6 +703,18 @@ either; Grant and retry, which needs `--allow-management` and a host operation;
 Reconcile in Queue for an unknown outcome; the review expiry at any viewport
 but 390×844; and Chromium, Safari, physical phones, assistive technology and GPU
 rendering, as before.
+
+## Review fixes, 2026-11-16
+
+Four Studio changes made after the review of the 1.5.0 diff have unit and
+companion tests and no browser run. **NOT RUN** in a browser: the Output line
+for Save Video at format auto with the ProRes codec, which now reads MOV; the
+refused-draft button for a value of a node inside a subgraph or of a dotted
+dynamic input, which now opens All inputs; one Undo after Set up Fleet in
+Create, which now brings back the old workflow with its own Job category, and
+a refused Fleet load, after which Undo restores what it did before; and Send to
+edit on a driver slow enough that the browser stops waiting, then pressed
+again, which binds the one copy the companion made.
 
 ## Remaining acceptance
 

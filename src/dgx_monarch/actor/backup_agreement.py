@@ -15,14 +15,19 @@ each rank sends five more integers, and every decision is made from what the
 MIN over the ranks brings back, never from a rank's own value:
 
 1. 0 if this rank is short: it holds a backup and its room above the host
-   floor is under the ask (1.5 times ComfyUI's full estimate, as on one GPU);
+   floor, with the device pool it holds idle, is under the ask (1.5 times
+   ComfyUI's full estimate), as on one GPU;
 2. 0 if this rank cannot free (a patched model that is not a stock slot of
-   this Worker's store, or one ComfyUI's dynamic loader holds);
+   this Worker's store);
 3. 0 if ``DGXM_DISABLE_BACKUP_FREE`` is set on this rank;
 4. this rank's margin, its room less what the sampler still needs, in MiB,
    with its rank number in the low bits so the answer names the tightest rank;
 5. 0 if this rank holds a slot whose backup this agreement freed before.
 
+- A model ComfyUI's dynamic loader holds (comfy-managed residency), or one
+  with no patches, carries no stack, as on one GPU
+  (``lora_partial_load.carries_stack``): its backup holds ComfyUI's
+  force-loaded small weights, so the rank holds no backup to weigh.
 - A rank whose load device has memory of its own (a GPU that does not share
   the host's memory) takes no part. Its sampler draws on the device, not on
   the host, and the backup it keeps costs that sampler nothing. It is never
@@ -173,25 +178,6 @@ def _single_estimate(patcher: Any, noise_shape: Any, conds: Any) -> int | None:
         return None
 
 
-def _idle_pool(patcher: Any) -> int:
-    """Device memory this Worker holds reserved and unused, which its sampler takes before the box gives more.
-
-    The term ComfyUI's own free reading adds on a Worker (``comfy_bridge._uma_free_memory``). A Worker
-    keeps the pool its last sampler grew, and MemAvailable does not count it: without it a second
-    render on a warm Worker would be weighed as if it started cold. Zero off a CUDA device, or unread.
-    """
-    try:
-        device = getattr(patcher, "load_device", None)
-        if getattr(device, "type", None) != "cuda":
-            return 0
-        import torch
-
-        stats = torch.cuda.memory_stats(device)
-        return max(0, int(stats["reserved_bytes.all.current"]) - int(stats["active_bytes.all.current"]))
-    except Exception:
-        return 0
-
-
 def _mapped_shared_bytes() -> int | None:
     """The shared memory this Worker process maps now (RssShmem), or None where /proc does not say."""
     try:
@@ -254,6 +240,10 @@ def vote(patchers: tuple, sampling: tuple[Any, Any], rank: int) -> Vote:
             stored = slot() if callable(slot) else None
             if getattr(stored, FREED_FLAG, False):
                 found.freed_before = True
+            # One GPU's rule (``lora_partial_load.check``): a dynamic patcher, or a model with no
+            # patches, holds no stack's originals, whatever ComfyUI's backup holds.
+            if not lora_partial_load.carries_stack(patcher):
+                continue
             if not getattr(patcher, "backup", None) or getattr(model, "current_weight_patches_uuid", None) is None:
                 continue
             if not lora_partial_load.shares_host_memory(patcher):
@@ -261,18 +251,17 @@ def vote(patchers: tuple, sampling: tuple[Any, Any], rank: int) -> Vote:
             held = True
             if stored is None:
                 found.can, found.why_not = False, "a patched model here is not one this Worker's store holds"
-            elif patcher.is_dynamic():
-                found.can, found.why_not = False, "a patched model here is not a stock load on unified memory"
             else:
                 found.freeable.append((patcher, stored))
         if found.own_memory:
             return found  # not short, able, no margin claimed (need is None), nothing to free
         found.room = lora_partial_load._host_room()
         first = patchers[0] if patchers else None
-        found.pool = 0 if first is None else _idle_pool(first)
+        found.pool = 0 if first is None else lora_partial_load._idle_pool(first)
         if first is not None:
             found.need, found.ask, found.unmapped = _pair_needs(first, sampling)
-        found.short = bool(held and found.ask is not None and found.room < found.ask)
+        # The room the margin and the refusal weigh: the box's, and the pool the sampler takes first.
+        found.short = bool(held and found.ask is not None and found.room + found.pool < found.ask)
         if held and found.can and _fault_here(found.rank):
             log.warning("pair backup: acceptance fault (%s names this rank): it votes short at any reading",
                         FAULT_RANK_ENV)
@@ -440,7 +429,7 @@ def settle(mine: Vote, answer: list[int], exchange: Any, gather: Any = None) -> 
             wrong = wrong or lora_partial_load._what_is_wrong_after_the_route(patcher, False)
         mine.room = lora_partial_load._host_room()
         if mine.freeable:
-            mine.pool = _idle_pool(mine.freeable[0][0])
+            mine.pool = lora_partial_load._idle_pool(mine.freeable[0][0])
         if wrong is None and _fault_here(mine.rank):
             log.warning("pair backup: acceptance fault (%s names this rank): its model is read as wrong",
                         FAULT_RANK_ENV)

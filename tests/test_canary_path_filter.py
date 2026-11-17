@@ -200,3 +200,36 @@ def test_a_path_loaded_module_triggers_and_an_unrun_test_import_does_not():
     assert "benchmark/sweep/report.py" not in closure
     assert "benchmark/gates.py" in _path_filter(workflow)
     assert "benchmark/sweep/report.py" not in _path_filter(workflow)
+
+
+_ONE_PROCESS = "Real-comfy test files in one process (cross-file leaks, CPU)"
+_PYTEST_FILE = re.compile(r"(?<![\w/])(tests/test_\w+\.py)")
+
+
+def _pytest_steps(workflow: dict) -> list[dict]:
+    return [step for job in workflow["jobs"].values() for step in job["steps"]
+            if "pytest" in (step.get("run") or "")]
+
+
+def test_the_one_process_step_runs_every_test_file_the_other_steps_run():
+    """The one-process step exists to show what a file breaks beside the others,
+    so a file another step runs and this one leaves out is a leak it cannot see."""
+    steps = _pytest_steps(_workflow())
+    (together,) = [step for step in steps if step.get("name") == _ONE_PROCESS]
+    listed = set(_PYTEST_FILE.findall(together["run"]))
+    others = {path for step in steps if step is not together
+              for path in _PYTEST_FILE.findall(step["run"])}
+    assert len(others) > 40, "the step parser found too few pytest files; the check would pass vacuously"
+    missing = sorted(others - listed)
+    assert not missing, f"other canary steps run these files, but the one-process step does not: {missing}"
+
+
+def test_the_driver_reading_and_the_load_renames_run_against_comfy():
+    """Both files hold real-ComfyUI cases that the ordinary CI job skips: the
+    term of stock's free-memory reading the driver's wrapper adds, and the key
+    renames ComfyUI's model configs make at load."""
+    workflow = _workflow()
+    run = {path for step in _pytest_steps(workflow) for path in _PYTEST_FILE.findall(step["run"])}
+    for path in ("tests/test_driver_uma_memory.py", "tests/test_load_renames.py",
+                 "tests/test_vae_decode_driver_side.py"):
+        assert path in run, path

@@ -235,6 +235,10 @@ before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
                               objects ComfyUI builds for them, and as the
                               KSamplerSelect and SamplerDPMAdaptative nodes
                               the loader's graph walk reads
+ 66. held encoder mark        the is_clip mark ComfyUI sets on a CLIP's
+                              patcher and keeps on its clones, and a loaded
+                              entry's size, which tell the loader's held
+                              credit a text encoder from any other model
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -3585,6 +3589,49 @@ def _assert_copy_free_drop_seam() -> None:
         mm.soft_empty_cache = soft_empty_cache
         if saved[3] is not None:
             os.environ[resident_ledger.COPY_FREE_DROP_DISABLE_ENV] = saved[3]
+
+
+def _assert_held_encoder_mark_seam() -> None:
+    """The loader's held-model credit tells a text encoder by ComfyUI's own mark.
+
+    ``nodes/loader_graph._comfy_held_bytes`` reads a held model's bytes as a text
+    encoder's, credited at its measured resident ratio, only where its patcher
+    carries ``is_clip`` (review of the 1.5.0 promotion); any other held
+    model counts at its size. It leans on ComfyUI: a plain ModelPatcher is not
+    marked, a clone keeps the mark, ``comfy.sd.CLIP`` marks the patcher it
+    builds, and a loaded entry's ``model_memory`` is its patcher's size.
+    """
+    import inspect
+
+    import comfy.model_management as mm
+    import comfy.sd
+    import torch
+    from comfy.model_patcher import ModelPatcher
+
+    from dgx_monarch.nodes import loader_graph
+
+    cpu = torch.device("cpu")
+    encoder = ModelPatcher(torch.nn.Linear(16, 16, bias=False), cpu, cpu)
+    plain = ModelPatcher(torch.nn.Linear(8, 8, bias=False), cpu, cpu)
+    assert encoder.is_clip is False and plain.is_clip is False, (
+        "held encoder mark seam: a ModelPatcher is now marked is_clip from its start")
+    encoder.is_clip = True
+    assert encoder.clone().is_clip is True, (
+        "held encoder mark seam: a clone of a CLIP's patcher no longer keeps its is_clip mark")
+    assert "self.patcher.is_clip = True" in inspect.getsource(comfy.sd.CLIP.__init__), (
+        "held encoder mark seam: comfy.sd.CLIP no longer marks the patcher it builds is_clip")
+    saved = list(mm.current_loaded_models)
+    try:
+        entries = [mm.LoadedModel(encoder), mm.LoadedModel(plain)]
+        assert [entry.model_memory() for entry in entries] == [encoder.model_size(), plain.model_size()], (
+            "held encoder mark seam: LoadedModel.model_memory is no longer the patcher's size")
+        mm.current_loaded_models[:] = entries
+        assert loader_graph._comfy_held_bytes() == (
+            encoder.model_size() + plain.model_size(), encoder.model_size()), (
+            "held encoder mark seam: the loader's held-model read no longer splits ComfyUI's list "
+            "into all held bytes and the marked encoders' share")
+    finally:
+        mm.current_loaded_models[:] = saved
 
 
 def _calls_on_self(source: str, receiver: str | None) -> set:
@@ -7593,6 +7640,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("minimax h3 packed total", _assert_minimax_h3_packed_total_seam),
     ("driver spend wraps", _assert_driver_spend_wraps_seam),
     ("adaptive-step samplers", _assert_adaptive_step_samplers_seam),
+    ("held encoder mark", _assert_held_encoder_mark_seam),
 )
 
 

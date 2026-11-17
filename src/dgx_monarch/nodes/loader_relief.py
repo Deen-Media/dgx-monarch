@@ -23,7 +23,10 @@ is raised:
    with the graph's driver models charged whole, since none of them is held
    any more. The loader's price already counts held models against this
    graph's own (``loader_graph.credited_terms``), so the unload makes room
-   only by what ComfyUI held beyond them: another graph's larger encoder.
+   only by what ComfyUI held beyond them: another graph's larger encoder. At
+   a render site the encodes have run, so the price keeps those models out
+   of the DiT's load window (``graph_load_price.load_window_models``), and
+   there the unload makes room by all it frees.
    Where ComfyUI holds no model the same step still returns the allocator's
    cached blocks, and the load is priced again if the reading rose: the
    driver's ComfyUI keeps that cache for longer since its free-memory reading
@@ -190,10 +193,9 @@ def _unload_driver_models(mesh: Any) -> tuple[driver_unload.Unloaded | None, str
     # ComfyUI's own /free sequence. With no model held it still returns the
     # allocator's cached blocks, which the driver's ComfyUI keeps for longer
     # since its free-memory reading follows MemAvailable (driver_uma_memory.py).
+    # It empties the loader's charge memo where a model left (driver_unload.unload).
     outcome = driver_unload.unload(mm, held)
     if outcome.names:
-        # Nothing ComfyUI held is loaded now, so no earlier charge stands for it.
-        loader_graph.reset_charged_artifacts()
         return outcome, ""
     # No model left ComfyUI: worth a second price only where the released cache shows in the reading.
     return (outcome if outcome.gain >= _CACHE_WORTH_BYTES else None), ""
@@ -285,14 +287,17 @@ def render_credit(model: Any, request: Any) -> swap_credit.SwapCredit:
     """The swap credit for a render whose DiT load is still pending; never raises.
 
     The render-site checks that charge a pending load read it through
-    ``driver_unload.check_with_unload``. The question carries the request's own
-    model spec, LoRA stack included, so the Worker's answer is the one its
+    ``driver_unload.check_with_unload``. The question carries the model's own
+    spec, LoRA stack included (``pending_load_relief.model_spec``: no request
+    carries it while these checks run), so the Worker's answer is the one its
     sample-time agreement will give.
     """
+    from . import pending_load_relief
+
     try:
         mesh = getattr(model, "mesh", None)
-        spec = request.get("model") if isinstance(request, dict) else None
-        if (mesh is None or not isinstance(spec, dict) or not spec.get("unet_name")
+        spec = pending_load_relief.model_spec(model)
+        if (mesh is None or not spec.get("unet_name")
                 or mesh_safety.env_enabled(swap_credit.DISABLE_ENV)):
             return swap_credit.NONE
         name = str(spec["unet_name"])
@@ -302,7 +307,7 @@ def render_credit(model: Any, request: Any) -> swap_credit.SwapCredit:
             return swap_credit.NONE
         credit = swap_credit.from_answers(asked.mine, "cond", box=graph_load_price.driver_box(mesh))
         # A dual-model guider's second DiT, as the request carries it.
-        uncond = request.get("uncond_model")
+        uncond = request.get("uncond_model") if isinstance(request, dict) else None
         others: list[dict[str, Any]] | None = [] if uncond is None else None
         if isinstance(uncond, dict) and isinstance(uncond.get("unet_name"), str) and uncond["unet_name"]:
             others = [{"unet_name": uncond["unet_name"], "options": uncond.get("options"),
