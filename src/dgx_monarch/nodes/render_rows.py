@@ -35,24 +35,38 @@ def _percent(value: Any) -> float:
     return float(value)
 
 
+# Every window widens by this much on each side, so two bounds the sampler cannot
+# tell apart are priced as one step. ComfyUI's own percent_to_sigma, in float32,
+# maps bounds closer than about 6e-8 times the shift to one sigma under flow
+# sampling (4.1e-7 at shift 8, 1.0e-6 at 20, 4.8e-6 at 100, the most
+# ModelSamplingSD3 allows) and about 9e-8 under discrete sampling; 1e-5 clears
+# the widest of these twice over and stays a hundredth of the node's own 0.001
+# step. Widening only joins windows, so it can only over-charge, and every
+# window moves by the same amount, so the start-point scan stays exact. An
+# inverted window narrower than twice this now counts as running.
+WINDOW_TOLERANCE = 1e-5
+
+
 def _window(extra: dict) -> tuple[float, float]:
     """The share of the schedule a conditioning entry runs in, as ComfyUI reads
     it (``comfy/samplers.calculate_start_end_timesteps``, the clip pair applied
     in its order; ``get_area_and_mult`` skips an entry only outside it, so both
-    ends count), held to 0 to 1, where ``percent_to_sigma`` saturates. A bound
-    that is not a finite number never skips the entry in ComfyUI (a NaN sigma
-    compares false), so such a window, and an unreadable one, is throughout."""
+    ends count), held to 0 to 1, where ``percent_to_sigma`` saturates, then
+    widened by ``WINDOW_TOLERANCE``. A bound that is not a finite number never
+    skips the entry in ComfyUI (a NaN sigma compares false), so such a window,
+    and an unreadable one, is throughout."""
     try:
         start = _percent(extra.get("start_percent", 0.0))
         end = _percent(extra.get("end_percent", 1.0))
         if "clip_start_percent" in extra:
             start = max(_percent(extra["clip_start_percent"]), start)
             end = min(_percent(extra["clip_end_percent"]), end)
-    except (KeyError, TypeError):
-        return 0.0, 1.0
+    except (KeyError, TypeError, OverflowError):
+        start, end = 0.0, 1.0
     if not (math.isfinite(start) and math.isfinite(end)):
-        return 0.0, 1.0
-    return min(max(start, 0.0), 1.0), min(max(end, 0.0), 1.0)
+        start, end = 0.0, 1.0
+    return (min(max(start, 0.0), 1.0) - WINDOW_TOLERANCE,
+            min(max(end, 0.0), 1.0) + WINDOW_TOLERANCE)
 
 
 def _pose_rows(pose: Any) -> int:

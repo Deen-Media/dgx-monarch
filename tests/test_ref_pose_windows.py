@@ -81,15 +81,18 @@ def _price(request: dict) -> None:
         "wan_scail", "/unused.safetensors", "scail.safetensors", request, VIDEO, True)
 
 
+@pytest.mark.parametrize("second", [(0.6, 1.0),
+                                    (0.501, 1.0)])   # a gap of the node's own 0.001 step
 @pytest.mark.parametrize("kind", ["ksampler", "sampler_custom"])
-def test_two_windows_that_never_meet_price_the_larger_entry(monkeypatch, tmp_path, kind):
-    request = _request(monkeypatch, tmp_path, kind, [_entry((0.0, 0.5)), _entry((0.6, 1.0))])
+def test_two_windows_that_never_meet_price_the_larger_entry(monkeypatch, tmp_path, kind, second):
+    request = _request(monkeypatch, tmp_path, kind, [_entry((0.0, 0.5)), _entry(second)])
     assert render_rows.ref_pose_shapes(request) == ([REFERENCE.shape], POSE.shape)
     _price(request)  # 6.875 GiB within the 7 GiB reading: admitted
 
 
 @pytest.mark.parametrize(("first", "second"), [((0.0, 0.6), (0.5, 1.0)),   # they overlap
                                                ((0.0, 0.5), (0.5, 1.0)),   # they meet at 0.5
+                                               ((0.0, 0.5), (0.500005, 1.0)),  # closer than a sigma
                                                (None, (0.6, 1.0))])        # one runs throughout
 @pytest.mark.parametrize("kind", ["ksampler", "sampler_custom"])
 def test_windows_that_share_a_step_price_their_sum(monkeypatch, tmp_path, kind, first, second):
@@ -114,7 +117,9 @@ def test_a_sampler_custom_and_a_ksampler_request_price_the_same(monkeypatch, tmp
 
 
 def test_an_inverted_window_never_runs_and_adds_nothing(monkeypatch, tmp_path):
-    """ComfyUI skips an entry whose start comes after its end at every step."""
+    """ComfyUI skips an entry whose start comes after its end at every step. This
+    one is inverted by far more than twice the window tolerance; a narrower one
+    counts as running, which only over-charges."""
     request = _request(monkeypatch, tmp_path, "ksampler", [_entry((0.7, 0.2)), _entry(None)])
     assert render_rows.ref_pose_shapes(request) == ([REFERENCE.shape], POSE.shape)
 
@@ -126,6 +131,7 @@ def test_an_inverted_window_never_runs_and_adds_nothing(monkeypatch, tmp_path):
     pytest.param({"start_percent": math.inf}, id="infinite start"),
     pytest.param({"start_percent": True}, id="a bool"),
     pytest.param({"start_percent": "0.5"}, id="a string"),
+    pytest.param({"start_percent": 10 ** 400}, id="an int too large for a float"),
 ])
 @pytest.mark.parametrize("kind", ["ksampler", "sampler_custom"])
 def test_a_window_bound_that_is_not_a_finite_number_runs_throughout(
@@ -165,10 +171,27 @@ def _rows(refs: list, poses: list) -> int:
     return mesh_safety.ref_pose_token_counts((1, 0, 0, 0, 0), refs)[0] + pose
 
 
+# Two bounds closer than this are one step to the sampler (its float32 sigmas
+# cannot tell them apart), so the oracle below reads every window as reaching
+# this far past each of its bounds.
+SIGMA_RESOLUTION = 1e-5
+
+
+def test_the_tolerance_is_the_one_the_oracle_reads():
+    assert render_rows.WINDOW_TOLERANCE == SIGMA_RESOLUTION
+
+
+def _bound(rng: random.Random) -> float:
+    """A window bound on the node's 0.01 grid, now and then nudged by less than
+    a few sigma resolutions, so near-touching windows are drawn too."""
+    nudge = rng.uniform(-3, 3) * SIGMA_RESOLUTION if rng.random() < 0.3 else 0.0
+    return min(max(round(rng.random(), 2) + nudge, 0.0), 1.0)
+
+
 def test_the_price_covers_every_set_that_can_share_a_step():
     """Random requests: the price is never below any entry's own call or any set
-    of entries whose windows share a point, and equals the largest such set a
-    scan of every window bound and the points between them finds."""
+    of entries that can share a step, and equals the largest such set a scan of
+    every window's reach and the points between finds."""
     rng = random.Random(197)  # noqa: S311 - a seeded test case generator, not a secret
     for _case in range(2000):
         entries, shaped = [], []
@@ -182,16 +205,18 @@ def test_the_price_covers_every_set_that_can_share_a_step():
                 extras["pose_video_latent"] = SimpleNamespace(shape=pose)
             window = None
             if rng.random() < 0.7:
-                start, end = sorted(round(rng.random(), 2) for _ in range(2))
+                start, end = sorted(_bound(rng) for _ in range(2))
                 window = (start, end)
                 extras["start_percent"], extras["end_percent"] = window
             entries.append([object(), extras])
-            shaped.append((window or (0.0, 1.0), refs, [pose] if pose is not None else []))
+            start, end = window or (0.0, 1.0)
+            reach = (start - SIGMA_RESOLUTION, end + SIGMA_RESOLUTION)
+            shaped.append((reach, refs, [pose] if pose is not None else []))
         refs, pose = render_rows.ref_pose_shapes({"positive": entries})
         price = sum(mesh_safety.ref_pose_token_counts((1, 0, 0, 0, 0), refs, pose))
-        for _window, own_refs, own_pose in shaped:
+        for _reach, own_refs, own_pose in shaped:
             assert price >= _rows(own_refs, own_pose)
-        bounds = sorted({0.0, 1.0, *(b for window, _r, _p in shaped for b in window)})
+        bounds = sorted({b for reach, _r, _p in shaped for b in reach})
         points = bounds + [(lo + hi) / 2 for lo, hi in itertools.pairwise(bounds)]
         scanned = 0
         for point in points:

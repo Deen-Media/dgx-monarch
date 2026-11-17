@@ -2026,8 +2026,9 @@ the entries that can run in one step: entries whose timestep windows
 (ConditioningSetTimestepRange) never overlap never share a model call, so the
 largest set whose windows share a point is priced, with its references summed
 and the largest pose of its entries (which can raise the price of a graph whose
-entries carry poses of different sizes), and entries with no window, or a
-window bound that is not a finite number, count throughout.
+entries carry poses of different sizes); windows closer than the sampler can
+tell apart are priced together, and entries with no window, or a window bound
+that is not a finite number, count throughout.
 
 **Fix:** shrink resolution, frame count or reference-image count until the
 token count is under that bound, or free memory (`sync && echo 3 | sudo tee
