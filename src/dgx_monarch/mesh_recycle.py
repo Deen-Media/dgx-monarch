@@ -173,7 +173,8 @@ def recycle_detailed_impl(
             try:
                 stop_attempted = True
                 mesh_teardown.enter_stop_boundary(handle, retrying_blocked)
-                handle.procs.stop("dgx-monarch recycle").get(timeout=60)
+                mesh_teardown.stop_with_reason(
+                    handle, "dgx-monarch recycle", mesh_teardown.proc_stop_bound_s())
                 stopped = True
             except TimeoutError as exc:
                 log.error("proc stop on recycle timed out: %r", exc)

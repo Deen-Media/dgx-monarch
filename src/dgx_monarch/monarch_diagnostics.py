@@ -28,8 +28,8 @@ _POLICY_STATE: dict[str, Any] = {}
 def configure_policy(policy: Any) -> dict[str, Any]:
     """Apply validated explicit policy before native provider initialization.
 
-    In 0.7 the endpoint enables upstream logs as well as metrics. Their content
-    is not the sanitized DGX diagnostic schema, so separate consent is required.
+    In 0.8 the endpoint enables upstream logs and spans as well as metrics. Their
+    content is not the sanitized DGX diagnostic schema, so separate consent is required.
     An already initialized provider cannot be redirected or flushed here.
     """
     global _POLICY_STATE
@@ -47,7 +47,7 @@ def configure_policy(policy: Any) -> dict[str, Any]:
     configure(metrics=validated.metrics)
     with _LOCK:
         _POLICY_STATE = {
-            "export_scope": "upstream_metrics_and_logs" if endpoint else "no_managed_otlp",
+            "export_scope": "upstream_metrics_logs_and_spans" if endpoint else "no_managed_otlp",
             "upstream_log_export_acknowledged": validated.otlp_logs,
         }
     return status()
@@ -59,6 +59,10 @@ def start_refusal(policy: Any) -> str | None:
     The driver asks before it admits anything, so a refused edit never stops
     the running exporter: a refusal through configure_policy would.
     """
+    from .monarch_policy import SIGNAL_OTLP_ENV
+
+    if any(os.environ.get(name) for name in SIGNAL_OTLP_ENV):
+        return "ambient_otlp_signal_endpoint"
     endpoint = policy.otlp_endpoint
     existing = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
     if not endpoint or existing == endpoint:
@@ -108,8 +112,8 @@ def configure_policy_logged(policy: Any, role: str) -> dict[str, Any]:
 
 class _MetricExporter:
     def __init__(self, meter: Any) -> None:
-        # The 0.7 Python wrapper does not implement gauges/observables or
-        # custom histogram boundaries. Never request unsupported instruments.
+        # The 0.7 Python wrapper had no gauges, observables or custom histogram
+        # boundaries; 0.8.0 adds gauges, which this exporter does not use yet.
         self._count = meter.create_counter("dgxm.phase.completed")
         self._duration = meter.create_histogram("dgxm.phase.duration.seconds")
         # Occupancy levels ride this thread; a meter without them keeps phases.

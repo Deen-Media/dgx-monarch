@@ -39,6 +39,7 @@ import torch
 
 import test_driver_unload as rig
 from dgx_monarch import mesh_safety, mesh_setup
+from dgx_monarch.mesh_stop import PROC_STOP_DEFAULT_S
 from dgx_monarch.nodes import (
     common,
     loader_preflight,
@@ -281,7 +282,7 @@ def test_a_configuration_change_drains_every_memo_and_ends_the_preset_credit(
     monkeypatch.setattr(monarch_launch, "prepare_driver", lambda _config: None)
     with pytest.raises(RuntimeError, match="replacement reached"):
         mesh_mod.get_mesh(mode="cluster")
-    assert events == [("shutdown", 30), "spawn"]
+    assert events == [("shutdown", 30, PROC_STOP_DEFAULT_S), "spawn"]
     assert _render_memos_drained()
     assert loader_preflight._CLEARED_UNETS == {}, "the loader node runs again and stamps its memo"
     assert "Charged: DiT weights 19.5 GiB (not yet loaded)" in _refused(h3, _h3_latent())

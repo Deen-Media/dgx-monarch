@@ -274,7 +274,7 @@ class MeshHandle:
         return mesh_rpc.cancel_sample(self, render_id, timeout_s, wait, log)
 
     def shutdown(
-        self, timeout_s: float = 60.0, *, _reconcile_token: object | None = None
+        self, timeout_s: float = 60.0, *, stop_timeout_s: float | None = None, _reconcile_token: object | None = None
     ) -> None:
         """Stop client-owned mesh processes while leaving Worker services available.
 
@@ -292,12 +292,12 @@ class MeshHandle:
             # procs; a second stop can only fail and must not re-block a
             # handle whose teardown succeeded.
             return
-        # Two phases of at most 60 s plus 30 s margin stay under mesh_safety.TOKEN_AUTHORITY_S.
-        phase = min(timeout_s, 60)
+        # The group teardown, the actor and proc stops and 30 s stay under TOKEN_AUTHORITY_S.
+        envelope = mesh_teardown.shutdown_envelope_s(timeout_s, stop_timeout_s)
         try:
             mesh_helpers.run_blocking_off_loop(
-                lambda: self._shutdown_impl(timeout_s, _reconcile_token=_reconcile_token),
-                2 * phase + 30, "dgxm-shutdown")
+                lambda: self._shutdown_impl(timeout_s, stop_timeout_s=stop_timeout_s, _reconcile_token=_reconcile_token),
+                envelope, "dgxm-shutdown")
         except TimeoutError as exc:
             raise mesh_safety.PriorTeardownUnknownError(
                 "worker ProcMesh stop did not complete within the caller deadline; "
@@ -305,10 +305,10 @@ class MeshHandle:
                 "replacement is unsafe until that thread finishes"
             ) from exc
 
-    def _shutdown_impl(self, timeout_s: float = 60.0, *,
+    def _shutdown_impl(self, timeout_s: float = 60.0, *, stop_timeout_s: float | None = None,
                        _reconcile_token: object | None = None,
                        lock_timeout_s: float = 10.0) -> None:
-        phase = min(timeout_s, 60)
+        phase, stop_phase = mesh_teardown.shutdown_phases(timeout_s, stop_timeout_s)
         with mesh_setup.lifecycle_lock(self, "shutdown", lock_timeout_s):
             if getattr(self, "teardown_complete", False):
                 return
@@ -353,7 +353,7 @@ class MeshHandle:
                 try:
                     stop_attempted = True
                     mesh_teardown.enter_stop_boundary(self, retrying_blocked)
-                    self.procs.stop("dgx-monarch client detach").get(timeout=phase)
+                    mesh_teardown.stop_with_reason(self, "dgx-monarch client detach", stop_phase)
                 except TimeoutError as exc:
                     log.error("proc stop on detach timed out: %r", exc)
                     mesh_teardown.publish_stop_failure(
@@ -522,7 +522,7 @@ def get_mesh(
             if old is not None:
                 log.info("mesh source/config changed; recycling the previous fleet")
                 try:
-                    old.shutdown(timeout_s=30)  # never under _MESH_LOCK
+                    old.shutdown(timeout_s=30, stop_timeout_s=mesh_teardown.proc_stop_bound_s())  # never under _MESH_LOCK
                 except Exception as exc:
                     restore_driver(previous_admission)  # old stays registered and reusable on a revert
                     raise MeshAttachError(

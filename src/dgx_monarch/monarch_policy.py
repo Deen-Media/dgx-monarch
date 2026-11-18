@@ -1,6 +1,6 @@
 """Validated process policy for the pinned Monarch runtime.
 
-Environment variables have highest precedence in Monarch 0.7. Install the
+Environment variables have highest precedence in Monarch 0.7 and 0.8. Install the
 resolved policy before importing the runtime, then verify its native readback.
 Diagnostic export settings are deliberately outside the transport identity.
 """
@@ -25,6 +25,15 @@ _DEVICE = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
 POLICY_ENV = "DGXM_MONARCH_POLICY"
 # Every ambient-environment refusal in apply_policy names the same remedy entry.
 AMBIENT_TROUBLESHOOTING = "docs/TROUBLESHOOTING.md #119"
+# The pinned Monarch starts each signal's export from its own variable even
+# with the base OTEL_EXPORTER_OTLP_ENDPOINT empty, where Monarch 0.7.0
+# exported only with the base set. The policy manages the base variable alone, so every
+# role refuses these and actors start without them.
+SIGNAL_OTLP_ENV = ("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+                   "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+# What an endpoint sends, for every consent text; Monarch has no switch for spans alone.
+OTLP_DISCLOSURE = ("upstream logs and spans; every post carries the user and host names, and "
+                   "the logs carry process command lines")
 _LOCK = threading.RLock()
 _ACTIVE: dict[str, Any] | None = None
 # Fixed release defaults outside the supported tuning surface. Include them
@@ -139,7 +148,7 @@ def parse_policy(raw: object, *, host_names: tuple[str, ...] | None = None) -> M
               "qp_init_timeout_s": (1, 300)}
     numbers = {key: _integer(rdma.get(key, getattr(defaults, key)), low, high,
                             f"monarch.rdma.{key}") for key, (low, high) in limits.items()}
-    # 0.7 pairs NICs one-to-one; one device cannot appear in two pairs.
+    # 0.7 and 0.8 pair NICs one-to-one; one device cannot appear in two pairs.
     if math.prod(numbers[key] for key in ("max_nics_per_buffer", "qps_per_peer", "application_chunks")) > 32:
         raise ClusterConfigError("Monarch RDMA NICs * QPs * application chunks must not exceed 32")
     fallback = rdma.get("allow_tcp_fallback", False)
@@ -161,7 +170,8 @@ def parse_policy(raw: object, *, host_names: tuple[str, ...] | None = None) -> M
     if type(logs) is not bool:
         raise ClusterConfigError("monarch.diagnostics.otlp_logs must be a boolean")
     if endpoint and not logs:
-        raise ClusterConfigError("Monarch 0.7 OTLP also exports upstream logs; set monarch.diagnostics.otlp_logs=true explicitly")
+        raise ClusterConfigError(f"Monarch OTLP also exports {OTLP_DISCLOSURE}; set "
+                                 "monarch.diagnostics.otlp_logs=true explicitly")
     if endpoint:
         try:
             url = urlsplit(endpoint)
@@ -240,7 +250,7 @@ def policy_environment(policy: MonarchPolicy, host: str = "") -> dict[str, str]:
     result.update({POLICY_ENV: encode_policy(policy, host), "DGXM_RDMA_QP_SPLIT": str(chunks)})
     if policy.diagnostics.otlp_endpoint:
         if not policy.diagnostics.otlp_logs:
-            raise ClusterConfigError("OTLP export also sends upstream logs; set otlp_logs=true explicitly")
+            raise ClusterConfigError(f"OTLP export also sends {OTLP_DISCLOSURE}; set otlp_logs=true explicitly")
         result["OTEL_EXPORTER_OTLP_ENDPOINT"] = policy.diagnostics.otlp_endpoint
     return result
 
@@ -262,6 +272,13 @@ def apply_policy(policy: MonarchPolicy, host: str = "", *, role: str = "driver",
     with _LOCK:
         if _ACTIVE is not None and _ACTIVE["transport_sha256"] != identity:
             raise RuntimeError("Monarch transport policy changed; restart this process before attaching")
+        signal = sorted(key for key in SIGNAL_OTLP_ENV if os.environ.get(key))
+        if signal:
+            raise ClusterConfigError(
+                f"ambient per-signal OTLP endpoint ({', '.join(signal)}) would export Monarch "
+                "telemetry outside the validated policy; unset it in the environment that starts "
+                "this process: [monarch.diagnostics] otlp_endpoint names the only destination "
+                f"({AMBIENT_TROUBLESHOOTING})")
         if (os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
                 and not policy.diagnostics.otlp_endpoint):
             raise ClusterConfigError(

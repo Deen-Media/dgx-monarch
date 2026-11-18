@@ -7,6 +7,7 @@ reconciliation.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import math
 import os
@@ -164,6 +165,29 @@ def bootstrap_proc() -> None:
     actor_lifetime.install()
 
 
+@contextlib.contextmanager
+def kept_root_log_level():
+    """Put the root Python logger's level back after a Monarch client-creating call.
+
+    The pinned Monarch sets the root logger to INFO when it creates this
+    process's client (monarch/_src/actor/logging.py, initialize_local_log_level);
+    Monarch 0.7.0 left it alone. Inside ComfyUI that changed the host's verbosity at the
+    first ``this_host()`` or ``attach_to_workers()``, the two calls in the pack
+    that can be the first to create the client; the prime's ``context()`` only
+    ever runs after one of them (tests/test_spawn_contract.py). The level goes
+    back only when it reads INFO, so a level another thread set meanwhile stays.
+    """
+    import logging
+
+    root = logging.getLogger()
+    level = root.level
+    try:
+        yield
+    finally:
+        if root.level == logging.INFO and level != logging.INFO:
+            root.setLevel(level)
+
+
 def attach_once(addresses: list[str]):
     """Attach the worker loops, timing each half of the handshake."""
     from monarch.actor import attach_to_workers
@@ -174,7 +198,8 @@ def attach_once(addresses: list[str]):
     log = get_logger(__name__)
     from .runtime_diagnostics import phase
 
-    with phase("attach"), attach_trace.half(log, "attach_to_workers", hosts=len(addresses)):
+    with (phase("attach"), attach_trace.half(log, "attach_to_workers", hosts=len(addresses)),
+          kept_root_log_level()):
         hosts = attach_to_workers(
             ca="trust_all_connections", workers=addresses, name="dgxm")
     with phase("readiness"), attach_trace.half(log, "initialized_get", bound_s=ATTACH_INIT_WAIT_S):

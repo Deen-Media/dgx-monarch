@@ -9,6 +9,12 @@ from . import mesh_safety
 from .error_utils import failure_summary, safe_note
 from .log import get_logger
 from .mesh_runtime import mesh_creation_timeout_s
+from .mesh_stop import ACTOR_STOP_S as ACTOR_STOP_S  # re-exported for the teardown callers
+from .mesh_stop import PROC_STOP_DEFAULT_S as PROC_STOP_DEFAULT_S
+from .mesh_stop import RECONCILE_GROUP_S, proc_stop_bound_s, stop_with_reason
+from .mesh_stop import reconcile_join_s as reconcile_join_s
+from .mesh_stop import shutdown_envelope_s as shutdown_envelope_s
+from .mesh_stop import shutdown_phases as shutdown_phases
 
 log = get_logger("dgx_monarch.mesh")
 
@@ -278,8 +284,7 @@ def stop_failed_setup_procs(handle: Any, run_off_loop: Any) -> BaseException | N
             mesh_safety.begin_deliberate_teardown(id(handle))
             attempted = True
             enter_stop_boundary(handle, retrying)
-            handle.procs.stop(
-                "dgx-monarch failed setup rollback").get(timeout=60)
+            stop_with_reason(handle, "dgx-monarch failed setup rollback", proc_stop_bound_s())
             confirmed = True
         except BaseException as exc:
             stop_error = exc
@@ -302,7 +307,7 @@ def stop_failed_setup_procs(handle: Any, run_off_loop: Any) -> BaseException | N
         return stop_error
 
     try:
-        return run_off_loop(stop_once, 90, "dgxm-setup-rollback")
+        return run_off_loop(stop_once, proc_stop_bound_s() + ACTOR_STOP_S + 30, "dgxm-setup-rollback")
     except TimeoutError as exc:
         # The scratch owner still publishes the eventual outcome.
         return exc
@@ -357,7 +362,8 @@ def latch_reconcile_launch_failure(handle: Any, detail: str) -> None:
 def reconcile_stop(handle: Any, exc: BaseException, token: object) -> None:
     """Best-effort bounded stop outside the failing caller."""
     try:
-        handle.shutdown(timeout_s=30, _reconcile_token=token)
+        handle.shutdown(timeout_s=RECONCILE_GROUP_S, stop_timeout_s=proc_stop_bound_s(),
+                        _reconcile_token=token)
     except mesh_safety.PriorTeardownUnknownError as shut_exc:
         # Fault evidence does not prove that an outcome-less stop failed.
         safe_note(exc, "supervision cleanup found a prior stop with no known outcome", shut_exc)
