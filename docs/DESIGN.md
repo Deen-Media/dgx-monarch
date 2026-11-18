@@ -4400,6 +4400,7 @@ dgx-monarch/
 │   │                          #   wait that ends on one (stdlib leaf)
 │   ├── restart_reattach.py    # the render's re-attach after every Worker loop
 │   │                          #   restarted: id check, teardown, refusals
+│   ├── restart_pinned.py      # a Pipeline's or Gate's restart: retire, refuse
 │   ├── mesh_capacity_consent.py # capacity-rescue consent constants + grant check
 │   ├── mesh_creation.py       # creation publication, claims, and recovery
 │   ├── mesh_lease.py          # setup-generation and raw-RDMA-read leases

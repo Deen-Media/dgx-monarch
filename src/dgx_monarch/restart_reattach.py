@@ -58,7 +58,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
-from . import attach_trace, box_names, delivery_faults, worker_proc_id
+from . import attach_trace, box_names, delivery_faults, driver_exit, worker_proc_id
 from .delivery_faults import WorkerDeliveryError
 from .log import get_logger
 from .refusal import RefusalClass, refusal
@@ -355,15 +355,19 @@ def _retire(handle: Any, moves: Moves, refused: BaseException) -> str:
     if not completed:
         if deliberate or deferred:
             _refuse_retire(handle, moves, refused)
+        _stand_down_at_exit(refused)
         try:
             handle.shutdown(timeout_s=STOP_BOUND_S, _reconcile_token=token)
         except PriorTeardownUnknownError as exc:
+            _stand_down_at_exit(refused)
             _refuse_retire(handle, moves, exc)
         except Exception as exc:
+            _stand_down_at_exit(refused)
             # Expected: nothing at the old ids acknowledges the stop. The latch
             # it leaves names the after-death cause, which the proof below reads.
             log.info("restart_reattach: the stale mesh's stop did not confirm (%s); "
                      "checking that its processes are gone", type(exc).__name__)
+    _stand_down_at_exit(refused)  # no liveness probe over ssh, no attach
     if getattr(handle, "teardown_complete", False):
         return "stop_confirmed"
     if mesh_liveness.try_release(handle):
@@ -371,12 +375,21 @@ def _retire(handle: Any, moves: Moves, refused: BaseException) -> str:
     _refuse_retire(handle, moves, refused)
 
 
+def _stand_down_at_exit(refused: BaseException) -> None:
+    """Once the driver is exiting, end the detour: Monarch's exit step stops every mesh."""
+    if driver_exit.exiting():
+        _refuse("the driver is exiting, so this render stops here: Monarch's exit step "
+                "stops the Worker actors, and nothing was loaded.", refused)
+
+
 def _record(outcome: str, moves: Moves, started: float, *, seq: int = 0,
             teardown: str = "none", reason: str = "") -> float:
-    """The trace line, the operator's log line and the telemetry event."""
+    """The trace line, the operator's log line and the telemetry event; none at exit."""
     from .telemetry import emit
 
     wall = time.monotonic() - started
+    if driver_exit.exiting():
+        return wall
     log.info("%s", attach_trace.line(
         EVENT, seq=seq, outcome=outcome, verdict=moves.verdict, moved=list(moves.moved),
         kept=list(moves.kept), unknown=len(moves.unknown), teardown=teardown,
@@ -397,6 +410,7 @@ def _record(outcome: str, moves: Moves, started: float, *, seq: int = 0,
     return wall
 
 
+@driver_exit.quiet_at_exit()
 def heal(handle: Any, refused: BaseException, *,
          respawn: Callable[[Any], Any] | None = None) -> Reattached:
     """Retire a fleet whose every Worker loop restarted and attach a new one, or refuse.
@@ -405,6 +419,8 @@ def heal(handle: Any, refused: BaseException, *,
     the new mesh for the caller's one retry, or raises a refusal that names what
     the check found. ``respawn`` attaches the new mesh (``mesh.ensure_live`` by
     default; the loader prices first). An attach failure propagates as raised.
+    Once the driver is exiting, its thread logs nothing (driver_exit) and the
+    detour stands down at the next step, with no probe and no attach.
     """
     from .mesh import ensure_live
 
@@ -421,6 +437,7 @@ def heal(handle: Any, refused: BaseException, *,
     except WorkerDeliveryError:
         _record("refused", moves, started, reason="not_retired")
         raise
+    _stand_down_at_exit(refused)
     try:
         fresh = (respawn or ensure_live)(handle)
     except BaseException as exc:
@@ -432,69 +449,4 @@ def heal(handle: Any, refused: BaseException, *,
     return Reattached(fresh, wall, moves.moved, teardown)
 
 
-_RETIRED = {"stop_confirmed": "its stop was confirmed",
-            "liveness_release": "the liveness check found its processes gone"}
-
-
-def _held(handle: Any) -> str:
-    """What makes a pinned session leave this fleet as before, or "" for nothing."""
-    from contextlib import nullcontext
-
-    from . import mesh_safety, mesh_setup
-
-    if mesh_safety.token_present(id(handle)):
-        return "teardown_in_progress"  # read first: that stop can hold the lock
-    lock = getattr(handle, "lock", None)
-    with lock if lock is not None else nullcontext():
-        try:
-            mesh_setup.require_no_sample_leases(
-                handle, "retire the stale mesh", allow_abandoned=True)
-        except mesh_setup.SampleResultBusyError:
-            return "leases_held"  # an earlier render's result is still in flight
-        if (getattr(handle, "replacement_blocked", None)
-                and not getattr(handle, "_replacement_retryable", False)):
-            return "prior_stop_unknown"
-    return ""
-
-
-def refuse_pinned(handle: Any, refused: WorkerDeliveryError) -> NoReturn:
-    """Refuse a pinned session's restart, retiring the stale fleet first when safe.
-
-    ``refused`` carries the restart check's reading, or is a delivery failure read here
-    with ``PRECHECK_PROBE_S``. A full restart with nothing in ``_held`` is retired by
-    ``_retire``; otherwise the fleet is left as before (the check's error is evicted).
-    """
-    started = time.monotonic()
-    moves = getattr(refused, "moves", None)
-    checked = isinstance(moves, Moves)
-    if handle is None:
-        raise refused
-    if not isinstance(moves, Moves):
-        moves = read_moves(getattr(handle, "config", None), timeout=PRECHECK_PROBE_S)
-    held = _held(handle) if moves.verdict == ALL else moves.verdict
-    if held:
-        from . import mesh_helpers, mesh_teardown
-
-        _record("refused", moves, started, reason=f"pinned_{held}")
-        if checked:
-            mesh_helpers.mark_defunct_preserving_primary(handle, refused)
-        if held == "teardown_in_progress" and mesh_teardown.cleanup_running(handle):
-            _refuse(f"every Worker loop serves a new proc id (on {_labels(handle, moves.moved)}), and "
-                    "this render cannot attach again inside its run: "
-                    f"{mesh_teardown.cleanup_running_sentence()}.", refused)
-        raise refused
-    try:
-        teardown = _retire(handle, moves, refused)
-    except WorkerDeliveryError:
-        _record("refused", moves, started, reason="pinned_not_retired")
-        raise
-    _record("retired", moves, started, teardown=teardown, reason="pinned_session")
-    _refuse(
-        f"every Worker loop serves a new proc id (on {_labels(handle, moves.moved)}): "
-        "the loops restarted under this attached mesh (`dgxm restart`, a crash that "
-        "systemd restarted, or a reboot) and its actors are gone. This render runs in a "
-        "session pinned to that mesh (a pipelined render, an identity-gate leg or the "
-        "Identity Gate node), so it cannot attach again inside its run; this driver "
-        f"retired the stale mesh instead ({_RETIRED.get(teardown, teardown)}). Nothing "
-        "was loaded. The Worker loops restarted; queue again: the next render attaches "
-        "a fresh mesh by the new ids.", refused)
+from .restart_pinned import refuse_pinned as refuse_pinned  # noqa: E402  # re-exported for render_submit

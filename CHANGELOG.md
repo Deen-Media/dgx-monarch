@@ -436,6 +436,11 @@ sections after them list every change.
   still stopping that fleet the refusal says so and to try again when it
   ends; the gate's quarantine on an aborted run is unchanged. Checked on CPU;
   the pair checks have not run.
+- A normal ComfyUI exit while a render attaches again after a Worker restart,
+  or while a Pipeline or Gate render retires the stale mesh, ends that detour
+  quietly: after the exit's notice the render's own stop of the stale mesh
+  logs nothing, and the render probes no host and attaches nothing
+  ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 - A graph with no LoRA stack whose model takes no slab residency no longer
   pays two proof renders before its first render. The first-use gate could
   only record that there was nothing to compare there, and that verdict

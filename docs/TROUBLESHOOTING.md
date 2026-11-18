@@ -203,6 +203,17 @@ the loops were down. Next to `outcome=attached` they are expected, and no
 lost-Worker warning follows them: that warning comes only from a render's
 call that fails ([#4](#4-supervisionerror--process-exited-with-non-zero-code)).
 
+A ComfyUI that exits normally (Ctrl+C, or the server closing) while a render
+is attaching again, or a Pipeline or Gate render is retiring the stale mesh,
+ends that detour quietly: once the exit's notice is logged
+([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)), the
+render's own stop of the stale mesh logs nothing, and the render probes no host
+and attaches nothing. It ends with "the driver is exiting, so this render
+stops here", which ComfyUI may log as the interrupted render's own error. On
+loopback on 2026-11-18, exits 0.5 to 8.0 s into the detour, by a normal return
+or by Ctrl+C, logged nothing after the notice, and every process exited with
+code 0.
+
 The render refuses at once instead, with a class C `cross_rank_capacity`
 refusal that names the remedy, when the reading finds:
 
@@ -2527,7 +2538,10 @@ with one INFO line: "The driver is exiting: Monarch's exit step stops the
 Worker actors, and the driver reports no Worker faults from here on". A call
 still in flight then fails without a fault report: the driver neither evicts
 the fleet nor stops it a second time, and a cleanup that was already stopping a
-dead fleet when the exit began logs none of its own lines. A render's call that
+dead fleet when the exit began logs none of its own lines. So does a render
+that was attaching again after a Worker restart
+([#2](#2-every-attach-times-out-after-one-failed-attach)): it stops at once,
+probes no host and attaches nothing. A render's call that
 the exit stops can read like a lost contact; the driver then words no lost
 Worker and logs no lost-Worker warning, since none was lost. In CPU tests over
 loopback on 2026-11-17 and 2026-11-18, with or without a call in flight, the

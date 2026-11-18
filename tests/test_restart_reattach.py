@@ -665,6 +665,77 @@ def test_a_heal_whose_stop_is_confirmed_after_an_earlier_release_keeps_its_retry
     assert failed == [retried] and driver.dials[-1] == retried
 
 
+class _ClientStoppedProcs:
+    """Procs whose stop fails as Monarch's exit step leaves it; ``exit_first``
+    sets the driver's exit flag as the stop runs, as the exit hook does then."""
+
+    def __init__(self, exit_first: bool) -> None:
+        self.exit_first, self.stops = exit_first, []
+
+    def stop(self, _reason):
+        from dgx_monarch import driver_exit
+
+        def get(timeout):
+            self.stops.append(timeout)
+            if self.exit_first:
+                driver_exit._EXITING.set()
+            raise ValueError("error stopping mesh: client.local<C1>@tcp://10.0.0.9:1: owner "
+                             "terminated: stopped: client stopped")
+
+        return SimpleNamespace(get=get)
+
+
+@pytest.mark.parametrize("path", ["heal", "pinned"])
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_an_exit_inside_the_retires_stop_leaves_the_renders_thread_quiet(
+        driver, monkeypatch, path, exiting):
+    """The driver begins to exit while a render's heal, or a pinned render's
+    retire, is inside its own stop, and Monarch's exit step ends that stop with
+    "client stopped". From then on the render's thread logs no WARNING or
+    ERROR, probes no host, attaches nothing and sends no telemetry: it raises
+    the exit refusal. Not exiting, the same failed stop logs as it always did,
+    and the detour refuses as one whose stop has no known outcome."""
+    import logging
+
+    from dgx_monarch import driver_exit
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())  # a fresh flag, undone after
+    for logger in (mesh_mod.log, restart_reattach.log):  # the real methods, through the filters
+        for level in ("info", "warning"):
+            monkeypatch.delattr(logger, level, raising=False)
+    kept: list[logging.LogRecord] = []
+    keep = logging.Handler()
+    keep.emit = kept.append  # type: ignore[method-assign]
+    loggers = [logging.getLogger(name) for name in driver_exit.QUIET_LOGGERS]
+    probes: list[int] = []
+    real_probe = mesh_liveness.probe_fleet
+    monkeypatch.setattr(mesh_liveness, "probe_fleet",
+                        lambda handle, **kw: probes.append(1) or real_probe(handle, **kw))
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    handle.procs = _ClientStoppedProcs(exit_first=exiting)
+    refused = _restarted(driver)
+    run = restart_reattach.heal if path == "heal" else restart_reattach.refuse_pinned
+    for logger in loggers:
+        logger.addHandler(keep)
+    try:
+        with pytest.raises(WorkerDeliveryError) as raised:
+            run(handle, refused)
+    finally:
+        for logger in loggers:
+            logger.removeHandler(keep)
+    mine = [record for record in kept if record.thread == threading.get_ident()]
+    loud = [record.getMessage() for record in mine if record.levelno >= logging.WARNING]
+    assert len(driver.dials) == 1 and driver_exit._QUIET_THREADS == set()  # the mark ends with it
+    if exiting:
+        assert "the driver is exiting" in str(raised.value) and loud == [], loud
+        assert probes == [] and driver.events == []
+    else:
+        assert "could not retire the stale mesh" in str(raised.value)
+        assert any("proc stop on detach failed" in text for text in loud), loud
+        assert any("restart_reattach outcome=refused" in text for text in loud), loud
+        assert driver.events
+
+
 def test_a_real_handle_evicted_with_its_stop_done_heals_without_a_second_stop(driver):
     """Another path (the panel's status poll, a second render) evicted the
     fleet through the supervision publication and its stop finished. The heal

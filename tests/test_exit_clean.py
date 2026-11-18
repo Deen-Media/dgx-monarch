@@ -70,7 +70,7 @@ def _run(tmp_path: Path, mode: str,
                              stderr=subprocess.PIPE, text=True, env=environment,
                              start_new_session=True)
     try:
-        if mode in ("sigint", "hold"):
+        if mode in ("sigint", "hold", "heal_sigint"):
             while not ready.exists() and child.poll() is None and time.monotonic() < started + 120:
                 time.sleep(0.1)
             if ready.exists():
@@ -123,6 +123,30 @@ def test_a_normal_exit_is_clean_with_or_without_a_call_in_flight(tmp_path, mode)
         # Monarch starts each local actor process in its own group: Ctrl+C reaches the driver only.
         assert first["group"] not in first["actor_groups"], detail
     _actors_gone(first["actors"], exited)
+
+
+@pytest.mark.parametrize("mode", ["heal", "heal_sigint"])
+def test_an_exit_inside_a_heals_own_stop_is_quiet(tmp_path, mode):
+    """ComfyUI exits while a render's restart heal is stopping a fleet whose
+    Worker processes are gone, on the render's own thread. Monarch's exit step
+    ends that stop ("client stopped"); the render's thread then logs nothing,
+    probes no host and attaches nothing, so the exit shows the one notice and
+    no WARNING or ERROR. Before, that thread logged the failed stop, the
+    liveness proof and the refused or retired outcome after the notice."""
+    pytest.importorskip("monarch.actor")
+    proc, records, _exited = _run(tmp_path, mode)
+    detail = f"stdout: {proc.stdout[-2000:]}\nstderr: {proc.stderr[-3000:]}"
+    assert proc.returncode == 0, detail
+    assert "panicked" not in proc.stderr, detail
+    assert "proc stop on detach" not in proc.stderr, detail
+    assert "restart_reattach outcome=" not in proc.stderr, detail
+    assert "liveness fold" not in proc.stderr, detail
+    assert _error_lines(proc.stderr) == [], detail
+    assert [line for line in proc.stderr.splitlines() if " WARNING " in line] == [], detail
+    assert proc.stderr.count(NOTICE) == 1, detail
+    assert records[-1]["calls"] == 1 and records[-1].get("held") is None, detail  # the heal never finished
+    if mode == "heal_sigint":
+        assert records[-1].get("interrupted") is True, detail
 
 
 def test_a_worker_killed_while_the_driver_is_not_exiting_is_evicted_and_stopped(tmp_path):
