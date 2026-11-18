@@ -26,8 +26,9 @@ Three more facts come from the header, none needing the model:
   the upstream gate refuses a file of it whose quantization metadata cannot be
   read, before any load, as stock ComfyUI cannot load that file either.
 
-Its own imports are standard library only, as ``upstream_gate.py``'s are; importing
-it still loads the ``dgx_monarch.adapters`` package, whose registry imports torch.
+Its own imports are standard library only, as ``upstream_gate.py``'s are apart from
+the stdlib-only ``stock_prefix_drift``; importing it still loads the
+``dgx_monarch.adapters`` package, whose registry imports torch.
 """
 from __future__ import annotations
 

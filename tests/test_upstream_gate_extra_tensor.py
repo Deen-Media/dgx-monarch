@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import struct
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ import pytest
 from comfy_managed_helpers import _isolated_process_state  # noqa: F401  # autouse fixture import.
 from dgx_monarch import upstream_gate
 from dgx_monarch.adapters import detect, gate_keys
+from stock_prefix_checkouts import MASTER, RELEASE, loaded, package, write_checkout
 from test_dropped_scale_gate import _comfy_checkout
 from test_dropped_scale_gate import real_comfy as real_comfy  # the real-ComfyUI fixture
 from test_minimax_h3_image_comfy_detection import _FAMILY_SINCE, _comfy_version
@@ -192,6 +194,65 @@ def test_one_h3_key_alone_draws_no_image_refusal(models, missing):
     _assert_on_both_paths(models, _write(models, "one-key.safetensors", names, None), None)
 
 
+def test_the_family_keys_follow_the_prefix_rule_they_are_handed(models, monkeypatch, tmp_path_factory):
+    """``gate_keys`` reads ComfyUI's keys under the rule the gate hands it, not this
+    process's, on both of its paths (a quantization table that parses, and one that
+    does not). So an L2P file under net. beside SenseNova's two top-level keys, with
+    the extra tensor that moves the detector's reading, refuses #91 for a checkout
+    with master's rule, which strips net., and passes for one with the release rule,
+    which keeps the file whole, whichever rule this process runs."""
+    names = {**{f"net.{key}": "BF16" for key in L2P}, **dict.fromkeys(upstream_gate._SENSENOVA_KEYS, "BF16")}
+    whole, stripped = frozenset(names), frozenset(L2P)
+    files = {**{f"net.{key}": shape for key, shape in L2P.items()},
+             **{key: [1] for key in upstream_gate._SENSENOVA_KEYS}, "aux.dec_net.x.weight": [1]}
+    name = _write(models, "mixed.safetensors", files)
+    root = tmp_path_factory.mktemp
+    release, master = write_checkout(root("release"), RELEASE), write_checkout(root("master"), MASTER)
+    for running in (release, master):
+        monkeypatch.setitem(sys.modules, "comfy", package(running))
+        monkeypatch.setitem(sys.modules, "comfy.model_detection", loaded(running))
+        for metadata in ({}, {"_quantization_metadata": "{not json"}):
+            assert gate_keys.comfy_detection_keys(names, metadata, True) == whole
+            assert gate_keys.comfy_detection_keys(names, metadata, False) == stripped
+        assert upstream_gate.refusal_for(str(models / name), comfy_dir=release) is None
+        assert upstream_gate.refusal_for(str(models / name), comfy_dir=master)[1] == L2P_NUMBER
+
+
+UNKNOWN_RULE_STATES = ("a_loaded_rule_whose_two_probes_disagree", "no_comfy_to_import",
+                       "a_named_checkout_that_cannot_be_read")
+
+
+@pytest.mark.parametrize("state", UNKNOWN_RULE_STATES)
+def test_a_rule_that_cannot_be_told_refuses_what_only_masters_rule_refuses(
+        models, monkeypatch, tmp_path_factory, state):
+    """The family file above refuses #91 under master's rule alone, so where the rule
+    cannot be told the gate refuses it too, not only the files the release rule
+    refuses: for a loaded rule keyed on another pair of the file's keys, which gives
+    its two probes different answers, with no ComfyUI to import, and for a named
+    checkout whose source cannot be read."""
+    first, _second = upstream_gate._SENSENOVA_KEYS
+    files = {**{f"net.{key}": shape for key, shape in L2P.items()},
+             **{key: [1] for key in upstream_gate._SENSENOVA_KEYS}, "aux.dec_net.x.weight": [1]}
+    name = _write(models, "mixed.safetensors", files)
+    base = tmp_path_factory.mktemp("checkouts")
+    comfy_dir = None
+    monkeypatch.delitem(sys.modules, "comfy.model_detection", raising=False)
+    if state == "a_loaded_rule_whose_two_probes_disagree":
+        other_pair = MASTER.replace("    return", f"    if {first!r} in state_dict and "
+                                    "'fm_modules.fm_head.conv1.weight' in state_dict:\n        return ''\n    return", 1)
+        running = write_checkout(base / "running", other_pair)
+        monkeypatch.setitem(sys.modules, "comfy", package(running))
+        monkeypatch.setitem(sys.modules, "comfy.model_detection", loaded(running))
+    elif state == "no_comfy_to_import":
+        monkeypatch.delitem(sys.modules, "comfy", raising=False)
+        monkeypatch.setattr(sys, "path", [entry for entry in sys.path if not (Path(entry) / "comfy").is_dir()])
+    else:
+        comfy_dir = write_checkout(base / "unreadable", "def (\n")
+    assert upstream_gate.keeps_sensenova_whole(comfy_dir) is None
+    found = upstream_gate.refusal_for(str(models / name), comfy_dir=comfy_dir)
+    assert found is not None and found[1] == L2P_NUMBER, found
+
+
 # Real ComfyUI, CPU only. Keep these last in the file (the conftest comfy guard).
 def _comfy_builds(comfy, names: dict[str, list[int]], metadata) -> str | None:
     """ComfyUI's ``image_model`` for these names, through its own prefix strip, or None."""
@@ -272,3 +333,26 @@ def test_comfy_tests_the_exact_keys_the_gate_anchors_on(real_comfy):
         pytest.skip("this ComfyUI predates MiniMax-H3-Image (ComfyUI 0.45.0 added it)")
     renamed = {**H3_IMAGE, "aux.audio_patch_proj.weight": [1]}
     assert _comfy_builds(real_comfy, renamed, CONFIG) == "minimax_h3_image"
+
+
+def test_a_family_file_beside_two_top_level_backbones_follows_comfys_prefix_rule(real_comfy, tmp_path):
+    """SenseNova's two top-level keys beside a family file stored under a prefix, plus
+    the extra tensor that moves the detector's reading. A ComfyUI that strips the
+    prefix, as master does, builds the refused model, and the gate refuses it; one
+    that keeps the file whole, as the newest release does, builds no refused model
+    (the release builds SenseNova from the two keys)."""
+    first, second = upstream_gate._SENSENOVA_KEYS
+    backbones = {first: [1024, 3, 16, 16], second: [4096, 8]}  # the widths ComfyUI's detection reads
+    refused = []
+    for base, extra in (("l2p", "aux.dec_net.x.weight"), ("h3-image-no-grid", "aux.audio_patch_proj.weight")):
+        names, metadata, number = BASES[base]
+        for prefix in ("net.", "model.diffusion_model."):
+            files = {**{prefix + key: shape for key, shape in names.items()}, **backbones, extra: [1]}
+            name = _write(tmp_path, f"{base}-{prefix}safetensors", files, metadata)
+            built = _comfy_builds(real_comfy, files, metadata)
+            if built in ("latent-zimage", "minimax_h3_image"):
+                found = upstream_gate.refusal_for(str(tmp_path / name))
+                assert found is not None and found[1] == number, (base, prefix, built)
+                refused.append(name)
+    whole = upstream_gate.keeps_sensenova_whole()
+    assert whole is not None and bool(refused) is not whole, (whole, refused)

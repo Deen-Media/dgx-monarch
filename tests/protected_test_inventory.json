@@ -1048,15 +1048,25 @@
     },
     "tests/test_dropped_scale_gate.py": {
       "test_a_file_comfy_reads_whole_passes": "9e84d408dc03b9da",
+      "test_a_process_that_has_not_loaded_detection_reads_what_it_would_import": "1f53a7f605a8cdf1",
+      "test_a_process_that_loaded_detection_asks_its_own_function": "2f9b5c868368bea9",
+      "test_a_rule_that_cannot_be_told_reads_a_file_twice_only_if_it_holds_both_keys": "f1dc98ddb800604d",
       "test_a_scale_comfy_would_drop_refuses_and_names_its_layers": "75ad155a4e3a0cd6",
       "test_an_unreadable_or_foreign_path_answers_none": "12a0ee2a0dd0db8f",
       "test_both_funnels_pass_a_file_comfy_reads_whole": "a97eb477fa2b374c",
+      "test_both_funnels_read_the_rule_of_the_comfy_they_imported": "a5aa10f7c88bc81b",
       "test_both_funnels_refuse_the_same_class_p_text_before_anything_loads": "7a28d67921b66274",
       "test_comfy_drops_a_packed_scale_with_no_record_under_dynamic_vram": "5da8162e593dbc10",
       "test_comfy_loads_an_unrecorded_layer_without_error_and_drops_its_scale": "65dbc4e512894ed4",
+      "test_one_file_gets_each_checkouts_own_verdict": "2f183baa4117b827",
       "test_the_l2p_gate_keeps_its_own_text_and_number": "5b2641e104e5ddbe",
+      "test_the_replay_holds_both_comfy_prefix_rules": "0548da865ef89f81",
+      "test_the_replay_names_comfys_keys_beside_two_top_level_backbones": "8851b5930e17b27b",
       "test_the_replay_names_the_keys_comfys_own_load_hands_the_model": "5f2ad9f9f20eaeac",
+      "test_the_replay_picks_comfys_prefix_beside_two_top_level_backbones": "324ac3a2c90b79fd",
       "test_the_replay_strips_the_prefix_comfy_picks": "679960d5b85dc316",
+      "test_the_rule_is_read_from_the_checkout_and_nowhere_else": "60352eaeb84903fa",
+      "test_the_rule_the_gate_reads_from_the_checkout_is_comfys_own": "cb1150fdb92f2501",
       "test_the_staged_flux3_files_pass_and_the_fp8r_variant_refuses": "1ee090553c768e7a"
     },
     "tests/test_expander_prompt.py": {
@@ -3046,6 +3056,7 @@
       "test_the_session_pin_carries_the_loaded_nccl_and_a_swap_blocks_the_resume": "16f42a8e17fbc013",
       "test_the_source_digest_reads_the_runtime_not_the_harness": "22d3fc9af1c2609e",
       "test_the_sweep_predicts_the_pair_tag_from_the_prompt_texts": "bfc627237a5e52c0",
+      "test_the_upstream_refusal_is_the_configured_comfy_checkouts": "dc5860908ec4b159",
       "test_wan_scail_refuses_cfg_parallel_and_ring_past_world_two": "10b8411a347fac46"
     },
     "tests/test_sweep_run.py": {

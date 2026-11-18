@@ -4204,6 +4204,15 @@ Skills call `dgxm` rather than reimplementing operations.
   row only when the values outrun that order, and drops the widget only at
   that value; the frontend extension restores the node by name. The canary
   requires that value on every ComfyUI it runs against.
+- The upstream gate replays master's checkpoint prefix rule. A part of that
+  rule a supported release still has and master dropped lives in
+  `stock_prefix_drift.py` and applies where the ComfyUI an answer is for has
+  it: the loaded function answers in a process that has loaded detection,
+  and otherwise the source the process would import or the checkout a caller
+  names. Where that cannot be told, the gate refuses a file either rule
+  refuses. The canary holds the reading against ComfyUI's own function on
+  master and the newest release, and the part leaves when the support floor
+  passes the release that dropped it.
 
 ---
 
@@ -4325,6 +4334,8 @@ dgx-monarch/
 │   ├── comfy_surface.py       # runtime Comfy touchpoint/signature assertion
 │   ├── stock_widget_drift.py  # stock widgets older supported ComfyUI
 │   │                          #   releases lack, and what templates hold
+│   ├── stock_prefix_drift.py  # stock's checkpoint prefix rule on key names,
+│   │                          #   and the part older supported releases keep
 │   ├── comfy_forward_contracts.py # aggregate/re-export forward compatibility map
 │   ├── comfy_rebound_signatures.py # exact stock rebound-method contracts
 │   ├── comfy_rebound_sites.py # declared static self.bind/Adapter.bind inventory
