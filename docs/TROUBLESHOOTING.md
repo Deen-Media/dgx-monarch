@@ -7362,10 +7362,12 @@ torchmonarch`) beside the pin in that checkout's `pyproject.toml`. A rerun of
 the same update refuses with `prior_worker_drift` while the Workers do not
 match the driver.
 
-- Any code whose receipt lists no `worker_stop` step: the update stopped
-  while staging, before any live change, and only the removal of its staging
-  area (the `stage_cleanup` step) was not confirmed. The driver and the
-  Workers are as they were; clear the cause the code names and rerun.
+- Any code whose receipt lists neither a `worker_stop` nor a
+  `pre_stop_recheck` step: the update stopped before any live change, while
+  staging, at the confirmation or at the recheck before the stop, and only
+  the removal of its staging area (the `stage_cleanup` step) was not
+  confirmed. The driver and the Workers are as they were; clear the cause
+  the code names and rerun.
 - An `activation_failed`, `start_failed`, `doctor_failed`,
   `cluster_smoke_failed`, `readback_mismatch` or `driver_commit_failed`
   whose `prior_release_start` step succeeded: the old release was restored
@@ -7409,7 +7411,10 @@ match the driver.
   previous release or of the staging area was not confirmed, so renders
   attach. The previous release's slot can stay on disk.
 - `operation_exception` and `operation_interrupted`: read the last step the
-  receipt lists and use the case above for the step that follows it.
+  receipt lists and use the case above for the step that follows it. A last
+  step of `pre_stop_recheck` means the Worker stop itself was cut short:
+  nothing was activated, some Workers may be stopped, and the driver is
+  unchanged, so run `dgxm up`, then rerun the update, as for `stop_unknown`.
 
 ## 119. A mesh build or Worker start refuses on an ambient environment variable
 
