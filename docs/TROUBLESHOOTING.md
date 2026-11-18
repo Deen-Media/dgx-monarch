@@ -7385,9 +7385,9 @@ match the driver.
   host's link and unit can name either release, Workers of either
   release may be running or stopped, and the driver is on the old release
   (a driver commit reports `failed` only after it put the driver back).
-  Hosts whose link names the old release match the driver, and `dgxm up`
-  starts any of them that are stopped; if any names the new one, use the
-  forward repair above.
+  Hosts whose link names the old release match the driver. When every link
+  names the old release, `dgxm up` starts the stopped ones; if any names the
+  new one, use the forward repair above.
 - `start_unknown`: every link and unit names the new release, and the new
   Workers may be running, because the update stopped nothing after it. The
   driver's checkout and torchmonarch are unchanged. Use the forward repair.
@@ -7418,8 +7418,9 @@ match the driver.
   adds as it settles, and read the steps before them.
   - If one of them failed or is unknown, use the case for the code of the
     first such step: its name with `_failed` or `_unknown`, where
-    `worker_start` reads `start_` and a failed `exact_readback` is
-    `readback_mismatch`. A failed step with no `prior_release_start` step
+    `worker_start` reads `start_`, `worker_stop` reads `stop_`, and
+    `exact_readback` reads `readback_` (a failed one is `readback_mismatch`).
+    A failed step with no `prior_release_start` step
     that succeeded is the case of a restore that was not confirmed, whatever
     restore steps follow it.
   - If every one succeeded, use the case for the step that comes after the
