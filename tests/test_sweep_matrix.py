@@ -252,6 +252,27 @@ def test_cell_ids_are_stable_and_unmatched_files_are_reported(tmp_path):
     assert "stray_bf16.safetensors" in unmatched
 
 
+def test_the_upstream_refusal_is_the_configured_comfy_checkouts(tmp_path):
+    """A cell's upstream refusal is the gate's answer for the ComfyUI the sweep drives,
+    not for this process. SenseNova's two top-level keys beside six layers under net.
+    and an fp8 layer at the top level whose scale nothing records: refused where that
+    checkout keeps the file whole (the release rule), passed where it strips net."""
+    from dgx_monarch.stock_prefix_drift import SENSENOVA_KEYS
+    from stock_prefix_checkouts import MASTER, RELEASE, write_checkout
+
+    config = _rig(tmp_path)
+    tensors = {key: torch.zeros(2, 2) for key in (*FAMILY_KEYS["krea2"], *SENSENOVA_KEYS,
+                                                  *(f"net.blocks.{i}.weight" for i in range(6)))}
+    tensors["fm_modules.extra.weight"] = torch.zeros(2, 2, dtype=torch.float8_e4m3fn)
+    tensors["fm_modules.extra.weight_scale"] = torch.ones(2)
+    name = "krea2_raw_bf16.safetensors"
+    save_file(tensors, str(config["model_dir"] / name))
+    for text, refused in ((RELEASE, True), (MASTER, False)):
+        write_checkout(config["comfy_dir"], text)
+        cells, _pruned, _unmatched = matrix.build_cells(config)
+        assert {cell["upstream_refusal"] for cell in cells if name in cell["unets"].values()} == {refused}
+
+
 def test_reference_specs_name_a_bar_and_a_source(tmp_path):
     cells, _pruned, _unmatched = matrix.build_cells(_rig(tmp_path))
     assert _pick(cells, "krea2", "uly2+fsdp", artifact_quant="bf16")["reference"] == {

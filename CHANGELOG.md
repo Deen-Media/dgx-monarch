@@ -1170,6 +1170,22 @@ sections after them list every change.
   counts, 73 workflows, 21 nodes and 143 declared inputs, and a test ties them
   to the generated inventory. The acceptance record adds the browser round of
   2026-11-03 and keeps the gaps it did not repeat.
+- The upstream gate now replays the checkpoint prefix rule of the ComfyUI it
+  answers for. ComfyUI master stopped keeping whole a file with SenseNova's two
+  top-level backbone keys on 2026-11-17 (ComfyUI #17790), while the newest
+  release still keeps it whole, and the gate kept the release rule on master.
+  The two rules hand the model different keys only when such a file also holds
+  keys under the prefix master picks; the two public SenseNova checkpoints
+  whose headers were read for this change hold every key at the top level.
+  On master, a file of that mixed shape could meet a #120 refusal
+  that master's own load does not warrant, or, with one extra tensor, pass
+  where it should meet the #91 or #149 refusal. The driver takes the rule from
+  ComfyUI's own loaded function, a Worker before its first load from the source
+  it is about to import, and the sweep matrix and `tools/fp8_paths.py
+  --comfy-dir` from the checkout they name. Where the rule cannot be read, the
+  gate refuses a file that either rule refuses. The comfy canary's
+  dropped-scale gate step, red against master, passes again
+  ([TROUBLESHOOTING #120](docs/TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
 
 ### Rendering
 

@@ -97,6 +97,7 @@ on:
       - "tests/fake_model_base_helpers.py"
       - "tests/minimax_h3_image_headers.py"
       - "tests/module_location_helpers.py"
+      - "tests/stock_prefix_checkouts.py"
       - "tests/test_fsdp_lora.py"
       - "tests/test_flux_pad_exclusion.py"
       - "tests/test_lens_order.py"
