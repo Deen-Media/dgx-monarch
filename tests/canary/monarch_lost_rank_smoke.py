@@ -25,6 +25,8 @@ import threading
 import time
 from pathlib import Path
 
+import canary_sessions  # tests/canary, beside this script
+
 NAME = "dgxm-procs-canary00"
 MARKERS = ("actor proc_mesh_controller_", "error stopping proc mesh", "Timeout(")
 
@@ -56,9 +58,11 @@ def run() -> dict[str, object]:
 
     observations: dict[str, object] = {}
     ports = [_free_port(), _free_port()]
-    loops = [subprocess.Popen([sys.executable, __file__, "loop", f"tcp://127.0.0.1:{port}"],
-                              start_new_session=True, stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL) for port in ports]
+    # Each loop leads its own session, recorded for the runner (canary_sessions).
+    loops = [canary_sessions.start_session(
+        [sys.executable, __file__, "loop", f"tcp://127.0.0.1:{port}"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for port in ports]
+    canary_sessions.arm_deadline(lambda: canary_sessions.stop_groups(loop.pid for loop in loops))
     faults: list[tuple[float, str]] = []
     try:
         deadline = time.monotonic() + 60
@@ -109,11 +113,8 @@ def run() -> dict[str, object]:
         observations["stop_report_s"] = round(reported_at - started, 1)
         observations["stop_report_text"] = " ".join(text.split())[:600]
     finally:
+        canary_sessions.stop_groups(process.pid for process in loops)
         for process in loops:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
             process.wait(10)
         try:
             shutdown_context(host_timeout=10).get(timeout=15)

@@ -194,6 +194,7 @@ jobs:
               "tools/leak_allowlist.toml",
               "tools/leak_check.py",
               "tests/canary/bake_equivalence_canary.py",
+              "tests/canary/canary_sessions.py",
               "tests/canary/comfy_entrypoint_canary.py",
               "tests/canary/comfy_seam_contracts.py",
               "tests/canary/import_canary.py",
@@ -224,6 +225,7 @@ jobs:
           canary_members = {name for name in members if name.startswith("tests/canary/")}
           expected_canaries = {
               "tests/canary/bake_equivalence_canary.py",
+              "tests/canary/canary_sessions.py",
               "tests/canary/comfy_entrypoint_canary.py",
               "tests/canary/comfy_seam_contracts.py",
               "tests/canary/import_canary.py",
