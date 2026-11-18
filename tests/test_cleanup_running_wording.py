@@ -5,7 +5,8 @@ eviction resumed at lease retirement, the supervision reconcile stops the old
 fleet, holding the handle's lock across its proc stop. A render queued in that
 window, or a Reset pressed in it, is refused as before; the verdicts and the
 locks do not change. Only the words do: they say the driver is still stopping
-the old fleet, within about the actor stop's cap plus the proc stop's own limit,
+the old fleet, within about the limit of the reconcile's whole shutdown (the
+group teardown's wait, the actor stop's cap and the proc stop's own limit),
 and to try again when that ends, never to press Reset or restart ComfyUI, which
 cannot help then (reconcile_running.cleanup_running_sentence). They hold only while
 the reconcile is alive and within its own wait of its start; a refusal with no
@@ -16,15 +17,19 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
 from dgx_monarch import mesh, mesh_recycle, mesh_stop, mesh_teardown, reconcile_running
 from dgx_monarch.log import get_logger
+from test_exit_clean import _error_lines, _run
 from test_mesh_creation_recovery import _ProcMesh, _spawn_returning, isolated_mesh_runtime  # noqa: F401
 from topology_transition_helpers import _acks, _Future, _handle, _Workers
 
 RUNNING = "the driver is still stopping the previous Worker fleet; that stop ends within about"
+STALL_PROBE = Path(__file__).with_name("stall_cleanup_probe.py")
+WARNING_TAIL = "The driver stops that fleet once no render holds it"
 
 
 class _Records(logging.Handler):
@@ -61,10 +66,62 @@ def _defunct_handle(reconcile_thread=None, started_ago_s: float = 1.0):
     return handle
 
 
+FULL_STOP_S = mesh_stop.RECONCILE_GROUP_S + mesh_stop.ACTOR_STOP_S + mesh_stop.proc_stop_bound_s()
+
+
 def _says_only_wait(text: str) -> None:
     assert RUNNING in text and "try again when it ends" in text, text
-    assert f"within about {mesh_stop.ACTOR_STOP_S + mesh_stop.proc_stop_bound_s():.0f} s" in text, text
+    assert f"within about {FULL_STOP_S:.0f} s" in text, text
     assert "Reset" not in text and "restart ComfyUI" not in text and "lost Worker" not in text, text
+
+
+def test_the_sentences_figure_is_the_whole_cleanups_and_never_less_than_its_phases():
+    """A stall eviction's Worker can be alive and make its group teardown wait, so the group phase counts.
+
+    The figure is the reconcile's three shutdown phases (group teardown, actor
+    stop, proc stop) as MeshHandle.shutdown splits them, the envelope less its
+    margin; the render's wait and the words' own limit (reconcile_join_s) sit
+    above it, and the lost-Worker WARNING's shorter figure below it.
+    """
+    figure = reconcile_running.reconcile_stop_limit_s()
+    assert figure == FULL_STOP_S
+    envelope = mesh_stop.shutdown_envelope_s(mesh_stop.RECONCILE_GROUP_S, mesh_stop.proc_stop_bound_s())
+    assert figure == envelope - mesh_stop.SHUTDOWN_MARGIN_S
+    assert reconcile_running.lost_fleet_stop_s() < figure < mesh_stop.reconcile_join_s()
+    assert f"within about {figure:.0f} s;" in mesh_teardown.cleanup_running_sentence()
+
+
+def test_a_stall_evictions_cleanup_waits_on_the_gpu_lock_and_ends_inside_the_figure(tmp_path):
+    """The case the group phase counts for, on a real one-rank fleet (tests/stall_cleanup_probe.py).
+
+    The render's collect stalls on a step that holds the Worker's GPU lock, so
+    the eviction's reconcile finds the Worker alive and its group teardown
+    waits its whole phase on that lock before the actor and proc stops. Each
+    render queued meanwhile gets the sentence, and the cleanup ends inside its
+    figure. Neither the stall's text nor the one the stop leaves on the held
+    call reads as a lost Worker, so the WARNING with its shorter figure is not
+    logged.
+    """
+    pytest.importorskip("monarch.actor")
+    proc, records, _exited = _run(tmp_path, "stall", probe=STALL_PROBE)
+    detail = f"stdout: {proc.stdout[-3000:]}\nstderr: {proc.stderr[-3000:]}"
+    assert proc.returncode == 0 and records, detail
+    result = records[-1]
+    assert result["stall"].startswith("SampleStallError: render stalled:"), detail
+    assert result["stall_words"] is None and result["stall_loss"] is False, detail
+    assert result["reconcile_started"] and result["refusals"], detail
+    for refusal in result["refusals"]:
+        _says_only_wait(refusal)
+    assert result["group_wait_s"] >= mesh_stop.RECONCILE_GROUP_S - 1.0, detail  # it waited on the lock
+    assert result["figure_s"] == reconcile_running.reconcile_stop_limit_s() == FULL_STOP_S
+    assert result["cleanup_s"] <= result["figure_s"], detail
+    assert result["teardown_complete"] is True and result["replacement_blocked"] is None, detail
+    # The stop's own words on the call it ended: its reason, or the proc stop's when the actor stop did not land.
+    held = result["held_call"]
+    assert "stopped: dgx-monarch client detach" in held or "stopped: parent draining" in held, detail
+    assert result["held_call_loss"] is False and result["warned"] is False, detail
+    assert not [line for line in result["warnings"] if WARNING_TAIL in line], detail
+    assert WARNING_TAIL not in proc.stderr and _error_lines(proc.stderr) == [], detail
 
 
 def _recycled(handle, lock_timeout_s: float = 10.0):

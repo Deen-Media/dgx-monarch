@@ -16,12 +16,13 @@ built from a captured text, as tests/test_lost_worker_words.py does.
 from __future__ import annotations
 
 import logging
+import time
 from types import SimpleNamespace
 
 import pytest
 
 import test_worker_loss as captured
-from dgx_monarch import mesh_setup, mesh_stop, reconcile_running, worker_loss
+from dgx_monarch import mesh_safety, mesh_setup, mesh_stop, reconcile_running, worker_loss
 from dgx_monarch.log import get_logger
 from dgx_monarch.nodes import refusal_lead
 from test_lost_worker_words import _supervision_error
@@ -46,8 +47,11 @@ def warnings_seen():
     logger.removeHandler(capture)
 
 
-def _renders(error_texts: list[str]):
-    """A real handle with one dispatched render per text, each of whose calls fails with it."""
+def _renders(error_texts: list[str], make_error=_supervision_error, activity=None):
+    """A real handle with one dispatched render per text, each of whose calls fails with it.
+
+    ``activity``, the progress receiver's stamp, arms the stall guard as a render's own does.
+    """
     import torch
 
     from dgx_monarch.mesh_session import RenderSession, claim_render_session
@@ -57,14 +61,17 @@ def _renders(error_texts: list[str]):
     handle, old, _new = _handle(_Workers([_Future(_acks())]))
     token = mesh_setup.current_setup_token(handle)
     session, _owned = claim_render_session(handle, RenderSession())  # a Pipeline's one session
+    progress = SimpleNamespace(__exit__=lambda *_args: None)
+    if activity is not None:
+        progress.activity = activity
     pendings = []
     for index, text in enumerate(error_texts):
-        error = _supervision_error(text)
+        error = make_error(text)
         with session.activate():
             submission = _dispatch_sample(handle, lambda error=error: _Future(error=error), setup_token=token)
             session.track(submission)
         pendings.append(render_submit.PendingRender(
-            handle, submission, SimpleNamespace(__exit__=lambda *_args: None), old,
+            handle, submission, progress, old,
             {"samples": torch.zeros((1, 4, 1, 1))}, 10.0, f"render-{index}", render_result._finish_render))
 
     def collect(pending):
@@ -129,7 +136,37 @@ def test_at_exit_a_stopped_call_is_no_lost_worker(warnings_seen, monkeypatch, ex
         assert isinstance(caught.value, worker_loss.WorkerLostError)
 
 
-@pytest.mark.parametrize("text", [captured.RECYCLE_ERROR_070, captured.DRAINING_ERROR_080])
+def test_a_stall_eviction_logs_no_lost_worker(warnings_seen, monkeypatch):
+    """The WARNING's figure leaves the group phase out, so a stall must never log it.
+
+    A stalled Worker can be alive and hold its GPU lock, and its group teardown
+    then waits its whole phase (tests/test_cleanup_running_wording.py). Through
+    the render's own collect the stall guard raises SampleStallError, whose
+    text names no Worker mesh and which collect_sample sends down its own
+    branch: nothing is worded, warned or flagged, even when its text reaches
+    warn_lost_once.
+    """
+    from dgx_monarch import mesh_lease, worker_box
+
+    monkeypatch.setenv(mesh_lease.SAMPLE_STALL_ENV, "0.05")
+    stale = time.monotonic() - 1000.0
+    handle, [pending], collect = _renders(["slice elapsed"], make_error=TimeoutError, activity=lambda: stale)
+    with pytest.raises(mesh_lease.SampleStallError) as caught:
+        collect(pending)
+    assert str(caught.value).startswith("render stalled: the fleet reported no progress for ")
+    assert handle.defunct and not getattr(handle, worker_box.LOSS_WARNED, False)
+    assert worker_box.lost_worker_words(caught.value) is None
+    worker_box.warn_lost_once(caught.value, handle)
+    assert [r for r in warnings_seen if r.levelno >= logging.WARNING] == []
+
+
+# Every reason the pack stops a fleet with (a stall's reconcile gives "dgx-monarch client detach"
+# to a call it ends, tests/stall_cleanup_probe.py), and the proc stop's own words.
+DELIBERATE_STOPS = [captured.RECYCLE_ERROR_070.replace("dgx-monarch recycle", reason)
+                    for reason in mesh_safety._TEARDOWN_REASON_MARKERS] + [captured.DRAINING_ERROR_080]
+
+
+@pytest.mark.parametrize("text", DELIBERATE_STOPS)
 def test_a_deliberate_stops_failure_logs_no_lost_worker(warnings_seen, text):
     from monarch._rust_bindings.monarch_hyperactor.supervision import SupervisionError
 

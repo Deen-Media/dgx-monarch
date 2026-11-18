@@ -54,7 +54,8 @@ def _alive(pid: int) -> bool:
         return False
 
 
-def _run(tmp_path: Path, mode: str) -> tuple[subprocess.CompletedProcess, list[dict], float]:
+def _run(tmp_path: Path, mode: str,
+         probe: Path = PROBE) -> tuple[subprocess.CompletedProcess, list[dict], float]:
     runtime_dir = tmp_path / "run"
     runtime_dir.mkdir(mode=0o700)
     environment = {key: value for key, value in os.environ.items()
@@ -65,7 +66,7 @@ def _run(tmp_path: Path, mode: str) -> tuple[subprocess.CompletedProcess, list[d
         PYTHONPATH=os.pathsep.join(filter(None, (str(SRC), os.environ.get("PYTHONPATH")))))
     ready = tmp_path / "ready.json"
     started = time.monotonic()
-    child = subprocess.Popen([sys.executable, str(PROBE), mode], stdout=subprocess.PIPE,
+    child = subprocess.Popen([sys.executable, str(probe), mode], stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, env=environment,
                              start_new_session=True)
     try:

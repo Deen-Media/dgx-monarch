@@ -444,11 +444,16 @@ torchmonarch 0.8.0):
   itself the driver logs one WARNING, once per fleet, with the cause in plain
   words ("... The driver stops that fleet once no render holds it; a render
   still waiting on it gets its error when that stop ends, within about
-  105 s."). The figure is the actor stop's cap plus the proc stop's own limit
-  at Monarch's defaults. A render queued, or a Reset pressed, while that stop
-  runs is refused with "the driver is still stopping the previous Worker
-  fleet; that stop ends within about 105 s; try again when it ends": a Reset
-  or a ComfyUI restart cannot help before then.
+  105 s."). That figure is the actor stop's cap plus the proc stop's own
+  limit at Monarch's defaults: the group teardown fails at once on a lost
+  Worker. A render queued, or a Reset pressed, while that stop runs is refused
+  with "the driver is still stopping the previous Worker fleet; that stop ends
+  within about 135 s; try again when it ends": a Reset or a ComfyUI restart
+  cannot help before then. This figure adds the group teardown's 30 s, since
+  the same stop follows a stall
+  ([#86](#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)),
+  whose Worker can still be alive and hold its GPU lock, which the group
+  teardown waits for.
 
 These figures come from Worker services killed or frozen on one machine, over
 loopback, on 2026-11-17 and 2026-11-18. A powered-off box or a cut link sends

@@ -131,13 +131,17 @@ def warn_lost_once(exc: BaseException, handle: Any) -> None:
 
     The driver stops the dead fleet once no render holds it (a held lease
     defers the reconcile), and the render that retires the last lease waits
-    for that stop before its error shows, within reconcile_running.lost_fleet_stop_s.
-    In a two-deep Pipeline render 1's error therefore comes at once and render
-    2's after the stop, so the line says both. A flag on the handle, set at the
-    first warning and read without a lock, keeps it to one line when a
-    Pipeline's renders fail together on one loss. Once the driver is exiting
-    it says nothing: a call that Monarch's exit step stopped reads like a lost
-    contact, and no Worker was lost.
+    for that stop before its error shows, within reconcile_running.lost_fleet_stop_s:
+    the line is logged only for an error carrying the lost-Worker words, whose
+    group teardown fails at once on the dead actor, so that figure leaves the
+    group phase out. A stall eviction never reaches it: collect_sample sends
+    a SampleStallError down its own branch, and that text names no Worker
+    mesh, so it carries no words. In a two-deep Pipeline render 1's error
+    comes at once and render 2's after the stop, so the line says both. A
+    flag on the handle, set at the first warning and read without a lock,
+    keeps it to one line when a Pipeline's renders fail together on one loss.
+    Once the driver is exiting it says nothing: a call that Monarch's exit
+    step stopped reads like a lost contact, and no Worker was lost.
     """
     from . import driver_exit
 
