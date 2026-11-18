@@ -233,8 +233,7 @@ class _TornDownHandle:
         self.teardown_complete = True
 
 
-@pytest.mark.parametrize("marker", ("Supervision", "connection lost",
-                                    "peer closed"))
+@pytest.mark.parametrize("marker", ("Supervision", "peer closed"))
 def test_string_fallback_fires_only_where_the_typed_check_missed(
         marker, fired, monkeypatch):
     monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", _CLEAN_STATE)
@@ -302,7 +301,7 @@ def test_absorption_lines_are_never_errors(fired, monkeypatch):
         mesh_safety, "_TEARDOWN_STATE", ({7: time.monotonic()}, float("-inf"), 0))
     mesh_safety.token_within_authority(7)
     mesh_helpers.mark_defunct_on_supervision_failure(
-        _TornDownHandle(), RuntimeError("connection lost"))
+        _TornDownHandle(), RuntimeError("peer closed"))
     assert set(fired.sites()) == set(absorb_fire.SITES)
     tagged = [r for r in fired.records if absorb_fire.TAG in r.getMessage()]
     assert tagged and all(r.levelno == logging.INFO for r in tagged)

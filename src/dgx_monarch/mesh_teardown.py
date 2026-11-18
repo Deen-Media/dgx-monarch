@@ -5,7 +5,7 @@ import time
 from contextlib import nullcontext
 from typing import Any
 
-from . import mesh_safety
+from . import mesh_safety, reconcile_running
 from .error_utils import failure_summary, safe_note
 from .log import get_logger
 from .mesh_runtime import mesh_creation_timeout_s
@@ -15,6 +15,9 @@ from .mesh_stop import RECONCILE_GROUP_S, proc_stop_bound_s, stop_with_reason
 from .mesh_stop import reconcile_join_s as reconcile_join_s
 from .mesh_stop import shutdown_envelope_s as shutdown_envelope_s
 from .mesh_stop import shutdown_phases as shutdown_phases
+from .reconcile_running import cleanup_running as cleanup_running  # re-exported for the refusals' callers
+from .reconcile_running import cleanup_running_sentence as cleanup_running_sentence
+from .reconcile_running import unresolved_refusal as unresolved_refusal
 
 log = get_logger("dgx_monarch.mesh")
 
@@ -124,6 +127,8 @@ def block_cause_sentence(handle: Any) -> str:
 
 def blocked_refusal(handle: Any, door: str) -> str:
     """Format a lifecycle refusal with the recovery action for its cause."""
+    if cleanup_running(handle):
+        return f"the cached mesh cannot be used yet: {cleanup_running_sentence()}"
     sentence = block_cause_sentence(handle)
     if door == GET_MESH_DOOR:
         blocked = getattr(handle, "replacement_blocked", None)
@@ -334,6 +339,7 @@ def retire_retryable_reconcile(handle: Any) -> None:
 
 
 def reconcile_thread_main(handle: Any, exc: BaseException, token: object) -> None:
+    reconcile_running.note_started(handle)  # bounds how long a refusal says the stop is running
     try:
         reconcile_stop(handle, exc, token)
     except BaseException as reconcile_exc:

@@ -2,7 +2,7 @@
 
 Configure once outside runtime ownership locks. Metrics use a bounded daemon
 queue so an exporter cannot block a render. The same thread samples ownership
-occupancy into up-down counters (occupancy_metrics). OTLP destination and
+occupancy into gauges (occupancy_metrics). OTLP destination and
 collection interval belong to Monarch's startup environment, not this adapter.
 Disabling stops new records; it does not claim to flush an external telemetry
 backend.
@@ -112,12 +112,13 @@ def configure_policy_logged(policy: Any, role: str) -> dict[str, Any]:
 
 class _MetricExporter:
     def __init__(self, meter: Any) -> None:
-        # The 0.7 Python wrapper had no gauges, observables or custom histogram
-        # boundaries; 0.8.0 adds gauges, which this exporter does not use yet.
+        # The 0.8 Python wrapper implements counters, up-down counters,
+        # histograms and gauges, but no observable instruments or custom
+        # histogram boundaries. Never request unsupported instruments.
         self._count = meter.create_counter("dgxm.phase.completed")
         self._duration = meter.create_histogram("dgxm.phase.duration.seconds")
         # Occupancy levels ride this thread; a meter without them keeps phases.
-        self._levels = occupancy_metrics.level_counters(meter)
+        self._levels = occupancy_metrics.level_gauges(meter)
         self._queue: queue.Queue[dict[str, Any]] = queue.Queue(_QUEUE_CAPACITY)
         self._stopped = threading.Event()
         self.dropped = 0

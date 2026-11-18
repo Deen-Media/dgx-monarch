@@ -207,6 +207,11 @@ NOT_REFUSAL_CLASSES = frozenset({
     # (2026-11-13): caught where it is raised, it frees the driver and refuses
     # nothing (nodes/pending_load_relief.py).
     "PendingLoadShort",
+    # A lost Worker's render error (2026-11-17): the node layer opens Monarch's
+    # own error with its cause in plain words (worker_loss.py). It reports a
+    # fault, refuses nothing, and is raised only for an error of Monarch's or
+    # Python's own type that carries no tag, so no refusal turns into it.
+    "WorkerLostError",
 })
 
 # A class P message must point somewhere reachable. One of these must appear.

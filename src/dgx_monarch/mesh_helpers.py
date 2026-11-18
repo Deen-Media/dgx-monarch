@@ -7,8 +7,15 @@ from typing import TYPE_CHECKING, Any
 
 from . import absorb_fire as _absorb
 from . import client_lease as _client_lease
+from . import (
+    driver_exit,
+    mesh_safety,
+    mesh_teardown,
+    native_return_latch,
+    residency_doors,
+    retired_meshes,
+)
 from . import mesh_runtime as _mesh_runtime
-from . import mesh_safety, mesh_teardown, native_return_latch, residency_doors, retired_meshes
 from .error_utils import (
     exception_chain,
     failure_summary,
@@ -38,7 +45,7 @@ start_client_lease = _client_lease.start
 validated_local_gpu_count = _mesh_runtime.validated_local_gpu_count
 visible_gpu_count = _mesh_runtime.visible_gpu_count
 _latch_reconcile_launch_failure = mesh_teardown.latch_reconcile_launch_failure
-_reconcile_thread_main = mesh_teardown.reconcile_thread_main
+_reconcile_thread_main = driver_exit.skipped_at_exit(mesh_teardown.reconcile_thread_main)
 _reconcile_thread_started = mesh_teardown.reconcile_thread_started
 
 
@@ -47,17 +54,6 @@ def run_mesh_preflight(
 ) -> None:
     if callback is not None:
         callback(config, world)
-
-
-def shutdown_all(handles: dict, log: Any) -> None:
-    """Best-effort cleanup after Monarch's own LIFO atexit hook has run."""
-    for handle in list(handles.values()):
-        try:
-            handle.shutdown(timeout_s=15)
-        except BaseException as exc:
-            # Native shutdown may panic after Monarch tears down its client.
-            log.debug("atexit mesh shutdown: %r", exc)
-    handles.clear()
 
 
 def wait_for_mesh_creation(condition, creating: Collection[tuple], key: tuple,
@@ -141,10 +137,12 @@ def publish_setup_ready(
         raise
 
 
-def install_unhandled_fault_hook(correlation_state) -> bool:
+def install_unhandled_fault_hook(correlation_state, held_meshes=None) -> bool:
     """Route faults to logs/toasts, consuming them; eviction recovers the fleet.
     Deliberate teardown noise is INFO; other faults are ERROR, and an exact
-    repeat is a counted line. The supplied callable returns a coherent
+    repeat is a counted line. A lost Worker's fault opens with its cause in
+    plain words (worker_loss.hook_words; ``held_meshes`` names the meshes the
+    driver still holds). The supplied callable returns a coherent
     ``(live, creating, teardown-in-flight)`` snapshot. Returns whether the
     hook was installed. Before Monarch is loaded it defers rather than import
     it: the driver must apply its policy and OTLP endpoint first, and
@@ -154,7 +152,7 @@ def install_unhandled_fault_hook(correlation_state) -> bool:
 
     if "monarch.actor" not in sys.modules:
         return False
-    from . import fault_repeats, mesh_safety
+    from . import fault_repeats, mesh_safety, worker_loss
     from .log import get_logger
 
     hook_log = get_logger("dgx_monarch.mesh")
@@ -191,16 +189,17 @@ def install_unhandled_fault_hook(correlation_state) -> bool:
                 return
             if not repeats.first_report(text, hook_log):
                 return
-            hook_log.error("cluster fault: %s", failure)
+            cause = worker_loss.hook_words(failure, held_meshes)
+            hook_log.error("cluster fault: %s", f"{cause} {text}" if cause else failure)
             try:
                 from server import PromptServer
 
                 PromptServer.instance.send_sync(
-                    "dgx-monarch.fault", {"message": str(failure)})
+                    "dgx-monarch.fault", {"message": f"{cause}\n{text}" if cause else text})
             except Exception:
                 pass  # headless / non-comfy driver
 
-        monarch_actor.unhandled_fault_hook = hook
+        monarch_actor.unhandled_fault_hook = driver_exit.skipped_at_exit(hook)
         return True
     except Exception as exc:
         hook_log.warning("could not install fault hook: %r", exc)
@@ -307,7 +306,8 @@ def mark_defunct_on_supervision_failure(handle, exc: BaseException, *,
     text = f"{names} " + " ".join(failure_summary(e) for e in chain if not isinstance(e, ActorError))
     # Match the exported SupervisionError type first. The string list is a
     # secondary net only, audited against the 0.7.0 and 0.8.0 wheels: each binding
-    # exports the type and carries these strings, but not "ProcessExited".
+    # exports the type and carries these strings. "connection lost" went: in both
+    # wheels it is only the QUIC library's text, and the pack never runs QUIC.
     # On their own the strings would miss a renamed failure and let a dead fleet
     # be reused; isinstance survives a rename of the message text.
     try:
@@ -318,8 +318,7 @@ def mark_defunct_on_supervision_failure(handle, exc: BaseException, *,
     except ImportError:
         supervision_chain = False
     if not supervision_chain and not _absorb.hits(
-            "string-fallback", text, ("Supervision", "connection lost",
-                                      "peer closed")):
+            "string-fallback", text, ("Supervision", "peer closed")):
         return
     _publish_defunct(handle, exc, text, holding_lock=holding_lock)
 
@@ -338,6 +337,7 @@ def mark_defunct_deliberate(handle, exc: BaseException, *,
                      deliberate_route=True)
 
 
+@driver_exit.skipped_at_exit  # a call Monarch's own exit stopped is no lost fleet
 def _publish_defunct(handle, exc: BaseException, text: str, *,
                      holding_lock: bool, deliberate_route: bool = False) -> None:
     if not getattr(handle, "defunct", False):  # its replacement holds no model; the next render's checks run first
@@ -434,7 +434,7 @@ def _launch_reconcile_thread(
                             thread = threading.Thread(
                                 target=_reconcile_thread_main,
                                 args=(handle, exc, token),
-                                name="dgxm-reconcile-stop",
+                                name=driver_exit.RECONCILE_THREAD,
                                 daemon=True,
                             )
                         handle._supervision_reconcile_thread = thread

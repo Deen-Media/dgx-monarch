@@ -1,23 +1,28 @@
-"""Ownership occupancy as Monarch up-down counters; opt-in metrics only.
+"""Ownership occupancy as Monarch gauges; opt-in metrics only.
 
 When ``[monarch.diagnostics] metrics = true``, the metrics thread that
 ``monarch_diagnostics`` already runs reads the occupancy this process reports
 (on the driver through /dgxm/telemetry, on an actor through ``status()``), at
-most once a second, and adds the change since its last export to one up-down
-counter per value, so a collector reads the level. The first reading exports
-the whole level, so a counter starts at the true value.
+most once a second, and sets one gauge per value to the level it read, so a
+collector reads the level itself.
+
+A gauge holds no history to keep in step: each set states the whole level. An
+exporter that metrics off and on replaced starts with no memory and sets every
+level at its first reading, and it never depends on Monarch merging two
+instruments of one name into one stream. Monarch's meter makes gauges
+(``Meter.create_gauge``); the up-down counters this module used before needed
+the change since the last export carried across exporters.
 
 Readers use the sources of the /dgxm/metrics series that share each name and
 never import a runtime. A process that has not loaded a source exports nothing
 for it, and a reading that is unavailable this time (a busy return-ownership
-lock, an unknown mesh state) leaves the level where it was. The mesh reading
+lock, an unknown mesh state) leaves the gauge where it was. The mesh reading
 does not skip a busy lock: like the telemetry route, it waits for the mesh
-registry lock. An ``add`` that raises leaves the exported level unchanged, so
-the next sample sends the change again.
+registry lock. A ``set`` that raises is tried again at the next sample.
 
-This module starts no thread, timer or service. A meter without up-down
-counters, or a counter that raises, costs one DEBUG line per process; the phase
-metrics and every render go on.
+This module starts no thread, timer or service. A meter without gauges, or a
+gauge that raises, costs one DEBUG line per process; the phase metrics and
+every render go on.
 """
 from __future__ import annotations
 
@@ -30,7 +35,7 @@ from . import return_diagnostics
 
 SAMPLE_INTERVAL_S = 1.0
 # (OpenTelemetry name, the /dgxm/metrics series that reads the same source)
-COUNTERS = (
+GAUGES = (
     ("dgxm.return.live_handoffs", "dgxm_return_live_handoffs"),
     ("dgxm.return.pending_read_jobs", "dgxm_return_pending_read_jobs"),
     ("dgxm.return.poison_owners", "dgxm_return_poison_owners"),
@@ -42,10 +47,6 @@ _KNOWN_MESH_STATES = frozenset({"ok", "busy", "dirty", "poisoned", "idle"})
 _MAX_WORKERS = 16
 _PACKAGE = __package__ or "dgx_monarch"
 _LOCK = threading.Lock()
-# Process lifetime: the level each counter last exported. A replacement
-# exporter continues from it, so turning metrics off and on never adds a level
-# twice to the same upstream counter.
-_EXPORTED: dict[str, int] = {}
 _WORKERS: list[weakref.ref] = []
 _FAILURE_LOGGED = threading.Event()
 
@@ -59,7 +60,7 @@ def _note_failure(what: str, error: BaseException) -> None:
         from .log import get_logger
 
         get_logger(__name__).debug(
-            "Monarch occupancy counters: %s (%s); renders and phase metrics continue",
+            "Monarch occupancy gauges: %s (%s); renders and phase metrics continue",
             what, type(error).__name__)
     except BaseException:
         pass
@@ -142,30 +143,29 @@ def read_levels() -> dict[str, int]:
     return levels
 
 
-class LevelCounters:
-    """One up-down counter per occupancy value; adds only level changes."""
+class LevelGauges:
+    """One gauge per occupancy value, set to the level each sample reads.
+
+    ``_set`` remembers only what this instance set, so a level that did not
+    change is not sent again; a new instance, after metrics off and on, sets
+    every level it reads, zero included, at its first sample.
+    """
 
     def __init__(self, meter: Any) -> None:
-        self._counters = {name: meter.create_up_down_counter(name) for name, _series in COUNTERS}
+        self._gauges = {name: meter.create_gauge(name) for name, _series in GAUGES}
+        self._set: dict[str, int] = {}
 
     def sample(self, levels: dict[str, int]) -> None:
-        for name, counter in self._counters.items():
+        for name, gauge in self._gauges.items():
             level = _count(levels.get(name))
-            if level is None:
-                continue
-            with _LOCK:
-                previous = _EXPORTED.get(name)
-            if previous == level:
+            if level is None or self._set.get(name) == level:
                 continue
             try:
-                # The first export sends the whole level, zero included, so the
-                # series exists from the start.
-                counter.add(level - (previous or 0), {})
+                gauge.set(level, {})
             except Exception as error:
-                _note_failure(f"{name} add failed", error)
+                _note_failure(f"{name} set failed", error)
                 continue
-            with _LOCK:
-                _EXPORTED[name] = level
+            self._set[name] = level
 
     def sample_safely(self) -> None:
         try:
@@ -174,10 +174,10 @@ class LevelCounters:
             _note_failure("sample failed", error)
 
 
-def level_counters(meter: Any) -> LevelCounters | None:
-    """The counters, or None when this meter cannot make them; never raises."""
+def level_gauges(meter: Any) -> LevelGauges | None:
+    """The gauges, or None when this meter cannot make them; never raises."""
     try:
-        return LevelCounters(meter)
+        return LevelGauges(meter)
     except BaseException as error:
-        _note_failure("up-down counters unavailable", error)
+        _note_failure("gauges unavailable", error)
         return None

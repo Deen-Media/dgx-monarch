@@ -1,7 +1,6 @@
 """Driver mesh lifecycle: cache actors, reap procs, surface failed attach/retry."""
 from __future__ import annotations
 
-import atexit
 import os
 import sys
 import threading
@@ -25,6 +24,7 @@ from . import (
     mesh_setup_transition,
     mesh_teardown,
     residency_doors,
+    retired_meshes,
 )
 from .config import ClusterConfig, find_config_path, load_cluster_config, local_config
 from .config_schema import actor_worker_args
@@ -90,8 +90,8 @@ def install_fault_hook() -> None:
     global _FAULT_HOOK_INSTALLED
     if _FAULT_HOOK_INSTALLED:
         return
-    _FAULT_HOOK_INSTALLED = mesh_helpers.install_unhandled_fault_hook(
-        _fault_correlation_state)
+    _FAULT_HOOK_INSTALLED = mesh_helpers.install_unhandled_fault_hook(_fault_correlation_state, lambda: (
+        retired_meshes.held_names((_MESHES, _MESH_PENDING), _MESH_LOCK)))
 
 
 @dataclass
@@ -479,11 +479,7 @@ def get_mesh(
                 elif verdict == "blocked":
                     raise MeshAttachError(mesh_teardown.blocked_refusal(old, "get_mesh"))
                 elif verdict == "unresolved":
-                    raise MeshAttachError(
-                        "the previous fleet's group or process teardown is unconfirmed "
-                        "(dirty, in flight, or its outcome was lost); replacement is unsafe. "
-                        "Reset the Attached mesh; if that reset cannot confirm the stop, restart "
-                        "ComfyUI only after confirming the old workers are gone")
+                    raise MeshAttachError(mesh_teardown.unresolved_refusal(old))
                 changed = old is not None and (
                     (config_digest != getattr(old, "config_fingerprint", ""))
                     or getattr(old, "n_hosts", n_hosts) != n_hosts
@@ -682,9 +678,8 @@ def _raise_released_attach(addresses, exc, *, auto_heal: bool, restarted=None, *
         MeshAttachError, addresses, exc, auto_heal=auto_heal, restarted=restarted, **detail)
 
 
-@atexit.register
-def _shutdown_all() -> None:
-    handles = {**_MESH_PENDING, **_MESHES}
-    mesh_helpers.shutdown_all(handles, log)
-    _MESH_PENDING.clear()
-    _MESHES.clear()
+# No exit hook of its own: at a normal interpreter exit, Monarch's own hook,
+# registered when its client starts and so run first, stops every mesh the
+# driver owns, Workers' actors included (meta-pytorch/monarch#5152, #5070). A
+# stop of ours after it could only fail against the closed client
+# (tests/test_exit_clean.py).

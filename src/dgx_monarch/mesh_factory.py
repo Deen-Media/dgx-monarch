@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Any
 
-from . import proc_stops, retired_meshes
+from . import driver_exit, proc_stops, retired_meshes
 from .error_utils import raise_with_distinct_cause, reconcile_error, safe_note
 from .mesh_runtime import get_off_loop, kept_root_log_level
 from .mesh_stop import RECONCILE_GROUP_S, cleanup_stop_s, stop_procs
@@ -340,6 +340,26 @@ def _mesh_name(workers: Any) -> str | None:
         return None
 
 
+def _record_mesh(workers: Any, config: Any, use_cluster: bool, gpus_per_host: int) -> None:
+    """Record the new mesh for the fault hook: its name, and its ranks' boxes in plain words.
+
+    The first build also registers the exit flag's hook, after Monarch's own (driver_exit).
+    """
+    driver_exit.install()
+    name = _mesh_name(workers)
+    retired_meshes.remember(workers, name)
+    try:
+        from types import SimpleNamespace
+
+        from . import box_names, worker_loss
+
+        ranks = (len(getattr(config, "hosts", ()) or ()) if use_cluster else 1) * gpus_per_host
+        fleet = SimpleNamespace(owns_hosts=use_cluster, config=config, gpus_per_host=gpus_per_host)
+        worker_loss.remember(name, box_names.fleet_labels(fleet, ranks))
+    except Exception:
+        pass  # the hook then keeps Monarch's own words for this mesh
+
+
 def spawn_worker_fleet(config, use_cluster: bool, gpus_per_host: int,
                        attach_cluster, bootstrap,
                        handoff: FleetHandoff | None = None) -> Fleet:
@@ -424,7 +444,7 @@ def spawn_worker_fleet(config, use_cluster: bool, gpus_per_host: int,
         with phase("spawn"):
             workers = procs.spawn("dgxm_worker", GPUWorker)
         wait_worker_ready(workers, deadline)
-        retired_meshes.remember(workers, _mesh_name(workers))
+        _record_mesh(workers, config, use_cluster, gpus_per_host)
         handoff.fleet = hosts, procs, workers, owns_hosts
         handoff.spawn_in_progress = False
         return hosts, procs, workers, owns_hosts

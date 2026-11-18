@@ -1765,7 +1765,7 @@ hidden `UNIQUE_ID`; no node reads its value, but it is part of that contract.
 - For state the node surface does not show, use `dgxm top`, the sidebar panel,
   `/dgxm/metrics`, a `dgxm diagnostics` capture or, with
   `[monarch.diagnostics] metrics = true` and an `otlp_endpoint`, the ownership
-  occupancy counters in your own collector (docs/CLUSTER.md). Monarch's own
+  occupancy gauges in your own collector (docs/CLUSTER.md). Monarch's own
   observability services (`enable_telemetry`, `Job.profile`, `monarch query`,
   the dashboard and the mesh admin agent that `monarch tui` reads) stay off,
   and there is no inspector mode for them: no form of them in the 0.7.0
@@ -4518,7 +4518,7 @@ dgx-monarch/
 │   ├── rdma_settlement.py     # durable local-drop publication helpers
 │   ├── native_return_latch.py # driver latch: messaging after a failed native
 │   │                          #   read, cleared only by a driver restart
-│   ├── occupancy_metrics.py   # opt-in occupancy up-down counters, sampled on
+│   ├── occupancy_metrics.py   # opt-in occupancy gauges, sampled on
 │   │                          #   the existing metrics thread (stdlib leaf)
 │   ├── return_phases.py       # one native return's phase split for the result
 │   │                          #   row, the render log line and the qualifier
