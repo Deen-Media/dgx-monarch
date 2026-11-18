@@ -233,7 +233,7 @@ def test_concurrent_supervision_failures_share_one_reconcile_stop():
         _supervision_reconcile_started=False,
     )
 
-    def shutdown(*, timeout_s, _reconcile_token):
+    def shutdown(*, timeout_s, stop_timeout_s=None, _reconcile_token):
         calls.append(_reconcile_token)
         assert _reconcile_token is handle._supervision_reconcile_token
         entered.set()

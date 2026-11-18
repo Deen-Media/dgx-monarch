@@ -1179,10 +1179,11 @@ Read this before the first update from 1.4.0, in this order. An install on
    `dgxm update --verify`, as [Upgrading from 1.2.0](#upgrading-from-120)
    describes
    ([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
-3. This release keeps the torchmonarch pin, the required dependencies and
-   Gate protocol 14 of 1.4.0, so neither mode installs a new pin and the
-   dependency check passes wherever it passes on 1.4.0. A saved Gate grant
-   also names the package version, so the 1.4.0 grants go stale and each
+3. This release moves the torchmonarch pin from 0.7.0 to 0.8.0, which
+   requires two packages 0.7.0 did not: `nvidia-ml-py`, which item 1 installs
+   before the update, and `psutil`, which ComfyUI's own requirements already
+   bring. Gate protocol 14 does not change. A saved Gate
+   grant also names the package version, so the 1.4.0 grants go stale and each
    model, residency and LoRA combination runs its first-use Gate again, once
    ([TROUBLESHOOTING #114](TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
 4. This release needs ComfyUI 0.45.0 or newer on the driver and on every
@@ -1493,9 +1494,9 @@ Read this before the first update from 1.3.0, in this order. An install on
    `dgxm update --verify`, as [Upgrading from 1.2.0](#upgrading-from-120)
    describes
    ([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
-3. This release keeps the torchmonarch pin, the required dependencies and the
-   Gate protocol of 1.3.0, so neither mode installs a new pin and the
-   dependency check passes wherever it passes on 1.3.0. A saved Gate grant also
+3. Release 1.4.0 kept the torchmonarch pin, the required dependencies and the
+   Gate protocol of 1.3.0. The pin and dependencies that 1.5.0 moves are in
+   [Upgrading from 1.4.0](#upgrading-from-140). A saved Gate grant also
    names the package version, so the 1.3.0 grants go stale and each model,
    residency and LoRA combination runs its first-use Gate again, once
    ([TROUBLESHOOTING #114](TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
@@ -1524,7 +1525,7 @@ Read this before the first update from 1.2.0, in this order. An install on
 
 1. The first update from 1.2.0 runs the 1.2.0 updater, the `dgxm` installed
    now. Its release-slot refusal and dependency checks apply in both modes.
-   The check of the packaged Studio files, which this release adds to
+   The check of the packaged Studio files, which release 1.3.0 brought to
    verified update, release staging and setup, applies from the next update
    on.
 2. If your Workers run from release slots, update only with
@@ -1534,16 +1535,16 @@ Read this before the first update from 1.2.0, in this order. An install on
    update on 1.2.0 refuses such a host with `release_slot_worker` before it
    fetches
    ([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
-3. This release keeps the torchmonarch pin and the required dependencies of
-   1.2.0, so neither mode installs a new pin, and the dependency check passes
-   wherever it passes on 1.2.0.
+3. Release 1.3.0 kept the torchmonarch pin and the required dependencies of
+   1.2.0. The pin and dependencies that 1.5.0 moves are in
+   [Upgrading from 1.4.0](#upgrading-from-140).
 4. The optional Studio companion needs the `studio` extra, which adds aiohttp
    and Pillow. Neither update mode installs an extra. To use Studio, install
    it as [Optional Studio companion](#optional-studio-companion) describes.
    Plain update reruns the editable install with `--no-deps`, which creates
    the `dgxm-studio` command. A verified update does not, so until you rerun
    that install, `pip show` reports 1.2.0 and `dgxm-studio` is missing,
-   although the code that runs is already this release.
+   although the code that runs is already the new release.
 5. MOSS-Image and Kromoss need ComfyUI 0.42.0 or newer on the driver and on
    every Worker, with the comfy-kitchen version that ComfyUI's requirements
    name
@@ -1567,7 +1568,7 @@ Read this before the first update from 1.2.0, in this order. An install on
 8. FLUX.3 Klein INT8 renders on uly2 can differ at the same seed from renders
    on 1.2.0. On 1.2.0 a Worker sent FLUX.3 Klein's `qkv` (or `q`, `k` and `v`)
    and `mlp_in` on an INT8 weight down a route that dequantizes the weight and
-   skips activation quantization. This release runs them through
+   skips activation quantization. From release 1.3.0 on they run through
    comfy-kitchen's INT8 GEMM, as stock does, and on 2026-10-21 FLUX.3 Klein
    INT8 uly2 renders were bit-identical to the pin-stripped one-GPU render. No
    hardware run rendered FLUX.3 Klein INT8 on uly2 under 1.2.0. The only
@@ -1588,8 +1589,8 @@ Read this before the first update from 1.2.0, in this order. An install on
 Read this before the first update from 1.1.0, in this order.
 
 1. The first update from 1.1.0 runs the 1.1.0 updater, the `dgxm` installed
-   now. The checks this release adds to both update modes apply from the next
-   update on, so check the points below yourself.
+   now. The checks release 1.2.0 brought to both update modes apply from the
+   next update on, so check the points below yourself.
 2. If your Workers run from release slots, update only with
    `dgxm update --verify`. A Worker runs from a slot when its host's
    `~/.local/share/dgx-monarch/src` resolves into
@@ -1603,12 +1604,12 @@ Read this before the first update from 1.1.0, in this order.
    update; repair that first with the same entry. The 1.1.0 verified updater
    has no `--privileged-process-inspection`, so where protected process
    environments are unreadable it refuses with `activity_unknown`; run the
-   update from a checkout of this release with the
+   update from a checkout of the release you update to with the
    [recovery procedure](TROUBLESHOOTING.md#recover-an-installation-with-an-older-verifier)
    and that flag instead.
 3. If cluster.toml sets `rdma_latent_return = true`, set it to `false` before
-   you update, in either mode. This release needs a `nic:` target in
-   `[monarch.rdma]` for native return, and the 1.1.0 loader rejects that
+   you update, in either mode. From release 1.2.0 on, native return needs a
+   `nic:` target in `[monarch.rdma]`, and the 1.1.0 loader rejects that
    table. After the update, add the target
    ([CLUSTER.md](CLUSTER.md#monarchrdma)), turn native return back on, and
    make the Workers start with the new policy. On an install whose Workers
@@ -1621,20 +1622,24 @@ Read this before the first update from 1.1.0, in this order.
    `xxhash` as point 6 says, then rerun `dgxm update` to finish it; on an
    install whose Workers run from release slots, follow TROUBLESHOOTING #118
    instead. Remove the table again before any return to 1.1.0.
-5. This release refuses to build a mesh on three kinds of ambient environment
-   variable: `OTEL_EXPORTER_OTLP_ENDPOINT` while export is off, a
+5. From release 1.2.0 on, a mesh build refuses three kinds of ambient
+   environment variable: `OTEL_EXPORTER_OTLP_ENDPOINT` while export is off, a
    `MONARCH_RDMA_*` name the policy does not set, and a variable the policy
    sets, such as `DGXM_RDMA_QP_SPLIT` or a `MONARCH_RDMA_*` name, set to
-   another value. 1.1.0 read `DGXM_RDMA_QP_SPLIT` as a user setting, and a
-   Worker of this release refuses to start on a value that differs from the
+   another value; 1.5.0 also refuses the per-signal OTLP endpoint variables
+   ([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+   1.1.0 read `DGXM_RDMA_QP_SPLIT` as a user setting, and a Worker of 1.2.0
+   or newer refuses to start on a value that differs from the
    policy, so the update's own Worker start would fail. Clear
    `DGXM_RDMA_QP_SPLIT` from each Worker's environment before you update: the
    systemd user manager (`systemctl --user show-environment`), any hand edit
    to the unit, and the shell that starts a `nohup` Worker. Clear the others
    before the first render
    ([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
-6. The torchmonarch pin this release installs requires `xxhash`, `pyarrow` 17
-   or newer and `numpy` 1.26 or newer. The 1.1.0 updater installs the pin with
+6. The torchmonarch pin of every release from 1.2.0 on requires `xxhash`,
+   `pyarrow` 17 or newer and `numpy` 1.26 or newer, and from release 1.5.0 on
+   it also requires `nvidia-ml-py` and `psutil`
+   ([Upgrading from 1.4.0](#upgrading-from-140)). The 1.1.0 updater installs the pin with
    `--no-deps` and checks none of them, so `pip check` and
    `tools/check_dependencies.py` then name any that is missing or too old; on
    the tested stack only `xxhash` was. Install what they name on the driver,
@@ -1648,11 +1653,11 @@ Read this before the first update from 1.1.0, in this order.
    reads the earlier version, so `pip show` and `pip check` report it, until
    the next `"$COMFY_PYTHON" -m pip install -e "$REPO_DIR" --no-deps`. Run that
    once after the update; the code that runs is already the new release.
-8. Run the driver and the Workers on the same release. A driver on this
-   release refuses Workers still on 1.1.0 before it dials, with an error that
+8. Run the driver and the Workers on the same release. A driver on 1.2.0 or
+   newer refuses Workers still on 1.1.0 before it dials, with an error that
    starts `no attach ran`, and `dgxm doctor` fails each such host's
    `listener generation` row. A ComfyUI started on 1.1.0 cannot attach to
-   Workers on this release; restart it
+   Workers on 1.2.0 or newer; restart it
    ([TROUBLESHOOTING #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 
 ### Update commands

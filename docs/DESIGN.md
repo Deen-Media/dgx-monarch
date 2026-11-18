@@ -8,8 +8,9 @@ supports a Worker
 on the driver's host; [Validation](VALIDATION.md#operator-checks) records the
 update results and limits. The benchmark
 campaign covers a documented subset, not the full matrix. The package declares
-version 1.5.0 and keeps the Monarch dependency that 1.2.0 moved to. That
-migration has local CPU, native-load and [exact-source paired hardware evidence](VALIDATION.md#gpu-checks-for-the-070-migration).
+version 1.5.0 and moves the Monarch dependency from 0.7.0, which 1.2.0 moved
+to and which has local CPU, native-load and [exact-source paired hardware evidence](VALIDATION.md#gpu-checks-for-the-070-migration),
+to 0.8.0, which so far has local CPU and native-load evidence only.
 Clean cancellation remains unproven despite successful explicit recovery;
 native cancellation and fabric-failure recovery remain untested.
 [Release history](../CHANGELOG.md) records what changed since 1.2.0 and how to
@@ -1765,9 +1766,13 @@ hidden `UNIQUE_ID`; no node reads its value, but it is part of that contract.
   occupancy counters in your own collector (docs/CLUSTER.md). Monarch's own
   observability services (`enable_telemetry`, `Job.profile`, `monarch query`,
   the dashboard and the mesh admin agent that `monarch tui` reads) stay off,
-  and there is no inspector mode for them: no form of them in the pinned 0.7.0
-  wheel is both stoppable and confined to what the integration owns. The paths
-  below are inside that wheel.
+  and there is no inspector mode for them: no form of them in the 0.7.0
+  wheel, the pin when these facts were traced, is both stoppable and confined
+  to what the integration owns. The paths below are inside that wheel; the
+  current pin's wheel has not been traced again, but its stub still gives the
+  mesh admin handle, `PyMeshAdminRef`, no methods
+  (`monarch/_rust_bindings/monarch_hyperactor/host_mesh.pyi`), so it still has
+  no stop handle.
   - `enable_telemetry`, `Job.profile`, `monarch query` and the dashboard each
     need a Job (`monarch/_src/job/job.py:502-597`; `monarch query` loads the
     active Job at `monarch/tools/cli.py:601-606`). A Job over the persistent

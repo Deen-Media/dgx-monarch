@@ -203,7 +203,7 @@ from dgx_monarch.monarch_policy import apply_policy, parse_policy
 policy = parse_policy({"diagnostics": {"otlp_endpoint": "http://127.0.0.1:4318", "otlp_logs": True}})
 apply_policy(policy, role="driver")
 state = configure_policy(policy.diagnostics)
-assert state.get("export_scope") == "upstream_metrics_and_logs", state
+assert state.get("export_scope") == "upstream_metrics_logs_and_spans", state
 assert os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://127.0.0.1:4318"
 print("ok")
 '''
@@ -244,7 +244,7 @@ def test_otlp_endpoint_is_installed_only_before_native_import(monkeypatch, isola
         otlp_endpoint='http://127.0.0.1:4318', otlp_logs=True))
     assert os.environ['OTEL_EXPORTER_OTLP_ENDPOINT'] == 'http://127.0.0.1:4318'
     assert adapter.status()['available'] is True
-    assert adapter.status()['export_scope'] == 'upstream_metrics_and_logs'
+    assert adapter.status()['export_scope'] == 'upstream_metrics_logs_and_spans'
 
 
 def test_inherited_matching_child_endpoint_can_attach_instruments(monkeypatch):

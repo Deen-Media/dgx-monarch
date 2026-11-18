@@ -25,15 +25,18 @@ def exception_observation(exc: BaseException) -> dict[str, str]:
     }
 
 
-def probe_python_task_asyncio(
+def probe_handle_asyncio(
     import_module: Callable[[str], object],
 ) -> dict[str, str]:
-    module = import_module("monarch._rust_bindings.monarch_hyperactor.pytokio")
-    python_task: Any = module.__dict__["PythonTask"]  # type: ignore[attr-defined]
+    """Await a resolved native Handle, the object under every returned Future."""
+    module = import_module("monarch._rust_bindings.monarch_hyperactor.handle")
+    new_pair: Any = module.__dict__["_new_handle_pair"]  # type: ignore[attr-defined]
 
     async def probe() -> dict[str, str]:
         try:
-            result = await python_task.sleep(0)
+            handle, completer = new_pair()
+            completer.set_result(())
+            result = await handle
         except BaseException as exc:
             return exception_observation(exc)
         return {
@@ -83,10 +86,29 @@ def probe_mesh_factory_private_ownership(
     }
 
 
+def probe_lifecycle_config_defaults(
+    import_module: Callable[[str], object],
+) -> dict[str, Any]:
+    """Record the config defaults the teardown rests on, as the runtime reads them back.
+
+    Direct spawn carries a stop reason only through ActorMesh.stop, fails
+    ``initialized`` on a constructor failure and finds a lost host in about
+    11 s. mesh_stop bounds the proc stop by the two idle limits, read back as
+    strings; a form its reader cannot parse refuses at driver admission.
+    """
+    module: Any = import_module("monarch.config")
+    config = module.__dict__["get_global_config"]()
+    if not isinstance(config, dict):
+        return {"outcome": "unexpected_config_type", "config_type": type_name(config)}
+    keys = ("use_direct_spawn", "get_proc_state_max_idle", "proc_stop_max_idle")
+    return {"outcome": "observed", **{key: config.get(key, "key_absent") for key in keys}}
+
+
 __all__ = [
     "exception_observation",
+    "probe_handle_asyncio",
+    "probe_lifecycle_config_defaults",
     "probe_mesh_factory_private_ownership",
-    "probe_python_task_asyncio",
     "probe_unhandled_hook_writable",
     "type_name",
 ]

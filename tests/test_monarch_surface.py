@@ -46,15 +46,9 @@ PIN_SEMANTICS = {
             }
         ],
     },
-    "raw_python_task_await_in_asyncio": {
-        "exception_type": "builtins.RuntimeError",
-        "message": (
-            "Attempting to __await__ a PythonTask when the asyncio event loop is active. "
-            "PythonTask objects should only be awaited in coroutines passed to "
-            "PythonTask.from_coroutine"
-        ),
-        "outcome": "raised",
-    },
+    # 0.8.0 removed PythonTask, which refused an await on a running loop; the
+    # Handle that replaced it under every Future awaits there.
+    "raw_handle_await_in_asyncio": {"outcome": "returned", "result_type": "builtins.tuple"},
     "unhandled_fault_hook_assignment": {"outcome": "writable"},
     # 0.7.0 removed the switch; the separate CPU smoke verifies concurrency.
     "actor_queue_dispatch_default": {"outcome": "key_absent"},
@@ -64,6 +58,13 @@ PIN_SEMANTICS = {
         "host_proc_meshes_empty": True,
         "host_proc_meshes_type": "builtins.list",
         "proc_host_identity": True,
+    },
+    # Direct spawn, and the two stop limits as the runtime reads them back (mesh_stop).
+    "lifecycle_config_defaults": {
+        "outcome": "observed",
+        "use_direct_spawn": True,
+        "get_proc_state_max_idle": "1m",
+        "proc_stop_max_idle": "30s",
     },
 }
 
@@ -184,13 +185,26 @@ def test_manifest_is_unique_nonvacuous_and_covers_every_required_family():
         "monarch.rdma.RDMABuffer.drop",
         "monarch.rdma.is_ibverbs_available",
         "monarch.actor.unhandled_fault_hook",
-        "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask.__await__",
+        "monarch._rust_bindings.monarch_hyperactor.handle.Handle.__await__",
+        "monarch._rust_bindings.monarch_hyperactor.handle.Handle.get",
+        "monarch._rust_bindings.monarch_hyperactor.host_mesh.BootstrapCommand",
+        "monarch._rust_bindings.monarch_hyperactor.supervision.SupervisionError",
+        "monarch.config.configure",
+        "monarch.config.get_global_config",
+        "monarch._src.actor.actor_mesh.ActorMesh.initialized",
+        "monarch._src.actor.actor_mesh.Instance._as_rust",
+        "monarch._src.actor.bootstrap_main.invoke_main",
+        "monarch._rust_bindings.monarch_hyperactor.supervision.MeshFailure.mesh_name",
+        "monarch._src.actor.proc_mesh.SetupActor",
+        "monarch._src.actor.logging._LogLevelSetter",
+        "monarch._src.actor.proc_mesh.ProcMesh._start_root_logging",
     } <= set(paths)
 
 
 def test_manifest_helper_has_only_standard_library_imports():
     imported_roots = set()
     for filename in (
+        "monarch_lifecycle_touchpoints.py",
         "monarch_semantics.py",
         "monarch_surface.py",
         "monarch_surface_report.py",
@@ -359,6 +373,23 @@ def test_two_fresh_reports_with_the_same_failed_ownership_probe_do_not_compare_c
                for blocker in comparison.blockers)
     assert any(blocker.startswith("candidate: semantic probe mesh_factory_private_ownership")
                for blocker in comparison.blockers)
+
+
+def test_a_lifecycle_config_probe_that_errored_in_both_reports_is_blocked():
+    """Direct spawn and the stop limits rest on it, so an error never compares clean."""
+    errored = {"outcome": "probe_error", "exception_type": "builtins.KeyError",
+               "message": "get_global_config"}
+    baseline, candidate = _snapshot("0.8.0"), _snapshot("0.8.1")
+    for snapshot in (baseline, candidate):
+        snapshot["semantics"]["lifecycle_config_defaults"] = copy.deepcopy(errored)
+    assert ("semantic probe lifecycle_config_defaults: builtins.KeyError: get_global_config"
+            in snapshot_blockers(baseline))
+    comparison = compare_snapshots(baseline, candidate)
+    assert not comparison.compatible
+    assert any(blocker.startswith("candidate: semantic probe lifecycle_config_defaults")
+               for blocker in comparison.blockers)
+    del baseline["semantics"]["lifecycle_config_defaults"]
+    assert "semantic probe lifecycle_config_defaults: absent" in snapshot_blockers(baseline)
 
 
 def test_a_snapshot_without_the_ownership_probe_is_blocked():

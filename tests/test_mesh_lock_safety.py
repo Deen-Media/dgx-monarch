@@ -30,6 +30,7 @@ from dgx_monarch import (
     mesh_lease,
     mesh_runtime,
     mesh_safety,
+    mesh_stop,
     mesh_teardown,
 )
 from dgx_monarch.adapters.base import UnsupportedModelError
@@ -102,6 +103,8 @@ def test_reconcile_thread_launch_retries_one_shot_start_failure(monkeypatch):
 
     def flaky_thread(*args, **kwargs):
         thread = real_thread(*args, **kwargs)
+        if kwargs.get("name") != "dgxm-reconcile-stop":
+            return thread  # e.g. the proc stop's own wait thread
         actual_start = thread.start
 
         def start():
@@ -150,8 +153,9 @@ def test_supervision_publication_repairs_token_before_defunct_interruption():
     handle._supervision_reconcile_token = None
     handle.interrupt_defunct = True
 
-    def shutdown(*, timeout_s, _reconcile_token):
-        assert timeout_s == 30
+    def shutdown(*, timeout_s, stop_timeout_s, _reconcile_token):
+        # The group teardown keeps its 30 s; the proc stop can follow a host's death.
+        assert (timeout_s, stop_timeout_s) == (mesh_stop.RECONCILE_GROUP_S, mesh_stop.proc_stop_bound_s())
         assert _reconcile_token is handle._supervision_reconcile_token
         handle.teardown_complete = True
 
@@ -1060,7 +1064,7 @@ def test_partial_bring_up_rollback_stop_runs_off_the_loop():
     assert error.original is spawn_failure
     assert error.cleanup is None           # the rollback stop completed
     assert procs.reasons == ["dgx-monarch partial bring-up rollback"]
-    assert stop_future.timeouts == [60]
+    assert stop_future.timeouts == [mesh_stop.cleanup_stop_s()]
     assert stop_future.thread_names == ["dgxm-bringup-rollback"]
 
 
@@ -1077,8 +1081,10 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "reached only through _await_or_evict, already off-loop",
     ("mesh_runtime.py", "get_off_loop"):
         "the seam itself: this get IS the scratch-thread body",
-    ("mesh_teardown.py", "stop_failed_setup_procs.stop_once"):
-        "inside the dgxm-setup-rollback scratch thread",
+    ("mesh_stop.py", "stop_with_reason"):
+        "called only inside the dgxm-recycle, dgxm-shutdown and dgxm-setup-rollback scratch threads",
+    ("mesh_stop.py", "stop_procs.wait"):
+        "the dgxm-proc-stop-wait thread body, started from stop_with_reason inside those threads",
     ("monarch_surface.py", "_probe_future_get_asyncio.probe"):
         "deliberate on-loop pin of monarch's own semantics",
     ("progress.py", "ProgressReceiver.__enter__.pump"):

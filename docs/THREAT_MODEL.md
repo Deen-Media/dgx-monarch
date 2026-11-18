@@ -642,17 +642,23 @@ Monarch export is off by default. `[monarch.diagnostics] metrics = true`
 creates dgx-monarch's phase and occupancy instruments, which leave the host
 only through an `otlp_endpoint`
 ([CLUSTER.md](CLUSTER.md#monarchdiagnostics)). With an endpoint set, the
-driver, every actor and every Worker send Monarch's metrics and its upstream
-raw logs, as well as those instruments, to the collector that endpoint names.
-Loading the file refuses an endpoint unless `otlp_logs = true` acknowledges
-the logs.
-dgx-monarch sanitizes only its own metric labels; the upstream logs may hold
-more, and an `http://` endpoint carries them unencrypted. Use a collector you
-control. An ambient `OTEL_EXPORTER_OTLP_ENDPOINT` would start that export
-without the file's acknowledgement, so the driver refuses every mesh build
-while the variable is set and export is off, or while it names a different
-endpoint. Actors start with the variable removed when export is off, and the
-Worker loop's environment filter drops it
+driver, every actor and every Worker send Monarch's metrics, its upstream
+raw logs and its spans, as well as those instruments, to the collector that
+endpoint names. Every post carries the user and host names, and the logs
+carry process command lines. Monarch has no switch for spans alone. Loading
+the file refuses an endpoint unless
+`otlp_logs = true` acknowledges the logs and spans.
+dgx-monarch sanitizes only its own metric labels; the upstream logs and spans
+may hold more, and an `http://` endpoint carries them unencrypted. Use a
+collector you control. An ambient `OTEL_EXPORTER_OTLP_ENDPOINT` would start
+that export without the file's acknowledgement, so the driver refuses every
+mesh build while the variable is set and export is off, or while it names a
+different endpoint. Monarch also starts one signal's export from
+`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `..._METRICS_ENDPOINT` or
+`..._TRACES_ENDPOINT` alone, so the driver refuses any of those, whatever the
+policy says. Actors start with the base variable removed when export is off
+and the three per-signal variables always removed, and the Worker loop's
+environment filter drops them all
 ([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
 
 `dgxm diagnostics` changes no runtime state. For a bounded time it polls

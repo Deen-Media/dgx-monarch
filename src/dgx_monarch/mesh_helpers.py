@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from . import absorb_fire as _absorb
 from . import client_lease as _client_lease
 from . import mesh_runtime as _mesh_runtime
-from . import mesh_safety, mesh_teardown, native_return_latch, residency_doors
+from . import mesh_safety, mesh_teardown, native_return_latch, residency_doors, retired_meshes
 from .error_utils import (
     exception_chain,
     failure_summary,
@@ -164,21 +164,20 @@ def install_unhandled_fault_hook(correlation_state) -> bool:
 
         def hook(failure) -> None:
             text = str(failure)
-            # A fault carrying a stop reason always absorbs: the reason is the
-            # attribution, so no correlation or coherence check may reject it.
-            if mesh_safety.is_reason_marked_teardown(text):
-                hook_log.info("cluster teardown notice (deliberate): %s",
-                              text.split("\n")[0][:160])
+            # A stop reason is the attribution, so no correlation check may
+            # reject it; a retired mesh or Monarch's internal ones are expected noise.
+            label = (retired_meshes.RETIRED_NOTICE if mesh_safety.is_reason_marked_teardown(text)
+                     else retired_meshes.notice(text, failure))
+            if label:
+                hook_log.info("%s: %s", label, text.split("\n")[0][:160])
                 return
-            # A fault without a reason correlates under one coherent snapshot.
-            # The state version bumps on every teardown transition and the
-            # bracket closes after classification, so every mutable read, the
-            # grace deadline included, sits inside it; a transition in between
+            # A fault without a reason correlates under one coherent snapshot:
+            # the state version bumps on every teardown transition and the
+            # bracket closes after classification, so a transition in between
             # leaves the fault visible. correlation_state() counts a stop in
             # flight only from a token whose handle has published neither
             # teardown_complete nor replacement_blocked, so an interrupt in
-            # end_deliberate_teardown before its store cannot hide faults
-            # forever.
+            # end_deliberate_teardown cannot hide faults forever.
             version = mesh_safety.teardown_state_version()
             live, creating, in_flight = correlation_state()
             absorb = mesh_safety.is_deliberate_teardown_fault(
@@ -307,8 +306,8 @@ def mark_defunct_on_supervision_failure(handle, exc: BaseException, *,
     names = {type(e).__name__ for e in chain}
     text = f"{names} " + " ".join(failure_summary(e) for e in chain if not isinstance(e, ActorError))
     # Match the exported SupervisionError type first. The string list is a
-    # secondary net only, audited against the 0.7.0 wheel: its binding still
-    # exports the type and carries these strings, but no longer "ProcessExited".
+    # secondary net only, audited against the 0.7.0 and 0.8.0 wheels: each binding
+    # exports the type and carries these strings, but not "ProcessExited".
     # On their own the strings would miss a renamed failure and let a dead fleet
     # be reused; isinstance survives a rename of the message text.
     try:
@@ -492,7 +491,7 @@ def _launch_reconcile_thread(
         return
     if creator and wait and thread is not None:
         try:
-            thread.join(timeout=95.0)
+            thread.join(timeout=mesh_teardown.reconcile_join_s())
         except BaseException as join_exc:
             safe_note(
                 exc, "supervision reconcile thread join was interrupted", join_exc)

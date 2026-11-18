@@ -125,7 +125,9 @@ def source_facts():
 def check_source(facts, sha, manifest):
     require(facts["source_manifest_sha256"] == manifest, "source manifest mismatch")
     require(facts["source_sha"] in (None, sha), "source commit mismatch")
-    require(facts["torchmonarch"] == "0.7.0", "torchmonarch must equal 0.7.0")
+    from dgx_monarch import TORCHMONARCH_PIN
+
+    require(facts["torchmonarch"] == TORCHMONARCH_PIN, f"torchmonarch must equal {TORCHMONARCH_PIN}")
     # Managed copies are bound to the clean driver's exact SHA by payload digest;
     # do not report a nonexistent remote Git checkout as verified.
     return {**facts, "bound_source_sha": sha,

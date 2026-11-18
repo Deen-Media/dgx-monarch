@@ -7,6 +7,8 @@ import types
 
 import pytest
 
+from dgx_monarch.mesh_stop import PROC_STOP_DEFAULT_S as STOP_S  # the old fleet's stop on a config change
+
 
 class _Done:
     def get(self, timeout=None):
@@ -77,8 +79,8 @@ def test_stale_config_retries_cached_shutdown_before_replacement(monkeypatch, is
     )
     calls = []
 
-    def shutdown(timeout_s):
-        calls.append(timeout_s)
+    def shutdown(timeout_s, stop_timeout_s=None):
+        calls.append((timeout_s, stop_timeout_s))
         if len(calls) == 1:
             raise RuntimeError("old procs still alive")
 
@@ -109,7 +111,7 @@ def test_stale_config_retries_cached_shutdown_before_replacement(monkeypatch, is
     monkeypatch.setattr(mesh_mod, "_attach_cluster", replacement_reached)
     with pytest.raises(RuntimeError, match="replacement attach reached"):
         mesh_mod.get_mesh(mode="cluster")
-    assert calls == [30, 30]
+    assert calls == [(30, STOP_S), (30, STOP_S)]  # group teardown 30 s, proc stop the bound
     assert mesh_mod._MESHES == {}
 
 
@@ -176,7 +178,7 @@ def test_comfy_dir_only_change_retires_same_source_fleet(monkeypatch, isolated_e
     handle = types.SimpleNamespace(
         defunct=False, replacement_blocked=None, config_fingerprint="unreadable",
         n_hosts=1, gpus_per_host=1, comfy_dir="/old",
-        shutdown=lambda timeout_s: calls.append(timeout_s))
+        shutdown=lambda timeout_s, stop_timeout_s=None: calls.append((timeout_s, stop_timeout_s)))
     key = mesh_mod._mesh_cache_key(config.source, "/new", True)
     monkeypatch.setattr(mesh_mod, "find_config_path", lambda _path: "/cluster.toml")
     monkeypatch.setattr(mesh_mod, "load_cluster_config", lambda _path: config)
@@ -190,7 +192,7 @@ def test_comfy_dir_only_change_retires_same_source_fleet(monkeypatch, isolated_e
         lambda *args: (_ for _ in ()).throw(RuntimeError("replacement reached")))
     with pytest.raises(RuntimeError, match="replacement reached"):
         mesh_mod.get_mesh(mode="cluster")
-    assert calls == [30]
+    assert calls == [(30, STOP_S)]
     assert mesh_mod._MESHES == {}
 
 
@@ -201,7 +203,7 @@ def _replaceable_fleet(monkeypatch, config, events):
     handle = types.SimpleNamespace(
         defunct=False, replacement_blocked=None, config_fingerprint="edited",
         n_hosts=1, gpus_per_host=1, comfy_dir="/comfy",
-        shutdown=lambda timeout_s: events.append(("shutdown", timeout_s)))
+        shutdown=lambda timeout_s, stop_timeout_s=None: events.append(("shutdown", timeout_s, stop_timeout_s)))
     key = mesh_mod._mesh_cache_key(config.source, "/comfy", True)
     monkeypatch.setattr(mesh_mod, "find_config_path", lambda _path: "/cluster.toml")
     monkeypatch.setattr(mesh_mod, "load_cluster_config", lambda _path: config)
@@ -244,7 +246,7 @@ def test_driver_refusal_keeps_the_live_fleet_a_config_edit_would_replace(monkeyp
     monkeypatch.setattr(monarch_launch, "prepare_driver", lambda _config: events.append("admit"))
     with pytest.raises(RuntimeError, match="replacement reached"):
         mesh_mod.get_mesh(mode="cluster")
-    assert events == ["admit", ("shutdown", 30), "spawn"]
+    assert events == ["admit", ("shutdown", 30, STOP_S), "spawn"]
     assert mesh_mod._MESHES == {}
 
 
@@ -314,7 +316,8 @@ def _stub_native_driver(monkeypatch, get_meter, ambient=None):
         monkeypatch.delenv(name, raising=False)
     if ambient:
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = ambient
-    native: dict = {}
+    # The runtime always reports the two stop limits; a missing one refuses admission.
+    native: dict = {"get_proc_state_max_idle": "1m", "proc_stop_max_idle": "30s"}
     actor = types.SimpleNamespace(get_meter=get_meter, span=lambda _name: None)
     monkeypatch.setitem(sys.modules, "monarch", types.SimpleNamespace(actor=actor))
     monkeypatch.setitem(sys.modules, "monarch.actor", actor)
@@ -426,7 +429,7 @@ def test_an_admitted_edit_whose_recycle_refuses_puts_the_live_fleets_admission_b
         expected = _driver_state()
         events: list = []
 
-        def refuse(timeout_s):
+        def refuse(timeout_s, stop_timeout_s=None):
             events.append("shutdown")
             raise RuntimeError("a render still holds the fleet")
 
@@ -476,7 +479,7 @@ def test_a_refused_endpoint_edit_never_stops_the_running_exporter(monkeypatch, i
                             lambda self: stops.append(self) or real_stop(self))
         events: list = []
         key, handle, _current = _live_fleet(monkeypatch, old, _driver_config({"diagnostics": edited}),
-                                            lambda timeout_s: events.append("shutdown"))
+                                            lambda timeout_s, stop_timeout_s=None: events.append("shutdown"))
 
         with pytest.raises(ClusterConfigError, match=case):
             mesh_mod.get_mesh(mode="cluster")
@@ -522,7 +525,7 @@ def test_a_restore_that_cannot_restart_a_stuck_exporter_says_so(monkeypatch, iso
         expected_policy = _driver_state()[1:]
         events: list = []
 
-        def shutdown(timeout_s):
+        def shutdown(timeout_s, stop_timeout_s=None):
             events.append("shutdown")
             if failure == "recycle_refused":
                 raise RuntimeError("a render still holds the fleet")

@@ -11,6 +11,9 @@ from types import SimpleNamespace
 import pytest
 
 from dgx_monarch import client_lease
+from dgx_monarch.mesh_stop import cleanup_stop_s
+
+STOP_S = cleanup_stop_s()  # the creation rollback's stop: 65 s at Monarch's defaults
 
 
 class _PublishedProcMesh:
@@ -127,7 +130,7 @@ def test_mesh_publication_waiters_never_reuse_a_handle_whose_lease_start_failed(
     assert errors == [startup_error]
     assert len(proc_meshes) == 2 and starts == 2
     assert proc_meshes[0].stop_reasons == ["dgx-monarch client detach"]
-    assert proc_meshes[0].stop_timeouts == [30]
+    assert proc_meshes[0].stop_timeouts == [STOP_S]
     assert proc_meshes[1].stop_reasons == []
     assert results == [handles_at_start[1]]
     assert results[0] is not handles_at_start[0]
@@ -172,7 +175,7 @@ def test_publication_boundary_baseexception_retires_the_unleased_handle(monkeypa
     assert failure.value is interrupted
     assert starts == 0
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert mesh._MESHES == {}
     assert mesh._MESH_PENDING == {}
     assert mesh._MESH_CREATING == {}
@@ -297,7 +300,7 @@ def test_prepublication_baseexception_stops_the_owned_proc_mesh(monkeypatch, bou
     assert failure.value is interrupted
     assert starts == 0
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert mesh._MESHES == {}
     assert mesh._MESH_CREATING == {}
     assert mesh._TRANSPORT_CLAIMS == set()
@@ -371,7 +374,7 @@ def test_creation_instruction_handoffs_stop_the_owned_proc_mesh(monkeypatch, bou
     assert failure.value is interrupted
     assert starts == (1 if boundary == "lease" else 0)
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert mesh._MESHES == {}
     assert mesh._MESH_CREATING == {}
     assert mesh._TRANSPORT_CLAIMS == set()
@@ -410,7 +413,7 @@ def test_proc_only_factory_handoff_is_reconciled_once(monkeypatch, cleanup):
                        if cleanup in {"not_started", "callback_unconfirmed"}
                        else "dgx-monarch partial bring-up rollback")
     assert proc_mesh.stop_reasons == [expected_reason]
-    assert proc_mesh.stop_timeouts == ([30]
+    assert proc_mesh.stop_timeouts == ([STOP_S]
                                        if cleanup in {"not_started", "callback_unconfirmed"} else
                                        [60] if cleanup == "confirmed" else [])
     assert mesh._MESHES == {} and mesh._MESH_CREATING == {}
@@ -449,8 +452,12 @@ def test_outer_proc_stop_instruction_publishes_ambiguity_before_the_call_returns
         raise primary
 
     monkeypatch.setattr(mesh, "MeshHandle", fail_handle)
-    instructions = list(dis.get_instructions(
-        mesh_factory.reconcile_creation_cleanup))
+    # The creation cleanup issues its stop inside mesh_stop.stop_procs, the registered wait.
+    from dgx_monarch import mesh_stop
+
+    assert "stop_procs" in mesh_factory.reconcile_creation_cleanup.__code__.co_names
+    stop_code = mesh_stop.stop_procs.__code__
+    instructions = list(dis.get_instructions(mesh_stop.stop_procs))
     load_index = next(
         index for index, instruction in enumerate(instructions)
         if instruction.opname == "LOAD_ATTR" and instruction.argval == "stop"
@@ -467,22 +474,18 @@ def test_outer_proc_stop_instruction_publishes_ambiguity_before_the_call_returns
 
     def interrupt(_code, instruction_offset):
         if instruction_offset == target.offset:
-            monitoring.set_local_events(
-                tool_id, mesh_factory.reconcile_creation_cleanup.__code__, 0)
+            monitoring.set_local_events(tool_id, stop_code, 0)
             raise interrupted
 
     monitoring.use_tool_id(tool_id, "dgxm-outer-proc-stop-handoff-test")
     monitoring.register_callback(
         tool_id, monitoring.events.INSTRUCTION, interrupt)
-    monitoring.set_local_events(
-        tool_id, mesh_factory.reconcile_creation_cleanup.__code__,
-        monitoring.events.INSTRUCTION)
+    monitoring.set_local_events(tool_id, stop_code, monitoring.events.INSTRUCTION)
     with pytest.raises(RuntimeError, match="handle construction failed") as failure:
         try:
             mesh.get_mesh(mode="local", gpus_per_host=1)
         finally:
-            monitoring.set_local_events(
-                tool_id, mesh_factory.reconcile_creation_cleanup.__code__, 0)
+            monitoring.set_local_events(tool_id, stop_code, 0)
             monitoring.register_callback(
                 tool_id, monitoring.events.INSTRUCTION, None)
             monitoring.free_tool_id(tool_id)
@@ -541,7 +544,7 @@ def test_outer_proc_cleanup_diagnostics_are_best_effort(monkeypatch, broken):
     assert handoffs[0].cleanup_started is True
     assert handoffs[0].cleanup_confirmed is False
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert "owned ProcMesh cleanup unconfirmed" in mesh._TRANSPORT_POISON
     if broken == "cleanup_repr":
         assert "<BrokenCleanup>" in mesh._TRANSPORT_POISON
@@ -682,7 +685,7 @@ def test_active_creation_claim_serializes_an_unrelated_key(
     assert all(
         proc_mesh.stop_reasons == ["dgx-monarch client detach"]
         for proc_mesh in proc_meshes)
-    assert all(proc_mesh.stop_timeouts == [30] for proc_mesh in proc_meshes)
+    assert all(proc_mesh.stop_timeouts == [STOP_S] for proc_mesh in proc_meshes)
     assert mesh_factory.creation_cleanup_pending() is False
     assert mesh._TRANSPORT_POISON is None
 
@@ -986,7 +989,7 @@ def test_new_cleanup_claim_between_confirm_and_poison_clear_still_blocks(
     assert raced_claims and mesh_factory.creation_cleanup_pending() is True
     assert mesh._TRANSPORT_POISON is None
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     with pytest.raises(mesh.MeshAttachError, match="not reusable"):
         mesh.get_mesh(mode="local", gpus_per_host=1)
     assert spawn_calls == 1
@@ -1112,7 +1115,7 @@ def test_lease_start_failure_with_unconfirmed_proc_cleanup_blocks_every_retry(mo
     assert len(pending) == 1
     retained = pending[0]
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert retained.teardown_complete is False
     assert "proc stop was not confirmed" in retained.replacement_blocked
     assert mesh_factory.creation_cleanup_pending() is True
@@ -1159,7 +1162,7 @@ def test_confirmed_stop_outranks_an_interrupted_cache_eviction(monkeypatch):
     assert failure.value is startup_error
     assert retire_calls == 2
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert published[0].teardown_complete is True
     assert published[0].replacement_blocked is None
     assert mesh._MESHES == {}

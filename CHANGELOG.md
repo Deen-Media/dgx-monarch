@@ -14,14 +14,16 @@ package that ships files in torchmonarch's directories was installed with
 script can do; a reinstall of that package without the prefix clears it, and
 this release's updater, run from a checkout of this release, accepts it
 ([TROUBLESHOOTING #155](docs/TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
-Before the update, install `nvidia-ml-py` into the driver's Python and into the
-Python cluster.toml names on every Worker host: a torchmonarch pin of 0.8.0 or
-newer requires it, neither update mode installs it, and an update to such a
-pin stops before any change. The 1.4.0 updater names only the first Python
-that lacks it, so install it on every one before you start; this release's
-updater names each
-([INSTALL](docs/INSTALL.md#upgrading-from-140)).
-The torchmonarch pin, the required dependencies and Gate protocol 14 do not
+The torchmonarch pin moves from 0.7.0 to 0.8.0, which requires two more
+packages, `nvidia-ml-py` and `psutil`, on the driver and on every Worker
+host. Before the update, install `nvidia-ml-py` into the driver's Python and
+into the Python cluster.toml names on every Worker host: neither update mode
+installs it, and an update to this pin stops before any change until every
+Python holds it. The 1.4.0 updater names only the first Python that lacks
+it, so install it on every one before you start; this release's updater
+names each
+([INSTALL](docs/INSTALL.md#upgrading-from-140)). The required dependencies
+and Gate protocol 14 do not
 change, but a saved Gate grant names the package version, so each model,
 residency and LoRA combination runs its first-use Gate again, once
 ([TROUBLESHOOTING #114](docs/TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
@@ -276,7 +278,20 @@ sections after them list every change.
   `listener generation` row now shows the
   torchmonarch each running loop imported and fails when it is not the pin
   ([TROUBLESHOOTING #8](docs/TROUBLESHOOTING.md#8-version-skew-between-hosts)).
-
+- An `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`
+  or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` in ComfyUI's environment, harmless
+  on 1.4.0, now stops every mesh build, because torchmonarch 0.8.0 exports
+  that signal from the variable alone. It asks you to unset it and restart
+  ComfyUI; `[monarch.diagnostics] otlp_endpoint` stays the only destination
+  ([TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+- A `HYPERACTOR_MESH_GET_PROC_STATE_MAX_IDLE` or
+  `HYPERACTOR_MESH_PROC_STOP_MAX_IDLE` in ComfyUI's environment that makes
+  Monarch's two stop limits add up to more than 90 s, or that Monarch reads
+  back as something dgx-monarch cannot read, now stops every mesh build,
+  because the teardown budgets cannot hold a longer stop. It names the
+  variables that are set and asks you to unset them, or lower them to add up
+  to 90 s or less, and restart ComfyUI
+  ([TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
 - On an older ComfyUI a MiniMax H3 file with a stacked output head refuses
   under sequence parallelism, and asks for ComfyUI 0.45.0
   ([TROUBLESHOOTING #147](docs/TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
@@ -1096,6 +1111,60 @@ sections after them list every change.
 
 ### Compatibility and verification
 
+- torchmonarch moves from 0.7.0 to 0.8.0, and keeps its default of spawning
+  actors directly. A GPUWorker that fails as it starts now fails the start-up
+  wait itself, and the bring-up error opens with the Worker's own exception
+  line ahead of Monarch's supervision text. Reset, Recycle, detach and a
+  failed setup's rollback stop the Worker actors with their reason before the
+  processes, so a call still in flight reads "stopped: dgx-monarch recycle"
+  and the like, where 0.8.0's process stop alone gives "stopped: parent
+  draining". The proc stop that can follow a lost Worker host now waits
+  Monarch's two stop limits plus 10 s, 100 s at their defaults and never
+  more: 0.8.0 holds it behind a status query of the dead host for up to 1
+  minute, so the old 30 s wait timed out and, with the host unreachable, the
+  next mesh refused until ComfyUI restarted. The group teardown before it
+  keeps its old wait. The stop of a failed mesh creation's cleanup, and of a
+  failed bring-up's rollback, waits Monarch's state limit plus 5 s, 65 s at
+  its defaults: on a single-host fleet a stop sent more than about 8 s after
+  the loss confirms once Monarch's state query of the dead host ends, so the
+  cleanup no longer leaves a ComfyUI restart to do. Where the lost host sits
+  beside a live one the stop does not confirm, and these two cleanups then
+  wait up to 65 s for the same unknown outcome, where 0.7.0 waited 30 s and
+  60 s. When the lost host's procs sit beside a live host's,
+  0.8.0 ends the stop about 30 s after the stop starts (up to 90 s when the
+  stop follows the loss within a minute) without confirming them, and never
+  completes it. The pack spawns every proc mesh under a name of its own and
+  registers every proc stop it issues, so Monarch's report on that stop, and
+  no other, ends its wait at once, with the outcome a timed-out stop gives.
+  On one machine over loopback, a render 40 s after a Worker loop died
+  refuses in 57.5 s (0.7.0: 57.0 s; without that change, 124 s), and a call
+  in flight when a Worker loop dies refuses in 97.5 s (0.7.0: 97.1 s), the
+  stop then following within a minute of the loss. Late failures from a
+  mesh the driver is stopping or has stopped, from Monarch's internal
+  `log_level` and `setup` meshes, and Monarch's report on a proc stop of the
+  pack, including one that arrives after that stop's wait gave up, as after a
+  heal's 2 s stop, now log at INFO with no toast; a live Worker mesh's
+  failure is still an error with a toast. Creating the Monarch
+  client no longer changes ComfyUI's root log level, which 0.8.0 sets to
+  INFO. 0.8.0 builds every rank's launch command before it starts any
+  process, so a command that refuses now ends the bring-up with its rollback
+  confirmed and nothing to stop. 0.8.0 starts OTLP export from
+  `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `..._METRICS_ENDPOINT` or
+  `..._TRACES_ENDPOINT` alone and adds spans to every export, so the driver
+  refuses those three variables, actors start without them and the Worker
+  loop drops them; `otlp_logs = true` now acknowledges the spans too
+  ([TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+  The weekly torchmonarch canary watches `Handle`, which replaced
+  `PythonTask` under every returned Future, and the Monarch names production
+  code uses that it did not list before, among them those the teardown, the
+  fault hook and the root log level guard rest on. Its CPU smoke now also
+  checks a spawn with a bootstrap, the faults a dead proc of it raises, the
+  two bring-up failures the factory reads and where the root log level
+  changes, and Monarch's stop report for a lost rank beside a live one on two
+  loopback Worker loops, and it records direct spawn and the two stop
+  limits. It installs Torch 2.15.0, and its
+  checked baseline comes from its own run. Local CPU checks and native loading pass on 0.8.0;
+  hardware checks have not run.
 - This release needs ComfyUI 0.45.0 or newer. ComfyUI 0.45.0 changed the
   MiniMax H3 output head to take one sigma grid per stream, and the sharded
   H3 forward now passes those grids, built as stock builds them. It reads the

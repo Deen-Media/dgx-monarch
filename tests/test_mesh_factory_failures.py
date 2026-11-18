@@ -19,6 +19,9 @@ from dgx_monarch.mesh_factory import (
     _unregister_callback_once,
     spawn_worker_fleet,
 )
+from dgx_monarch.mesh_stop import cleanup_stop_s
+
+STOP_S = cleanup_stop_s()  # the bring-up rollback's stop: 65 s at Monarch's defaults
 
 _CONFIG = SimpleNamespace(monarch=SimpleNamespace(startup_timeout_s=180))
 
@@ -195,7 +198,7 @@ def test_spawn_baseexception_rolls_back_partial_proc_mesh(monkeypatch):
     assert error.cleanup is None
     assert error.__cause__ is primary
     assert procs.stop_reasons == ["dgx-monarch partial bring-up rollback"]
-    assert stop_future.timeouts == [60]
+    assert stop_future.timeouts == [STOP_S]
     assert stop_future.thread_names == ["dgxm-bringup-rollback"]
     assert shutdown_calls == []
 
@@ -231,7 +234,7 @@ def test_rollback_baseexception_preserves_spawn_and_cleanup_evidence(monkeypatch
     assert error.__cause__ is primary
     assert str(error) == str(primary)
     assert procs.stop_reasons == ["dgx-monarch partial bring-up rollback"]
-    assert stop_future.timeouts == [60]
+    assert stop_future.timeouts == [STOP_S]
     assert stop_future.thread_names == ["dgxm-bringup-rollback"]
     assert shutdown_calls == []
 
@@ -270,7 +273,7 @@ def test_worker_spawn_error_survives_broken_original_str_and_repr(monkeypatch):
     assert failure.value.cleanup is None
     assert failure.value.__cause__ is primary
     assert procs.stop_reasons == ["dgx-monarch partial bring-up rollback"]
-    assert stop_future.timeouts == [60]
+    assert stop_future.timeouts == [STOP_S]
     assert shutdown_calls == []
 
 
@@ -458,7 +461,7 @@ def test_successful_spawn_handoff_baseexception_rolls_back_owned_proc_mesh(
     assert error.cleanup is cleanup
     assert error.__cause__ is primary
     assert procs.stop_reasons == ["dgx-monarch partial bring-up rollback"]
-    assert stop_future.timeouts == [60]
+    assert stop_future.timeouts == [STOP_S]
     assert stop_future.thread_names == ["dgxm-bringup-rollback"]
     assert shutdown_calls == []
     assert handoff.fleet == (hosts, procs, workers, True)
@@ -562,7 +565,7 @@ def test_spawn_procs_instruction_handoff_never_orphans_proc_mesh(
     assert failure.value.original is primary
     assert failure.value.cleanup is None
     assert procs.stop_reasons == ["dgx-monarch partial bring-up rollback"]
-    assert stop_future.timeouts == [60]
+    assert stop_future.timeouts == [STOP_S]
     assert callbacks == []
     assert handoff.proc_meshes and set(map(id, handoff.proc_meshes)) == {id(procs)}
     assert handoff.cleanup_started is True
@@ -704,7 +707,7 @@ def test_spawn_callback_unregister_instruction_is_reconciled(monkeypatch):
     assert callbacks == []
     assert handoff.callback_cleanup_unconfirmed is False
     assert procs.stop_reasons == ["dgx-monarch partial bring-up rollback"]
-    assert stop_future.timeouts == [60]
+    assert stop_future.timeouts == [STOP_S]
 
 
 @pytest.mark.skipif(not hasattr(sys, "monitoring"), reason="requires Python 3.12")
@@ -777,7 +780,7 @@ def test_spawn_callback_cleanup_flag_instruction_is_reconciled(monkeypatch):
     assert callbacks == []
     assert handoff.callback_cleanup_unconfirmed is False
     assert procs.stop_reasons == ["dgx-monarch partial bring-up rollback"]
-    assert stop_future.timeouts == [60]
+    assert stop_future.timeouts == [STOP_S]
 
 
 def test_spawn_callback_cleanup_that_cannot_be_confirmed_stays_latched(monkeypatch):
@@ -822,4 +825,4 @@ def test_spawn_callback_cleanup_that_cannot_be_confirmed_stays_latched(monkeypat
     assert unregister_calls == 2 and len(callbacks) == 1
     assert handoff.callback_cleanup_unconfirmed is True
     assert procs.stop_reasons == ["dgx-monarch partial bring-up rollback"]
-    assert stop_future.timeouts == [60]
+    assert stop_future.timeouts == [STOP_S]

@@ -1498,7 +1498,7 @@ names a missing/incompatible dotted Monarch surface, an event-loop semantic
 change, or `semantic probe mesh_factory_private_ownership`.
 
 **Cause:** either the installed exact pin no longer matches the checked pin
-snapshot, latest stable changed a production call shape, or raw `PythonTask` /
+snapshot, latest stable changed a production call shape, or raw `Handle` /
 public `Future.get()` active-asyncio behavior changed. The workflow treats
 semantic drift as review-required even when it might be an improvement,
 because dgx-monarch's off-loop and bounded-wait paths are built on the old
@@ -6830,14 +6830,38 @@ production Future failure. The probe now obtains a Future from the public
 channel API before testing `.get()` inside an asyncio loop. Queue dispatch is
 now unconditional upstream, but the removed setting still requires review.
 
-On 2026-10-12 the development pin moved to 0.7.0, with a regenerated ARM64 schema-2 baseline.
-The canary uses Torch 2.12.0+cu132 and additionally requires a native RDMA import,
+On 2026-10-12 the development pin moved to 0.7.0, with a regenerated ARM64 schema-2 baseline,
+and the canary then installed Torch 2.12.0+cu132. It additionally requires a native RDMA import,
 an empty native action and a separate `cpu-smoke` run. The smoke checks local
 actors, concurrent dispatch, terminal timeout cancellation for decorated
 Futures, re-observable endpoint timeouts and lazy ProcMesh shutdown. Since
 2026-10-13 it also times out a ProcMesh stop at once and requires that stop to
 stay cancelled and its procs to answer until a fresh stop. Neither
 stage contacts configured Worker services or exercises a GPU/fabric.
+
+On 2026-11-17 the development pin moved to 0.8.0, which removed
+`pytokio.PythonTask`; the canary now watches `handle.Handle`, the object
+under every returned Future, and awaits a resolved one inside an asyncio
+loop. The canary installs Torch 2.15.0 from the cu132 index, the build this
+release ships on, and the checked baseline is the canary workflow's own
+`pin.json` from that environment, so the exact-pin comparison sees the same
+Torch on both sides. The manifest also lists the names the teardown, the
+fault hook and the root log level guard rest on, and the
+`lifecycle_config_defaults` probe records direct spawn and the two stop
+limits as the runtime reads them back. The CPU smoke checks that the first
+`this_host()` sets the root logger to INFO; that a refusing per-rank launch
+command raises its own exception on the calling thread before anything
+spawns; that a refusing constructor fails `initialized` with Monarch's abort
+words ahead of the traceback; that a spawn with a bootstrap runs it in a
+`SetupActor` inside a `bootstrap_main` process that carries the bootstrap
+marker; and that a dead proc of that spawn raises faults whose `mesh_name`
+names its `setup-` and `log_level-` meshes beside the actor's own. A second
+smoke script starts two Worker loops on loopback, kills one under a named
+proc mesh and stops the mesh: it checks that the controller's report says
+"error stopping proc mesh" with a `Timeout(` rank, that the pack's own
+matcher takes it for a stop registered under the mesh's name, as it must
+for the pack to tie that report to its stop, and that the stop's own Future
+is still pending.
 
 Complete the
 [pin-bump procedure](../skills/dgx-monarch-dev/SKILL.md#torchmonarch-bump-procedure-63)
@@ -7441,6 +7465,13 @@ match the driver.
 one of these messages, each ending in a pointer to this entry:
 
 - "ambient OTLP endpoint conflicts with disabled diagnostic export";
+- "metrics or OTLP export cannot start on the driver
+  (ambient_otlp_signal_endpoint)", for an `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`,
+  `..._METRICS_ENDPOINT` or `..._TRACES_ENDPOINT` in the ComfyUI environment;
+- "Monarch's get_proc_state_max_idle (...) and proc_stop_max_idle (...) add
+  up to ... s", or "Monarch's get_proc_state_max_idle reads ..." or
+  "Monarch's proc_stop_max_idle reads ...", where a value Monarch does not
+  report reads "nothing", on the driver;
 - "unmanaged MONARCH_RDMA_ environment setting", followed by the names it
   found;
 - "`NAME` conflicts with the validated Monarch policy", for example
@@ -7458,7 +7489,7 @@ instead. The driver checks on every mesh build, in local mode too; with no
 cluster.toml the default policy applies, so a single box with no cluster
 config can see this. The Worker loop drops
 every variable outside a short allowlist before it checks, so of these only
-`DGXM_RDMA_QP_SPLIT` can stop a Worker start; the other two come from the
+`DGXM_RDMA_QP_SPLIT` can stop a Worker start; the others come from the
 environment that starts ComfyUI.
 
 **Remedy**, per variable:
@@ -7467,8 +7498,21 @@ environment that starts ComfyUI.
   that starts ComfyUI (the shell, its profile, or the launcher), then restart
   ComfyUI. Setting `[monarch.diagnostics] otlp_endpoint` to the same URL with
   `otlp_logs = true` also clears it, but that turns on export of Monarch's
-  upstream logs as well as metrics; choose it only on purpose
+  upstream logs and spans as well as metrics; choose it only on purpose
   ([CLUSTER.md](CLUSTER.md#monarchdiagnostics)).
+- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` or
+  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, whatever the policy says: unset it
+  where ComfyUI starts, then restart ComfyUI. Monarch starts that signal's
+  export from the variable alone, so no policy setting clears it;
+  `otlp_endpoint` is the only destination dgx-monarch admits.
+- `HYPERACTOR_MESH_GET_PROC_STATE_MAX_IDLE` or
+  `HYPERACTOR_MESH_PROC_STOP_MAX_IDLE`: unset whichever the message names
+  where ComfyUI starts, or lower them so the two add up to 90 s or less, then
+  restart ComfyUI. The stop after a lost Worker host waits for these two
+  limits plus 10 s, and the teardown budgets around it hold at most 90 s of
+  limits; Monarch's defaults, 1 minute and 30 s, fit. A lower setting is
+  accepted and shortens that wait. When the message says neither variable is
+  set, no setting can fix it: reinstall the pinned torchmonarch.
 - A `MONARCH_RDMA_*` name the policy does not set: unset it. `[monarch.rdma]`
   sets every RDMA option this release supports
   ([CLUSTER.md](CLUSTER.md#monarchrdma)). A managed `MONARCH_RDMA_*` name set

@@ -17,4 +17,4 @@ __version__ = "1.5.0"
 
 # pyproject.toml holds the torchmonarch pin; `dgxm doctor` compares this mirror
 # with the installed package.
-TORCHMONARCH_PIN = "0.7.0"
+TORCHMONARCH_PIN = "0.8.0"

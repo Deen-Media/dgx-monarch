@@ -69,33 +69,46 @@ def _compare(args: argparse.Namespace) -> int:
     return 0 if comparison.compatible else 1
 
 
+def _run_smoke(script: str, output: Path, env: dict[str, str], timeout_s: float) -> int | str:
+    """One smoke script in a fresh process group; its return code, or "timeout"."""
+    with subprocess.Popen(
+        [sys.executable, str(Path(__file__).with_name(script)), str(output)],
+        env=env, start_new_session=True,
+    ) as process:
+        try:
+            return process.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            # Only the fresh canary's process group is eligible for cleanup.
+            # Descendant actors must not outlive a timed-out controller.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            return "timeout"
+
+
 def _cpu_smoke(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="dgxm-monarch-cpu-") as scratch:
-        output = Path(scratch) / "result.json"
         env = {**os.environ, "CUDA_VISIBLE_DEVICES": "",
                "MONARCH_RDMA_DISABLE_IBVERBS": "1", "XDG_RUNTIME_DIR": scratch,
                "PYTHONDONTWRITEBYTECODE": "1"}
-        with subprocess.Popen(
-            [sys.executable, str(Path(__file__).with_name("monarch_cpu_smoke.py")),
-             str(output)], env=env, start_new_session=True,
-        ) as process:
-            try:
-                returncode = process.wait(timeout=90)
-            except subprocess.TimeoutExpired:
-                # Only the fresh canary's process group is eligible for cleanup.
-                # Descendant actors must not outlive a timed-out controller.
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
-                _write_json(args.output, {"status": "failed", "reason": "timeout"})
+        observations: dict[str, object] = {}
+        # monarch_cpu_smoke: about 40 s on a 20-core CPU host, a dead proc's
+        # faults taking the most (90 s of their own). monarch_lost_rank_smoke:
+        # about 50 s, the stop report coming at proc_stop_max_idle (30 s).
+        for script, timeout_s in (("monarch_cpu_smoke.py", 240), ("monarch_lost_rank_smoke.py", 300)):
+            output = Path(scratch) / f"{script}.json"
+            returncode = _run_smoke(script, output, env, timeout_s)
+            if returncode == "timeout":
+                _write_json(args.output, {"status": "failed", "script": script, "reason": "timeout"})
                 return 1
-        if returncode or not output.is_file():
-            _write_json(args.output, {"status": "failed", "returncode": returncode})
-            return 1
+            if returncode or not output.is_file():
+                _write_json(args.output, {"status": "failed", "script": script, "returncode": returncode})
+                return 1
+            observations.update(_read_json(str(output)))
         _write_json(args.output, {"status": "passed", "scope": "local_cpu_only",
-                                  "observations": _read_json(str(output))})
+                                  "observations": observations})
         return 0
 
 

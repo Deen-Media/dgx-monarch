@@ -6,7 +6,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 XFUSER_BUILDER="$SCRIPT_DIR/../tools/build_xfuser_compat_wheel.py"
-MONARCH_PIN="torchmonarch==0.7.0"   # the 0.x API changes between releases; bump on purpose
+MONARCH_PIN="torchmonarch==0.8.0"   # the 0.x API changes between releases; bump on purpose
 # --worker needs DGXM_SIBLING, the other box's fabric IP. It has no default
 # because the address is your rig's. DGXM_SSH_KEY names an ssh key the sibling
 # accepts; empty uses your ssh config or agent.
@@ -25,7 +25,11 @@ setup_base() {
   "$P" install -q --upgrade pip
   "$P" install -q "$MONARCH_PIN" numpy
   "$P" install -q torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132
-  "$PY" -c "import monarch.actor, monarch.rdma, torch; import monarch.rdma as r; print('monarch+torch OK on', __import__('socket').gethostname(), '| ibverbs:', r.is_ibverbs_available())"
+  # This import applies no dgx-monarch policy: keep any OTLP endpoint in the
+  # installer's shell from starting Monarch's export from this one process.
+  env -u OTEL_EXPORTER_OTLP_ENDPOINT -u OTEL_EXPORTER_OTLP_LOGS_ENDPOINT \
+    -u OTEL_EXPORTER_OTLP_METRICS_ENDPOINT -u OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
+    "$PY" -c "import monarch.actor, monarch.rdma, torch; import monarch.rdma as r; print('monarch+torch OK on', __import__('socket').gethostname(), '| ibverbs:', r.is_ibverbs_available())"
 }
 
 setup_comfy_layer() {

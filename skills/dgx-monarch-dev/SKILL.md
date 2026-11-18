@@ -163,13 +163,19 @@ within its recorded scope; positive-step qualification is limited to the recorde
    comparison cannot detect changes to dispatch behavior.
 3. Update the pin in every declaration (`pyproject.toml`, `requirements.txt`,
    `scripts/setup_env.sh`, `TORCHMONARCH_PIN`, and the tests that assert the
-   old version) and bump `__version__` in the same commit. The gate ledger
-   binds trusted `PASS` rows to the package version, so a pin-only change can
-   reuse a PASS measured on a different runtime. Regenerate the checked baseline
-   on aarch64 as `tests/fixtures/torchmonarch_pin_<version>.json`, with the
-   version's dots written as underscores (`tests/test_monarch_surface.py`
-   builds the name from `TORCHMONARCH_PIN`; for 0.7.0 it is
-   `torchmonarch_pin_0_7_0.json`). Update `.github/workflows/ci.yml` and
+   old version). A trusted Gate `PASS` row binds the source manifest digest,
+   which the `TORCHMONARCH_PIN` edit changes, so no PASS measured under the
+   old pin authorizes the new one. The release that carries the new pin must
+   still declare another `__version__` than the release that carried the old
+   one, so that no two released builds share a version: bump it in the same
+   commit unless the pin moves inside a version not yet released. Take the
+   checked baseline from the canary workflow's own environment:
+   push the branch, dispatch `torchmonarch-canary` on it, and commit its
+   `pin.json` artifact as `tests/fixtures/torchmonarch_pin_<version>.json`,
+   with the version's dots written as underscores (`tests/test_monarch_surface.py`
+   builds the name from `TORCHMONARCH_PIN`; for 0.8.0 it is
+   `torchmonarch_pin_0_8_0.json`). A snapshot taken elsewhere carries other
+   Torch strings, which the checked-pin step blocks on. Update `.github/workflows/ci.yml` and
    `.github/workflows/torchmonarch-canary.yml`, which name that file, and
    review `PIN_SEMANTICS` in `tests/test_monarch_surface.py`.
 4. After active work has stopped, deploy the same version atomically on every

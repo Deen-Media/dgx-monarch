@@ -107,7 +107,7 @@ a new file without these tables.
 
 ## `[monarch]` (optional)
 
-The 0.7.0 integration validates these settings before runtime initialization.
+The integration validates these settings before runtime initialization.
 `startup_timeout_s` defaults to `180` and accepts integers from `30` through
 `3600`. After host attachment completes, ProcMesh initialization and actor
 readiness share this observation budget. Host attachment and its configuration
@@ -204,8 +204,10 @@ never prove transfer completion, cleanup or readiness.
 credentials, query, fragment or path other than a bare trailing `/` (the
 exporter appends each signal's path, such as `/v1/metrics`) and requires
 **`otlp_logs = true`** explicitly:
-Monarch 0.7 exports upstream raw logs as well as metrics to this destination.
-Those logs may contain more than dgx-monarch's sanitized metric labels. Use an
+Monarch 0.8 exports upstream raw logs and spans as well as metrics to this
+destination, and has no switch for spans alone. Every post carries the user
+and host names, and the logs carry process command lines.
+Those logs and spans may contain more than dgx-monarch's sanitized metric labels. Use an
 operator-controlled collector and review disclosure requirements before
 opting in.
 

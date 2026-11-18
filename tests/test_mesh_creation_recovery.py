@@ -11,7 +11,10 @@ import types
 import pytest
 
 from dgx_monarch import client_lease, mesh, mesh_creation, mesh_factory
+from dgx_monarch.mesh_stop import PROC_STOP_DEFAULT_S, cleanup_stop_s
 from dgx_monarch.monarch_policy import MonarchPolicy
+
+STOP_S = cleanup_stop_s()  # the creation cleanup's stop: 65 s at Monarch's defaults
 
 
 class _Interrupt(BaseException):
@@ -259,7 +262,8 @@ def test_a_cluster_file_edit_still_replaces_the_fleet(isolated_mesh_runtime, mon
     stopped = []
     handle = types.SimpleNamespace(
         defunct=False, config_mtime=0.0, config_fingerprint=mesh.config_fingerprint(path),
-        n_hosts=1, gpus_per_host=1, comfy_dir="/fake/comfy", shutdown=lambda timeout_s: stopped.append(timeout_s))
+        n_hosts=1, gpus_per_host=1, comfy_dir="/fake/comfy",
+        shutdown=lambda timeout_s, stop_timeout_s=None: stopped.append((timeout_s, stop_timeout_s)))
 
     def replacement_reached(_config, _handoff):
         raise RuntimeError("replacement attach reached")
@@ -273,7 +277,7 @@ def test_a_cluster_file_edit_still_replaces_the_fleet(isolated_mesh_runtime, mon
     path.write_text(f"[worker_args]\n{edit}\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="replacement attach reached"):
         mesh.get_mesh(config_path=str(path), mode="cluster")
-    assert stopped == [30]
+    assert stopped == [(30, PROC_STOP_DEFAULT_S)]  # the config-change stop keeps the bound
 
 
 def test_local_worker_args_fingerprint_tracks_values_not_order():
@@ -374,7 +378,7 @@ def test_late_transport_poison_refuses_ready_and_cleans_private_handle(
     assert len(pending) == 1
     assert pending[0].teardown_complete is True
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert mesh._MESHES == {}
     assert mesh._MESH_PENDING == {}
     assert mesh._MESH_CREATING == {}
@@ -512,7 +516,7 @@ def test_failure_latch_store_interruption_cleans_returned_fleet_and_wins(
     assert failure.value is interrupted
     assert failure.value is not ordinary
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert mesh._MESHES == {}
     assert mesh._MESH_PENDING == {}
     assert mesh._MESH_CREATING == {}
@@ -718,7 +722,7 @@ def test_next_get_mesh_terminally_reconciles_an_exited_creator_frame(
     handle = mesh.get_mesh(mode="local", gpus_per_host=1)
 
     assert stale_proc.stop_reasons == ["dgx-monarch client detach"]
-    assert stale_proc.stop_timeouts == [30]
+    assert stale_proc.stop_timeouts == [STOP_S]
     assert fresh_proc.stop_reasons == []
     assert mesh_factory.creation_cleanup_registered(cleanup_claim) is False
     assert mesh._MESH_CREATING == {}
