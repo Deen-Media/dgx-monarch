@@ -865,8 +865,9 @@ def test_a_later_creation_failure_after_the_released_replacement_attached_has_no
     assert later.replacement_blocked == "a later bring-up failed"
 
 
-@pytest.mark.parametrize("when", ["before_the_dial", "during_the_prime", "during_attempt_1",
-                                  "during_attempt_2", "not_exiting"])
+@pytest.mark.parametrize("when", ["before_the_dial", "during_the_heal", "during_the_prime",
+                                  "during_the_prime_unsent", "during_attempt_1",
+                                  "during_the_reread", "during_attempt_2", "not_exiting"])
 def test_an_attach_the_exit_reaches_stands_down_quietly(monkeypatch, attach_rig, when):
     """Once the driver is exiting, Monarch's exit step stops the client, so an
     attach under way makes no dial, reads no id again over ssh, makes no
@@ -884,11 +885,23 @@ def test_an_attach_the_exit_reaches_stands_down_quietly(monkeypatch, attach_rig,
     mesh_mod = attach_rig.rig([blip, blip if when == "during_attempt_2" else object()],
                               _Listeners([True, True]), auto_heal=True)
     healed: list[int] = []
-    monkeypatch.setattr(mesh_mod, "_heal_dead_loops", lambda *_a, **_k: healed.append(1))
+
+    def heal_dead_loops(*_args, **_kwargs):
+        healed.append(1)
+        if when == "during_the_heal":
+            exiting.set()  # a heal already under way runs to its end; nothing follows it
+
+    monkeypatch.setattr(mesh_mod, "_heal_dead_loops", heal_dead_loops)
     readings: list[int] = []
     real_fleet = listener_generation.fleet
-    monkeypatch.setattr(listener_generation, "fleet",
-                        lambda config, **kw: readings.append(1) or real_fleet(config, **kw))
+
+    def fleet(config, **kwargs):
+        readings.append(1)
+        if when == "during_the_reread" and len(readings) == 2:
+            exiting.set()  # the exit hook ran while the ids were read again
+        return real_fleet(config, **kwargs)
+
+    monkeypatch.setattr(listener_generation, "fleet", fleet)
     real_once = mesh_mod._attach_once
 
     def attach_once(dial):
@@ -899,10 +912,13 @@ def test_an_attach_the_exit_reaches_stands_down_quietly(monkeypatch, attach_rig,
     monkeypatch.setattr(mesh_mod, "_attach_once", attach_once)
     if when == "before_the_dial":
         exiting.set()
-    if when == "during_the_prime":
+    if when in ("during_the_prime", "during_the_prime_unsent"):
+        # A loop whose id moved gets the throwaway message; the unsent case is
+        # one the prime could not reach, whose warning must not follow the exit.
         monkeypatch.setattr(mesh_attach, "_LAST_DIALED", {ADDRESS_A: "aaaaaaaaaaaa0000"})
+        unsent = [ADDRESS_A] if when.endswith("unsent") else []
         monkeypatch.setattr(worker_proc_id, "prime",
-                            lambda addresses: exiting.set() or [])
+                            lambda addresses: exiting.set() or unsent)
     lines: list[str] = []
     monkeypatch.setattr(attach_trace, "_LAST_SEEN", {})
     real_warning = mesh_mod.log.warning
@@ -916,10 +932,12 @@ def test_an_attach_the_exit_reaches_stands_down_quietly(monkeypatch, attach_rig,
         return
     with pytest.raises(mesh_mod.MeshAttachError, match="the driver is exiting"):
         mesh_mod._attach_cluster(config)
-    dials = {"before_the_dial": 0, "during_the_prime": 0, "during_attempt_1": 1,
+    dials = {"before_the_dial": 0, "during_the_heal": 0, "during_the_prime": 0,
+             "during_the_prime_unsent": 0, "during_attempt_1": 1, "during_the_reread": 1,
              "during_attempt_2": 2}[when]
-    assert len(attach_rig.attempts) == dials
-    assert len(readings) == (0 if when == "before_the_dial" else 1 + (when == "during_attempt_2"))
+    reads = {"before_the_dial": 0, "during_the_heal": 0, "during_the_reread": 2,
+             "during_attempt_2": 2}.get(when, 1)
+    assert len(attach_rig.attempts) == dials and len(readings) == reads
     assert healed == ([] if when == "before_the_dial" else [1])  # the heal ran only before the exit
     assert attach_rig.restarts == [] and mesh_mod._TRANSPORT_POISON is None
     # Only the retry's warning, logged before the exit began, in the last case.

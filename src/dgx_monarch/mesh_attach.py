@@ -160,7 +160,7 @@ def read_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,
 
 def _traced_attach(runtime: dict[str, Any], config: ClusterConfig,
                    trace: attach_trace.AttachTrace, values: list[str],
-                   *, attempt: int):
+                   *, attempt: int, handoff: Any = None):
     """One attach attempt dialing ``<proc-id>@<address>`` for the ids just read.
 
     A loop whose id changed since this process last dialed it gets the
@@ -174,6 +174,7 @@ def _traced_attach(runtime: dict[str, Any], config: ClusterConfig,
         unprimed = worker_proc_id.prime(moved)
         trace.emit("proc_id_prime", attempt=attempt, addresses=moved,
                    unprimed=unprimed)
+        _stand_down_at_exit(runtime, trace, handoff=handoff)  # before the prime's warning
         if unprimed:
             # Without the throwaway message the config push is the message the
             # old session loses, and this attach to that loop times out.
@@ -182,20 +183,22 @@ def _traced_attach(runtime: dict[str, Any], config: ClusterConfig,
                 "%s before dialing their new id; the attach to them may time out (%s)",
                 unprimed, worker_proc_id.ENTRY)
     dial = [worker_proc_id.proc_addr(host.address, value) for host, value in pairs]
-    _stand_down_at_exit(runtime, trace)  # no dial once the exit began, the prime's wait included
+    _stand_down_at_exit(runtime, trace, handoff=handoff)  # no dial once the exit began
     _LAST_DIALED.update((host.address, value) for host, value in pairs)
     with trace.phase("attach", attempt=attempt):
         return runtime["_attach_once"](dial)
 
 
 def _stand_down_at_exit(runtime: dict[str, Any], trace: attach_trace.AttachTrace,
-                        cause: BaseException | None = None) -> None:
+                        cause: BaseException | None = None, *, handoff: Any = None) -> None:
     """Once the driver is exiting, end this attach quietly and leave the session as it is.
 
     Monarch's exit step stops the client, so no dial, id reading, second
-    attempt, transport poison or Worker restart can help (driver_exit).
+    attempt, transport poison or Worker restart can help (driver_exit). The
+    handoff is marked safe, so get_mesh does not poison the transport either.
     """
     if driver_exit.exiting():
+        runtime["mesh_factory"].safe_transport_failure(handoff)
         trace.closed("refused", stage="exiting")
         raise runtime["MeshAttachError"](
             "the driver is exiting, so this attach stops here: Monarch's exit step stops "
@@ -243,7 +246,7 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
     """
     factory = runtime["mesh_factory"]
     error_type = runtime["MeshAttachError"]
-    _stand_down_at_exit(runtime, trace)  # no pre-attach heal, reading or dial
+    _stand_down_at_exit(runtime, trace, handoff=handoff)  # no pre-attach heal, reading or dial
     if config.auto_heal:
         try:
             with trace.phase("auto_heal"):
@@ -257,6 +260,7 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
             raise error_type(
                 f"pre-attach Worker-service auto-heal failed ({evidence}); no worker "
                 "attach was attempted, so fix the lifecycle/SSH error and retry") from exc
+        _stand_down_at_exit(runtime, trace, handoff=handoff)  # a heal under way ran to its end
     try:
         dial = read_dial(config, trace, attempt=1, monarch=monarch)
     except worker_proc_id.WorkerProcIdError as exc:
@@ -267,7 +271,7 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
         raise
     started = time.perf_counter()
     try:
-        hosts = _traced_attach(runtime, config, trace, dial, attempt=1)
+        hosts = _traced_attach(runtime, config, trace, dial, attempt=1, handoff=handoff)
     except BaseException as first_exc:
         first_evidence = factory.safe_failure_evidence(first_exc)
         if not isinstance(first_exc, Exception):
@@ -275,8 +279,9 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
                 f"cluster attach failed: {first_evidence}")
             trace.closed("poisoned", stage="attach_1", evidence=first_evidence)
             raise
-        _stand_down_at_exit(runtime, trace, first_exc)  # no reread, retry, poison or restart
+        _stand_down_at_exit(runtime, trace, first_exc, handoff=handoff)  # no reread or retry
         retry_dial, refusal = _read_retry_dial(config, trace, dial, monarch=monarch)
+        _stand_down_at_exit(runtime, trace, first_exc, handoff=handoff)  # an exit during the reread
         if refusal is not None and refusal.skew:
             # No poison: the next attach stands where an in-process second attempt
             # would, on this transport over the same leftovers. A loop whose version
@@ -304,14 +309,14 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
                 "first cluster attach failed (%s); retrying once in-process",
                 first_evidence)
         try:
-            hosts = _traced_attach(runtime, config, trace, retry_dial, attempt=2)
+            hosts = _traced_attach(runtime, config, trace, retry_dial, attempt=2, handoff=handoff)
         except BaseException as exc:
             evidence = factory.safe_failure_evidence(exc)
             if not isinstance(exc, Exception):
                 runtime["_TRANSPORT_POISON"] = f"cluster attach failed: {evidence}"
                 trace.closed("poisoned", stage="attach_2", evidence=evidence)
                 raise
-            _stand_down_at_exit(runtime, trace, exc)
+            _stand_down_at_exit(runtime, trace, exc, handoff=handoff)
             runtime["_TRANSPORT_POISON"] = f"cluster attach failed: {evidence}"
             trace.closed("poisoned", stage="attach_2_failed", evidence=evidence)
             if config.auto_heal:

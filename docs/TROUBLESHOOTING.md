@@ -2548,7 +2548,10 @@ nothing starts after it. Any attach the exit reaches, a first one included,
 ends with "the driver is exiting, so this attach stops here" once its attempt
 fails: no id reading, no second attempt, no transport poison and no restart of
 the Worker services, which `auto_heal` used to start while ComfyUI was
-closing. A render's call that
+closing. The one exception is `auto_heal`'s check before an attach: one already
+under way when the exit begins runs to its end, so it may still restart a
+Worker service it found dead, and the attach stops right after it. A render's
+call that
 the exit stops can read like a lost contact; the driver then words no lost
 Worker and logs no lost-Worker warning, since none was lost. In CPU tests over
 loopback on 2026-11-17 and 2026-11-18, with or without a call in flight, the

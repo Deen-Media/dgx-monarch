@@ -633,6 +633,38 @@ def _restarted(driver) -> WorkerDeliveryError:
     return refused
 
 
+@pytest.mark.parametrize("when", ["before_the_dial", "during_attempt_1"])
+def test_an_attach_the_exit_stands_down_leaves_the_transport_unpoisoned(driver, monkeypatch, when):
+    """Through the real fleet spawn and get_mesh: an attach the driver's exit
+    reaches ends in the exit error and leaves the transport unpoisoned, as a
+    refusal before any dial does. Before, the spawn's attach mark made get_mesh
+    poison it ("cluster attach result handoff interrupted"). With the flag
+    cleared, the next get_mesh attaches."""
+    from dgx_monarch import driver_exit, mesh_factory
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    stand_in, real_once = mesh_mod.spawn_worker_fleet, mesh_mod._attach_once
+    monkeypatch.setattr(mesh_mod, "spawn_worker_fleet", mesh_factory.spawn_worker_fleet)
+    if when == "before_the_dial":
+        driver_exit._EXITING.set()
+    else:
+        def attach_once(dial):
+            driver.dials.append(list(dial))
+            driver_exit._EXITING.set()  # the exit hook ran while this attempt waited
+            raise RuntimeError("attach failed: config push failed during attach")
+
+        monkeypatch.setattr(mesh_mod, "_attach_once", attach_once)
+    with pytest.raises(mesh_mod.MeshAttachError, match="the driver is exiting"):
+        mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    assert mesh_mod._TRANSPORT_POISON is None
+    assert len(driver.dials) == (0 if when == "before_the_dial" else 1)
+    driver_exit._EXITING.clear()
+    monkeypatch.setattr(mesh_mod, "spawn_worker_fleet", stand_in)
+    monkeypatch.setattr(mesh_mod, "_attach_once", real_once)
+    assert mesh_mod.get_mesh(mode="cluster", config_path=SOURCE) is not None
+    assert mesh_mod._TRANSPORT_POISON is None
+
+
 def test_a_heal_whose_stop_is_confirmed_after_an_earlier_release_keeps_its_retry(
         driver, monkeypatch):
     """A first restart ends in a liveness release, which arms the release

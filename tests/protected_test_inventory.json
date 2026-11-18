@@ -2681,6 +2681,7 @@
       "test_a_retry_whose_new_price_fits_dispatches_once_on_the_new_mesh": "c8eb2b8bf57dba9a",
       "test_a_supervision_error_after_a_restart_heals_before_any_eviction": "a65b2d65da186a23",
       "test_a_supervision_error_without_a_full_restart_evicts_and_refuses_as_before": "d08a8db7145016b3",
+      "test_an_attach_the_exit_stands_down_leaves_the_transport_unpoisoned": "fa2cbf1bf578ec4a",
       "test_an_exit_after_the_stop_ends_the_detour_with_the_exit_refusal": "2226b15ca8cee9fa",
       "test_an_exit_inside_the_retires_stop_leaves_the_renders_thread_quiet": "2733b5ddee07be7d",
       "test_an_explicit_loader_attaches_again_and_loads_once_more": "c2b51c4b9e43ddca",

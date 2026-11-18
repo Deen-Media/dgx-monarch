@@ -444,7 +444,8 @@ sections after them list every change.
   reaches, a first one included, now ends once its attempt fails, with no id
   reading, no second attempt, no transport poison and no restart of the Worker
   services, where with `auto_heal` on it used to restart them while ComfyUI
-  was closing
+  was closing; only `auto_heal`'s check already under way before an attach
+  runs to its end, and may still restart a Worker service it found dead
   ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 - A graph with no LoRA stack whose model takes no slab residency no longer
   pays two proof renders before its first render. The first-use gate could
