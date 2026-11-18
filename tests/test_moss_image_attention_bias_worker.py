@@ -40,6 +40,7 @@ from dgx_monarch.adapters.moss_image_seams import CONTEXT_ATTENTION_BIAS_REFUSAL
 from dgx_monarch.nodes import model_patch_preflight
 from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
 from dgx_monarch.topology import topology_from_preset
+from rank_exit_helpers import ENDING
 from test_moss_image_attention_bias_preflight import (
     EFFECTIVE,
     GUIDERS,
@@ -426,7 +427,7 @@ peer_record = pathlib.Path(out).with_name(f"rank{1 - rank}.json")
 deadline = time.monotonic() + hold_s
 while time.monotonic() < deadline and not peer_record.exists():
     time.sleep(0.05)
-'''
+''' + ENDING
 
 
 def _two_ranks(tmp_path, mode: str, hold_s: float, wait_s: float) -> list[dict]:

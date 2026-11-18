@@ -30,6 +30,8 @@ from pathlib import Path
 import pytest
 import xfuser.core.distributed  # noqa: F401  (a required dependency: a skip would hide the exchange in CI)
 
+from rank_exit_helpers import ENDING
+
 SRC = Path(__file__).resolve().parents[1] / "src"
 # Model calls each dp group's sampler makes, as two batch slices under
 # dpm_adaptive can.
@@ -157,8 +159,8 @@ while time.monotonic() < deadline and not all(
     time.sleep(0.05)
 print(json.dumps({"rank": rank, "dp_rank": dp_rank, "outcome": outcome, "made": made, "seen": seen,
                   "exchanges": exchanges}), flush=True)
-os._exit(0)  # a timed-out gloo group may not tear down cleanly
-"""
+# A timed-out gloo group may not tear down cleanly either, so no destroy comes first.
+""" + ENDING
 
 
 def _free_port() -> str:
