@@ -259,10 +259,10 @@
       "test_the_switch_on_any_rank_turns_the_rule_off_for_the_fleet": "698a8fc945200f86"
     },
     "tests/test_backup_agreement_two_ranks.py": {
-      "test_a_long_cause_crosses_cut_and_stays_whole_on_its_own_rank": "aebf3b6906a2a640",
-      "test_a_room_refusal_gives_the_short_ranks_figures_on_both_ranks": "43237e3d0db924b0",
-      "test_both_ranks_make_the_same_collectives_and_neither_waits": "ac15ba2111493d49",
-      "test_the_wrong_ranks_own_words_reach_the_error_on_both_ranks": "38382ff93ceb3b59"
+      "test_a_long_cause_crosses_cut_and_stays_whole_on_its_own_rank": "6ef38eddc1389e0d",
+      "test_a_room_refusal_gives_the_short_ranks_figures_on_both_ranks": "4b87a4c1e6391fa6",
+      "test_both_ranks_make_the_same_collectives_and_neither_waits": "2c0cb526f1717515",
+      "test_the_wrong_ranks_own_words_reach_the_error_on_both_ranks": "3cc9f0a23c06d9db"
     },
     "tests/test_boogu_adapter.py": {
       "test_boogu_28_7_gqa_expands_kv_before_uly2": "bea5326e49273477",
@@ -2293,8 +2293,8 @@
       "test_malformed_conditioning_passes_as_on_the_driver": "2aee5add8959b711",
       "test_run_sample_scans_once_after_the_readiness_exchange_and_before_any_conditioning_read": "2ed0d8d86e2c1bd7",
       "test_the_driver_and_the_worker_read_one_scan_on_one_predicate": "10d7d1ad24be9aac",
-      "test_two_real_ranks_refuse_a_bias_on_one_prompt_together_before_sampling": "823b5d2f492d4a15",
-      "test_without_the_scan_the_group_without_the_bias_waits_at_the_cfg_gather": "ee4ef3868014d5d8"
+      "test_two_real_ranks_refuse_a_bias_on_one_prompt_together_before_sampling": "8d6e081075a337a0",
+      "test_without_the_scan_the_group_without_the_bias_waits_at_the_cfg_gather": "ee1efab9eccab609"
     },
     "tests/test_moss_image_comfy_exactness.py": {
       "test_forward_a_marked_patch_is_honoured_and_the_same_patch_unmarked_refuses": "7785fe2503c61978",
@@ -3288,11 +3288,11 @@
       "test_variant_keys_detect_as_wan_or_variant": "fc1b3eac4ffa6f29",
       "test_wan_animate2_allows_explicitly_sequence_local_attn2_patch": "b2b2249964147108",
       "test_wan_animate2_native_attention_drops_the_block_preference": "ba18c483ffda2d55",
-      "test_wan_animate2_real_comfy_two_rank_gloo_matches_stock": "695f1240c8272f0c",
+      "test_wan_animate2_real_comfy_two_rank_gloo_matches_stock": "b8223aa2630eafaf",
       "test_wan_animate2_rechecks_a_mutable_selector_before_patch_embedding": "c86625c6d4f4dee2",
       "test_wan_animate2_refuses_unqualified_attention_patches_before_patch_embedding": "d7b7518fb7f35728",
       "test_wan_animate2_rejects_foreign_attention_override_before_patch_embedding": "a3b061f8f3132e80",
-      "test_wan_animate2_two_rank_gloo_spatial_gather_matches_stock": "d686ac01b1bd73f5",
+      "test_wan_animate2_two_rank_gloo_spatial_gather_matches_stock": "e476dffea215295b",
       "test_wandancer_per_frame_e0_expansion_arithmetic": "ef18865308092e9e",
       "test_wandancer_rejects_reference_latent_typed": "cb282d2667e9cd1c",
       "test_worker_selects_ring2_treatment_only_for_exact_scail2": "7666a6bbb5c0fb28"

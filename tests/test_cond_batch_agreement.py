@@ -24,6 +24,7 @@ from types import SimpleNamespace
 import pytest
 
 from dgx_monarch.actor import cond_batch_agreement as agreement
+from rank_exit_helpers import ENDING
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 # The comfy-canary job names its checkout; a named checkout must exist there,
@@ -96,7 +97,7 @@ print(json.dumps({"rank": rank, "batches": model.batches, "peer_batches": model.
                   "override_left": "get_free_memory" in model.current_patcher.__dict__}))
 if world > 1:
     dist.destroy_process_group()
-'''
+''' + ENDING
 
 
 def _comfy_or_skip() -> None:

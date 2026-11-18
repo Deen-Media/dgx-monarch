@@ -21,6 +21,7 @@ import pytest
 import torch.distributed  # noqa: F401  (must be there: a skip would hide the exchange in CI)
 
 from dgx_monarch.actor import backup_agreement
+from rank_exit_helpers import ENDING
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -109,7 +110,7 @@ except Exception as exc:
     outcome, text = type(exc).__name__, str(exc)
 print(json.dumps({"rank": rank, "outcome": outcome, "text": text, **made}))
 dist.destroy_process_group()
-"""
+""" + ENDING
 
 # Each scenario: what rank 0 and rank 1 read of their own box, then what BOTH ranks must report.
 SCENARIOS = {
