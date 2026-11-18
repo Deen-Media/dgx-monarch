@@ -1,4 +1,9 @@
-"""The lazy xFuser ring surface a real long-context constructor imports."""
+"""The xFuser ring surface a real long-context constructor imports.
+
+On a CUDA host it must import without the NPU ring helper that released
+yunchang lacks: xFuser 0.8.0 guards that import, and the patched
+0.7.0+dgxm.npuimport1 build makes it lazy (docs/TROUBLESHOOTING.md #104).
+"""
 from __future__ import annotations
 
 import importlib

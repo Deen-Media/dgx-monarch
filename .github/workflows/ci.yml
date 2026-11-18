@@ -46,15 +46,14 @@ jobs:
           # CPU-only torch lacks CUDA device guards needed by FakeTensorMode tests.
           # Use the validated production build; hosted runners still do no GPU work.
           pip install --no-cache-dir torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132
-          mkdir -p xfuser-compat-wheels
-          python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
+          # pip takes stock xfuser 0.8.0 from the index; the constraint holds torch to the build above.
           torch_dist_version="$(python -c 'from importlib.metadata import version; print(version("torch"))')"
-          printf 'torch==%s\n' "$torch_dist_version" > xfuser-compat-wheels/torch-constraint.txt
-          pip install --find-links xfuser-compat-wheels \
-            --constraint xfuser-compat-wheels/torch-constraint.txt \
+          printf 'torch==%s\n' "$torch_dist_version" > "$RUNNER_TEMP/torch-constraint.txt"
+          pip install --constraint "$RUNNER_TEMP/torch-constraint.txt" \
             -e .[dev] --no-build-isolation
           python tools/check_dependencies.py
           python -c 'import torch; actual = (torch.__version__, torch.version.cuda, torch.cuda.is_available()); assert actual == ("2.12.0+cu132", "13.2", False), actual'
+          python -c 'from importlib.metadata import version; actual = version("xfuser"); assert actual == "0.8.0", actual'
       - name: ruff
         run: ruff check __init__.py src tests benchmark tools studio/tests
       - name: Trust citations
@@ -189,7 +188,6 @@ jobs:
               "tests/test_leak_check.py",
               "tests/test_node_contract.py",
               "tools/gen_templates.py",
-              "tools/build_xfuser_compat_wheel.py",
               "tools/check_dgx_monarch_segments.mjs",
               "tools/leak_allowlist.toml",
               "tools/leak_check.py",
@@ -369,14 +367,13 @@ jobs:
           # CPU-only torch lacks CUDA device guards needed by FakeTensorMode tests.
           # Use the validated production build; hosted runners still do no GPU work.
           pip install --no-cache-dir torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132
-          mkdir -p xfuser-compat-wheels
-          python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
+          # pip takes stock xfuser 0.8.0 from the index; the constraint holds torch to the build above.
           torch_dist_version="$(python -c 'from importlib.metadata import version; print(version("torch"))')"
-          printf 'torch==%s\n' "$torch_dist_version" > xfuser-compat-wheels/torch-constraint.txt
-          pip install --find-links xfuser-compat-wheels \
-            --constraint xfuser-compat-wheels/torch-constraint.txt \
+          printf 'torch==%s\n' "$torch_dist_version" > "$RUNNER_TEMP/torch-constraint.txt"
+          pip install --constraint "$RUNNER_TEMP/torch-constraint.txt" \
             -e .[dev] --no-build-isolation
           python tools/check_dependencies.py
           python -c 'import torch; actual = (torch.__version__, torch.version.cuda, torch.cuda.is_available()); assert actual == ("2.12.0+cu132", "13.2", False), actual'
+          python -c 'from importlib.metadata import version; actual = version("xfuser"); assert actual == "0.8.0", actual'
       - name: pytest (no-GPU unit suite)
         run: bash scripts/test_cpu.sh

@@ -4,9 +4,10 @@
 #   bash scripts/setup_env.sh --comfy             # + the ComfyUI and xFuser layer
 #   bash scripts/setup_env.sh --comfy --worker    # same on both boxes
 set -euo pipefail
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-XFUSER_BUILDER="$SCRIPT_DIR/../tools/build_xfuser_compat_wheel.py"
 MONARCH_PIN="torchmonarch==0.8.0"   # the 0.x API changes between releases; bump on purpose
+# Stock xFuser from the package index; src/dgx_monarch/xfuser_build.py lists
+# the builds Worker setup accepts.
+XFUSER_PIN="xfuser==0.8.0"
 # --worker needs DGXM_SIBLING, the other box's fabric IP. It has no default
 # because the address is your rig's. DGXM_SSH_KEY names an ssh key the sibling
 # accepts; empty uses your ssh config or agent.
@@ -46,15 +47,11 @@ setup_comfy_layer() {
   # installed torchaudio, so the helper stops with the repair instead.
   local PY="$HOME/monarch-env/bin/python"
   local P="$HOME/monarch-env/bin/pip"
-  local SP XFUSER_WHEELS TORCH_CONSTRAINT TORCH_DIST_VERSION
-  if [ ! -r "$XFUSER_BUILDER" ]; then
-    echo "FAIL: cannot read tools/build_xfuser_compat_wheel.py; run setup_env.sh from a full dgx-monarch checkout" >&2
-    return 1
-  fi
+  local SP CONSTRAINT_DIR TORCH_CONSTRAINT TORCH_DIST_VERSION
   SP="$("$PY" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
   # Install xFuser's declared dependencies (distvae, peft, av and others) while
   # a constraint holds pip to the installed torch distribution version. Do not
-  # use --no-deps here: xFuser 0.7 adds required runtime distributions.
+  # use --no-deps here: xFuser adds required runtime distributions.
   # Runtime torch.__version__ can include a CUDA suffix absent from pip's
   # distribution metadata. Probe before any Comfy dependency resolution and
   # refuse missing metadata; never guess a version or remove the constraint.
@@ -62,19 +59,14 @@ setup_comfy_layer() {
     echo "FAIL: cannot read installed torch distribution metadata; repair the dedicated bootstrap environment before installing ComfyUI dependencies" >&2
     return 1
   fi
-  XFUSER_WHEELS="$(mktemp -d)"
-  TORCH_CONSTRAINT="$XFUSER_WHEELS/torch-constraint.txt"
+  CONSTRAINT_DIR="$(mktemp -d)"
+  TORCH_CONSTRAINT="$CONSTRAINT_DIR/torch-constraint.txt"
   printf 'torch==%s\n' "$TORCH_DIST_VERSION" > "$TORCH_CONSTRAINT"
-  if ! "$PY" "$XFUSER_BUILDER" --output-dir "$XFUSER_WHEELS"; then
-    rm -rf "$XFUSER_WHEELS"
-    return 1
-  fi
   "$P" install -q --constraint "$TORCH_CONSTRAINT" -r "$HOME/ComfyUI/requirements.txt"
   "$P" install -q --constraint "$TORCH_CONSTRAINT" diffusers==0.38.0 accelerate
   "$P" install -q --upgrade-strategy only-if-needed \
-    --constraint "$TORCH_CONSTRAINT" --find-links "$XFUSER_WHEELS" \
-    xfuser==0.7.0+dgxm.npuimport1 yunchang==0.6.4
-  rm -rf "$XFUSER_WHEELS"
+    --constraint "$TORCH_CONSTRAINT" "$XFUSER_PIN" yunchang==0.6.4
+  rm -rf "$CONSTRAINT_DIR"
   "$P" install -q --no-deps torchvision --index-url https://download.pytorch.org/whl/cu132
   local NEEDS_TORCHAUDIO=0
   if grep -Eiq '^[[:space:]]*torchaudio([^A-Za-z0-9_.-]|$)' "$HOME/ComfyUI/requirements.txt"; then
@@ -192,19 +184,9 @@ if [ "$WANT_WORKER" = 1 ]; then
   {
     printf '%s\n' 'set -euo pipefail'
     printf 'MONARCH_PIN=%q\n' "$MONARCH_PIN"
+    printf 'XFUSER_PIN=%q\n' "$XFUSER_PIN"
     printf 'TORCHAUDIO_DONOR=%q\n' "$TORCHAUDIO_DONOR"
     printf 'WANT_COMFY=%q\n' "$WANT_COMFY"
-    # The peer may not have this checkout: stream the stdlib-only builder with
-    # the two functions, not a second copy or a prebuilt wheel.
-    # Expand these variables on the peer after SSH reads this script.
-    # shellcheck disable=SC2016
-    printf '%s\n' 'XFUSER_BUILDER="$(mktemp)"'
-    # shellcheck disable=SC2016
-    printf '%s\n' 'trap '\''rm -f "$XFUSER_BUILDER"'\'' EXIT'
-    # shellcheck disable=SC2016
-    printf '%s\n' 'cat > "$XFUSER_BUILDER" <<'\''PY'\'''
-    cat -- "$XFUSER_BUILDER"
-    printf '%s\n' 'PY'
     declare -f setup_base setup_comfy_layer torchaudio_state
     printf '%s\n' 'setup_base' \
       "if [ \"\$WANT_COMFY\" = 1 ]; then setup_comfy_layer; fi"

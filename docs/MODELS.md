@@ -359,8 +359,8 @@ sampler; leave the negative input unconnected for the text-free unconditional
 pass. Each rank holds one checkpoint; single/DP instead keeps both on each
 rank. Leave the resident-adoption input unconnected under dm-cfg2. The shipped
 workflow leaves `sync_ulysses` on, as every shipped workflow does. Until 1.5.0
-it shipped with the setting off. The setting changes nothing on the pinned
-xfuser 0.7.0, whose Ulysses all-to-all never receives it
+it shipped with the setting off. The setting changes nothing on xfuser 0.7.0
+or 0.8.0, whose Ulysses all-to-all never receives it
 ([Adapters](ADAPTERS.md#what-an-adapter-provides)), but it is part of a
 setup's identity, so that one difference rebuilt the setup on every move
 between this workflow and another on the same topology, and both models loaded

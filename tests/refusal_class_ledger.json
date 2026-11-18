@@ -316,6 +316,12 @@
       "waivable": false
     },
     {
+      "site": "actor/xfuser_setup.py::refuse_unsupported_xfuser::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/__init__.py::_forced_adapter::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -347,6 +353,12 @@
     },
     {
       "site": "adapters/attention_capability.py::assert_static_capability::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/attention_capability.py::raise_if_unbuilt::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false

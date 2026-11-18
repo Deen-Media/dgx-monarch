@@ -11,6 +11,8 @@ _CHECKS = {
     "torchmonarch": "monarch_pin",
     "torch CUDA": "torch_cuda",
     "torch version match": "torch_version_match",
+    "xfuser": "xfuser_build",
+    "xfuser build match": "xfuser_build_match",
     "actor NCCL backend": "actor_nccl_backend",
     "NCCL_PROTO": "nccl_protocol",
     "NCCL library": "nccl_library",
@@ -37,6 +39,7 @@ _HOST_CHECKS = {
     "worker policy": "worker_policy",
     "worker release version": "worker_release_version",
     "INT8 GEMM": "worker_int8_gemm",
+    "xfuser": "worker_xfuser",
 }
 _UNAVAILABLE = "doctor diagnostics: unavailable"
 

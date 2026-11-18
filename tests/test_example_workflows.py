@@ -410,7 +410,7 @@ def test_a_monarch_graph_holds_exactly_one_init(path: Path):
 
 @pytest.mark.parametrize("path", EVERY_TEMPLATE, ids=_EVERY_ID)
 def test_no_template_turns_sync_ulysses_off(path: Path):
-    # The input changes nothing on the pinned xfuser, but it is part of a
+    # The input changes nothing on xfuser 0.7.0 or 0.8.0, but it is part of a
     # setup's identity (mesh_setup.nccl_setup_key). One template with it off
     # rebuilt the setup on every move to or from it, which unloads every model
     # on every Worker: on 2026-11-12 both Ideogram 4 models loaded from disk

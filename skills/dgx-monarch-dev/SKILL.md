@@ -27,11 +27,11 @@ data, and cite dated evidence for empirical constants.
    source file, the MIT INT8 GEMM kernel in
    `src/dgx_monarch/kernels/int8_gemm_triton.py`, is a reviewed exception
    (DESIGN §3.1).
-2. xfuser stays external. Do not vendor it. The temporary compatibility wheel
-   (`tools/build_xfuser_compat_wheel.py`) is rebuilt from a SHA-verified
-   official wheel and changes only the version metadata and the optional NPU
-   import, which it makes lazy. Retain this workaround until official xFuser
-   and yunchang releases build CUDA attention without it.
+2. xfuser stays external. Do not vendor it. Stock 0.8.0 comes from the package
+   index; the patched `0.7.0+dgxm.npuimport1` that 1.4.0 built still runs,
+   and `src/dgx_monarch/xfuser_build.py` holds the exact list that doctor and
+   Worker setup enforce. Moving xFuser to another version needs the hardware
+   fidelity controls first, then a change to that list.
 3. For new behavior, identify the source in the PR, such as a specification
    section or public API document.
 4. Public node and package identities stay `dgx-monarch` and `DGXMonarch*`.
@@ -206,9 +206,8 @@ setup-service script modules. Review both sets on a bump.
 1. `ruff`, mypy, pytest, template generation and `python -m build` pass.
    Smoke-test a fresh Git checkout directly under ComfyUI `custom_nodes`:
    install it with an explicit `COMFY_PYTHON` and the docs/INSTALL.md recipe,
-   which builds the xFuser compatibility wheel, then runs
-   `"$COMFY_PYTHON" -m pip install -e` on the checkout with that wheel and the
-   torch constraint.
+   which runs `"$COMFY_PYTHON" -m pip install -e` on the checkout under the
+   torch constraint and takes stock xFuser 0.8.0 from the index.
 2. Run the authorized hand-run hardware checks against the exact public source
    SHA, including each feature-specific validation, under the
    [hardware-smoke contract](../../docs/THREAT_MODEL.md#github-actions-to-trusted-hardware).

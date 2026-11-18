@@ -65,13 +65,13 @@ coverage in [`test_gate_ledger.py:23-27`](../tests/test_gate_ledger.py#L23-L27 "
   are covered by
   [`test_gate_orchestration.py:1027-1047`](../tests/test_gate_orchestration.py#L1027-L1047 "anchor:test_gate_context_merges_cluster_and_init_worker_args")
   and [`test_fleet.py:804-822`](../tests/test_fleet.py#L804-L822 "anchor:test_fleet_preserves_requested_policy_only_for_exact_context_pass").
-  The physical fields include the driver's torch and CUDA build, from
-  [`gate_runtime.py:19-33`](../src/dgx_monarch/gate_runtime.py#L19-L33 "anchor:runtime_build_identity"),
-  so a PASS proven under one torch build reads `stale` under another, and a
+  The physical fields include the driver's torch, CUDA and xFuser build, from
+  [`gate_runtime.py:21-38`](../src/dgx_monarch/gate_runtime.py#L21-L38 "anchor:runtime_build_identity"),
+  so a PASS proven under one build reads `stale` under another, and a
   row written before the field existed carries no build and never vouches, as
-  [`test_gate_runtime.py:67-78`](../tests/test_gate_runtime.py#L67-L78 "anchor:test_a_torch_change_changes_the_token_and_the_pass_reads_stale")
+  [`test_gate_runtime.py:70-81`](../tests/test_gate_runtime.py#L70-L81 "anchor:test_a_torch_change_changes_the_token_and_the_pass_reads_stale")
   and
-  [`test_gate_runtime.py:89-106`](../tests/test_gate_runtime.py#L89-L106 "anchor:test_a_row_without_the_runtime_field_is_read_and_never_vouches")
+  [`test_gate_runtime.py:92-109`](../tests/test_gate_runtime.py#L92-L109 "anchor:test_a_row_without_the_runtime_field_is_read_and_never_vouches")
   show.
   Tokens and ledger rows use the same canonical context encoder. It accepts
   only finite JSON-native values and rejects opaque metadata, non-string

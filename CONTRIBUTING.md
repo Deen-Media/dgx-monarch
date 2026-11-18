@@ -6,10 +6,10 @@ the [setup skill](skills/dgx-monarch/SKILL.md) for installation.
 
 ## Set up a development environment
 
-Follow the verified xFuser wheel and Torch-constraint procedure in
+Follow the Torch-constraint procedure in
 [docs/INSTALL.md](docs/INSTALL.md). Use `-e "$REPO_DIR[dev]"` in both the
-reviewed dry run and the install command. Keep the temporary wheel directory
-until installation finishes. The dev tools are listed in `pyproject.toml`.
+reviewed dry run and the install command. Keep the temporary constraint
+directory until installation finishes. The dev tools are listed in `pyproject.toml`.
 
 Use the Python environment you selected throughout. Preserve ComfyUI's working
 CUDA Torch build and the repository's exact Monarch pin; an older Monarch can
@@ -153,9 +153,8 @@ copy or vendor dependency implementations; the compiled Studio bundle is build
 output, listed in [LICENSE-NOTES.md](LICENSE-NOTES.md#studio-frontend-bundle),
 and the one vendored source file, the MIT INT8 GEMM kernel, is listed under
 [Vendored INT8 GEMM kernel](LICENSE-NOTES.md#vendored-int8-gemm-kernel).
-xFuser remains external: its
-compatibility wheel is built locally from the verified official wheel, and
-neither the wheel nor dependency source belongs in the repository.
+xFuser remains external: it comes from the package index, and neither a
+wheel nor dependency source belongs in the repository.
 
 External contributions require a DCO sign-off on each commit with
 `git commit -s`. There is no Contributor License Agreement. See

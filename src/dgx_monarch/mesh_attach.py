@@ -47,7 +47,7 @@ def attach_cluster(runtime: dict[str, Any], config: ClusterConfig, handoff: Any)
         raise error_type(
             f"torchmonarch is not importable ({evidence}). Install dgx-monarch and its pinned dependencies "
             "into ComfyUI's Python with the docs/INSTALL.md install block; a bare `pip install -r "
-            "requirements.txt` can pick another Python and cannot find the patched xfuser wheel the guide builds."
+            "requirements.txt` can pick another Python and skips the guide's torch constraint."
         ) from exc
     from .monarch_capabilities import loaded_version
 

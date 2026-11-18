@@ -3347,6 +3347,35 @@
       "test_the_ceremony_attests_every_ranks_build_before_any_proof": "5004f481b8402457",
       "test_the_first_use_auto_gate_refuses_the_mixed_pair_instead_of_going_stock": "ad0446467fb31561",
       "test_the_persisted_quarantine_read_does_not_hide_the_mixed_pair": "c834b9e3d1c8b60f"
+    },
+    "tests/test_xfuser_build.py": {
+      "test_a_box_moved_on_disk_but_not_restarted_is_told_to_restart_its_worker": "c31259790a014bad",
+      "test_a_host_that_prints_no_xfuser_line_reads_unobserved": "0c003f6d650329dc",
+      "test_a_local_build_of_0_8_0_reads_fail_with_the_forced_line": "935fb88d528ba9e3",
+      "test_a_pair_on_two_xfuser_builds_holds_no_gate_authority": "0ea1193e67a13758",
+      "test_a_render_that_would_run_fa_refuses_in_the_packs_words": "1ada92394beca0bf",
+      "test_a_worker_refuses_a_grant_proven_under_another_xfuser": "1ee60810a242bc3b",
+      "test_an_actor_keeps_reporting_the_build_its_setup_checked": "fabb12cf4629d236",
+      "test_an_xfuser_move_makes_the_pass_read_stale_and_the_notice_names_it": "27cd629d089bdb19",
+      "test_any_other_kernel_that_will_not_build_still_fails_setup": "09edfc02160ddc79",
+      "test_builds_compare_as_pep_440_versions_not_as_strings": "6764f1fe8fc126f4",
+      "test_doctor_sends_the_probe_and_fails_a_host_on_stock_0_7_0": "30f6b507ca704287",
+      "test_doctor_warns_but_passes_on_the_patched_build_everywhere": "86e72b608159ea12",
+      "test_each_build_reads_its_verdict_with_cause_and_remedy": "719b7947e2709f98",
+      "test_fa_without_flash_attn_sets_up_where_the_kernel_never_runs": "49a93a9f9e961e0c",
+      "test_installed_version_reads_metadata_without_importing_xfuser": "19874ff5ef797aae",
+      "test_one_version_spelled_two_ways_is_admitted_on_each_box_but_refuses_at_the_gate": "c5a8c3db95da6bdf",
+      "test_stock_0_8_0_without_flash_attn_builds_fa_for_a_render_that_never_runs_it": "b24014d36cf0264e",
+      "test_the_driver_row_reads_this_interpreter": "835fe5065541b96e",
+      "test_the_gate_runtime_identity_names_the_xfuser_build": "f9eb746eaf8ed1c9",
+      "test_the_host_probe_prints_the_line_doctor_selects_and_the_row_reads_it": "55485cc35a477e0e",
+      "test_the_match_row_warns_on_two_builds_and_stays_out_when_no_host_answered": "62ed683a276b6923",
+      "test_the_move_line_installs_stock_0_8_0_by_pips_own_matching": "be4b18b794f80a11",
+      "test_the_requirement_admits_both_builds_and_only_code_refuses_stock_0_7_0": "731a9f8675333d1c",
+      "test_the_requirement_is_one_string_in_pyproject_requirements_and_the_module": "c583d1013e1bd249",
+      "test_with_no_pep_440_parser_builds_compare_as_exact_strings_and_nothing_else_is_admitted": "64805ded8eb35b6a",
+      "test_worker_setup_goes_on_with_either_allowed_build": "797e89103897ac81",
+      "test_worker_setup_refuses_any_other_build_before_it_changes_anything": "d38674880600cd9b"
     }
   }
 }
