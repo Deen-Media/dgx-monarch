@@ -207,11 +207,14 @@ A ComfyUI that exits normally (Ctrl+C, or the server closing) while a render
 is attaching again, or a Pipeline or Gate render is retiring the stale mesh,
 ends that detour with no warning and no error after the exit's notice
 ([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)). The
-render's own stop of the stale mesh logs nothing; a liveness probe or an
-attach already under way runs to its end, an attach's trace lines at INFO, and
-nothing starts after it: no probe, no attach, no second attempt and no Worker
-restart. The render ends with "the driver is exiting, so this render stops
-here", which ComfyUI may log as the interrupted render's own error. On loopback
+render's own stop of the stale mesh logs nothing. An id reading, a liveness
+probe or an attach already under way runs to its end, an attach's trace lines
+at INFO. A reading of the Workers' ids over ssh that had started still asks
+each host it had yet to ask, up to 3 s per host (10 s in a re-attach), and
+then the render stops. Nothing starts after the notice: no id reading, no
+probe, no attach, no second attempt and no Worker restart. The render ends
+with "the driver is exiting, so this render stops here", which ComfyUI may log
+as the interrupted render's own error. On loopback
 on 2026-11-18, exits 0.5 to 8.0 s into the detour, by a normal return or by
 Ctrl+C, logged no warning and no error after the notice, and every process
 exited with code 0.
@@ -2543,9 +2546,12 @@ the fleet nor stops it a second time, and a cleanup that was already stopping a
 dead fleet when the exit began logs none of its own lines. So does a render
 that was attaching again after a Worker restart, or a Pipeline or Gate render
 retiring the stale mesh ([#2](#2-every-attach-times-out-after-one-failed-attach)):
-a liveness probe or an attach it already has under way runs to its end, and
-nothing starts after it. Any attach the exit reaches, a first one included,
-ends with "the driver is exiting, so this attach stops here" once its attempt
+an id reading, a liveness probe or an attach it already has under way runs to
+its end, and nothing starts after it. A reading of the Workers' ids over ssh
+that had started still asks each host it had yet to ask, up to 3 s per host
+(10 s in a re-attach), and then the render stops. Any attach the exit
+reaches, a first one included, ends with "the driver is exiting, so this
+attach stops here" once its attempt
 fails: no id reading, no second attempt, no transport poison and no restart of
 the Worker services, which `auto_heal` used to start while ComfyUI was
 closing. The one exception is `auto_heal`'s check before an attach: one already

@@ -439,10 +439,13 @@ sections after them list every change.
 - A normal ComfyUI exit while a render attaches again after a Worker restart,
   or while a Pipeline or Gate render retires the stale mesh, ends that detour
   with no warning and no error after the exit's notice: the render's own stop
-  of the stale mesh logs nothing, a probe or attach under way runs to its end,
-  and the render ends with "the driver is exiting". Any attach the exit
-  reaches, a first one included, now ends once its attempt fails, with no id
-  reading, no second attempt, no transport poison and no restart of the Worker
+  of the stale mesh logs nothing, an id reading, probe or attach under way runs
+  to its end (a reading of the Workers' ids over ssh that had started still
+  asks each host it had yet to ask, up to 3 s per host or 10 s in a
+  re-attach, and then the render stops), and the render ends with "the driver
+  is exiting". Any attach the exit reaches, a first one included, now ends
+  once its attempt fails, with no id reading, no second attempt, no transport
+  poison and no restart of the Worker
   services, where with `auto_heal` on it used to restart them while ComfyUI
   was closing; only `auto_heal`'s check already under way before an attach
   runs to its end, and may still restart a Worker service it found dead
