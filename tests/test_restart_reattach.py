@@ -299,7 +299,12 @@ def test_a_local_fleet_waits_once_for_its_whole_deadline():
 
 
 def _readings(ids: dict[str, str]) -> dict[str, dict[str, str]]:
-    return {address: {"gen": value[:12], "proc_id": value} for address, value in ids.items()}
+    import monarch.actor  # noqa: F401  # the driver imports Monarch before any attach
+
+    from dgx_monarch.monarch_capabilities import loaded_version
+
+    return {address: {"gen": value[:12], "proc_id": value, "monarch": loaded_version()}
+            for address, value in ids.items()}
 
 
 def _config():

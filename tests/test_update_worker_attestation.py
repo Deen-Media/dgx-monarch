@@ -46,6 +46,21 @@ def installed_worker(tmp_path):
         proof = identity if pin_digest is None else replace(identity, pin_payload_digest=pin_digest)
         script = attestation.release_attestation_script(config, site=str(source), tools="$HOME/" + str(tools.relative_to(home)), identity=proof, verifier_digest=attestation.verifier_tree_digest(tools / "dgx_monarch"), captured_site=True)
         return subprocess.run(["bash", "-s"], input=script, capture_output=True, text=True, env={**os.environ, "HOME": str(home)}, timeout=30)
+
+    def check(pin_digest=None):
+        """The controller's reading of the same attestation: (matched, refusal)."""
+        proof = identity if pin_digest is None else replace(identity, pin_payload_digest=pin_digest)
+
+        def host_runner(_config, _host, script, timeout):
+            return subprocess.run(["bash", "-s"], input=script, capture_output=True, text=True,
+                                  env={**os.environ, "HOME": str(home)}, timeout=timeout)
+
+        return attestation.remote_release_check(
+            config, config.hosts[0] if config.hosts else None, site=str(source),
+            tools="$HOME/" + str(tools.relative_to(home)), identity=proof, host_runner=host_runner,
+            verifier_digest=attestation.verifier_tree_digest(tools / "dgx_monarch"), captured_site=True)
+
+    run.check = check  # type: ignore[attr-defined]
     return source, tools, packages, run
 
 
@@ -180,3 +195,153 @@ def test_worker_attestation_still_rejects_color_matcher_shadow_or_false_claim(in
     result = run(pin_digest=expected)
     assert result.returncode != 0
     assert "RELEASE_MATCH" not in result.stdout
+
+
+# A Worker environment built with PYTHONPYCACHEPREFIX (docs/TROUBLESHOOTING.md #155).
+TAG = sys.implementation.cache_tag
+PREFIX = "../../../../scratch/cache/pycache/home/user/venv/lib/python3.12/site-packages"
+
+
+def _rows(*rows):
+    import csv
+    import io
+
+    output = io.StringIO()
+    csv.writer(output).writerows(rows)
+    return output.getvalue()
+
+
+def _external(packages, relative, data=b""):
+    """Create the file a RECORD row outside site-packages names, as a live prefix tree has it.
+    importlib.metadata drops a RECORD row whose file is missing, so the file must exist."""
+    path = (packages / relative).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
+def test_the_pinned_record_s_prefix_bytecode_does_not_refuse_the_worker(installed_worker):
+    _, _, packages, run = installed_worker
+    row = f"{PREFIX}/monarch/__init__.{TAG}.pyc"
+    _external(packages, row)
+    record = packages / "torchmonarch-0.6.0.dist-info/RECORD"
+    record.write_text(record.read_text() + _rows((row, "", "")))
+    result = run()
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert result.stdout.strip() == "RELEASE_MATCH"
+
+
+def test_any_other_row_outside_site_packages_refuses_and_names_its_cause(installed_worker):
+    _, _, packages, run = installed_worker
+    row = f"{PREFIX}/evil.py"
+    _external(packages, row, b"EVIL = True\n")
+    record = packages / "torchmonarch-0.6.0.dist-info/RECORD"
+    record.write_text(record.read_text() + _rows((row, "", "")))
+    result = run()
+    assert result.returncode == 3 and "RELEASE_MATCH" not in result.stdout
+    assert ("DGXM_ATTEST_REFUSAL=record_outside_site distribution=torchmonarch "
+            "path=torchmonarch-0.6.0.dist-info/RECORD") in result.stdout
+    matched, refusal = run.check()
+    assert matched is False and refusal is not None
+    assert (refusal.reason, refusal.distribution) == ("record_outside_site", "torchmonarch")
+
+
+def _foreign_examples(packages, extra=()):
+    """torchmonarch ships examples/demo.py; xfuser ships examples/xfuser_demo.py
+    beside it, with pip's prefix bytecode rows; returns the new pin digest."""
+    import base64
+    import hashlib
+
+    def record(path, data):
+        return (path, "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode().rstrip("="),
+                str(len(data)))
+
+    (packages / "examples").mkdir()
+    (packages / "examples/demo.py").write_bytes(b"PINNED = True\n")
+    own = packages / "torchmonarch-0.6.0.dist-info/RECORD"
+    own.write_text(own.read_text() + _rows(record("examples/demo.py", b"PINNED = True\n")))
+    expected = site_payload_digest(packages, "0.6.0")
+    info = packages / "xfuser-0.8.0.dist-info"
+    info.mkdir()
+    metadata = b"Metadata-Version: 2.1\nName: xfuser\nVersion: 0.8.0\n"
+    (info / "METADATA").write_bytes(metadata)
+    (packages / "examples/xfuser_demo.py").write_bytes(b"FOREIGN = True\n")
+    rows = [record("xfuser-0.8.0.dist-info/METADATA", metadata),
+            record("examples/xfuser_demo.py", b"FOREIGN = True\n"),
+            (f"{PREFIX}/examples/xfuser_demo.{TAG}.pyc", "", ""), *extra,
+            ("xfuser-0.8.0.dist-info/RECORD", "", "")]
+    (info / "RECORD").write_text(_rows(*rows))
+    return expected
+
+
+def test_a_foreign_record_with_prefix_bytecode_does_not_refuse_the_worker(installed_worker):
+    """The issue-158 refusal on a Worker whose torchmonarch lives in its base
+    environment: before this change it read as a bare prior_worker_drift."""
+    _, _, packages, run = installed_worker
+    expected = _foreign_examples(packages)
+    assert site_payload_digest(packages, "0.6.0") == expected
+    result = run(pin_digest=expected)
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert result.stdout.strip() == "RELEASE_MATCH"
+
+
+def test_a_foreign_record_the_check_cannot_vouch_for_names_host_reason_and_remedy(installed_worker):
+    _, _, packages, run = installed_worker
+    expected = _foreign_examples(packages, extra=[("../../../../scratch/x/evil.pth", "", "")])
+    result = run(pin_digest=expected)
+    assert result.returncode == 1 and "RELEASE_MATCH" not in result.stdout
+    assert ("DGXM_ATTEST_REFUSAL=record_outside_site distribution=xfuser "
+            "path=xfuser-0.8.0.dist-info/RECORD") in result.stdout
+    matched, refusal = run.check(pin_digest=expected)
+    assert matched is False and refusal is not None
+    assert (refusal.reason, refusal.distribution) == ("record_outside_site", "xfuser")
+
+
+def _shared_conftest(packages, tools, monkeypatch):
+    """torchmonarch ships tests/conftest.py; the named wheel ships its own over it.
+    The verifier copy on the host gets the same synthetic table, as for color-matcher."""
+    import base64
+    import hashlib
+
+    from dgx_monarch.cli import update_payload_ownership as ownership
+
+    def record(path, data):
+        return (path, "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode().rstrip("="),
+                str(len(data)))
+
+    (packages / "tests").mkdir()
+    (packages / "tests/conftest.py").write_bytes(b"PINNED = True\n")
+    own = packages / "torchmonarch-0.6.0.dist-info/RECORD"
+    own.write_text(own.read_text() + _rows(record("tests/conftest.py", b"PINNED = True\n")))
+    expected = site_payload_digest(packages, "0.6.0")
+    table = {("xfuser", "0.8.0"): {"tests/conftest.py": record("tests/conftest.py", b"FOREIGN = True\n")[1:]}}
+    monkeypatch.setattr(ownership, "_SHARED_PINNED", table, raising=False)
+    with (tools / "dgx_monarch/cli/update_payload_ownership.py").open("a") as stream:
+        stream.write("\n_SHARED_PINNED = " + repr(table) + "\n")
+    info = packages / "xfuser-0.8.0.dist-info"
+    info.mkdir()
+    metadata = b"Metadata-Version: 2.1\nName: xfuser\nVersion: 0.8.0\n"
+    (info / "METADATA").write_bytes(metadata)
+    (packages / "tests/conftest.py").write_bytes(b"FOREIGN = True\n")
+    (info / "RECORD").write_text(_rows(record("xfuser-0.8.0.dist-info/METADATA", metadata),
+                                       record("tests/conftest.py", b"FOREIGN = True\n"),
+                                       ("xfuser-0.8.0.dist-info/RECORD", "", "")))
+    return expected
+
+
+def test_the_named_wheel_s_copy_of_the_shared_path_attests_the_same_release(installed_worker, monkeypatch):
+    _, tools, packages, run = installed_worker
+    expected = _shared_conftest(packages, tools, monkeypatch)
+    assert site_payload_digest(packages, "0.6.0") == expected
+    result = run(pin_digest=expected)
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert result.stdout.strip() == "RELEASE_MATCH"
+
+
+def test_a_vanished_shared_path_refuses_on_the_worker_and_names_it(installed_worker, monkeypatch):
+    _, tools, packages, run = installed_worker
+    expected = _shared_conftest(packages, tools, monkeypatch)
+    (packages / "tests/conftest.py").unlink()
+    result = run(pin_digest=expected)
+    assert result.returncode == 1 and "RELEASE_MATCH" not in result.stdout
+    assert ("DGXM_ATTEST_REFUSAL=shared_payload_missing distribution=torchmonarch "
+            "path=tests/conftest.py") in result.stdout

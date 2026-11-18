@@ -272,6 +272,13 @@ no attach ran: the id each Worker loop serves on this start is unknown for <host
 third reasons and warns for the last two
 ([#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)).
 
+The same reading names the torchmonarch each loop imported. When every id is
+known but a loop runs a torchmonarch other than the driver's, or comes from a
+release that does not report one, the attach refuses the same way, before it
+dials, with `no attach ran: <host> (<address>): its Worker loop runs
+torchmonarch <X> and this driver runs <Y>; ...`; see
+[#8](#8-version-skew-between-hosts).
+
 A loop that cannot write its record says so in its log:
 
 ```
@@ -293,6 +300,11 @@ it found none for <host> (...)`; a released fleet's error says `the id reading
 after it found none for`), and the trace closes `attach_1_reread_refused` (a
 released fleet closes `attach_1_released`;
 [#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)).
+When that reading finds every id but a loop on another torchmonarch, the
+attach refuses instead: no second attempt runs, no Worker restarts, since a
+restart cannot change a loop's version, the session stays usable, and the
+trace closes `outcome=refused stage=proc_id_reread`
+([#8](#8-version-skew-between-hosts)).
 
 **Upgrading.** A ComfyUI started before the update that brought per-start ids
 dials the bare address. `dgxm update` refuses in either mode while ComfyUI
@@ -539,6 +551,46 @@ mid-attach, or a render refused with `Gate authority needs every box on the
 driver's torch build`, which names each box's torch and CUDA. A Worker can
 refuse the same way in its own words: `this Worker runs torch ...`.
 
+For torchmonarch, a render refuses before it dials with `no attach ran:
+<host> (<address>): its Worker loop runs torchmonarch <X> and this driver runs
+<Y>`, or with `... runs an earlier release, which does not report its
+torchmonarch version`, and doctor's `listener generation` row fails with
+`running torchmonarch=<X>`. When the first attempt failed and the reading
+after it finds such a loop, the refusal starts `the first attach failed
+(...), and the id reading after it found <host> (<address>): ...`. A render
+can also refuse before any attach with `Monarch version does not match the
+supported pin: this process loaded torchmonarch <X> and this dgx-monarch pins
+<Y>`, or with `Monarch's native binding in this process is no longer the file
+on disk: torchmonarch was reinstalled after this process loaded it`. A driver from a release before 1.5.0 has none of these checks: its
+attach waits out the config push budget twice (`reply timed out after
+MESH_ATTACH_CONFIG_TIMEOUT`), restarts the Worker services when `auto_heal`
+is on, and ends with "Rule out version skew first".
+
+**Cause, torchmonarch:** in a CPU loopback check on 2026-11-17, a 0.7.0 loop
+and a 0.8.0 client, either way round, did not attach: they could not decode
+each other's messages, so the config push waited out its whole budget.
+Monarch's own file log held an INFO line, `deserialize message with M =
+hyperactor::mailbox::MessageEnvelope`, an ERROR, `failed to receive ack within
+timeout`, and a WARN, `connection to <address> lost: delivery timeout`, and
+none of them named the versions. Each Worker loop records the torchmonarch it
+imported in its actor ledger loop record, the probe the driver runs before
+every attach reads it, and the driver refuses before it dials when it is not
+the version the driver loaded. The driver reads that version once, at its
+first mesh build after torchmonarch is loaded, and keeps it: an install
+under a running ComfyUI changes the files on disk, not the code the process
+runs, so the driver refuses until ComfyUI restarts. Something else in
+ComfyUI may load torchmonarch before that first reading, so on Linux the
+reading also checks that the native binding the process mapped is still the
+file on disk (`/proc/self/maps`), and refuses with `torchmonarch was
+reinstalled after this process loaded it` when it is not. Where that list
+cannot be read, or the reading is taken while an install is under way, with
+the old file still mapped under pip's stash path, nothing is settled and the
+reading is the version installed at that moment. A refusal on the reading after a failed first
+attempt restarts nothing, since a restart cannot change a loop's version, and
+leaves the session usable. Doctor's `env` row reads the version installed on
+disk; its `listener generation` row reads the one the running loop imported,
+which a stopped or restarted process can make differ.
+
 **Fix:** For a torch-version mismatch, install the same torch/CUDA build in
 the driver and every worker environment; doctor treats the skew as a failure
 because serialized objects and distributed kernels cross that boundary. A Gate
@@ -555,7 +607,28 @@ never changes a release slot. If the driver has already moved without those
 Workers, repair that first
 ([#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
 Neither path resolves or replaces torch, NCCL, xfuser, or optional extras.
-torchmonarch is pinned; bump it on all hosts at once.
+torchmonarch is pinned; bump it on all hosts at once. When the attach refuses
+on a Worker loop's version, the driver and every Worker must run the same
+release, and the refusal says which side is newer when the two versions
+order. A loop that reports no version runs a release older than any driver
+that reads one. When the driver is the newer side, it moved without its
+Workers, by a hand pull or a rollback, and `dgxm update --verify` refuses
+then with `prior_worker_drift`: on plain source directories, install the
+driver's torchmonarch into the Python cluster.toml names and run `dgxm
+restart`, which syncs the driver's source to the Workers; in release slots,
+use the forward repair in
+[#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update).
+When the Workers are the newer side, as after a verified update that ended
+`partial`, put the driver's checkout and Python on their release and restart
+ComfyUI (#118 says how for each partial code). When the refusal says `this process loaded
+torchmonarch` or `torchmonarch was reinstalled after this process loaded it`,
+restart ComfyUI before anything else if dgx-monarch was updated since it
+started, since the process still holds the old pin; otherwise install the pin
+into ComfyUI's Python if it is missing, then restart ComfyUI: no install
+reaches a process that already loaded torchmonarch. The same
+restart clears `Monarch runtime identity is unavailable` and `... not owned by
+the ... distribution` once the install is right, since the process keeps
+its first reading.
 
 ## 9. Worker host death mid-render
 
@@ -6235,7 +6308,11 @@ attempt, and its refusal says that no in-process retry ran; its trace reads
 differently (below). A refusal that starts `no attach ran` is the id gate in
 [#2](#2-every-attach-times-out-after-one-failed-attach): nothing dialed, the
 session stays usable, and its trace ends at `close outcome=refused
-stage=proc_id`.
+stage=proc_id`. One that starts `the first attach failed (...), and the id
+reading after it found` is the same gate's version check after a failed
+first attempt ([#8](#8-version-skew-between-hosts)): nothing restarted, the
+session stays usable, and its trace ends at `close outcome=refused
+stage=proc_id_reread`.
 
 **What the driver writes.** Every cluster attach writes one line per phase
 into the driver log, all sharing a sequence number. Grep the ComfyUI log:
@@ -6266,12 +6343,12 @@ after a Worker restart writes `restart_reattach` after it. A sequence with no
 | `heal_probe` | which loops the pre-attach probe read as down, and which ones it never observed |
 | `heal_restart` | the loops read as down, and the loops the restart touched (every configured loop) |
 | `heal_settled` | whether worker health settled after that restart, and how long it took |
-| `loop_generation` | one line per loop before every attach attempt: the generation `gen`, the process that holds the loop's LISTEN socket and how long that process has been up, the unit restart count, `proc_id`, the id that process serves and the attempt dials (or why there is none: `bare`, `unpublished`, `malformed`, `unreadable`, `none`, `unknown`), and `changed=true` when that process is not the one this driver read last time. A failed first attempt is followed by one more reading, `phase=before_attach_2`, even when no second attempt runs |
+| `loop_generation` | one line per loop before every attach attempt: the generation `gen`, the process that holds the loop's LISTEN socket and how long that process has been up, the unit restart count, `proc_id`, the id that process serves and the attempt dials (or why there is none: `bare`, `unpublished`, `malformed`, `unreadable`, `none`, `unknown`), `monarch`, the torchmonarch that process imported (`absent` from a release that does not record it), and `changed=true` when that process is not the one this driver read last time. A failed first attempt is followed by one more reading, `phase=before_attach_2`, even when no second attempt runs |
 | `proc_id_moved` | the loops whose id changed between the dial of the first attempt and the reading after it failed: they restarted during that attempt, so the second attempt dials their new ids |
 | `proc_id_prime` | the loops whose id changed since this driver last dialed them, sent one throwaway message before this `attempt` dials ([#2](#2-every-attach-times-out-after-one-failed-attach)), and any of them the message could not reach (`unprimed`) |
 | `phase` | one timed step. `phase=transport_enable`, `phase=auto_heal`, or `phase=attach attempt=1..2`, each with `wall_s` and an `outcome` of `ok` or the exception class |
 | `attach_call` | the two halves of one monarch attach: `half=attach_to_workers` is the worker config push, `half=initialized_get` is the wait on the mesh, bounded by its `bound_s` (70 s under the shipped 60 s config-push budget) |
-| `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_1_reread_refused`, an ordinary attach whose first attempt failed and whose reading after it found no id, so no second attempt ran (a released fleet in that case closes as `attach_1_released`); `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to, and `stage=proc_id` for a loop whose id the first reading did not carry, which leaves the session usable. `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
+| `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_1_reread_refused`, an ordinary attach whose first attempt failed and whose reading after it found no id, so no second attempt ran (a released fleet in that case closes as `attach_1_released`); `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to, and `stage=proc_id` for a loop whose id the first reading did not carry, or whose torchmonarch is not the driver's, which leaves the session usable. One refusal follows an attach that ran: `stage=proc_id_reread`, a first attempt that failed and a reading after it that found a loop on another torchmonarch, so no second attempt and no restart ran, and the session stays usable ([#8](#8-version-skew-between-hosts)). `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
 | `post_fail_restart` | the loops the post-failure Worker restart touched and the failure class that prompted it. It lands after the `close`, as `restart_reattach` does |
 | `restart_reattach` | a render, or an explicit loader's eager load, that met Worker loops restarted under its mesh ([#2](#2-every-attach-times-out-after-one-failed-attach)). `outcome=attached` carries the replacement attach's `seq` and lands after its `close`, with `verdict=all`, the loops that `moved`, the `teardown` that retired the stale mesh (`stop_confirmed` or `liveness_release`) and the detour's `wall_s`. `outcome=refused` carries `seq=0`, since no attach ran, and a `reason`: `partial`, `none` or `unknown` for what the id reading found, or `not_retired` for a stale mesh the liveness proof did not release. `outcome=failed` carries the exception class as its `reason`: a replacement attach that raised, whose own `close` names the stage, or an explicit loader's capacity price that refused before that attach ran, which writes no new `close` |
 
@@ -6334,7 +6411,7 @@ a fresh driver process, which attached in 0.75 s in the recovery test
 loop, among that host's rows after its Worker service row:
 
 ```
-  [ ok ] <host> listener generation: gen=<generation> pid=4242 age_s=612 restarts=0 started=<timestamp> marker=match proc_id=<16 hex digits>
+  [ ok ] <host> listener generation: gen=<generation> pid=4242 age_s=612 restarts=0 started=<timestamp> marker=match proc_id=<16 hex digits> running torchmonarch=<version>
 ```
 
 `gen` is a short digest of the boot id, the process holding the LISTEN socket,
@@ -6350,7 +6427,11 @@ it normally starts with the 12 digits of `gen`. The row fails when a listening
 loop definitely publishes no id (`bare`, `unpublished` or `malformed`),
 because the driver refuses to attach to it, and names the remedy from
 [#2](#2-every-attach-times-out-after-one-failed-attach). An id the probe could
-not read (`unreadable`, `unknown`) warns as unobserved. Nothing else in the row moves doctor's exit code.
+not read (`unreadable`, `unknown`) warns as unobserved. `running torchmonarch`
+is the version that process imported, which the env row cannot show because
+it reads the disk; the row fails when it is not this checkout's pin, or when a
+record with an id carries none (`absent`), because the driver refuses to
+attach ([#8](#8-version-skew-between-hosts)). Nothing else in the row moves doctor's exit code.
 
 A host doctor could not read still gets its row:
 
@@ -7270,6 +7351,65 @@ there.
 If that update still refuses with `prior_worker_drift`, the Workers run a
 different commit from the one you reset to, as after a guided setup followed
 by plain updates. Use the forward repair instead.
+
+**After a verified update that ended `partial`:** the receipt's status is
+`partial`, and its code says where the update stopped. Keep ComfyUI stopped,
+keep the receipt, the retained controller and the installation journals, and
+before you change anything read each host's link (`readlink -f
+~/.local/share/dgx-monarch/src`), the driver's commit (`git -C "$REPO_DIR"
+rev-parse HEAD`) and the driver's torchmonarch (`"$COMFY_PYTHON" -m pip show
+torchmonarch`) beside the pin in that checkout's `pyproject.toml`. A rerun of
+the same update refuses with `prior_worker_drift` while the Workers do not
+match the driver.
+
+- Any code whose receipt lists no `worker_stop` step: the update stopped
+  while staging, before any live change, and only the removal of its staging
+  area (the `stage_cleanup` step) was not confirmed. The driver and the
+  Workers are as they were; clear the cause the code names and rerun.
+- An `activation_failed`, `start_failed`, `doctor_failed`,
+  `cluster_smoke_failed`, `readback_mismatch` or `driver_commit_failed`
+  whose `prior_release_start` step succeeded: the old release was restored
+  and its Workers run again, and only the `stage_cleanup` step was not
+  confirmed. The driver and the Workers match on the old release; clear the
+  cause and rerun.
+- `stop_unknown`, and a `stop_failed` whose `stage_cleanup` step was not
+  confirmed: nothing was activated. Every link names the old release, some
+  Workers may be stopped, and the driver is unchanged. `dgxm up` starts them
+  again; then rerun the update.
+- `activation_unknown`, and an `activation_failed`, `start_failed`,
+  `doctor_failed`, `cluster_smoke_failed`, `readback_mismatch` or
+  `driver_commit_failed` whose `prior_release_start` step is missing or did
+  not succeed, so the restore of the old release was not confirmed: each
+  host's link and unit can name either release, Workers of either
+  release may be running or stopped, and the driver is on the old release
+  (a driver commit reports `failed` only after it put the driver back).
+  Hosts whose link names the old release match the driver; if any names the
+  new one, use the forward repair above.
+- `start_unknown`: every link and unit names the new release, and the new
+  Workers may be running, because the update stopped nothing after it. The
+  driver's checkout and torchmonarch are unchanged. Use the forward repair.
+- `doctor_unknown`, `cluster_smoke_unknown` and `readback_unknown`: every link
+  names the new release, the update tried once to stop the new Workers (the
+  receipt's `fail_closed_stop` step says whether that was confirmed), and the
+  driver is unchanged. The next `dgxm up`, `dgxm restart` or reboot starts the
+  new Workers under the old driver: from 1.5.0 its attach refuses when their
+  torchmonarch versions differ ([#8](#8-version-skew-between-hosts)); an
+  earlier driver times out instead. Use the forward repair.
+- `driver_commit_unknown`: the links name the new release and the update
+  tried once to stop the new Workers. The driver commit installs the target's
+  torchmonarch into the driver's Python before it moves the checkout, so that
+  Python can hold the target pin under the old checkout. If the checkout is
+  at the target and the driver's torchmonarch is its pin, the driver is on
+  the new release: run `dgxm up`, then `dgxm doctor`. If the checkout is
+  still on the old commit, install that commit's pin into the driver's
+  Python as step 4 of the forward repair reads it (`"$COMFY_PYTHON" -m pip
+  install --no-deps "$PIN"`), then use the forward repair.
+- `finalize_unknown`, `finalize_failed` and `stage_cleanup_unconfirmed`: the
+  driver and every Worker run the new release, and only the cleanup of the
+  previous release or of the staging area was not confirmed, so renders
+  attach. The previous release's slot can stay on disk.
+- `operation_exception` and `operation_interrupted`: read the last step the
+  receipt lists and use the case above for the step that follows it.
 
 ## 119. A mesh build or Worker start refuses on an ambient environment variable
 
@@ -9238,28 +9378,76 @@ on the Workers once an adapter for it lands
 not match the current checkout's exact pin: foreign distribution inventory is
 ambiguous (distribution=<name>; relative path=<name>-<version>.dist-info/RECORD)
 ... no package repair was attempted", on every try, when nothing about
-torchmonarch has changed.
+torchmonarch has changed. That is the 1.4.0 updater's text, which runs the
+first update from 1.4.0. From 1.5.0 the same check reads "foreign distribution
+RECORD lists files outside site-packages that are not bytecode compiled for its
+own sources (distribution=<name>; relative path=...). That RECORD lists a file
+outside site-packages the check cannot vouch for ... See them with `grep
+'^\.\./' <site-packages>/<relative path>` ...", or "RECORD is malformed", or
+"is installed more than once", each with what clears it. A Worker whose
+torchmonarch lives in its own Python, outside a `u-` release slot, prints the
+same cause under its host name, above "worker hosts do not exactly match the
+current driver release".
 
 **Cause:** the update's ownership check reads the pip RECORD of every foreign
 distribution that ships files inside torchmonarch's directories (`tests/` and
-`examples/`; xfuser does), and treats a RECORD as invalid when an entry
-escapes site-packages, other than a `../bin/` console script. An environment
-built with `PYTHONPYCACHEPREFIX` set records every compiled `.pyc` as such a
-path (`../../../../<prefix>/...`), so the check cannot vouch for that
-distribution. On 2026-11-06 the torch 2.15 environment on both Sparks had been
-built that way, 183 of its 204 distributions carried such entries, and
-xfuser's RECORD, with 301 of them, refused the first deploy of dev `79bb47e`
-ten times.
+`examples/`; xfuser does), on the driver's Python and on each Worker's Python
+that holds torchmonarch itself; a `u-` slot carries its own torchmonarch, so
+its Worker's Python is never read. pip records each `.pyc` it compiles with no
+hash; with `PYTHONPYCACHEPREFIX` set to a writable directory that file lands
+under the prefix, outside site-packages (`../../../../<prefix>/...`). The 1.4.0
+check treats any such entry, other than a `../bin/` console script, as an
+inventory it cannot vouch for. From 1.5.0 it ignores an entry that is exactly
+pip's bytecode for one of that RECORD's own sources (no hash or size, a
+`<stem>.<cache tag>.pyc` name, which no import can load by name, at the end
+of a path that repeats the source's own path in site-packages), and every
+other entry outside site-packages, other than a console script, still
+refuses; it never opens those files and still checks each file inside
+site-packages against its hash. The prefix the pack sets for its own
+processes, `/proc/self/fd/2147483647`, is not writable, so pip compiles nothing
+there and records no such entry. On 2026-11-06 the torch 2.15 environment on
+both Sparks had been built with a writable prefix by its build script, 183 of
+its 204 distributions carried such entries, and xfuser's RECORD, with 301 of
+them, refused the first deploy of dev `79bb47e` ten times.
 
-**Fix:** reinstall the named distribution from the same wheel in a shell where
-`PYTHONPYCACHEPREFIX` is unset, in the Worker environment on every host:
-`pip install --no-index --no-deps --force-reinstall <wheel>`, then run the
-update again. Its RECORD then lists its bytecode under `<package>/__pycache__/`
-inside site-packages. Other distributions with such entries do not matter to
-the check unless they also ship files in torchmonarch's directories.
+**Fix, on the first update from 1.4.0:** reinstall the named distribution from
+the same wheel in a shell where `PYTHONPYCACHEPREFIX` is unset, in the
+driver's Python, and in the Python cluster.toml names on each Worker host
+whose Worker runs outside a `u-` slot:
+`<python> -m pip install --no-index --no-deps --force-reinstall <wheel>`, then
+run the update again. Its RECORD then lists its bytecode under
+`<package>/__pycache__/` inside site-packages. Other distributions with such
+entries do not matter to the check unless they also ship files in
+torchmonarch's directories. You can instead run this release's updater, which
+accepts pip's bytecode entries, from a checkout of this release with
+[the recovery procedure in #110](#recover-an-installation-with-an-older-verifier).
 
-**Check:** `grep -c '^\.\./' <site-packages>/<name>-<version>.dist-info/RECORD`
-reads 1 (the console script) or 0, and the next `dgxm update --verify` passes.
+**Fix, from 1.5.0:** pip's bytecode no longer reaches this refusal, so what
+remains is an entry a reinstall writes again: a file with a hash outside
+site-packages, such as a data file, a header or a script, a script's compiled
+cache with no source beside it, or bytecode for another Python. List the
+entries with `grep '^\.\./' <site-packages>/<name>-<version>.dist-info/RECORD`.
+Uninstall that distribution from this environment, or install it in another
+one, then run the update again. "RECORD is malformed" asks for a reinstall of
+that distribution; "is installed more than once" means more than one metadata
+directory names it, so remove every copy and install the version you use once.
+
+**A shared test file.** The official xfuser 0.8.0 wheel ships
+`tests/conftest.py`, which torchmonarch ships too, so whichever installs last
+writes the file. From 1.5.0 the check accepts either copy when xfuser's record
+of it is the official one, and counts it at torchmonarch's own hash, so every
+host attests the same release. The 1.4.0 updater refuses it with "foreign
+distribution claims pinned payload (distribution=xfuser; relative
+path=tests/conftest.py)". Removing or upgrading xfuser deletes the file, and
+the check then refuses with "a file torchmonarch shares with another
+distribution is missing"; reinstall torchmonarch at its installed version
+(`<python> -m pip install --no-deps --force-reinstall torchmonarch==<version>`)
+and run the update again. Any other distribution, version or file that claims
+a torchmonarch file is still refused.
+
+**Check:** the next `dgxm update --verify` passes. After the reinstall without
+the prefix, `grep '^\.\./' <site-packages>/<name>-<version>.dist-info/RECORD`
+lists only the distribution's console scripts, as `../../../bin/<name>` rows.
 On 2026-11-06 the deploy of `79bb47e` succeeded on its first try after the
 reinstall on both hosts, with doctor at 50 checks and 0 failures
 ([VALIDATION](VALIDATION.md#host-memory-2026-11-06)).

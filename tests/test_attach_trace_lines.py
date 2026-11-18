@@ -78,11 +78,14 @@ def rig(monkeypatch):
     generations = {"gen": "aaaaaaaaaaaa", "proc_id": "aaaaaaaaaaaa0001"}
 
     def fleet(config, **_kwargs):
+        from dgx_monarch.monarch_capabilities import loaded_version
+
         return {host.address: {"gen": generations["gen"],
                                "loop_pid": "4242", "age_s": "31",
                                "listening": "true", "unit_restarts": "0",
                                "marker": "match",
-                               "proc_id": generations["proc_id"]}
+                               "proc_id": generations["proc_id"],
+                               "monarch": loaded_version()}
                 for host in config.hosts}
 
     monkeypatch.setattr(listener_generation, "fleet", fleet)
@@ -326,8 +329,10 @@ def test_a_generation_that_moved_between_attempts_says_so(rig, monkeypatch):
     readings = iter(["aaaaaaaaaaaa", "bbbbbbbbbbbb"])
 
     def fleet(config, **_kwargs):
+        from dgx_monarch.monarch_capabilities import loaded_version
+
         gen = next(readings)
-        return {host.address: {"gen": gen, "proc_id": gen + "0001"}
+        return {host.address: {"gen": gen, "proc_id": gen + "0001", "monarch": loaded_version()}
                 for host in config.hosts}
 
     monkeypatch.setattr(listener_generation, "fleet", fleet)

@@ -382,9 +382,16 @@ case: its known external test-data/cache records and a verified empty
 `tests/__init__.py`. The initializer makes the ancillary `tests` namespace a
 regular Python package. This allowance does not extend to runtime packages,
 nonempty initializers, overlapping pinned files or ambiguous ownership. All
-pinned wheel files still require their original hashes. External record paths
-are classified without reading or changing their targets. Installed metadata
-establishes local ownership, not publisher authenticity.
+pinned wheel files still require their original hashes. One named exception
+lets the official xfuser 0.8.0 wheel share `tests/conftest.py`, a test file
+torchmonarch also ships, outside its runtime packages: that path may hold
+either wheel's bytes when xfuser's record of it is the official one, it counts
+at the pinned hash, and a missing copy still refuses. External record paths
+are classified without reading or changing their targets; the only external
+records accepted are console scripts, the color-matcher 0.6.0 records named
+above, and the bytecode pip compiled for a record's own sources under a
+pycache prefix, which no import can load by name.
+Installed metadata establishes local ownership, not publisher authenticity.
 
 The recovery updater explicitly trusts a separately reviewed controller
 checkout at the selected target commit. It binds that controller separately

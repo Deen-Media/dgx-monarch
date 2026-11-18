@@ -240,9 +240,10 @@ def _scan_tree(site: Path, expected: Mapping[str, str]) -> Mapping[str, str]:
             if current.name.endswith(".pyc"):
                 continue
             found[relative.as_posix()] = _hash_file(current)
-    for name in foreign_namespace_files(site, expected, found):
+    shared: dict[str, str] = {}  # vouched shared paths, counted at the pinned hash
+    for name in foreign_namespace_files(site, expected, found, shared=shared):
         del found[name]
-    return found
+    return found | shared
 
 
 def _dependency_contract(payload: bytes, pin: str) -> dict:

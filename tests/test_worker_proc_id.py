@@ -25,6 +25,8 @@ from dgx_monarch.cli.probe_certainty import FAIL, OK, UNOBSERVED, WARN
 ADDRESS_A = "tcp://10.0.0.1:26600"
 ADDRESS_B = "tcp://10.0.0.2:26600"
 BOOT = "6f1c2d3e-0000-4000-8000-000000000001"
+# The torchmonarch a driver imported, for the gate tests that build readings by hand.
+DRIVER = "0.7.0"
 
 
 def _host(name: str, address: str):
@@ -161,9 +163,10 @@ def test_the_worker_loop_publishes_then_serves_the_id_it_published():
 
     source = inspect.getsource(worker_loop.main)
     order = [source.index(token) for token in (
+        "monarch_version = assert_supported_runtime()",
         "proc_id = worker_proc_id.current()",
-        "publish_loop(args.address, proc_id=proc_id)",
-        "start_tracker(args.address, proc_id=proc_id)",
+        "publish_loop(args.address, proc_id=proc_id, monarch=monarch_version)",
+        "start_tracker(args.address, proc_id=proc_id, monarch=monarch_version)",
         "served = worker_proc_id.proc_addr(args.address, proc_id)",
         "run_worker_loop_forever(address=served,",
     )]
@@ -196,12 +199,12 @@ def test_the_loop_record_names_the_served_id_before_the_loop_serves(
                          (monarch_policy, "apply_policy"),
                          (monarch_policy, "activate_native_policy"),
                          (monarch_diagnostics, "configure_policy_logged"),
-                         (monarch_capabilities, "assert_supported_runtime"),
                          (monarch_actor, "enable_transport")):
         monkeypatch.setattr(module, name, lambda *_a, **_k: None)
-    tracked: list[str | None] = []
-    monkeypatch.setattr(actor_ledger, "start_tracker",
-                        lambda _address, **kwargs: tracked.append(kwargs.get("proc_id")))
+    monkeypatch.setattr(monarch_capabilities, "assert_supported_runtime", lambda: "9.8.7")
+    tracked: list[tuple[str | None, str | None]] = []
+    monkeypatch.setattr(actor_ledger, "start_tracker", lambda _address, **kwargs: tracked.append(
+        (kwargs.get("proc_id"), kwargs.get("monarch"))))
     served: list[tuple[str, dict]] = []
 
     def serve(*, address, ca):
@@ -213,8 +216,11 @@ def test_the_loop_record_names_the_served_id_before_the_loop_serves(
     (dialed, record), = served
     assert worker_proc_id.is_value(record.get("proc_id"))
     assert record["pid"] == os.getpid() and record["address"] == address
+    # The record names the version the admission returned, and so do the
+    # tracker's later ticks.
+    assert record["monarch"] == "9.8.7"
     assert dialed == worker_proc_id.proc_addr(address, record["proc_id"])
-    assert tracked == [record["proc_id"]]
+    assert tracked == [(record["proc_id"], "9.8.7")]
 
 
 # Reading it back with the real probe
@@ -237,7 +243,8 @@ def test_a_new_driver_refuses_an_old_loop_before_dialing(held):
     fields = _probe(held.address)
     assert fields["proc_id"] == worker_proc_id.BARE
     with pytest.raises(worker_proc_id.WorkerProcIdError) as refused:
-        worker_proc_id.dial_addresses([_host("h1", held.address)], {held.address: fields})
+        worker_proc_id.dial_addresses([_host("h1", held.address)], {held.address: fields},
+                                      monarch=DRIVER)
     text = str(refused.value)
     assert "older release" in text and "`dgxm update`" in text
     assert worker_proc_id.ENTRY in text and "no attach ran" in text
@@ -279,7 +286,133 @@ def test_nothing_listening_reads_none():
         probe.bind(("127.0.0.1", 0))
         free = probe.getsockname()[1]
     fields = _probe(f"tcp://127.0.0.1:{free}")
-    assert (fields["gen"], fields["proc_id"]) == ("none", worker_proc_id.NONE)
+    assert (fields["gen"], fields["proc_id"], fields["monarch"]) == (
+        "none", worker_proc_id.NONE, worker_proc_id.NONE)
+
+
+# The torchmonarch version the loop imported, read back for the process holding the listener
+
+
+def test_the_probe_reads_the_torchmonarch_version_the_loop_published(held):
+    value = worker_proc_id.current()
+    assert actor_ledger.publish_loop(held.address, proc_id=value, monarch="9.8.7", home=str(held.home))
+    fields = _probe(held.address)
+    assert (fields["proc_id"], fields["monarch"]) == (value, "9.8.7")
+    # The tracker's later ticks keep the version rather than dropping it.
+    actor_ledger.tick(held.address, home=str(held.home), proc_id=value, monarch="9.8.7", now=10_000.0)
+    assert _probe(held.address)["monarch"] == "9.8.7"
+
+
+@pytest.mark.parametrize(("monarch", "reading"), [
+    (None, "absent"), ("not a version", "malformed"), ("absent", "malformed"), (7, "malformed")])
+def test_a_record_without_a_usable_version_reads_absent_or_malformed(held, monarch, reading):
+    pid, starttime = _own_identity()
+    loop = {"pid": pid, "starttime": starttime, "address": held.address, "proc_id": "a" * 16}
+    if monarch is not None:
+        loop["monarch"] = monarch
+    _write_loop(held.home, loop)
+    assert _probe(held.address)["monarch"] == reading
+
+
+def test_the_worker_loop_records_the_torchmonarch_it_imported(isolated_environ, monkeypatch, tmp_path):
+    """The real admission, against whichever torchmonarch this interpreter
+    holds: the record must carry that distribution's version, read after the
+    import it checks, so the driver compares what the loop actually runs."""
+    import importlib.metadata
+    import sys
+
+    import monarch.actor as monarch_actor
+
+    import dgx_monarch
+    from dgx_monarch import monarch_diagnostics, monarch_policy, runtime_provenance
+    from dgx_monarch.cli import worker_loop, worker_process_env
+
+    installed = importlib.metadata.version("torchmonarch")
+    monkeypatch.setattr(dgx_monarch, "TORCHMONARCH_PIN", installed)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["worker_loop", "--address", "tcp://127.0.0.1:27871"])
+    for module, name in ((runtime_provenance, "enforce_source_only_imports"),
+                         (worker_process_env, "prepare_worker_process_environment"),
+                         (monarch_policy, "apply_policy"),
+                         (monarch_policy, "activate_native_policy"),
+                         (monarch_diagnostics, "configure_policy_logged"),
+                         (monarch_actor, "enable_transport")):
+        monkeypatch.setattr(module, name, lambda *_a, **_k: None)
+    monkeypatch.setattr(actor_ledger, "start_tracker", lambda *_a, **_k: None)
+    served: list[dict] = []
+    monkeypatch.setattr(monarch_actor, "run_worker_loop_forever", lambda **_kwargs: served.append(
+        actor_ledger.read_ledger(home=str(tmp_path))["loop"]))
+    worker_loop.main()
+    assert served[0]["monarch"] == installed
+
+
+def _gate(held, monkeypatch):
+    """mesh_attach.read_dial, with the real probe script run by bash in place of ssh."""
+    import subprocess
+    import sys
+
+    from dgx_monarch import mesh_attach
+    from dgx_monarch.cli import lifecycle
+
+    def run_on_host(_config, _host, script, timeout):
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                              timeout=max(timeout, 30), env=dict(os.environ))
+
+    from dgx_monarch.monarch_capabilities import loaded_version
+
+    monkeypatch.setattr(lifecycle, "run_on_host", run_on_host)
+    config = SimpleNamespace(hosts=(_host("h1", held.address),), python_bin=sys.executable)
+    trace = SimpleNamespace(generation=lambda *_a, **_k: "", emit=lambda *_a, **_k: "")
+    return lambda: mesh_attach.read_dial(config, trace, attempt=1, monarch=loaded_version())
+
+
+@pytest.fixture
+def driver_monarch():
+    """The torchmonarch this test process imported, as a driver has before any attach."""
+    import importlib.metadata
+
+    import monarch.actor  # noqa: F401
+
+    return importlib.metadata.version("torchmonarch")
+
+
+def _record(held, monarch):
+    """This process's loop record, as a loop of either release would write it."""
+    pid, starttime = _own_identity()
+    loop = {"pid": pid, "starttime": starttime, "address": held.address, "proc_id": "a" * 16}
+    if monarch is not None:
+        loop["monarch"] = monarch
+    _write_loop(held.home, loop)
+
+
+def test_the_attach_dials_a_loop_on_the_driver_s_own_torchmonarch(held, monkeypatch, driver_monarch):
+    _record(held, driver_monarch)
+    assert _gate(held, monkeypatch)() == ["a" * 16]
+
+
+@pytest.mark.parametrize("recorded", ["0.0.1", None])
+def test_the_attach_refuses_a_loop_on_another_torchmonarch_before_dialing(
+        held, monkeypatch, driver_monarch, recorded):
+    """The real probe reads the record and the real gate compares it with the
+    torchmonarch this process imported. A loop on another version, or one from
+    a release that records none, refuses here with the cause and the remedy,
+    instead of two config-push timeouts and a restart of healthy loops."""
+    _record(held, recorded)
+    with pytest.raises(worker_proc_id.WorkerProcIdError) as refused:
+        _gate(held, monkeypatch)()
+    text = str(refused.value)
+    assert text.startswith("no attach ran: h1 (") and "stays usable" in text
+    if recorded is None:
+        assert "earlier release, which does not report its torchmonarch version" in text
+    else:
+        assert f"runs torchmonarch 0.0.1 and this driver runs {driver_monarch}" in text
+    # Either way this driver is the newer side, which a verified update cannot repair.
+    assert "this driver runs the newer release, so bring the Workers to it" in text
+    assert f"torchmonarch=={driver_monarch}`) and run `dgxm restart`" in text
+    assert f"forward repair in {worker_proc_id.UPDATE_ENTRY}" in text
+    assert "`dgxm update --verify` refuses while they differ" in text
+    assert worker_proc_id.VERSION_ENTRY in text
+    assert refused.value.unknown.startswith("h1 (")
 
 
 # The dial gate
@@ -289,8 +422,8 @@ def test_every_host_dials_the_id_its_own_reading_carries():
     a, b = "a" * 16, "b" * 16
     dial = worker_proc_id.dial_addresses(
         [_host("h1", ADDRESS_A), _host("h2", ADDRESS_B)],
-        {ADDRESS_A: {"gen": a[:12], "proc_id": a},
-         ADDRESS_B: {"gen": b[:12], "proc_id": b}})
+        {ADDRESS_A: {"gen": a[:12], "proc_id": a, "monarch": DRIVER},
+         ADDRESS_B: {"gen": b[:12], "proc_id": b, "monarch": DRIVER}}, monarch=DRIVER)
     assert dial == [worker_proc_id.proc_addr(ADDRESS_A, a),
                     worker_proc_id.proc_addr(ADDRESS_B, b)]
     assert all(entry.startswith("service<") for entry in dial)
@@ -306,11 +439,11 @@ def test_every_host_dials_the_id_its_own_reading_carries():
     ({}, "did not read it (no reading)"),
 ])
 def test_a_host_without_a_usable_id_refuses_naming_host_reason_and_remedy(fields, says):
-    good = {"gen": "a" * 12, "proc_id": "a" * 16}
+    good = {"gen": "a" * 12, "proc_id": "a" * 16, "monarch": DRIVER}
     with pytest.raises(worker_proc_id.WorkerProcIdError) as refused:
         worker_proc_id.dial_addresses(
             [_host("h1", ADDRESS_A), _host("h2", ADDRESS_B)],
-            {ADDRESS_A: good, ADDRESS_B: fields})
+            {ADDRESS_A: good, ADDRESS_B: fields}, monarch=DRIVER)
     text = str(refused.value)
     assert f"h2 ({ADDRESS_B})" in text and "h1 (" not in text
     assert says in text
@@ -322,12 +455,12 @@ def test_read_dial_probes_every_configured_loop_through_the_runner():
 
     def runner(_config, host, script, timeout):
         calls.append((host.address, timeout))
-        line = f"{listener_generation.LINE_PREFIX}aaaaaaaaaaaa proc_id={'a' * 16}"
+        line = f"{listener_generation.LINE_PREFIX}aaaaaaaaaaaa proc_id={'a' * 16} monarch={DRIVER}"
         return SimpleNamespace(returncode=0, stdout=line + "\n")
 
     config = SimpleNamespace(hosts=(_host("h1", ADDRESS_A), _host("h2", ADDRESS_B)),
                              python_bin="python3")
-    dial = worker_proc_id.read_dial(config, runner=runner, timeout=4.0)
+    dial = worker_proc_id.read_dial(config, monarch=DRIVER, runner=runner, timeout=4.0)
     assert [address for address, _ in calls] == [ADDRESS_A, ADDRESS_B]
     assert dial == [worker_proc_id.proc_addr(address, "a" * 16)
                     for address in (ADDRESS_A, ADDRESS_B)]
@@ -344,9 +477,11 @@ def _row(**fields):
 
 
 def test_a_loop_serving_an_id_reads_ok_and_shows_it():
-    status, _name, detail, reason, critical = _row(proc_id="5c4ab03463a91f07")
+    from dgx_monarch import TORCHMONARCH_PIN
+
+    status, _name, detail, reason, critical = _row(proc_id="5c4ab03463a91f07", monarch=TORCHMONARCH_PIN)
     assert (status, reason, critical) == (OK, "", False)
-    assert detail.endswith("proc_id=5c4ab03463a91f07")
+    assert detail.endswith(f"proc_id=5c4ab03463a91f07 running torchmonarch={TORCHMONARCH_PIN}")
 
 
 @pytest.mark.parametrize("value", ["bare", "unpublished", "malformed"])
@@ -362,3 +497,62 @@ def test_an_id_the_probe_could_not_read_stays_an_unobserved_warning(fields):
     status, _name, detail, reason, _critical = _row(**fields)
     assert (status, reason) == (WARN, UNOBSERVED)
     assert worker_proc_id.ENTRY in detail
+
+
+@pytest.mark.parametrize(("monarch", "says"), [
+    ("0.0.1", "runs torchmonarch 0.0.1 and this driver runs"),
+    ("absent", "earlier release"),
+    ("malformed", "could not read the torchmonarch version"),
+])
+def test_a_loop_running_another_torchmonarch_fails_with_its_running_version(monarch, says):
+    """The env row reads the version on disk; this row reads the one the
+    running loop imported, which is what the attach gate refuses on."""
+    status, _name, detail, reason, _critical = _row(proc_id="5c4ab03463a91f07", monarch=monarch)
+    assert (status, reason) == (FAIL, "")
+    assert f"running torchmonarch={monarch}" in detail and says in detail
+    assert "the driver refuses to attach" in detail and worker_proc_id.VERSION_ENTRY in detail
+
+
+@pytest.mark.parametrize("fields", [{"monarch": "unknown"}, {}])
+def test_a_running_version_the_probe_could_not_read_stays_an_unobserved_warning(fields):
+    status, _name, detail, reason, _critical = _row(proc_id="5c4ab03463a91f07", **fields)
+    assert (status, reason) == (WARN, UNOBSERVED)
+    assert worker_proc_id.VERSION_ENTRY in detail
+
+
+# What each version refusal asks for. A driver that moved without its Workers
+# (a hand pull, a rollback) is the state a loop without a version, or on an
+# older version, comes from; there a verified update refuses with
+# prior_worker_drift, so the remedy must not be one.
+
+_TO_WORKERS = "this driver runs the newer release, so bring the Workers to it"
+_TO_DRIVER = "the Workers run the newer release, so put the driver's checkout and Python on their release"
+
+
+@pytest.mark.parametrize("reading", ["absent", "0.0.1", "0.7.0"])
+def test_a_loop_older_than_this_driver_is_brought_to_it_without_a_verified_update(reading):
+    _reason, remedy = worker_proc_id.version_problem(reading, "0.8.0")
+    assert remedy.startswith(_TO_WORKERS)
+    assert ("on plain source directories install torchmonarch 0.8.0 into the Python cluster.toml "
+            "names (`<python> -m pip install --no-deps torchmonarch==0.8.0`) and run `dgxm restart`, "
+            "which syncs this driver's source to them") in remedy
+    assert f"in release slots use the forward repair in {worker_proc_id.UPDATE_ENTRY}" in remedy
+    assert "`dgxm update --verify` refuses while they differ" in remedy
+    assert "finish the update" not in remedy and "restart ComfyUI" not in remedy
+
+
+def test_a_loop_newer_than_this_driver_asks_for_the_driver_and_a_comfyui_restart():
+    _reason, remedy = worker_proc_id.version_problem("0.8.0", "0.7.0")
+    assert remedy == (f"{_TO_DRIVER} and restart ComfyUI ({worker_proc_id.UPDATE_ENTRY}); "
+                      "then render again")
+
+
+@pytest.mark.parametrize(("reading", "driver"), [("0.8.0+local", "0.7.0"), ("0.8.0rc1", "0.8.0"),
+                                                 ("0.8", "0.8.0.0")])
+def test_versions_that_do_not_order_name_both_sides(reading, driver):
+    _reason, remedy = worker_proc_id.version_problem(reading, driver)
+    assert remedy.startswith("the driver and every Worker must run the same release: if this "
+                             "driver is the newer side, bring the Workers to it")
+    assert f"torchmonarch=={driver}`) and run `dgxm restart`" in remedy
+    assert "if the Workers are, put the driver's checkout and Python on their release and " \
+           "restart ComfyUI" in remedy
