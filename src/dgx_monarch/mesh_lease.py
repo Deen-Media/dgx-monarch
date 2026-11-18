@@ -448,7 +448,16 @@ def collect_sample(handle: Any, future: Any, timeout_s: float,
         from . import worker_box
 
         worker_box.name(exc, handle)
+        worker_box.warn_lost_once(exc, handle)  # the render's own error waits for the fleet's stop
         mesh_helpers.mark_defunct_preserving_primary(
             handle, exc, holding_lock=False)
         raise
-    return [value for _point, value in value_mesh.items()]
+    from .mesh_rpc import read_values
+
+    try:  # a reply is decoded only as it is read (mesh_rpc.read_values); the fleet is not evicted for it
+        return read_values(value_mesh, "sample")
+    except Exception as exc:
+        from . import worker_box
+
+        worker_box.name(exc, handle)  # the rank mark puts the box ahead, as for a call's error
+        raise

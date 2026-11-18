@@ -531,7 +531,7 @@ copied from historical evidence.
    world, policy, full requests, artifacts, selected-worker parity, and finally
    recomputed from the worker's source identity before load and adoption at
    [`mesh_residency.py:165-245`](../src/dgx_monarch/mesh_residency.py#L165-L245 "anchor:assert_fleet_residency_grant"),
-   [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"),
+   [`mesh_rpc.py:270-392`](../src/dgx_monarch/mesh_rpc.py#L270-L392 "anchor:verify_request_artifacts"),
    [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization"), and
    [`worker_authorization.py:145-155`](../src/dgx_monarch/actor/worker_authorization.py#L145-L155 "anchor:assert_resident_artifact_identity"),
    with production call order at
@@ -623,7 +623,7 @@ copied from historical evidence.
     [`render_submit.py:252-493`](../src/dgx_monarch/nodes/render_submit.py#L252-L493 "anchor:_submit_render_guarded"),
     [`mesh_residency.py:96-161`](../src/dgx_monarch/mesh_residency.py#L96-L161 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:253-397`](../src/dgx_monarch/mesh_residency.py#L253-L397 "anchor:assert_normal_render_residency_grant"),
-    [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"), and
+    [`mesh_rpc.py:270-392`](../src/dgx_monarch/mesh_rpc.py#L270-L392 "anchor:verify_request_artifacts"), and
     [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization").
     Exact precedence/topology, ledger-read refusal, field tampering, and mode
     regressions are
@@ -868,7 +868,7 @@ copied from historical evidence.
   [`gate_identity.py:282-296`](../src/dgx_monarch/nodes/gate_identity.py#L282-L296 "anchor:model_for_request"),
   [`gate_identity.py:343-482`](../src/dgx_monarch/nodes/gate_identity.py#L343-L482 "anchor:authorize_normal_render"),
   [`render_submit.py:252-493`](../src/dgx_monarch/nodes/render_submit.py#L252-L493 "anchor:_submit_render_guarded"),
-  [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"),
+  [`mesh_rpc.py:270-392`](../src/dgx_monarch/mesh_rpc.py#L270-L392 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:145-155`](../src/dgx_monarch/actor/worker_authorization.py#L145-L155 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
   [`test_runtime_remediation.py:1762-1788`](../tests/test_runtime_remediation.py#L1762-L1788 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").

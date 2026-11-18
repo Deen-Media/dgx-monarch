@@ -2065,6 +2065,13 @@
       "test_patches_of_the_right_shape_pass": "bc02cfba6e2a0950",
       "test_the_store_refuses_in_the_lora_build_before_any_weight_moves": "85dacc354624d335"
     },
+    "tests/test_lost_worker_refusals.py": {
+      "test_a_generic_error_raised_from_the_loss_opens_with_its_cause": "21b9b506fa68896b",
+      "test_a_render_memory_refusal_after_a_lost_workers_trim_stays_the_refusal": "61e9ba5bdbf5ae52",
+      "test_a_spend_refusal_after_a_lost_workers_trim_stays_the_refusal": "2c2bad447891c118",
+      "test_an_error_the_driver_raised_around_a_loss_is_never_reworded": "65926877e7adf262",
+      "test_comfyui_and_studio_name_the_lost_workers_type": "3b27c402cbf1def7"
+    },
     "tests/test_ltx_adapter.py": {
       "test_a_comfy_without_the_paired_helper_rotates_each_alone": "805e3954a9ed9764",
       "test_a_cross_attention_names_its_key_stream_even_when_it_did_not_pad": "6d5cffc9e4f63106",
@@ -2516,7 +2523,7 @@
     "tests/test_refusal_classes.py": {
       "test_class_rules_hold_at_every_classified_site": "881a1999616424bc",
       "test_classified_refusal_sites_match_the_ledger": "d03d34e882230f9f",
-      "test_every_declared_exception_is_classified_as_refusal_or_not": "8e00ed1e849edd1d",
+      "test_every_declared_exception_is_classified_as_refusal_or_not": "230ce0abdc88cccf",
       "test_every_waivable_guard_message_names_the_panel_and_the_env_fallback": "28e23825921f635e",
       "test_guard_vocabulary_agrees_with_the_frozen_ledger_vocabulary": "9525b2023313c356",
       "test_guard_vocabulary_is_claimed_or_explicitly_reserved": "f4e54e2c731766bf",

@@ -98,6 +98,15 @@ def quiet(text: object) -> bool:
     return notice(text) is not None
 
 
+def held_names(registries: Any, lock: Any) -> frozenset[str]:
+    """Recorded, unretired names of the Worker meshes behind these handle registries."""
+    with lock:
+        workers = [getattr(handle, "workers", None)
+                   for registry in registries for handle in list(registry.values())]
+    with _LOCK:
+        return frozenset(_LIVE[id(mesh)] for mesh in workers if id(mesh) in _LIVE)
+
+
 def reset() -> None:
     """Forget every record (tests)."""
     with _LOCK:

@@ -2117,6 +2117,69 @@ sections after them list every change.
 
 ### Operations
 
+- A normal ComfyUI exit (Ctrl+C, or the server closing by itself) now stops
+  the Workers' actors through Monarch's own exit step, and the driver logs no
+  error, whether or not a call is in flight: it logs one INFO line as the exit
+  begins ("The driver is exiting: Monarch's exit step stops the Worker actors,
+  and the driver reports no Worker faults from here on"), a call that the exit
+  stops neither evicts nor stops that fleet again nor reads as a lost Worker,
+  and a cleanup already stopping a dead fleet logs none of its own lines. In
+  CPU tests over loopback a local fleet's actors went with the driver, and a
+  Worker service's within a few seconds (Monarch allows each up to 10 s when
+  a call holds it). 1.4.0's own exit stop ran after Monarch's, against a
+  closed client: in CPU tests it
+  logged `ERROR proc stop on detach timed out` at an exit with no call running
+  or with a call holding its actor, though not with short calls in flight. A
+  cluster's Worker actors outlived a normal 1.4.0 exit (in a CPU test they were
+  still running 100 s later), and only the actor lease ended them. That exit
+  stop is gone. A ComfyUI stopped by SIGTERM, killed, or restarted by
+  replacing its process without running its exit steps still leaves its
+  actors to the lease
+  ([TROUBLESHOOTING #51](docs/TROUBLESHOOTING.md#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
+- A lost Worker's fault toast and render error now open with the cause in
+  plain words, ahead of Monarch's own text: "The Worker on the sibling was
+  stopped by signal 9 (SIGKILL)", "... exited with code 3" or "The driver
+  lost contact with the sibling". Signal 9 adds where to look for an
+  out-of-memory kill and never says there was one. A late fault from a mesh
+  the driver no longer holds reads "a Worker of an earlier fleet", never
+  today's boxes. The render's error has a new type,
+  `dgx_monarch.worker_loss.WorkerLostError`, which ComfyUI names and Studio
+  shows as the error code; 1.4.0 showed Monarch's
+  `monarch._rust_bindings.monarch_hyperactor.supervision.SupervisionError`,
+  which stays chained under it. A refusal the driver raises while it handles
+  the loss keeps its own type and words. TROUBLESHOOTING #4 says how soon each
+  shows up on 0.8.0, measured with Worker services killed or frozen over
+  loopback: a call in flight usually fails within about a second of its process
+  dying, an idle Worker's death is reported after about 30 s, and a render on
+  a lost box fails when the driver's stop of that fleet ends: with a call in
+  flight, about 98 s after the loss of a box beside a live one and about 56
+  to 68 s when the fleet's only box is lost, on loopback. At the failure
+  itself the driver now logs one WARNING, once per fleet, with the cause in
+  plain words, that it stops that fleet once no render holds it, and that a
+  render still waiting on it gets its error when that stop ends, within the
+  actor stop's cap plus the proc stop's own limit (about 105 s at Monarch's
+  defaults); it says nothing once the driver is exiting. A
+  render queued or a Reset pressed while that stop runs is refused, as
+  before, but now says the driver is still stopping the old fleet and to try
+  again when it ends, where it used to advise a Reset or a ComfyUI restart
+  that could not help then; the Reset's line is a WARNING, not an ERROR
+  ([TROUBLESHOOTING #4](docs/TROUBLESHOOTING.md#4-supervisionerror--process-exited-with-non-zero-code)).
+- The ownership occupancy metrics (`[monarch.diagnostics] metrics = true`) are
+  now gauges, which torchmonarch 0.8.0's meter makes, in place of up-down
+  counters that carried each level as a change since the last export. A
+  collector reads them as gauges, not sums. Turning metrics off and on again
+  no longer depends on Monarch merging two instruments of one name; a loopback
+  collector read the right level after the restart
+  ([CLUSTER.md](docs/CLUSTER.md#monarchdiagnostics)).
+- A rank's reply that the driver cannot read, for example one whose class
+  the driver cannot import, now fails like any other rank's failure: the
+  error names the endpoint and opens with the box it came from, where it used
+  to reach the user as a bare unpickling error after the call's own handling.
+  A render's own reply reads the same way, and such a reply never evicts the
+  fleet: its call completed.
+- A failure text that says only "connection lost" no longer marks a fleet
+  dead: in both Monarch builds that text comes only from QUIC, which the pack
+  never runs.
 - A Worker's diagnostic switches can now be set on any Worker unit, from one
   file: `~/.config/dgx-monarch/worker.env` on that box, `NAME=value` lines,
   then a recycle. The unit a verified update writes starts its loop through

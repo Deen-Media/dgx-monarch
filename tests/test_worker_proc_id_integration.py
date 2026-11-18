@@ -358,6 +358,37 @@ def test_a_lost_hosts_fleet_stops_within_its_bound_and_frees_the_replacement(
     assert _line(driver, 30)["step"] == "done"
 
 
+def test_an_idle_lost_host_is_reported_in_plain_words_for_the_fleet_the_driver_holds(tmp_path, cleanup):
+    """Nothing in flight, one of two loops lost: Monarch's fault for the Worker
+    mesh reaches the hook about 30 s later. Bring-up recorded the mesh through
+    mesh_factory._record_mesh, as production does, so the hook opens its ERROR
+    with the cause in plain words for the box the driver still holds
+    (worker_loss.fault_words). About 45 s of wall time."""
+    loop_a = _Loop(tmp_path / "a")
+    cleanup.append(loop_a)
+    loop_b = _Loop(tmp_path / "b")
+    cleanup.append(loop_b)
+    spec = {"mode": "idle_loss",
+            "hosts": [["a", loop_a.address], ["b", loop_b.address]],
+            "homes": {"a": str(loop_a.home), "b": str(loop_b.home)}}
+    driver = _client(tmp_path, spec, "20s")
+    cleanup.append(driver)
+    built = _line(driver, 120)
+    assert built["ok"], built
+    time.sleep(2.0)
+    _kill_group(loop_b)
+    driver.stdin.write("go\n")
+    driver.stdin.flush()
+    lost = _line(driver, 120)
+    assert lost["ok"], lost
+    faults = [line for line in lost["errors"] if line.startswith("cluster fault:")]
+    assert faults, lost
+    # The box that was lost, named as box_names names a loopback pair's second host.
+    assert faults[0].startswith("cluster fault: The driver lost contact with the sibling at b."), faults
+    assert "dgxm_worker" not in faults[0].split("MeshFailure", 1)[0], faults  # the words name no mesh
+    assert _line(driver, 30)["step"] == "done"
+
+
 def test_a_lost_host_beside_a_live_one_ends_the_stop_on_monarchs_report(tmp_path, cleanup):
     """One of two loops is lost, and a call meets it about 50 s later, as a
     render did in the lost40 leg. Monarch's ProcMesh controller cannot confirm

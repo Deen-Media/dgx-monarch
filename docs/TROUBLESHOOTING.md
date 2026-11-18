@@ -423,6 +423,78 @@ the attach to the replacement fleet fails anyway, after a longer outage, run
 `dgxm restart` so both Worker services restart together, unless the error
 says they already did, then restart ComfyUI.
 
+**How soon the driver hears of it** (measured on CPU on 2026-11-17, with
+torchmonarch 0.8.0):
+
+- A call in flight when its Worker process dies usually fails at the next
+  status check, within about a second. Now and then it fails about 10 s
+  later instead, with the status-request timeout below, and the words then
+  say the driver lost contact with the box, even for this box.
+- A Worker that dies while nothing is running is reported in the log, and in
+  the browser, after about 30 s (`data_supervision_timeout`). The next render
+  fails within about 2 s when the Worker's box is still reachable.
+- When a box's Worker service is killed or frozen, Monarch fails a call in
+  flight after about 10 s, and one sent after the loss after about 12 s. The
+  driver stops that fleet once no render holds it, and the render waiting on
+  it gets its error when that stop ends: with a call in flight, about 98 s
+  after the loss of a box beside a live one (the pair's case) and about 56 to
+  68 s when the fleet's only box is lost, killed or frozen alike, since the stop
+  waits for Monarch's report on it. In a two-deep KSampler Pipeline the first
+  render's error comes at once and the second's after the stop. At the failure
+  itself the driver logs one WARNING, once per fleet, with the cause in plain
+  words ("... The driver stops that fleet once no render holds it; a render
+  still waiting on it gets its error when that stop ends, within about
+  105 s."). That figure is the actor stop's cap plus the proc stop's own
+  limit at Monarch's defaults: the group teardown fails at once on a lost
+  Worker. A render queued, or a Reset pressed, while that stop runs is refused
+  with "the driver is still stopping the previous Worker fleet; that stop ends
+  within about 135 s; try again when it ends": a Reset or a ComfyUI restart
+  cannot help before then. This figure adds the group teardown's 30 s, since
+  the same stop follows a stall
+  ([#86](#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)),
+  whose Worker can still be alive and hold its GPU lock, which the group
+  teardown waits for.
+
+These figures come from Worker services killed or frozen on one machine, over
+loopback, on 2026-11-17 and 2026-11-18. A powered-off box or a cut link sends
+no reset, so the driver may learn of it later; that case is not measured yet,
+and a test on the pair that pulls the direct cable is what will measure it.
+
+The fault toast and the render error open with the cause in plain words, then
+Monarch's own text. Since 1.5.0 the render's error has its own type,
+`dgx_monarch.worker_loss.WorkerLostError`, which is the type ComfyUI names and
+the error code Studio shows. Before, both named Monarch's
+`monarch._rust_bindings.monarch_hyperactor.supervision.SupervisionError`, and
+that error stays chained under the new one in ComfyUI's log. A refusal the
+driver raises while it handles the loss keeps its own type and words.
+
+"The Worker on the sibling was stopped by signal 9 (SIGKILL)" comes from `the
+process this actor was running on failed: Killed(sig=9)`. The kernel's
+out-of-memory killer sends signal 9, but so does `kill -9`: look for an
+out-of-memory line in that host's `dmesg` or `journalctl -k` before you blame
+memory. When the words name no single box, they say to look on each box of
+the fleet, or on those boxes. "... exited with code N" comes from `exited with
+non-zero code N`: the Worker exited by itself, and its log says why. "The
+driver lost contact with the sibling" comes from any of these:
+
+- `supervision liveness failed`: the box stopped answering Monarch's liveness
+  checks (its Worker service killed, frozen or out of reach).
+- `status request to monitored actor ... timed out`: the Worker process went
+  10 s without an answer, because its box's service was killed or frozen,
+  because the process itself stalled (a whole-process stall of over about 11 s
+  with a call pending ends the Worker this way), or because the Worker process
+  was killed between two status checks.
+- `host unreachable: no status received from process within 60s`: no status
+  came from the box's service for a minute.
+- `timeout waiting for message from proc mesh agent`: the box's service did
+  not answer a query about the Worker.
+- `no status received from process`: the Worker process sent no status.
+- a monitor that `stopped before reporting a failure`: the Worker service
+  restarted, and the process it watched went with it.
+
+A fault that names a fleet the driver has since replaced says "a Worker of an
+earlier fleet".
+
 ## 5. Loads fail / OOM on UMA boxes (DGX Spark etc.)
 
 **Symptom:** ComfyUI refuses a load that appears to fit, or the host swaps
@@ -2354,6 +2426,30 @@ proof of cleanup unless the sweep settled; repair the host/transport and retry.
 **Automatic cleanup:** the driver renews actor leases. After 300 seconds
 without renewal by default, the actor logs `dgxm-reap:` and exits. Inspect
 `journalctl --user -u dgxm-worker` for that line.
+
+A normal ComfyUI exit (Ctrl+C, or the server closing by itself) frees the
+Workers: Monarch's own exit step stops every mesh the driver owns. Once a fleet
+has been built, every such exit, whether or not a call is in flight, begins
+with one INFO line: "The driver is exiting: Monarch's exit step stops the
+Worker actors, and the driver reports no Worker faults from here on". A call
+still in flight then fails without a fault report: the driver neither evicts
+the fleet nor stops it a second time, and a cleanup that was already stopping a
+dead fleet when the exit began logs none of its own lines. A render's call that
+the exit stops can read like a lost contact; the driver then words no lost
+Worker and logs no lost-Worker warning, since none was lost. In CPU tests over
+loopback on 2026-11-17 and 2026-11-18, with or without a call in flight, the
+driver logged no error and no warning. A local fleet's actor processes, which
+are the driver's own children, were gone when the driver was. A Worker
+service's actors were gone when the driver was, or 3 s after it when a call
+held the actor's process, as a render's step does; Monarch gives each one up
+to 10 s to stop, so allow about 10 s. ComfyUI itself may still log the
+interrupted render's own error.
+
+A ComfyUI stopped by SIGTERM (`systemctl stop`, `kill`), killed outright, or
+restarted by replacing its process without running its exit steps (as some
+extensions' restart buttons do) runs no exit step, and its actor processes stay
+until the lease above ends them.
+
 `dgxm down` sweeps after stopping the service, including its children;
 `dgxm up` sweeps only orphans. `dgxm restart` uses both. A host is not reported
 successful before its sweep finishes. The Worker service records its actors in
@@ -4852,7 +4948,7 @@ stop:
 * a bounded `dgxm diagnostics` capture
   ([CLUSTER.md](CLUSTER.md#monarchdiagnostics));
 * with `[monarch.diagnostics] metrics = true` and an `otlp_endpoint`, the phase
-  metrics and the ownership occupancy counters in your own collector
+  metrics and the ownership occupancy gauges in your own collector
   ([CLUSTER.md](CLUSTER.md#monarchdiagnostics));
 * for each completed native return in a normal render, the `native return:`
   log line, which splits the Worker's pack and the driver's read into phases.

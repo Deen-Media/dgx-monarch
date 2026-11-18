@@ -311,7 +311,15 @@ def _lifecycle_client(config, log: _Log, mode: str) -> None:
 
     from monarch.actor import Actor, concurrent_endpoint, endpoint
 
-    from dgx_monarch import delivery_faults, mesh_helpers, mesh_liveness, mesh_stop, monarch_launch, retired_meshes
+    from dgx_monarch import (
+        delivery_faults,
+        mesh_factory,
+        mesh_helpers,
+        mesh_liveness,
+        mesh_stop,
+        monarch_launch,
+        retired_meshes,
+    )
     from dgx_monarch import mesh as mesh_mod
     from dgx_monarch.log import get_logger
 
@@ -341,8 +349,10 @@ def _lifecycle_client(config, log: _Log, mode: str) -> None:
         procs.initialized.get(timeout=60)
         workers = procs.spawn(delivery_faults.WORKER_MESH, HoldWorker)
         workers.initialized.get(timeout=60)
-        # What mesh_factory.spawn_worker_fleet records after readiness.
-        retired_meshes.remember(workers, workers._name.get(timeout=10))
+        # What mesh_factory.spawn_worker_fleet records after readiness: the mesh's
+        # name for the retired-mesh check, its boxes for the lost-Worker words, and
+        # the exit flag's hook.
+        mesh_factory._record_mesh(workers, config, True, gpus)
         return hosts, procs, workers, True
 
     class _Records(logging.Handler):
@@ -410,6 +420,14 @@ def _lifecycle_client(config, log: _Log, mode: str) -> None:
         return
     if mode == "lost_beside_live":
         _lost_beside_live(handle, mesh_helpers, mesh_stop)
+        return
+    if mode == "idle_loss":
+        sys.stdin.readline()  # the test kills one loop's process group here; nothing is in flight
+        deadline = time.monotonic() + 75.0  # an idle Worker's fault reaches the hook about 30 s in
+        while time.monotonic() < deadline and not any(
+                level >= logging.ERROR and line.startswith("cluster fault:") for level, line in records.lines):
+            time.sleep(0.5)
+        _say(step="idle_loss", ok=True, errors=[line for level, line in records.lines if level >= logging.ERROR])
         return
     in_flight = handle.workers.hold.call(60.0)
     time.sleep(1.0)
@@ -504,7 +522,7 @@ def client(spec_json: str) -> None:
         _render_client(config, _Log(), recycle=bool(spec.get("recycle")))
         _say(step="done")
         os._exit(0)
-    if spec["mode"] in ("lost_host", "lost_beside_live", "stop_recycle", "stop_detach"):
+    if spec["mode"] in ("lost_host", "lost_beside_live", "idle_loss", "stop_recycle", "stop_detach"):
         config = ClusterConfig(
             hosts=tuple(HostConfig(name=name, address=address)
                         for name, address in spec["hosts"]),

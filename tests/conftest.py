@@ -11,6 +11,7 @@ warnings.
 
 from __future__ import annotations
 
+import atexit
 import fnmatch
 import gc
 import importlib.util
@@ -373,6 +374,20 @@ def _the_battery_cannot_write_the_operator_memo():
         "reads, or another process on this box did; check the autouse redirect "
         "above before trusting the second reading."
     )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_driver_exit_hook_at_pytest_exit():
+    """Unregister the exit hook a test's mesh build registered (driver_exit.install).
+
+    At pytest's own exit it would log its notice to a stream pytest has closed,
+    a "Logging error" traceback after the summary. Probe subprocesses keep theirs.
+    A session that never imported driver_exit registered nothing and imports nothing here.
+    """
+    yield
+    module = sys.modules.get("dgx_monarch.driver_exit")
+    if module is not None:
+        atexit.unregister(module._begin)  # nothing to do when no test registered it
 
 
 @pytest.fixture

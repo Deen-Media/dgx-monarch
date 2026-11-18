@@ -64,6 +64,30 @@ def call_all(
     )
 
 
+def read_values(value_mesh: Any, endpoint_name: str) -> list[Any]:
+    """Each rank's reply, in rank order; a reply the driver cannot read names its rank.
+
+    torchmonarch decodes a reply only when ``items()`` reaches it, on 0.7.0 and
+    0.8.0 alike, so a reply whose bytes the driver cannot unpickle raises here,
+    after the call itself returned. The rank mark lets ``worker_box`` put the
+    box ahead of the words, as for any rank whose call failed.
+    """
+    from .refusal import mark_rank
+
+    values: list[Any] = []
+    replies = iter(value_mesh.items())
+    while True:
+        try:
+            _point, value = next(replies)
+        except StopIteration:
+            return values
+        except Exception as exc:
+            raise RuntimeError(mark_rank(
+                f"the {endpoint_name} reply could not be read on the driver "
+                f"({type(exc).__name__}: {exc})", len(values))) from exc
+        values.append(value)
+
+
 def call_all_bound(
     handle: Any,
     endpoint_name: str,
@@ -104,6 +128,8 @@ def call_all_bound(
         future = mesh_setup.dispatch_endpoint(
             handle, endpoint_name, send, setup_token=setup_token)
         value_mesh = handle._await_or_evict(future, timeout_s)
+        # Read inside this handler: a reply is decoded only here (read_values).
+        values = read_values(value_mesh, endpoint_name)
     except BaseException as exc:
         # The box the Worker's error came from, ahead of its own words, before
         # any reader below sees them (worker_box.py).
@@ -186,7 +212,6 @@ def call_all_bound(
         if not clear_succeeded and first_clear_error is not None:
             # Both attempts failed: raise the first ordinary failure.
             raise_with_distinct_cause(first_clear_error, clear_cause)
-    values = [value for _point, value in value_mesh.items()]
     if endpoint_name in ("load_model", "load_uncond_model"):
         from .actor.model_store import request_artifact_identity
 
