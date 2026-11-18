@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import socket
 import subprocess
 import sys
@@ -62,7 +61,7 @@ def run() -> dict[str, object]:
     loops = [canary_sessions.start_session(
         [sys.executable, __file__, "loop", f"tcp://127.0.0.1:{port}"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for port in ports]
-    canary_sessions.arm_deadline(lambda: canary_sessions.stop_groups(loop.pid for loop in loops))
+    canary_sessions.arm_deadline(lambda: canary_sessions.stop_sessions(loop.pid for loop in loops))
     faults: list[tuple[float, str]] = []
     try:
         deadline = time.monotonic() + 60
@@ -77,7 +76,8 @@ def run() -> dict[str, object]:
         hosts.initialized.get(timeout=60)
         procs = hosts.spawn_procs(per_host={"gpus": 1}, name=NAME)
         procs.initialized.get(timeout=60)
-        os.killpg(loops[0].pid, signal.SIGKILL)
+        # The lost rank: its whole group killed, and its record removed once that is confirmed.
+        assert canary_sessions.stop_sessions([loops[0].pid]) == [], "the killed Worker loop lived on"
         loops[0].wait(10)
         proc_stops.remember(procs, NAME)
         registered = proc_stops.started(procs, keep_s=300)  # what mesh_stop.stop_procs does
@@ -113,7 +113,7 @@ def run() -> dict[str, object]:
         observations["stop_report_s"] = round(reported_at - started, 1)
         observations["stop_report_text"] = " ".join(text.split())[:600]
     finally:
-        canary_sessions.stop_groups(process.pid for process in loops)
+        canary_sessions.stop_sessions(process.pid for process in loops)
         for process in loops:
             process.wait(10)
         try:

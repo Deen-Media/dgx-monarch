@@ -7,7 +7,9 @@ reach those sessions, and a hang in native code runs neither the script's
 ``finally`` nor a signal handler; the loops and their procs then held their
 ports after the canary gave up. These stand-in scripts start a session-leading
 child that starts a grandchild of its own, as a loop starts its procs, and
-then hang, end on their own deadline, or exit leaving the child running.
+then hang, end on their own deadline, stop the child themselves and exit, or
+exit leaving the child running. A group the script's own stop confirmed gone
+is not signalled again by anyone, since an unrelated process may take its id.
 """
 from __future__ import annotations
 
@@ -44,8 +46,9 @@ def _script(tmp_path: Path, ending: str) -> Path:
         "while not (out / 'grandchild').exists():\n"
         "    time.sleep(0.05)\n"
         + {"hang": "time.sleep(600)\n",
-           "deadline": ("canary_sessions.arm_deadline(lambda: canary_sessions.stop_groups([child.pid]))\n"
+           "deadline": ("canary_sessions.arm_deadline(lambda: canary_sessions.stop_sessions([child.pid]))\n"
                         "time.sleep(600)\n"),
+           "clean": "canary_sessions.stop_sessions([child.pid])\nsys.exit(0)\n",
            "exit": "sys.exit(0)\n"}[ending])
     return script
 
@@ -109,6 +112,58 @@ def test_a_session_left_by_a_script_that_exited_is_stopped_too(runner, tmp_path)
     assert returncode == 0 and left == []
     child, grandchild = _pids(tmp_path)
     assert _gone(child) and _gone(grandchild), (child, grandchild)
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="needs /proc")
+def test_after_a_clean_run_nothing_is_recorded_and_the_runner_signals_no_group(runner, tmp_path, monkeypatch):
+    """A group id reused after the script's own confirmed stop must never be hit."""
+    signalled: list = []
+    real_killpg = os.killpg
+    monkeypatch.setattr(os, "killpg", lambda group, sig: signalled.append((group, sig)) or real_killpg(group, sig))
+    returncode, left = runner._run_smoke(_script(tmp_path, "clean"), tmp_path / "out.json",
+                                         dict(os.environ), timeout_s=30.0)
+    assert returncode == 0 and left == []
+    assert runner.canary_sessions.recorded(tmp_path / "out.json.sessions") == []
+    assert signalled == []
+    child, grandchild = _pids(tmp_path)
+    assert _gone(child) and _gone(grandchild), (child, grandchild)
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="needs /proc")
+def test_a_deadline_stop_also_clears_its_record(runner, tmp_path):
+    returncode, left = runner._run_smoke(_script(tmp_path, "deadline"), tmp_path / "out.json",
+                                         dict(os.environ), timeout_s=30.0, deadline_s=1.5)
+    assert returncode == runner.canary_sessions.DEADLINE_EXIT and left == []
+    assert runner.canary_sessions.recorded(tmp_path / "out.json.sessions") == []
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="needs /proc")
+def test_a_group_the_script_stopped_is_never_signalled_again(tmp_path, monkeypatch):
+    """The lost-rank script stops one loop mid-run, reaps it, then stops every loop at its end."""
+    monkeypatch.syspath_prepend(str(CANARY))
+    import canary_sessions
+
+    monkeypatch.setattr(canary_sessions, "_stopped", set())
+    record = tmp_path / "sessions"
+    monkeypatch.setenv(canary_sessions.SESSIONS_ENV, str(record))
+    loops = [canary_sessions.start_session([sys.executable, "-c", "import time; time.sleep(600)"])
+             for _ in range(2)]
+    try:
+        assert canary_sessions.recorded(record) == [loop.pid for loop in loops]
+        assert canary_sessions.stop_sessions([loops[0].pid]) == []
+        loops[0].wait(10)
+        assert canary_sessions.recorded(record) == [loops[1].pid]
+        signalled: list = []
+        real_killpg = os.killpg
+        monkeypatch.setattr(os, "killpg", lambda group, sig: signalled.append(group) or real_killpg(group, sig))
+        assert canary_sessions.stop_sessions(loop.pid for loop in loops) == []
+        assert signalled == [loops[1].pid]
+        assert canary_sessions.recorded(record) == []
+    finally:
+        for loop in loops:
+            if loop.poll() is None:
+                loop.kill()
+            loop.wait(10)
 
 
 def test_the_runner_gives_each_script_a_deadline_before_its_limit(runner):
