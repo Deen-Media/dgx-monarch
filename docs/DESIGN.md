@@ -222,9 +222,10 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
   attach: the config push waited out its budget and nothing in Monarch
   named the cause (docs/TROUBLESHOOTING.md #8). The first dial to a loop whose id changed since
   this driver last dialed it is primed with one throwaway message. The driver
-  still enables one process transport, once, so it re-attaches to a restarted
-  loop only within Monarch's message delivery timeout; beyond it the recovery
-  is a fresh driver. After every loop restarted, a sampler render that owns
+  still enables one process transport, once, and its channel to a loop's
+  address keeps reconnecting for a day (`channel_reconnect_timeout`, fixed by
+  the Monarch policy), so it re-attaches to a loop that restarted within that
+  day; beyond it the recovery is a fresh driver. After every loop restarted, a sampler render that owns
   its session and keeps the last render's setup, or an explicit loader's
   eager load, attaches again within that render: the capacity price wait
   ends on the first delivery failure the fault hook records for a fleet host
@@ -234,9 +235,11 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
   attaches by the new ids and dispatches once more (`restart_reattach.py`).
   Some loops moved and others not, no loop moved, an unread id, or old
   processes not proven gone each refuse at once, class C, with the remedy.
-  Pipelined renders, Gate legs, the Fleet node, a one-host fleet and a render
-  whose setup changed meet the old actors as before and take the supervision
-  path. Mechanism and evidence:
+  Pipelined renders and Gate legs cannot leave their session's mesh: when
+  every loop moved and no earlier result is in flight, they retire the stale
+  mesh the same way and refuse, so the next render attaches. The Fleet node, a
+  one-host fleet and a render whose setup changed meet the old actors as
+  before and take the supervision path. Mechanism and evidence:
   [TROUBLESHOOTING.md #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach).
 - The ComfyUI process is the single Monarch client: when it dies its procs die,
   so no orphaned process holds a model. A supervision-class failure on a
@@ -4818,8 +4821,8 @@ Every milestone must satisfy this checklist:
    fleet, and the next Init or render brings up a fresh one once the old
    processes are confirmed gone; until then the attach refuses with its
    remedy. An endpoint error leaves the live fleet and its warm state in
-   place. A Worker loop that stayed down longer than Monarch's message
-   delivery timeout still needs a fresh driver (§5.1).
+   place. A Worker loop that stayed down longer than the driver channel's
+   one-day reconnect bound still needs a fresh driver (§5.1).
 4. **The default topology is benchmark-seeded.** Auto mode logs the row it took
    and why. A row seeded from a sibling family, a scope the table records as
    unmeasured, and the unknown-family fallback each say so in that reason.

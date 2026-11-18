@@ -142,10 +142,41 @@ class _Name:
         return self.name
 
 
+class _Future:
+    """One rank's quote future: answers, raises, or blocks for the wait it is given."""
+
+    def __init__(self, fleet: _Fleet, rank: int) -> None:
+        self.fleet, self.rank = fleet, rank
+
+    def get(self, timeout=None):
+        fleet = self.fleet
+        fleet.steps.append(timeout)
+        answer = fleet.answers[self.rank]
+        if isinstance(answer, tuple):  # (seconds, exception): fails that late
+            due = fleet.started + answer[0] - time.monotonic()
+            if due > timeout:
+                time.sleep(timeout)
+                raise TimeoutError("no answer yet")
+            time.sleep(max(due, 0.0))
+            answer = answer[1]
+        if isinstance(answer, BaseException):
+            raise answer
+        if answer is True:
+            return _row(self.rank)
+        if answer is not False:
+            due = fleet.started + float(answer) - time.monotonic()
+            if due <= timeout:
+                time.sleep(max(due, 0.0))
+                return _row(self.rank)
+        time.sleep(timeout)
+        raise TimeoutError("no answer")
+
+
 class _Fleet:
     """A two-host fleet whose futures answer, or block for the step they are given.
 
-    A rank whose answer is a number answers after that many seconds.
+    A rank whose answer is a number answers after that many seconds. Its
+    evicting wait records each call and reads the future as the real one does.
     """
 
     def __init__(self, answers: dict[int, bool | float], *, addresses=(A, B),
@@ -158,6 +189,8 @@ class _Fleet:
         self.answers = answers
         self.sent: list[int] = []
         self.steps: list[float] = []
+        self.evicting: list[tuple[int, float]] = []
+        self.join_s = 0.0
         self.started = time.monotonic()
         self.workers = types.SimpleNamespace(
             extent=types.SimpleNamespace(labels=["hosts", "gpus"]), slice=self._slice,
@@ -166,20 +199,17 @@ class _Fleet:
     def _slice(self, **coords):
         rank = coords["hosts"]
         return types.SimpleNamespace(capacity_quote=types.SimpleNamespace(
-            call_one=lambda _request: self.sent.append(rank) or rank))
+            call_one=lambda _request: self.sent.append(rank) or _Future(self, rank)))
 
     def _await_or_evict(self, future, timeout_s):
-        self.steps.append(timeout_s)
-        answer = self.answers[future]
-        if answer is True:
-            return _row(future)
-        if answer is not False:
-            due = self.started + float(answer) - time.monotonic()
-            if due <= timeout_s:
-                time.sleep(max(due, 0.0))
-                return _row(future)
-        time.sleep(timeout_s)
-        raise TimeoutError("no answer")
+        self.evicting.append((future.rank, timeout_s))
+        try:
+            return future.get(timeout_s)
+        except TimeoutError:
+            raise
+        except Exception:
+            time.sleep(self.join_s)  # the post-death stop the real eviction joins
+            raise
 
 
 def _head_named(monkeypatch, name: str) -> None:
@@ -219,19 +249,20 @@ def test_a_failure_recorded_during_the_wait_ends_it_within_one_poll(monkeypatch)
     assert "Supervision" not in text and "peer closed" not in text
 
 
-def test_without_a_failure_the_wait_keeps_its_deadline_and_asks_once_more(monkeypatch):
-    monkeypatch.setattr(delivery_faults, "REASK_S", 0.4)
+def test_without_a_failure_the_wait_keeps_its_deadline_and_asks_each_rank_once(monkeypatch):
+    """A rank that never answers is asked once and waited on for the whole
+    deadline. The wait this replaces sent a silent rank a second request 2 s
+    in, so with a 2.6 s deadline that request shows here as a third send."""
     monkeypatch.setattr(delivery_faults, "POLL_S", 0.2)
     fleet = _Fleet({0: True, 1: False})
     started = time.monotonic()
-    answers = capacity_agreement.collect(fleet, {}, 2, deadline_s=1.2)
-    assert 1.1 <= time.monotonic() - started < 2.0
+    answers = capacity_agreement.collect(fleet, {}, 2, deadline_s=2.6)
+    assert 2.5 <= time.monotonic() - started < 3.5
     assert answers[1].silent == "did not answer in time"
     with pytest.raises(FleetQuoteUnavailableError) as raised:
         decide(answers, 2)
     assert not isinstance(raised.value, WorkerDeliveryError)
-    # Both ranks were sent to once, and the silent one was asked once more.
-    assert fleet.sent == [0, 1, 1]
+    assert fleet.sent == [0, 1]
 
 
 def test_a_failure_from_another_address_or_before_the_wait_does_not_end_it():
@@ -258,7 +289,6 @@ def test_a_late_failure_from_a_retired_mesh_does_not_end_a_healthy_wait():
 
 
 def test_a_mesh_whose_name_cannot_be_read_keeps_the_whole_deadline(monkeypatch):
-    monkeypatch.setattr(delivery_faults, "REASK_S", 0.3)
     monkeypatch.setattr(delivery_faults, "POLL_S", 0.2)
     delivery_faults.record(_fault(B))
     fleet = _Fleet({0: True, 1: False}, name=None)
@@ -293,6 +323,104 @@ def test_a_local_fleet_waits_once_for_its_whole_deadline():
     capacity_agreement.collect(fleet, {}, 2, deadline_s=7.0)
     assert fleet.steps[0] == pytest.approx(7.0, abs=0.1)
     assert len(fleet.steps) == 2
+
+
+def _supervision_error():
+    from monarch._rust_bindings.monarch_hyperactor.supervision import SupervisionError
+
+    return SupervisionError(
+        "monitor for actor dgxm_worker<x>.anon-0<y> stopped before report")
+
+
+def _reads(monkeypatch, moves) -> list[tuple[object, float | None]]:
+    """Stand in for the loops' id reading; record each call and its bound."""
+    reads: list[tuple[object, float | None]] = []
+
+    def read(config, *, timeout=None):
+        reads.append((config, timeout))
+        return moves
+
+    monkeypatch.setattr(restart_reattach, "read_moves", read)
+    return reads
+
+
+def test_a_supervision_error_after_a_restart_heals_before_any_eviction(monkeypatch):
+    """Monarch's supervision can give up on the old actors before a delivery
+    failure is recorded; the restart runs traced it about 2 s into the price.
+    The handle's own wait would then evict the fleet and join its post-death
+    stop, about 24 s on loopback, before anything else ran. The price reads the
+    loops' ids first, with the short bound, and ends with the error the
+    render's re-attach catches, carrying that reading. On the commit before
+    this check, the fleet was evicted first and the price refused."""
+    _head_named(monkeypatch, "h0")
+    moves = restart_reattach.Moves(moved=(A, B))
+    reads = _reads(monkeypatch, moves)
+    fleet = _Fleet({0: _supervision_error(), 1: _supervision_error()})
+    fleet.join_s = 5.0
+    started = time.monotonic()
+    with pytest.raises(WorkerDeliveryError) as raised:
+        capacity_agreement.agree_or_refuse(fleet, {}, deadline_s=20.0)
+    assert time.monotonic() - started < 1.0
+    assert reads == [(fleet.config, restart_reattach.PRECHECK_PROBE_S)]
+    assert fleet.evicting == []  # no eviction and no join: the heal's own stops follow
+    assert raised.value.moves is moves
+    text = str(raised.value)
+    assert "failed (SupervisionError)" in text and "every Worker loop serves a new proc id" in text
+    assert "on the head and the sibling" in text and "10.0.0." not in text
+    assert "KSampler (DGX Monarch)" in text and "TROUBLESHOOTING.md #2" in text
+    tag = parse_leading_refusal_tag(text)
+    assert (tag.refusal_class.value, tag.guard) == ("C", capacity_agreement.GUARD)
+    assert not mesh_safety.is_stock_load_capacity_error(raised.value)
+
+
+def test_the_heal_is_reached_when_the_deadline_is_nearly_spent(monkeypatch):
+    """A SupervisionError that comes 0.9 s into a 1 s price, where the
+    eviction's join would last longer than the deadline. Checked before the
+    eviction, it still ends the price for the heal; evicted first, the later
+    rank was called silent unread and the heal was never reached."""
+    moves = restart_reattach.Moves(moved=(A, B))
+    reads = _reads(monkeypatch, moves)
+    fleet = _Fleet({0: (0.9, _supervision_error()), 1: _supervision_error()})
+    fleet.join_s = 1.5
+    with pytest.raises(WorkerDeliveryError) as raised:
+        capacity_agreement.collect(fleet, {}, 2, deadline_s=1.0)
+    assert raised.value.moves is moves and len(reads) == 1 and fleet.evicting == []
+
+
+@pytest.mark.parametrize("verdict", ["partial", "none", "unknown"])
+def test_a_supervision_error_without_a_full_restart_evicts_and_refuses_as_before(
+        monkeypatch, verdict):
+    """One reading for the whole price; then each failure goes through the
+    handle's own evicting wait, read again at once, and the price refuses as a
+    fleet that did not answer."""
+    moves = {"partial": restart_reattach.Moves(moved=(A,), kept=(B,)),
+             "none": restart_reattach.Moves(kept=(A, B)),
+             "unknown": restart_reattach.Moves(unknown=("the head (ssh failed)",))}[verdict]
+    reads = _reads(monkeypatch, moves)
+    fleet = _Fleet({0: _supervision_error(), 1: _supervision_error()})
+    answers = capacity_agreement.collect(fleet, {}, 2, deadline_s=5.0)
+    assert [answer.silent for answer in answers] == ["failed to answer (SupervisionError)"] * 2
+    assert len(reads) == 1 and fleet.evicting == [(0, 0.0), (1, 0.0)]
+    with pytest.raises(FleetQuoteUnavailableError) as raised:
+        decide(answers, 2)
+    assert not isinstance(raised.value, WorkerDeliveryError)
+
+
+def test_other_failures_and_timeouts_read_no_ids_and_evict_as_before(monkeypatch):
+    def unexpected(_config, **_kwargs):
+        raise AssertionError("the move check ran")
+
+    monkeypatch.setattr(restart_reattach, "read_moves", unexpected)
+    fleet = _Fleet({0: RuntimeError("endpoint raised"), 1: False})
+    answers = capacity_agreement.collect(fleet, {}, 2, deadline_s=1.0)
+    assert [answer.silent for answer in answers] == [
+        "failed to answer (RuntimeError)", "did not answer in time"]
+    # The endpoint failure went through the evicting wait; the timeouts did not.
+    assert fleet.evicting == [(0, 0.0)]
+    # A local fleet has no loops to read and waits through the handle as before.
+    local = _Fleet({0: _supervision_error(), 1: _supervision_error()}, addresses=())
+    capacity_agreement.collect(local, {}, 2, deadline_s=1.0)
+    assert [rank for rank, _step in local.evicting] == [0, 1]
 
 
 # ------------------------------------------------------------ the move check
@@ -461,6 +589,148 @@ def test_every_loop_moved_retires_the_stale_mesh_and_attaches_by_the_new_ids(dri
     assert mesh_mod.ensure_live(handle) is outcome.handle
 
 
+def test_the_detour_reuses_the_reading_the_supervision_check_took(driver, monkeypatch):
+    """refuse_if_restarted read every loop's id moments before; the detour does
+    not run the probe a second time on every host."""
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    driver.ids = dict(NEW)
+    refused = _refused()
+    refused.moves = restart_reattach.read_moves(_config())
+
+    def read_again(_config, **_kwargs):
+        raise AssertionError("the detour read the ids again")
+
+    monkeypatch.setattr(restart_reattach, "read_moves", read_again)
+    outcome = restart_reattach.heal(handle, refused)
+    assert outcome.handle is not handle and outcome.moved == (A, B)
+    assert _trace(driver, "restart_reattach")[-1]["outcome"] == "attached"
+
+
+class _HeldProcs:
+    """Procs whose stop answers once ``release`` is set; it is set from the start
+    for a stop that is done, and later for a stop another thread is still in."""
+
+    def __init__(self, release: threading.Event) -> None:
+        self.release, self.stops, self.entered = release, [], threading.Event()
+
+    def stop(self, _reason):
+        def get(timeout):
+            self.stops.append(timeout)
+            self.entered.set()
+            if not self.release.wait(timeout):
+                raise TimeoutError("detach acknowledgement timed out")
+            return None
+
+        return SimpleNamespace(get=get)
+
+
+def _restarted(driver) -> WorkerDeliveryError:
+    """The error the price's restart check raises once every loop restarted."""
+    driver.ids = dict(NEW)
+    refused = _refused()
+    refused.moves = restart_reattach.read_moves(_config())
+    assert refused.moves.verdict == restart_reattach.ALL
+    return refused
+
+
+def test_a_heal_whose_stop_is_confirmed_after_an_earlier_release_keeps_its_retry(
+        driver, monkeypatch):
+    """A first restart ends in a liveness release, which arms the release
+    note, and its replacement attaches. A second restart in the same window
+    has its stop confirmed, which arms nothing. Its replacement attach fails
+    once and must get its in-process retry: the note was spent when the first
+    replacement attached. Before that, the stale note made it fail fast."""
+    newer = {A: "aaaaaaaaaaaa0003", B: "bbbbbbbbbbbb0003"}
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    first = restart_reattach.heal(handle, _restarted(driver))
+    assert first.teardown == "liveness_release"
+    done = threading.Event()
+    done.set()
+    first.handle.procs = _HeldProcs(done)
+    driver.ids = dict(newer)
+    refused = _refused()
+    refused.moves = restart_reattach.read_moves(_config())
+    real_attach, failed = mesh_mod._attach_once, []
+
+    def flaky(dial):
+        if not failed:
+            failed.append(list(dial))
+            raise RuntimeError("blip")
+        return real_attach(dial)
+
+    monkeypatch.setattr(mesh_mod, "_attach_once", flaky)
+    second = restart_reattach.heal(first.handle, refused)
+    assert second.teardown == "stop_confirmed" and second.handle is not first.handle
+    retried = [worker_proc_id.proc_addr(A, newer[A]), worker_proc_id.proc_addr(B, newer[B])]
+    assert failed == [retried] and driver.dials[-1] == retried
+
+
+def test_a_real_handle_evicted_with_its_stop_done_heals_without_a_second_stop(driver):
+    """Another path (the panel's status poll, a second render) evicted the
+    fleet through the supervision publication and its stop finished. The heal
+    reads that outcome, stops nothing more, and attaches by the new ids."""
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    done = threading.Event()
+    done.set()
+    handle.procs = _HeldProcs(done)
+    mesh_helpers.mark_defunct_on_supervision_failure(handle, _supervision_error())
+    assert handle.defunct and handle.teardown_complete
+    stops = list(handle.procs.stops)
+    outcome = restart_reattach.heal(handle, _restarted(driver))
+    assert outcome.handle is not handle and outcome.teardown == "stop_confirmed"
+    assert handle.procs.stops == stops  # the heal sent no stop of its own
+    assert driver.dials[-1] == [worker_proc_id.proc_addr(A, NEW[A]),
+                                worker_proc_id.proc_addr(B, NEW[B])]
+
+
+def _reconcile_running(driver, release: threading.Event):
+    """A real handle whose supervision reconcile another thread runs, inside its stop."""
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    handle.procs = _HeldProcs(release)
+    mesh_helpers.mark_defunct_on_supervision_failure(
+        handle, _supervision_error(), holding_lock=True)  # the reconcile runs on its own thread
+    assert handle.procs.entered.wait(5.0)
+    return handle
+
+
+def test_a_real_handle_whose_reconcile_is_running_heals_after_that_stop_ends(driver):
+    """A reconcile another thread started is still in its stop when the price's
+    check finds every loop restarted. The heal waits for that stop under the
+    handle's lock, sends none of its own, and attaches by the new ids once it
+    has ended: the wait the price's own eviction would have joined, with no
+    second stop beside it."""
+    release = threading.Event()
+    handle = _reconcile_running(driver, release)
+    refused = _restarted(driver)
+    timer = threading.Timer(0.5, release.set)
+    timer.start()
+    started = time.monotonic()
+    try:
+        outcome = restart_reattach.heal(handle, refused)
+    finally:
+        timer.cancel()
+        release.set()
+    assert time.monotonic() - started >= 0.4  # it waited for the running stop
+    assert outcome.handle is not handle and outcome.teardown == "stop_confirmed"
+    assert len(handle.procs.stops) == 1 and len(driver.dials) == 2
+
+
+def test_a_real_handle_whose_running_reconcile_fails_refuses_and_attaches_nothing(
+        driver, monkeypatch):
+    """The same, when the other thread's stop runs out its bound: the latch
+    stays blocked, and the heal refuses without a second stop or an attach."""
+    monkeypatch.setattr(mesh_teardown, "proc_stop_bound_s", lambda: 0.5)
+    release = threading.Event()
+    handle = _reconcile_running(driver, release)
+    try:
+        with pytest.raises(WorkerDeliveryError, match="could not retire the stale mesh"):
+            restart_reattach.heal(handle, _restarted(driver))
+    finally:
+        release.set()
+    assert len(handle.procs.stops) == 1 and len(driver.dials) == 1
+    assert handle.replacement_blocked
+
+
 def test_one_loop_moved_refuses_fast_and_leaves_the_mesh_alone(driver, monkeypatch):
     _head_named(monkeypatch, "h1")
     handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
@@ -586,6 +856,478 @@ def test_a_pipelined_or_gate_render_keeps_the_fast_refusal(monkeypatch):
     with pytest.raises(WorkerDeliveryError):
         render_submit.submit_render(None, {}, {}, None, 1)
     assert state.calls == 1 and state.healed == []
+
+
+def _restart_check_error(monkeypatch, moves) -> WorkerDeliveryError:
+    """The error the price's restart check raises, built as production builds it."""
+    monkeypatch.setattr(restart_reattach, "read_moves", lambda config, timeout=None: moves)
+    handle = SimpleNamespace(config=_config())
+    try:
+        try:
+            raise _supervision_error()
+        except Exception as failure:
+            restart_reattach.refuse_if_restarted(handle, failure, 2.0, 30.0)
+    except WorkerDeliveryError as exc:
+        return exc
+    raise AssertionError("the restart check did not raise")
+
+
+def _guard_route(monkeypatch, route: str) -> BaseException:
+    if route == "restart_check":
+        return _restart_check_error(monkeypatch, restart_reattach.Moves(moved=(A, B)))
+    if route == "delivery":
+        try:
+            restart_reattach.refuse_undelivered(SimpleNamespace(config=_config()), [A], 0.5, 30.0)
+        except WorkerDeliveryError as exc:
+            return exc
+    if route == "check_not_all":
+        # Not a reading the check raises on; the hook must not trust its type alone.
+        error = WorkerDeliveryError("[dgxm:C guard=cross_rank_capacity waivable=0] failed "
+                                    "(SupervisionError)",
+                                    moves=restart_reattach.Moves(moved=(A,), kept=(B,)))
+        error.__cause__ = _supervision_error()
+        return error
+    if route == "supervision":
+        return _supervision_error()
+    if route == "quote_unavailable":
+        return FleetQuoteUnavailableError(
+            "[dgxm:C guard=cross_rank_capacity waivable=0] the sibling at a failed to "
+            "answer (SupervisionError)")
+    raise AssertionError(route)
+
+
+@pytest.mark.parametrize(("route", "inherited", "expected"), [
+    ("restart_check", False, ["heal"]),
+    ("delivery", False, ["heal"]),
+    ("check_not_all", False, ["evicted", "heal"]),
+    ("supervision", False, ["evicted"]),
+    ("quote_unavailable", False, ["evicted"]),
+    ("restart_check", True, ["pinned"]),
+    ("delivery", True, ["pinned"]),
+    ("supervision", True, ["evicted"]),
+    ("busy_then_restart", False, ["evicted"]),
+    ("busy_then_restart", True, ["evicted"]),
+], ids=["restart_check", "delivery", "check_not_all", "supervision", "quote_unavailable",
+        "restart_check_pipeline", "delivery_pipeline", "supervision_pipeline",
+        "retry_restart_check", "retry_restart_check_pipeline"])
+def test_the_submit_guard_leaves_only_a_full_restart_to_the_heal_unevicted(
+        monkeypatch, route, inherited, expected):
+    """Through the real submit_render, with the dispatch marked started before
+    the price raises, as a sampler render marks it. The restart check's error
+    with every loop restarted reaches the heal with the fleet unevicted, as a
+    delivery failure does; on the commit before this rule the guard's failure
+    hook evicted it first and joined the post-death stop. Every other failure
+    of a started dispatch is evicted as before. A Pipeline or Identity Gate
+    session does not heal: both errors reach refuse_pinned unevicted (its
+    behaviour is tested below under a real session), and any other failure is
+    evicted there as before. A retry that a busy fleet's heal or an old
+    model's clear runs is caught by neither, so a full restart on it is
+    evicted as before."""
+    from dgx_monarch import mesh_setup
+    from dgx_monarch.nodes import recycle_drain, render_submit
+
+    events: list[str] = []
+    retry = route == "busy_then_restart"
+    error = _guard_route(monkeypatch, "restart_check" if retry else route)
+    errors = [mesh_setup.LifecycleBusyError("busy"), error] if retry else [error]
+    monkeypatch.setattr(mesh_helpers, "_publish_defunct",
+                        lambda handle, exc, text, **_kwargs: events.append("evicted"))
+    monkeypatch.setattr(render_submit, "_heal_abandoned_wedge_once", lambda *_a: True)
+    monkeypatch.setattr(render_submit.render_preflight, "_model_with_bound_handle",
+                        lambda model, _handle: model)
+    calls = {"n": 0}
+
+    def guarded(model, request, latent, cfg, steps, seq, depth, progress, handoff, guard,
+                *, adoption_context=None):
+        calls["n"] += 1
+        if calls["n"] <= len(errors):
+            guard.handle = object()
+            guard.dispatch_started = True  # set before submit_sample runs the price
+            raise errors[calls["n"] - 1]
+        return "pending"
+
+    def heal(_handle, _exc):
+        events.append("heal")
+        return restart_reattach.Reattached(object(), 1.0, (A, B), "liveness_release")
+
+    def pinned(_handle, exc):
+        events.append("pinned")
+        raise exc
+
+    monkeypatch.setattr(render_submit, "_submit_render_guarded", guarded)
+    monkeypatch.setattr(restart_reattach, "heal", heal)
+    monkeypatch.setattr(restart_reattach, "refuse_pinned", pinned)
+    monkeypatch.setattr(recycle_drain, "drop_residency_memos", lambda: None)
+    monkeypatch.setattr(render_submit.render_preflight,
+                        "activation_footprint_preflight_for_request", lambda *a: None)
+    monkeypatch.setattr(render_submit, "active_render_session",
+                        lambda: object() if inherited else None)
+    raises = route in ("supervision", "quote_unavailable") or inherited or retry
+    if raises:
+        with pytest.raises(type(error)):
+            render_submit.submit_render(None, {}, {}, None, 1)
+    else:
+        assert render_submit.submit_render(None, {}, {}, None, 1) == "pending"
+    assert events == expected and calls["n"] == len(errors) + (not raises)
+
+
+# ------------------------------------------------- a pinned session's restart
+
+
+def _check_error(driver) -> WorkerDeliveryError:
+    """Every loop restarted; the price's restart check raises, as production builds it."""
+    driver.ids = dict(NEW)
+    try:
+        try:
+            raise _supervision_error()
+        except Exception as failure:
+            restart_reattach.refuse_if_restarted(
+                SimpleNamespace(config=_config()), failure, 2.0, 30.0)
+    except WorkerDeliveryError as exc:
+        return exc
+    raise AssertionError("the restart check did not raise")
+
+
+def _delivery_error(driver, ids=None) -> WorkerDeliveryError:
+    """A message to the old actors came back undeliverable; ``ids`` the loops serve now."""
+    driver.ids = dict(ids or NEW)
+    try:
+        restart_reattach.refuse_undelivered(SimpleNamespace(config=_config()), [A], 0.5, 30.0)
+    except WorkerDeliveryError as exc:
+        return exc
+    raise AssertionError("no delivery refusal")
+
+
+def _lease(handle):
+    """A sample lease an earlier pipelined render still holds on ``handle``."""
+    from dgx_monarch.mesh_lease import SetupBoundFuture
+
+    lease = SetupBoundFuture.prepared(handle, 0)
+    with handle.lock:
+        lease._register_locked()
+        lease._mark_enqueue_started_locked()
+        lease._bind_future_locked(SimpleNamespace(get=lambda timeout=None: None))
+    return lease
+
+
+def _pinned_rig(monkeypatch, handle, error, during=None):
+    """The real submit_render in a Pipeline's or Gate's place: its body binds
+    ``handle``, marks the dispatch started, runs ``during`` and meets ``error``."""
+    from dgx_monarch.nodes import recycle_drain, render_submit
+
+    events: list[str] = []
+    real_publish = mesh_helpers._publish_defunct
+
+    def publish(target, exc, text, **kwargs):
+        events.append("evicted")
+        return real_publish(target, exc, text, **kwargs)
+
+    def guarded(model, request, latent, cfg, steps, seq, depth, progress, handoff, guard,
+                *, adoption_context=None):
+        events.append("dispatch")
+        guard.handle = handle
+        guard.dispatch_started = True
+        if during is not None:
+            during()
+        raise error
+
+    monkeypatch.setattr(mesh_helpers, "_publish_defunct", publish)
+    monkeypatch.setattr(render_submit, "_submit_render_guarded", guarded)
+    monkeypatch.setattr(restart_reattach, "heal",
+                        lambda *_a, **_k: pytest.fail("a pinned session must not heal"))
+    monkeypatch.setattr(recycle_drain, "drop_residency_memos", lambda: None)
+    return render_submit, events
+
+
+def _pinned_submit(monkeypatch, handle, error, during=None, before_close=None):
+    """One render under a real claimed RenderSession, as a Pipeline or Gate run makes it;
+    ``before_close`` sees that session after the refusal, before the run closes it."""
+    from dgx_monarch.mesh_session import RenderSession
+
+    render_submit, events = _pinned_rig(monkeypatch, handle, error, during)
+    session = RenderSession()
+    session.bind(handle)
+    try:
+        with session.activate(), pytest.raises(WorkerDeliveryError) as raised:
+            render_submit.submit_render(None, {}, {}, None, 1)
+        if before_close is not None:
+            before_close(session)
+    finally:
+        session.close()
+    return raised.value, events
+
+
+@pytest.mark.parametrize("route", ["restart_check", "delivery"])
+@pytest.mark.parametrize("teardown", ["stop_confirmed", "liveness_release", "release_refused"])
+def test_a_pinned_session_retires_a_full_restart_and_refuses_queue_again(
+        driver, monkeypatch, route, teardown):
+    """A Pipeline or Identity Gate render cannot attach again inside its run.
+    With every loop restarted and nothing else holding the fleet, it retires
+    the stale fleet with the heal's own stop and proof, attaches nothing, and
+    refuses so that the next render attaches a fresh one. Before this rule the
+    restart check's error was evicted behind the post-death stop's join, and a
+    delivery failure left the fleet as it was, so every re-queue refused until
+    a KSampler render healed. A retire that cannot finish refuses as the heal
+    does, with no eviction and nothing attached."""
+    from dgx_monarch.mesh_session import (
+        ConcurrentRenderSessionError,
+        RenderSession,
+        RetiredRenderHandleError,
+    )
+
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    if teardown == "stop_confirmed":
+        done = threading.Event()
+        done.set()
+        handle.procs = _HeldProcs(done)
+    if teardown == "release_refused":
+        driver.liveness = mesh_liveness.ALIVE
+    error = _check_error(driver) if route == "restart_check" else _delivery_error(driver)
+    other = SimpleNamespace(fresh=None)
+
+    def before_close(session) -> None:
+        # A later step of the same run can neither dispatch onto the retired
+        # handle nor cross to another mesh inside the old session.
+        other.dials = len(driver.dials)  # what the refused render attached: nothing
+        with pytest.raises(RetiredRenderHandleError):
+            session.bind(handle)
+        if teardown != "release_refused":
+            other.fresh = mesh_mod.ensure_live(handle)
+            with pytest.raises(ConcurrentRenderSessionError, match="multiple mesh handles"):
+                session.bind(other.fresh)
+
+    refusal, events = _pinned_submit(monkeypatch, handle, error, before_close=before_close)
+    assert events == ["dispatch"]  # no eviction and no second dispatch
+    assert other.dials == 1 and handle.defunct  # nothing attached inside the session
+    if teardown == "release_refused":
+        assert "could not retire the stale mesh" in str(refusal)
+        assert handle.replacement_blocked and len(driver.dials) == 1
+        assert _trace(driver, "restart_reattach")[-1]["reason"] == "pinned_not_retired"
+        return
+    assert refusal is not error and refusal.__cause__ is error
+    assert "The Worker loops restarted; queue again" in str(refusal)
+    assert parse_leading_refusal_tag(str(refusal)) is not None
+    traced = _trace(driver, "restart_reattach")[-1]
+    assert (traced["outcome"], traced["teardown"]) == ("retired", teardown)
+    with pytest.raises(RetiredRenderHandleError):
+        RenderSession().bind(handle)  # no later run can dispatch onto it either
+    fresh = mesh_mod.ensure_live(handle)
+    assert fresh is other.fresh and fresh is not handle and len(driver.dials) == 2
+    RenderSession().bind(fresh)  # the next run's session takes the fresh fleet
+    assert driver.dials[-1] == [worker_proc_id.proc_addr(A, NEW[A]),
+                                worker_proc_id.proc_addr(B, NEW[B])]
+
+
+@pytest.mark.parametrize(("route", "case"), [
+    ("restart_check", "leases_held"), ("delivery", "leases_held"),
+    ("restart_check", "teardown_in_progress"), ("delivery", "teardown_in_progress"),
+    ("restart_check", "prior_stop_unknown"), ("delivery", "prior_stop_unknown"),
+    ("delivery", "partial"), ("delivery", "none"), ("delivery", "unknown"),
+])
+def test_a_pinned_session_leaves_every_other_case_as_before(driver, monkeypatch, route, case):
+    """Every case outside a full restart with nothing holding the fleet keeps
+    the behaviour before this rule: the restart check's error is evicted as
+    any supervision failure (deferred while a lease is held, absorbed by a
+    teardown in progress) and a delivery failure is raised unchanged, with no
+    stop of this path's own and nothing attached."""
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    ids = {"partial": {A: NEW[A], B: OLD[B]}, "none": dict(OLD)}.get(case)
+    error = _check_error(driver) if route == "restart_check" else _delivery_error(driver, ids)
+    if case == "unknown":
+        monkeypatch.setattr(listener_generation, "fleet", lambda _config, **_k: {})
+    held: list = []
+
+    def during():
+        if case == "leases_held":
+            held.append(_lease(handle))
+        elif case == "teardown_in_progress":
+            mesh_safety.begin_deliberate_teardown(id(handle))  # a Reset's stop in flight
+        elif case == "prior_stop_unknown":
+            handle.replacement_blocked = "an earlier ProcMesh stop has no known outcome"
+
+    refusal, events = _pinned_submit(monkeypatch, handle, error, during)
+    assert refusal is error and len(driver.dials) == 1
+    assert _trace(driver, "restart_reattach")[-1]["outcome"] == "refused"
+    assert driver.procs[0].stops == []  # no stop of this path's own
+    if route == "delivery":
+        assert events == ["dispatch"]
+        return
+    assert events[-1] == "evicted" and handle.defunct
+    if case == "leases_held":
+        assert handle.deferred_supervision_error is not None  # deferred to the lease
+    text = str(refusal)
+    assert text.index("queue this workflow again") < text.index(
+        "run one render through KSampler")
+    # It says what the render did, which holds in every case here, and never
+    # that the fleet is gone.
+    assert "handed this fleet to the driver's failure cleanup" in text
+    assert "evicted this fleet" not in text
+    if case == "prior_stop_unknown":
+        # That cleanup cannot stop the fleet, so the next render names what blocks it.
+        assert handle.replacement_blocked and not handle.teardown_complete
+        with pytest.raises(Exception, match=r"cannot be used or replaced: .*teardown outcome"):
+            mesh_mod.ensure_live(handle)
+        assert len(driver.dials) == 1
+
+
+@pytest.mark.parametrize("route", ["restart_check", "delivery"])
+@pytest.mark.parametrize("reconcile", ["running", "stuck", "ended_blocked"])
+def test_a_pinned_render_during_a_running_cleanup_says_to_try_again_when_it_ends(
+        driver, monkeypatch, route, reconcile):
+    """The driver's own cleanup is still stopping this fleet when a Pipeline or
+    Gate render meets every loop restarted. That is a teardown in progress, so
+    nothing is retired, and while the reconcile's thread is alive and inside
+    its own wait the refusal says what the driver's other doors say then: try
+    again when that stop ends. A reconcile alive past its wait (stuck), or one
+    whose stop ended without an outcome, keeps the refusal it had."""
+    from dgx_monarch import mesh_teardown as teardown
+    from dgx_monarch import reconcile_running
+
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    error = _check_error(driver) if route == "restart_check" else _delivery_error(driver)
+    release = threading.Event()
+    if reconcile == "stuck":
+        monkeypatch.setattr(reconcile_running, "reconcile_join_s", lambda: 0.0)
+    if reconcile == "ended_blocked":
+        monkeypatch.setattr(mesh_teardown, "proc_stop_bound_s", lambda: 0.3)
+
+    def during():
+        handle.procs = _HeldProcs(release)
+        mesh_helpers.mark_defunct_on_supervision_failure(
+            handle, _supervision_error(), holding_lock=True)  # the reconcile's own thread
+        assert handle.procs.entered.wait(5.0)
+        if reconcile == "ended_blocked":
+            handle._supervision_reconcile_thread.join(10.0)
+            assert not handle._supervision_reconcile_thread.is_alive()
+            assert handle.replacement_blocked
+        else:
+            # The session's close waits on the lock that stop holds, as it always
+            # has; the pinned path decides before that.
+            timer = threading.Timer(1.0, release.set)
+            timer.daemon = True
+            timer.start()
+
+    try:
+        refusal, _events = _pinned_submit(monkeypatch, handle, error, during)
+    finally:
+        release.set()
+    sentence = teardown.cleanup_running_sentence()
+    assert len(driver.dials) == 1 and len(handle.procs.stops) == 1  # no stop of its own
+    if reconcile == "running":
+        assert refusal is not error and refusal.__cause__ is error
+        assert sentence in str(refusal) and "try again when it ends" in str(refusal)
+        assert parse_leading_refusal_tag(str(refusal)) is not None
+        assert _trace(driver, "restart_reattach")[-1]["reason"] == "pinned_teardown_in_progress"
+    else:
+        assert refusal is error and sentence not in str(refusal)
+
+
+def test_loops_restarted_on_another_torchmonarch_retire_then_refuse_before_dialing(
+        driver, monkeypatch):
+    """TROUBLESHOOTING entry 2, Upgrading: every loop restarted on another
+    torchmonarch. The ids moved, so the heal retires the stale mesh, and its
+    attach then refuses before it dials, naming both versions."""
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    driver.ids = dict(NEW)
+    older = {address: dict(fields, monarch="0.7.0")
+             for address, fields in _readings(NEW).items()}
+    monkeypatch.setattr(listener_generation, "fleet", lambda _config, **_k: older)
+    refused = _refused()
+    refused.moves = restart_reattach.read_moves(_config())
+    assert refused.moves.verdict == restart_reattach.ALL
+    with pytest.raises(Exception, match=r"runs torchmonarch 0\.7\.0 and this driver runs"):
+        restart_reattach.heal(handle, refused)
+    assert handle.defunct and len(driver.dials) == 1  # retired, and nothing dialed after
+    assert _trace(driver, "restart_reattach")[-1]["outcome"] == "failed"
+
+
+def test_a_pipeline_at_depth_two_stops_nothing_before_its_abort_retires_the_lease(
+        driver, monkeypatch):
+    """A real RenderPipeline at depth 2: the second render meets every loop
+    restarted while the first one's result is still in flight on the old
+    fleet. The pinned path retires nothing; the restart check's error is
+    evicted as before and that eviction waits on the lease, so no stop runs
+    until the pipeline's abort abandons the first render, and the deferred
+    stop runs then. Nothing is attached inside the pipeline's session."""
+    from dgx_monarch import mesh_session
+    from dgx_monarch.nodes import common
+    from dgx_monarch.nodes.pipeline import RenderPipeline
+
+    monkeypatch.setattr(mesh_teardown, "proc_stop_bound_s", lambda: 0.5)
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    error = _check_error(driver)
+    render_submit, events = _pinned_rig(monkeypatch, handle, error)
+    order: list[tuple[str, int]] = []
+
+    class InFlight:
+        def __init__(self) -> None:
+            self.lease = _lease(handle)
+
+        def result(self):
+            raise RuntimeError("the old actors are gone")
+
+        def abandon(self) -> None:
+            order.append(("abandon", len(driver.procs[0].stops)))
+            self.lease.abandon()
+
+    real_submit = render_submit.submit_render
+
+    def submit(model, request, latent, cfg_value, steps_hint, seq=0, depth=1,
+               progress_on_step=None, handoff=None):
+        if seq:
+            return real_submit(model, request, latent, cfg_value, steps_hint, seq=seq,
+                               depth=depth, progress_on_step=progress_on_step, handoff=handoff)
+        mesh_session.active_render_session().bind(handle)  # as the real submit claims it
+        return InFlight()
+
+    monkeypatch.setattr(common, "submit_render", submit)
+    pipe = RenderPipeline(depth=2)
+    pipe.push(None, {}, {}, 4.5, 10)
+    with pytest.raises(WorkerDeliveryError) as raised:
+        pipe.push(None, {}, {}, 4.5, 10)
+    # The eviction published at the refusal and deferred, then resumed by the lease.
+    assert raised.value is error and events == ["dispatch", "evicted", "evicted"]
+    assert order == [("abandon", 0)]  # no stop before the abort retired the lease
+    assert driver.procs[0].stops and not handle.sample_leases.get(0)  # the deferred stop ran
+    assert len(driver.dials) == 1
+    assert _trace(driver, "restart_reattach")[-1]["reason"] == "pinned_leases_held"
+
+
+def test_a_gate_run_quarantines_pushes_nothing_and_the_next_attach_is_fresh(
+        driver, monkeypatch):
+    """An Identity Gate ceremony under its own real session: its leg meets
+    every loop restarted, the stale fleet is retired, the abort writes the
+    quarantine as for any abort and pushes nothing to the gone actors, the
+    session is released, and the next attach is a fresh fleet."""
+    from dgx_monarch.mesh_session import RenderSession
+    from dgx_monarch.nodes import common, gate, gate_identity, gate_session
+
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    error = _check_error(driver)
+    render_submit, events = _pinned_rig(monkeypatch, handle, error)
+    quarantined: list = []
+    monkeypatch.setattr(gate_identity, "quarantine_unproven_paths",
+                        lambda model, cause=None, uncond=None: quarantined.append(cause))
+    handle.call_all = lambda *_a, **_k: pytest.fail("nothing may be pushed to gone actors")
+    model = SimpleNamespace(mesh=SimpleNamespace(handle=handle, topology_preset="auto"),
+                            loras=())
+    monkeypatch.setattr(common, "_bind_packed_render_model",
+                        lambda model, latent, cfg, **_k: (model, handle))
+
+    def bound(*_args, **_kwargs):
+        return render_submit.submit_render(None, {}, {}, None, 1)
+
+    runtime = {"ensure_live": lambda target: target, "RenderSession": RenderSession,
+               "_run_identity_ceremony_bound": bound,
+               "_force_stock_quarantine": gate_identity.force_stock_quarantine,
+               "_close_gate_session": gate._close_gate_session, "log": restart_reattach.log}
+    with pytest.raises(WorkerDeliveryError) as raised:
+        gate_session.run_identity_ceremony(model, {}, {}, 4.5, 10, "auto_first_use", "run1",
+                                           runtime=runtime)
+    assert "The Worker loops restarted; queue again" in str(raised.value)
+    assert quarantined == [raised.value] and events == ["dispatch"]
+    RenderSession().bind(fresh := mesh_mod.ensure_live(handle))  # released; a fresh fleet
+    assert fresh is not handle and len(driver.dials) == 2
 
 
 def test_a_detour_that_cannot_heal_raises_its_refusal_without_a_retry(monkeypatch):

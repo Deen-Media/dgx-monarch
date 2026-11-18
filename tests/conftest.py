@@ -285,6 +285,17 @@ def _attach_dial_history_starts_empty(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _liveness_release_note_starts_disarmed(monkeypatch):
+    """A liveness release's note lives as long as a driver process; each test
+    starts with none. A test that arms it and never attaches would otherwise
+    leave the next test's attach to the same hosts without its retry."""
+    from dgx_monarch import mesh_teardown
+
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_PREDECESSOR", None)
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_ADDRESSES", None)
+
+
+@pytest.fixture(autouse=True)
 def _delivery_fault_record_starts_empty():
     """The fault hook's delivery record lives as long as a driver process; each test starts fresh."""
     from dgx_monarch import delivery_faults

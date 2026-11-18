@@ -143,10 +143,26 @@ from a mesh that Recycle, Reset or an earlier re-attach retired names the same
 address under another mesh id, so it never ends a later wait.
 
 When nothing has reached a restarted loop since its restart, the render's own
-price request is the message the old channel session loses (below), and no
-failure comes back for it. So the wait asks a rank that has not answered once
-more after 2 s; that second request comes back undeliverable at once, and the
-wait ends about 2.5 s in.
+price request is the first message on the old channel session. The pinned
+torchmonarch sends it again on a fresh session, the new loop returns it
+undeliverable at once, and the wait ends at its first poll, about half a second
+in. The pinned release before it lost that message, and the wait asked each
+silent rank a second time and ended about 2.5 s in.
+
+Monarch's supervision can also report the old actors dead before any
+delivery failure comes back: in the restart runs traced on CPU its `monitor
+for actor ... stopped before report` reached the price about 2 s in, and the
+price then fails with a SupervisionError. Before the driver evicts the fleet
+for that failure, which would stop it and wait for the stop, the render reads
+every loop's id once, with 3 s per host. When every loop serves a new id, it
+ends the price with the same undeliverable refusal. A sampler render that
+owns its session then leaves the fleet unevicted, as for a delivery failure,
+and takes the step below at once. A KSampler Pipeline or Identity Gate
+render, which cannot leave its session's mesh, retires the stale fleet with
+the same short stop instead and refuses with "The Worker loops restarted;
+queue again" (the paths below). When not every loop serves a new id, the
+failure evicts the fleet, and the price refuses as a fleet that did not
+answer.
 
 **A sampler render attaches again by itself.** A render through KSampler,
 KSampler Advanced or Sampler Custom (DGX Monarch) that owns its render
@@ -181,8 +197,11 @@ and `reattach_s`, the seconds the detour took, and the `dgxm top` ticker shows
 a `restart_reattach` event with its `outcome`, `verdict`, `moved`, `teardown`
 and `wall_s`. The undeliverable messages and late faults from the stale mesh
 (`cluster fault`), and a stale-mesh stop that times out (`proc stop on detach
-timed out`), still log at ERROR and can raise browser toasts; next to
-`outcome=attached` they are expected.
+timed out`), still log at ERROR and can raise browser toasts; after an outage
+the fault lines open with `The driver lost contact with` and the box, since
+the loops were down. Next to `outcome=attached` they are expected, and no
+lost-Worker warning follows them: that warning comes only from a render's
+call that fails ([#4](#4-supervisionerror--process-exited-with-non-zero-code)).
 
 The render refuses at once instead, with a class C `cross_rank_capacity`
 refusal that names the remedy, when the reading finds:
@@ -197,28 +216,47 @@ refusal that names the remedy, when the reading finds:
 **Paths that do not attach again by themselves.**
 
 - KSampler Pipeline (DGX Monarch) renders and the Identity Gate (DGX Monarch)
-  node run in a session pinned to the mesh they started on. They stop at the
-  fast refusal, and queuing them again, or running `dgxm restart` again, does
-  not clear the stale mesh. Run one render through KSampler (DGX Monarch)
-  with the loader and Init inputs unchanged, which attaches again by the new
-  ids, then queue the workflow again.
-- An automatic first-use identity gate stops at the fast refusal too. Its
+  node run in a session pinned to the mesh they started on, so they cannot
+  attach again inside their run. When every loop serves a new id (the price's
+  own reading, or one taken with 3 s per host after a delivery failure), they
+  retire the stale mesh with the same short stop and liveness proof and refuse
+  with "The Worker loops restarted; queue again": queuing the workflow again
+  attaches a fresh fleet. On loopback that refusal came about 4.6 s in after a
+  delivery failure and about 6.1 s in after a SupervisionError. They leave the
+  fleet as before when not every loop restarted, while a teardown is in
+  progress, when a prior stop has no known outcome, and in a Pipeline whose
+  earlier render's result is still in flight. While that teardown is the
+  driver's own cleanup still inside its wait, the refusal says `the driver is
+  still stopping the previous Worker fleet; that stop ends within about <n>
+  s; try again when it ends`. In the Pipeline case, after a
+  SupervisionError the eviction waits for the Pipeline's abort to abandon that
+  result, about 24 s on loopback, and the re-queue attaches; after a delivery
+  failure the stale mesh stays, and a plain re-queue's first render, which has
+  no earlier result, retires it and refuses once more. Otherwise after a
+  delivery failure, queuing them again, or running `dgxm restart` again, does
+  not clear the stale mesh: run one render through KSampler (DGX Monarch) with
+  the loader and Init inputs unchanged, which attaches again by the new ids,
+  then queue the workflow again.
+- An automatic first-use identity gate stops at the same refusal too. Its
   abort turns that combination's residency levers off, as for any abort, but
   sends no stock policy to the gone actors, and the combination's next Gate
   run can restore the levers. The render it was proving then runs under stock
-  residency, and attaches again by itself only when that leaves its worker
-  settings as the last render's were (the next item). Under FSDP the gate's
-  refusal ends the render instead.
+  residency. After a retire it attaches a fresh fleet; otherwise it attaches
+  again by itself only when that leaves its worker settings as the last
+  render's were (the next item). Under FSDP the gate's refusal ends the render
+  instead.
 - Fleet KSampler (DGX Monarch) dispatches without a cross-rank price, a
   one-host fleet prices nothing, and a render whose topology, attention or
   worker settings differ from the last render's sends that setup to the old
   actors before it prices. A gate's own policy changes can do the same.
   These meet the old actors directly.
-- A render that reaches the stale mesh after Monarch's supervision already
-  reported the old actors dead takes the supervision path. On the pair the
+- A render that reaches the stale mesh after another path already evicted it
+  for a supervision failure takes the supervision path; on the pair the
   panel's status poll drew that report about a minute after the restart. A
-  render that arrives while the supervision stop is still running refuses
+  render that arrives while that eviction's stop is still running refuses
   with `the cached mesh cannot be used or replaced`; queue again once it ends.
+  A render whose own price meets the supervision failure reads the loops' ids
+  first, as above.
 
 On those paths the fallback is the one from before 1.2.0. The call fails on
 the old actors (a `SupervisionError`,
@@ -236,21 +274,28 @@ The Worker log prints the id in Monarch's own spelling and then in hex:
 digits>)`. The probe, the attach trace and doctor print the same value as the
 16 hex digits.
 
-The first message this driver sends to a restarted loop's address is lost:
-it rides the channel session the old process accepted, the new process
-refuses that session, and only the next message opens a fresh one. A lost
-config push would leave the new host agent waiting for it forever. So before
+The first message this driver sends to a restarted loop's address can be
+lost. After a short restart the pinned torchmonarch sends it again on a fresh
+session. After an outage of 30 s or more, messages this driver sent to the
+old process and never had acknowledged close the channel the moment it
+reconnects (`HYPERACTOR_MESSAGE_DELIVERY_TIMEOUT`), and whatever was queued
+with them is dropped, not sent again. A lost config push would leave the new
+host agent waiting for it forever. So before
 the first dial to a loop whose id changed since this driver last dialed it,
 the driver sends that address one throwaway message and waits 2 s; the trace
 writes a `proc_id_prime` line naming those loops. That first attach after a
 restart therefore takes about 2 s.
 
-That holds when the loop came back within Monarch's message delivery timeout
-(`HYPERACTOR_MESSAGE_DELIVERY_TIMEOUT`, 30 s by default in the pinned release).
-After a longer outage, such as a stop, a crash loop or a reboot, the driver's
-channel to that address stays closed and its attach fails at the config-push
-budget, the attach within a render included: restart ComfyUI. dgx-monarch
-leaves the delivery timeout at its default.
+That holds for an outage of up to a day: a restart, a stop, a crash loop or
+a reboot. A channel with nothing to send keeps reconnecting for that long
+(`channel_reconnect_timeout`, which dgx-monarch sets to one day in every
+process and reads back; the attach config push carries the driver's value to
+the Workers). Past that bound torchmonarch closes the channel for the life of
+the process and never dials the address again; with its 60 s default, a
+Worker down longer than a minute could not be reached from a ComfyUI that
+stayed up. After an outage longer than a day the attach fails at the
+config-push budget, the attach within a render included: restart ComfyUI.
+dgx-monarch leaves the delivery timeout at its default of 30 s.
 
 **The id gate.** When the first reading of an attach carries no id for a
 loop, the attach refuses before anything dials, and the ComfyUI session stays
@@ -306,14 +351,25 @@ restart cannot change a loop's version, the session stays usable, and the
 trace closes `outcome=refused stage=proc_id_reread`
 ([#8](#8-version-skew-between-hosts)).
 
-**Upgrading.** A ComfyUI started before the update that brought per-start ids
-dials the bare address. `dgxm update` refuses in either mode while ComfyUI
-runs, so this case arises only when the Workers restart on the new code under
-a running ComfyUI: `dgxm restart` after a pull, or a hand restart of the
-service. Its next attach then fails at the config-push budget, retries once,
-and names `dgxm doctor` and a ComfyUI restart (older builds end that message
-`the in-process retry already ran`): restart ComfyUI. A new driver against
-Worker services still on an older release refuses before dialing, as the
+**Upgrading.** A ComfyUI keeps the torchmonarch it started with. `dgxm update`
+refuses in either mode while ComfyUI runs, so a driver and Workers on
+different releases meet only when the Workers restart on the new code under a
+running ComfyUI: `dgxm restart` after a pull, or a hand restart of the
+service. When that restart also moves torchmonarch to another version, the two
+sides cannot read each other's messages. The render still retires the stale
+mesh as above, since every loop serves a new id, but its attach then refuses
+before it dials, with `no attach ran: <host> (<address>): its Worker loop runs
+torchmonarch <X> and this driver runs <Y>` and what brings both to one release
+([#8](#8-version-skew-between-hosts)); a Pipeline's or Gate's re-queue meets
+the same refusal. A
+driver from a release before 1.5.0 instead waits out the config-push budget on
+each attempt and ends with `dgxm doctor` and a ComfyUI restart (older builds
+end that message `the in-process retry already ran`): restart ComfyUI. On one
+torchmonarch version, a driver that dials a
+loop's bare address is told the id that loop serves and attaches with it, so
+a Worker serving per-start ids never turns a driver away for dialing bare
+(CPU-tested). A new driver against Worker
+services on a release before per-start ids refuses before dialing, as the
 table above says; Workers left in release slots by a plain update from 1.1.0
 need [#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update).
 
@@ -350,6 +406,42 @@ price had waited 30 s. On hardware the liveness release reads every host
 under its 20 s budget; that cost is not measured yet. In mutation runs,
 removing the wait's short circuit made the price wait 30.1 s, and removing
 the re-attach left it refused.
+
+**What CPU runs on torchmonarch 0.8.0 showed (2026-11-17).** Real Worker
+loops and a driver on one machine, through the same attach and re-attach
+code. After both loops restarted, the render's price wait ended at its first
+poll, 0.5 s in, with no second request, and the render carried on in 5 to 7 s.
+With one loop held down 40 s under a live mesh, the replacement attach passed
+in 2.1 to 2.2 s in 5 of 5 runs with the throwaway message and timed out in 5 of
+5 without it; after such a timeout that driver could not attach to the loop
+again, while a second driver process attached at once. Held down 90 s, the
+attach timed out in 3 of 3 runs with torchmonarch's 60 s reconnect default and
+passed in 4 of 4 with the one-day bound. With both loops down 40 s and a
+render queued after through the sampler's own submission path, 5 of 5
+renders rendered: 3 ended the price on a SupervisionError 2.0 s in, whose id
+reading took 0.10 s, and reached the re-attach about 2.1 s in with the fleet
+unevicted; 2 ended on a delivery failure 0.5 s in. Each render took 7.0 to
+8.6 s, and after both loops restarted at once 5 of 5 rendered in 7.1 s. With
+one loop restarted the render refused 0.6 s in, and rendered in 7.1 s once the
+other loop restarted too. In a real render session the render did not open,
+as a Pipeline or Gate render runs, every full restart retired the stale mesh
+and refused with "queue again", and the next render attached a fresh fleet in
+2.4 to 2.5 s: after both loops restarted at once, 5 of 5 on a delivery
+failure, refusing 4.6 s in; after both were down 40 s, 4 of 5 on a delivery
+failure, refusing 4.6 s in, and 1 on a SupervisionError, refusing 6.1 s in.
+With one loop restarted the render refused 0.6 s in with the delivery refusal,
+as before, and retired the mesh once the other loop restarted too. With an
+earlier result's lease held, as a Pipeline at depth 2 holds it, nothing was
+retired: on a delivery failure (1 run) the render refused 0.6 s in as before,
+and the re-queue retired the mesh and refused once more; on a
+SupervisionError (3 runs) it refused 2.1 s in and the abort's release of the
+lease then waited 24.2 to 24.3 s for the deferred stop. With one loop down and
+staying down (4 runs), the reading answered unknown in 0.06 to 0.08 s, the
+fleet was evicted as before, and the render refused 57.5 s in. In none of
+these runs did the driver log the lost-Worker warning that a render's failed
+call raises; after the 40 s outage two fault lines opened with `The driver
+lost contact with` and the box, since the loops were down. The pair checks of
+these cases have not run.
 
 **What the two-Spark recheck showed (2026-10-15).** With per-start ids and
 both loops restarted together under a live driver, the first render waited
@@ -415,11 +507,12 @@ dgxm-worker` for systemd-managed Worker services. On UMA boxes the usual cause
 is OOM; see [#5](#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc). The driver
 evicts the poisoned mesh automatically, and the next Init or render respawns
 the actors. That needs no ComfyUI restart. A Worker service that died and came
-back within the delivery timeout serves a new id. When every service
-restarted, the first sampler render attaches again by itself (CPU-tested; the
-pair recheck is pending). When only one did, that render refuses and names
-`dgxm restart` ([#2](#2-every-attach-times-out-after-one-failed-attach)). When
-the attach to the replacement fleet fails anyway, after a longer outage, run
+back serves a new id, and a ComfyUI that stayed up reaches it again when it
+came back within a day. When every service restarted, the first sampler render
+attaches again by itself (CPU-tested; the pair recheck is pending). When only one
+did, that render refuses and names `dgxm restart`
+([#2](#2-every-attach-times-out-after-one-failed-attach)). When the attach to
+the replacement fleet fails anyway, after an outage longer than a day, run
 `dgxm restart` so both Worker services restart together, unless the error
 says they already did, then restart ComfyUI.
 
@@ -718,7 +811,7 @@ timeout and a poisoned driver transport; see [the dated lifecycle results](VALID
 A poisoned transport requires a fresh driver after confirmed owned cleanup;
 resetting its attached mesh does not clear that transport state. That check
 came before per-start Worker ids; see [#2](#2-every-attach-times-out-after-one-failed-attach) for
-re-attach after a Worker restart within the delivery timeout.
+re-attach after a Worker restart.
 
 ## 10. First RDMA latent return is slow
 
@@ -5617,7 +5710,7 @@ A fleet-wide gone result retires the cached handle and permits one fresh fleet;
 it never issues a second stop. If replacement setup fails, the new handle is
 blocked and the error identifies its liveness-proven predecessor. The
 replacement attach dials each loop's current id, so a loop that restarted
-within the delivery timeout attaches at once
+within the last day attaches at once
 ([#2](#2-every-attach-times-out-after-one-failed-attach)). It tries once, plus
 once more if a loop moved to a new id during that try, and otherwise names the
 restart recovery in [#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out).
@@ -5942,9 +6035,10 @@ Six shapes reach the operator:
 * **A rank's actor is gone.** When Monarch reports a message to a rank's
   Worker actor undeliverable while the price waits, which is what a Worker
   loop restart under the attached mesh produces, the wait ends within half a
-  second of the report rather than at 30 s (about 2.5 s in when the first
-  request is lost; see #2), and the refusal says the message was
-  undeliverable. A sampler render whose setup is unchanged then reads the
+  second of the report rather than at 30 s, and the refusal says the message
+  was undeliverable. When Monarch reports the old actors dead before any such
+  report, the price reads the loops' ids before the fleet is evicted and,
+  when every loop restarted, ends the same way (see #2). A sampler render whose setup is unchanged then reads the
   loops' ids and, when every loop restarted, attaches again by itself and
   renders; otherwise the refusal names the remedy
   ([#2](#2-every-attach-times-out-after-one-failed-attach)).
@@ -6403,7 +6497,7 @@ in-process retry already ran`), and every later render in
 that ComfyUI process refuses at once with `this ComfyUI session's Monarch
 transport is not reusable after a partial bring-up failure`. Both worker loops
 are up, `dgxm doctor` reads clean, and a fresh driver attaches on its first
-try. Known triggers include a Worker outage longer than the delivery timeout,
+try. Known triggers include a Worker outage longer than a day,
 `dgxm restart` followed immediately by a render, and dead-rank recovery
 releasing its latch. In the third case the attach stops after its first
 attempt, and its refusal says that no in-process retry ran; its trace reads
@@ -6452,7 +6546,7 @@ after a Worker restart writes `restart_reattach` after it. A sequence with no
 | `attach_call` | the two halves of one monarch attach: `half=attach_to_workers` is the worker config push, `half=initialized_get` is the wait on the mesh, bounded by its `bound_s` (70 s under the shipped 60 s config-push budget) |
 | `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_1_reread_refused`, an ordinary attach whose first attempt failed and whose reading after it found no id, so no second attempt ran (a released fleet in that case closes as `attach_1_released`); `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to, and `stage=proc_id` for a loop whose id the first reading did not carry, or whose torchmonarch is not the driver's, which leaves the session usable. One refusal follows an attach that ran: `stage=proc_id_reread`, a first attempt that failed and a reading after it that found a loop on another torchmonarch, so no second attempt and no restart ran, and the session stays usable ([#8](#8-version-skew-between-hosts)). `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
 | `post_fail_restart` | the loops the post-failure Worker restart touched and the failure class that prompted it. It lands after the `close`, as `restart_reattach` does |
-| `restart_reattach` | a render, or an explicit loader's eager load, that met Worker loops restarted under its mesh ([#2](#2-every-attach-times-out-after-one-failed-attach)). `outcome=attached` carries the replacement attach's `seq` and lands after its `close`, with `verdict=all`, the loops that `moved`, the `teardown` that retired the stale mesh (`stop_confirmed` or `liveness_release`) and the detour's `wall_s`. `outcome=refused` carries `seq=0`, since no attach ran, and a `reason`: `partial`, `none` or `unknown` for what the id reading found, or `not_retired` for a stale mesh the liveness proof did not release. `outcome=failed` carries the exception class as its `reason`: a replacement attach that raised, whose own `close` names the stage, or an explicit loader's capacity price that refused before that attach ran, which writes no new `close` |
+| `restart_reattach` | a render, or an explicit loader's eager load, that met Worker loops restarted under its mesh ([#2](#2-every-attach-times-out-after-one-failed-attach)). `outcome=attached` carries the replacement attach's `seq` and lands after its `close`, with `verdict=all`, the loops that `moved`, the `teardown` that retired the stale mesh (`stop_confirmed` or `liveness_release`) and the detour's `wall_s`. `outcome=refused` carries `seq=0`, since no attach ran, and a `reason`: `partial`, `none` or `unknown` for what the id reading found, or `not_retired` for a stale mesh the liveness proof did not release. `outcome=failed` carries the exception class as its `reason`: a replacement attach that raised, whose own `close` names the stage, or an explicit loader's capacity price that refused before that attach ran, which writes no new `close`. `outcome=retired` is a KSampler Pipeline or Identity Gate render that retired the stale mesh and refused, with `seq=0`, `verdict=all`, its `teardown` and `reason=pinned_session`; such a render's `outcome=refused` reasons start with `pinned_`: `pinned_partial`, `pinned_none` or `pinned_unknown` for the reading, `pinned_leases_held`, `pinned_teardown_in_progress` or `pinned_prior_stop_unknown` for what kept the fleet as before, and `pinned_not_retired` |
 
 **Read the attach timings first.** Each `phase=attach` line follows the `attach_call`
 lines of its attempt, which split its duration between the config push and the
@@ -6478,11 +6572,13 @@ that comes back is still compared against something.
 
 **What each of the three cases should look like.**
 
-*After a Worker outage longer than the delivery timeout.* The restarted loop's
+*After a Worker outage longer than a day.* The restarted loop's
 first `loop_generation` line reads `changed=true` with a new `proc_id`, and a
 `proc_id_prime` line names it. Attempt 1 spends its whole window in
 `half=attach_to_workers`: the config push never lands, because the driver's
-channel to that address closed during the outage. The `before_attach_2`
+channel to that address gave up reconnecting during the outage and stays
+closed. The same lines follow a shorter outage when the throwaway message did
+not take the loss and the config push itself was dropped. The `before_attach_2`
 reading shows the same `proc_id`. On a released fleet the `close` line names
 `stage=attach_1_released`; on an ordinary attach, attempt 2 fails the same way
 and the `close` names `stage=attach_2_failed`. Restart ComfyUI
@@ -6502,8 +6598,8 @@ driver's attach window is absorbing a wait the start path should make.
 attaches. When it fails, there is only one `phase=attach attempt=1` line, the
 `before_attach_2` readings show the same `proc_id` per loop, and the `close`
 line names `stage=attach_1_released`: no loop moved, so a second attempt with
-the same ids cannot win, and the likely cause is an outage longer than the
-delivery timeout. A `proc_id_moved` line instead means a loop restarted during
+the same ids cannot win, and the likely cause is an outage longer than a day
+or a dropped config push. A `proc_id_moved` line instead means a loop restarted during
 the attempt, and a second attempt runs with its new id.
 The recovery is the restart path: both worker loops restarting together, then
 a fresh driver process, which attached in 0.75 s in the recovery test
@@ -7614,7 +7710,7 @@ one of these messages, each ending in a pointer to this entry:
 - "unmanaged MONARCH_RDMA_ environment setting", followed by the names it
   found;
 - "`NAME` conflicts with the validated Monarch policy", for example
-  `DGXM_RDMA_QP_SPLIT`.
+  `DGXM_RDMA_QP_SPLIT` or `HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT`.
 
 A Worker that refuses exits at start, and its systemd unit keeps restarting
 it; on that host, `journalctl --user -u dgxm-worker.service` shows the
@@ -7663,6 +7759,11 @@ environment that starts ComfyUI.
   Worker, look in the systemd user manager's environment
   (`systemctl --user show-environment`), in any hand edit to its unit, and in
   the shell environment `dgxm up` starts a `nohup` Worker from.
+- `HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT`: unset it where ComfyUI starts. The
+  policy sets it to one day in every process, so a Worker that was down for a
+  reboot can be reached again
+  ([#2](#2-every-attach-times-out-after-one-failed-attach)); the Worker loop
+  drops it from its own environment.
 
 ## 120. A render refuses because ComfyUI would drop the checkpoint's weight scales
 

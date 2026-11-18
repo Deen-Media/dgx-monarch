@@ -833,6 +833,38 @@ def _release_the_latch(monkeypatch, *addresses: str):
     return handle
 
 
+def test_a_later_attach_after_the_released_replacement_attached_keeps_its_retry(
+        monkeypatch, attach_rig):
+    """The note a liveness release arms is spent once the replacement it
+    authorized attaches. Before that rule it stayed armed for the rest of the
+    creation timeout, so the next attach to the same hosts in that window (a
+    config-change recycle, a re-attach in which no loop moved its id) got one
+    attempt where it should get two."""
+    _release_the_latch(monkeypatch, ADDRESS_A)
+    replacement, later = object(), object()
+    mesh_mod = attach_rig.rig([replacement, RuntimeError("blip"), later],
+                              _Listeners([True, True, True]))
+    assert mesh_mod._attach_cluster(attach_rig.config(ADDRESS_A)) is replacement
+    assert mesh_teardown.released_predecessor_recently() is False
+    assert mesh_mod._attach_cluster(attach_rig.config(ADDRESS_A)) is later
+    assert len(attach_rig.attempts) == 3  # the later attach retried in process
+    assert mesh_mod._TRANSPORT_POISON is None and attach_rig.restarts == []
+
+
+def test_a_later_creation_failure_after_the_released_replacement_attached_has_no_note(
+        monkeypatch, attach_rig):
+    """A creation failure after the released fleet's replacement attached is
+    not the bring-up the release authorized, so its poison text carries no
+    liveness note. Before the attach spent the note, a failure anywhere in the
+    creation timeout's window was labelled with it."""
+    _release_the_latch(monkeypatch, ADDRESS_A)
+    mesh_mod = attach_rig.rig([object()], _Listeners([True]))
+    mesh_mod._attach_cluster(attach_rig.config(ADDRESS_A))
+    later = SimpleNamespace(teardown_complete=False)
+    mesh_teardown.publish_creation_block(later, "a later bring-up failed")
+    assert later.replacement_blocked == "a later bring-up failed"
+
+
 def test_a_released_replacement_fails_fast_after_exactly_one_attempt(
         monkeypatch, attach_rig):
     """A released fleet whose loops serve the same id after the failed
@@ -846,7 +878,7 @@ def test_a_released_replacement_fails_fast_after_exactly_one_attempt(
     assert raised.value.__cause__ is attach_rig.attempts[0]
     text = str(raised.value)
     assert "no loop came back with a new id" in text
-    assert "delivery timeout" in text and "Restart ComfyUI" in text
+    assert "came back within a day" in text and "Restart ComfyUI" in text
     assert "docs/TROUBLESHOOTING.md #2, #101" in text
     assert mesh_mod._TRANSPORT_POISON == "cluster attach failed: RuntimeError('worker gone')"
     assert attach_rig.slept == []          # no wait ran either

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, replace
-from functools import partial
 from typing import Any, NoReturn
 
 from . import box_names, old_model
@@ -419,7 +418,9 @@ def collect(handle: Any, request: dict, world: int, *,
     would report only an aggregate failure. Send all requests before waiting so
     the total wait is not multiplied by world size. A delivery failure that names
     a fleet host and this fleet's mesh ends the wait at once (delivery_faults.py,
-    restart_reattach.py).
+    restart_reattach.py). On a cluster fleet the wait reads each rank before
+    any eviction, so a SupervisionError while every loop serves a new id ends
+    it with the same error (``restart_reattach.PriceWait``).
     """
     from . import delivery_faults, mesh_setup, restart_reattach
 
@@ -438,6 +439,8 @@ def collect(handle: Any, request: dict, world: int, *,
     futures = [(index, send(index)) for index in range(world)]
     watched = delivery_faults.fleet_addresses(handle)
     mesh = restart_reattach.watched_mesh(handle) if watched else None
+    await_step = (restart_reattach.PriceWait(handle, started, deadline_s) if watched
+                  else handle._await_or_evict)
     answers = []
     for index, future in futures:
         asked = time.monotonic()
@@ -447,8 +450,8 @@ def collect(handle: Any, request: dict, world: int, *,
             continue
         try:
             reply = delivery_faults.await_rank(
-                handle._await_or_evict, future, left, watched=watched, mesh=mesh,
-                since=started, reask=partial(send, index),
+                await_step, future, left, watched=watched, mesh=mesh,
+                since=started,
                 on_failure=lambda failed: restart_reattach.refuse_undelivered(
                     handle, failed, time.monotonic() - started, deadline_s))
         except WorkerDeliveryError:

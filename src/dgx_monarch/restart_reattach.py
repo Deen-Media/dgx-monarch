@@ -9,10 +9,20 @@ deadline, refuse, and leave the reset to the operator. Now:
 1. The capacity price wait ends within one poll of a delivery failure that
    names a fleet host and the mesh it prices on (``delivery_faults.await_rank``,
    ``watched_mesh``) and raises ``WorkerDeliveryError`` (``refuse_undelivered``).
+   Monarch's supervision can give up on the old actors before any delivery
+   failure is recorded (the restart runs traced its "stopped before report"
+   about 2 s into the price), and the price then fails with a SupervisionError.
+   The handle's own wait would evict the fleet and join its post-death stop
+   before anything else ran. ``PriceWait`` waits plainly instead, and on the
+   first SupervisionError ``refuse_if_restarted`` reads every loop's id once,
+   with a short bound. When every loop serves a new id it raises the same
+   error with that reading attached; otherwise the failure goes through the
+   handle's own wait, and its eviction and reconcile run as before.
 2. A sampler render that owns its render session, or the UNET Loader's eager
    load, calls ``heal``. It reads each loop's id with the listener-generation
-   probe every attach already runs, and compares it with the id this driver
-   dialed (``mesh_attach.last_dialed``).
+   probe every attach already runs, unless the error carries that reading
+   already, and compares it with the id this driver dialed
+   (``mesh_attach.last_dialed``).
 3. When every loop serves a new id, the loops restarted and the actors are
    gone. ``heal`` publishes that death the way a supervision failure does, and
    stops the fleet through the deliberate teardown with a short bound: in CPU
@@ -25,13 +35,18 @@ deadline, refuse, and leave the reset to the operator. Now:
 4. Anything else refuses at once and names its remedy: some loops moved and
    some did not, none moved, an id the probe could not read, or old processes
    the liveness check did not find gone.
+5. A KSampler Pipeline or Identity Gate render is pinned to its mesh: ``refuse_pinned``
+   retires the stale fleet as step 3 does and refuses when every loop restarted and
+   nothing else holds the fleet; otherwise it leaves the fleet as it always did.
 
-Bounds: ``GENERATION_PROBE_S`` per host for the reading, two ``STOP_BOUND_S``
+Bounds: ``GENERATION_PROBE_S`` per host for the reading (``PRECHECK_PROBE_S``
+for the one taken before an eviction), two ``STOP_BOUND_S``
 waits for the stop, the liveness fleet budget, and the attach's own budgets.
-The replacement attach reuses the one transport this process bound. After an
-outage longer than Monarch's delivery timeout the channel to that address
-stays closed, that attach fails at its config-push budget, and the session
-asks for the documented driver relaunch, as before.
+The replacement attach reuses the one transport this process bound. Its
+channel to a loop's address keeps reconnecting for a day
+(``monarch_policy._FIXED_CHANNEL``); after a longer outage that channel stays
+closed, the attach fails at its config-push budget, and the session asks for
+the documented driver relaunch.
 
 Every detour writes one ``attach_trace event=restart_reattach`` line, one
 ``restart_reattach outcome=...`` log line and one telemetry event.
@@ -57,6 +72,13 @@ TROUBLESHOOTING = 2
 # Each of the two waits the deliberate teardown makes on a fleet whose loops
 # restarted: the group teardown and the proc stop. Neither can be acknowledged.
 STOP_BOUND_S = 2.0
+# How long the reading taken before an eviction may wait on each host. On
+# loopback a reading of two loops took 0.07 to 0.13 s (the pair is not
+# measured); a host that does not answer is read as unknown here, and its
+# eviction then runs as it always did.
+PRECHECK_PROBE_S = 3.0
+# The trace event for that reading.
+CHECK_EVENT = "restart_check"
 
 ALL, PARTIAL, NONE, UNKNOWN = "all", "partial", "none", "unknown"
 _RESTART_TOGETHER = (
@@ -111,8 +133,11 @@ class Reattached:
     teardown: str  # "stop_confirmed" or "liveness_release"
 
 
-def read_moves(config: Any) -> Moves:
-    """Read every loop's id now and compare it with the id this driver dialed."""
+def read_moves(config: Any, *, timeout: float | None = None) -> Moves:
+    """Read every loop's id now and compare it with the id this driver dialed.
+
+    ``timeout`` bounds each host's reading; the attach's own bound by default.
+    """
     from . import mesh_attach
     from .cli import lifecycle, listener_generation
 
@@ -120,7 +145,8 @@ def read_moves(config: Any) -> Moves:
     words = box_names.address_words(config)
     try:
         readings = listener_generation.fleet(
-            config, runner=lifecycle.run_on_host, timeout=mesh_attach.GENERATION_PROBE_S)
+            config, runner=lifecycle.run_on_host,
+            timeout=mesh_attach.GENERATION_PROBE_S if timeout is None else timeout)
     except Exception as exc:
         return Moves(unknown=tuple(
             f"{words.get(str(host.address), box_names.UNLISTED)} (the probe raised "
@@ -167,11 +193,110 @@ def refuse_undelivered(handle: Any, failed: list[str], waited_s: float,
         "(`dgxm restart`, a crash that systemd restarted, or a reboot): its actors "
         "are gone. Nothing was loaded on any rank. A sampler render that owns its "
         "session, and the UNET Loader's eager load, read every loop's id next and, "
-        "when every loop restarted, attach again by the new ids and carry on. This "
-        "refusal reaching you means that step did not run here (a pipelined "
-        "render, an identity-gate leg or the Identity Gate node), or that the one "
-        "dispatch on the new mesh met an undeliverable actor again. To recover, "
-        f"{_ONE_SAMPLER_RENDER}.", None)
+        "when every loop restarted, attach again by the new ids and carry on; a "
+        "pipelined render, an identity-gate leg or the Identity Gate node then "
+        "retires the stale mesh and asks for a re-queue. This refusal reaching you "
+        "means neither happened here (an earlier render's result was still in "
+        "flight, or not every loop restarted, for example), or that the one dispatch "
+        f"on the new mesh met an undeliverable actor again. To recover, {_ONE_SAMPLER_RENDER}.",
+        None)
+
+
+def _supervised(exc: BaseException) -> bool:
+    """Whether ``exc``, or an exception chained behind it, is Monarch's SupervisionError."""
+    from .error_utils import exception_chain
+
+    try:
+        from monarch._rust_bindings.monarch_hyperactor.supervision import SupervisionError
+    except ImportError:
+        return False
+    return any(isinstance(link, SupervisionError) for link in exception_chain(exc))
+
+
+def refuse_if_restarted(handle: Any, failure: BaseException, waited_s: float,
+                        deadline_s: float) -> Moves:
+    """End the price on a SupervisionError when every loop restarted; else return the reading.
+
+    Reads every loop's id once, with ``PRECHECK_PROBE_S`` per host. When each
+    serves a new id, raises the ``WorkerDeliveryError`` that a sampler render
+    or the eager load catches to attach again, carrying the reading for
+    ``heal``. Writes one ``attach_trace event=restart_check`` line either way.
+    """
+    started = time.monotonic()
+    moves = read_moves(getattr(handle, "config", None), timeout=PRECHECK_PROBE_S)
+    log.info("%s", attach_trace.line(
+        CHECK_EVENT, seq=0, verdict=moves.verdict, moved=list(moves.moved),
+        kept=list(moves.kept), unknown=len(moves.unknown), waited_s=waited_s,
+        wall_s=time.monotonic() - started))
+    if moves.verdict != ALL:
+        return moves
+    raise WorkerDeliveryError(refusal(
+        RefusalClass.CAPACITY,
+        "this render needs every rank to price the load before any rank "
+        "allocates, and Monarch reported this fleet's Worker actors failed "
+        f"(SupervisionError) {waited_s:.1f} s into the price's {deadline_s:.0f} s "
+        f"deadline, while every Worker loop serves a new proc id (on "
+        f"{_labels(handle, moves.moved)}): the loops restarted under this attached "
+        "mesh (`dgxm restart`, a crash that systemd restarted, or a reboot) and its "
+        "actors are gone. Nothing was loaded on any rank. A sampler render that "
+        "owns its session, and the UNET Loader's eager load, attach again by the "
+        "new ids and carry on. This refusal reaching you means that step did not "
+        "run here (a pipelined render, an identity-gate leg or the Identity Gate "
+        "node), or that the one dispatch on the new mesh failed again. To "
+        "recover, queue this workflow again: a pipelined or identity-gate render "
+        "handed this fleet to the driver's failure cleanup before this refusal "
+        "reached you, so the next render attaches a fresh one once that cleanup "
+        "has stopped it, or names what blocks it, and a sampler render attaches "
+        f"again by itself. If the next render refuses the same way, {_ONE_SAMPLER_RENDER}.",
+        guard=GUARD, waivable=False, troubleshooting=TROUBLESHOOTING),
+        moves=moves) from failure
+
+
+def heals_unevicted(exc: BaseException) -> bool:
+    """Whether ``exc`` is the restart check's error with every loop restarted.
+
+    A submit guard's failure hook leaves a first attempt's to ``heal``, or in a
+    pinned session to ``refuse_pinned``, as it leaves a delivery failure: they stop
+    the old fleet with their own short bounds, where an eviction first would
+    stop it with the post-death bound and wait. Every other error, a
+    SupervisionError that is not a full restart among them, goes to the
+    eviction as before.
+    """
+    moves = getattr(exc, "moves", None)
+    return (isinstance(exc, WorkerDeliveryError) and isinstance(moves, Moves)
+            and moves.verdict == ALL)
+
+
+class PriceWait:
+    """One wait step of a cluster fleet's capacity price, read before any eviction.
+
+    ``MeshHandle._await_or_evict`` evicts the fleet on a supervision failure
+    and joins its post-death stop before it raises, which can outlast the
+    price's deadline. This wait reads the future plainly. On the first
+    SupervisionError it asks ``refuse_if_restarted`` whether every loop
+    restarted; that raises the heal's error when they did. Every other failure,
+    and every later one, goes through the handle's own wait on the same
+    future, which reads the outcome again at once and evicts exactly as it
+    always did. A step that only times out evicts nothing there either.
+    """
+
+    def __init__(self, handle: Any, started: float, deadline_s: float) -> None:
+        self.handle, self.started, self.deadline_s = handle, started, deadline_s
+        self.checked = False
+
+    def __call__(self, future: Any, step: float) -> Any:
+        from .mesh_helpers import get_off_loop
+
+        try:
+            return get_off_loop(future, step)
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            if not self.checked and _supervised(exc):
+                self.checked = True
+                refuse_if_restarted(self.handle, exc, time.monotonic() - self.started,
+                                    self.deadline_s)
+        return self.handle._await_or_evict(future, 0.0)
 
 
 def _refuse_moves(handle: Any, moves: Moves, refused: BaseException) -> NoReturn:
@@ -284,7 +409,10 @@ def heal(handle: Any, refused: BaseException, *,
     from .mesh import ensure_live
 
     started = time.monotonic()
-    moves = read_moves(getattr(handle, "config", None))
+    # refuse_if_restarted read every loop's id moments ago; read again otherwise.
+    moves = getattr(refused, "moves", None)
+    if not isinstance(moves, Moves):
+        moves = read_moves(getattr(handle, "config", None))
     if moves.verdict != ALL:
         _record("refused", moves, started, reason=moves.verdict)
         _refuse_moves(handle, moves, refused)
@@ -302,3 +430,71 @@ def heal(handle: Any, refused: BaseException, *,
     wall = _record("attached", moves, started, seq=attach_trace.last_sequence(),
                    teardown=teardown)
     return Reattached(fresh, wall, moves.moved, teardown)
+
+
+_RETIRED = {"stop_confirmed": "its stop was confirmed",
+            "liveness_release": "the liveness check found its processes gone"}
+
+
+def _held(handle: Any) -> str:
+    """What makes a pinned session leave this fleet as before, or "" for nothing."""
+    from contextlib import nullcontext
+
+    from . import mesh_safety, mesh_setup
+
+    if mesh_safety.token_present(id(handle)):
+        return "teardown_in_progress"  # read first: that stop can hold the lock
+    lock = getattr(handle, "lock", None)
+    with lock if lock is not None else nullcontext():
+        try:
+            mesh_setup.require_no_sample_leases(
+                handle, "retire the stale mesh", allow_abandoned=True)
+        except mesh_setup.SampleResultBusyError:
+            return "leases_held"  # an earlier render's result is still in flight
+        if (getattr(handle, "replacement_blocked", None)
+                and not getattr(handle, "_replacement_retryable", False)):
+            return "prior_stop_unknown"
+    return ""
+
+
+def refuse_pinned(handle: Any, refused: WorkerDeliveryError) -> NoReturn:
+    """Refuse a pinned session's restart, retiring the stale fleet first when safe.
+
+    ``refused`` carries the restart check's reading, or is a delivery failure read here
+    with ``PRECHECK_PROBE_S``. A full restart with nothing in ``_held`` is retired by
+    ``_retire``; otherwise the fleet is left as before (the check's error is evicted).
+    """
+    started = time.monotonic()
+    moves = getattr(refused, "moves", None)
+    checked = isinstance(moves, Moves)
+    if handle is None:
+        raise refused
+    if not isinstance(moves, Moves):
+        moves = read_moves(getattr(handle, "config", None), timeout=PRECHECK_PROBE_S)
+    held = _held(handle) if moves.verdict == ALL else moves.verdict
+    if held:
+        from . import mesh_helpers, mesh_teardown
+
+        _record("refused", moves, started, reason=f"pinned_{held}")
+        if checked:
+            mesh_helpers.mark_defunct_preserving_primary(handle, refused)
+        if held == "teardown_in_progress" and mesh_teardown.cleanup_running(handle):
+            _refuse(f"every Worker loop serves a new proc id (on {_labels(handle, moves.moved)}), and "
+                    "this render cannot attach again inside its run: "
+                    f"{mesh_teardown.cleanup_running_sentence()}.", refused)
+        raise refused
+    try:
+        teardown = _retire(handle, moves, refused)
+    except WorkerDeliveryError:
+        _record("refused", moves, started, reason="pinned_not_retired")
+        raise
+    _record("retired", moves, started, teardown=teardown, reason="pinned_session")
+    _refuse(
+        f"every Worker loop serves a new proc id (on {_labels(handle, moves.moved)}): "
+        "the loops restarted under this attached mesh (`dgxm restart`, a crash that "
+        "systemd restarted, or a reboot) and its actors are gone. This render runs in a "
+        "session pinned to that mesh (a pipelined render, an identity-gate leg or the "
+        "Identity Gate node), so it cannot attach again inside its run; this driver "
+        f"retired the stale mesh instead ({_RETIRED.get(teardown, teardown)}). Nothing "
+        "was loaded. The Worker loops restarted; queue again: the next render attaches "
+        "a fresh mesh by the new ids.", refused)

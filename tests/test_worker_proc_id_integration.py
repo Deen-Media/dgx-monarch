@@ -253,9 +253,10 @@ def test_a_render_after_every_loop_restarts_attaches_again_inside_the_render(
         tmp_path, cleanup):
     """docs/TROUBLESHOOTING.md #2, issue #47. Both loops restart under a live
     mesh, and nothing reaches them before the render, so the render's own price
-    request is the message each old channel session loses. The wait asks once
-    more, Monarch reports that request undeliverable, and the wait ends there
-    instead of at its 30 s deadline. The re-attach then reads the new ids,
+    request is the first message on each old channel session. Monarch sends it
+    again on a fresh session, the new loop reports it undeliverable at once, and
+    the wait ends at its first poll instead of at its 30 s deadline, with no
+    second request. The re-attach then reads the new ids,
     retires the stale mesh through the deliberate teardown and the (stood-in)
     liveness release, and attaches by the new ids, and the price answers on the
     new mesh. In mutation runs, removing the short circuit made this price wait
@@ -288,7 +289,9 @@ def test_a_render_after_every_loop_restarts_attaches_again_inside_the_render(
     render = _line(driver, 120)
     assert render["ok"], render
     deadline = capacity_agreement.CAPACITY_QUOTE_DEADLINE_S
-    assert render["refused_after_s"] < 5.0, render
+    # One poll: on the pin before 0.8.0 only a second request, sent 2 s in,
+    # came back, and the wait ended about 2.5 s in.
+    assert render["refused_after_s"] < 1.5, render
     assert render["wall_s"] < deadline / 2, render
     assert render["old_retired"] and render["new_mesh"], render
     # The fault text spells the mesh ActorMesh._name reads, so the filter that

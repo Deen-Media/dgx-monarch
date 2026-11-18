@@ -273,7 +273,7 @@ def test_a_released_fleet_retries_once_when_a_loop_came_back_with_a_new_id(rig):
 
 def test_a_released_fleet_whose_ids_held_still_fails_fast(rig):
     """Same id after the failed attempt: the loop did not move, so a second
-    dial cannot win (an outage longer than the delivery timeout)."""
+    dial cannot win (a lost config push, or an outage past the reconnect bound)."""
     rig.released.value = True
     rig.readings.append(_reading(a=ID_1))
     runtime = rig.build([RuntimeError("closed channel")])
@@ -351,13 +351,14 @@ def test_a_restarted_loop_the_prime_could_not_reach_is_named_in_a_warning(rig, m
     assert len(warned) == 1 and ADDRESS_A in warned[0] and worker_proc_id.ENTRY in warned[0]
 
 
-def test_the_released_message_names_the_delivery_timeout_fallback():
+def test_the_released_message_names_the_reconnect_bound_fallback():
     with pytest.raises(RuntimeError) as raised:
         mesh_attach.raise_released_attach(
             RuntimeError, [ADDRESS_A], TimeoutError(), auto_heal=False)
     text = str(raised.value)
     assert "no loop came back with a new id" in text
-    assert "delivery timeout" in text and "Restart ComfyUI" in text
+    assert "came back within a day" in text and "Restart ComfyUI" in text
+    assert "delivery timeout" not in text
     assert "cannot attach again" not in text
 
 

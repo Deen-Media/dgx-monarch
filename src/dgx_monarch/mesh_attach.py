@@ -220,10 +220,11 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
     nothing restarts and the session stays usable. A replacement for a fleet
     this driver released gets one attempt
     unless a loop came back with a new id since the dial: a loop that
-    restarted inside the delivery timeout re-attaches at once, and one that
-    stayed down longer leaves this driver's channel to it closed, so a retry
-    with the same id cannot win (docs/TROUBLESHOOTING.md #2). Ordinary
-    attaches keep two attempts.
+    restarted re-attaches at once, and when that attempt still fails with the
+    same id, a retry with it cannot win. Either its config push was lost and
+    the next one waits behind it, or the loop stayed down longer than the
+    channel's one-day reconnect bound and the channel to it stays closed
+    (docs/TROUBLESHOOTING.md #2). Ordinary attaches keep two attempts.
     """
     factory = runtime["mesh_factory"]
     error_type = runtime["MeshAttachError"]
@@ -301,6 +302,9 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
     runtime["log"].info(
         "attached %d host(s) in %.2fs", len(addresses),
         time.perf_counter() - started)
+    if released:
+        # The replacement the release authorized is attached; the note is spent.
+        mesh_teardown.clear_liveness_release(addresses)
     trace.closed("attached", hosts=len(addresses))
     return hosts
 
@@ -459,8 +463,9 @@ def raise_released_attach(error_type: type[RuntimeError], addresses: list[str],
         f"attach to workers {addresses} failed ({failure_summary(exc)}) on a "
         f"fleet this driver released after proving the old workers gone, and {why}, "
         "so no in-process retry ran. A driver "
-        "attaches again in the same process only to a loop that came back within "
-        "the transport's delivery timeout; after a longer outage the driver's channel to "
-        f"that address stays closed. {restart_sentence} Restart ComfyUI and the "
+        "attaches again in the same process to a loop that came back within a day, "
+        "unless its first config push to that loop was lost; after a longer outage "
+        f"the driver's channel to that address stays closed. {restart_sentence} "
+        "Restart ComfyUI and the "
         "next render attaches (docs/TROUBLESHOOTING.md #2, #101)."
     ) from exc
