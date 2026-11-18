@@ -7385,14 +7385,16 @@ match the driver.
   host's link and unit can name either release, Workers of either
   release may be running or stopped, and the driver is on the old release
   (a driver commit reports `failed` only after it put the driver back).
-  Hosts whose link names the old release match the driver; if any names the
-  new one, use the forward repair above.
+  Hosts whose link names the old release match the driver, and `dgxm up`
+  starts any of them that are stopped; if any names the new one, use the
+  forward repair above.
 - `start_unknown`: every link and unit names the new release, and the new
   Workers may be running, because the update stopped nothing after it. The
   driver's checkout and torchmonarch are unchanged. Use the forward repair.
 - `doctor_unknown`, `cluster_smoke_unknown` and `readback_unknown`: every link
-  names the new release, the update tried once to stop the new Workers (the
-  receipt's `fail_closed_stop` step says whether that was confirmed), and the
+  names the new release, the update tried once to stop the new Workers (a
+  `fail_closed_stop` step that succeeded confirms it; with none, or another
+  status, it is unconfirmed), and the
   driver is unchanged. The next `dgxm up`, `dgxm restart` or reboot starts the
   new Workers under the old driver: from 1.5.0 its attach refuses when their
   torchmonarch versions differ ([#8](#8-version-skew-between-hosts)); an
@@ -7410,11 +7412,27 @@ match the driver.
   driver and every Worker run the new release, and only the cleanup of the
   previous release or of the staging area was not confirmed, so renders
   attach. The previous release's slot can stay on disk.
-- `operation_exception` and `operation_interrupted`: read the last step the
-  receipt lists and use the case above for the step that follows it. A last
-  step of `pre_stop_recheck` means the Worker stop itself was cut short:
-  nothing was activated, some Workers may be stopped, and the driver is
-  unchanged, so run `dgxm up`, then rerun the update, as for `stop_unknown`.
+- `operation_exception` and `operation_interrupted` with a `pre_stop_recheck`
+  step (without one, the first case above applies): set aside the
+  `fail_closed_stop`, `stage_cleanup` and `stage_retention` steps the update
+  adds as it settles, and read the steps before them.
+  - If one of them failed or is unknown, use the case for the code of the
+    first such step: its name with `_failed` or `_unknown`, where
+    `worker_start` reads `start_` and a failed `exact_readback` is
+    `readback_mismatch`. A failed step with no `prior_release_start` step
+    that succeeded is the case of a restore that was not confirmed, whatever
+    restore steps follow it.
+  - If every one succeeded, use the case for the step that comes after the
+    last of them. After `pre_stop_recheck` that is the Worker stop itself,
+    cut short: nothing was activated, some Workers may be stopped, and the
+    driver is unchanged, so run `dgxm up`, then rerun the update, as for
+    `stop_unknown`. After
+    `worker_stop` it is the activation (`activation_unknown`); after
+    `activation`, the Worker start (`start_unknown`); after `worker_start`,
+    `doctor` or `cluster_smoke`, the next check (`doctor_unknown`,
+    `cluster_smoke_unknown` or `readback_unknown`); after `exact_readback`,
+    the driver commit (`driver_commit_unknown`); after `driver_commit`, the
+    finalize (`finalize_unknown`).
 
 ## 119. A mesh build or Worker start refuses on an ambient environment variable
 
