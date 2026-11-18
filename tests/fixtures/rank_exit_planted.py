@@ -94,6 +94,29 @@ done()
 """ + ENDING
 
 
+P15_EXIT_IN_A_LATER_FRAGMENT = """
+import torch.distributed as dist
+dist.init_process_group("gloo", rank=0, world_size=1)
+""" + "\nimport sys\nsys.exit(0)\n" + ENDING
+
+P16_EXIT_IN_AN_EARLIER_FRAGMENT = "import sys\nsys.exit(0)\n" + """
+import torch.distributed as dist
+dist.init_process_group("gloo", rank=0, world_size=1)
+""" + ENDING
+
+PREFIX = "import os\n"
+P17_FRAGMENT_IN_A_NAME = PREFIX + """
+import torch.distributed as dist
+dist.init_process_group("gloo", rank=0, world_size=1)
+""" + ENDING
+
+P18_TWO_CLEAN_FRAGMENTS_PASS = "import os\n" + """
+import torch.distributed as dist
+dist.init_process_group("gloo", rank=0, world_size=1)
+dist.destroy_process_group()
+""" + ENDING
+
+
 def _p12_exits_before_leave(rank):
     import os
 

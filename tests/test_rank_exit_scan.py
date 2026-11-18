@@ -7,10 +7,13 @@ This scan reads the source of each ``tests/*.py`` and finds each such rank:
 
 - any string constant that holds a script starting a Gloo group, assigned or
   passed inline, run by ``python -c`` or from a written file. The expression
-  around it (string joins and ``textwrap.dedent``) must end with ``+ ENDING``,
-  and the script must not call ``sys.exit``, ``os._exit``, ``exit`` or
-  ``quit``, or ``raise SystemExit``, outside a function it defines, since that
-  would leave before the ending;
+  around it (string joins and ``textwrap.dedent``) must end with ``+ ENDING``.
+  Every part joined before the ending must be a string literal, since a part
+  held in a name or built by any other call cannot be read and fails; and the
+  script those parts make, read as a whole the way it runs, must parse and
+  must not call ``sys.exit``, ``os._exit``, ``exit`` or ``quit``, or ``raise
+  SystemExit``, outside a function it defines, in any of its fragments, since
+  that would leave before the ending;
 - a module function that starts one and is handed to ``spawn`` or to a
   ``Process`` target. Its last statement must be a call to ``leave``, and it
   must hold no ``return`` of its own and no such exit before it;
@@ -97,6 +100,20 @@ def _wraps(parent: ast.AST, child: ast.AST) -> bool:
     return isinstance(parent, ast.Call) and _named(parent.func, "dedent") and child in parent.args
 
 
+def _text(node: ast.AST) -> str | None:
+    """The script text an expression builds, through ``+`` joins and ``textwrap.dedent``;
+    None where a part is not a string literal the scan can read (a name, any other call)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _text(node.left), _text(node.right)
+        return None if left is None or right is None else left + right
+    if isinstance(node, ast.Call) and _named(node.func, "dedent") and len(node.args) == 1:
+        inner = _text(node.args[0])
+        return None if inner is None else textwrap.dedent(inner)
+    return None
+
+
 def _script_strings(tree: ast.Module, parents: dict):
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Constant) and isinstance(node.value, str) and _GLOO.search(node.value)):
@@ -106,12 +123,13 @@ def _script_strings(tree: ast.Module, parents: dict):
             whole = parents[whole]
         ends = (isinstance(whole, ast.BinOp) and isinstance(whole.op, ast.Add)
                 and _named(whole.right, "ENDING"))
+        # The script as it runs: every fragment joined before the ending, read together.
+        text = _text(whole.left) if ends else None
         try:
-            script = ast.parse(textwrap.dedent(node.value))
-            leaves_early = _exits(_own(script.body))
+            runs_through = text is not None and not _exits(_own(ast.parse(textwrap.dedent(text)).body))
         except SyntaxError:
-            leaves_early = False
-        yield _label(node, parents), node.lineno, ends and not leaves_early
+            runs_through = False
+        yield _label(node, parents), node.lineno, ends and runs_through
 
 
 def _spawned_functions(tree: ast.Module, _parents: dict):
@@ -173,10 +191,12 @@ def test_the_scan_sees_the_ranks_it_guards():
 
 
 def test_the_scan_fails_each_planted_rank_that_could_bring_the_abort_back():
-    """No ending, an exit, a raise SystemExit or a return before it, the ending
-    first, an inline script, a Process target: each fails. A dedented script
-    joined with the ending passes. The shapes the docstring lists as not seen
-    stay unseen, or pass, as an exit inside a helper the script calls does."""
+    """No ending, an exit, a raise SystemExit or a return before it in any
+    fragment, the ending first, a fragment held in a name, an inline script, a
+    Process target: each fails. A dedented script joined with the ending
+    passes, and so do clean fragments joined before it. The shapes the
+    docstring lists as not seen stay unseen, or pass, as an exit inside a
+    helper the script calls does."""
     verdicts = {label: ends for label, _line, ends in scan(PLANTED)}
     assert verdicts == {
         "P1_NO_ENDING_SHOULD_FAIL": False,
@@ -189,4 +209,8 @@ def test_the_scan_fails_each_planted_rank_that_could_bring_the_abort_back():
         "_p12_exits_before_leave": False,
         "P13_RAISES_SYSTEMEXIT_BEFORE_THE_ENDING": False,
         "P14_EXIT_IN_A_HELPER_IT_CALLS": True,
+        "P15_EXIT_IN_A_LATER_FRAGMENT": False,
+        "P16_EXIT_IN_AN_EARLIER_FRAGMENT": False,
+        "P17_FRAGMENT_IN_A_NAME": False,
+        "P18_TWO_CLEAN_FRAGMENTS_PASS": True,
     }, verdicts
