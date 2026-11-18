@@ -362,7 +362,7 @@ def spawn_worker_fleet(config, use_cluster: bool, gpus_per_host: int,
             error = RuntimeError(
                 f"torchmonarch is not importable ({exc}). Install dgx-monarch with "
                 "ComfyUI's Python as docs/INSTALL.md shows; a bare `pip install -r requirements.txt` "
-                "cannot find the patched xfuser wheel the guide builds.")
+                "can pick another Python and skips the guide's torch constraint.")
             raise WorkerSpawnError(error, None, rollback_confirmed=True) from exc
         handoff.spawn_in_progress = True
         with kept_root_log_level():

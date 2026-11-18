@@ -546,10 +546,11 @@ family-specific remediation.
 ## 8. Version skew between hosts
 
 **Symptom:** doctor row `torchmonarch=…; version skew vs driver pin`, a
-failing `torch version match: skew across hosts` row, pickling errors
-mid-attach, or a render refused with `Gate authority needs every box on the
-driver's torch build`, which names each box's torch and CUDA. A Worker can
-refuse the same way in its own words: `this Worker runs torch ...`.
+failing `torch version match: skew across hosts` row, a warning
+`xfuser build match: two builds` row, pickling errors mid-attach, or a render
+refused with `Gate authority needs every box on the driver's build`, which
+names each box's torch, CUDA and xFuser. A Worker can refuse the same way in
+its own words: `this Worker runs torch ...`.
 
 For torchmonarch, a render refuses before it dials with `no attach ran:
 <host> (<address>): its Worker loop runs torchmonarch <X> and this driver runs
@@ -593,10 +594,12 @@ which a stopped or restarted process can make differ.
 
 **Fix:** For a torch-version mismatch, install the same torch/CUDA build in
 the driver and every worker environment; doctor treats the skew as a failure
-because serialized objects and distributed kernels cross that boundary. A Gate
-PASS names the build it was proven under, so a risky render on a mixed pair
-refuses rather than reuse a proof no box ran; once the builds match, the PASS
-rows recorded on a matched pair apply again.
+because serialized objects and distributed kernels cross that boundary. For
+two xFuser builds, install stock xFuser 0.8.0 on every box
+([#104](#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
+A Gate PASS names the torch, CUDA and xFuser build it was proven under, so a
+risky render on a mixed pair refuses rather than reuse a proof no box ran;
+once the builds match, the PASS rows recorded on a matched pair apply again.
 `dgxm update` uses `--no-deps`, so it does not replace torch.
 For torchmonarch skew on plain source directories, run `dgxm update`
 (synchronize the repo's exact pin with `--no-deps`, install/sync dgx-monarch
@@ -6549,27 +6552,64 @@ is a second, exact check, not the primary capacity check.
 53's rescue offers, this refusal is not waivable and has no panel action: slab
 is already the residency, and no consent adds memory.
 
-## 104. xFuser 0.7 CUDA setup imports a missing NPU helper
+## 104. Worker setup refuses the installed xFuser, or doctor warns about it
 
-**Symptoms:** worker setup fails before model loading with an import error for
-`yunchang.ring.utils.update_npu_out`. A plain `import xfuser` can still succeed.
+**Symptoms:** a render fails at Worker setup with `this Worker's Python (...)
+has xFuser 0.7.0, and Worker setup refuses it` (or another version, or `has no
+xFuser installed`), and `dgxm doctor` shows a failing `xfuser` or
+`<host> xfuser` row. Or doctor shows a warning on those rows that names
+`0.7.0+dgxm.npuimport1, the patched build 1.4.0 installed`. Before 1.5.0 the
+same build failed later, with an import error for
+`yunchang.ring.utils.update_npu_out`.
 
-**Cause:** the official xFuser 0.7.0 wheel imports an optional NPU ring
-backend while it constructs CUDA attention, and released yunchang 0.6.4 lacks
-the helper that backend imports.
+**Cause:** dgx-monarch runs on two xFuser builds: stock 0.8.0 from the package
+index, and the patched `0.7.0+dgxm.npuimport1` that an install of 1.4.0 built.
+Stock 0.7.0 imports an optional NPU ring helper while it builds CUDA
+attention, and released yunchang 0.6.4 lacks that helper, so its attention
+cannot start. Stock 0.8.0 guards that import, so the patched build is no
+longer needed. No render has been checked on any other version. The package
+requirement admits every 0.7 and 0.8.0 release, because no version range can
+name the patched build alone, so doctor and Worker setup enforce the exact
+list (`src/dgx_monarch/xfuser_build.py`).
 
-**Action:** follow [INSTALL.md](INSTALL.md) in the existing ComfyUI environment
-on every host. Its builder verifies the official wheel and produces the
-temporary `0.7.0+dgxm.npuimport1` compatibility wheel, which makes the NPU
-import lazy and leaves the NVIDIA attention math unchanged. A bare pip install
-of this local version cannot resolve it from PyPI; pass the builder's output
-with `--find-links` as INSTALL.md shows. Keep the selected CUDA Torch build,
-and compare dependency versions across hosts before restarting while no render
-runs. The temporary wheel stays until an official xFuser
-and yunchang pair constructs CUDA attention without the local fix. It adds no
-NPU support. The GPU import canary exercises the ring import that exposed this
-failure; the two-host constructor and fidelity controls are recorded in
-[VALIDATION.md](VALIDATION.md#dependency-and-setup-checks).
+**Action:** coming from 1.4.0, move only once the first update from 1.4.0
+has finished: the 1.4.0 updater's verified mode refuses the
+`tests/conftest.py` that xFuser 0.8.0 shares with torchmonarch (its plain
+mode runs no ownership check) ([#155](#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+Then, while no render runs, install stock 0.8.0 with the Python the row
+or the refusal names, on the driver and on each Worker host:
+`<python> -m pip install --upgrade-strategy only-if-needed xfuser==0.8.0`. It
+keeps the installed torch, since xFuser asks only for torch 2.4.1 or newer.
+For a local build of 0.8.0 (`0.8.0+<label>`), which pip counts as already
+satisfying `==0.8.0`, the row and the refusal give
+`<python> -m pip install --force-reinstall --no-deps xfuser==0.8.0` instead.
+After a verified update from 1.4.0, an interpreter whose dgx-monarch install
+metadata still reads 1.4.0, as the driver's does, gives pip the requirement of
+release 1.4.0, `xfuser==0.7.0+dgxm.npuimport1`, and pip then reports a conflict: run
+`<python> -m pip install -e <checkout> --no-deps` with that Python first, as
+[INSTALL](INSTALL.md#upgrading-from-140) item 30 says.
+Then restart that box's Worker (`dgxm restart`; in local mode, where the
+actors run inside ComfyUI's own mesh, reset the attached mesh or restart
+ComfyUI) and run doctor again. The
+patched build still renders and doctor only warns about it, but every box
+should run the same build: a Gate PASS names the xFuser build it was proven
+under, so a pair on two builds refuses a risky render until they match
+([#8](#8-version-skew-between-hosts)), and moving a box from the patched
+build to 0.8.0 runs each gated combination's first-use Gate again, once.
+
+Stock 0.8.0 also checks, as it builds the attention, for the package an
+attention kernel needs: FA needs flash-attn 2.7.0 or newer and FA3 needs
+FlashAttention-3. The patched build did not check. With FA or FA3 chosen in
+the Init node and the package missing on a Worker, a cfg, dp or single render
+still sets up and renders, since it never runs that kernel, but a sequence
+parallel render refuses at load with `FA cannot run the sharded attention on
+this Worker`, naming what xFuser reported. Choose TORCH_FLASH, install the
+package on every Worker, or run that workflow on a cfg or single topology.
+
+The GPU import canary exercises the ring import.
+[VALIDATION.md](VALIDATION.md#dependency-and-setup-checks) holds the two-host
+constructor and fidelity controls of the patched build only; the controls that
+compare stock 0.8.0 with it on the pair have not run yet.
 
 ## 105. Nodes 2.0 shows nodes and links but no input widgets
 

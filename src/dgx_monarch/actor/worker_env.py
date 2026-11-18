@@ -15,7 +15,7 @@ from ..transfer_utils import (
     reconcile_error,
     safe_note,
 )
-from . import fsdp_checkpoint_pin, load_fault, rendezvous, vae_decode
+from . import fsdp_checkpoint_pin, load_fault, rendezvous, vae_decode, xfuser_setup
 from .attention_dispatch import _AttentionDispatch as _AttentionDispatch
 from .context_room import ensure_comfy  # comfy_bridge's, with room for the CUDA context
 from .worker_authorization import (
@@ -188,10 +188,9 @@ def _setup_key(env: dict, fabric: dict[str, str]) -> tuple:
 def setup_impl(worker, env: dict) -> dict:
     """Bring up NCCL and xFuser parallel state on one GPU.
 
-    env keys: setup_generation, rank, world, master_addr, master_port, topology{...},
-    fabric_env{...}, comfy_dir, worker_args{...}, gpus_per_host, local_gpu_index,
-    attention, sync_ulysses, rdma_latent_return, rdma_min_bytes, pipeline_depth,
-    nccl_timeout_s.
+    env keys: setup_generation, rank, world, master_addr, master_port, topology{...}, fabric_env{...},
+    comfy_dir, worker_args{...}, gpus_per_host, local_gpu_index, attention, sync_ulysses,
+    rdma_latent_return, rdma_min_bytes, pipeline_depth, nccl_timeout_s.
 
     Setup is idempotent only for an exact persistent identity; live worker
     policy is applied separately. A different key retires bound forwards.
@@ -231,6 +230,7 @@ def setup_impl(worker, env: dict) -> dict:
     from ..config_schema import validate_fabric_env
 
     fabric = validate_fabric_env(env.get("fabric_env") or {}, "fabric_env")
+    xfuser_setup.refuse_unsupported_xfuser()  # before any state change or xFuser import
     key = _setup_key(env, fabric)
     if worker._setup_key == key:
         return worker._setup_info()

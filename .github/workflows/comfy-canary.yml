@@ -20,7 +20,6 @@ on:
       - "__init__.py"
       - "pyproject.toml"
       - "requirements.txt"
-      - "tools/build_xfuser_compat_wheel.py"
       - "src/**"
       - "tests/canary/**"
       - "tests/fixtures/workflows/**"
@@ -180,13 +179,12 @@ jobs:
           pip install -r ../ComfyUI/requirements.txt
           # Share ci.yml's dev dependencies. tests/conftest.py imports hypothesis
           # at module scope, so installing pytest alone would fail collection.
-          mkdir -p xfuser-compat-wheels
-          python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
+          # pip takes stock xfuser 0.8.0 from the index; the constraint holds torch.
           torch_dist_version="$(python -c 'from importlib.metadata import version; print(version("torch"))')"
-          printf 'torch==%s\n' "$torch_dist_version" > xfuser-compat-wheels/torch-constraint.txt
-          pip install --find-links xfuser-compat-wheels \
-            --constraint xfuser-compat-wheels/torch-constraint.txt \
+          printf 'torch==%s\n' "$torch_dist_version" > "$RUNNER_TEMP/torch-constraint.txt"
+          pip install --constraint "$RUNNER_TEMP/torch-constraint.txt" \
             -e .[dev] --no-build-isolation
+          python -c 'from importlib.metadata import version; actual = version("xfuser"); assert actual == "0.8.0", actual'
       - name: Import entrypoint and assert Comfy touchpoint manifest (CPU)
         env:
           COMFYUI_DIR: ../ComfyUI

@@ -12584,7 +12584,7 @@
       }
     },
     {
-      "applicability": "No effect on the pinned xfuser 0.7.0: its Ulysses all-to-all never receives this setting, so output and speed are the same either way (docs/ADAPTERS.md). Changing it still runs setup again, and a gate verdict covers one setting, so the first render after a change runs its own identity gate. It stays because removing an input needs a major release.",
+      "applicability": "No effect on xfuser 0.7.0 or 0.8.0: its Ulysses all-to-all never receives this setting, so output and speed are the same either way (docs/ADAPTERS.md). Changing it still runs setup again, and a gate verdict covers one setting, so the first render after a change runs its own identity gate. It stays because removing an input needs a major release.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": null,
@@ -12628,7 +12628,7 @@
       "units": null,
       "validation": {
         "advanced": true,
-        "tooltip": "No effect on the pinned xfuser 0.7.0: its Ulysses all-to-all never receives this setting, so output and speed are the same either way (docs/ADAPTERS.md). Changing it still runs setup again, and a gate verdict covers one setting, so the first render after a change runs its own identity gate. It stays because removing an input needs a major release."
+        "tooltip": "No effect on xfuser 0.7.0 or 0.8.0: its Ulysses all-to-all never receives this setting, so output and speed are the same either way (docs/ADAPTERS.md). Changing it still runs setup again, and a gate verdict covers one setting, so the first render after a change runs its own identity gate. It stays because removing an input needs a major release."
       }
     },
     {

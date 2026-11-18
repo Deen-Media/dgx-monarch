@@ -42,7 +42,7 @@ diffusion inference across multiple GPUs/nodes using:
   supervision trees, typed remote errors, one persistent
   Worker service per host;
 - **xDiT/xfuser** (Apache-2.0) for the sequence/CFG-parallel algorithms,
-  through a temporary local compatibility wheel (§3.1);
+  stock 0.8.0 from the package index (§3.1);
 - **NCCL / torch.distributed** for tensor communication.
 
 The runtime provides:
@@ -122,13 +122,14 @@ distribution-boundary inventory.
 2. Measurements and architecture requirements belong in dated project records.
    Implementation should depend on the recorded contract, not an undocumented
    external implementation detail.
-3. Apache-2.0 dependencies remain external dependencies. The temporary xFuser
-   compatibility wheel `0.7.0+dgxm.npuimport1` is rebuilt by INSTALL.md from
-   the SHA-verified official 0.7.0 wheel, is not vendored, and changes only a
-   lazy optional-NPU import and its version metadata, so NVIDIA attention math
-   and APIs are unchanged. Remove it when official xFuser and yunchang releases
-   build CUDA attention without it. See VALIDATION.md, xFuser 0.7 compatibility
-   build.
+3. Apache-2.0 dependencies remain external dependencies. xFuser comes from the
+   package index as stock 0.8.0, which guards the optional NPU import that
+   stock 0.7.0 made while building CUDA attention. The patched
+   `0.7.0+dgxm.npuimport1` that 1.4.0 built from the SHA-verified official
+   0.7.0 wheel still runs; the repository no longer builds it, and doctor and
+   Worker setup accept only those two builds (`src/dgx_monarch/xfuser_build.py`).
+   VALIDATION.md, dependency and setup checks, records the patched build's
+   controls; those comparing stock 0.8.0 with it on the pair have not run yet.
 4. LICENSE-NOTES.md records dependency licenses and distribution boundaries.
    Contributors update it when those boundaries change.
 5. The registry identity is `dgx-monarch`. Node class names and categories use
@@ -340,19 +341,20 @@ Risky single-model normal-render residency is separately authorized for every
 immutable dispatch snapshot. A Gate PASS is only the source of authority: the
 request grant binds the primary model and detailed checkpoint/LoRA artifact
 set, the complete effective worker policy, physical config identity, the
-driver's torch and CUDA build, resolved topology and attention, and the
+driver's torch, CUDA and xFuser build, resolved topology and attention, and the
 selected READY setup generation/key. The
 physical config identity hashes only the `cluster.toml` settings that can
 change math, residency or transport, leaving out `auto_heal`, `ssh_key`,
 `monarch.startup_timeout_s`, `[monarch.diagnostics]` and the driver-only
 `[worker_args]` keys (`config_schema.DRIVER_ONLY_KEYS`)
 (`monarch_policy_io.trust_config_fingerprint`). Every capability context also
-names the driver's torch and CUDA build (`gate_runtime.runtime_build_identity`),
-because a PASS proven under one torch says nothing about another. Each rank
+names the driver's torch, CUDA and xFuser build
+(`gate_runtime.runtime_build_identity`; xFuser from its package metadata),
+because a PASS proven under one build says nothing about another. Each rank
 reports its own build in its setup reply and in each Gate provenance row, and
 Gate authority needs every rank on the driver's build: the driver refuses a
 PASS lookup, a ceremony or a grant on a pair whose reports differ or lack the
-build, naming each box's torch and CUDA, and each Worker refuses a normal or
+build, naming each box's torch, CUDA and xFuser, and each Worker refuses a normal or
 Fleet grant whose build is not its own (`worker_runtime.py`). The context still
 names one build, so a pair that matches keeps its PASS rows. A dual-model
 render is proven as one unit. Its ceremony renders the dual request itself,
@@ -4213,11 +4215,13 @@ Skills call `dgxm` rather than reimplementing operations.
   and the hosts report different torch versions. Each row shows the versions
   it read. The attach refuses a loop on a torchmonarch other than the one
   the driver loaded before it dials (section 5.1), and Gate authority
-  refuses a pair whose torch or CUDA builds differ (section 5.2).
+  refuses a pair whose torch, CUDA or xFuser builds differ (section 5.2).
 - torchmonarch is pinned and bumped with a changelog entry per bump; the
   developer skill documents the introspection-first upgrade process.
-- xFuser is pinned to the local `0.7.0+dgxm.npuimport1` compatibility wheel
-  until an official release replaces it (section 3.1, rule 3).
+- xFuser runs as stock 0.8.0 or as the patched `0.7.0+dgxm.npuimport1` that
+  1.4.0 installed. No version range names exactly those two, so the
+  requirement admits every 0.7 release and 0.8.0, and doctor and Worker setup
+  hold the exact list; a Gate PASS names the xFuser build (section 3.1, rule 3).
 - ComfyUI: track nightly (project policy), with a CI canary job that runs the
   node-pack import and a CPU-only graph-build daily against comfy master and
   the newest release tag. The release entry changes only when ComfyUI tags a

@@ -179,16 +179,18 @@ The required safeguards are:
    to every relevant dependency resolution, including
    ComfyUI prerequisite work. Reject a plan that replaces the working Torch
    build; do not silently change system CUDA, drivers or NCCL.
-3. Build the required xFuser compatibility wheel with
-   `tools/build_xfuser_compat_wheel.py`. It verifies the official wheel and
-   makes the optional NPU import lazy. Do not hand-edit an installed dependency
-   or substitute the unpatched upstream package for the repository's pin.
+3. Let pip take stock xFuser 0.8.0 from the index with the install. An
+   existing install that holds the patched `0.7.0+dgxm.npuimport1` keeps
+   working; `dgxm doctor` warns and names the move. Do not hand-edit an
+   installed dependency, and never install stock xFuser 0.7.0: Worker setup
+   refuses it.
 4. Review the dry-run dependency report before applying it. Save reports and
    resolved versions privately. Keep versions consistent across hosts; open
    dependency ranges are not a promise of identical future resolution.
 5. Apply the reviewed install using the chosen ComfyUI interpreter, then verify
    the original Torch build/import path, CUDA availability, the actual project
-   import path and the exact Monarch/xFuser pins. Stop on incompatible binary
+   import path, the exact Monarch pin, and xFuser 0.8.0 by `dgxm doctor`'s
+   `xfuser` row. Stop on incompatible binary
    imports. Do not copy a donor environment's packages to hide missing wheels.
 
 Run `tools/check_dependencies.py` with the chosen ComfyUI interpreter as

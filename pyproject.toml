@@ -22,10 +22,11 @@ dependencies = [
     # Pinned exactly: the 0.x torchmonarch API changes between releases. Follow
     # the bump procedure in skills/dgx-monarch-dev/SKILL.md to move it.
     "torchmonarch==0.8.0",
-    # Temporary local compatibility build of the external xfuser 0.7 wheel.
-    # tools/build_xfuser_compat_wheel.py verifies the official wheel and applies
-    # only the lazy optional-NPU import patch; NVIDIA attention math is unchanged.
-    "xfuser==0.7.0+dgxm.npuimport1",
+    # Stock xfuser 0.8.0, or the patched 0.7.0+dgxm.npuimport1 that 1.4.0
+    # installed. No specifier can name exactly those two (a local label never
+    # takes part in matching), so src/dgx_monarch/xfuser_build.py holds the
+    # exact list that doctor and Worker setup enforce.
+    "xfuser>=0.7.0,<=0.8.0",
     "yunchang>=0.6.4",
 ]
 

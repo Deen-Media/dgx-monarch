@@ -11,7 +11,7 @@ install separately. It is not legal advice.
 |---|---|---|
 | dgx-monarch | Apache-2.0 | Source distributed by this repository; copyright Deen Media, LLC |
 | torchmonarch | BSD-3-Clause | Runtime dependency installed separately |
-| xfuser / xDiT | Apache-2.0 | External runtime dependency; the temporary local compatibility wheel changes only the version metadata and makes the optional-NPU import lazy |
+| xfuser / xDiT | Apache-2.0 | External runtime dependency installed separately, stock 0.8.0 from the package index; the patched 0.7.0+dgxm.npuimport1 that 1.4.0 built locally changed only the version metadata and made the optional-NPU import lazy |
 | yunchang | Apache-2.0 | Runtime dependency installed separately; also required by xfuser |
 | ComfyUI | GPL-3.0 | Runtime host installed separately by the user |
 | Textual | MIT | Optional TUI dependency installed separately |

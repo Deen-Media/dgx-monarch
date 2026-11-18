@@ -145,7 +145,7 @@ these files, since ComfyUI's own `.gitignore` covers `input/`.
 
 Set these paths explicitly, and run this block and every block up to the
 `DGXM` export in one shell, since later blocks read these exports and
-`$XFUSER_WHEELS`. `COMFY_PYTHON` must be the interpreter that starts
+`$INSTALL_TMP`. `COMFY_PYTHON` must be the interpreter that starts
 this ComfyUI checkout. If the intended node-pack path is absent, clone
 `https://github.com/Deen-Media/dgx-monarch.git` there and select the same reviewed
 commit on both hosts. An existing checkout or symlink must pass the inspection
@@ -160,19 +160,16 @@ test -f "$COMFY_DIR/main.py" && test -x "$COMFY_PYTHON"
 ```
 
 Stop if either check fails. Do not substitute another interpreter to make the
-check pass. Prepare the xFuser wheel and torch constraint before any pip
-resolution, then save a dry-run report:
+check pass. Prepare the torch constraint before any pip resolution, then save
+a dry-run report:
 
 ```bash
-XFUSER_WHEELS="$(mktemp -d)"
-"$COMFY_PYTHON" "$REPO_DIR/tools/build_xfuser_compat_wheel.py" \
-  --output-dir "$XFUSER_WHEELS" &&
-  TORCH_DIST_VERSION="$("$COMFY_PYTHON" -c 'from importlib.metadata import version; print(version("torch"))')" &&
-  printf 'torch==%s\n' "$TORCH_DIST_VERSION" > "$XFUSER_WHEELS/torch-constraint.txt" &&
+INSTALL_TMP="$(mktemp -d)"
+TORCH_DIST_VERSION="$("$COMFY_PYTHON" -c 'from importlib.metadata import version; print(version("torch"))')" &&
+  printf 'torch==%s\n' "$TORCH_DIST_VERSION" > "$INSTALL_TMP/torch-constraint.txt" &&
   "$COMFY_PYTHON" -m pip install --dry-run \
-    --report "$XFUSER_WHEELS/install-plan.json" -e "$REPO_DIR" \
-    --find-links "$XFUSER_WHEELS" \
-    --constraint "$XFUSER_WHEELS/torch-constraint.txt"
+    --report "$INSTALL_TMP/install-plan.json" -e "$REPO_DIR" \
+    --constraint "$INSTALL_TMP/torch-constraint.txt"
 ```
 
 Pip resolves the installed distribution metadata. A build from the Python
@@ -195,13 +192,16 @@ After reviewing the plan, run the matching install command:
 
 ```bash
 "$COMFY_PYTHON" -m pip install -e "$REPO_DIR" \
-  --find-links "$XFUSER_WHEELS" \
-  --constraint "$XFUSER_WHEELS/torch-constraint.txt"
+  --constraint "$INSTALL_TMP/torch-constraint.txt"
 ```
 
-The builder downloads the official xfuser 0.7.0 wheel unless `--wheel` names a
-local copy. It checks the SHA-256 and wheel contents, applies the lazy
-optional-NPU-import patch, and produces `xfuser==0.7.0+dgxm.npuimport1`.
+In an environment without xFuser, pip takes stock 0.8.0 from the package
+index. The requirement admits every 0.7 release and 0.8.0, so an environment
+that already holds a 0.7 release keeps it: the patched `0.7.0+dgxm.npuimport1`
+that an install of 1.4.0 built runs until you move it, and any other build,
+stock 0.7.0 among them, makes `dgxm doctor` fail and Worker setup refuse, each
+with the line that installs 0.8.0
+([TROUBLESHOOTING #104](TROUBLESHOOTING.md#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
 The editable install also brings in the exact `torchmonarch` pin
 ([DESIGN.md §6.3](DESIGN.md#63-versioning-and-compatibility-policy)). First
 installation needs network access; it must not replace ComfyUI's CUDA torch.
@@ -246,10 +246,10 @@ and starts no server:
 git -C "$REPO_DIR" rev-parse HEAD
 ```
 
-Copy `$XFUSER_WHEELS/install-plan.json` into the private test record, then
+Copy `$INSTALL_TMP/install-plan.json` into the private test record, then
 remove only the temporary directory created above when it is no longer
-needed. This procedure pins Monarch and xFuser; it does not lock every
-transitive dependency.
+needed. This procedure pins Monarch and installs stock xFuser 0.8.0 where no
+xFuser is installed; it does not lock every transitive dependency.
 
 The INT8 GEMM kernel, on by default for INT8 ConvRot checkpoints, needs the
 Python development headers for `$COMFY_PYTHON` on the driver and on every
@@ -986,10 +986,10 @@ parameter itself and names the fix.
 Offer the optional dgxm TUI during the initial setup questions, alongside the
 launch-script choice. If accepted, prefer one combined install with the `tui`
 extra. Follow the same dry-run and constrained installation procedure above,
-using the verified xFuser wheel and preserved Torch constraint, changing
+using the preserved Torch constraint, changing
 `-e "$REPO_DIR"` to
-`-e "$REPO_DIR[tui]"` in both commands. If the temporary wheel directory has
-already been removed, prepare it again first. Review the dependency plan and
+`-e "$REPO_DIR[tui]"` in both commands. If the temporary constraint directory
+has already been removed, prepare it again first. Review the dependency plan and
 verify torch afterward; do not run an unconstrained extras install. If the
 user declines, leave the extra out. Use the chosen ComfyUI environment rather
 than creating or overwriting another one.
@@ -1000,7 +1000,7 @@ than creating or overwriting another one.
 
 The optional Studio companion (`dgxm-studio`) needs the `studio` extra, which
 adds aiohttp and Pillow. Install it with the same dry-run and constrained
-installation procedure, using the verified xFuser wheel and preserved Torch
+installation procedure, using the preserved Torch
 constraint, and change `-e "$REPO_DIR"` to `-e "$REPO_DIR[studio]"` in both
 commands, or to `-e "$REPO_DIR[tui,studio]"` to add both extras at once.
 Review the dependency plan and verify torch afterward; do not run an
@@ -1182,7 +1182,9 @@ Read this before the first update from 1.4.0, in this order. An install on
 3. This release moves the torchmonarch pin from 0.7.0 to 0.8.0, which
    requires two packages 0.7.0 did not: `nvidia-ml-py`, which item 1 installs
    before the update, and `psutil`, which ComfyUI's own requirements already
-   bring. Gate protocol 14 does not change. A saved Gate
+   bring. Gate protocol 14 does not change. Its xFuser requirement admits the
+   patched build 1.4.0 installed as well as stock 0.8.0, so the update keeps
+   the xFuser you have; stock 0.8.0 goes in after it (item 30). A saved Gate
    grant also names the package version, so the 1.4.0 grants go stale and each
    model, residency and LoRA combination runs its first-use Gate again, once
    ([TROUBLESHOOTING #114](TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
@@ -1265,19 +1267,19 @@ Read this before the first update from 1.4.0, in this order. An install on
     compile cache in `~/.cache/dgx-monarch/inductor`, so a reboot no longer
     repeats the autotune; `TORCHINDUCTOR_CACHE_DIR` places it elsewhere
     ([TROUBLESHOOTING #14](TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
-    The Init node's `sync_ulysses` input has no effect on the pinned xfuser
-    0.7.0, though changing it still reruns setup and the identity gate
+    The Init node's `sync_ulysses` input has no effect on xfuser 0.7.0 or
+    0.8.0, though changing it still reruns setup and the identity gate
     ([Adapters](ADAPTERS.md#what-an-adapter-provides)). The Ideogram 4
     template now leaves it on, as every other shipped template does, so the
     first Ideogram 4 render after the update runs its identity gate once
     more. A workflow saved from the older template keeps the setting off;
     turn it on in its Init node to match
     ([MODELS](MODELS.md#model-ideogram4)).
-13. A Gate PASS now names the torch and CUDA build it was proven under.
-    Neither update mode replaces torch, so keep the driver and every Worker
-    on one build: a pair on two builds refuses a risky render until they
-    match, and a torch change proves each gated combination again on first
-    use
+13. A Gate PASS now names the torch, CUDA and xFuser build it was proven
+    under. Neither update mode replaces torch or xFuser, so keep the driver
+    and every Worker on one build: a pair on two builds refuses a risky render
+    until they match, and a torch or xFuser change proves each gated
+    combination again on first use
     ([TROUBLESHOOTING #8](TROUBLESHOOTING.md#8-version-skew-between-hosts)).
     Update every Worker to this release before the first render, too: a
     fleet whose Workers run two builds of dgx-monarch, such as one still on
@@ -1478,6 +1480,32 @@ Read this before the first update from 1.4.0, in this order. An install on
     ([Studio](STUDIO.md#working-with-workflows)). The `studio` extra does not
     change and neither update mode installs it
     ([Optional Studio companion](#optional-studio-companion)).
+30. Stock xFuser 0.8.0 replaces the patched `0.7.0+dgxm.npuimport1` build
+    that an install of 1.4.0 made with `tools/build_xfuser_compat_wheel.py`,
+    which is gone. The patched build still runs, so the update needs nothing
+    from you here, and `dgxm doctor`'s `xfuser` rows warn on each box that has
+    it and give the line that moves it. Stock xFuser 0.8.0 goes in after the
+    first update from 1.4.0, never before it: xFuser 0.8.0 installs a
+    `tests/conftest.py` that torchmonarch also ships, and the 1.4.0 updater,
+    which runs that update, refuses it in verified mode as a pinned claim
+    with `foreign distribution claims pinned payload` (its plain mode runs no
+    ownership check); this release's updater accepts it
+    ([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+    Neither update mode installs xFuser. After a
+    verified update, first run
+    `"$COMFY_PYTHON" -m pip install -e "$REPO_DIR" --no-deps` on the driver,
+    as item 7 of [Upgrading from 1.1.0](#upgrading-from-110) says: until then
+    its install metadata still names the requirement of release 1.4.0,
+    `xfuser==0.7.0+dgxm.npuimport1`, and pip reports the move as a conflict.
+    Then, while no render runs, on the driver:
+    `"$COMFY_PYTHON" -m pip install --upgrade-strategy only-if-needed xfuser==0.8.0`,
+    and the same line on each Worker host with cluster.toml's `python` in
+    place of `COMFY_PYTHON`; then restart the Workers (in local mode, reset
+    the attached mesh or restart ComfyUI). Move every box: a pair on two
+    builds refuses a risky render until they match (item 13), and the move
+    runs each gated combination's first-use Gate again, once. Worker setup
+    refuses any other build, such as stock 0.7.0, with that line
+    ([TROUBLESHOOTING #104](TROUBLESHOOTING.md#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
 
 ### Upgrading from 1.3.0
 

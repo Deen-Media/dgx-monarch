@@ -22,9 +22,16 @@ installs it, and an update to this pin stops before any change until every
 Python holds it. The 1.4.0 updater names only the first Python that lacks
 it, so install it on every one before you start; this release's updater
 names each
-([INSTALL](docs/INSTALL.md#upgrading-from-140)). Gate protocol 14 does not
-change, but a saved Gate grant names the package version, so each model,
-residency and LoRA combination runs its first-use Gate again, once
+([INSTALL](docs/INSTALL.md#upgrading-from-140)). The xFuser
+requirement now admits stock xFuser 0.8.0 beside the patched build 1.4.0
+installed, so the first update from 1.4.0 keeps the xFuser you have. Stock
+xFuser 0.8.0 goes in after that update, never before it: the 1.4.0 updater's
+verified mode refuses the `tests/conftest.py` it shares with torchmonarch
+([TROUBLESHOOTING #104](docs/TROUBLESHOOTING.md#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
+Gate protocol 14 does not change, but a saved Gate grant names the package
+version, and now the xFuser build too, so each model, residency and LoRA
+combination runs its first-use Gate again, once, and once more after the move
+to xFuser 0.8.0
 ([TROUBLESHOOTING #114](docs/TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
 This release needs ComfyUI 0.45.0 or newer on the driver and on every Worker,
 at the same commit on each
@@ -75,7 +82,7 @@ sections after them list every change.
   eager, and Worker services keep torch inductor's compile cache under
   `~/.cache/dgx-monarch/inductor`
   ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
-- The Init node says `sync_ulysses` has no effect on the pinned xfuser 0.7.0.
+- The Init node says `sync_ulysses` has no effect on xfuser 0.7.0 or 0.8.0.
   The Ideogram 4 template now leaves `sync_ulysses` on, as every other shipped
   template does, so the first Ideogram 4 render after the update runs its
   identity gate once more. A workflow saved from the older template keeps the
@@ -294,10 +301,15 @@ sections after them list every change.
 - On an older ComfyUI a MiniMax H3 file with a stacked output head refuses
   under sequence parallelism, and asks for ComfyUI 0.45.0
   ([TROUBLESHOOTING #147](docs/TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
-- A Gate PASS now names the torch and CUDA build it was proven under, so a
-  pair whose boxes run two builds refuses a risky render until the builds
+- A Gate PASS now names the torch, CUDA and xFuser build it was proven under,
+  so a pair whose boxes run two builds refuses a risky render until the builds
   match
   ([TROUBLESHOOTING #8](docs/TROUBLESHOOTING.md#8-version-skew-between-hosts)).
+- Worker setup refuses an xFuser other than stock 0.8.0 or the patched
+  `0.7.0+dgxm.npuimport1` 1.4.0 built, before it imports xFuser, and names the
+  line that installs 0.8.0. Stock 0.7.0 used to fail later, deep in attention
+  setup
+  ([TROUBLESHOOTING #104](docs/TROUBLESHOOTING.md#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
 - A MiniMax-H3-Image graph that turns the prompt expander on with an empty
   task prompt, or with one that lacks the `{input text}` marker, refuses
   before the model loads
@@ -869,7 +881,7 @@ sections after them list every change.
 - Left and Right on a Studio Recent Outputs tile select the previous or next
   output and show it in the viewer ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 - The Init node's tooltip and description say `sync_ulysses` has no effect on
-  the pinned xfuser 0.7.0; changing it still reruns setup and the identity gate
+  xfuser 0.7.0 or 0.8.0; changing it still reruns setup and the identity gate
   ([Adapters](docs/ADAPTERS.md#what-an-adapter-provides)).
 - The Ideogram 4 template now leaves `sync_ulysses` on, as every other shipped
   template does. It was the one template with the setting off, and the setting
@@ -1166,6 +1178,31 @@ sections after them list every change.
   limits. It installs Torch 2.15.0, and its
   checked baseline comes from its own run. Local CPU checks and native loading pass on 0.8.0;
   hardware checks have not run.
+- Stock xFuser 0.8.0 from the package index replaces the local
+  `0.7.0+dgxm.npuimport1` build: 0.8.0 guards the NPU ring import that stock
+  0.7.0 made while it built CUDA attention, which closes issue 3.
+  `tools/build_xfuser_compat_wheel.py`, its test, its CI steps and its INSTALL
+  blocks are gone; `scripts/setup_env.sh`, INSTALL and CI install 0.8.0 under
+  the torch constraint. The requirement reads `xfuser>=0.7.0,<=0.8.0`, since a
+  local label never takes part in matching and no range names the patched
+  build alone, and `src/dgx_monarch/xfuser_build.py` holds the exact list.
+  `dgxm doctor` gains an `xfuser` row on the driver and on each Worker host,
+  which fails on any other build and warns on the patched build with the line
+  that moves it, and an `xfuser build match` row. The Gate's runtime identity
+  now names the xFuser build beside torch and CUDA, read from package metadata.
+  Gate protocol 14 does not change: the added field already makes every older
+  row read stale through the existing context rule, as the torch build did, so
+  a saved row never vouches across builds and nothing else is burned. Stock
+  0.8.0 will not build the FA or FA3 attention without flash-attn 2.7.0 or
+  FlashAttention-3, where 0.7.0 built it and failed only where it ran: the
+  Worker holds that failure, so a cfg, dp or single render with FA chosen sets
+  up and renders as before, and a sequence parallel one refuses class P at
+  load in the pack's words, never with xFuser's ImportError at setup. A
+  reading of the modules the render path reaches finds no change to attention
+  math, and `sync_ulysses` stays inert. The pair's fidelity controls that
+  compare 0.8.0 with the patched build (a Ulysses, a cfg2, a ring and a
+  compiled render, and FA on cfg2 and uly2) have not run yet
+  ([TROUBLESHOOTING #104](docs/TROUBLESHOOTING.md#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
 - This release needs ComfyUI 0.45.0 or newer. ComfyUI 0.45.0 changed the
   MiniMax H3 output head to take one sigma grid per stream, and the sharded
   H3 forward now passes those grids, built as stock builds them. It reads the

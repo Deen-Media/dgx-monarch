@@ -1,9 +1,9 @@
-"""The torch build a Gate proof ran under, and the notice that names a torch change.
+"""The build a Gate proof ran under, and the notice that names a build change.
 
-Every capability context carries ``runtime``, the driver's torch and CUDA
-build, so a PASS proven under one torch never vouches for another: the
-context string differs and the lookup reads stale. A row written before this
-field existed has none, so it reads stale too, and the reader never parses it
+Every capability context carries ``runtime``, the driver's torch, CUDA and
+xFuser build, so a PASS proven under one build never vouches for another: the
+context string differs and the lookup reads stale. A row written before a
+field existed lacks it, so it reads stale too, and the reader never parses it
 to decide trust. Only the first-use notice below parses old rows, to say why
 the gate runs again.
 """
@@ -13,25 +13,35 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from . import xfuser_build
+
 RUNTIME_FIELD = "runtime"
 
 
 def runtime_build_identity() -> dict[str, str]:
-    """The torch and CUDA build this process imported.
+    """The torch, CUDA and xFuser build this process runs.
 
     On the driver it is the build a capability context names. Every rank
     reports its own through this function, and Gate authority needs each to
     match the driver's (worker_runtime.py), so the context names the build
-    every rank of a proof ran. The NCCL library is left out: torch reports
-    only its build-time NCCL, which the torch version already fixes, and the
-    library an actor loads is unknown to the driver before dispatch; doctor's
-    ``NCCL library`` row compares it.
+    every rank of a proof ran. xFuser comes from package metadata
+    (xfuser_build.py), so the driver, which never imports xFuser, names the
+    build its own Workers' setup accepts. The NCCL library is left out: torch
+    reports only its build-time NCCL, which the torch version already fixes,
+    and the library an actor loads is unknown to the driver before dispatch;
+    doctor's ``NCCL library`` row compares it.
     """
     import torch
 
     version = getattr(torch, "version", None)
     return {"torch": str(getattr(torch, "__version__", "unknown")),
-            "cuda": str(getattr(version, "cuda", None) or "none")}
+            "cuda": str(getattr(version, "cuda", None) or "none"),
+            "xfuser": xfuser_build.installed_version()}
+
+
+def xfuser_words(runtime: dict) -> str:
+    """`` and xFuser 0.8.0`` when a build names its xFuser, else empty (rows before 1.5.0)."""
+    return f" and xFuser {runtime['xfuser']}" if "xfuser" in runtime else ""
 
 
 def _without_runtime(context: Any) -> Any:
@@ -43,18 +53,20 @@ def _without_runtime(context: Any) -> Any:
 def _label(runtime: Any) -> str:
     if not isinstance(runtime, dict):
         return "no recorded torch build"
-    return f"torch {runtime.get('torch', 'unknown')} with CUDA {runtime.get('cuda', 'unknown')}"
+    return (f"torch {runtime.get('torch', 'unknown')} with CUDA {runtime.get('cuda', 'unknown')}"
+            f"{xfuser_words(runtime)}")
 
 
 def torch_change(ledger_dir: str | Callable[[], str], token: tuple[str, ...]) -> str | None:
-    """Say why a stale combination proves again when only the torch build moved.
+    """Say why a stale combination proves again when only the build moved.
 
-    ``ledger_dir`` is the directory or a function that returns it, called
+    The build is ``runtime``: torch, CUDA and xFuser. ``ledger_dir`` is the
+    directory or a function that returns it, called
     inside the guard so a lookup failure cannot fail the ceremony. ``token``
     is the tuple ``gate_ledger.gate_verdict_token`` builds. Only a
     PASS row equal to it in key, artifact digest, ComfyUI commit, package
     source, protocol, package version and every context field but ``runtime``
-    qualifies, so the notice never blames torch for a change it did not cause.
+    qualifies, so the notice never blames the build for a change it did not cause.
     The row's own context must still read ``pass`` to the ledger reader, so a
     later FAIL, RETESTING or other row for it revokes the PASS here as well.
     An unknown ComfyUI commit, an unreadable row or ledger, and any other case

@@ -19,7 +19,7 @@ NORMAL_RENDER_RESIDENCY_CAPABILITY = "normal_render_residency"
 
 
 def physical_capability_context(handle) -> dict:
-    """Physical/config identity and the driver's torch build, shared by grants and preflight.
+    """Physical/config identity and the driver's build, shared by grants and preflight.
 
     The build is the driver's once every rank's setup report agrees with it;
     a pair whose reports differ refuses here (worker_runtime.cohort_runtime).
