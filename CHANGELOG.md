@@ -22,8 +22,7 @@ installs it, and an update to this pin stops before any change until every
 Python holds it. The 1.4.0 updater names only the first Python that lacks
 it, so install it on every one before you start; this release's updater
 names each
-([INSTALL](docs/INSTALL.md#upgrading-from-140)). The required dependencies
-and Gate protocol 14 do not
+([INSTALL](docs/INSTALL.md#upgrading-from-140)). Gate protocol 14 does not
 change, but a saved Gate grant names the package version, so each model,
 residency and LoRA combination runs its first-use Gate again, once
 ([TROUBLESHOOTING #114](docs/TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
@@ -1125,12 +1124,14 @@ sections after them list every change.
   next mesh refused until ComfyUI restarted. The group teardown before it
   keeps its old wait. The stop of a failed mesh creation's cleanup, and of a
   failed bring-up's rollback, waits Monarch's state limit plus 5 s, 65 s at
-  its defaults: on a single-host fleet a stop sent more than about 8 s after
-  the loss confirms once Monarch's state query of the dead host ends, so the
-  cleanup no longer leaves a ComfyUI restart to do. Where the lost host sits
-  beside a live one the stop does not confirm, and these two cleanups then
-  wait up to 65 s for the same unknown outcome, where 0.7.0 waited 30 s and
-  60 s. When the lost host's procs sit beside a live host's,
+  its defaults. Over loopback, with a Worker loop killed on a single-host
+  fleet, a stop sent more than about 8 s after the loss confirmed once
+  Monarch's state query of the dead host ended, so that cleanup left no
+  ComfyUI restart to do; one sent sooner still ends unknown. A powered-off
+  box or a cut link was not measured, and the leg on a pair of Sparks is
+  still to run. Where the lost host sits beside a live one the stop does not
+  confirm, and these two cleanups then wait up to 65 s for the same unknown
+  outcome, where 0.7.0 waited 30 s and 60 s. When the lost host's procs sit beside a live host's,
   0.8.0 ends the stop about 30 s after the stop starts (up to 90 s when the
   stop follows the loss within a minute) without confirming them, and never
   completes it. The pack spawns every proc mesh under a name of its own and

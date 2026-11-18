@@ -618,6 +618,9 @@ driver's torchmonarch into the Python cluster.toml names and run `dgxm
 restart`, which syncs the driver's source to the Workers; in release slots,
 use the forward repair in
 [#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update).
+This torchmonarch also requires `nvidia-ml-py`, which an install with
+`--no-deps` does not bring: install it into that Python as well, or the next
+update stops before any change and names it as missing for that host.
 When the Workers are the newer side, as after a verified update that ended
 `partial`, put the driver's checkout and Python on their release and restart
 ComfyUI (#118 says how for each partial code). When the refusal says `this process loaded
