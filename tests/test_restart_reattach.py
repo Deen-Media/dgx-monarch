@@ -775,14 +775,17 @@ def test_an_exit_inside_the_retires_stop_leaves_the_renders_thread_quiet(
 
 
 @pytest.mark.parametrize(("path", "stage"), [
-    ("heal", "liveness_probe"), ("pinned", "liveness_probe"), ("heal", "attach")])
+    ("heal", "liveness_probe"), ("pinned", "liveness_probe"), ("heal", "liveness_alive"),
+    ("pinned", "liveness_alive"), ("heal", "attach")])
 def test_an_exit_after_the_stop_ends_the_detour_with_the_exit_refusal(
         driver, monkeypatch, path, stage):
-    """The driver begins to exit during the liveness probe (which answers gone)
+    """The driver begins to exit during the liveness probe (which answers gone,
+    or alive as a host whose processes Monarch's exit step is still stopping)
     or during the replacement attach (which the exit then cuts short). The
     render's thread logs no WARNING or ERROR, dials nothing new, and its error
-    is always the exit refusal: not the failed attach's own advice, and not a
-    pinned render's "queue again"."""
+    is always the exit refusal: not the failed attach's own advice, not a
+    pinned render's "queue again", and not the retire's "could not retire",
+    which a probe the exit overtook raised before."""
     import logging
 
     from dgx_monarch import driver_exit
@@ -796,7 +799,9 @@ def test_an_exit_after_the_stop_ends_the_detour_with_the_exit_refusal(
     keep.emit = kept.append  # type: ignore[method-assign]
     loggers = [logging.getLogger(name) for name in _EXIT_PATH_LOGGERS]
     real_probe, real_live, attaches = mesh_liveness.probe_fleet, mesh_mod.ensure_live, []
-    if stage == "liveness_probe":
+    if stage == "liveness_alive":
+        driver.liveness = mesh_liveness.ALIVE
+    if stage.startswith("liveness"):
         def probe(handle, **kwargs):
             kept.clear()  # what the stop logged came before the exit
             driver_exit._EXITING.set()  # the exit hook ran while the probe read the hosts
@@ -826,9 +831,223 @@ def test_an_exit_after_the_stop_ends_the_detour_with_the_exit_refusal(
     loud = [record.getMessage() for record in kept
             if record.thread == threading.get_ident() and record.levelno >= logging.WARNING]
     text = str(raised.value)
-    assert "the driver is exiting, so this render stops here" in text and "queue again" not in text
+    assert "the driver is exiting, so this render stops here" in text
+    assert "queue again" not in text and "could not retire" not in text
     assert loud == [], loud  # nothing above INFO after the exit began
     assert len(driver.dials) == 1 and attaches == []  # no attach was even begun
+
+
+def _exit_rig(driver, monkeypatch):
+    """A fresh exit flag, the real log methods through their filters, and a count of
+    the id readings. Each reading is one ``listener_generation.fleet`` call, which on
+    the pair asks every host over ssh in turn. ``exit_on_read`` sets the flag inside
+    the reading, as the exit hook would while it asks the hosts; ``readings`` stands
+    in for what the hosts answer. ``listen`` starts the count and keeps every record
+    on the detour's loggers from then on; ``loud`` is this thread's WARNING and ERROR
+    records."""
+    import logging
+
+    from dgx_monarch import driver_exit
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())  # a fresh flag, undone after
+    for logger in (mesh_mod.log, restart_reattach.log):  # the real methods, through the filters
+        for level in ("info", "warning"):
+            monkeypatch.delattr(logger, level, raising=False)
+    rig = SimpleNamespace(kept=[], reads=0, exit_on_read=False, readings=None,
+                          flag=driver_exit._EXITING)
+
+    def reading(_config, **_kwargs):
+        rig.reads += 1
+        if rig.exit_on_read:
+            rig.flag.set()
+        return rig.readings if rig.readings is not None else _readings(driver.ids)
+
+    def listen() -> None:
+        rig.reads = 0  # the first attach's own reading came before
+        keep = logging.Handler()
+        keep.emit = rig.kept.append  # type: ignore[method-assign]
+        for name in _EXIT_PATH_LOGGERS:
+            logger = logging.getLogger(name)
+            monkeypatch.setattr(logger, "handlers", [*logger.handlers, keep])
+
+    def loud() -> list[str]:
+        return [record.getMessage() for record in rig.kept
+                if record.thread == threading.get_ident() and record.levelno >= logging.WARNING]
+
+    monkeypatch.setattr(listener_generation, "fleet", reading)
+    rig.listen, rig.loud = listen, loud
+    return rig
+
+
+def _first_reading_site(site: str, handle, error, fleet):
+    """Run the price's restart check, the heal or a pinned retire, each of which reads
+    the loops' ids first: the check after a SupervisionError, the other two on a
+    delivery failure, which carries no reading."""
+    if site == "price_check":
+        return capacity_agreement.collect(fleet, {}, 2, deadline_s=5.0)
+    if site == "heal":
+        return restart_reattach.heal(handle, error)
+    return restart_reattach.refuse_pinned(handle, error)
+
+
+_EXIT_REFUSAL = "the driver is exiting, so this render stops here"
+
+
+@pytest.mark.parametrize("site", ["price_check", "heal", "pinned"])
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_at_exit_the_first_id_reading_never_starts(driver, monkeypatch, site, exiting):
+    """ComfyUI begins to exit after the price failed and before the restart check,
+    the heal or a pinned render's retire reads the loops' ids. None of them starts
+    that reading, which on the pair asks each host over ssh with up to 3 s per host:
+    each ends at once in the exit refusal, with no WARNING or ERROR on the render's
+    thread, no eviction, no stop, no attach and no telemetry. On the commit before,
+    each read every host first. Not exiting, each reads once and goes on as before:
+    the check raises the heal's error with its reading, the heal attaches by the
+    new ids, and a pinned render retires the stale mesh and asks for a re-queue."""
+    rig = _exit_rig(driver, monkeypatch)
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    error = _delivery_error(driver)  # every loop restarted; the error carries no reading
+    fleet = _Fleet({0: _supervision_error(), 1: _supervision_error()})
+    rig.listen()
+    if exiting:
+        rig.flag.set()  # the exit hook ran after the price failed
+        with pytest.raises(WorkerDeliveryError) as raised:
+            _first_reading_site(site, handle, error, fleet)
+        assert _EXIT_REFUSAL in str(raised.value)
+        assert getattr(raised.value, "moves", None) is None  # nothing for the heal to trust
+        assert rig.reads == 0 and rig.loud() == [], rig.loud()
+        assert fleet.evicting == [] and handle.defunct is False
+        assert driver.procs[0].stops == [] and len(driver.dials) == 1 and driver.events == []
+        return
+    if site == "heal":
+        outcome = _first_reading_site(site, handle, error, fleet)
+        assert outcome.handle is not handle and len(driver.dials) == 2
+        assert any(text.startswith("restart_reattach outcome=attached") for text in rig.loud())
+    else:
+        with pytest.raises(WorkerDeliveryError) as raised:
+            _first_reading_site(site, handle, error, fleet)
+        assert _EXIT_REFUSAL not in str(raised.value) and len(driver.dials) == 1
+        if site == "price_check":
+            assert raised.value.moves.verdict == restart_reattach.ALL and fleet.evicting == []
+        else:
+            assert "The Worker loops restarted; queue again" in str(raised.value)
+            assert any("outcome=retired" in text for text in rig.loud()), rig.loud()
+    assert rig.reads == (2 if site == "heal" else 1)  # the heal's replacement attach reads its own
+
+
+@pytest.mark.parametrize("site", ["price_check", "heal", "pinned"])
+@pytest.mark.parametrize("found", ["partial", "unknown", "none"])
+def test_a_reading_the_exit_overtakes_ends_in_the_exit_refusal(driver, monkeypatch, site, found):
+    """The driver begins to exit while the loops' ids are read, and the reading
+    finds that not every loop restarted, or an id it could not read. The checks
+    that follow a full restart never run then. On the commit before, the user got
+    that verdict's own words while ComfyUI closed: the price went on to its
+    evicting wait and refused as a fleet that did not answer, the heal named the
+    verdict's remedy (restart the loops together, queue again once each publishes
+    its id, or press Reset), and a pinned render raised the price's refusal. Now
+    each ends in the exit refusal after that one reading, with no eviction, no stop,
+    no attach and no WARNING or ERROR on the render's thread."""
+    rig = _exit_rig(driver, monkeypatch)
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    error = _delivery_error(driver, {"partial": {A: NEW[A], B: OLD[B]}, "none": OLD}.get(found))
+    if found == "unknown":
+        rig.readings = _readings(NEW)
+        rig.readings[A] = {"gen": "unknown", "error": "ssh failed"}
+    fleet = _Fleet({0: _supervision_error(), 1: _supervision_error()})
+    rig.exit_on_read = True
+    rig.listen()
+    with pytest.raises(WorkerDeliveryError) as raised:
+        _first_reading_site(site, handle, error, fleet)
+    text = str(raised.value)
+    assert _EXIT_REFUSAL in text
+    for today in ("dgxm restart", "Reset attached mesh", "publishes its id", "queue again"):
+        assert today not in text
+    assert rig.reads == 1 and rig.loud() == [], rig.loud()
+    assert fleet.evicting == [] and handle.defunct is False
+    assert driver.procs[0].stops == [] and len(driver.dials) == 1 and driver.events == []
+
+
+def _owned_submit(monkeypatch, handle, error, during=None):
+    """The real submit_render for a sampler render that owns its session, with the
+    real heal: its dispatch binds ``handle``, runs ``during``, meets ``error``, and
+    any later dispatch answers."""
+    from dgx_monarch.nodes import recycle_drain, render_submit
+
+    dispatches: list[int] = []
+
+    def guarded(model, request, latent, cfg, steps, seq, depth, progress, handoff, guard,
+                *, adoption_context=None):
+        dispatches.append(1)
+        guard.handle = handle
+        guard.dispatch_started = True
+        if len(dispatches) > 1:
+            return "pending"
+        if during is not None:
+            during()
+        raise error
+
+    monkeypatch.setattr(render_submit, "_submit_render_guarded", guarded)
+    monkeypatch.setattr(recycle_drain, "drop_residency_memos", lambda: None)
+    with pytest.raises(WorkerDeliveryError) as raised:
+        render_submit.submit_render(None, {}, {}, None, 1)
+    return raised.value, dispatches
+
+
+@pytest.mark.parametrize(("render", "when"), [
+    ("owned", "price_check"), ("pinned", "price_check"), ("owned", "after_the_price"),
+    ("pinned", "after_the_price"), ("owned", "during_the_replacement_attach")])
+def test_through_the_submit_path_an_exit_starts_no_reading_and_no_second_dispatch(
+        driver, monkeypatch, render, when):
+    """Through the real submit path and the real detours, for a sampler render that
+    owns its session and for one in a claimed Pipeline or Gate session. The exit
+    begins before the price's restart check, or after the price raised a delivery
+    failure and before the detour runs: the price's exit refusal goes to the
+    guard's eviction, which does nothing at exit, and on to the detour, which
+    stands down again; or the delivery failure reaches a detour that reads nothing.
+    Either way no id is read, nothing is stopped or attached, and the render ends
+    in the exit refusal. The exit can also begin while the replacement attach
+    dials, which then succeeds: the render does not dispatch again on the new
+    mesh, where on the commit before it did."""
+    rig = _exit_rig(driver, monkeypatch)
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    during = None
+    if when == "price_check":
+        rig.flag.set()
+        try:
+            try:
+                raise _supervision_error()
+            except Exception as failure:
+                restart_reattach.refuse_if_restarted(handle, failure, 2.0, 30.0)
+        except WorkerDeliveryError as exc:
+            error = exc
+    else:
+        error = _delivery_error(driver)
+        if when == "after_the_price":
+            during = rig.flag.set
+        else:
+            real_live = mesh_mod.ensure_live
+
+            def ensure_live(*args, **kwargs):
+                fresh = real_live(*args, **kwargs)
+                rig.kept.clear()  # the stop's lines came before the exit
+                rig.flag.set()  # the exit hook ran while the attach dialed
+                return fresh
+
+            monkeypatch.setattr(mesh_mod, "ensure_live", ensure_live)
+    rig.listen()
+    if render == "owned":
+        refusal, dispatches = _owned_submit(monkeypatch, handle, error, during)
+    else:
+        refusal, events = _pinned_submit(monkeypatch, handle, error, during)
+        dispatches = [event for event in events if event == "dispatch"]
+    assert _EXIT_REFUSAL in str(refusal) and "queue again" not in str(refusal)
+    assert len(dispatches) == 1  # never a second dispatch
+    assert rig.loud() == [], rig.loud()
+    if when == "during_the_replacement_attach":
+        assert rig.reads == 2 and len(driver.dials) == 2  # the heal's and the attach's; nothing after
+        return
+    assert rig.reads == 0 and handle.defunct is False
+    assert driver.procs[0].stops == [] and len(driver.dials) == 1 and driver.events == []
 
 
 def test_a_real_handle_evicted_with_its_stop_done_heals_without_a_second_stop(driver):

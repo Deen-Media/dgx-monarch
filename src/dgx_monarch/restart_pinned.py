@@ -49,7 +49,8 @@ def refuse_pinned(handle: Any, refused: WorkerDeliveryError) -> NoReturn:
     ``refused`` carries the restart check's reading, or is a delivery failure read here
     with ``PRECHECK_PROBE_S``. A full restart with nothing in ``_held`` is retired by
     ``_retire``; otherwise the fleet is left as before (the check's error is evicted).
-    Quiet at exit, as the heal is.
+    Quiet at exit, as the heal is; once the driver is exiting it reads no id and
+    ends in the exit refusal.
     """
     from . import restart_reattach as rr
 
@@ -59,7 +60,9 @@ def refuse_pinned(handle: Any, refused: WorkerDeliveryError) -> NoReturn:
     if handle is None:
         raise refused
     if not isinstance(moves, rr.Moves):
+        rr._stand_down_at_exit(refused)  # no id reading over ssh once the driver is exiting
         moves = rr.read_moves(getattr(handle, "config", None), timeout=rr.PRECHECK_PROBE_S)
+    rr._stand_down_at_exit(refused)  # at exit, after a reading too: no lock wait, the exit's refusal
     held = _held(handle) if moves.verdict == rr.ALL else moves.verdict
     if held:
         from . import mesh_helpers, mesh_teardown

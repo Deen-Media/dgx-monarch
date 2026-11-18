@@ -220,10 +220,14 @@ def refuse_if_restarted(handle: Any, failure: BaseException, waited_s: float,
     Reads every loop's id once, with ``PRECHECK_PROBE_S`` per host. When each
     serves a new id, raises the ``WorkerDeliveryError`` that a sampler render
     or the eager load catches to attach again, carrying the reading for
-    ``heal``. Writes one ``attach_trace event=restart_check`` line either way.
+    ``heal``. Writes one ``attach_trace event=restart_check`` line either way,
+    except at exit: once the driver is exiting it reads nothing and raises the
+    exit refusal, as it does for any reading the exit overtook.
     """
     started = time.monotonic()
+    _stand_down_at_exit(failure)  # no id reading over ssh once the driver is exiting
     moves = read_moves(getattr(handle, "config", None), timeout=PRECHECK_PROBE_S)
+    _stand_down_at_exit(failure)  # a reading the exit overtook: the exit's refusal, not the price's
     log.info("%s", attach_trace.line(
         CHECK_EVENT, seq=0, verdict=moves.verdict, moved=list(moves.moved),
         kept=list(moves.kept), unknown=len(moves.unknown), waited_s=waited_s,
@@ -372,6 +376,7 @@ def _retire(handle: Any, moves: Moves, refused: BaseException) -> str:
         return "stop_confirmed"
     if mesh_liveness.try_release(handle):
         return "liveness_release"
+    _stand_down_at_exit(refused)  # a probe the exit overtook: the exit's refusal, not its answer's
     _refuse_retire(handle, moves, refused)
 
 
@@ -420,7 +425,8 @@ def heal(handle: Any, refused: BaseException, *,
     the check found. ``respawn`` attaches the new mesh (``mesh.ensure_live`` by
     default; the loader prices first). An attach failure propagates as raised.
     Once the driver is exiting, its thread logs nothing (driver_exit) and the
-    detour stands down at the next step, with no probe and no attach.
+    detour stands down at the next step: no id reading, stop, probe or attach
+    starts, and no dispatch follows on a mesh the exit overtook.
     """
     from .mesh import ensure_live
 
@@ -428,7 +434,9 @@ def heal(handle: Any, refused: BaseException, *,
     # refuse_if_restarted read every loop's id moments ago; read again otherwise.
     moves = getattr(refused, "moves", None)
     if not isinstance(moves, Moves):
+        _stand_down_at_exit(refused)  # no id reading over ssh once the driver is exiting
         moves = read_moves(getattr(handle, "config", None))
+    _stand_down_at_exit(refused)  # a reading the exit overtook: the exit's refusal, not its remedy
     if moves.verdict != ALL:
         _record("refused", moves, started, reason=moves.verdict)
         _refuse_moves(handle, moves, refused)
@@ -445,6 +453,7 @@ def heal(handle: Any, refused: BaseException, *,
         _record("failed", moves, started, seq=attach_trace.last_sequence(),
                 teardown=teardown, reason=type(exc).__name__)
         raise
+    _stand_down_at_exit(refused)  # an attach the exit overtook: no dispatch on the new mesh
     wall = _record("attached", moves, started, seq=attach_trace.last_sequence(),
                    teardown=teardown)
     return Reattached(fresh, wall, moves.moved, teardown)
