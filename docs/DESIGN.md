@@ -199,12 +199,26 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
 - Worker identity is per start. Each Worker loop start serves
   `<proc-id>@tcp://<fabric-ip>:<port>` with a new Monarch proc id
   (`worker_proc_id.py`) and records the id in its actor ledger loop record
-  before it listens. The driver dials only an id it read from that host's
-  listener-generation probe for the current attempt, and keeps every
-  bookkeeping key (the released check, the attach trace, errors) on the bare
-  address. When the first reading of an attach lacks a loop's id, the attach
-  refuses before anything dials, with its own type, `WorkerProcIdError`, and
-  the session stays usable. The first dial to a loop whose id changed since
+  before it listens, with the torchmonarch version it imported. The driver
+  dials only an id it read from that host's listener-generation probe for the
+  current attempt, and keeps every bookkeeping key (the released check, the
+  attach trace, errors) on the bare address. When the first reading of an
+  attach lacks a loop's id, or names a torchmonarch other than the one the
+  driver loaded, or none, the attach refuses before anything dials, with
+  its own type, `WorkerProcIdError`, and the session stays usable; the
+  reading after a failed first attempt refuses the same way on a version,
+  with no second attempt and no restart. The driver reads its torchmonarch
+  version once, at its first mesh build after torchmonarch is loaded, and
+  its admission compares the pin with that reading, so an install under a
+  running ComfyUI refuses until a restart. On Linux that reading also
+  compares the native binding the process mapped (`/proc/self/maps`) with
+  the file on disk and refuses when a reinstall replaced it, whichever came
+  first. Where that list cannot be read, or the reading is taken while an
+  install is under way (the old file still mapped under pip's stash path
+  settles nothing), the reading is the version installed at that moment.
+  The two torchmonarch releases checked against each other did not
+  attach: the config push waited out its budget and nothing in Monarch
+  named the cause (docs/TROUBLESHOOTING.md #8). The first dial to a loop whose id changed since
   this driver last dialed it is primed with one throwaway message. The driver
   still enables one process transport, once, so it re-attaches to a restarted
   loop only within Monarch's message delivery timeout; beyond it the recovery
@@ -4182,9 +4196,19 @@ Skills call `dgxm` rather than reimplementing operations.
 
 ### 6.3 Versioning and compatibility policy
 
-- semver; `dgxm doctor` enforces matching Monarch and Torch versions across
-  hosts, and Gate authority refuses a pair whose torch or CUDA builds differ
-  (section 5.2).
+- semver. `dgxm doctor` compares each torchmonarch reading with the pin, not
+  with the other hosts. It fails its `torchmonarch` row when the driver's
+  installed version is not the pin or none is installed; a host's `env` row
+  when the torchmonarch in that Worker's environment is not the pin, or
+  torch or torchmonarch is missing there, or its ComfyUI folder is absent;
+  a host's `listener
+  generation` row when the running loop recorded a torchmonarch other than
+  the pin, or none, or one it could not parse (a reading the probe could not
+  take is an unobserved warning); and `torch version match` when the driver
+  and the hosts report different torch versions. Each row shows the versions
+  it read. The attach refuses a loop on a torchmonarch other than the one
+  the driver loaded before it dials (section 5.1), and Gate authority
+  refuses a pair whose torch or CUDA builds differ (section 5.2).
 - torchmonarch is pinned and bumped with a changelog entry per bump; the
   developer skill documents the introspection-first upgrade process.
 - xFuser is pinned to the local `0.7.0+dgxm.npuimport1` compatibility wheel

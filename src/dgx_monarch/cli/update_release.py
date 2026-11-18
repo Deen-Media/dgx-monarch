@@ -23,6 +23,7 @@ from .update_installation import (
     start_prior_installation,
     stop_installation,
 )
+from .update_pin_diagnostic import PinDiagnostic
 from .update_release_finalize import finalize_release
 from .update_release_switch import (
     activate_hosts,
@@ -50,6 +51,7 @@ from .update_transaction import Certainty, OperationResult
 from .update_worker_attestation import (
     WorkerReleaseIdentity,
     release_attestation_script,
+    remote_release_check,
     remote_release_matches,
     site_tree_digest,
     verifier_tree_digest,
@@ -74,6 +76,9 @@ class ReleaseManager:
         self._state_root = state_root or Path.home() / ".local" / "state" / "dgx-monarch" / "update-staging"
         self._token_factory = token_factory
         self.slot: ReleaseSlot | None = None
+        # (host name, ownership refusal or None) for each host whose prior
+        # attestation did not match; the update names them beside prior_worker_drift.
+        self.prior_refusals: list[tuple[str, PinDiagnostic | None]] = []
 
     def ensure_supported(self) -> None:
         error = remote_colocation_error(self.config.hosts, lifecycle._is_local)
@@ -135,6 +140,7 @@ class ReleaseManager:
         slot.prior_metadata = None
         slot.prior_pin_payload_digest = ""
         slot.installations = {}
+        self.prior_refusals = []
         _validate_metadata(metadata)
         identity = WorkerReleaseIdentity(
             metadata.version, metadata.torchmonarch_pin,
@@ -144,16 +150,19 @@ class ReleaseManager:
         tools = self._remote(slot.token, "verifier")
         snapshots = {host.name: capture_installation(self.config, host, self._host_run) for host in self.config.hosts}
         if any(value is None for value in snapshots.values()):
+            self.prior_refusals = [(name, None) for name, value in snapshots.items() if value is None]
             return False
         slot.installations = {name: value for name, value in snapshots.items() if value is not None}
-        matched = all(
-            remote_release_matches(
+        matched = True
+        for host in self.config.hosts:  # every host, so each refusal is named
+            host_matched, refusal = remote_release_check(
                 self.config, host, site=slot.installations[host.name]["site"], tools=tools, identity=identity,
                 captured_site=True,
                 host_runner=self._host_run, verifier_digest=slot.verifier_digest,
             )
-            for host in self.config.hosts
-        )
+            if not host_matched:
+                self.prior_refusals.append((host.name, refusal))
+            matched = matched and host_matched
         if matched:
             slot.prior_metadata = metadata
             slot.prior_pin_payload_digest = pin_payload_digest

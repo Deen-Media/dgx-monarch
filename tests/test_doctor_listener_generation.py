@@ -19,6 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from dgx_monarch import TORCHMONARCH_PIN
 from dgx_monarch.cli import doctor, listener_generation
 from dgx_monarch.cli.probe_certainty import OK, UNOBSERVED, WARN, probe_row
 
@@ -32,7 +33,7 @@ def _reading(**overrides) -> dict[str, str]:
         "gen": "5c4ab03463a9", "loop_pid": "4242", "age_s": "612",
         "listening": "true", "unit_state": "active", "unit_restarts": "0",
         "unit_started": "Mon_2026-09-07_10:11:12_UTC", "marker": "match",
-        "proc_id": "5c4ab03463a91f07",
+        "proc_id": "5c4ab03463a91f07", "monarch": TORCHMONARCH_PIN,
     }
     fields.update(overrides)
     return fields

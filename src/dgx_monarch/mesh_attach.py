@@ -49,6 +49,14 @@ def attach_cluster(runtime: dict[str, Any], config: ClusterConfig, handoff: Any)
             "into ComfyUI's Python with the docs/INSTALL.md install block; a bare `pip install -r "
             "requirements.txt` can pick another Python and cannot find the patched xfuser wheel the guide builds."
         ) from exc
+    from .monarch_capabilities import loaded_version
+
+    try:
+        # Read once per attach: every id reading below compares each loop with it.
+        monarch = loaded_version()
+    except RuntimeError:
+        factory.safe_transport_failure(handoff)
+        raise
     if config.transport_security != "trusted_fabric":
         factory.safe_transport_failure(handoff)
         raise error_type(
@@ -113,7 +121,7 @@ def attach_cluster(runtime: dict[str, Any], config: ClusterConfig, handoff: Any)
                         "ComfyUI before retrying") from exc
         with attach_trace.active(trace):
             return _attach_and_retry(
-                runtime, config, handoff, addresses, trace, released=released)
+                runtime, config, handoff, addresses, trace, released=released, monarch=monarch)
 
 
 def snapshot_generations(config: ClusterConfig, trace: attach_trace.AttachTrace,
@@ -138,15 +146,16 @@ def snapshot_generations(config: ClusterConfig, trace: attach_trace.AttachTrace,
 
 
 def read_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,
-              *, attempt: int) -> list[str]:
+              *, attempt: int, monarch: str) -> list[str]:
     """Each loop's id value, in host order, read just before this attempt.
 
-    Raises ``worker_proc_id.WorkerProcIdError`` before anything dials when a
-    loop's current id is unknown. Every bookkeeping key stays the bare
-    address; only the dial carries the id.
+    Raises ``worker_proc_id.WorkerProcIdError`` before this attempt dials when
+    a loop's current id is unknown, or when a loop runs a torchmonarch other
+    than ``monarch``, the one this driver loaded. Every bookkeeping key stays
+    the bare address; only the dial carries the id.
     """
     readings = snapshot_generations(config, trace, phase=f"before_attach_{attempt}")
-    return worker_proc_id.read_values(config.hosts, readings)
+    return worker_proc_id.read_values(config.hosts, readings, monarch=monarch)
 
 
 def _traced_attach(runtime: dict[str, Any], config: ClusterConfig,
@@ -179,7 +188,7 @@ def _traced_attach(runtime: dict[str, Any], config: ClusterConfig,
 
 
 def _read_retry_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,
-                     dialed: list[str]
+                     dialed: list[str], *, monarch: str,
                      ) -> tuple[list[str] | None, worker_proc_id.WorkerProcIdError | None]:
     """Read the ids again after a failed attempt; name every loop that moved.
 
@@ -187,7 +196,7 @@ def _read_retry_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,
     more attempt with the new id can win where the first could not.
     """
     try:
-        values = read_dial(config, trace, attempt=2)
+        values = read_dial(config, trace, attempt=2, monarch=monarch)
     except worker_proc_id.WorkerProcIdError as exc:
         return None, exc
     moved = [host.address
@@ -200,13 +209,16 @@ def _read_retry_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,
 
 def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: Any,
                       addresses: list[str], trace: attach_trace.AttachTrace,
-                      *, released: bool):
+                      *, released: bool, monarch: str):
     """Heal, read each loop's id, and attach, at most twice.
 
     The first read refuses before anything dials when an id is unknown, and
     leaves the session usable. A reading after a failed first attempt that
     finds no id ends the attach there: the dial already ran, so the session is
-    poisoned. A replacement for a fleet this driver released gets one attempt
+    poisoned. One that finds a loop on another torchmonarch than ``monarch``
+    refuses instead: a restart or a retry cannot change a loop's version, so
+    nothing restarts and the session stays usable. A replacement for a fleet
+    this driver released gets one attempt
     unless a loop came back with a new id since the dial: a loop that
     restarted inside the delivery timeout re-attaches at once, and one that
     stayed down longer leaves this driver's channel to it closed, so a retry
@@ -229,7 +241,7 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
                 f"pre-attach Worker-service auto-heal failed ({evidence}); no worker "
                 "attach was attempted, so fix the lifecycle/SSH error and retry") from exc
     try:
-        dial = read_dial(config, trace, attempt=1)
+        dial = read_dial(config, trace, attempt=1, monarch=monarch)
     except worker_proc_id.WorkerProcIdError as exc:
         # Nothing dialed, so the transport carries no failed attach and the
         # next render reads the ids again.
@@ -246,7 +258,19 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
                 f"cluster attach failed: {first_evidence}")
             trace.closed("poisoned", stage="attach_1", evidence=first_evidence)
             raise
-        retry_dial, refusal = _read_retry_dial(config, trace, dial)
+        retry_dial, refusal = _read_retry_dial(config, trace, dial, monarch=monarch)
+        if refusal is not None and refusal.skew:
+            # No poison: the next attach stands where an in-process second attempt
+            # would, on this transport over the same leftovers. A loop whose version
+            # changed restarted, so it serves a new id and is primed first, and while
+            # the versions differ the next render refuses before it dials.
+            factory.safe_transport_failure(handoff)
+            trace.closed("refused", stage="proc_id_reread", evidence=first_evidence)
+            raise worker_proc_id.WorkerProcIdError(
+                f"the first attach failed ({first_evidence}), and the id reading after it "
+                f"found {refusal.skew}. No second attach ran and no Worker was restarted; "
+                f"this ComfyUI session stays usable ({worker_proc_id.VERSION_ENTRY}).",
+            ) from first_exc
         # No second dial runs when the reading found no id, or when a released
         # fleet's loops kept their ids (see the docstring above).
         if retry_dial is None or (released and retry_dial == dial):

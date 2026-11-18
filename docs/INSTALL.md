@@ -1160,9 +1160,21 @@ Read this before the first update from 1.4.0, in this order. An install on
 1.3.0 or older follows the sections below as well.
 
 1. The first update from 1.4.0 runs the 1.4.0 updater, the `dgxm` installed
-   now. Neither update mode changes in this release, so the release-slot
-   refusal, the dependency checks and the process scan work as they do on
-   1.4.0.
+   now, so its release-slot refusal, dependency checks, ownership check and
+   process scan govern that update; what this release changes in the verified
+   update applies from the next one. Before you start it, install
+   `nvidia-ml-py` into the driver's Python, `"$COMFY_PYTHON" -m pip install nvidia-ml-py`,
+   and the same into the Python cluster.toml names on every Worker host; it is
+   pure Python and needs nothing else. A torchmonarch pin of 0.8.0 or newer
+   requires it, neither update mode installs it, and until every Python holds
+   it an update to such a pin stops before any change. The 1.4.0 updater
+   names only the first Python that lacks it, so install it on every one
+   before you start; this release's updater names each. If the
+   1.4.0 updater stops with "foreign distribution inventory is ambiguous",
+   reinstall the package it names as
+   [TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)
+   says, or run this release's updater from a checkout of this release with
+   [the recovery procedure](TROUBLESHOOTING.md#recover-an-installation-with-an-older-verifier).
 2. If your Workers run from release slots, update only with
    `dgxm update --verify`, as [Upgrading from 1.2.0](#upgrading-from-120)
    describes
@@ -1368,11 +1380,21 @@ Read this before the first update from 1.4.0, in this order. An install on
     of restoring the old one
     ([TROUBLESHOOTING #1](TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout)).
     `dgxm setup`'s cleanup of a reserved release slot refuses, and keeps the
-    slot, when its site holds anything beside the package. A verified update
-    that stops with "foreign distribution inventory is ambiguous" names a
-    package installed under `PYTHONPYCACHEPREFIX`; reinstall it without the
-    prefix
+    slot, when its site holds anything beside the package. From this release
+    a verified update accepts the bytecode entries pip records under
+    `PYTHONPYCACHEPREFIX`. Every package-ownership refusal names its cause,
+    on the driver and per Worker host, and four also say what clears it: an
+    entry outside site-packages, a malformed RECORD, a package installed
+    twice and a missing shared file; the others ask you to inspect that
+    package. A Worker host whose release differs is named on a line of its
+    own even when no package check refused
     ([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+    The attach refuses, before it dials, a Worker loop on a torchmonarch other
+    than the one the driver loaded, and doctor's `listener generation` row
+    shows the torchmonarch each running loop imported. The driver keeps the
+    version it loaded, so after the pin is installed under a running ComfyUI,
+    restart ComfyUI
+    ([TROUBLESHOOTING #8](TROUBLESHOOTING.md#8-version-skew-between-hosts)).
 22. A Worker's six diagnostic switches, `DGXM_DISABLE_CONTEXT_ROOM`,
     `DGXM_DISABLE_COPY_FREE_DROP` and `DGXM_DISABLE_BACKUP_FREE` among them,
     are set in `~/.config/dgx-monarch/worker.env` on that Worker's box, as
@@ -1701,10 +1723,21 @@ update from any process, in either mode, refuses before it changes anything.
 
 A pin check that encounters a conflicting distribution or invalid inventory
 reports a bounded package name and relative path locally when they are safe
-to show. Inspect that distribution in the selected environment and plan its
-repair separately; the updater does not weaken ownership checks or repair
-third-party packages. The sanitized receipt retains the stable
-`driver_pin_drift` code, without those local details.
+to show, with what clears it where the cause is known. An inventory listing
+files outside site-packages that are not pip's bytecode for its own sources
+names them as the `../` rows of its RECORD, which a reinstall writes again;
+a malformed inventory asks for a reinstall; a distribution installed twice
+asks you to remove every copy and install one; a missing file torchmonarch
+shares with another distribution asks for a torchmonarch reinstall
+([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+A Worker whose check refuses the same way prints its host name, the cause and
+the remedy above `prior_worker_drift`, and a Worker whose release differs for
+another reason, such as its payload digest, prints its host name and that its
+release differs. Otherwise inspect that distribution in
+the selected environment and plan its repair separately; the updater does not
+repair third-party packages. The sanitized receipt retains the stable
+`driver_pin_drift` or `prior_worker_drift` message, without those local
+details.
 
 For a cluster running from a Git source checkout, `dgxm update --verify`
 supports remote Workers and one Worker on the driver's host. It first copies
@@ -1731,7 +1764,9 @@ unchanged config, and refuses while ComfyUI, a Render session, a lease, or an
 actor is active, or when the evidence to decide that is missing. It then puts
 the target in a detached private worktree, confirms that every declared target
 dependency other than torchmonarch is already satisfied on the driver and on
-every host, builds a private release of the package and its exact torchmonarch
+every host (otherwise it names each requirement and the interpreter that
+failed it, `driver` or `host_<n>`, and refuses with
+`target_dependencies_unsatisfied`), builds a private release of the package and its exact torchmonarch
 pin, stages it on every Worker host, and reads each copy back. It downloads the
 prior and target exact torchmonarch wheels and installs each into a private
 verification site with offline `--no-index --no-deps`. The live driver pin

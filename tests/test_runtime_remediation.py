@@ -1468,11 +1468,13 @@ def _no_generation_probe(monkeypatch):
     canned and no test here reaches the network.
     """
     from dgx_monarch.cli import listener_generation
+    from dgx_monarch.monarch_capabilities import loaded_version
 
     monkeypatch.setattr(
         listener_generation, "fleet",
         lambda config, **_kwargs: {host.address: {"gen": "aaaaaaaaaaaa",
-                                                  "proc_id": "aaaaaaaaaaaa0001"}
+                                                  "proc_id": "aaaaaaaaaaaa0001",
+                                                  "monarch": loaded_version()}
                                    for host in config.hosts})
 
 

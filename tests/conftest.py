@@ -263,6 +263,15 @@ def _monarch_policy_starts_unadmitted(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _loaded_monarch_identity_starts_unread(monkeypatch):
+    """The torchmonarch a process loaded is read once and kept for its life
+    (``monarch_capabilities.loaded_version``); each test starts unread, as a fresh process."""
+    from dgx_monarch import monarch_capabilities
+
+    monkeypatch.setattr(monarch_capabilities, "_LOADED", None)
+
+
+@pytest.fixture(autouse=True)
 def _attach_dial_history_starts_empty(monkeypatch):
     """The ids a driver last dialed live as long as its process; each test starts fresh.
 

@@ -784,12 +784,14 @@ def attach_rig(monkeypatch):
     # runner. Canned here so the rig stays free of ssh, and the process-lifetime
     # readings start empty so no earlier test's reading is compared against.
     monkeypatch.setattr(attach_trace, "_LAST_SEEN", {})
+    from dgx_monarch.monarch_capabilities import loaded_version
+
     monkeypatch.setattr(
         listener_generation, "fleet",
         lambda config, **_kwargs: {
             host.address: {"gen": "aaaaaaaaaaaa", "loop_pid": "111",
                            "age_s": "9", "listening": "true", "marker": "match",
-                           "proc_id": "aaaaaaaaaaaa0001"}
+                           "proc_id": "aaaaaaaaaaaa0001", "monarch": loaded_version()}
             for host in config.hosts})
     monkeypatch.setattr(mesh_teardown, "_RELEASED_PREDECESSOR", None)
     monkeypatch.setattr(mesh_teardown, "_RELEASED_ADDRESSES", None)

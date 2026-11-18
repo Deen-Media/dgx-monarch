@@ -79,7 +79,10 @@ def driver(isolated_environ, monkeypatch):
         return attach(config, handoff), _StopTimesOut(), object(), True
 
     def fleet(config, **_kwargs):
-        return {host.address: {"gen": state.proc_id[:12], "proc_id": state.proc_id}
+        from dgx_monarch.monarch_capabilities import loaded_version
+
+        return {host.address: {"gen": state.proc_id[:12], "proc_id": state.proc_id,
+                               "monarch": loaded_version()}
                 for host in config.hosts}
 
     def attach_once(dial):

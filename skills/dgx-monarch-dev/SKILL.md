@@ -173,10 +173,11 @@ within its recorded scope; positive-step qualification is limited to the recorde
    `.github/workflows/torchmonarch-canary.yml`, which name that file, and
    review `PIN_SEMANTICS` in `tests/test_monarch_surface.py`.
 4. After active work has stopped, deploy the same version atomically on every
-   host. A mixed-version mesh can attach
-   and spawn before every endpoint call times out without a version message.
-   Update the source checkout and exact dependency pin on all hosts, then
-   restart and run doctor.
+   host. The attach refuses, before it dials, a Worker loop whose recorded
+   torchmonarch is not the one the driver loaded, and a driver keeps the
+   version it loaded until it restarts, so a half-deployed pin stops renders
+   until every side matches. Update the source checkout and exact dependency
+   pin on all hosts, then restart the Workers and ComfyUI and run doctor.
 5. Hardware gate: measure `status` latency during a live render (poll
    `dgxm status` or `dgxm top` while a render holds the GPU) and compare it
    against the dated concurrency result in docs/VALIDATION.md. The

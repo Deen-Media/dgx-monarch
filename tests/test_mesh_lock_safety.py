@@ -792,11 +792,13 @@ def test_cluster_native_baseexception_preserves_identity_without_extra_work(
                         lambda **_k: False)
     # Each loop's id reading, which the attach dials; no ssh runs.
     from dgx_monarch.cli import listener_generation
+    from dgx_monarch.monarch_capabilities import loaded_version
 
     monkeypatch.setattr(
         listener_generation, "fleet",
         lambda config, **_kwargs: {host.address: {"gen": "aaaaaaaaaaaa",
-                                                  "proc_id": "aaaaaaaaaaaa0001"}
+                                                  "proc_id": "aaaaaaaaaaaa0001",
+                                                  "monarch": loaded_version()}
                                    for host in config.hosts})
 
     class NativeAbort(BaseException):

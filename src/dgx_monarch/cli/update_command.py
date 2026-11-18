@@ -21,7 +21,7 @@ from .update_doctor_diagnostics import report_doctor_result
 from .update_driver_pin import DriverPinError, DriverPinTransition
 from .update_entrypoint import run_serialized_update
 from .update_inspect import inspect_checkout as _inspect_checkout
-from .update_pin_diagnostic import pin_refusal_message
+from .update_pin_diagnostic import pin_refusal_message, prior_drift_message
 from .update_release import CommandRunner, ReleaseLayoutError, ReleaseManager, ReleaseMetadata
 from .update_repository import git_command, repository_snapshot
 from .update_site_probe import site_matches
@@ -150,7 +150,11 @@ class SystemUpdateOps(UpdateOps):
                 raise RuntimeError("prior driver commit was not captured")
             prior_metadata, _prior_dependencies = _inspect_checkout(self.repo, self._prior_sha)
             if not _dependencies_available(self.config, dependencies, self._run):
-                raise RuntimeError("target dependency contract is not satisfied")
+                raise UpdatePreconditionError(
+                    "target_dependencies_unsatisfied",
+                    "the target's own dependencies are not satisfied on every interpreter; the lines "
+                    "above name each requirement and the interpreter that failed it, and neither "
+                    "update mode installs them")
             release_started = True
             slot = self._releases.prepare(checkout, metadata)
             try:
@@ -165,7 +169,7 @@ class SystemUpdateOps(UpdateOps):
                 )
             prior_payload = self._pins.prior_payload_digest
             if prior_payload is None or not self._releases.attest_prior(prior_metadata, prior_payload):
-                raise UpdatePreconditionError("prior_worker_drift", "worker hosts do not exactly match the current driver release")
+                raise UpdatePreconditionError("prior_worker_drift", prior_drift_message(self._releases))
             if not self._pins.target_matches_site(slot.site):
                 raise RuntimeError("worker and driver target pin artifacts do not match")
             self._dependency_roots = dependencies

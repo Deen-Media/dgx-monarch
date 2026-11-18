@@ -35,10 +35,13 @@ def _stub(monkeypatch, probe_results, attach_results, restart_calls):
 
     monkeypatch.setattr(mesh_mod, "_attach_once", fake_attach_once)
     # Each loop's id reading, which the attach dials; no ssh runs.
+    from dgx_monarch.monarch_capabilities import loaded_version
+
     monkeypatch.setattr(
         listener_generation, "fleet",
         lambda config, **_kwargs: {host.address: {"gen": "aaaaaaaaaaaa",
-                                                  "proc_id": "aaaaaaaaaaaa0001"}
+                                                  "proc_id": "aaaaaaaaaaaa0001",
+                                                  "monarch": loaded_version()}
                                    for host in config.hosts})
     monkeypatch.setattr(mesh_mod, "_TRANSPORT_POISON", None)
     monkeypatch.setattr(mesh_mod, "_TRANSPORT_BIND", None)

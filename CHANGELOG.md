@@ -7,11 +7,20 @@
 **Upgrading from 1.4.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-140). If a host's
 Workers run from a release slot, use only `dgxm update --verify`
 ([TROUBLESHOOTING #118](docs/TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
-A verified update can stop with "foreign distribution inventory is ambiguous"
-when a package that ships files in torchmonarch's directories was installed
-under `PYTHONPYCACHEPREFIX`, as the 1.4.0 updater can; a reinstall of that
-package without the prefix clears it
+The first update from 1.4.0 runs the 1.4.0 updater, so its checks govern that
+update. It can stop with "foreign distribution inventory is ambiguous" when a
+package that ships files in torchmonarch's directories was installed with
+`PYTHONPYCACHEPREFIX` set to a writable directory, as an environment build
+script can do; a reinstall of that package without the prefix clears it, and
+this release's updater, run from a checkout of this release, accepts it
 ([TROUBLESHOOTING #155](docs/TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+Before the update, install `nvidia-ml-py` into the driver's Python and into the
+Python cluster.toml names on every Worker host: a torchmonarch pin of 0.8.0 or
+newer requires it, neither update mode installs it, and an update to such a
+pin stops before any change. The 1.4.0 updater names only the first Python
+that lacks it, so install it on every one before you start; this release's
+updater names each
+([INSTALL](docs/INSTALL.md#upgrading-from-140)).
 The torchmonarch pin, the required dependencies and Gate protocol 14 do not
 change, but a saved Gate grant names the package version, so each model,
 residency and LoRA combination runs its first-use Gate again, once
@@ -243,6 +252,30 @@ sections after them list every change.
   ([CONTRIBUTING](CONTRIBUTING.md#reports-from-clusters-larger-than-ours)).
 
 **New refusals and what they ask for.**
+
+- The driver refuses to attach, before it dials, when a Worker loop runs a
+  torchmonarch other than the one the driver loaded, or comes from a release
+  that does not report one. It names the host, both versions and what brings
+  them to one release: `dgxm restart`, after installing the driver's
+  torchmonarch, for Workers on plain source directories, or the forward repair
+  in TROUBLESHOOTING #118 for release slots, when the driver is the newer side;
+  the driver's release and a ComfyUI restart when the Workers are. In a
+  loopback check on 2026-11-17 a 0.7.0 loop and a 0.8.0 client did not attach
+  to each other, either way round: the attach waited out the config push
+  budget twice and nothing named the cause. Until now a driver then also
+  restarted the Worker services when `auto_heal` was on. When the reading
+  after a failed first attempt finds such a loop, the attach refuses the same
+  way, with no second attempt and no restart. The driver reads the version
+  once, at its first mesh build after torchmonarch is loaded, and keeps it, so
+  a pin installed under a running ComfyUI no longer admits it: the render
+  refuses with "this process loaded torchmonarch" and asks for a ComfyUI
+  restart. On Linux that first reading also checks that the native binding
+  the process mapped is still the file on disk, so a reinstall before it
+  refuses the same way; where `/proc` cannot tell, as while an install is
+  under way, the reading is the installed version. `dgxm doctor`'s
+  `listener generation` row now shows the
+  torchmonarch each running loop imported and fails when it is not the pin
+  ([TROUBLESHOOTING #8](docs/TROUBLESHOOTING.md#8-version-skew-between-hosts)).
 
 - On an older ComfyUI a MiniMax H3 file with a stacked output head refuses
   under sequence parallelism, and asks for ComfyUI 0.45.0
@@ -2059,10 +2092,28 @@ sections after them list every change.
   release test of that build rendered 66 templates with no error, the seven
   that need user inputs skipped
   ([VALIDATION](docs/VALIDATION.md#host-memory-2026-11-06)).
-- A verified update that stops with "foreign distribution inventory is
-  ambiguous" names a package whose pip RECORD lists bytecode outside
-  site-packages, from an install under `PYTHONPYCACHEPREFIX`; reinstall that
-  package without the prefix ([TROUBLESHOOTING #155](docs/TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+- A verified update no longer refuses a package whose pip RECORD lists,
+  outside site-packages, only the bytecode pip compiled for that package's own
+  sources under `PYTHONPYCACHEPREFIX`. Every other entry outside site-packages
+  still refuses. The refusal now names its cause, and for four causes what
+  clears it: an entry outside site-packages, a malformed RECORD, a package
+  installed twice and a missing shared file. A Worker whose torchmonarch lives
+  in its own Python prints its cause and remedy under its host name, and any
+  Worker whose release differs is named on a line of its own, beside "worker
+  hosts do not exactly match the current driver release". The official xfuser
+  0.8.0 wheel may share `tests/conftest.py` with torchmonarch, in either
+  install order, and the check counts it at torchmonarch's hash; a deleted copy
+  refuses and asks for a torchmonarch reinstall
+  ([TROUBLESHOOTING #155](docs/TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+- A verified update whose target needs a package an interpreter lacks, or
+  holds at another version, now names each requirement and the interpreter
+  that failed it (`driver`, or `host_<n>` in cluster.toml order) and refuses
+  with `target_dependencies_unsatisfied`, where it read "release staging
+  failed before any live change" and named nothing. The check of the
+  torchmonarch pin's own dependencies now names every interpreter that fails
+  it, where it stopped at the first. The first update from 1.4.0 still runs the
+  1.4.0 checks
+  ([INSTALL](docs/INSTALL.md#update-commands)).
 - Fix: a Clear VRAM node set to `hard` now unloads through the driver's own
   unload, so where a model left ComfyUI it forgets the driver models a loader
   charged, and the next loader with nothing held charges them again rather

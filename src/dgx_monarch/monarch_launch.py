@@ -149,7 +149,7 @@ def prepare_driver(config: Any) -> Admission | None:
     build, for the caller to restore if the fleet it admitted stays registered.
     """
     from .mesh import install_fault_hook
-    from .monarch_capabilities import assert_supported_runtime
+    from .monarch_capabilities import assert_supported_runtime, note_loaded_version
     from .monarch_diagnostics import configure_policy, requested_refusal, start_refusal
     from .monarch_policy import activate_native_policy, admit_native_targets, admitted, apply_policy
     from .monarch_policy_io import driver_host
@@ -169,6 +169,9 @@ def prepare_driver(config: Any) -> Admission | None:
         assert_supported_runtime()
         activate_native_policy()
     except BaseException:
+        # configure_policy can import monarch for its meter and a refusal can
+        # follow before the admission reads the version: keep what was loaded.
+        note_loaded_version()
         restore_driver(previous)
         raise
     return previous

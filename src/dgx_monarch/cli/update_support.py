@@ -15,17 +15,30 @@ from .update_dependency_contract import probe_source
 from .update_dependency_diagnostics import report_result
 from .update_release import CommandRunner
 
+# Prints the unmet requirements as a JSON list in report_result's bounded
+# forms, and exits 1 when there are any.
 _DEPENDENCY_CHECK = r"""
 import importlib.metadata as md, json, sys
-from pip._vendor.packaging.requirements import Requirement
-from pip._vendor.packaging.version import Version
-for raw in json.loads(sys.argv[1]):
-    req = Requirement(raw)
-    if req.marker and not req.marker.evaluate({"extra": ""}): continue
-    if req.name.lower() == "torchmonarch": continue
-    try: installed = Version(md.version(req.name))
-    except Exception: raise SystemExit(2)
-    if req.specifier and installed not in req.specifier: raise SystemExit(3)
+errors = []
+try:
+    from pip._vendor.packaging.requirements import Requirement
+    from pip._vendor.packaging.utils import canonicalize_name
+    from pip._vendor.packaging.version import Version
+    for raw in json.loads(sys.argv[1]):
+        req = Requirement(raw)
+        if req.marker and not req.marker.evaluate({"extra": ""}): continue
+        name = canonicalize_name(req.name)
+        if name == "torchmonarch": continue
+        try: installed = Version(md.version(req.name))
+        except Exception:
+            errors.append(name + ": missing")
+            continue
+        if req.specifier and installed not in req.specifier:
+            errors.append(f"{name}: installed {installed}, requires {req.specifier}")
+except Exception:
+    errors = ["dependency metadata could not be verified"]
+print(json.dumps(errors))
+raise SystemExit(1 if errors else 0)
 """
 
 
@@ -71,55 +84,51 @@ export PYTHONPATH="$HOME/.local/share/dgx-monarch/src"
 def dependencies_available(
     config: ClusterConfig, dependencies: Sequence[str], run: CommandRunner
 ) -> bool:
-    """Verify ambient target dependencies without mutating any interpreter."""
-    payload = json.dumps(dependencies, separators=(",", ":"))
-    local = run(
-        [sys.executable, "-c", _DEPENDENCY_CHECK, payload],
-        capture_output=True, text=True, timeout=60,
-    )
-    if local.returncode != 0:
-        return False
-    script = f"""
-set -eu
-PYBIN={shlex.quote(config.python_bin)}
-case "$PYBIN" in "~/"*) PYBIN="$HOME/${{PYBIN#\\~/}}";; "~") PYBIN="$HOME";; esac
-"$PYBIN" -c {shlex.quote(_DEPENDENCY_CHECK)} {shlex.quote(payload)}
-"""
-    for host in config.hosts:
-        try:
-            result = lifecycle.run_on_host(config, host, script, timeout=60)
-        except (OSError, subprocess.TimeoutExpired):
-            return False
-        if result.returncode != 0:
-            return False
-    return True
+    """Verify ambient target dependencies without mutating any interpreter.
+
+    Checks every interpreter and prints one line per unmet requirement to
+    stderr, labelled ``driver`` or ``host_<n>`` in cluster.toml order.
+    """
+    return _every_interpreter(config, _DEPENDENCY_CHECK,
+                              json.dumps(dependencies, separators=(",", ":")), run)
 
 
 def candidate_dependencies_available(
     config: ClusterConfig, dependencies: Sequence[str], contract: dict, run: CommandRunner,
 ) -> bool:
-    """Inspect the exact candidate's dependency closure on all target interpreters."""
-    payload = json.dumps({"contract": contract, "roots": list(dependencies)}, separators=(",", ":"))
-    source = probe_source()
+    """Inspect the exact candidate's dependency closure on all target interpreters.
 
+    Like ``dependencies_available``, it reads every interpreter before it
+    answers, so its lines name each one that fails.
+    """
+    payload = json.dumps({"contract": contract, "roots": list(dependencies)}, separators=(",", ":"))
+    return _every_interpreter(config, probe_source(), payload, run)
+
+
+def _every_interpreter(config: ClusterConfig, source: str, payload: str, run: CommandRunner) -> bool:
+    """Run one check on the driver's Python and each host's; report each, then answer."""
     try:
-        if not report_result(run(
+        satisfied = report_result(run(
             [sys.executable, "-c", source, payload],
             capture_output=True, text=True, timeout=60,
-        ), "driver"):
-            return False
-        script = f"""
+        ), "driver")
+    except (OSError, subprocess.TimeoutExpired):
+        print("  driver: dependency inspection failed", file=sys.stderr)
+        satisfied = False
+    script = f"""
 set -eu
 PYBIN={shlex.quote(config.python_bin)}
 case "$PYBIN" in "~/"*) PYBIN="$HOME/${{PYBIN#\\~/}}";; "~") PYBIN="$HOME";; esac
 "$PYBIN" -c {shlex.quote(source)} {shlex.quote(payload)}
 """
-        for ordinal, host in enumerate(config.hosts, 1):
-            if not report_result(lifecycle.run_on_host(config, host, script, timeout=60), f"host_{ordinal}"):
-                return False
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return True
+    for ordinal, host in enumerate(config.hosts, 1):
+        try:
+            satisfied &= report_result(lifecycle.run_on_host(config, host, script, timeout=60),
+                                       f"host_{ordinal}")
+        except (OSError, subprocess.TimeoutExpired):
+            print(f"  host_{ordinal}: dependency inspection failed", file=sys.stderr)
+            satisfied = False
+    return satisfied
 
 
 def private_root(path: Path) -> None:

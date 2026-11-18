@@ -915,3 +915,87 @@ def test_privileged_inspection_receipt_records_selection_without_claiming_succes
     assert result.succeeded is clear
     if not clear:
         assert "stop" not in ops.events
+
+
+# The receipts TROUBLESHOOTING entry 118 reads for operation_exception and
+# operation_interrupted: the last step before the ones the update adds as it
+# settles, and those closing steps, for each place a failure can land after the
+# Worker stop began.
+_CLOSING = {"fail_closed_stop", "stage_cleanup", "stage_retention"}
+
+
+def _tail(receipt: dict) -> tuple[tuple[str, str], list[str]]:
+    steps = [(step["name"], step["status"]) for step in receipt["steps"]]
+    end = len(steps)
+    while end and steps[end - 1][0] in _CLOSING:
+        end -= 1
+    return steps[end - 1], [name for name, _status in steps[end:]]
+
+
+@pytest.mark.parametrize(("setup", "raise_at", "last", "closing"), [
+    ({}, "stop", ("pre_stop_recheck", "succeeded"), ["stage_retention"]),
+    ({}, "activate", ("worker_stop", "succeeded"), ["stage_retention"]),
+    ({"activation": FAIL}, "compensate", ("activation", "failed"), ["stage_retention"]),
+    ({"activation": FAIL}, "start_no_sync", ("compensation", "succeeded"), ["stage_retention"]),
+    ({}, "start_no_sync", ("activation", "succeeded"), ["stage_retention"]),
+    ({}, "doctor", ("worker_start", "succeeded"), ["fail_closed_stop", "stage_retention"]),
+    ({}, "cluster_smoke", ("doctor", "succeeded"), ["fail_closed_stop", "stage_retention"]),
+    ({}, "readback", ("cluster_smoke", "succeeded"), ["fail_closed_stop", "stage_retention"]),
+])
+def test_an_exception_after_the_stop_began_leaves_the_steps_the_partial_section_reads(
+        setup, raise_at, last, closing):
+    """An exception inside the stop leaves pre_stop_recheck last and no
+    worker_stop; inside the compensation after a failed activation it leaves
+    the failed activation last. The settling steps always close the list."""
+    ops = FakeOps()
+    for name, value in setup.items():
+        setattr(ops, name, value)
+    ops.raise_at = raise_at
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert (result.code, result.receipt["status"]) == ("operation_exception", "partial")
+    assert _tail(result.receipt) == (last, closing)
+    if raise_at == "stop":
+        assert "worker_stop" not in _step_names(result) and "activate" not in ops.events
+
+
+def _interrupt_at(ops: FakeOps, name: str, occurrence: int = 1) -> KeyboardInterrupt:
+    interrupt = KeyboardInterrupt()
+    record = ops._event
+    seen = []
+
+    def event(event_name: str) -> None:
+        record(event_name)
+        if event_name == name:
+            seen.append(event_name)
+            if len(seen) == occurrence:
+                raise interrupt
+
+    ops._event = event  # type: ignore[method-assign]
+    return interrupt
+
+
+@pytest.mark.parametrize(("setup", "at", "occurrence", "last", "closing"), [
+    ({}, "stop", 1, ("pre_stop_recheck", "succeeded"), ["stage_retention"]),
+    ({"activation": FAIL}, "compensate", 1, ("activation", "failed"), ["stage_retention"]),
+    ({"doctor_result": UNKNOWN}, "stop", 2, ("doctor", "unknown"), ["stage_retention"]),
+    ({}, "commit_driver", 1, ("exact_readback", "succeeded"), ["fail_closed_stop", "stage_retention"]),
+    ({}, "finalize", 1, ("driver_commit", "succeeded"), ["stage_retention"]),
+])
+def test_an_interruption_after_the_stop_began_leaves_the_steps_the_partial_section_reads(
+        setup, at, occurrence, last, closing):
+    ops = FakeOps()
+    for name, value in setup.items():
+        setattr(ops, name, value)
+    interrupt = _interrupt_at(ops, at, occurrence)
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert raised.value is interrupt
+    receipt = interrupted_receipt(interrupt)
+    assert receipt is not None and receipt["status"] == "partial"
+    assert _tail(receipt) == (last, closing)
+    if (at, occurrence) == ("stop", 1):
+        assert "worker_stop" not in [step["name"] for step in receipt["steps"]]

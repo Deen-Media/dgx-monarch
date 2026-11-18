@@ -549,7 +549,7 @@ copied from historical evidence.
    [`test_runtime_remediation.py:734-763`](../tests/test_runtime_remediation.py#L734-L763 "anchor:test_worker_rechecks_fleet_grant_after_driver_preflight"),
    [`test_runtime_remediation.py:766-805`](../tests/test_runtime_remediation.py#L766-L805 "anchor:test_worker_binds_loaded_model_to_grant_after_execution_recheck"),
    [`test_fleet.py:1473-1501`](../tests/test_fleet.py#L1473-L1501 "anchor:test_fleet_source_manifest_failure_forces_stock_without_a_grant"), and
-   [`test_runtime_remediation.py:1720-1757`](../tests/test_runtime_remediation.py#L1720-L1757 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch").
+   [`test_runtime_remediation.py:1722-1759`](../tests/test_runtime_remediation.py#L1722-L1759 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch").
 9. **`auto_gate=first_use` gates every normal sampler path before the user's
    render, and LoRA-less slab renders still gate.** KSampler, KSampler Advanced
    and Sampler Custom renders all reach it; a Sampler Custom proof replays the
@@ -637,7 +637,7 @@ copied from historical evidence.
     [`test_runtime_remediation.py:123-138`](../tests/test_runtime_remediation.py#L123-L138 "anchor:test_normal_residency_grant_binds_every_reconstructible_boundary"),
     [`test_runtime_remediation.py:141-174`](../tests/test_runtime_remediation.py#L141-L174 "anchor:test_normal_residency_grant_rejects_tampering"),
     [`test_runtime_remediation.py:177-188`](../tests/test_runtime_remediation.py#L177-L188 "anchor:test_risky_normal_render_requires_driver_mode_and_grant"), and
-    [`test_runtime_remediation.py:1658-1691`](../tests/test_runtime_remediation.py#L1658-L1691 "anchor:test_worker_rechecks_normal_grant_before_model_load").
+    [`test_runtime_remediation.py:1660-1693`](../tests/test_runtime_remediation.py#L1660-L1693 "anchor:test_worker_rechecks_normal_grant_before_model_load").
 12. **Process verdicts cannot resurrect a newly disproved durable PASS.** One
     copy-on-write publication covers normal, Fleet, and sibling tokens. Negative
     verdicts live in a non-evicting revocation map and outrank both the bounded
@@ -682,8 +682,8 @@ copied from historical evidence.
     Later normal and Fleet workers independently recompute the same source-bound
     token before model load. Source-token and driver/worker skew are covered by
     [`test_gate_ledger.py:1047-1089`](../tests/test_gate_ledger.py#L1047-L1089 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
-    [`test_runtime_remediation.py:1720-1757`](../tests/test_runtime_remediation.py#L1720-L1757 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch"), and
-    [`test_runtime_remediation.py:1760-1786`](../tests/test_runtime_remediation.py#L1760-L1786 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
+    [`test_runtime_remediation.py:1722-1759`](../tests/test_runtime_remediation.py#L1722-L1759 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch"), and
+    [`test_runtime_remediation.py:1762-1788`](../tests/test_runtime_remediation.py#L1762-L1788 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
 13. **v9 audit rows are permanent evidence and can never become authority.**
     Every consented bypass writes a `WAIVER` row naming what was waived, under
     which capability context, from which channel, and a certified rescue load
@@ -871,7 +871,7 @@ copied from historical evidence.
   [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:145-155`](../src/dgx_monarch/actor/worker_authorization.py#L145-L155 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
-  [`test_runtime_remediation.py:1760-1786`](../tests/test_runtime_remediation.py#L1760-L1786 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
+  [`test_runtime_remediation.py:1762-1788`](../tests/test_runtime_remediation.py#L1762-L1788 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
 
 - A persisted runtime grant exists only when contextual lookup selects a
   current row and returns `pass` for a known matching ComfyUI commit and
@@ -1208,6 +1208,10 @@ no model verdict or runtime-package exception.
 |---|---|
 | The color-matcher layout must preserve the complete pinned payload digest without external reads. | [`test_update_color_matcher_layout.py:60-70`](../tests/test_update_color_matcher_layout.py#L60-L70 "anchor:test_complete_layout_keeps_pinned_digest_and_never_reads_external_paths") |
 | Other owners, versions, paths, changed files and executable initializers remain rejected. | [`test_update_color_matcher_layout.py:78-118`](../tests/test_update_color_matcher_layout.py#L78-L118 "anchor:test_layout_refuses_every_other_shape") |
-| Production package and module shadows remain rejected. | [`test_update_payload_ownership.py:59-63`](../tests/test_update_payload_ownership.py#L59-L63 "anchor:test_foreign_claim_cannot_shadow_or_overlap_pinned_package") |
-| Worker attestation must still reject a changed initializer or direct pinned-file claim. | [`test_update_worker_attestation.py:177-182`](../tests/test_update_worker_attestation.py#L177-L182 "anchor:test_worker_attestation_still_rejects_color_matcher_shadow_or_false_claim") |
+| Outside site-packages, only console scripts, the color-matcher 0.6.0 records and pip's bytecode for a record's own sources are accepted; every other external record still voids the record. | [`test_update_payload_ownership.py:232-238`](../tests/test_update_payload_ownership.py#L232-L238 "anchor:test_any_other_row_outside_site_packages_still_voids_the_record") |
+| The one named shared test path counts at the pinned hash in either install order. | [`test_update_payload_ownership.py:286-293`](../tests/test_update_payload_ownership.py#L286-L293 "anchor:test_the_named_wheel_may_share_its_one_path_whichever_installs_last") |
+| A missing shared copy refuses on the driver and in the Worker digest. | [`test_update_payload_ownership.py:296-311`](../tests/test_update_payload_ownership.py#L296-L311 "anchor:test_a_shared_path_that_vanished_refuses_and_asks_for_torchmonarch") |
+| Any other owner, version, hash or pinned path remains rejected. | [`test_update_payload_ownership.py:322-341`](../tests/test_update_payload_ownership.py#L322-L341 "anchor:test_what_the_shared_path_rule_still_refuses") |
+| Production package and module shadows remain rejected. | [`test_update_payload_ownership.py:60-64`](../tests/test_update_payload_ownership.py#L60-L64 "anchor:test_foreign_claim_cannot_shadow_or_overlap_pinned_package") |
+| Worker attestation must still reject a changed initializer or direct pinned-file claim. | [`test_update_worker_attestation.py:192-197`](../tests/test_update_worker_attestation.py#L192-L197 "anchor:test_worker_attestation_still_rejects_color_matcher_shadow_or_false_claim") |
 | Recovery must bind the original checkout, config and target independently of the fixed controller. | [`test_update_recovery_bootstrap.py:90-109`](../tests/test_update_recovery_bootstrap.py#L90-L109 "anchor:test_bound_original_refuses_drift") |

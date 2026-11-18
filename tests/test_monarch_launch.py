@@ -280,3 +280,33 @@ def test_a_local_actor_purges_host_memory_at_free_time_unless_the_driver_chose(c
     monkeypatch.setenv(HOST_ALLOCATOR_PURGE_ENV, "25")
     cmd = launch.actor_bootstrap_command(config(), False)({"gpus": 0})
     assert cmd.env[HOST_ALLOCATOR_PURGE_ENV] == "25"
+
+
+def test_a_driver_refused_before_its_admission_still_keeps_the_torchmonarch_it_loaded(monkeypatch):
+    """configure_policy imports monarch for its meter, and an export refusal
+    can follow before the admission reads the version. A pin installed under
+    the running driver before the next render must not then read as loaded."""
+    import sys
+    from types import SimpleNamespace
+
+    import monarch.actor  # noqa: F401 - what configure_policy's meter import loads
+
+    from dgx_monarch import TORCHMONARCH_PIN, monarch_capabilities, monarch_diagnostics, monarch_policy
+    from dgx_monarch.config import ClusterConfigError
+    from dgx_monarch.monarch_policy import DiagnosticsPolicy
+
+    def installed(version):
+        monkeypatch.setattr(monarch_capabilities.importlib.metadata, "distribution", lambda _: SimpleNamespace(
+            version=version, files=["monarch", "monarch._rust_bindings"],
+            locate_file=lambda name: sys.modules[name].__file__))
+
+    monkeypatch.setattr(monarch_policy, "apply_policy", lambda *_a, **_k: None)
+    monkeypatch.setattr(monarch_diagnostics, "configure_policy", lambda *_a: {
+        "metrics": False, "available": False, "reason": "instrument_setup_failed"})
+    installed("0.0.1")
+    requested = replace(config(), monarch=MonarchPolicy(diagnostics=DiagnosticsPolicy(metrics=True)))
+    with pytest.raises(ClusterConfigError, match="instrument_setup_failed"):
+        launch.prepare_driver(requested)
+    installed(TORCHMONARCH_PIN)
+    with pytest.raises(RuntimeError, match=r"this process loaded torchmonarch 0\.0\.1"):
+        monarch_capabilities.assert_supported_runtime()
