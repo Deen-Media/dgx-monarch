@@ -382,11 +382,12 @@ def _no_driver_exit_hook_at_pytest_exit():
 
     At pytest's own exit it would log its notice to a stream pytest has closed,
     a "Logging error" traceback after the summary. Probe subprocesses keep theirs.
+    A session that never imported driver_exit registered nothing and imports nothing here.
     """
     yield
-    from dgx_monarch import driver_exit
-
-    atexit.unregister(driver_exit._begin)  # nothing to do when no test registered it
+    module = sys.modules.get("dgx_monarch.driver_exit")
+    if module is not None:
+        atexit.unregister(module._begin)  # nothing to do when no test registered it
 
 
 @pytest.fixture
