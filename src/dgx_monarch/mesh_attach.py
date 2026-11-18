@@ -260,6 +260,10 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
             raise
         retry_dial, refusal = _read_retry_dial(config, trace, dial, monarch=monarch)
         if refusal is not None and refusal.skew:
+            # No poison: the next attach stands where an in-process second attempt
+            # would, on this transport over the same leftovers. A loop whose version
+            # changed restarted, so it serves a new id and is primed first, and while
+            # the versions differ the next render refuses before it dials.
             factory.safe_transport_failure(handoff)
             trace.closed("refused", stage="proc_id_reread", evidence=first_evidence)
             raise worker_proc_id.WorkerProcIdError(
