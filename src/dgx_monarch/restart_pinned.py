@@ -77,6 +77,7 @@ def refuse_pinned(handle: Any, refused: WorkerDeliveryError) -> NoReturn:
     except WorkerDeliveryError:
         rr._record("refused", moves, started, reason="pinned_not_retired")
         raise
+    rr._stand_down_at_exit(refused)  # an exit during the liveness probe: the exit's refusal
     rr._record("retired", moves, started, teardown=teardown, reason="pinned_session")
     rr._refuse(
         f"every Worker loop serves a new proc id (on {rr._labels(handle, moves.moved)}): "

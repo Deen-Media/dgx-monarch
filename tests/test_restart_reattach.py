@@ -665,6 +665,12 @@ def test_a_heal_whose_stop_is_confirmed_after_an_earlier_release_keeps_its_retry
     assert failed == [retried] and driver.dials[-1] == retried
 
 
+# Every logger the detour and its attach write through, named here rather than
+# read from driver_exit, so a logger dropped from its quiet list shows.
+_EXIT_PATH_LOGGERS = ("dgx_monarch.mesh", "dgx_monarch.mesh_liveness", "dgx_monarch.restart_reattach",
+                      "dgx_monarch.mesh_runtime", "dgx_monarch.capacity_agreement")
+
+
 class _ClientStoppedProcs:
     """Procs whose stop fails as Monarch's exit step leaves it; ``exit_first``
     sets the driver's exit flag as the stop runs, as the exit hook does then."""
@@ -706,7 +712,7 @@ def test_an_exit_inside_the_retires_stop_leaves_the_renders_thread_quiet(
     kept: list[logging.LogRecord] = []
     keep = logging.Handler()
     keep.emit = kept.append  # type: ignore[method-assign]
-    loggers = [logging.getLogger(name) for name in driver_exit.QUIET_LOGGERS]
+    loggers = [logging.getLogger(name) for name in _EXIT_PATH_LOGGERS]
     probes: list[int] = []
     real_probe = mesh_liveness.probe_fleet
     monkeypatch.setattr(mesh_liveness, "probe_fleet",
@@ -734,6 +740,63 @@ def test_an_exit_inside_the_retires_stop_leaves_the_renders_thread_quiet(
         assert any("proc stop on detach failed" in text for text in loud), loud
         assert any("restart_reattach outcome=refused" in text for text in loud), loud
         assert driver.events
+
+
+@pytest.mark.parametrize(("path", "stage"), [
+    ("heal", "liveness_probe"), ("pinned", "liveness_probe"), ("heal", "attach")])
+def test_an_exit_after_the_stop_ends_the_detour_with_the_exit_refusal(
+        driver, monkeypatch, path, stage):
+    """The driver begins to exit during the liveness probe (which answers gone)
+    or during the replacement attach (which the exit then cuts short). The
+    render's thread logs no WARNING or ERROR, dials nothing new, and its error
+    is always the exit refusal: not the failed attach's own advice, and not a
+    pinned render's "queue again"."""
+    import logging
+
+    from dgx_monarch import driver_exit
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    for logger in (mesh_mod.log, restart_reattach.log):
+        for level in ("info", "warning"):
+            monkeypatch.delattr(logger, level, raising=False)
+    kept: list[logging.LogRecord] = []
+    keep = logging.Handler()
+    keep.emit = kept.append  # type: ignore[method-assign]
+    loggers = [logging.getLogger(name) for name in _EXIT_PATH_LOGGERS]
+    real_probe, real_live, attaches = mesh_liveness.probe_fleet, mesh_mod.ensure_live, []
+    if stage == "liveness_probe":
+        def probe(handle, **kwargs):
+            kept.clear()  # what the stop logged came before the exit
+            driver_exit._EXITING.set()  # the exit hook ran while the probe read the hosts
+            return real_probe(handle, **kwargs)
+
+        monkeypatch.setattr(mesh_liveness, "probe_fleet", probe)
+        monkeypatch.setattr(mesh_mod, "ensure_live",
+                            lambda *a, **k: attaches.append(1) or real_live(*a, **k))
+    else:
+        def ensure_live(_handle):
+            kept.clear()
+            driver_exit._EXITING.set()
+            raise RuntimeError("Handle producer ended without publishing a result")
+
+        monkeypatch.setattr(mesh_mod, "ensure_live", ensure_live)
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    refused = _restarted(driver)
+    run = restart_reattach.heal if path == "heal" else restart_reattach.refuse_pinned
+    for logger in loggers:
+        logger.addHandler(keep)
+    try:
+        with pytest.raises(WorkerDeliveryError) as raised:
+            run(handle, refused)
+    finally:
+        for logger in loggers:
+            logger.removeHandler(keep)
+    loud = [record.getMessage() for record in kept
+            if record.thread == threading.get_ident() and record.levelno >= logging.WARNING]
+    text = str(raised.value)
+    assert "the driver is exiting, so this render stops here" in text and "queue again" not in text
+    assert loud == [], loud  # nothing above INFO after the exit began
+    assert len(driver.dials) == 1 and attaches == []  # no attach was even begun
 
 
 def test_a_real_handle_evicted_with_its_stop_done_heals_without_a_second_stop(driver):

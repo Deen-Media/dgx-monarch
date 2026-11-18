@@ -205,14 +205,16 @@ call that fails ([#4](#4-supervisionerror--process-exited-with-non-zero-code)).
 
 A ComfyUI that exits normally (Ctrl+C, or the server closing) while a render
 is attaching again, or a Pipeline or Gate render is retiring the stale mesh,
-ends that detour quietly: once the exit's notice is logged
-([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)), the
-render's own stop of the stale mesh logs nothing, and the render probes no host
-and attaches nothing. It ends with "the driver is exiting, so this render
-stops here", which ComfyUI may log as the interrupted render's own error. On
-loopback on 2026-11-18, exits 0.5 to 8.0 s into the detour, by a normal return
-or by Ctrl+C, logged nothing after the notice, and every process exited with
-code 0.
+ends that detour with no warning and no error after the exit's notice
+([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)). The
+render's own stop of the stale mesh logs nothing; a liveness probe or an
+attach already under way runs to its end, an attach's trace lines at INFO, and
+nothing starts after it: no probe, no attach, no second attempt and no Worker
+restart. The render ends with "the driver is exiting, so this render stops
+here", which ComfyUI may log as the interrupted render's own error. On loopback
+on 2026-11-18, exits 0.5 to 8.0 s into the detour, by a normal return or by
+Ctrl+C, logged no warning and no error after the notice, and every process
+exited with code 0.
 
 The render refuses at once instead, with a class C `cross_rank_capacity`
 refusal that names the remedy, when the reading finds:
@@ -2539,9 +2541,14 @@ Worker actors, and the driver reports no Worker faults from here on". A call
 still in flight then fails without a fault report: the driver neither evicts
 the fleet nor stops it a second time, and a cleanup that was already stopping a
 dead fleet when the exit began logs none of its own lines. So does a render
-that was attaching again after a Worker restart
-([#2](#2-every-attach-times-out-after-one-failed-attach)): it stops at once,
-probes no host and attaches nothing. A render's call that
+that was attaching again after a Worker restart, or a Pipeline or Gate render
+retiring the stale mesh ([#2](#2-every-attach-times-out-after-one-failed-attach)):
+a liveness probe or an attach it already has under way runs to its end, and
+nothing starts after it. Any attach the exit reaches, a first one included,
+ends with "the driver is exiting, so this attach stops here" once its attempt
+fails: no id reading, no second attempt, no transport poison and no restart of
+the Worker services, which `auto_heal` used to start while ComfyUI was
+closing. A render's call that
 the exit stops can read like a lost contact; the driver then words no lost
 Worker and logs no lost-Worker warning, since none was lost. In CPU tests over
 loopback on 2026-11-17 and 2026-11-18, with or without a call in flight, the
@@ -6558,7 +6565,7 @@ after a Worker restart writes `restart_reattach` after it. A sequence with no
 | `proc_id_prime` | the loops whose id changed since this driver last dialed them, sent one throwaway message before this `attempt` dials ([#2](#2-every-attach-times-out-after-one-failed-attach)), and any of them the message could not reach (`unprimed`) |
 | `phase` | one timed step. `phase=transport_enable`, `phase=auto_heal`, or `phase=attach attempt=1..2`, each with `wall_s` and an `outcome` of `ok` or the exception class |
 | `attach_call` | the two halves of one monarch attach: `half=attach_to_workers` is the worker config push, `half=initialized_get` is the wait on the mesh, bounded by its `bound_s` (70 s under the shipped 60 s config-push budget) |
-| `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_1_reread_refused`, an ordinary attach whose first attempt failed and whose reading after it found no id, so no second attempt ran (a released fleet in that case closes as `attach_1_released`); `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to, and `stage=proc_id` for a loop whose id the first reading did not carry, or whose torchmonarch is not the driver's, which leaves the session usable. One refusal follows an attach that ran: `stage=proc_id_reread`, a first attempt that failed and a reading after it that found a loop on another torchmonarch, so no second attempt and no restart ran, and the session stays usable ([#8](#8-version-skew-between-hosts)). `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
+| `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_1_reread_refused`, an ordinary attach whose first attempt failed and whose reading after it found no id, so no second attempt ran (a released fleet in that case closes as `attach_1_released`); `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to, and `stage=proc_id` for a loop whose id the first reading did not carry, or whose torchmonarch is not the driver's, which leaves the session usable. One refusal follows an attach that ran: `stage=proc_id_reread`, a first attempt that failed and a reading after it that found a loop on another torchmonarch, so no second attempt and no restart ran, and the session stays usable ([#8](#8-version-skew-between-hosts)). `stage=exiting` is an attach the driver's own exit reached: no dial after it, or none after the attempt it cut short, and no id reading, second attempt, poison or restart ([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)). `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
 | `post_fail_restart` | the loops the post-failure Worker restart touched and the failure class that prompted it. It lands after the `close`, as `restart_reattach` does |
 | `restart_reattach` | a render, or an explicit loader's eager load, that met Worker loops restarted under its mesh ([#2](#2-every-attach-times-out-after-one-failed-attach)). `outcome=attached` carries the replacement attach's `seq` and lands after its `close`, with `verdict=all`, the loops that `moved`, the `teardown` that retired the stale mesh (`stop_confirmed` or `liveness_release`) and the detour's `wall_s`. `outcome=refused` carries `seq=0`, since no attach ran, and a `reason`: `partial`, `none` or `unknown` for what the id reading found, or `not_retired` for a stale mesh the liveness proof did not release. `outcome=failed` carries the exception class as its `reason`: a replacement attach that raised, whose own `close` names the stage, or an explicit loader's capacity price that refused before that attach ran, which writes no new `close`. `outcome=retired` is a KSampler Pipeline or Identity Gate render that retired the stale mesh and refused, with `seq=0`, `verdict=all`, its `teardown` and `reason=pinned_session`; such a render's `outcome=refused` reasons start with `pinned_`: `pinned_partial`, `pinned_none` or `pinned_unknown` for the reading, `pinned_leases_held`, `pinned_teardown_in_progress` or `pinned_prior_stop_unknown` for what kept the fleet as before, and `pinned_not_retired` |
 

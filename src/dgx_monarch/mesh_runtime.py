@@ -202,6 +202,11 @@ def attach_once(addresses: list[str]):
           kept_root_log_level()):
         hosts = attach_to_workers(
             ca="trust_all_connections", workers=addresses, name="dgxm")
+    # Monarch's client, and so its exit hook, exists now; the exit flag's hook,
+    # registered after it, runs first, so an exit during this attach stands it down.
+    from . import driver_exit
+
+    driver_exit.install()
     with phase("readiness"), attach_trace.half(log, "initialized_get", bound_s=ATTACH_INIT_WAIT_S):
         get_off_loop(hosts.initialized, ATTACH_INIT_WAIT_S, "dgxm-attach-init")
     return hosts

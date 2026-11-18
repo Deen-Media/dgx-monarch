@@ -457,3 +457,39 @@ def test_a_call_in_flight_or_after_a_deliberate_stop_names_the_reason_and_stays_
     assert "parent draining" not in stopped["in_flight"] + stopped["straggler"], stopped
     assert stopped["errors"] == [], stopped
     assert _line(driver, 30)["step"] == "done"
+
+
+def test_an_exit_while_an_attach_waits_stands_the_attach_down_quietly(tmp_path, cleanup):
+    """ComfyUI exits normally while the driver's attach waits on a loop that
+    does not answer (frozen here), auto_heal on. The exit's notice is logged,
+    attempt 1 ends in the exit refusal, and nothing else follows: no id
+    reading over ssh, no second attempt, no transport poison, no restart of
+    the Worker services, and nothing above INFO after the notice. Before,
+    that attach was retried, the transport poisoned and, with auto_heal on,
+    the Worker services restarted while ComfyUI was closing. About 4 s."""
+    from dgx_monarch import driver_exit
+
+    a = _Loop(tmp_path / "a")
+    cleanup.append(a)
+    b = _Loop(tmp_path / "b")
+    cleanup.append(b)
+    os.killpg(b.proc.pid, signal.SIGSTOP)  # its listener takes the dial, but nothing answers
+    try:
+        spec = {"mode": "exit_attach", "hosts": [["a", a.address], ["b", b.address]],
+                "homes": {"a": str(a.home), "b": str(b.home)}, "delay_s": 0.5}
+        driver = _client(tmp_path, spec, "20s")
+        cleanup.append(driver)
+        first, report = _line(driver, 60), _line(driver, 60)
+        code = driver.wait(30)
+    finally:
+        os.killpg(b.proc.pid, signal.SIGCONT)
+    err = driver.errors_path.read_text()  # type: ignore[attr-defined]
+    detail = f"{first} {report}\n{err[-3000:]}"
+    assert code == 0 and first["step"] == "main_returns", detail
+    assert err.count(driver_exit.NOTICE) == 1, detail
+    after = err.split(driver_exit.NOTICE, 1)[1].splitlines()
+    assert [line for line in after if " WARNING " in line or " ERROR " in line] == [], detail
+    assert report["step"] == "exit_attach" and report["exiting"] is True, detail
+    assert "the driver is exiting, so this attach stops here" in report["error"], detail
+    assert report["attempts"] == 1 and report["post_fail_restarts"] == 0, detail
+    assert report["poisoned"] is False and report["pre_attach_heals"] == 1, detail  # before the exit

@@ -441,6 +441,7 @@ def heal(handle: Any, refused: BaseException, *,
     try:
         fresh = (respawn or ensure_live)(handle)
     except BaseException as exc:
+        _stand_down_at_exit(exc)  # an attach the exit cut short ends in the exit's refusal
         _record("failed", moves, started, seq=attach_trace.last_sequence(),
                 teardown=teardown, reason=type(exc).__name__)
         raise

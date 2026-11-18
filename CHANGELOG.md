@@ -438,8 +438,13 @@ sections after them list every change.
   the pair checks have not run.
 - A normal ComfyUI exit while a render attaches again after a Worker restart,
   or while a Pipeline or Gate render retires the stale mesh, ends that detour
-  quietly: after the exit's notice the render's own stop of the stale mesh
-  logs nothing, and the render probes no host and attaches nothing
+  with no warning and no error after the exit's notice: the render's own stop
+  of the stale mesh logs nothing, a probe or attach under way runs to its end,
+  and the render ends with "the driver is exiting". Any attach the exit
+  reaches, a first one included, now ends once its attempt fails, with no id
+  reading, no second attempt, no transport poison and no restart of the Worker
+  services, where with `auto_heal` on it used to restart them while ComfyUI
+  was closing
   ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 - A graph with no LoRA stack whose model takes no slab residency no longer
   pays two proof renders before its first render. The first-use gate could

@@ -497,6 +497,55 @@ def _lost_beside_live(handle, mesh_helpers, mesh_stop) -> None:
          stop_errors=[line for line in records.errors() if "proc_mesh_controller_" in line])
 
 
+def _exit_attach_client(config, delay_s: float) -> None:
+    """Attach on a daemon thread, as ComfyUI's prompt worker would, while the
+    test holds one loop frozen so attempt 1 waits; return from main ``delay_s``
+    into that attempt, so the interpreter exits with the attach in flight.
+
+    ``auto_heal`` is on, with its two Worker restarts stood in and counted. An
+    exit hook registered before Monarch's own (so it runs after it) waits for
+    the attach's thread to report, so a line it logs after the exit's notice is
+    never lost to the race with the interpreter's end.
+    """
+    import atexit
+
+    from dgx_monarch import driver_exit, mesh_attach
+    from dgx_monarch.log import get_logger
+
+    reported = threading.Event()
+    atexit.register(reported.wait, 30)
+    counts = {"attempts": 0, "pre_attach_heals": 0, "post_fail_restarts": 0}
+    runtime = _runtime(_Log())
+    runtime["log"] = get_logger("dgx_monarch.mesh")  # the production logger, to stderr
+    runtime["_heal_dead_loops"] = lambda *_a: counts.__setitem__(
+        "pre_attach_heals", counts["pre_attach_heals"] + 1)
+    mesh_attach.restart_after_failed_attach = lambda *_a: counts.__setitem__(
+        "post_fail_restarts", counts["post_fail_restarts"] + 1)
+    real_once, entered = runtime["_attach_once"], threading.Event()
+
+    def attach_once(dial):
+        counts["attempts"] += 1
+        entered.set()
+        return real_once(dial)
+
+    runtime["_attach_once"] = attach_once
+
+    def attach() -> None:
+        fields: dict = {"error": None}
+        try:
+            mesh_attach.attach_cluster(runtime, config, None)
+        except BaseException as exc:
+            fields["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        _say(step="exit_attach", exiting=driver_exit.exiting(),
+             poisoned=runtime["_TRANSPORT_POISON"] is not None, **counts, **fields)
+        reported.set()
+
+    threading.Thread(target=attach, name="render", daemon=True).start()
+    entered.wait(60)
+    time.sleep(delay_s)
+    _say(step="main_returns")
+
+
 def client(spec_json: str) -> None:
     spec = json.loads(spec_json)
     from dgx_monarch.cli import lifecycle
@@ -522,6 +571,15 @@ def client(spec_json: str) -> None:
         _render_client(config, _Log(), recycle=bool(spec.get("recycle")))
         _say(step="done")
         os._exit(0)
+    if spec["mode"] == "exit_attach":
+        config = ClusterConfig(
+            hosts=tuple(HostConfig(name=name, address=address)
+                        for name, address in spec["hosts"]),
+            client_bind="tcp://127.0.0.1:0", auto_heal=True,
+            transport_security="trusted_fabric", python_bin=sys.executable,
+            source="/integration/cluster.toml")
+        _exit_attach_client(config, float(spec.get("delay_s", 0.5)))
+        return  # a normal interpreter exit, with its exit hooks, while the attach waits
     if spec["mode"] in ("lost_host", "lost_beside_live", "idle_loss", "stop_recycle", "stop_detach"):
         config = ClusterConfig(
             hosts=tuple(HostConfig(name=name, address=address)
