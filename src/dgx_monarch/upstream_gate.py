@@ -122,6 +122,7 @@ UNREAD_HEADER_REFUSAL = (
 
 class QuantMetadataError(ValueError):
     """``_quantization_metadata`` that ComfyUI's ``convert_old_quants`` cannot parse either."""
+    keyed = True  # whether the other prefix rule reads the file's keys differently
 
 
 class _Dtype(NamedTuple):
@@ -198,7 +199,8 @@ def uncovered_scaled_layers(path: str) -> tuple[str, ...]:
     Linear drops both as unexpected keys. Layer names are the ones the model
     sees, after ComfyUI's prefix strip. An L2P layout answers none, because
     #91 refuses it first. The prefix rules are ``_rules()``; the first that finds
-    a layer names them.
+    a layer names them. A table ComfyUI cannot parse raises at the first rule
+    that reaches it: under any rule it leaves no layer to name.
     """
     for whole in _rules():
         _l2p, layers, _h3_image, keyed = _read_by_identity(*_identity(path), whole)
@@ -208,10 +210,8 @@ def uncovered_scaled_layers(path: str) -> tuple[str, ...]:
 
 
 def _rules(comfy_dir: str | os.PathLike[str] | None = None) -> tuple[bool, ...]:
-    """The prefix rules to read a file under: the one the ComfyUI an answer is for
-    has, or both where that cannot be told, so that a file either refuses is refused.
-    The second is read only for a file whose prefix the two rules pick differently,
-    the only files they read differently, so any other file costs one header read."""
+    """The prefix rules to read a file under: the one the ComfyUI an answer is for has,
+    or both where that cannot be told; the second only for a file they read differently."""
     rule = keeps_sensenova_whole(comfy_dir)
     return (True, False) if rule is None else (rule,)
 
@@ -356,10 +356,11 @@ def _read_by_identity(
     try:
         uncovered = _dropped_scale_layers(comfy_load_keys(
             {key: info.dtype for key, info in header.tensors.items()}, header.metadata, sensenova_whole))
-    except QuantMetadataError:
+    except QuantMetadataError as exc:
         if not h3_image:
             # No verdict. Stock ComfyUI fails to parse the same metadata at load
             # (comfy.utils.convert_old_quants), so no scale is silently dropped.
+            exc.keyed = keyed
             raise
         # This family fails closed before any load: the grid refusal stands, or
         # the metadata refusal answers for metadata ComfyUI cannot parse either.
@@ -374,14 +375,14 @@ def _read_by_identity(
     return False, uncovered, h3_image_number, keyed
 
 
-def _verdict(path: str | None, comfy_dir: str | os.PathLike[str] | None = None,
-             ) -> tuple[int, tuple[str, ...]] | None:
+def _verdict(path: str | None, comfy_dir: str | os.PathLike[str] | None = None) -> tuple[int, tuple[str, ...]] | None:
     """(TROUBLESHOOTING number, uncovered layers) for a refused path, or None,
     under the prefix rules of ``_rules(comfy_dir)``: the first that refuses answers.
 
     Total. An unnamed, missing or non-safetensors path answers None. So does a
     file no stock reader can read either, or one whose quantization metadata
-    ComfyUI cannot parse (``_stock_fails_too``): that load fails by itself.
+    ComfyUI cannot parse (``_stock_fails_too``) and that no rule read refuses
+    before the metadata counts: that load fails by itself.
     Any other failed read refuses (#152), because a load that skipped the gate
     could render wrong. One header read answers every question; an L2P layout
     is read once more, for the log line alone, through
@@ -402,7 +403,9 @@ def _verdict(path: str | None, comfy_dir: str | os.PathLike[str] | None = None,
         try:
             l2p_layout, layers, h3_image_number, keyed = _read_by_identity(*identity, whole)
         except Exception as exc:
-            if _stock_fails_too(exc):
+            if _stock_fails_too(exc):  # no verdict under this rule; the other may refuse first
+                if isinstance(exc, QuantMetadataError) and exc.keyed:
+                    continue
                 return None
             from .log import get_logger
 
@@ -444,8 +447,7 @@ def _scale_fields(layers: tuple[str, ...]) -> dict[str, object]:
     return {"count": len(layers), "first": layers[0][:160]}
 
 
-def refusal_for(path: str | None, comfy_dir: str | os.PathLike[str] | None = None,
-                ) -> tuple[str, int] | None:
+def refusal_for(path: str | None, comfy_dir: str | os.PathLike[str] | None = None) -> tuple[str, int] | None:
     """The refusal body and its TROUBLESHOOTING number for ``path``, or None.
 
     Total, as ``_verdict`` is. The sweep matrix and the tests read it; the load

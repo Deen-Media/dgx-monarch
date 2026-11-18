@@ -253,6 +253,50 @@ def test_a_rule_that_cannot_be_told_refuses_what_only_masters_rule_refuses(
     assert found is not None and found[1] == L2P_NUMBER, found
 
 
+def test_a_table_no_comfyui_parses_leaves_the_other_rule_to_refuse(models, monkeypatch, tmp_path_factory):
+    """A quantization table ComfyUI cannot parse gives no verdict under the rule whose
+    read reaches it, so where the rule cannot be told the other rule still decides.
+    The L2P file under net. beside the two keys, with the extra tensor, reaches the
+    table under the release rule and refuses #91 under master's before the table
+    counts; its mirror, bare L2P keys beside six keys under net., refuses #91 under
+    the release rule and reaches the table under master's. A file both rules carry
+    to the table answers None at two header reads, and one they read alike at one."""
+    from dgx_monarch import safetensors_header
+
+    base = tmp_path_factory.mktemp("checkouts")
+    release, master = write_checkout(base / "release", RELEASE), write_checkout(base / "master", MASTER)
+    unknown = write_checkout(base / "unreadable", "def (\n")
+    assert upstream_gate.keeps_sensenova_whole(unknown) is None
+    backbones = {key: [1] for key in upstream_gate._SENSENOVA_KEYS}
+    under_net = {f"net.blocks.{i}.weight": [1] for i in range(6)}
+    extra = {"aux.dec_net.x.weight": [1]}
+    # names: (answer under the release rule, under master's, with the rule unknown, its header reads)
+    files = {
+        "only_master_refuses": ({**{f"net.{key}": shape for key, shape in L2P.items()}, **backbones, **extra},
+                                (None, L2P_NUMBER, L2P_NUMBER, 2)),
+        "only_the_release_rule_refuses": ({**L2P, **backbones, **under_net, **extra},
+                                          (L2P_NUMBER, None, L2P_NUMBER, 1)),
+        "both_rules_reach_the_table": ({**backbones, **under_net}, (None, None, None, 2)),
+        "both_rules_read_it_alike": ({"single_blocks.0.q.weight": [1]}, (None, None, None, 1)),
+    }
+    reads: list[str] = []
+    read = safetensors_header.read_safetensors_header
+    monkeypatch.setattr(safetensors_header, "read_safetensors_header",
+                        lambda path: reads.append(str(path)) or read(path))
+
+    def answer(path: str, comfy_dir: Path) -> int | None:
+        found = upstream_gate.refusal_for(path, comfy_dir=comfy_dir)
+        return None if found is None else found[1]
+
+    for label, (names, (under_release, under_master, either, count)) in files.items():
+        path = str(models / _write(models, f"{label}.safetensors", names, {"_quantization_metadata": "{not json"}))
+        reads.clear()
+        assert answer(path, unknown) == either, label
+        assert len(reads) == count, (label, reads)
+        assert answer(path, release) == under_release, label
+        assert answer(path, master) == under_master, label
+
+
 # Real ComfyUI, CPU only. Keep these last in the file (the conftest comfy guard).
 def _comfy_builds(comfy, names: dict[str, list[int]], metadata) -> str | None:
     """ComfyUI's ``image_model`` for these names, through its own prefix strip, or None."""
