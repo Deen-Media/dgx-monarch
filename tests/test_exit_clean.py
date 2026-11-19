@@ -63,6 +63,7 @@ def _run(tmp_path: Path, mode: str,
     environment.update(
         HOME=str(tmp_path), XDG_RUNTIME_DIR=str(runtime_dir), CUDA_VISIBLE_DEVICES="",
         PROBE_COMFY_DIR=str(tmp_path / "comfy"), PROBE_READY=str(tmp_path / "ready.json"),
+        PROBE_ENTRIES=str(tmp_path / "entries.txt"), PROBE_LAST_HOOK=str(tmp_path / "last_hook.txt"),
         PYTHONPATH=os.pathsep.join(filter(None, (str(SRC), os.environ.get("PYTHONPATH")))))
     ready = tmp_path / "ready.json"
     started = time.monotonic()
@@ -147,6 +148,29 @@ def test_an_exit_inside_a_heals_own_stop_is_quiet(tmp_path, mode):
     assert records[-1]["calls"] == 1 and records[-1].get("held") is None, detail  # the heal never finished
     if mode == "heal_sigint":
         assert records[-1].get("interrupted") is True, detail
+
+
+def test_a_queue_behind_the_cut_render_holds_one_entry_and_prints_nothing(tmp_path):
+    """A real interpreter exit with ComfyUI's prompt worker holding a queue: the
+    render the exit cuts, then four queued prompts entering ``mesh.ensure_live``
+    on the real handle. Exactly one entry starts and holds at the entry
+    (driver_exit.hold_at_entry); none raises, none prints, the exit shows its
+    one notice and no WARNING or ERROR, and the process ends at once after its
+    last exit hook, the held daemon thread with it, with code 0."""
+    pytest.importorskip("monarch.actor")
+    proc, _records, _exited = _run(tmp_path, "queue")
+    ended = time.time()
+    detail = f"stdout: {proc.stdout[-2000:]}\nstderr: {proc.stderr[-3000:]}"
+    assert proc.returncode == 0, detail
+    entries = (tmp_path / "entries.txt").read_text().splitlines()
+    assert len(entries) == 1 and entries[0].startswith("entered "), entries  # one enters; it holds
+    assert "panicked" not in proc.stderr and "Fatal Python error" not in proc.stderr, detail
+    assert _error_lines(proc.stderr) == [], detail
+    assert [line for line in proc.stderr.splitlines() if " WARNING " in line] == [], detail
+    assert "Traceback" not in proc.stderr and "DriverExitingError" not in proc.stderr, detail
+    assert proc.stderr.count(NOTICE) == 1, detail
+    last_hook = float((tmp_path / "last_hook.txt").read_text())
+    assert ended - last_hook < 1.0, ended - last_hook  # the held thread lengthens nothing
 
 
 def test_a_worker_killed_while_the_driver_is_not_exiting_is_evicted_and_stopped(tmp_path):

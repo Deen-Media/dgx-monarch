@@ -1034,3 +1034,52 @@ def test_receiver_handoff_entry_boundaries_settle_and_ack_once(seam):
     assert registry.get(generation, token)["_registry_state"] == "RELEASED"
     assert registry.live_count == 0 and registry.tombstone_count == 1
     assert rdma_read_job.pending_job_count() == baseline
+
+
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_a_latent_read_that_starts_at_exit_reads_nothing_and_drops_nothing(monkeypatch, exiting):
+    """A sample ends as the driver begins to exit, with the RDMA latent return
+    on: the read of the Worker's buffer is not started (driver_exit.refuse_new_call)
+    and its release is skipped, as the cancel is; Monarch's exit step stops the
+    actor that holds the buffer. Not exiting, the read and the drop run as before."""
+    from dgx_monarch import driver_exit
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    events = []
+
+    class Buffer(_FakeRDMABuffer):
+        def read_into(self, dst, timeout=None):
+            events.append("read")
+            return super().read_into(dst, timeout=timeout)
+
+        def drop(self):
+            events.append("drop")
+            return super().drop()
+
+    class Authority:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, *_args):
+            events.append("exit")
+
+    class Guard:
+        def read_authority(self):
+            return Authority()
+
+        def ack_latent(self, generation, owner_token):
+            events.append("ack")
+
+    source = torch.arange(8, dtype=torch.uint8)
+    desc = {"kind": "rdma", "dtype": "uint8", "shape": [8],
+            "parts": [{"buffer": Buffer(source), "offset": 0, "nbytes": 8}],
+            "owner_token": "a" * 32, "setup_generation": 7}
+    if not exiting:
+        assert torch.equal(read_latent_result(desc, Guard()), source)
+        assert events[:4] == ["enter", "read", "drop", "exit"]
+        return
+    flag.set()
+    with pytest.raises(driver_exit.DriverExitingError):
+        read_latent_result(desc, Guard())
+    assert "read" not in events and "drop" not in events, events

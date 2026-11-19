@@ -411,21 +411,27 @@ def _driver_exit_flag_never_leaks():
     clear it; one that swaps in its own ``_EXITING`` through monkeypatch leaves
     the process's flag alone, which is the one checked here (monkeypatch may put
     the swap back after this runs). A leak is cleared and fails the test that left it.
-    The entry's hold at exit (``hold_at_entry``) is bounded at 0.5 s here, so a
-    test that reaches the entry with the flag set fails in moments, not 30 s.
+    The entry's hold at exit (``hold_at_entry``) is bounded at 0.5 s here, and an
+    entry after the one refusal at 2 s, so a test that reaches the entry with the
+    flag set fails in moments, not 30 s or never; the one-refusal mark starts
+    clear and is cleared after each test.
     """
     module = sys.modules.get("dgx_monarch.driver_exit")
     flag = getattr(module, "_EXITING", None)
     if flag is not None:
         assert not flag.is_set(), "an earlier test left the driver's exit flag set"
-    bound = getattr(module, "HOLD_AT_EXIT_S", None)
-    if bound is not None:
-        module.HOLD_AT_EXIT_S = 0.5
+    bounds = {name: getattr(module, name) for name in ("HOLD_AT_EXIT_S", "HOLD_AFTER_REFUSAL_S")
+              if module is not None and hasattr(module, name)}
+    if bounds:
+        module.HOLD_AT_EXIT_S, module.HOLD_AFTER_REFUSAL_S = 0.5, 2.0
     try:
         yield
     finally:
-        if bound is not None:
-            module.HOLD_AT_EXIT_S = bound
+        for name, value in bounds.items():
+            setattr(module, name, value)
+        refused = getattr(module, "_REFUSED_AT_BOUND", None)
+        if refused is not None:
+            refused.clear()
     if flag is None:
         module = sys.modules.get("dgx_monarch.driver_exit")
         flag = getattr(module, "_EXITING", None)

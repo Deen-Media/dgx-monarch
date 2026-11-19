@@ -358,7 +358,7 @@ def _dispatch_sample_bound(
                 raise RuntimeError("sample authority belongs to a different setup generation")
             sample_authority._register_locked()
             sample_authority._mark_enqueue_started_locked()
-            future = send()
+            future = driver_exit.send_unless_exiting(send)  # a dispatch that waited for the lock
             sample_authority._bind_future_locked(future)
         return sample_authority
     except BaseException as exc:
@@ -456,14 +456,14 @@ def dispatch_endpoint(
             raise ValueError("setup tokens apply only to setup-bound endpoints")
         if endpoint_name not in SESSION_SCOPED_ENDPOINTS:
             require_endpoint(handle, endpoint_name)
-            return send()
+            return driver_exit.send_unless_exiting(send)
         with handle.lock:
             from .mesh_session import require_mutation_authority
 
             require_endpoint(handle, endpoint_name)
             require_mutation_authority(
                 handle, f"dispatch {endpoint_name}", require_owner=True)
-            return send()
+            return driver_exit.send_unless_exiting(send)  # a caller that waited for the lock
     with handle.lock:
         from .mesh_session import require_mutation_authority
 
@@ -475,7 +475,7 @@ def dispatch_endpoint(
                 f"setup-bound endpoint {endpoint_name} requires a SetupToken"
             )
         _require_setup_token(handle, setup_token)
-        return send()
+        return driver_exit.send_unless_exiting(send)  # a caller that waited for the lock
 
 
 def publish_worker_capabilities(handle: Any, results: list) -> None:

@@ -2653,6 +2653,7 @@
       "test_without_a_consent_the_same_load_offers_a_rescue": "b50a88b3d4d54524"
     },
     "tests/test_restart_reattach.py": {
+      "test_a_config_change_the_exit_reaches_starts_no_stop": "ace2e1b0bc3e3bb1",
       "test_a_death_another_path_owns_refuses_without_a_stop": "87074d3ed232637e",
       "test_a_detour_that_cannot_heal_raises_its_refusal_without_a_retry": "e303c362b3a442d5",
       "test_a_failed_replacement_attach_propagates_its_own_error": "eff1fce658bb5a68",
@@ -3271,6 +3272,8 @@
       "test_the_query_split_equals_one_dense_composite_mask": "185dc44ae15a5663"
     },
     "tests/test_vae_decode_split_comfy.py": {
+      "test_a_decode_that_starts_at_exit_stays_here_unlogged": "2335fae2ffdab712",
+      "test_a_decode_under_way_at_exit_decodes_here_and_logs_nothing": "829115df3b7ee65c",
       "test_a_failing_rank_falls_back_with_the_stock_bytes": "967dab1dc27932d8",
       "test_a_plan_the_stock_loop_leaves_decodes_the_rest_here": "f1f2bc6815f467df",
       "test_a_real_vae_file_splits_through_the_stock_decode_and_the_worker_body": "a53cb73951b77c9d",

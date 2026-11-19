@@ -518,6 +518,7 @@ def get_mesh(
             # Admit before recycling: a config edit the driver refuses keeps the working fleet.
             previous_admission = prepare_driver(config)
             if old is not None:
+                driver_exit.refuse_new_call()  # no new stop once the driver is exiting
                 log.info("mesh source/config changed; recycling the previous fleet")
                 try:
                     old.shutdown(timeout_s=30, stop_timeout_s=mesh_teardown.proc_stop_bound_s())  # never under _MESH_LOCK

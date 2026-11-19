@@ -143,7 +143,7 @@ def _release_rdma_parts(
         for index, part in enumerate(parts):  # noqa: B007 - resume after boundary
             try:
                 with transfer_utils.rdma_drop_phase():
-                    _part_buffer(part).drop().get(timeout=RDMA_READ_TIMEOUT_S)
+                    transfer_utils.drop_rdma_buffer(_part_buffer(part), RDMA_READ_TIMEOUT_S)
             except BaseException as exc:
                 failures.append(_drop_failure(part, exc))
         _publish_drop_result(outcome_owner, failures, None)
@@ -161,7 +161,7 @@ def _release_rdma_parts(
         for part in parts[index + 1:]:
             try:
                 with transfer_utils.rdma_drop_phase():
-                    _part_buffer(part).drop().get(timeout=RDMA_READ_TIMEOUT_S)
+                    transfer_utils.drop_rdma_buffer(_part_buffer(part), RDMA_READ_TIMEOUT_S)
             except BaseException as later_exc:
                 failures.append(_drop_failure(part, later_exc))
         _publish_drop_result(outcome_owner, failures, exc)

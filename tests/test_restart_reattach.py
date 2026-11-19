@@ -674,6 +674,31 @@ def test_an_attach_the_exit_stands_down_leaves_the_transport_unpoisoned(driver, 
     assert mesh_mod._TRANSPORT_POISON is None
 
 
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_a_config_change_the_exit_reaches_starts_no_stop(driver, monkeypatch, exiting):
+    """get_mesh finds the cluster config changed and would stop the previous
+    fleet before it builds the new one. The exit begins after its entry (here,
+    as it admits the new config): no stop is sent, nothing is poisoned and
+    nothing new is dialed. Not exiting, it tries the previous fleet's stop as
+    before (one that is never acknowledged, so the change refuses)."""
+    from dgx_monarch import driver_exit, monarch_launch
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    handle.config_fingerprint = "the file before its edit"
+
+    def prepare(_config):
+        if exiting:
+            driver_exit._EXITING.set()  # the exit hook ran after get_mesh's entry
+
+    monkeypatch.setattr(monarch_launch, "prepare_driver", prepare)
+    error = driver_exit.DriverExitingError if exiting else mesh_mod.MeshAttachError
+    with pytest.raises(error):
+        mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    assert len(driver.dials) == 1 and mesh_mod._TRANSPORT_POISON is None
+    assert driver.procs[0].stops == ([] if exiting else [driver.procs[0].stops[0]])
+
+
 def test_a_heal_whose_stop_is_confirmed_after_an_earlier_release_keeps_its_retry(
         driver, monkeypatch):
     """A first restart ends in a liveness release, which arms the release

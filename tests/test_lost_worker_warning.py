@@ -74,9 +74,15 @@ def _renders(error_texts: list[str], make_error=_supervision_error, activity=Non
             handle, submission, progress, old,
             {"samples": torch.zeros((1, 4, 1, 1))}, 10.0, f"render-{index}", render_result._finish_render))
 
-    def collect(pending):
+    def collect(pending, during=None):
+        """The node method that collects, under its wrapper; ``during`` runs inside it first."""
+        def node():
+            if during is not None:
+                during()
+            return pending.result()
+
         with session.activate():
-            return refusal_lead.lead_with_refusal(pending.result)()
+            return refusal_lead.lead_with_refusal(node)()
 
     return handle, pendings, collect
 
@@ -113,17 +119,21 @@ def test_two_renders_failing_on_one_loss_log_it_once(warnings_seen):
 def test_at_exit_a_stopped_call_is_no_lost_worker(warnings_seen, monkeypatch, exiting):
     """Monarch's exit step stops a render's call, which then reads "monitor ... stopped before
     reporting a failure", one of the lost-contact texts. While the driver runs that is a lost
-    Worker; once it exits, the collect words nothing, warns nothing and flags nothing."""
+    Worker; once it exits, the collect words nothing, warns nothing and flags nothing. The
+    call is in flight and its node already running when the exit begins (inside the node's
+    wrapper, before the collect reads the call), as a sampler's own collect is."""
     from dgx_monarch import driver_exit
     from dgx_monarch.worker_box import LOSS_WARNED, LOST_WORKER
 
     handle, [pending], collect = _renders([captured.RESTART_ERROR_080])
-    if exiting:
+
+    def begin_exit() -> None:  # the exit hook runs while this node waits on its call
         monkeypatch.setattr(driver_exit, "_main_thread_alive", lambda: False)
         driver_exit._begin()
+
     try:
         with pytest.raises(Exception) as caught:  # the type is what this test reads
-            collect(pending)
+            collect(pending, during=begin_exit if exiting else None)
     finally:
         driver_exit.reset()
     lost = [r for r in warnings_seen if r.levelno == logging.WARNING and "lost contact" in r.getMessage()]
@@ -134,6 +144,29 @@ def test_at_exit_a_stopped_call_is_no_lost_worker(warnings_seen, monkeypatch, ex
     else:
         assert len(lost) == 1 and getattr(handle, LOSS_WARNED, False) is True
         assert isinstance(caught.value, worker_loss.WorkerLostError)
+
+
+def test_a_collect_that_starts_at_exit_holds_and_reads_no_call(warnings_seen, monkeypatch):
+    """A node that only starts once the driver is exiting, its render's call dispatched
+    before: it holds at its wrapper (driver_exit.hold_at_entry) and never reads the call;
+    at the bound it raises the exit refusal, with no lost-Worker words, warning or flag.
+    (Before the wrapper held, this collect read the stopped call as the row above does.)"""
+    from dgx_monarch import driver_exit
+    from dgx_monarch.worker_box import LOSS_WARNED
+
+    handle, [pending], collect = _renders([captured.RESTART_ERROR_080])
+    read: list[int] = []
+    real_result = pending.result
+    monkeypatch.setattr(pending, "result", lambda *a, **k: read.append(1) or real_result(*a, **k))
+    monkeypatch.setattr(driver_exit, "_main_thread_alive", lambda: False)
+    driver_exit._begin()
+    try:
+        with pytest.raises(driver_exit.DriverExitingError):
+            collect(pending)
+    finally:
+        driver_exit.reset()
+    lost = [r for r in warnings_seen if r.levelno == logging.WARNING and "lost contact" in r.getMessage()]
+    assert read == [] and lost == [] and not getattr(handle, LOSS_WARNED, False)
 
 
 def test_a_stall_eviction_logs_no_lost_worker(warnings_seen, monkeypatch):

@@ -221,13 +221,18 @@ Ctrl+C, logged no warning and no error after the notice, and every process
 exited with code 0.
 
 A render that ComfyUI starts after the notice, the next prompt in its queue for
-one, does not reach the Workers: it waits at the pack's entry, logging nothing,
-and ComfyUI starts no other prompt behind it, so the process ends with that
-render still waiting. A closing ComfyUI therefore prints at most the cut
-render's own error, then nothing, for any length of queue. If the process is
-still alive 30 s after that render started, because an exit hook hung, the
-render stops with "the driver is exiting, so this render, load or node did not
-start", which ComfyUI logs as its error
+one, does not reach the Workers: it waits at the pack's entry (its node, or the
+mesh entry for a node with no wrapper), logging nothing, and ComfyUI starts no
+other prompt behind it, so the process ends with that render still waiting. A
+closing ComfyUI therefore prints at most the cut render's own error, then
+nothing for the queue's DGX Monarch renders, for any length of queue. A queued
+prompt's stock ComfyUI nodes that run before its first DGX Monarch node still
+run and print what they print, and a prompt with no DGX Monarch node renders as
+usual. If the process is still alive 30 s after the waiting render started,
+because an exit hook hung, that render stops with "the driver is exiting, so
+this render, load or node did not start", which ComfyUI logs as its error;
+every render after it waits until the process ends, so that is the one error
+however long the hook hangs
 ([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
 
 The render refuses at once instead, with a class C `cross_rank_capacity`
@@ -2579,23 +2584,32 @@ held the actor's process, as a render's step does; Monarch gives each one up
 to 10 s to stop, so allow about 10 s. ComfyUI itself may still log the
 interrupted render's own error.
 
-Nothing new reaches the Workers after the notice, from any thread. A render,
-load or node that starts then waits at the pack's entry, logging nothing, until
-the process ends; ComfyUI starts no other prompt while it waits. A price, a
-setup, a dispatch, a reset or a status poll that a render already under way
-would send next is not sent, and the lease renewals stop. A call in flight and
-a stop under way run to their end. So a closing ComfyUI prints at most the cut
-render's own error, then nothing, however many prompts were queued. Before,
-each queued prompt that started priced on the closing Workers and printed its
-error, and from about 1 s after the notice Monarch panicked on the send
-(`SendError` on stderr). A process still alive 30 s after the waiting render
-started, because an exit hook hung, ends that render with "the driver is
-exiting, so this render, load or node did not start". On loopback on
-2026-11-18, with 2 or 4 renders queued behind the cut one and the next
-starting 0.2 to 2.0 s after the notice, by a normal return or by Ctrl+C, one
-render entered and waited, none printed, Monarch did not panic, the exit took
-as long as before, and every process exited with code 0; with an exit hook held
-35 s, the waiting render stopped at 30 s with that one error.
+Nothing new reaches the Workers after the notice, from any thread. What runs
+to its end is work already started: a call in flight, a stop under way, the
+cleanup of a fleet bring-up under way, and the steps of an attach after its
+dial. A render, load or node that starts after the notice waits at the pack's
+entry, logging nothing, until the process ends; ComfyUI starts no other prompt
+while it waits. A price, a setup, a dispatch, an RDMA latent read, a stop, a
+reset or a status poll that a render already under way would send next is not
+sent, and the lease renewals stop. A Worker-assisted VAE decode decodes its
+remaining units on the driver, as it would with the option off, and logs
+nothing. So a closing ComfyUI prints at most the cut render's own error, then
+nothing for the queue's DGX Monarch renders, however many prompts were queued;
+a queued prompt's stock ComfyUI nodes that run before its first DGX Monarch
+node still print what they print. Before, each queued prompt that started
+priced on the closing Workers and printed its error, and from about 1 s after
+the notice Monarch panicked on the send (`SendError` on stderr). If the
+process is still alive 30 s after the waiting render started, because an exit
+hook hung, that render stops with "the driver is exiting, so this render, load
+or node did not start"; every render after it waits until the process ends, so
+that is the one error however long the hook hangs. On loopback on 2026-11-18, with 2 or 4 renders queued behind the cut
+one and the next starting 0.2 to 2.0 s after the notice, by a normal return or
+by Ctrl+C, one render entered and waited, none printed, Monarch did not panic,
+the exit took as long as before, and every process exited with code 0. With an
+exit hook held 35 s, the waiting render stopped at 30 s with that one error;
+with 3 renders queued and a hook held 70 s, the first stopped at 30 s and the
+next waited until the process ended at 70 s, with nothing printed after that
+one error.
 
 A ComfyUI stopped by SIGTERM (`systemctl stop`, `kill`), killed outright, or
 restarted by replacing its process without running its exit steps (as some

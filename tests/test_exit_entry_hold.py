@@ -36,6 +36,8 @@ def flag(monkeypatch):
     """A fresh exit flag and a short hold bound for the test, put back after it."""
     event = threading.Event()
     monkeypatch.setattr(driver_exit, "_EXITING", event)
+    monkeypatch.setattr(driver_exit, "_REFUSED_AT_BOUND", threading.Event())
+    monkeypatch.setattr(driver_exit, "_PROCESS_ENDS", threading.Event())
     monkeypatch.setattr(driver_exit, "HOLD_AT_EXIT_S", BOUND_S)
     return event
 
@@ -176,6 +178,52 @@ def test_with_prompts_queued_exactly_one_enters_and_holds(flag, monkeypatch):
     worker.join(10.0)
 
 
+def _entering(handle, outcomes: list) -> threading.Thread:
+    """One prompt's thread entering ensure_live; what it raises lands in ``outcomes``."""
+
+    def prompt() -> None:
+        try:
+            mesh_mod.ensure_live(handle)
+        except driver_exit.DriverExitingError as exc:
+            outcomes.append((time.monotonic(), str(exc)))
+
+    thread = threading.Thread(target=prompt, daemon=True)
+    thread.start()
+    return thread
+
+
+@pytest.mark.parametrize("arrival", ["after_the_refusal", "together"])
+def test_one_refusal_per_exit_however_long_the_hook_hangs(flag, monkeypatch, arrival):
+    """An exit hook hangs past the bound with prompts still queued. The first entry
+    to reach the bound raises the one refusal; every entry after it, and any other
+    that reached the bound beside it, waits for the process to end with no bound,
+    so no second refusal is printed. (Here the process's end is the test setting
+    ``_PROCESS_ENDS``; until then nothing more is raised.) Before, each entry
+    raised at its own bound: one refusal every 30 s for as long as the hook hung."""
+    handle, _old, _new = _handle(_Workers([]))
+    monkeypatch.setattr(driver_exit, "HOLD_AFTER_REFUSAL_S", 10.0)  # a backstop: the test ends the wait
+    flag.set()
+    outcomes: list[tuple[float, str]] = []
+    started = time.monotonic()
+    first = _entering(handle, outcomes)
+    if arrival == "after_the_refusal":
+        first.join(5.0)
+        assert len(outcomes) == 1 and "waited" in outcomes[0][1]  # the one refusal, at the bound
+        late = _entering(handle, outcomes)  # the next queued prompt enters after it
+        threads = [late]
+    else:
+        threads = [first, _entering(handle, outcomes)]  # both reach the bound together
+    time.sleep(BOUND_S * 3)
+    assert time.monotonic() - started > BOUND_S * 2
+    assert len(outcomes) == 1, outcomes  # past its own bound, the later entry still waits
+    assert sum("waited" in text for _t, text in outcomes) == 1
+    assert any(thread.is_alive() for thread in threads)
+    driver_exit._PROCESS_ENDS.set()  # the process ends
+    for thread in threads:
+        thread.join(5.0)
+    assert sum("waited" in text for _t, text in outcomes) == 1  # still the one refusal
+
+
 @pytest.mark.parametrize("session", ["owned", "pinned"])
 def test_a_render_that_starts_at_exit_holds_and_its_refusal_heals_nothing(
         flag, monkeypatch, session):
@@ -239,6 +287,115 @@ def test_the_first_use_gate_takes_no_fallback_for_the_exits_refusal(monkeypatch,
             auto_gate.maybe_auto_gate(model, {}, {}, None, 1)
         return
     assert auto_gate.maybe_auto_gate(model, {}, {}, None, 1) == "ERROR"
+
+
+@EXITING
+def test_a_loader_that_starts_at_exit_holds_before_its_own_work(flag, monkeypatch, exiting):
+    """The node wrapper (refusal_lead.lead_with_refusal) is the outermost entry: a
+    loader that starts once the driver is exiting holds there, before any of its
+    own work, so its relief and the requeue price ask the Workers for no quote
+    (they run before the mesh entry when the driver's own price does not fit).
+    Not exiting, its body runs as before."""
+    from dgx_monarch import capacity_agreement
+    from dgx_monarch.nodes import loaders
+    from dgx_monarch.nodes.common import MeshSpec
+
+    ran: list[str] = []
+    monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k: ran.append("quote"))
+
+    def validate(_dtype):
+        ran.append("body")
+        raise _Stop
+
+    monkeypatch.setattr(loaders, "validate_weight_dtype", validate)
+    mesh = MeshSpec(handle=object(), topology_preset="uly2", attention="TORCH_FLASH", sync_ulysses=True)
+    started = time.monotonic()
+    if not exiting:
+        with pytest.raises(_Stop):
+            loaders.DGXMonarchUNETLoader().load(mesh, "x.safetensors")
+        assert ran == ["body"]
+        return
+    flag.set()
+    with pytest.raises(driver_exit.DriverExitingError):
+        loaders.DGXMonarchUNETLoader().load(mesh, "x.safetensors")
+    assert ran == [] and time.monotonic() - started >= BOUND_S
+
+
+def test_a_node_already_running_or_called_from_inside_another_is_not_held(flag, monkeypatch):
+    """The wrapper holds only at a thread's outermost node entry. A node already
+    running when the notice comes goes on, and a decorated method it calls from
+    inside passes straight through; after it ends, the next outermost entry holds."""
+    from dgx_monarch.nodes.refusal_lead import lead_with_refusal
+
+    monkeypatch.setattr(driver_exit, "HOLD_AT_EXIT_S", 30.0)
+    ran: list[str] = []
+
+    @lead_with_refusal
+    def inner() -> str:
+        ran.append("inner")
+        return "inner"
+
+    @lead_with_refusal
+    def outer() -> str:
+        ran.append("outer")
+        flag.set()  # the notice comes while this node runs
+        return inner()
+
+    started = time.monotonic()
+    assert outer() == "inner" and ran == ["outer", "inner"]
+    assert time.monotonic() - started < 1.0  # neither held
+    monkeypatch.setattr(driver_exit, "HOLD_AT_EXIT_S", BOUND_S)
+    with pytest.raises(driver_exit.DriverExitingError):
+        inner()  # the next outermost entry
+    assert ran == ["outer", "inner"]
+
+
+@pytest.mark.parametrize("failure", ["exit", "other"])
+def test_the_pipelines_gate_lookup_passes_the_exits_refusal_through(monkeypatch, failure):
+    """The Pipeline asks auto_gate_required whether a ceremony is due. Its lookup
+    reaches the entry; the exit's refusal from there is raised as it came, where
+    before the lookup swallowed it, logged a failed lookup and answered True, so
+    the Pipeline went on, entered again and held, and the one refusal was never
+    printed. Any other lookup failure still answers True (the fail-safe)."""
+    from dgx_monarch.nodes import auto_gate, common
+
+    error = (driver_exit.DriverExitingError(driver_exit.NOT_STARTED) if failure == "exit"
+             else RuntimeError("the ledger could not be read"))
+
+    def context(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(common, "_auto_gate_context", context)
+    model = SimpleNamespace(mesh=SimpleNamespace(worker_args={}))
+    if failure == "exit":
+        with pytest.raises(driver_exit.DriverExitingError):
+            auto_gate.auto_gate_required(model, "ksampler")
+        return
+    assert auto_gate.auto_gate_required(model, "ksampler") is True
+
+
+def test_the_shipped_bound_is_the_30_s_the_docs_state():
+    """Both fixtures replace the bound before any row reads it, so this row reads
+    the shipped values from the source itself: the hold refuses at 30 s, and an
+    entry after that one refusal waits with no bound. Every sentence of the docs
+    that names the bound states the same number."""
+    import ast
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    shipped = {}
+    for node in ast.parse(Path(driver_exit.__file__).read_text()).body:  # the module imported
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            shipped[node.targets[0].id] = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value:
+            shipped[node.target.id] = node.value
+    assert ast.literal_eval(shipped["HOLD_AT_EXIT_S"]) == 30.0
+    assert ast.literal_eval(shipped["HOLD_AFTER_REFUSAL_S"]) is None
+    stated: list[str] = []
+    for doc in ("docs/TROUBLESHOOTING.md", "CHANGELOG.md"):
+        stated += re.findall(r"still alive (\d+) s", " ".join((root / doc).read_text().split()))
+    assert len(stated) >= 3 and set(stated) == {"30"}, stated  # entries 2 and 51, the CHANGELOG
 
 
 def test_nothing_past_the_entry_holds(flag, monkeypatch):

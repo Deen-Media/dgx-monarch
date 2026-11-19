@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 from typing import Any, NoReturn
 
+from ..driver_exit import DriverExitingError
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call
 from ..worker_runtime import WorkerRuntimeMismatch
 from . import adaptive_steps, h3_ring_pad
@@ -26,10 +27,7 @@ from .gate_fsdp import (
     token_resolves_fsdp,
     topology_requires_fsdp_proof,
 )
-from .gate_process_state import (  # noqa: F401 - compatibility re-export
-    release_auto_gate_claim,
-    restore_auto_gate_active,
-)
+from .gate_process_state import release_auto_gate_claim, restore_auto_gate_active  # noqa: F401 - re-export
 from .gate_process_verdicts import (  # noqa: F401 - published from here
     process_gate_verdict,
     process_gate_verdict_locked,
@@ -199,8 +197,8 @@ def auto_gate_context(
                 )
         return state, gate_verdict_token(
             key, artifacts.current, commit, capability_context)
-    except (FsdpGateProofError, WorkerRuntimeMismatch):
-        raise  # two torch builds hold no Gate authority; the user sees which (worker_runtime.py)
+    except (FsdpGateProofError, WorkerRuntimeMismatch, DriverExitingError):
+        raise  # two torch builds hold no Gate authority (worker_runtime.py); an exit is no verdict
     except Exception as exc:
         if fsdp_proof_required:
             raise FsdpGateProofError(
@@ -230,8 +228,8 @@ def auto_gate_required(
     try:
         context = _auto_gate_context(model, request_kind, latent, cfg_value,
                                      *(() if uncond_model is None else (uncond_model,)))
-    except (FsdpGateProofError, WorkerRuntimeMismatch):
-        raise  # two torch builds hold no Gate authority; the user sees which (worker_runtime.py)
+    except (FsdpGateProofError, WorkerRuntimeMismatch, DriverExitingError):
+        raise  # two torch builds hold no Gate authority (worker_runtime.py); an exit is no verdict
     except PACKED_TOPOLOGY_REFUSALS:
         raise
     except Exception as exc:
@@ -460,8 +458,8 @@ def maybe_auto_gate(
                 _raise_cleanup_cancellation(
                     active_primary, active_cleanup_error,
                     "auto-gate active-context restoration was interrupted")
-    except (FsdpGateProofError, WorkerRuntimeMismatch):
-        raise  # two torch builds hold no Gate authority; the user sees which (worker_runtime.py)
+    except (FsdpGateProofError, WorkerRuntimeMismatch, DriverExitingError):
+        raise  # two torch builds hold no Gate authority (worker_runtime.py); an exit is no verdict
     except PACKED_TOPOLOGY_REFUSALS:
         raise
     except CeremonyCapacityStop as stop:

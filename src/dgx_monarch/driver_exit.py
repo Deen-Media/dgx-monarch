@@ -24,13 +24,20 @@ interpreter shuts down.
 
 Nothing new starts on the Workers once the flag is set. A render, load or node
 that starts then (ComfyUI's prompt worker takes every queued prompt until the
-interpreter stops it) waits at the top of ``mesh.get_mesh`` and
-``mesh.ensure_live`` (``hold_at_entry``) until the process ends, and raises only
-after ``HOLD_AT_EXIT_S``. Past the entry, each new send (a price, a setup, a
-dispatch, an all-rank call, a reset) raises ``DriverExitingError``
-(``refuse_new_call``), and the best-effort ones (the cancel, the lease renewal,
-a setup's rollback) skip themselves. No pack log line reports that error
-(``log.SilentInLogs``). A call in flight and a stop under way run to their end.
+interpreter stops it) waits at its node's wrapper (``nodes.refusal_lead``) or at
+the top of ``mesh.get_mesh`` and ``mesh.ensure_live`` (``hold_at_entry``) until
+the process ends; only the first
+to reach ``HOLD_AT_EXIT_S`` raises. Past the entry, each new send (a price, a setup,
+a dispatch, an all-rank call, an RDMA read, a stop, a reset) raises
+``DriverExitingError`` (``refuse_new_call``), and the best-effort ones (the
+cancel, an RDMA drop, the lease renewal, a setup's rollback) skip themselves.
+Once the exit has begun, the pack's loggers drop a record that carries that
+error as an object (an argument or the record's exception, itself or as an
+explicit cause; ``log.SilentInLogs``); a line that carries only its text still
+prints, and the one route that turned it into text, the Worker-assisted
+decode's record, checks the exit itself. What runs to its end: a call in
+flight, a stop under way, the cleanup of a fleet bring-up under way, and the
+steps of an attach after its dial.
 
 The hook sets the flag only once the main thread has ended. Python marks it
 ended before it runs exit hooks (checked on 3.11, 3.12 and 3.13), so a call
@@ -49,6 +56,7 @@ from typing import Any, TypeVar
 from .log import SilentInLogs, get_logger
 
 _F = TypeVar("_F", bound=Callable[..., Any])
+_T = TypeVar("_T")
 _log = get_logger("dgx_monarch.mesh")
 _EXITING = threading.Event()
 _LOCK = threading.Lock()
@@ -127,8 +135,11 @@ def exiting() -> bool:
 class DriverExitingError(RuntimeError, SilentInLogs):
     """A new call to the Worker actors that the driver did not send because it is exiting.
 
-    ``SilentInLogs``: no pack log line reports it, so a handler that catches it
-    and warns (an unload or a status poll that "failed") prints nothing.
+    ``SilentInLogs``: once the exit has begun, the pack's loggers drop a record
+    that carries this error as an object (an argument or the record's exception,
+    itself or as an explicit cause), so a handler that catches it and warns (an
+    unload or a status poll that "failed") prints nothing. A line that carries
+    only its text still prints.
     """
 
 
@@ -148,12 +159,26 @@ def refuse_new_call() -> None:
         raise DriverExitingError(SENT_NOTHING)
 
 
+def send_unless_exiting(send: Callable[[], _T]) -> _T:
+    """``send()``, unless exit has begun: the check at the send itself.
+
+    ``mesh_setup.dispatch_endpoint`` sends through this under the handle's lock,
+    so a caller that passed its own check and then waited for that lock (or for
+    the render session) sends nothing once the exit began while it waited.
+    """
+    refuse_new_call()
+    return send()
+
+
 # How long a render, load or node that starts once the driver is exiting waits at
 # the entry for the process to end before it refuses. A process ends about 0.5 s
 # after the notice on loopback; one still alive at the bound has an exit hook that
-# hung, and the refusal is then the one error it prints.
+# hung, and the refusal is then the one error it prints: every entry after it waits
+# for the process to end with no bound (HOLD_AFTER_REFUSAL_S, None outside tests).
 HOLD_AT_EXIT_S = 30.0
+HOLD_AFTER_REFUSAL_S: float | None = None
 _PROCESS_ENDS = threading.Event()  # never set: the process ends first
+_REFUSED_AT_BOUND = threading.Event()  # this exit's one refusal at the bound has been raised
 NOT_STARTED = ("the driver is exiting, so this render, load or node did not start: "
                "Monarch's exit step stops the Worker actors, and nothing was sent to them")
 
@@ -161,15 +186,21 @@ NOT_STARTED = ("the driver is exiting, so this render, load or node did not star
 def hold_at_entry(handle: Any = None) -> None:
     """Hold a render, load or node that starts once exit has begun; refuse at the bound.
 
-    At the top of ``mesh.get_mesh`` and ``mesh.ensure_live``, before any lock,
-    registry change, attach, id reading or price. ComfyUI's prompt worker takes
+    At a thread's outermost node method under ``nodes.refusal_lead.lead_with_refusal``
+    (the samplers, the UNET loaders, Fleet and the Identity Gate), before any of
+    the node's own work, and at the top of ``mesh.get_mesh`` and ``mesh.ensure_live``
+    for the nodes with no wrapper, before any lock, registry change, attach, id
+    reading or price. ComfyUI's prompt worker takes
     every queued prompt until the interpreter stops it, and prints two ERROR
     records for each that fails, so a refusal here would print a traceback per
     queued prompt while the process closes. Held, the first such prompt waits,
     logs nothing and takes no lock, and the worker takes no other: the process
-    ends, and the daemon thread with it. After ``HOLD_AT_EXIT_S`` it raises
-    ``DriverExitingError``. A thread that owns ``handle``'s lock, which a stop
-    takes, refuses at once instead of holding (no caller enters so; checked here).
+    ends, and the daemon thread with it. After ``HOLD_AT_EXIT_S`` the first
+    entry to get there raises ``DriverExitingError``; any entry after that one
+    waits for the process to end with no bound, so a queue behind an exit hook
+    that hangs prints that one refusal however long the hook hangs. A thread that
+    owns ``handle``'s lock, which a stop takes, refuses at once instead of holding
+    (no caller enters so; checked here).
     """
     if not _EXITING.is_set():
         return
@@ -177,8 +208,15 @@ def hold_at_entry(handle: Any = None) -> None:
     owned = getattr(lock, "_is_owned", None)
     if callable(owned) and owned():
         raise DriverExitingError(NOT_STARTED)
-    _PROCESS_ENDS.wait(HOLD_AT_EXIT_S)
-    raise DriverExitingError(f"{NOT_STARTED} (it waited {HOLD_AT_EXIT_S:.0f} s for the process to end)")
+    if not _REFUSED_AT_BOUND.is_set():
+        _PROCESS_ENDS.wait(HOLD_AT_EXIT_S)
+        with _LOCK:
+            first = not _REFUSED_AT_BOUND.is_set()
+            _REFUSED_AT_BOUND.set()
+        if first:
+            raise DriverExitingError(f"{NOT_STARTED} (it waited {HOLD_AT_EXIT_S:.0f} s for the process to end)")
+    _PROCESS_ENDS.wait(HOLD_AFTER_REFUSAL_S)  # no bound outside tests: no second refusal
+    raise DriverExitingError(NOT_STARTED)
 
 
 def skipped_at_exit(fn: _F) -> _F:
@@ -195,3 +233,4 @@ def skipped_at_exit(fn: _F) -> _F:
 def reset() -> None:
     """Forget an exit (tests); the registered hook stays registered."""
     _EXITING.clear()
+    _REFUSED_AT_BOUND.clear()

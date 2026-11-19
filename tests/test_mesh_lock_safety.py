@@ -1089,8 +1089,8 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "deliberate on-loop pin of monarch's own semantics",
     ("progress.py", "ProgressReceiver.__enter__.pump"):
         "the dedicated dgxm-progress thread",
-    ("transfer.py", "_release_rdma_parts"):
-        "inside the dgxm-latent-read scratch thread",
+    ("transfer_utils.py", "drop_rdma_buffer"):
+        "called only from transfer._release_rdma_parts, inside the dgxm-latent-read scratch thread",
     ("transfer_utils.py", "read_parts_concurrent.read_one"):
         "pool thread under dgxm-latent-read",
     ("rdma_receiver.py", "_read_and_release_owned.drive"):

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -69,6 +70,100 @@ def test_an_all_rank_call_sends_nothing_at_exit(flag, exiting):
         return
     assert handle.call_all("status", timeout_s=1.0) == [{"rank": 0}, {"rank": 1}]
     assert len(workers.status.calls) == 1
+
+
+class _LockHolder:
+    """Another thread holding the handle's lock (a setup, a stop) until released."""
+
+    def __init__(self, handle) -> None:
+        self.handle, self.held, self.release = handle, threading.Event(), threading.Event()
+        self.thread = threading.Thread(target=self._hold, daemon=True)
+        self.thread.start()
+        assert self.held.wait(5.0)
+
+    def _hold(self) -> None:
+        with self.handle.lock:
+            self.held.set()
+            self.release.wait(10.0)
+
+    def done(self) -> None:
+        self.release.set()
+        self.thread.join(5.0)
+
+
+@pytest.mark.parametrize("call", ["all_rank", "setup_bound", "sample"])
+@EXITING
+def test_a_call_that_waited_for_the_lock_when_the_exit_began_sends_nothing(flag, call, exiting):
+    """The call passed its own check, then waited for the handle's lock (or the
+    render session that shares it), and the exit began while it waited. The
+    check under the lock, at the send itself (mesh_setup.dispatch_endpoint and
+    the sample's enqueue), stops it. Not exiting, it sends once the lock frees."""
+    workers = _Workers([])
+    workers.clear_vram = _Endpoint(_Future(_ValueMesh([{}, {}])))
+    workers.compute_sigmas = _Endpoint(_Future(_ValueMesh([{}, {}])))
+    handle, _old, _new = _handle(workers)
+    token = mesh_setup.current_setup_token(handle)
+    sent: list[int] = []
+    outcome: list[object] = []
+
+    def sample_send():
+        sent.append(1)
+        return _Future(_ValueMesh([]))
+
+    def caller() -> None:
+        try:
+            if call == "all_rank":  # a session-scoped endpoint that needs no setup
+                outcome.append(handle.call_all("clear_vram", "soft", timeout_s=2.0))
+            elif call == "setup_bound":
+                outcome.append(handle.call_all("compute_sigmas", "x", timeout_s=2.0, setup_token=token))
+            else:
+                outcome.append(_dispatch_sample(handle, sample_send, setup_token=token))
+        except BaseException as exc:
+            outcome.append(exc)
+
+    holder = _LockHolder(handle)
+    waiting = threading.Thread(target=caller, daemon=True)
+    waiting.start()
+    time.sleep(0.3)
+    assert waiting.is_alive() and outcome == []  # past its own check, waiting for the lock
+    if exiting:
+        flag.set()
+    holder.done()
+    waiting.join(10.0)
+    calls = {"all_rank": workers.clear_vram.calls, "setup_bound": workers.compute_sigmas.calls,
+             "sample": sent}[call]
+    if exiting:
+        assert isinstance(outcome[0], driver_exit.DriverExitingError) and calls == []
+        return
+    assert not isinstance(outcome[0], BaseException) and len(calls) == 1
+    if call == "sample":
+        mesh_setup.release_sample(outcome[0])
+
+
+@pytest.mark.parametrize("call", ["all_rank", "sample", "reset"])
+def test_at_exit_the_check_comes_before_the_lock(flag, call):
+    """An all-rank call, a sample dispatch and a reset that start at exit refuse
+    at once, while another thread holds the handle's lock: none waits for the
+    render session or the lifecycle lock (10 s each) before it sees the exit."""
+    workers = _Workers([_Future(_acks())])
+    workers.clear_vram = _Endpoint(_Future(_ValueMesh([{}, {}])))
+    handle, _old, _new = _handle(workers)
+    token = mesh_setup.current_setup_token(handle)
+    holder = _LockHolder(handle)
+    flag.set()
+    started = time.monotonic()
+    try:
+        with pytest.raises(driver_exit.DriverExitingError):
+            if call == "all_rank":
+                handle.call_all("clear_vram", "soft", timeout_s=2.0)
+            elif call == "sample":
+                mesh_setup.dispatch_sample(handle, lambda: _Future(_ValueMesh([])), setup_token=token,
+                                           authority=object())
+            else:
+                handle.recycle_detailed()
+        assert time.monotonic() - started < 1.0
+    finally:
+        holder.done()
 
 
 @EXITING
@@ -332,9 +427,12 @@ def test_no_pack_log_line_reports_a_call_the_exit_did_not_send(flag, monkeypatch
     """A handler that catches the exit's refusal and warns (the panel's status
     poll, an unload before a ceremony) prints nothing once the driver is
     exiting: the pack's loggers drop a record whose arguments or exception carry
-    it, as itself or as a cause. A record about any other failure is kept,
-    through the same handlers. Before the exit nothing is dropped, not even a
-    record that carries the error (which only driver_exit raises, at exit)."""
+    it, as itself or as an explicit cause (``raise ... from``). A record about
+    any other failure is kept, through the same handlers, and so is one about an
+    error raised while the refusal was being handled, linked to it only as its
+    context: that is a different failure. Before the exit nothing is dropped,
+    not even a record that carries the error (which only driver_exit raises, at
+    exit)."""
     from dgx_monarch.nodes import routes
 
     kept = _kept(monkeypatch, routes.log.name)
@@ -350,6 +448,16 @@ def test_no_pack_log_line_reports_a_call_the_exit_did_not_send(flag, monkeypatch
     except RuntimeError as wrapped:
         routes.log.warning("unload failed (%r)", wrapped)
         routes.log.error("unload failed", exc_info=True)
+    routes.log.warning("unload failed (%(cause)r)", {"cause": refused})  # mapping-style arguments
     assert kept == []
+    try:
+        try:
+            raise refused
+        except driver_exit.DriverExitingError:
+            {}["fleet"]  # a different failure while the refusal is handled
+    except KeyError as other:
+        assert other.__context__ is refused and other.__cause__ is None
+        routes.log.error("cleanup failed: %r", other)
+    assert _loud(kept) == ["cleanup failed: KeyError('fleet')"]
     routes._log_refresh_failure(RuntimeError("status endpoint raised"))
-    assert _loud(kept) == ["worker status refresh failed: RuntimeError('status endpoint raised')"]
+    assert _loud(kept)[-1] == "worker status refresh failed: RuntimeError('status endpoint raised')"
