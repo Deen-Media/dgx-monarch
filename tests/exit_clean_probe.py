@@ -28,6 +28,15 @@ the actor process ids as one JSON line. Then, by mode:
   stop kills the actor processes as it starts, and the main thread returns half
   a second into that stop. ``heal_sigint``: the same, then the main thread
   waits for SIGINT as in ``sigint``.
+- ``queue``: ComfyUI's prompt worker with prompts queued behind a cut render:
+  a daemon thread runs the status loop of ``inflight`` (the render the exit
+  cuts), then four ``mesh.ensure_live`` calls on the real handle, each marked
+  in ``PROBE_ENTRIES`` before it starts. The main thread returns. A hook
+  registered before the mesh build (so it runs after Monarch's exit step)
+  waits until the first queued entry has started, then writes the time it
+  returned to ``PROBE_LAST_HOOK``. ``queue_wrapped``: the same, each queued
+  prompt entering a node method under ``refusal_lead.lead_with_refusal`` that
+  marks ``inside the node`` before its own ``mesh.ensure_live``.
 
 The last stdout line is always a JSON object.
 """
@@ -115,6 +124,16 @@ def main() -> None:
         import atexit
 
         atexit.register(_join_render)
+    queued = threading.Event()
+    if mode in ("queue", "queue_wrapped"):
+        import atexit
+
+        def _until_queued() -> None:
+            queued.wait(30)
+            with open(os.environ["PROBE_LAST_HOOK"], "w") as out:
+                out.write(repr(time.time()))
+
+        atexit.register(_until_queued)
     handle = mesh.get_mesh(mode="local", gpus_per_host=1, comfy_dir=os.environ["PROBE_COMFY_DIR"])
     handle.workers.status.call().get(timeout=60)
     actors = _actor_processes()
@@ -174,6 +193,33 @@ def main() -> None:
         _RENDER[0].start()
         entered.wait(60)
         time.sleep(float(os.environ.get("PROBE_HEAL_DELAY_S", "0.5")))  # inside the heal's 2 s stop
+    elif mode in ("queue", "queue_wrapped"):
+        from dgx_monarch.nodes.refusal_lead import lead_with_refusal
+
+        @lead_with_refusal
+        def _node() -> object:  # a node method under the pack's wrapper, as a sampler's is
+            with open(os.environ["PROBE_ENTRIES"], "a") as out:
+                out.write("inside the node\n")
+            return mesh.ensure_live(handle)
+
+        def _entry() -> object:
+            return _node() if mode == "queue_wrapped" else mesh.ensure_live(handle)
+
+        def _prompt_worker() -> None:
+            _calls(handle, record)  # the render the exit cuts
+            for _prompt in range(4):  # the prompts queued behind it
+                with open(os.environ["PROBE_ENTRIES"], "a") as out:
+                    out.write(f"entered {time.time()!r}\n")
+                queued.set()
+                try:
+                    _entry()
+                except BaseException as exc:
+                    with open(os.environ["PROBE_ENTRIES"], "a") as out:
+                        out.write(f"raised {type(exc).__name__}\n")
+
+        threading.Thread(target=_prompt_worker, name="prompt-worker", daemon=True).start()
+        while record["calls"] < 3 and record["error"] is None:
+            time.sleep(0.05)
     elif mode != "idle":
         threading.Thread(target=_calls, args=(handle, record), name="inflight", daemon=True).start()
         while record["calls"] < 3 and record["error"] is None:

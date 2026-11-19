@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import mesh_safety, mesh_setup
+from . import driver_exit, mesh_safety, mesh_setup
 from .log import get_logger
 from .transfer_utils import (
     raise_with_distinct_cause,
@@ -24,6 +24,8 @@ def cancel_sample(handle: Any, render_id: str, timeout_s: float, wait: bool, log
     """Time cancellation dispatch without waiting for the GPU queue."""
     from .runtime_diagnostics import phase
 
+    if driver_exit.exiting():  # Monarch's exit step stops the actors; no cancel is sent
+        return []
     try:
         with phase("cancel"):
             if not wait:
@@ -44,6 +46,7 @@ def call_all(
     **kwargs: Any,
 ) -> list[Any]:
     """Dispatch an all-rank endpoint under any required session capability."""
+    driver_exit.refuse_new_call()  # before the session's lock
     if endpoint_name in mesh_setup.SESSION_SCOPED_ENDPOINTS:
         from .mesh_session import mutation_render_session
 
@@ -368,6 +371,7 @@ def verify_request_artifacts(
             worker_args_key=tuple(getattr(handle, "worker_args_key", ()) or ()),
             worker_topology=driver_topology,
         )
+    driver_exit.refuse_new_call()  # the per-actor proof below sends directly
     if worker_index is None:
         # Collective render: every participant proves parity before collectives.
         results = handle.call_all("artifact_identity", specs, timeout_s=120)

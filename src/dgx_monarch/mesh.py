@@ -11,6 +11,7 @@ from . import (
     TORCHMONARCH_PIN,
     __version__,
     client_lease,
+    driver_exit,
     mesh_attach,
     mesh_creation,
     mesh_factory,
@@ -391,6 +392,7 @@ def get_mesh(
     """Get/create a mesh; a private claim marks only same-call creation."""
     global _TRANSPORT_MODE, _TRANSPORT_POISON
     global _TRANSPORT_CLAIM_GENERATION, _TRANSPORT_COMMITTED_GENERATION
+    driver_exit.hold_at_entry()  # at exit: waits for the process to end, before anything
     install_fault_hook()
     mesh_creation.reap_abandoned_attempts(globals())
     resolved = find_config_path(config_path or None)
@@ -516,6 +518,7 @@ def get_mesh(
             # Admit before recycling: a config edit the driver refuses keeps the working fleet.
             previous_admission = prepare_driver(config)
             if old is not None:
+                driver_exit.refuse_new_call()  # no new stop once the driver is exiting
                 log.info("mesh source/config changed; recycling the previous fleet")
                 try:
                     old.shutdown(timeout_s=30, stop_timeout_s=mesh_teardown.proc_stop_bound_s())  # never under _MESH_LOCK
@@ -633,6 +636,7 @@ def ensure_live(
     """Swap a defunct handle for a fresh mesh on the same config: ComfyUI caches
     node outputs, so a MeshSpec built before a worker death keeps referencing the
     evicted handle, and routing through here heals a re-queue without a restart."""
+    driver_exit.hold_at_entry(handle)  # at exit: before the liveness probe and any lock
     mesh_liveness.try_release(handle)
     verdict = _coherent_lifecycle_verdict(handle)
     if verdict in ("blocked", "unresolved"):

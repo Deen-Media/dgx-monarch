@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from . import mesh_helpers, mesh_safety, mesh_setup, residency_doors
+from . import driver_exit, mesh_helpers, mesh_safety, mesh_setup, residency_doors
 from .constants import DEFAULT_NCCL_MASTER_PORT
 from .log import get_logger
 from .topology import Topology
@@ -170,6 +170,7 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
     before the policy is published; an apply whose reply is lost marks where
     the inference (``drops_residents``) says a Worker may have dropped one.
     """
+    driver_exit.refuse_new_call()  # before the policy marker is retired
     effective = (handle.effective_worker_args(worker_args) if merge_config
                  else dict(worker_args))
     with handle.lock:
@@ -296,6 +297,7 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
                 handle.apply_worker_args(worker_args, timeout_s=budget.group_cleanup_s, merge_config=False)
             return []
 
+        driver_exit.refuse_new_call()  # no teardown and no setup once the driver is exiting
         mesh_setup.require_no_sample_leases(handle, "change distributed setup")
         require_mutation_authority(handle, "change distributed setup")
 
@@ -354,6 +356,7 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
         failed: dict[str, Any] = {"rank": None, "ahead": None, "spare": 0.0}
         try:
             deadline = mesh_setup.deadline_after(budget.rank_setup_s)
+            driver_exit.refuse_new_call()  # an exit during the teardown above
             futures = mesh_setup.dispatch_setup(
                 handle, topology, attention, sync_ulysses, worker_args,
                 fabric_env, master_addr, master_port, fleet)
@@ -373,6 +376,8 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
             from . import worker_box
 
             worker_box.name(setup_exc, handle, failed["rank"])
+            if driver_exit.exiting():  # Monarch's exit step stops the actors: no rollback is sent
+                raise
             # A failure seen ahead of the rank being awaited leaves that rank in
             # setup, waiting at its rendezvous for a peer that will not come, and
             # the rollback's teardown queues behind it. The rollback keeps what

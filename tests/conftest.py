@@ -401,6 +401,45 @@ def _no_driver_exit_hook_at_pytest_exit():
         atexit.unregister(module._begin)  # nothing to do when no test registered it
 
 
+@pytest.fixture(autouse=True)
+def _driver_exit_flag_never_leaks():
+    """Every test starts and ends with the driver's exit flag clear.
+
+    Once it is set, every new call to the Workers refuses (driver_exit), so one
+    test that left it set would fail every later test that dispatches, far from
+    its cause. A test that sets the flag through ``driver_exit._begin`` must
+    clear it; one that swaps in its own ``_EXITING`` through monkeypatch leaves
+    the process's flag alone, which is the one checked here (monkeypatch may put
+    the swap back after this runs). A leak is cleared and fails the test that left it.
+    The entry's hold at exit (``hold_at_entry``) is bounded at 0.5 s here, and an
+    entry after the one refusal at 2 s, so a test that reaches the entry with the
+    flag set fails in moments, not 30 s or never; the one-refusal mark starts
+    clear and is cleared after each test.
+    """
+    module = sys.modules.get("dgx_monarch.driver_exit")
+    flag = getattr(module, "_EXITING", None)
+    if flag is not None:
+        assert not flag.is_set(), "an earlier test left the driver's exit flag set"
+    bounds = {name: getattr(module, name) for name in ("HOLD_AT_EXIT_S", "HOLD_AFTER_REFUSAL_S")
+              if module is not None and hasattr(module, name)}
+    if bounds:
+        module.HOLD_AT_EXIT_S, module.HOLD_AFTER_REFUSAL_S = 0.5, 2.0
+    try:
+        yield
+    finally:
+        for name, value in bounds.items():
+            setattr(module, name, value)
+        refused = getattr(module, "_REFUSED_AT_BOUND", None)
+        if refused is not None:
+            refused.clear()
+    if flag is None:
+        module = sys.modules.get("dgx_monarch.driver_exit")
+        flag = getattr(module, "_EXITING", None)
+    if flag is not None and flag.is_set():
+        flag.clear()
+        pytest.fail("this test left the driver's exit flag set (driver_exit.reset clears it)")
+
+
 @pytest.fixture
 def sp(monkeypatch):
     """Patch the xfuser rank accessors read by ``base.shard_seq``.

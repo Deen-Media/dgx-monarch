@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .. import driver_exit
 from ..refusal import RefusalClass
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call
 from . import pending_load_relief
@@ -427,9 +428,8 @@ def gather_ceremony_evidence(
         # Residency/swap proofs force stock before surfacing the error. FSDP
         # has no same-topology stock fallback, so its typed refusal propagates.
         if fsdp_proof_scope:
-            runtime["log_aborted_proof"](
-                runtime["log"], settled_tag, retracted, exc)
-        else:
+            runtime["log_aborted_proof"](runtime["log"], settled_tag, retracted, exc)
+        elif not driver_exit.exiting():  # at exit the abort is the exit's, and no stock is forced
             safe_call(runtime["log"].error, "identity gate aborted (%r); forcing stock residency", exc)
         from ..adapters.sol_attention import is_sol_waiver_refusal
 

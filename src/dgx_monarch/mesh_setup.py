@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 from typing import Any
 
+from . import driver_exit
 from . import mesh_setup_state as _state
 from .mesh_lease import (  # noqa: F401  # Public mesh_setup compatibility API.
     SetupBoundFuture,
@@ -258,6 +259,7 @@ def dispatch_sample(
     """Own a logical session through one sample's terminal lease."""
     from .mesh_session import RenderSession, claim_render_session
 
+    driver_exit.refuse_new_call()  # before any session, lease or send
     candidate = RenderSession()
     session = None
     owns_session = False
@@ -344,8 +346,7 @@ def _dispatch_sample_bound(
             from .mesh_session import require_mutation_authority
 
             require_endpoint(handle, "sample")
-            require_mutation_authority(
-                handle, "dispatch sample", require_owner=True)
+            require_mutation_authority(handle, "dispatch sample", require_owner=True)
             require_no_abandoned_samples(handle, "dispatch another sample")
             if setup_token is None:
                 raise RuntimeError("setup-bound endpoint sample requires a SetupToken")
@@ -354,6 +355,7 @@ def _dispatch_sample_bound(
                 raise RuntimeError("sample authority belongs to a different mesh handle")
             if sample_authority.generation != setup_token.generation:
                 raise RuntimeError("sample authority belongs to a different setup generation")
+            driver_exit.refuse_new_call()  # waited for the lock: no lease, no abandoned mark
             sample_authority._register_locked()
             sample_authority._mark_enqueue_started_locked()
             future = send()
@@ -454,14 +456,14 @@ def dispatch_endpoint(
             raise ValueError("setup tokens apply only to setup-bound endpoints")
         if endpoint_name not in SESSION_SCOPED_ENDPOINTS:
             require_endpoint(handle, endpoint_name)
-            return send()
+            return driver_exit.send_unless_exiting(send)
         with handle.lock:
             from .mesh_session import require_mutation_authority
 
             require_endpoint(handle, endpoint_name)
             require_mutation_authority(
                 handle, f"dispatch {endpoint_name}", require_owner=True)
-            return send()
+            return driver_exit.send_unless_exiting(send)  # a caller that waited for the lock
     with handle.lock:
         from .mesh_session import require_mutation_authority
 
@@ -473,7 +475,7 @@ def dispatch_endpoint(
                 f"setup-bound endpoint {endpoint_name} requires a SetupToken"
             )
         _require_setup_token(handle, setup_token)
-        return send()
+        return driver_exit.send_unless_exiting(send)  # a caller that waited for the lock
 
 
 def publish_worker_capabilities(handle: Any, results: list) -> None:

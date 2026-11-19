@@ -30,6 +30,12 @@ reworded, and only from the words on it or on the errors it was raised
 ``from``: a refusal the driver raised while it handled the loss (the trim after
 a memory refusal, ``driver_unload``) is raised ``from None`` or carries its tag
 and its own type, and stays exactly as it was.
+
+A node that starts once the driver is exiting holds at the wrapper, before any
+of its own work (a loader's relief or the requeue price ask the Workers for a
+quote before the mesh entry): ``driver_exit.hold_at_entry``, at a thread's
+outermost decorated method only, so a node already running, or one called from
+inside another, is not held.
 """
 from __future__ import annotations
 
@@ -39,7 +45,7 @@ import threading
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
 
-from .. import mesh_safety
+from .. import driver_exit, mesh_safety
 from ..consent_descriptor import DESCRIPTOR_BEGIN, DESCRIPTOR_END
 from ..consent_observe import refusal_text
 from ..gate_audit_vocab import MEASURED_TAG_PREFIX
@@ -85,6 +91,10 @@ _MACHINE_BLOCKS = re.compile(
 # authorized, read by the node method's own wrapper, and cleared at its entry
 # and exit, so no note outlives the node call that wrote it.
 _NOTE = threading.local()
+# Render lifetime, one per ComfyUI executor thread: how many decorated node
+# methods this thread is inside, raised at a node method's entry and put back at
+# its exit, so it is 0 between node calls and only the outermost entry holds.
+_ENTRY = threading.local()
 
 _Method = TypeVar("_Method", bound=Callable[..., Any])
 
@@ -203,8 +213,12 @@ def lead_with_refusal(method: _Method) -> _Method:
     """Run a node method so a Worker refusal reaches the prompt error sentence first."""
     @functools.wraps(method)
     def lead(*args: Any, **kwargs: Any) -> Any:
-        _clear()
-        try:
+        depth = getattr(_ENTRY, "depth", 0)
+        if not depth:  # a node that starts at exit does none of its own work
+            driver_exit.hold_at_entry()
+        try:  # the depth goes up inside the try, so the finally always puts it back
+            _ENTRY.depth = depth + 1
+            _clear()
             return method(*args, **kwargs)
         except Exception as exc:
             refusal = surfaced(exc, forced_stock_state())
@@ -214,6 +228,7 @@ def lead_with_refusal(method: _Method) -> _Method:
                 raise
             raise refusal from exc
         finally:
+            _ENTRY.depth = depth
             _clear()
 
     return cast(_Method, lead)

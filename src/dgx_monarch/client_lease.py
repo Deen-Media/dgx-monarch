@@ -22,7 +22,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from typing import Any
 
-from . import actor_lifetime, mesh_safety, mesh_setup_state
+from . import actor_lifetime, driver_exit, mesh_safety, mesh_setup_state
 from .log import get_logger
 
 RENEW_INTERVAL_S = actor_lifetime.RENEW_INTERVAL_S
@@ -191,6 +191,8 @@ def renew_pass(
     live: set[int] = set()
     renewed = 0
     for handle in handles:
+        if driver_exit.exiting():  # Monarch's exit step stops the actors; no renewal is sent
+            break
         key = id(handle)
         live.add(key)
         if _retired_skip(tracked, key):
@@ -252,7 +254,7 @@ def _run(
     interval_s: float,
     sleeper: Callable[[float], None],
 ) -> None:
-    while True:
+    while not driver_exit.exiting():  # the renewer ends with the driver
         try:
             renew_pass(snapshot(), lease_s)
         except BaseException as exc:

@@ -22,7 +22,7 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from . import mesh_setup
+from . import driver_exit, mesh_setup
 
 ENDPOINT = "vae_decode"
 SCHEMA = 1
@@ -143,6 +143,7 @@ def sender(handle: Any, token: Any, base: dict[str, Any], inputs: list[Any]) -> 
     """``send(rank, unit)``: dispatch one unit without waiting for it."""
 
     def send(rank: int, unit: int) -> Any:
+        driver_exit.refuse_new_call()
         worker = _worker(handle, rank)
         request = {**base, "unit": unit, "input": inputs[unit]}
         return mesh_setup.dispatch_endpoint(

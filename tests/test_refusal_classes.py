@@ -142,6 +142,9 @@ NOT_REFUSAL_CLASSES = frozenset({
     # The pre-dial attach refusal (worker_proc_id.py): a lifecycle fault the
     # driver raises before anything dials, like MeshAttachError.
     "WorkerProcIdError",
+    # A new call to the Workers once the driver is exiting (driver_exit.py):
+    # the process is ending, so nothing about the request is refused.
+    "DriverExitingError",
     "ConsentStoreError",
     "DriverPinError",
     "PayloadOwnershipError",
