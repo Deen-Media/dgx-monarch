@@ -25,7 +25,8 @@ def test_mp4_variant_preserves_every_generation_input_and_both_decoders():
     video_id, video = by_type["CreateVideo"]
     assert video == {"images": [by_type["VAEDecode"][0], 0],
                      "audio": [by_type["VAEDecodeAudio"][0], 0],
-                     "fps": 24.0, "bit_depth": 8, "color_space": "sRGB", "codec": "none"}
+                     "fps": 24.0, "bit_depth": 8, "color_space": "sRGB",
+                     "chroma_subsampling": "auto", "codec": "none"}
     assert by_type["SaveVideo"][1] == {
         "video": [video_id, 0], "filename_prefix": "video/dgx_monarch_minimax_h3",
         "format": "mp4", "codec": "h264"}

@@ -12,6 +12,14 @@ which runs with no per-block kernel pin (adapters/stock_attention.py).
 `llm_adapter` runs before this denoise path and must remain unbound,
 unsharded, and outside any FSDP collective; under FSDP its parameters go in
 ``ignored_params`` (adapters/fsdp_islands.py).
+
+``prepare_base_model`` makes every Worker take stock's text branch: stock
+``Anima.extra_conds`` runs ``llm_adapter`` and the 512-row pad once per
+conditioning only under ``torch.inference_mode()``, which ComfyUI enters
+around a prompt and a Worker's sampling thread does not. Off that branch the
+forward reruns them on every call, and a prompt pair whose raw rows differ
+splits into two batch-1 calls where stock makes one batch-2 call.
+docs/ADAPTERS.md has the paragraph.
 """
 from __future__ import annotations
 
@@ -24,6 +32,7 @@ from .attention_inputs import (
     take_qkv,
 )
 from .base import Adapter, InjectionContext, UnsupportedModelError, shard_seq, sp_gather
+from .flux3 import _normal
 from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
@@ -74,11 +83,11 @@ def _make_usp_attn_op(attn):
 class AnimaAdapter(Adapter):
     family = "anima"
     model_base_classes = ("Anima",)
-    # This family pads no conditioning of its own. Comfy's own 512-token pad
-    # lands inside the forward, after comfy has decided whether the two
-    # conditionings batch, so it equalizes nothing the cfg wrapper can see: a
-    # prompt pair of different encoded length never shares a model call, and
-    # cfg-parallel runs it through the per-cond dispatch (adapters/cfg_dispatch.py).
+    # The driver pads no conditioning for this family. Comfy's own 512-row pad
+    # runs in extra_conds (prepare_base_model), before comfy decides whether
+    # the two conditionings batch: a pair of at most 512 T5 ids folds into one
+    # call, as on one GPU, and cfg-parallel slices it; only a pair whose padded
+    # rows differ dispatches one cond per rank (adapters/cfg_dispatch.py).
     cfg_cond_padding = "none"
     # These raw tensors have shape `(num_t5_tokens,)`, not a batch dimension.
     # extra_conds expands them to `(1, L)` on every rank; DP slicing them would
@@ -100,6 +109,32 @@ class AnimaAdapter(Adapter):
             "stock ComfyUI on one GPU, or, for a finetune that keeps the plain Anima "
             "forward, set family_adapter='anima' on the Init node (docs/MODELS.md)."
         )
+
+    def prepare_base_model(self, base_model) -> None:
+        """Run stock Anima.extra_conds under inference mode, as stock ComfyUI does.
+
+        FLUX.3's bind (adapters/flux3.py), on this family's method, on every
+        topology and every load path. Stock's own predicate still picks the
+        branch, so the text leaves here at stock's 512 rows and folds as
+        stock's does. Every inference tensor in the output is cloned out, and
+        the first text call per load logs the branch.
+        """
+        stock = type(base_model).extra_conds
+        reported: list[bool] = []
+
+        def extra_conds(self, **kwargs):
+            with torch.inference_mode():
+                out = stock(self, **kwargs)
+            for cond in out.values():
+                if hasattr(cond, "cond"):
+                    cond.cond = _normal(cond.cond)
+            if not reported and "c_crossattn" in out:
+                reported.append(True)
+                log.info("anima text branch: %s", "computed in the forward"
+                         if "t5xxl_ids" in out else "preprocessed once (extra_conds)")
+            return out
+
+        self.bind(base_model, "extra_conds", extra_conds)
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         attn = ctx.usp_attention

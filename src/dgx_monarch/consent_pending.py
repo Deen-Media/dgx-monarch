@@ -7,8 +7,10 @@ never persisted. Durable grants live in the memo; the ledger records audit
 evidence.
 
 Resolution checks an exact memo, then an eligible standing auto-rescue, then
-the kind-specific environment fallback. Environment grants never create memos;
-the bypass site still writes the required audit row.
+the kind-specific environment fallback. A capacity grant from either headless
+source is the same memo record a panel accept persists, held for the process
+(``consent_store.headless_memo``); a class-K environment grant stays a fresh
+grant per dispatch. The bypass site still writes the required audit row.
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from dataclasses import dataclass, field, fields
 from typing import Any
 
 from . import accuracy_waiver, consent_store
-from .consent_kinds import KIND_SPECS, KindSpec, consent_context
+from .consent_kinds import KIND_SPECS, KindSpec, consent_context, numbers_from_measured
 from .gate_audit_vocab import check_guard, new_consent_id
 from .log import get_logger
 
@@ -59,6 +61,10 @@ class ConsentDescriptor:
 
     ``capability_context`` records the full trust context. ``memo_context`` is
     the kind's narrow context used by the memo key (``consent_store``).
+    ``scope`` is the load capability the raising site read quarantine under
+    (:func:`load_scope`); the panel asks an unknown again under it, as that site
+    did, and the memo an accept writes keeps it so the panel lists that consent
+    on the same evidence. It never reaches a ledger row.
     """
 
     kind: str
@@ -76,6 +82,9 @@ class ConsentDescriptor:
     loras: int = 0
     numbers: str | None = None
     consent_id: str = ""
+    scope: dict[str, Any] | None = None
+    # This card's own sentence, beside the kind's fixed risk text.
+    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +118,9 @@ class PendingConsent:
     occurrences: int = 1
     first_seen: float = field(default_factory=time.time)
     seen_at: float = field(default_factory=time.time)
+    # What an action kind's card acts on (nodes/old_model_clear.py). It lives on
+    # the entry, so dismissal, expiry and the card limit drop it with the card.
+    binding: Any = None
 
 
 _PENDING: OrderedDict[str, PendingConsent] = OrderedDict()
@@ -152,13 +164,17 @@ def describe(source: object) -> ConsentDescriptor:
             loras=int(get("loras", 0) or 0),
             numbers=get("numbers", None),
             consent_id=str(get("consent_id", "") or ""),
+            scope=get("scope", None), detail=_optional_str(get("detail", None)),
         )
     spec = KIND_SPECS.get(descriptor.kind)
     if spec is None:
         raise ValueError(f"unknown consent kind {descriptor.kind!r}")
-    # Cards and permanent rows validate against the same guard vocabulary.
-    guard = check_guard(spec.kind, descriptor.target_guard or spec.default_guard) or ""
-    if not descriptor.path or not descriptor.combo_key or not descriptor.artifacts:
+    # Cards and permanent rows validate against the same guard vocabulary. An
+    # action kind writes no row and authorizes no memo (KindSpec.action).
+    guard = (descriptor.target_guard or spec.default_guard if spec.action
+             else check_guard(spec.kind, descriptor.target_guard or spec.default_guard) or "")
+    unjoinable = not spec.action and (not descriptor.combo_key or not descriptor.artifacts)
+    if not descriptor.path or unjoinable:
         # A card without joinable audit identity cannot authorize a memo.
         raise ValueError("a consent descriptor needs path, combo_key and artifacts")
     artifact = descriptor.artifact or os.path.basename(descriptor.path)
@@ -179,35 +195,25 @@ def describe(source: object) -> ConsentDescriptor:
         loras=descriptor.loras,
         numbers=descriptor.numbers,
         consent_id=descriptor.consent_id,
+        scope=dict(descriptor.scope) if isinstance(descriptor.scope, dict) else None,
+        detail=descriptor.detail,
     )
 
 
-def numbers_from_measured(measured: Mapping[str, Any] | None) -> str | None:
-    """Format the card's figures from structured refusal evidence.
+def load_scope(worker_args: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The capability a slab rescue of this policy runs under: the load, slab-resident.
 
-    A class-K refusal can carry a ``detail`` line instead (the pinned kernel
-    and its module count, ``accuracy_waiver.card_tail``), shown in the same place.
-
-    ``headroom_bytes`` is what is available minus the refusing site's price,
-    so ``needs`` comes back as that price, not the file size. For a stock load
-    the price is ``capacity_fit.stock_required_bytes``: the file, the host copy
-    it is placed from, and the host floor. A block that carries no headroom
-    falls back to the file size.
+    The shape a consented load's certificate row records. ``None`` when the
+    args are absent or carry a value the ledger cannot canonicalize.
     """
-    if not isinstance(measured, Mapping):
+    if not isinstance(worker_args, Mapping):
         return None
-    detail = measured.get("detail")
-    if isinstance(detail, str) and detail:
-        return detail  # a class-K card's one line about this refusal
-    needs = measured.get("checkpoint_bytes")
-    available = measured.get("mem_available_bytes")
-    if not isinstance(needs, int) or not isinstance(available, int):
+    scope = {"worker_args": {**dict(worker_args), "slab_weights": True}}
+    try:
+        consent_store.canonical_context(scope)
+    except (TypeError, ValueError, RecursionError):
         return None
-    headroom = measured.get("headroom_bytes")
-    if isinstance(headroom, int) and not isinstance(headroom, bool):
-        needs = available - headroom
-    gib = float(1 << 30)
-    return f"needs {needs / gib:.1f} GiB, {available / gib:.1f} GiB available"
+    return scope
 
 
 def descriptor_from_refusal(
@@ -221,6 +227,7 @@ def descriptor_from_refusal(
     memo_context: dict[str, Any],
     capability_context: dict[str, Any] | None = None,
     loras: int = 0,
+    scope: dict[str, Any] | None = None,
 ) -> ConsentDescriptor:
     """Combine worker refusal evidence with driver-held artifact identity.
 
@@ -255,6 +262,7 @@ def descriptor_from_refusal(
         loras=loras,
         numbers=numbers_from_measured(measured if isinstance(measured, Mapping) else None),
         consent_id=str(get("consent_id", "") or ""),
+        scope=scope,
     ))
 
 
@@ -273,8 +281,10 @@ def _card(entry: PendingConsent) -> dict[str, Any]:
         "style": spec.style,
         "title": spec.title.format(artifact=entry.descriptor.artifact),
         "artifact": entry.descriptor.artifact,
-        "risk": spec.risk,
+        "risk": spec.risk, "detail": entry.descriptor.detail,
         "evidence": spec.evidence,
+        # An action kind's accept runs its action; its checkbox makes that standing.
+        **({"runs": spec.action, "always": spec.always_label} if spec.action else {}),
         "numbers": entry.descriptor.numbers,
         "measured": spec.measured_for(entry.descriptor.target_guard),
         "primary": {"label": spec.primary_label, "action": "accept"},
@@ -400,9 +410,9 @@ def _env_grants(spec: KindSpec) -> bool:
 def resolve(*, kind: str, path: str, context: dict[str, Any]) -> ConsentGrant | None:
     """Resolve a memo, eligible standing grant, or environment fallback.
 
-    This function neither raises nor writes. The bypass site records a WAIVER
-    only when used. A grant cannot override quarantine or turn INCONCLUSIVE into
-    PASS.
+    This function neither raises nor writes a file or a ledger row. The bypass
+    site records a WAIVER only when used. A grant cannot override quarantine or
+    turn INCONCLUSIVE into PASS.
     """
     spec = KIND_SPECS.get(kind)
     if spec is None:
@@ -410,22 +420,35 @@ def resolve(*, kind: str, path: str, context: dict[str, Any]) -> ConsentGrant | 
     try:
         record = consent_store.lookup(kind, path, context)
         if record is not None:
-            return ConsentGrant(
-                id=record.id, kind=kind, consent_source=record.consent_source,
-                key=consent_store.memo_key(kind, path, context), reason=record.reason,
-                capability_context=(dict(record.capability_context)
-                                    if record.capability_context is not None else None))
-        if spec.auto_eligible and (consent_store.auto_rescue() or auto_rescue_env()):
-            return _minted(spec, "auto_rescue")
-        if _env_grants(spec):
-            return _minted(spec, "env")
+            return _granted(record, consent_store.memo_key(kind, path, context))
+        source = ("auto_rescue" if spec.auto_eligible
+                  and (consent_store.auto_rescue() or auto_rescue_env())
+                  else "env" if _env_grants(spec) else None)
+        if source is None:
+            return None
+        if spec.refusal_class != "C":
+            return _minted(spec, source)
+        # The record a panel accept would persist, held for this process. Its
+        # key stays empty: no click wrote its audit row, so its first use does.
+        return _granted(consent_store.headless_memo(
+            kind, path, context, source=source, target_guard=spec.default_guard,
+            waiver_class=spec.refusal_class, reason=spec.risk), "")
     except Exception as exc:  # a store fault degrades to "ask", never to a grant
         log.warning("consent lookup failed, so nothing is granted (%r)", exc)
     return None
 
 
+def _granted(record: consent_store.ConsentRecord, key: str) -> ConsentGrant:
+    """The live grant one memo record carries, persisted or headless."""
+    return ConsentGrant(
+        id=record.id, kind=record.kind, consent_source=record.consent_source, key=key,
+        reason=record.reason,
+        capability_context=(dict(record.capability_context)
+                            if record.capability_context is not None else None))
+
+
 def _minted(spec: KindSpec, source: str) -> ConsentGrant:
-    """A grant with no memo behind it: standing toggle or environment."""
+    """A class-K environment grant: no memo behind it, a fresh id per dispatch."""
     return ConsentGrant(id=new_consent_id(), kind=spec.kind, consent_source=source,
                         key="", reason=spec.risk)
 

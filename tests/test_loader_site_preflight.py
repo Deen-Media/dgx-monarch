@@ -556,8 +556,8 @@ def test_the_refusal_leads_with_the_numbers_so_a_gate_leg_truncation_keeps_them(
     message = _refuse(_Mesh(), REF2VA_BF16,
                       prompt=_graph(dit=REF2VA_BF16, refs="video"))
     head = message[:200]
-    assert "61.7 GiB to place on the driver host" in head
-    assert "GiB usable" in head
+    assert "minimax_h3_ref2va_bf16.safetensors needs 140.0 GiB on this box" in head
+    assert "114.5 GiB is available, 25.5 GiB short" in head
 
 
 # The FSDP shard-build price. Under a `*+fsdp` preset each rank builds one shard
@@ -668,7 +668,7 @@ def test_an_auto_preset_is_never_priced_as_a_shard_build():
     reading is the one that charges more."""
     message = _refuse(_Mesh(topology_preset="auto"), REF2VA_BF16,
                       prompt=_graph(dit=REF2VA_BF16, refs="video"))
-    assert "61.7 GiB to place" in message
+    assert "DiT weights 61.7 GiB (a Worker on this box, not yet loaded)" in message
     assert "at world" not in message
 
 
@@ -728,7 +728,7 @@ def test_a_rescue_is_offered_and_registered_when_slab_is_what_would_fit():
     assert card["kind"] == "rescue-slab" and card["class"] == "C"
     assert card["artifact"] == FL2VA_BF16
     assert card["primary"] == {"label": spec.primary_label, "action": "accept"}
-    assert "GiB usable" in str(card["numbers"])
+    assert "GiB available on this box" in str(card["numbers"])
 
 
 def test_the_card_is_reachable_on_the_DEFAULT_residency(monkeypatch):
@@ -996,7 +996,10 @@ def test_a_stack_comfy_already_holds_is_credited_not_charged(monkeypatch):
     monkeypatch.setitem(sys.modules, "comfy.model_management", mm)
     terms = loader_graph.credited_terms(
         loader_graph.driver_stack_terms(_graph(dit=REF2VA_BF16, refs="video")))
-    assert terms.credited and terms.total == 0
+    # The loads are credited. Since 1.5.0 the reference video's encode is not: it is a transient
+    # that has not run, as a guide's is, so it stays charged at its 40 GiB.
+    assert terms.credited and terms.te_bytes == terms.vae_bytes == 0
+    assert terms.total == terms.ref_bytes == loader_graph.REF_VIDEO_ENCODE_BYTES
     # So the resident window clears: those bytes are already inside the
     # MemAvailable reading. The load window still refuses: on 2026-08-04 the
     # eager load of this 61.7 GiB artifact took MemAvailable from 114.5 GiB to
@@ -1022,8 +1025,11 @@ def test_a_checkpoint_this_site_already_cleared_is_not_charged_again(monkeypatch
     loader_preflight.preflight_loader_footprint(
         _Mesh(), REF2VA_INT8_PRUNED, {}, graph)
     # Same checkpoint, a box that has since filled up: the weight term is not
-    # charged twice for an eager load that already happened.
-    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 12 * _GIB)
+    # charged twice for an eager load that already happened. 20 GiB would not
+    # hold the 19.5 GiB file again with the floor; it holds the render's own
+    # activations and the floor (16.0 GiB), which still count with no DiT left
+    # to place (graph_load_price.fits_box).
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 20 * _GIB)
     loader_preflight.preflight_loader_footprint(
         _Mesh(), REF2VA_INT8_PRUNED, {}, graph)
 
@@ -1041,12 +1047,49 @@ def test_the_env_escape_disables_the_refusal(monkeypatch):
         _Mesh(), REF2VA_BF16, {}, _graph(dit=REF2VA_BF16, refs="video"))
 
 
-def test_a_weight_dtype_cast_stands_the_whole_check_down():
-    """A cast's resident size is not the file's, so the only charge available
-    here would be the wrong number in the refusing direction."""
-    loader_preflight.preflight_loader_footprint(
-        _Mesh(), REF2VA_BF16, {"weight_dtype": "fp8_e4m3fn"},
-        _graph(dit=REF2VA_BF16, refs="video"))
+def test_a_weight_dtype_cast_is_priced_at_the_copy_it_builds(monkeypatch):
+    """Since 2026-11-05 the Worker's stock rung prices a cast at the copy the
+    header says it builds, beside the host copy at the file's own width
+    (capacity_fit.cast_resident_bytes). The loader's windows take the same
+    figure where the load runs stock, and offer no slab rescue, since a slab
+    keeps the cast copy beside the file. Before, a cast stood the whole check
+    down, driver stack included."""
+    seen: list = []
+
+    def cast(path, dtype, *, lower=False):
+        seen.append((Path(path).name, dtype, lower))
+        return DIT_REF2VA_BF16 // 2
+
+    monkeypatch.setattr(capacity_fit, "cast_resident_bytes", cast)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 100 * _GIB)
+    message = _refuse(_Mesh(), REF2VA_BF16, {"weight_dtype": "fp8_e4m3fn"},
+                      prompt=_graph(dit=REF2VA_BF16, refs="video"))
+    assert seen == [(REF2VA_BF16, "fp8_e4m3fn", False)]
+    assert ("DiT weights 30.9 GiB (a Worker on this box, not yet loaded, cast to a 30.9 GiB "
+            "copy of the 61.7 GiB file)") in message
+    shape = loader_preflight._Shape(
+        profile=driver_footprint.DRIVER_STACK_FAMILIES["minimax_h3"], mem_available=100 * _GIB,
+        weight_bytes=DIT_REF2VA_BF16, weights_resident=False, co_resident=True,
+        floor_reserve=5 * _GIB, stack_bytes=0, cast_bytes=DIT_REF2VA_BF16 // 2)
+    transient, settled = loader_preflight._windows(shape, slab=False)
+    assert transient.weight_bytes == settled.weight_bytes == DIT_REF2VA_BF16 // 2
+    assert transient.arena_bytes == int(capacity_fit.STOCK_PLACEMENT_RATIO * DIT_REF2VA_BF16)
+    assert "the host copy at the file's own width" in transient.notes["arena"]
+    assert settled.arena_bytes == 0
+    assert "Load with slab residency" not in message
+    assert consent_pending.pending_cards() == []
+
+
+@pytest.mark.parametrize("worker_args,preset", [
+    ({"slab_weights": True}, "uly2"),         # a slab keeps the cast copy beside the file
+    ({"slab_weights": False}, "uly2+fsdp"),   # a shard build refuses a live cast
+])
+def test_a_cast_off_the_stock_rung_still_makes_no_claim(monkeypatch, worker_args, preset):
+    monkeypatch.setattr(capacity_fit, "cast_resident_bytes",
+                        lambda *_a, **_k: pytest.fail("priced a cast no rung measures"))
+    assert loader_preflight.preflight_loader_footprint(
+        _Mesh(worker_args, topology_preset=preset), REF2VA_BF16,
+        {"weight_dtype": "fp8_e4m3fn"}, _graph(dit=REF2VA_BF16, refs="video")) is None
 
 
 def test_a_discrete_gpu_is_never_bounded_by_host_memory(monkeypatch):
@@ -1587,6 +1630,48 @@ def test_readable_denied_ledger_verdicts_keep_their_reason_without_a_grant(
     assert "There is no waiver for this refusal" in message
     assert "evidence is readable" not in message
     assert consent_pending.pending_cards() == []
+
+
+@pytest.mark.parametrize(("kind", "offered"), [("no_material", True), ("unproven", False)])
+def test_the_rescue_offer_after_a_gate_that_compared_nothing(tmp_path, kind, offered):
+    """A gate that had nothing to compare holds nothing against the rescue, so
+    the loader offers its card; an unproven verdict still refuses in its own words."""
+    from dgx_monarch.gate_ledger import GateLedger
+    from no_material_ledger_rows import write_ceremony_rows
+
+    mesh = _Mesh(worker_args={"slab_weights": "auto"})
+    path = str(tmp_path / "diffusion_models" / FL2VA_BF16)
+    combo, artifacts = loader_preflight._combo_identity(FL2VA_BF16, {}, path)
+    write_ceremony_rows(GateLedger(str(tmp_path / "output")), combo, artifacts, kind=kind)
+
+    message = _refuse(
+        mesh, FL2VA_BF16, prompt=_graph(dit=FL2VA_BF16, refs="keyframes"))
+
+    assert ("was INCONCLUSIVE" in message) is not offered
+    assert bool(consent_pending.pending_cards()) is offered
+
+
+@pytest.mark.parametrize("decision_name", ["_UNKNOWN_QUERY", "_FAILED"])
+def test_a_load_window_quarantine_refusal_names_the_binding_window_and_footprint(
+        monkeypatch, decision_name):
+    """A quarantine refusal explains the window that binds. This keyframes
+    graph fits its resident window and is short at the load window, so the
+    refusal must name the load window and its stock host copy, not the
+    resident window, whose numbers fit and would read as a false refusal."""
+    from dgx_monarch.nodes import consent_quarantine, consent_rescue
+
+    decision = getattr(consent_quarantine, decision_name)
+    monkeypatch.setattr(
+        consent_rescue, "quarantine_decision_for_load", lambda *_args: decision)
+
+    message = _refuse(
+        _Mesh(), FL2VA_BF16, prompt=_graph(dit=FL2VA_BF16, refs="keyframes"))
+
+    arena_gib = round(capacity_fit.STOCK_PLACEMENT_RATIO * DIT_FL2VA_BF16 / _GIB, 1)
+    assert decision.reason in message
+    assert f"at the {loader_preflight.WINDOW_TRANSIENT} window" in message
+    assert f"stock host copy {arena_gib} GiB" in message
+    assert f"at the {loader_preflight.WINDOW_SETTLED} window" not in message
 
 
 def test_a_proven_ledger_fail_remains_the_only_class_k_loader_refusal(monkeypatch):

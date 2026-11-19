@@ -137,11 +137,11 @@ trained at boot, because sysfs reads it the same as an uncabled port;
 `dgxm doctor` reports that rail. When the panel is idle, the last render's
 line also names the topology it ran, its auto table row, its last seconds per
 step, and any attention kernel the model pinned per attention module, with
-whether it ran
+whether it was kept
 ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
 When both models of a dual-model cfg2 render pin, that part gives one clause
 per model, such as
-`pinned: cond model: ..., ran; uncond model: ..., dropped (...)`.
+`pinned: cond model: ..., kept; uncond model: ..., dropped (...)`.
 Each render times a step against its own previous step, so the
 second leader of a dp>1 render, or another render in the same Fleet wave,
 cannot shrink that number to the gap between two messages. `dgxm top` draws
@@ -157,7 +157,9 @@ neither holds load or gate time. The auto facts are `auto_row`, `family`,
 `quant`, `megapixels`, `cfg`, `keeps_uncond` (whether the sampler keeps the
 negative pass at CFG 1, as the cfg++ samplers do), `evidence_row` (the record
 that admitted cfg2), `skipped_cfg_row` (a cfg row auto passed over for want of
-evidence) and `batch`. A preset leaves them null, and a one-GPU render has no
+evidence), `batch` and `pair_differs` (whether the prompt and the negative
+encode to different text rows, which the Boogu and Chroma cfg2 rows
+need). A preset leaves them null, and a one-GPU render has no
 `auto_row`. When the render re-attached after a Worker restart, `reattach`
 reads `restart_reattach` and `reattach_s` gives the re-attach seconds; both
 are null otherwise. The pin fields `attention_pins`, `attention_pins_ran` and
@@ -189,7 +191,8 @@ attach it unreviewed to a public bug report. Redact it to the narrow evidence
 needed, or use the private security-reporting path when disclosure is
 sensitive. Recording writes require one owner-held, non-symlink regular file
 with mode `0600`; an existing target that does not meet these requirements is
-refused. The run block and render label follow the selected tick. The
+refused. The run block and render label follow the selected tick, also once
+the one-hour history is full and new ticks push old ones out. The
 dashboard retains the latest 4,096 events and refreshes existing entries when
 the route resends them, without marking unchanged events as new.
 

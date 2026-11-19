@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -95,11 +96,22 @@ def _pad_rows(segments: list[tuple[int, int]]) -> list[int]:
     return sorted(rows)
 
 
+# One gather on these toy sizes takes milliseconds; a peer that has not
+# arrived in this long has failed or hung, and the wait gives up rather than
+# holding the test until CI's own timeout.
+BARRIER_TIMEOUT_S = 60.0
+JOIN_TIMEOUT_S = 90.0
+
+
 class _SimulatedUSP:
-    """Lock-step rank collective preserving the all-gather ordering exactly."""
+    """Lock-step rank collective preserving the all-gather ordering exactly.
+
+    The barrier is bounded and abortable: a rank that raises aborts it, so its
+    peer leaves the wait with BrokenBarrierError instead of blocking for good.
+    """
 
     def __init__(self) -> None:
-        self._barrier = threading.Barrier(2)
+        self._barrier = threading.Barrier(2, timeout=BARRIER_TIMEOUT_S)
         self._lock = threading.Lock()
         self._rounds: dict[int, dict[int, torch.Tensor]] = {}
 
@@ -110,6 +122,46 @@ class _SimulatedUSP:
         values = [self._rounds[round_id][item] for item in range(2)]
         self._barrier.wait()
         return values
+
+    def abort(self) -> None:
+        self._barrier.abort()
+
+
+def _run_ranks(target, collective: _SimulatedUSP) -> None:
+    """Run target(rank) for both ranks and raise the first rank's own error.
+
+    Each rank's exception is kept, and the first aborts the collective so the
+    peer leaves its gather. Both threads are joined before this returns,
+    except a thread still stuck after the abort, which is a daemon and is
+    reported; a caller restoring hooks in ``finally`` otherwise does so after
+    no rank can read them. Being daemons, the threads cannot hold the
+    interpreter open after the test has failed.
+    """
+    errors: dict[int, BaseException] = {}
+
+    def body(rank: int) -> None:
+        try:
+            target(rank)
+        except BaseException as exc:  # re-raised below, after the join
+            errors[rank] = exc
+            collective.abort()
+
+    threads = [threading.Thread(target=body, args=(rank,), name=f"mage-usp-rank-{rank}",
+                                daemon=True) for rank in range(2)]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + JOIN_TIMEOUT_S
+    for thread in threads:
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+    stuck = [thread.name for thread in threads if thread.is_alive()]
+    if stuck:
+        collective.abort()
+        for thread in threads:
+            thread.join(timeout=5.0)
+        raise AssertionError(f"rank threads still running after {JOIN_TIMEOUT_S:.0f} s: {stuck}")
+    # The rank that failed first carries the cause; a peer only saw the abort.
+    for rank in sorted(errors, key=lambda rank: isinstance(errors[rank], threading.BrokenBarrierError)):
+        raise errors[rank]
 
 
 def _rank_forward(rank, state, x, timestep, context, refs, rank_context, attention, output) -> None:
@@ -134,6 +186,33 @@ def _rank_forward(rank, state, x, timestep, context, refs, rank_context, attenti
 
 @pytest.mark.parametrize("reference_count", (0, 1, 3))
 def test_real_comfy_stock_and_two_rank_usp_match(reference_count, tmp_path):
+    _usp_differential(reference_count, _rank_forward)
+
+
+def test_a_rank_failure_releases_its_peer_and_restores_the_hooks():
+    """A rank that raises before its first gather must not strand its peer.
+
+    The peer leaves the aborted barrier, the failing rank's own error is what
+    the test reports, and the adapter's module hooks are the originals again.
+    """
+    import dgx_monarch.adapters.mage_flow as mage
+
+    hooks = (mage.shard_seq, mage.sp_gather, mage.sp_rank, mage.padded_row_indices)
+
+    def failing(rank, *args):
+        if rank == 1:
+            raise RuntimeError("rank 1 failed before its first gather")
+        _rank_forward(rank, *args)
+
+    with pytest.raises(RuntimeError, match="rank 1 failed before its first gather"):
+        _usp_differential(0, failing)
+    assert (mage.shard_seq, mage.sp_gather, mage.sp_rank, mage.padded_row_indices) == hooks
+    assert not [thread.name for thread in threading.enumerate()
+                if thread.name.startswith("mage-usp-rank-") and thread.is_alive()]
+
+
+def _usp_differential(reference_count: int, rank_forward) -> None:
+    """Stock MageFlow against two USP ranks running rank_forward, on CPU."""
     assert COMFY_DIR is not None
     _prepare_comfy()
     import comfy.ops as ops
@@ -195,18 +274,15 @@ def test_real_comfy_stock_and_two_rank_usp_match(reference_count, tmp_path):
         width = q.shape[sequence_dim]
         return full[:, rank_context.rank * width:(rank_context.rank + 1) * width]
 
-    mage.shard_seq, mage.sp_gather, mage.sp_rank, mage.padded_row_indices = shard, gather, lambda: rank_context.rank, _pad_rows
+    state = model.state_dict()
     results: dict[int, torch.Tensor] = {}
-    threads = [threading.Thread(
-        target=_rank_forward,
-        args=(rank, model.state_dict(), x, timestep, context, refs, rank_context, full_attention, results),
-    ) for rank in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=30)
-        assert not thread.is_alive()
-    mage.shard_seq, mage.sp_gather, mage.sp_rank, mage.padded_row_indices = original
+    mage.shard_seq, mage.sp_gather, mage.sp_rank, mage.padded_row_indices = shard, gather, lambda: rank_context.rank, _pad_rows
+    try:
+        _run_ranks(lambda rank: rank_forward(
+            rank, state, x, timestep, context, refs, rank_context, full_attention, results),
+            collective)
+    finally:
+        mage.shard_seq, mage.sp_gather, mage.sp_rank, mage.padded_row_indices = original
     assert torch.allclose(results[0], expected, atol=2e-5, rtol=2e-5)
     assert torch.equal(results[0], results[1])
 

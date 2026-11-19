@@ -14,7 +14,6 @@ different functions.
 """
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -22,7 +21,7 @@ from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
-from .. import mesh_setup, restart_reattach, runtime_observer
+from .. import mesh_setup, restart_reattach, runtime_observer, vae_decode_relief
 from ..adoption_evidence import (
     CONTEXT_REQUEST_KEY as _ADOPTION_CONTEXT_REQUEST_KEY,
 )
@@ -44,15 +43,19 @@ from ..adoption_evidence import (
 from ..delivery_faults import WorkerDeliveryError
 from ..log import get_logger
 from ..mesh import MeshHandle, mark_defunct_on_supervision_failure
+from ..old_model import OldModelRefusal
 from ..progress import ProgressReceiver
 from ..transfer import pack_latent
-from . import consent_waiver, model_patch_preflight, render_preflight
+from . import consent_waiver, model_patch_preflight, old_model_clear, refusal_lead, render_preflight, render_rows
 from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
+from .gate_dual import forced_stock_state
 from .gate_identity import (
     authorize_normal_render,
     model_for_request,
     model_with_worker_overrides,
 )
+from .in_place_bake_permission import IN_PLACE_BAKE_PROVEN
+from .in_place_bake_permission import stamp as stamp_in_place_bake_permission
 from .pending import PendingRender, PendingRenderHandoff
 from .render_quarantine import _enforce_persisted_quarantine
 from .render_result import _finish_render
@@ -72,7 +75,6 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
-_SAMPLE_TIMEOUT_S = float(os.environ.get("DGXM_SAMPLE_TIMEOUT", "3600"))
 _latent_without_topology_metadata = render_preflight.latent_without_topology_metadata
 _UNCLAIMED_ADOPTION_CONTEXT = object()
 # Render lifetime: set only while a RenderPipeline submit runs, and reset when
@@ -166,8 +168,9 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
 
         def on_failure(exc: BaseException) -> None:
             runtime_observer.submission_failed(guard, exc)
-            if (guard.dispatch_started and guard.handle is not None
-                    and isinstance(exc, Exception)):
+            # A first attempt's full restart goes unevicted to heal or refuse_pinned below.
+            if (guard.dispatch_started and guard.handle is not None and isinstance(exc, Exception)
+                    and not (restart_reattach.heals_unevicted(exc) and len(guards) == 1)):
                 mark_defunct_on_supervision_failure(guard.handle, exc)
 
         return run_guarded_submit(guard, body, on_failure)
@@ -189,9 +192,16 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
         return attempt()
     except WorkerDeliveryError as exc:
         if inherited:
-            raise
+            restart_reattach.refuse_pinned(guards[-1].handle, exc)
         return _attempt_after_restart(
             attempt, guards[-1].handle, exc, model, request, latent)
+    except OldModelRefusal as exc:
+        # Always clear and retry: one clear, then one attempt on a fresh fleet,
+        # whose refusal is not caught here.
+        refused = guards[-1].handle or getattr(getattr(model, "mesh", None), "handle", None)
+        if not old_model_clear.clear_for_retry(refused, exc, inherited=inherited):
+            raise
+        return attempt()
 
 
 def _attempt_after_restart(
@@ -221,7 +231,7 @@ def _attempt_after_restart(
     token = _REATTACH_FACTS.set(
         {"reattach": restart_reattach.EVENT, "reattach_s": round(outcome.wall_s, 2)})
     try:
-        return attempt()
+        return restart_reattach.retry_after_heal(attempt, exc)
     finally:
         _REATTACH_FACTS.reset(token)
 
@@ -274,7 +284,7 @@ def _submit_render_guarded(
         "_dgxm_artifact_sets",
         "_dgxm_artifact_preflight",
         "_dgxm_krea2_ref_preflight",
-        _ADOPTION_CONTEXT_REQUEST_KEY,
+        _ADOPTION_CONTEXT_REQUEST_KEY, IN_PLACE_BAKE_PROVEN,
     ):
         request.pop(internal_key, None)
     model = model_for_request(model, request)
@@ -282,6 +292,7 @@ def _submit_render_guarded(
     handle = (bound_handle if bound_handle is not None
               else ensure_live(spec.handle))
     guard.handle = handle
+    vae_decode_relief.note_serving(handle)  # a decode priced above its reading asks this fleet for idle pools
     if isinstance(handle, MeshHandle) and handoff is None:
         raise ValueError(
             "real render submission requires a caller-owned "
@@ -314,8 +325,10 @@ def _submit_render_guarded(
         render_preflight.preflight_krea2_reference_latents(model, ref_summary, topo)
         model_patch_preflight.preflight_moss_image_reference_images(model, ref_summary, topo)
         model_patch_preflight.preflight_moss_image_attention_bias(model, request, topo)
+        model_patch_preflight.preflight_flux_views(model, request, topo)
         render_preflight.preflight_minimax_h3_topology(model, topo)
         model_patch_preflight.preflight_model_patches(model, topo, request)
+        model_patch_preflight.preflight_h3_sigma_shift(model, request, latent)
         sample_attention = resolve_sample_attention(spec.attention, sage)
         render_preflight.preflight_sol_attention(
             model, topo, sample_attention, handle)
@@ -327,6 +340,7 @@ def _submit_render_guarded(
             handle,
             resolved_topology=topo,
             resolved_attention=sample_attention,
+            uncond=request.get("uncond_model"),
         ) or model
         authorization = authorize_normal_render(
             model, handle, uncond_model_request=request.get("uncond_model"),
@@ -335,18 +349,21 @@ def _submit_render_guarded(
             resolved_topology=topo,
             resolved_attention=sample_attention,
         )
+        refusal_lead.note_if_slab_dropped(model.mesh.worker_args, authorization.worker_args,
+                                          state=forced_stock_state(request, topo))
 
-        # A dual-model request is stamped stock whatever any ceremony did,
-        # and auto_gate off does not change that, so a blocked ceremony is
-        # not what refuses it. The generic refusal, which names the second
-        # model, answers it.
+        # Under comfy-managed residency a dual-model request runs no ceremony
+        # (nodes/gate_dual.py), so a blocked ceremony is not what refuses it.
+        # The generic refusal, which names the second model, answers it.
         if request.get("uncond_model") is None:
             consent_waiver.assert_ceremony_not_blocked(
                 model, handle, authorization)
         model = model_with_worker_overrides(
             model, authorization.worker_args, handle=handle)
+        stamp_in_place_bake_permission(  # only an exact gate PASS lets a Worker bake a classic stack in place
+            request, model, handle, resolved_topology=topo, resolved_attention=sample_attention)
         spec = model.mesh
-        validate_render_topology(model, topo, latent["samples"])
+        validate_render_topology(model, topo, latent["samples"], request)
         topology_label = topo.describe()
         log.info("render topology: %s (%s)", topology_label, reason)
         _collect_earlier_results_before_setup_change(handle, topo, spec)
@@ -402,7 +419,7 @@ def _submit_render_guarded(
                 "sync_ulysses": spec.sync_ulysses,
             }
 
-    timeout = max(_SAMPLE_TIMEOUT_S, steps_hint * 120.0)
+    timeout = render_rows.sample_deadline_s(model, request, latent, topo, steps_hint, cfg_value)
     from ..telemetry import render_progress
 
     # What the finished render's summary records beside its wall time: the

@@ -330,3 +330,175 @@ def test_bake_key_refuses_a_quantized_setter_typed(monkeypatch):
     message = str(raised.value)
     assert parse_leading_refusal_tag(message) == RefusalTag(
         refusal_class=RefusalClass.PHYSICS, guard=None, waivable=False)
+
+
+# A key ComfyUI renames as it loads the file. FLUX checkpoints store a q/k norm
+# weight as "<...>_norm.scale"; ComfyUI's model config renames it to
+# "<...>_norm.weight" (supported_models.Flux.process_unet_state_dict), and a
+# LoRA names the model's key. On 2026-11-11 the FLUX.2 Klein distill LoRA,
+# which carries diffs for 27 such weights, crashed uly2+fsdp with a bare
+# "no checkpoint tensor for key ...norm.query_norm.weight".
+
+class _NormBlock(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lin = torch.nn.Linear(4, 4, bias=False, dtype=torch.bfloat16)
+        self.query_norm = torch.nn.RMSNorm(4, dtype=torch.bfloat16)
+
+    def forward(self, x):
+        return self.lin(self.query_norm(x))
+
+
+def _flux_style_renames(state_dict):
+    """ComfyUI's Flux rule, as its model config applies it to a state dict."""
+    return {(k[:-len(".scale")] + ".weight" if k.endswith("_norm.scale") else k): v
+            for k, v in state_dict.items()}
+
+
+class _NormRoot(torch.nn.Module):
+    def __init__(self, process=_flux_style_renames):
+        super().__init__()
+        self.blocks = torch.nn.ModuleList([_NormBlock()])
+        self.model_config = SimpleNamespace(process_unet_state_dict=process)
+
+    def forward(self, x):
+        for block in self.blocks:
+            x = block(x)
+        return x
+
+
+_NORM_KEY = "blocks.0.query_norm.weight"
+_NORM_FILE_KEY = "blocks.0.query_norm.scale"
+
+
+def _norm_model(tmp_path, *, file_norm=None, file_key=_NORM_FILE_KEY, process=_flux_style_renames):
+    model = _NormRoot(process)
+    lin = torch.arange(16, dtype=torch.float32).reshape(4, 4).to(torch.bfloat16)
+    norm = torch.tensor([1.0, 1.5, 2.0, 2.5]).to(torch.bfloat16)
+    with torch.no_grad():
+        model.blocks[0].lin.weight.copy_(lin)
+        model.blocks[0].query_norm.weight.copy_(norm)
+    path = tmp_path / "m.safetensors"
+    tensors = {"blocks.0.lin.weight": lin}
+    if file_key is not None:
+        tensors[file_key] = norm if file_norm is None else file_norm
+    _write_safetensors(path, tensors)
+    return model, path, lin, norm
+
+
+def test_bake_finds_a_key_comfy_renames_at_load_under_its_file_name(tmp_path, monkeypatch):
+    import torch.distributed.fsdp
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    _install_comfy_stub(monkeypatch)
+    model, path, lin, norm = _norm_model(tmp_path)
+    keys = ["blocks.0.lin.weight", _NORM_KEY]
+    try:
+        model = _one_rank_fsdp(tmp_path, model)
+        x = torch.ones(2, 4, dtype=torch.bfloat16)
+        with torch.no_grad():
+            before = model(x)
+        store = SimpleNamespace(swap_verify=-1)
+        record = fsdp_lora.apply_stack(store, _Active(model, {key: ["patch"] for key in keys}),
+                                       str(path), None)
+        assert set(record.mapped) == set(keys)
+        sharded = model.blocks[0].query_norm.weight
+        assert type(sharded).__name__ == "DTensor"
+        assert torch.equal(fsdp_lora.local_shard(sharded), norm * 2)
+        assert torch.equal(fsdp_lora.local_shard(model.blocks[0].lin.weight), lin * 2)
+        with torch.no_grad():
+            assert not torch.equal(model(x), before)
+        # The record binds the model's key to the file's tensor, so a stack that
+        # drops the key restores this rank's rows from disk.
+        record2 = fsdp_lora.apply_stack(store, _Active(model, {}), str(path), record)
+        assert record2.mapped == {}
+        assert torch.equal(fsdp_lora.local_shard(sharded), norm)
+        with torch.no_grad():
+            assert torch.equal(model(x), before)
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.parametrize("own_name_holds", ["other bytes", "another dtype", "another shape"])
+def test_a_key_the_file_holds_under_both_names_binds_the_one_whose_bytes_match(tmp_path, monkeypatch, own_name_holds):
+    """ComfyUI loaded the renamed tensor; the file also holds one under the key's own name.
+
+    The lookup used to stop at the first name the header has, bind the wrong
+    tensor and call the model not pristine. It now byte-checks each candidate,
+    as the resident capture does, and binds the tensor the model holds.
+    """
+    import torch.distributed.fsdp
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    _install_comfy_stub(monkeypatch)
+    model, path, lin, norm = _norm_model(tmp_path)
+    decoy = {"other bytes": torch.tensor([9.0, 9.0, 9.0, 9.0]).to(torch.bfloat16),
+             "another dtype": torch.tensor([1.0, 1.5, 2.0, 2.5], dtype=torch.float32),
+             "another shape": torch.ones(8).to(torch.bfloat16)}[own_name_holds]
+    _write_safetensors(path, {"blocks.0.lin.weight": lin, _NORM_KEY: decoy, _NORM_FILE_KEY: norm})
+    try:
+        model = _one_rank_fsdp(tmp_path, model)
+        record = fsdp_lora.capture_record(model, [_NORM_KEY], str(path), 0, 1)
+        header = fsdp_lora.read_safetensors_header(str(path))
+        assert record.mapped[_NORM_KEY] == header[_NORM_FILE_KEY]
+        assert record.mapped[_NORM_KEY] != header[_NORM_KEY]
+        # With neither tensor equal to the live rows the model is not pristine, as before.
+        with torch.no_grad():
+            fsdp_lora.local_shard(model.blocks[0].query_norm.weight).add_(1)
+        with pytest.raises(UnbakeError, match=r"not pristine|needs the file's own dtype"):
+            fsdp_lora.capture_record(model, [_NORM_KEY], str(path), 0, 1)
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_a_renamed_key_still_has_to_match_the_files_bytes(tmp_path, monkeypatch):
+    """The rename only names a candidate; the byte check decides."""
+    import torch.distributed.fsdp
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    _install_comfy_stub(monkeypatch)
+    other = torch.tensor([9.0, 9.0, 9.0, 9.0]).to(torch.bfloat16)
+    model, path, _lin, _norm = _norm_model(tmp_path, file_norm=other)
+    try:
+        model = _one_rank_fsdp(tmp_path, model)
+        with pytest.raises(UnbakeError, match="not pristine"):
+            fsdp_lora.capture_record(model, [_NORM_KEY], str(path), 0, 1)
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.parametrize("case", ["no tensor in the file", "no rename known", "config reads tensors"])
+def test_capture_refuses_a_key_with_no_checkpoint_tensor_typed(tmp_path, monkeypatch, case):
+    """A patched key the file holds under no name is a class P refusal raised
+    before any shard is written, not a bare UnbakeError (the 2026-11-11 crash)."""
+    import torch.distributed.fsdp
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    _install_comfy_stub(monkeypatch)
+
+    def reads_tensors(state_dict):
+        return {key: value * 2 for key, value in state_dict.items()}  # fails on a name
+
+    kwargs = {"no tensor in the file": {"file_key": None},
+              "no rename known": {"process": None},
+              "config reads tensors": {"process": reads_tensors}}[case]
+    model, path, lin, norm = _norm_model(tmp_path, **kwargs)
+    try:
+        model = _one_rank_fsdp(tmp_path, model)
+        active = _Active(model, {"blocks.0.lin.weight": ["patch"], _NORM_KEY: ["patch"]})
+        with pytest.raises(UnbakeError, match="holds no tensor under that name") as raised:
+            fsdp_lora.apply_stack(SimpleNamespace(swap_verify=-1), active, str(path), None)
+        message = str(raised.value)
+        assert parse_leading_refusal_tag(message) == RefusalTag(
+            refusal_class=RefusalClass.PHYSICS, guard=None, waivable=False)
+        assert _NORM_KEY in message and "resident topology" in message
+        # Raised by the capture, before the bake: no shard changed, the stack is intact.
+        assert torch.equal(fsdp_lora.local_shard(model.blocks[0].lin.weight), lin)
+        assert torch.equal(fsdp_lora.local_shard(model.blocks[0].query_norm.weight), norm)
+        assert set(active.patches) == {"blocks.0.lin.weight", _NORM_KEY}
+    finally:
+        torch.distributed.destroy_process_group()

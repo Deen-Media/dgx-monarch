@@ -45,10 +45,7 @@ __all__ = ["TOUCHPOINTS", "Touchpoint", "assert_comfy_surface"]
 TOUCHPOINTS: tuple[Touchpoint, ...] = (
     # Core weight loading, progress, and tensor helpers.
     _call("comfy.utils", "load_torch_file", "safe_load", "device", "return_metadata", positional=("ckpt",)),
-    _call(
-        "comfy.utils", "convert_old_quants", "model_prefix", "metadata",
-        positional=("state_dict",),
-    ),
+    _call("comfy.utils", "convert_old_quants", "model_prefix", "metadata", positional=("state_dict",)),
     _call("comfy.utils", "ProgressBar", positional=("total",)),
     _call("comfy.utils", "ProgressBar.update_absolute", positional=("self", "value", "total")),
     _call("comfy.utils", "repeat_to_batch_size", positional=("tensor", "batch_size")),
@@ -60,11 +57,15 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     # Memory policy. The globals are hard requirements even where their first
     # read has a fallback: a write to a renamed knob fails silently and leaves
     # workers off the configured memory settings.
-    _call("comfy.model_management", "get_free_memory", "dev", "torch_free_too"),
+    _call("comfy.model_management", "get_free_memory", positional=("dev", "torch_free_too")),
     _call("comfy.model_management", "get_torch_device"),
     _call("comfy.model_management", "load_models_gpu", "force_full_load", positional=("models",)),
     _call("comfy.model_management", "unload_all_models"),
     _call("comfy.model_management", "soft_empty_cache"),
+    # What load_models_gpu requires free for a priced call, and the classic loader's way to free it (vae_decode_relief).
+    _call("comfy.model_management", "minimum_inference_memory"),
+    _call("comfy.model_management", "extra_reserved_memory"),
+    _call("comfy.model_management", "free_memory", "keep_loaded", "for_dynamic", positional=("memory_required", "device")),
     _call("comfy.model_management", "cast_to_device", "copy", positional=("tensor", "device", "dtype")),
     _call("comfy.model_management", "lora_compute_dtype", positional=("device",)),
     _call("comfy.model_management", "cast_to", "dtype", "device", positional=("weight",)),
@@ -81,6 +82,8 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.sd", "load_lora_for_models", positional=("model", "clip", "lora", "strength_model", "strength_clip")),
     _call("comfy.sd", "CLIP.tokenize", positional=("self", "text")),
     _call("comfy.sd", "CLIP.encode_from_tokens_scheduled", positional=("self", "tokens")),
+    _call("comfy.sd", "VAE.encode", positional=("self", "pixel_samples")),  # vae_encode_item wraps it in the driver
+    _call("comfy.sd", "VAE.decode", positional=("self", "samples_in")),  # vae_decode_relief wraps it in the driver
     _call("comfy.model_patcher", "ModelPatcher", positional=("model", "load_device", "offload_device")),
     _call("comfy.model_patcher", "ModelPatcher.clone", positional=("self",)),
     _call("comfy.model_patcher", "ModelPatcher.add_object_patch", positional=("self", "name", "obj")),
@@ -94,6 +97,9 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.lora", "calculate_weight", positional=("patches", "weight", "key")),
     _call("comfy.float", "stochastic_rounding", "seed", positional=("value", "dtype")),
     _attr("comfy.quant_ops", "QUANT_ALGOS"),
+    # The build-time operations pick that fp8_compute.py wraps, logging the
+    # class it returns in the driver and in every actor.
+    _call("comfy.ops", "pick_operations", "load_device", "disable_fast_fp8", "fp8_optimizations", "model_config", positional=("weight_dtype", "compute_dtype")),
     _call("comfy.quant_ops", "get_layout_class", positional=("name",)),
     _call("comfy.quant_ops", "QuantizedTensor", positional=("qdata", "layout_cls", "params")),
     _call("comfy_kitchen.tensor", "QuantizedTensor", positional=("qdata", "layout_cls", "params")),
@@ -144,6 +150,7 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("folder_paths", "get_folder_paths", positional=("folder_name",)),
     _call("folder_paths", "get_full_path", positional=("folder_name", "filename")),
     _call("folder_paths", "get_output_directory"),
+    _call("folder_paths", "get_input_directory"),
     _attr("folder_paths", "__file__"),
     _attr("server", "PromptServer.instance"),
     _attr("server", "PromptServer.instance.routes"),
@@ -199,12 +206,11 @@ MODEL_DETECTION_ANCHORS: dict[str, tuple[str, str, str, str]] = {
 # Real reads whose callers fall back safely when the name is absent. Listing
 # them keeps them visible without making their absence an outage.
 OPTIONAL_TOUCHPOINTS: tuple[str, ...] = (
-    # The loader-site footprint preflight (nodes/loader_graph.py) reads this to
-    # tell a driver stack comfy already holds from one it is about to build.
-    # Absence means "nothing loaded", which over-charges rather than crashing.
-    "comfy.model_management.current_loaded_models",
-    "comfy.memory_management.aimdo_enabled",
-    "comfy.utils.DISABLE_MMAP",
+    # The loader-site footprint preflight (nodes/loader_graph.py) and the
+    # render-site unload (driver_unload.py) read what comfy holds. Absence means
+    # "nothing loaded": the first over-charges, the second refuses unchanged.
+    "comfy.model_management.current_loaded_models", "comfy.model_management.LoadedModel.model",
+    "comfy.memory_management.aimdo_enabled", "comfy.utils.DISABLE_MMAP",
     "comfy.model_patcher.ModelPatcher.model.model_loaded_weight_memory",
     "comfy.model_patcher.ModelPatcher.model.model_lowvram",
     "comfy.model_patcher.ModelPatcher.load_device",
@@ -213,6 +219,8 @@ OPTIONAL_TOUCHPOINTS: tuple[str, ...] = (
     # hook writes it for one forward at a time (adapters/quant_activation_scale.py),
     # so its absence is normal.
     "comfy.ops.mixed_precision_ops.Linear.input_scale",
+    # ModelSamplingMiniMaxH3 (DGX Monarch): absent, an H3 shift render refuses class P.
+    "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
 )
 
 

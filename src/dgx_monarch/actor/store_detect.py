@@ -269,17 +269,29 @@ def _detect_live_precision(patcher, option_kind: str) -> LivePrecisionEvidence:
             return evidence("unknown")
         # Operation metadata is authoritative because wrapper dtypes can still
         # report the original BF16 storage kind.
+        # The first quantized module names the kind, except that one 4-bit
+        # grouped layer names the whole file w4a8: p-h3-image's W4A8 release
+        # keeps its most sensitive layers int8_tensorwise, and the token
+        # refiner, which comes first, is one of them. The header agrees
+        # (adapters/detect.py detect_quant_from_header).
         _FMT_KIND = {"float8_e4m3fn": "fp8", "float8_e5m2": "fp8",
                      "int8_tensorwise": "int8", "mxfp8": "mxfp8",
-                     "nvfp4": "nvfp4"}
+                     "nvfp4": "nvfp4", "asym_w4a8_int8": "w4a8"}
+        first_kind = None
         for m in modules():
             fmt = getattr(m, "quant_format", None)
-            if fmt:
-                kind = _FMT_KIND.get(fmt)
-                if kind is None:
+            if not fmt:
+                continue
+            kind = _FMT_KIND.get(fmt)
+            if kind is None:
+                if first_kind is None:
                     log.warning("unknown quant_format %r; reporting as fp8", fmt)
-                    kind = "fp8"
+                kind = "fp8"
+            if kind == "w4a8":
                 return evidence(kind, quantized_shards=True)
+            first_kind = first_kind or kind
+        if first_kind is not None:
+            return evidence(first_kind, quantized_shards=True)
         fp8_dtypes = (torch.float8_e4m3fn, torch.float8_e5m2)
         for name, p in named_parameters():
             total_parameter_bytes += p.numel() * p.element_size()

@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import aiohttp
 
 from .. import finite_json
+from ..constants import RECYCLE_HTTP_DEADLINE_S
 from .contracts import MAX_BODY_BYTES, MAX_EVENT_BYTES, OBJECT_INFO_BYTES, StudioError, bounded_key
 
 GET_PATHS = frozenset({"/object_info", "/queue", "/history", "/system_stats", "/dgxm/telemetry", "/dgxm/consents"})
@@ -29,6 +30,20 @@ HISTORY_REGROW_PAGES = 3
 HISTORY_HOLD_LIMIT = 64
 # Only a refused connect is an observed "nothing listens"; every other failure stays unknown.
 DRIVER_NOT_RUNNING = "No driver accepted a connection at the driver origin; start the driver."
+# A driver answers reads and ordinary posts at once; this bounds a hung one.
+REQUEST_TIMEOUT_S = 20.0
+# These two routes may run an attached-mesh reset, which the driver bounds at
+# RECYCLE_HTTP_DEADLINE_S. Studio waits this margin past it, so a timeout means
+# the answer was lost, which stays unknown, never that a slow reset succeeded.
+MAINTENANCE_PATHS = frozenset({"/dgxm/recycle", "/dgxm/consent"})
+MAINTENANCE_MARGIN_S = 20.0
+
+
+def request_timeout(method: str, path: str) -> float:
+    """Seconds Studio waits for one driver answer on this route."""
+    if method == "POST" and path in MAINTENANCE_PATHS:
+        return RECYCLE_HTTP_DEADLINE_S + MAINTENANCE_MARGIN_S
+    return REQUEST_TIMEOUT_S
 
 
 def safe_descriptor(value: dict[str, Any]) -> dict[str, str]:
@@ -144,7 +159,8 @@ class ComfyClient:
         async def no_redirect(session: Any, context: Any, params: Any) -> None:
             raise StudioError("driver_redirect", "Driver redirects are not permitted.", 502)
         trace.on_request_redirect.append(no_redirect)
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20), trace_configs=[trace])
+        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S),
+                                             trace_configs=[trace])
 
     async def close(self) -> None:
         if self.session:
@@ -247,8 +263,10 @@ class ComfyClient:
         try:
             action = {"/dgxm/recycle": "recycle", "/dgxm/consent": "consent"}.get(path)
             headers = {"Origin": self.origin, "X-DGXM-Action": action} if action else None
+            timeout = aiohttp.ClientTimeout(total=request_timeout(method, path))
             async with self.session.request(method, self.origin + path, json=data if method == "POST" else None,
-                                            params=params, headers=headers, allow_redirects=False) as response:
+                                            params=params, headers=headers, allow_redirects=False,
+                                            timeout=timeout) as response:
                 refused = response.status >= 300
                 raw = bytearray()
                 async for chunk in response.content.iter_chunked(65536):

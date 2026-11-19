@@ -128,10 +128,36 @@ def topology_from_preset(preset: str, world: int) -> Topology:
 
 
 # Family -> {target Ulysses degree: every sharded query and KV head count that
-# degree must divide}. Empty: the evidence validates the degree-2 rows but no
-# fold of data-parallel ranks into a larger Ulysses degree. Add one entry per
-# family and degree a campaign validates.
-VALIDATED_ULYSSES_FOLDS: dict[str, dict[int, tuple[int, ...]]] = {}
+# degree must divide}. The project's own evidence validates the degree-2 rows
+# and no fold of data-parallel ranks into a larger Ulysses degree; add one
+# entry per family and degree a campaign validates.
+#
+# One entry rests on community reports instead (issue #188, 2026-11-13), as
+# an exception the maintainer allowed (CONTRIBUTING.md, reports from clusters
+# larger than ours). Without it, MiniMax H3 at world 4 and batch 1 folds into
+# uly2+ring2, a fold no record shows rendering, where the adapter refuses
+# every packed total that does not divide 4 inside the first model call; it
+# also checks the live head count at injection. Community four-Spark users
+# reported uly4: in one report a ref2v graph
+# whose latent was bit-identical to their pair's uly2; in another, three rows
+# within the 0.10 one-step limit of one GPU, a closeness check rather than an
+# identical latent (docs/BENCHMARKS.md, 2026-10-27). uly4 runs the same Ulysses
+# code and pad exclusion as uly2, and 56 heads, the only count H3's one sharded
+# attention has, split four ways. This
+# project's two Sparks have not run it. The grant is keyed by family, so
+# p-h3-image, which reads as minimax_h3, takes it too with no reading of its
+# own; MiniMax-H3-Image is a family of its own and keeps the ring fold.
+VALIDATED_ULYSSES_FOLDS: dict[str, dict[int, tuple[int, ...]]] = {
+    "minimax_h3": {4: (56,)},
+}
+# What a fold that rests on anything but the project's own runs adds to the
+# logged reason, only where the fold runs, so a pair's line speaks of the pair.
+VALIDATED_ULYSSES_FOLD_NOTES: dict[tuple[str, int], str] = {
+    ("minimax_h3", 4): (
+        "uly4 rests on what community four-Spark users reported (one latent "
+        "bit-identical to a pair's uly2, and one-step checks within 0.10 of one "
+        "GPU), which this project's two Sparks have not reproduced"),
+}
 
 
 def _presets_tiling(world: int) -> list[str]:
@@ -189,6 +215,8 @@ def choose_auto_topology(
     batch_size: int = 1,
     keeps_uncond: bool = False,
     variant: str | None = None,
+    pair_differs: bool = False,
+    views: bool = False,
 ) -> AutoDecision:
     """Resolve ``auto`` and log the selected row and rationale.
 
@@ -196,17 +224,28 @@ def choose_auto_topology(
     says the sampler keeps the unconditional pass there
     (``sampler_keeps_uncond_at_cfg1``), and skips any cfg row with no passing
     evidence (topology_cfg_evidence), including a row whose record excludes the
-    checkpoint ``variant`` (``checkpoint_variant``). ``fits_resident=False``
+    checkpoint ``variant`` (``checkpoint_variant``) and a row whose record
+    covers only prompt pairs of different text rows when ``pair_differs``
+    does not say this render's pair is one (``cfg_pair``). ``fits_resident=False``
     adds FSDP for capacity. Spare ranks use data parallel only when the batch
     divides evenly; otherwise a pure sequence-parallel row folds them in, and
-    a cfg row raises UnsupportedModelError.
+    a cfg row raises UnsupportedModelError. ``views`` says the conditioning
+    carries UltraTex view inputs (adapters/flux_views.py): for the Flux
+    families that read them auto skips every cfg row, whose split would cut a
+    sample's views apart, and refuses where data parallelism or ring would
+    remain.
     """
+    if views:
+        from .adapters.flux_views import VIEW_FAMILIES
+
+        views = family in VIEW_FAMILIES
     if world <= 1:
         topo = Topology(world=max(world, 1))
         return AutoDecision(topo, False, "auto: single; world size 1", _FALLBACK_RULE)
 
     chosen: AutoRule | None = None
     skipped_cfg: AutoRule | None = None
+    skipped_views: AutoRule | None = None
     for rule in AUTO_TABLE:
         if rule.family != family:
             continue
@@ -219,7 +258,11 @@ def choose_auto_topology(
         if (rule.topology.get("cfg", 1) != 1 and cfg_value is not None
                 and abs(cfg_value - 1.0) < 1e-6 and not keeps_uncond):
             continue  # cfg-parallel has no uncond pass to parallelize at cfg 1.0
-        if rule.topology.get("cfg", 1) != 1 and not cfg_row_is_eligible(rule, quant_kind, variant):
+        if rule.topology.get("cfg", 1) != 1 and views:
+            skipped_views = rule
+            continue
+        if rule.topology.get("cfg", 1) != 1 and not cfg_row_is_eligible(
+                rule, quant_kind, variant, pair_differs):
             skipped_cfg = rule
             continue
         chosen = rule
@@ -237,7 +280,10 @@ def choose_auto_topology(
             and rule.topology.get("cfg", 1) != 1
             for rule in AUTO_TABLE
         )
-        if skipped_cfg is not None:
+        if skipped_views is not None:
+            note = (f"cfg2 table row {skipped_views.row} would split the batch that holds each "
+                    "UltraTex sample's views; uly2 is the proven topology for view conditioning")
+        elif skipped_cfg is not None:
             record = cfg_evidence_for(skipped_cfg)
             if record is None:
                 detail = "has no exact-row evidence record"
@@ -245,6 +291,10 @@ def choose_auto_topology(
                 detail = f"was measured on this {variant} checkpoint and does not grant it"
             elif record.quants and quant_kind not in record.quants:
                 detail = f"has no passing {quant_kind} result"
+            elif record.pairs == "unequal" and not pair_differs:
+                # The clause the Ulysses-row branch below appends, word for word.
+                detail = ("was measured on prompt pairs whose text rows differ, and this "
+                          "pair's rows are equal or unread")
             else:
                 detail = "has no passing in-band speed-and-fidelity result"
             note = (f"cfg2 table row {skipped_cfg.row} {detail}; uly2 is the "
@@ -270,12 +320,19 @@ def choose_auto_topology(
             # applies, but a registered family still arms its preflights.
             note = (f"family {family!r} has no auto table row, so the generic "
                     "fallback applies; uly2 is the conservative default")
+    if note is None and skipped_views is not None:
+        note = (f"{chosen.note}; cfg2 table row {skipped_views.row} would split the batch "
+                "that holds each UltraTex sample's views")
     if note is None:
         note = chosen.note
         excluded = cfg_evidence_for(skipped_cfg) if skipped_cfg is not None else None
         if excluded is not None and variant in excluded.excludes:
             note = (f"{note}; cfg2 table row {excluded.row} was measured on this "
                     f"{variant} checkpoint and does not grant it")
+        elif excluded is not None and excluded.permits(skipped_cfg, quant_kind, variant, True):
+            # Only the pair kept the row: say so, as the variant clause does.
+            note = (f"{note}; cfg2 table row {excluded.row} was measured on prompt pairs "
+                    "whose text rows differ, and this pair's rows are equal or unread")
 
     topo_kwargs = dict(chosen.topology)
     if not fits_resident:
@@ -302,6 +359,9 @@ def choose_auto_topology(
             topo = replace(topo, ulysses=target_uly, dp=1)
             note = (f"{note}; batch {batch_size} cannot split dp; folded into "
                     f"ulysses{target_uly} (heads tile; keeps exact pad exclusion)")
+            standing = VALIDATED_ULYSSES_FOLD_NOTES.get((family, target_uly))
+            if standing:
+                note = f"{note}; {standing}"
         elif topo.cfg > 1:
             # A ring fold fails the same way a Ulysses fold does: either builds
             # a cfg-plus-sequence composite no row names, so auto refuses rather
@@ -336,6 +396,10 @@ def choose_auto_topology(
         else:
             topo = replace(topo, ring=topo.ring * topo.dp, dp=1)
             note = f"{note}; batch {batch_size} cannot split dp; folded into ring{topo.ring}"
+    if views:
+        from .adapters.flux_views import refuse_auto_views
+
+        refuse_auto_views(family, topo, world)
     topo.validate()
 
     reason = (

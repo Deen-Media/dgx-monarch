@@ -25,6 +25,10 @@ MAX_DESCRIPTOR_BYTES = 4096
 # conditions for that load, producing at most one card. Explicit slab
 # residency needs no rescue consent.
 KIND_RESCUE_SLAB = "rescue-slab"
+# The "Old model in the way" card (old_model.py). The driver raises it and its
+# accept clears the attached mesh, so it grants nothing. It is not in the
+# descriptor grammar below: no worker raises it, and no refusal text may.
+KIND_CLEAR_RETRY = "clear-retry"
 
 # A class-K kind is this prefix plus a short name (letters, digits, "-", "_", ".").
 # Any such name parses, so an older driver still parses a newer worker's
@@ -36,6 +40,8 @@ _MAX_GUARD_ID = 48
 # Driver-side headless fallback for slab rescue. Class C and U kinds each have
 # their own variable; every class-K kind shares DGXM_WAIVE_KNOWN_WRONG.
 ENV_SLAB_RESCUE = "DGXM_ALLOW_SLAB_RESCUE"
+# Driver-side headless "Always clear and retry" (consent_kinds, old_model).
+ENV_CLEAR_RETRY = "DGXM_ALLOW_CLEAR_RETRY"
 
 # The card's evidence sentence is fixed by the certificate contract.
 EVIDENCE_BYTE_VERIFIED = (

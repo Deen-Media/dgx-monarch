@@ -279,3 +279,49 @@ def test_other_scoped_route_failures_keep_the_durable_unknown_intent(tmp_path):
         store.close()
 
     asyncio.run(scenario())
+
+
+def test_a_released_intent_frees_every_key_that_joined_it(tmp_path):
+    """Review F11: A waits on the scoped route, B joins its intent, the route is missing."""
+    async def scenario():
+        store = Store(tmp_path / "state")
+        job(store, state="running")
+        started, answer = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def scoped(prompt):
+            calls.append(("CANCEL", prompt))
+            started.set()
+            await answer.wait()
+            raise route_missing()
+
+        async def request(method, path, data=None):
+            calls.append((method, path, data))
+            return {}
+        selected = owner(store, SimpleNamespace(cancel_prompt=scoped, request=request))
+        first = {"confirmed": True, "idempotency_key": "first"}
+        second = {"confirmed": True, "idempotency_key": "second"}
+        task = asyncio.create_task(cancel_job(selected, "job", first))
+        await started.wait()
+        joined = await cancel_job(selected, "job", second)
+        assert joined["state"] == "cancel_requested"
+        answer.set()
+        with pytest.raises(StudioError) as caught:
+            await task
+        assert caught.value.code == "cancellation_scope"
+        value = store.get("jobs", "job")
+        assert value["state"] == "running"
+        assert not {"cancellation_intent_id", "cancellation", "cancellation_scope"} & set(value)
+        assert store.all("job_cancellations") == []
+        # Neither key points at the released intent: each is unspent, so neither replay says not_found.
+        for body in (first, second):
+            binding = {**body, "job_id": "job", "action": "cancel"}
+            assert store.request("job_cancellations", body["idempotency_key"], binding) is None
+        for body in (first, second):
+            with pytest.raises(StudioError, match="atomic prompt cancellation is unavailable") as replay:
+                await cancel_job(selected, "job", body)
+            assert replay.value.code == "cancellation_scope"
+        assert calls == [("CANCEL", "prompt-job")]
+        store.close()
+
+    asyncio.run(scenario())

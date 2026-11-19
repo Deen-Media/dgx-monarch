@@ -26,14 +26,18 @@ from dataclasses import asdict
 from typing import Any
 
 from .monarch_capabilities import collect_capabilities
+from .monarch_lifecycle_touchpoints import LIFECYCLE_TOUCHPOINTS
 from .monarch_semantics import (
     exception_observation as _exception_observation,
 )
 from .monarch_semantics import (
-    probe_mesh_factory_private_ownership as _probe_mesh_factory_private_ownership,
+    probe_handle_asyncio as _probe_handle_asyncio,
 )
 from .monarch_semantics import (
-    probe_python_task_asyncio as _probe_python_task_asyncio,
+    probe_lifecycle_config_defaults as _probe_lifecycle_config_defaults,
+)
+from .monarch_semantics import (
+    probe_mesh_factory_private_ownership as _probe_mesh_factory_private_ownership,
 )
 from .monarch_semantics import (
     probe_unhandled_hook_writable as _probe_unhandled_hook_writable,
@@ -152,7 +156,17 @@ TOUCHPOINTS: tuple[MonarchTouchpoint, ...] = (
         "HostMesh.spawn_procs",
         "per_host",
         "bootstrap",
+        "bootstrap_command",
+        "name",
         positional=("self",),
+    ),
+    # monarch_launch builds each actor's launch command with this.
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.host_mesh",
+        "BootstrapCommand",
+        "inherit_env",
+        positional=("program", "arg0", "args", "env"),
+        require_class=True,
     ),
     _class("monarch.actor", "ProcMesh"),
     _attr("monarch.actor", "ProcMesh.initialized"),
@@ -206,6 +220,13 @@ TOUCHPOINTS: tuple[MonarchTouchpoint, ...] = (
         positional=("self",),
         var_keyword=True,
     ),
+    # mesh_teardown.stop_with_reason: under direct spawn only the actor stop
+    # carries the reason to a call in flight.
+    _call(
+        "monarch._src.actor.actor_mesh",
+        "ActorMesh.stop",
+        positional=("self", "reason"),
+    ),
     _attr("monarch.actor", "Extent.labels"),
     _class("monarch.actor", "Endpoint"),
     _call(
@@ -254,30 +275,41 @@ TOUCHPOINTS: tuple[MonarchTouchpoint, ...] = (
     ),
     _call("monarch.rdma", "RDMABuffer.drop", positional=("self",)),
     _call("monarch.rdma", "is_ibverbs_available"),
-    _class(
-        "monarch._rust_bindings.monarch_hyperactor.pytokio",
-        "PythonTask",
-    ),
+    # monarch_policy installs the release policy and reads it back with these,
+    # and refuses a late admission once the RDMA manager cache holds an entry.
+    _call("monarch.config", "configure", var_keyword=True),
+    _call("monarch.config", "get_global_config"),
+    _attr("monarch._src.rdma.rdma", "_rdma_manager_init_cache"),
+    # mesh_helpers judges a dead fleet by this type before any message text.
+    _class("monarch._rust_bindings.monarch_hyperactor.supervision", "SupervisionError"),
+    # monarch_diagnostics' opt-in metrics exporter.
+    _call("monarch.actor", "get_meter"),
+    # The native object every returned Future observes since 0.8.0, which
+    # removed pytokio.PythonTask. The semantic probe awaits one in asyncio.
+    _class("monarch._rust_bindings.monarch_hyperactor.handle", "Handle"),
     _call(
-        "monarch._rust_bindings.monarch_hyperactor.pytokio",
-        "PythonTask.sleep",
-        positional=("seconds",),
-    ),
-    _call(
-        "monarch._rust_bindings.monarch_hyperactor.pytokio",
-        "PythonTask.__await__",
+        "monarch._rust_bindings.monarch_hyperactor.handle",
+        "Handle.get",
+        "timeout",
         positional=("self",),
     ),
     _call(
-        "monarch._rust_bindings.monarch_hyperactor.pytokio",
-        "PythonTask.block_on",
+        "monarch._rust_bindings.monarch_hyperactor.handle",
+        "Handle.poll",
         positional=("self",),
     ),
     _call(
-        "monarch._rust_bindings.monarch_hyperactor.pytokio",
-        "PythonTask.with_timeout",
-        positional=("self", "seconds"),
+        "monarch._rust_bindings.monarch_hyperactor.handle",
+        "Handle.as_asyncio",
+        positional=("self",),
     ),
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.handle",
+        "Handle.__await__",
+        positional=("self",),
+    ),
+    _call("monarch._rust_bindings.monarch_hyperactor.handle", "_new_handle_pair"),
+    *LIFECYCLE_TOUCHPOINTS,
 )
 
 
@@ -396,11 +428,12 @@ def collect_semantics(
     import_module: Callable[[str], object] = importlib.import_module,
 ) -> dict[str, dict[str, Any]]:
     probes: tuple[tuple[str, Callable[[Callable[[str], object]], dict[str, Any]]], ...] = (
-        ("raw_python_task_await_in_asyncio", _probe_python_task_asyncio),
+        ("raw_handle_await_in_asyncio", _probe_handle_asyncio),
         ("public_future_get_in_asyncio", _probe_future_get_asyncio),
         ("unhandled_fault_hook_assignment", _probe_unhandled_hook_writable),
         ("actor_queue_dispatch_default", _probe_actor_queue_dispatch_default),
         ("mesh_factory_private_ownership", _probe_mesh_factory_private_ownership),
+        ("lifecycle_config_defaults", _probe_lifecycle_config_defaults),
     )
     observations: dict[str, dict[str, Any]] = {}
     for name, probe in probes:

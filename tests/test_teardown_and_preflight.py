@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dgx_monarch import mesh_safety, mesh_setup
+from dgx_monarch import mesh_safety, mesh_setup, mesh_stop
 
 _TRANSPORT_FAULT = ("undeliverable message for dgxm_worker.status(): "
                     "broken link: channel closed with reason server closed")
@@ -728,10 +728,11 @@ def test_only_verified_supervision_capability_bypasses_owned_session(monkeypatch
 
 
 def test_shutdown_outer_budget_covers_the_sequential_envelope(monkeypatch):
-    """The off-loop budget covers group teardown and proc stop run in sequence
-    (each capped at 60 s), or a legal second-phase stop reads as a failure.
-    Caller timeouts are capped per phase, so every envelope stays inside
-    TOKEN_AUTHORITY_S."""
+    """The off-loop budget covers group teardown, the actor stop and proc stop
+    run in sequence (the group teardown capped at 60 s, the proc stop at its
+    bound, 100 s at Monarch's defaults), or a legal second-phase stop reads as
+    a failure. Caller timeouts are capped per phase, so every envelope stays
+    inside TOKEN_AUTHORITY_S."""
     import dgx_monarch.mesh as mesh_mod
 
     budgets = []
@@ -743,9 +744,10 @@ def test_shutdown_outer_budget_covers_the_sequential_envelope(monkeypatch):
     handle = _bare_handle()
     handle.shutdown(timeout_s=60)
     handle.shutdown(timeout_s=300)
-    assert budgets[0] >= 120          # covers 60 (group) + 60 (stop)
-    assert budgets[1] == budgets[0]   # phases capped at 60 whatever timeout_s
-    assert budgets[1] + 60 <= mesh_safety.TOKEN_AUTHORITY_S  # inside authority
+    assert budgets[0] >= 120 + mesh_stop.ACTOR_STOP_S  # 60 (group) + actor stop + 60 (stop)
+    # Phases capped whatever timeout_s; the envelope stays inside authority.
+    assert budgets[1] == 60 + mesh_stop.ACTOR_STOP_S + mesh_stop.PROC_STOP_DEFAULT_S + 30
+    assert budgets[1] <= mesh_safety.TOKEN_AUTHORITY_S
     # The inner phases honor the same cap.
     monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
     waits = []
@@ -758,7 +760,7 @@ def test_shutdown_outer_budget_covers_the_sequential_envelope(monkeypatch):
 
     inner = _bare_handle(procs=Procs())
     inner._shutdown_impl(timeout_s=300)
-    assert waits == [60]
+    assert waits == [mesh_stop.PROC_STOP_DEFAULT_S]
 
 
 def test_shutdown_outer_timeout_leaves_outcome_publication_to_scratch(monkeypatch):

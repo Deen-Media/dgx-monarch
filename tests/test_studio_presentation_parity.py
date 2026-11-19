@@ -96,7 +96,7 @@ def test_last_render_facts_include_topology_auto_row_last_step_and_attention_pin
     text = last_render_facts({"topology": "uly2", "auto_row": 11, "sec_per_step": 1.92,
                               "attention_pins": {"comfy_kitchen_sol": 40}, "attention_pins_ran": True})
     assert "uly2" in text and "auto row 11" in text and "1.92 s/step" in text
-    assert "comfy_kitchen_sol x 40 modules, ran" in text
+    assert "comfy_kitchen_sol x 40 modules, kept" in text
     assert last_render_facts({}) == ""
 
 

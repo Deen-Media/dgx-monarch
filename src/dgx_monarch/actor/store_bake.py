@@ -221,12 +221,13 @@ def verify_key(store, active, key: str) -> None:
 def bake_key(active, key: str) -> None:
     """Bake one key without invoking ComfyUI's load or backup manager.
 
-    The caller supplies a pristine weight. This path uses one compute tensor,
-    follows the patcher's public conversion and set functions, calculates in
-    its LoRA compute dtype, and applies key-seeded rounding. Plain weights update
-    in place to preserve tensor identity; quantized setters replace their wrapper
-    parameter. Ambient verification (verify_key) checks a sample of keys per
-    swap, two by default, against the reference bake.
+    The caller supplies a pristine weight. A key stock patches at cast time
+    takes stock's cast-time weight (actor/lora_cast_time.py, #145); any other
+    key takes ComfyUI's classic bake: the patcher's public conversion and set
+    functions, its LoRA compute dtype, and key-seeded rounding. Plain weights
+    update in place to preserve tensor identity; quantized weights replace
+    their wrapper parameter. Ambient verification (verify_key) checks a sample
+    of keys per swap, two by default, against the reference bake.
     """
     import comfy.float
     import comfy.lora
@@ -234,11 +235,17 @@ def bake_key(active, key: str) -> None:
     import comfy.model_patcher as comfy_mp
     import comfy.utils
 
+    from . import lora_cast_time
+
     patches = active.patches[key]
     weight, set_func, convert_func = comfy_mp.get_key_weight(active.model, key)
     # Pin bake math to ``load_device``. Using a temporarily offloaded weight's
     # device changes the compute dtype and caused deterministic image drift.
     bake_device = getattr(active, "load_device", None) or weight.device
+    cast = lora_cast_time.cast_time_weight(active, key, bake_device)
+    if cast is not None:
+        lora_cast_time.store(active.model, key, cast, in_place=True)
+        return
     temp = mm.cast_to_device(
         weight, bake_device, mm.lora_compute_dtype(bake_device), copy=True)
     if convert_func is not None:
@@ -327,7 +334,7 @@ def lazy_swap_transition(
         _adopt_patch_uuid(stored, active)
         # The swap re-baked into these weights, or restored them
         # pristine when the new stack is empty.
-        stored.base_baked = bool(lora_stack)
+        stored.base_baked = stored.baked_in_place = bool(lora_stack)
         stored.lora_sig = lora_signature(lora_stack)
         stored.request_key = (*base_key, stored.lora_sig, stored.quant_kind)
         stored.artifact_identity = requested_identity
@@ -375,6 +382,68 @@ def lazy_swap_transition(
     return None
 
 
+def swaps_in_place(stored, lora_low_rss: bool) -> bool:
+    """Whether a LoRA change on this resident is made from this stock copy of the base.
+
+    Mirrors the two branches ``ModelStore.ensure`` takes before a fresh load:
+    the low-RSS lazy swap restores and re-bakes in place, and the classic hot
+    swap clones the pristine base and re-applies the stack. Neither places a
+    second copy of the base. A classic change that ``copies_off_the_gpu`` sends
+    to a fresh load instead drops this copy first, which returns its GPU copy,
+    and the Worker's own wall prices that load whole after the drop, so the
+    credit holds there too. A pending slab retry reloads, and so does a base
+    the low-RSS bake consumed with no un-bake record. The fleet's capacity
+    quote reads this from the store snapshot (``capacity_lora_bake``).
+    """
+    if stored is None or getattr(stored, "slab_auto_retry", False):
+        return False
+    if lora_low_rss:
+        return stored.unbake is not None or not stored.lora_sig
+    return not stored.base_baked
+
+
+def _placed_bytes(model) -> int:
+    """What ComfyUI's ledger says it placed of this model on the GPU; 0 when unknown."""
+    value = getattr(model, "model_loaded_weight_memory", 0)
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
+def copies_off_the_gpu(store, stored, slot: str, active) -> tuple[int, int]:
+    """Weights an in-place swap would first copy off the GPU, as (uncovered, patched).
+
+    ComfyUI applies a new stack to a placed model by unpatching it to the host
+    (``ModelPatcher.unpatch_model``): each weight its backup holds goes back
+    as is, and every other weight is copied from the GPU into fresh host memory
+    before the new patches apply. From a bare base that backup is empty, so
+    the whole model is copied. On the 2026-11-05 hardware leg the BF16
+    Wan-Animate 2 swap spent 230 s in that copy, while a fresh load of base
+    and LoRA took 13.1 s and its patch 4.0 s. A fresh load drops the slot
+    without a host copy (``resident_ledger.unload_dropped``) and the
+    sampler patches from the file's own host copy, at the same price.
+
+    So ``uncovered`` counts the weights the new stack patches that the backup
+    the clones share does not hold, and the store reloads when it is not 0.
+    It stays 0, so the swap stays in place, unless every gate holds: classic
+    mode (the caller), a stock resident (slab, FSDP and comfy-managed keep their
+    own paths), a model ComfyUI placed on the GPU, and an empty other slot.
+    That last gate dates from the drop's global unload, which pushed the other
+    slot's model to the host the same slow way. On unified memory a stock drop
+    no longer does (``resident_ledger.unload_dropped``); the gate stays until
+    the in-place route beside a held slot is measured on hardware.
+    """
+    from . import store_residency
+
+    patches = getattr(active, "patches", None)
+    backup = getattr(stored.base_patcher, "backup", None)
+    other = store._stored("cond" if slot == "uncond" else "uncond")
+    if (not isinstance(patches, dict) or not isinstance(backup, dict) or other is not None
+            or store_residency.describe(stored)["residency"] != "stock"
+            or getattr(stored.base_patcher, "_dgxm_fsdp", False)
+            or _placed_bytes(getattr(stored.base_patcher, "model", None)) <= 0):
+        return 0, len(patches) if isinstance(patches, dict) else 0
+    return len(set(patches) - set(backup)), len(patches)
+
+
 def hot_swap_transition(
     store,
     stored,
@@ -386,12 +455,26 @@ def hot_swap_transition(
     *,
     request_artifact_identity,
     logger,
-) -> tuple[Any, str]:
-    """Clone the pristine base, re-apply the lora stack, and adopt the result."""
+) -> tuple[Any, str] | None:
+    """Clone the pristine base, re-apply the lora stack, and adopt the result.
+
+    Returns ``None`` when the swap would first copy weights off the GPU
+    (``copies_off_the_gpu``): the caller then loads base and stack fresh.
+    """
+    from . import in_place_fallback
     from .model_store import _is_quantized_kind, lora_signature
 
     t0 = time.perf_counter()
     active = store._build_active(stored.base_patcher, lora_stack)
+    uncovered, patched = copies_off_the_gpu(store, stored, slot, active)
+    if uncovered:
+        logger.info(
+            "model store [%s]: a LoRA change on %s would copy the model off the GPU first "
+            "(no host copy of %d of the %d weights the new stack patches), so it is not "
+            "hot-swapped: base and stack load fresh, or bake in place", slot, unet_name, uncovered, patched)
+        # The store holds what this build read (the patches, not the model) so the fresh load's walls price a fact.
+        in_place_fallback.note_stack_read(store, slot, lora_stack, getattr(active, "patches", None))
+        return None
     store_identity.assert_stable_identity(
         request_artifact_identity(unet_name, lora_stack), requested_identity,
         "applying a hot-swap")

@@ -11,6 +11,10 @@ no name gets one neutral placeholder. Choices that are not file names, such as
 sampler names, stay whole. Every referenced name must be in the recording,
 except the example names in NOT_IN_RECORDING, which the recording rig had not
 installed; the build adds those and stops on any other missing name.
+
+It also writes stock_text_classes.json: every stock ComfyUI class in the
+recording with a text input and a text or conditioning output, with its text
+inputs. Studio's text-through rule must hold a row for each.
 """
 from __future__ import annotations
 
@@ -25,6 +29,7 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO / "src/dgx_monarch/studio/data/workflows.json"
 OUTPUT = Path(__file__).with_name("object_info_bundled.json")
+STOCK_OUTPUT = Path(__file__).with_name("stock_text_classes.json")
 FILE_SUFFIX = re.compile(r"\.(safetensors|gguf|sft|ckpt|pt|pth|bin|onnx|png|jpe?g|webp|gif|mp4|webm|mov|mkv"
                          r"|wav|flac|mp3|ogg|opus|json|yaml|txt|glb)$", re.IGNORECASE)
 KEEP = ("input", "input_order", "output", "output_is_list", "output_name", "output_node", "name", "python_module")
@@ -32,10 +37,6 @@ VIRTUAL = {"Note", "MarkdownNote", "PrimitiveNode", "Reroute"}
 # Example names that public bundled workflows ship and the recording rig lacked.
 NOT_IN_RECORDING = {
     "DGXMonarchLoraLoader": {"your_first_lora.safetensors", "your_second_lora.safetensors"},
-    "LoadImage": {"blue_dancer.png", "qwen21_canvas_rgba.png", "qwen21_mask_rgba.png", "qwen21_source.png",
-                  "reference_character.png", "reference_character_mask.png"},
-    "LoadVideo": {"driving_video.mp4", "driving_video_mask.mp4", "source_video.mp4"},
-    "LoadAudio": {"wan_dancer_reference_audio.mp3"},
 }
 
 
@@ -57,14 +58,24 @@ def referenced(workflows: list[dict[str, Any]]) -> dict[str, set[str]]:
     return names
 
 
+# Any short extension or a slash marks a file name. In a list that holds file names, every such
+# choice no workflow references goes, so a recorded file of a type FILE_SUFFIX lacks, such as a
+# .tif image or a .m4a sound, cannot carry a private name into the fixture.
+LOOKS_LIKE_FILE = re.compile(r"\.[A-Za-z0-9]{1,5}$")
+
+
 def _file_like(choice: Any) -> bool:
     return isinstance(choice, str) and (FILE_SUFFIX.search(choice) is not None or "/" in choice)
+
+
+def _looks_like_file(choice: Any) -> bool:
+    return _file_like(choice) or (isinstance(choice, str) and LOOKS_LIKE_FILE.search(choice) is not None)
 
 
 def _trim_choices(choices: list[Any], names: set[str], added: set[str]) -> list[Any]:
     if not any(_file_like(choice) for choice in choices):
         return choices
-    kept = [choice for choice in choices if not _file_like(choice) or choice in names]
+    kept = [choice for choice in choices if not _looks_like_file(choice) or choice in names]
     kept.extend(sorted(added - set(kept)))
     if not any(_file_like(choice) for choice in kept):
         suffix = next(FILE_SUFFIX.search(choice).group(0) for choice in choices
@@ -128,15 +139,77 @@ def build(recording: dict[str, Any], workflows: list[dict[str, Any]]) -> dict[st
     return fixture
 
 
+STOCK_MODULES = re.compile(r"^(nodes|comfy_extras\..+|comfy_api_nodes\..+)$")
+
+
+def _text_inputs(spec: dict[str, Any], prefix: str = "") -> dict[str, bool]:
+    """Each text input's name, with whether its box is multi-line, dynamic option inputs included.
+
+    An option input is named after its parent, as `model.prompt`; a group that grows is named by
+    its parent and a dot, as `values.`.
+    """
+    found: dict[str, bool] = {}
+
+    def add(name: str, wide: bool) -> None:
+        found[name] = found.get(name, False) or wide
+
+    for group in ("required", "optional"):
+        for name, row in (spec.get(group) or {}).items():
+            if not isinstance(row, list) or not row:
+                continue
+            options = row[1] if len(row) > 1 and isinstance(row[1], dict) else {}
+            if row[0] == "STRING":
+                add(prefix + name, bool(options.get("multiline")))
+            elif row[0] == "COMFY_DYNAMICCOMBO_V3":
+                for option in options.get("options", []):
+                    for child, wide in _text_inputs(option.get("inputs") or {}, f"{prefix}{name}.").items():
+                        add(child, wide)
+            elif row[0] == "COMFY_AUTOGROW_V3":
+                grown = _text_inputs((options.get("template") or {}).get("input") or {})
+                if grown:
+                    add(f"{prefix}{name}.", any(grown.values()))
+    return found
+
+
+def stock_text_classes(recording: dict[str, Any]) -> dict[str, dict[str, bool]]:
+    """Every stock class with a text input and a text or conditioning output, with those inputs.
+
+    Studio's text-through rule (studio/src/textThrough.ts) must hold a row for each of them.
+    """
+    classes = {}
+    for kind, row in sorted(recording.items()):
+        outputs = {kind for kind in row.get("output") or [] if isinstance(kind, str)}
+        if not STOCK_MODULES.match(str(row.get("python_module", ""))) or not outputs & {"STRING", "CONDITIONING"}:
+            continue
+        texts = _text_inputs(row.get("input") or {})
+        if texts:
+            classes[kind] = dict(sorted(texts.items()))
+    return classes
+
+
+def write_stock_text_classes(classes: dict[str, dict[str, bool]], path: Path) -> None:
+    """Write the list one class to a line, so a new recording's change reads as a short diff."""
+    lines = [f"  {json.dumps(kind)}: {json.dumps(inputs)}" for kind, inputs in classes.items()]
+    about = ("Every stock ComfyUI class in the recorded driver /object_info with a text input and a text or "
+             "conditioning output: each text input, true when its box is multi-line. "
+             "build_object_info_bundled.py writes it, and Studio's text-through rule needs a row for each class.")
+    path.write_text("{\n" + f' "about": {json.dumps(about)},\n "classes": {{\n' + ",\n".join(lines) + "\n }\n}\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("recording", type=Path, help="a saved /object_info JSON response")
     parser.add_argument("--out", type=Path, default=OUTPUT)
+    parser.add_argument("--stock-out", type=Path, default=STOCK_OUTPUT)
     args = parser.parse_args(argv)
     workflows = json.loads(WORKFLOWS.read_text())["workflows"]
-    fixture = build(json.loads(args.recording.read_text()), workflows)
+    recording = json.loads(args.recording.read_text())
+    fixture = build(recording, workflows)
     args.out.write_text(json.dumps(fixture, indent=1, ensure_ascii=False) + "\n")
     print(f"wrote {len(fixture)} node classes to {args.out.name}")
+    classes = stock_text_classes(recording)
+    write_stock_text_classes(classes, args.stock_out)
+    print(f"wrote {len(classes)} stock text classes to {args.stock_out.name}")
     return 0
 
 

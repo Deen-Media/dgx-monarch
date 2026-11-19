@@ -53,6 +53,7 @@ include benchmark/sweep/sweep.example.toml
 recursive-include docs *
 recursive-include example_workflows *.jpg *.json
 include example_workflows/artifacts.toml
+recursive-include example_workflows/input *.png *.mp4 *.mp3
 recursive-include scripts *.md *.sh
 recursive-include tests *.json *.py
 recursive-include tests/fixtures *.jsonl *.txt
@@ -61,6 +62,7 @@ recursive-include tests/fixtures/studio *.md
 recursive-include tools *.py
 recursive-include tools *.mjs
 include tools/leak_allowlist.toml
+recursive-include tools/expander_prompts *.txt
 recursive-include web *.js *.svg
 
 global-exclude __pycache__

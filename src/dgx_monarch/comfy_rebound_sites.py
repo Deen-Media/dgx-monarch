@@ -53,6 +53,8 @@ def _site(
 ADAPTER_BIND_SITES: tuple[AdapterBindSite, ...] = (
     _site("anima.py", "AnimaAdapter.inject_usp", "diffusion_model", "_forward", "usp_forward",
           ("anima",), "usp", ("comfy.ldm.anima.model.Anima._forward",)),
+    _site("anima.py", "AnimaAdapter.prepare_base_model", "base_model", "extra_conds",
+          "extra_conds", ("anima",), "conds", ("comfy.model_base.Anima.extra_conds",)),
     _site("boogu.py", "BooguAdapter.inject_usp", "diffusion_model", "forward", "usp_forward",
           ("boogu",), "usp", ("comfy.ldm.boogu.model.BooguTransformer2DModel.forward",)),
     _site("boogu.py", "BooguAdapter.inject_cfg_pad_forward", "diffusion_model", "forward",
@@ -136,6 +138,9 @@ ADAPTER_BIND_SITES: tuple[AdapterBindSite, ...] = (
     _site("minimax_h3.py", "MiniMaxH3Adapter.inject_usp", "diffusion_model", "_forward",
           "usp_forward", ("minimax_h3",), "usp",
           ("comfy.ldm.minimax.model.MiniMaxH3Model._forward",)),
+    _site("minimax_h3_image.py", "MiniMaxH3ImageAdapter.inject_usp", "diffusion_model",
+          "_forward", "usp_forward", ("minimax_h3_image",), "usp",
+          ("comfy.ldm.minimax.model.MiniMaxH3ImageModel._forward",)),
     _site("omnigen2.py", "Omnigen2Adapter.inject_usp", "diffusion_model", "forward",
           "usp_forward", ("omnigen2",), "usp",
           ("comfy.ldm.omnigen.omnigen2.OmniGen2Transformer2DModel.forward",)),

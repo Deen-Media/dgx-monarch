@@ -136,6 +136,11 @@ def _latch_or_retire_failed_cleanup(
             break
     retired = False
     if not latched:
+        # A fleet retired here holds no model the next render may credit: its
+        # checks run before ensure_live starts the replacement. Never raises.
+        from .. import residency_doors
+
+        residency_doors.announce(residency_doors.UNLOADED)
         for attempt in range(2):
             try:
                 handle.defunct = True
@@ -215,6 +220,9 @@ def cleanup_aborted_fsdp_proof(
         return False
     try:
         responses = handle.call_all("unload", timeout_s=timeout_s)
+        from . import pending_load_relief
+
+        pending_load_relief.note_unloaded()  # nothing placed survives this cleanup
         world = getattr(handle, "world", None)
         if (
             type(world) is not int

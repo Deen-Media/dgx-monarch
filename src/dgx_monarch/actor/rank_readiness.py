@@ -27,7 +27,7 @@ from __future__ import annotations
 from typing import Any, NoReturn
 
 from ..log import get_logger
-from ..refusal import RefusalClass, refusal
+from ..refusal import RefusalClass, mark_rank, refusal
 from . import partial_load_guard
 
 log = get_logger(__name__)
@@ -70,9 +70,11 @@ class PeerLoadFailureError(RuntimeError):
 
 # Same wording rule as partial_load_guard.REFUSAL_TEXT: no host and no rank
 # inside, because MIN carries agreement and not identity, and each worker
-# journal names its own box's cause. Class P on this rank: it cannot know the
-# peer's cause, and no consent it could be offered would change the answer
-# here; the failing box keeps its own class and its own card.
+# journal names its own box's cause. Class P on this rank: no consent it could
+# be offered would change the answer here; the failing box keeps its own class
+# and its own card. Where the ranks crossed their own words after the MIN
+# (``peer_failed``), the failing rank's cause and ``PEER_CAUSE_TAIL`` stand in
+# place of this text.
 PEER_LOAD_TEXT = (
     "a peer rank could not load or verify the model for this render. Every rank "
     "of this topology holds the whole model, so a per-box memory shortfall, a "
@@ -121,3 +123,32 @@ def not_ready(local_error: Exception) -> NoReturn:
             "readiness flag not crossed (%r); the peer will wait on the group "
             "timeout", exc)
     raise local_error
+
+
+# The close of the peer refusal where the failing rank's own cause leads it
+# (``peer_failed``): the remedy that rank's own refusal gives. PEER_LOAD_TEXT
+# speaks of a box it cannot name, which reads wrong after a cause that names it.
+PEER_CAUSE_TAIL = (
+    "Nothing was sampled and no rank went on. Reset the attached mesh so the "
+    "model loads again, and turn lora_low_rss on (the default on a DGX Spark), "
+    "which bakes at load time, or run the same graph on a single box instead."
+)
+
+
+def peer_failed(cause: str = "", rank: int | None = None, own: int | None = None) -> NoReturn:
+    """Raise the healthy rank's refusal about a peer, for an exchange made outside this module.
+
+    The pair's backup agreement crosses each rank's model after a free on the
+    partial-load guard's exchange (``backup_agreement.settle``); a rank whose
+    own model is right raises this where a peer's is not. Where the ranks also
+    crossed their own words, ``cause`` is the failing rank's, in its words, and
+    leads the text, then this rank's sentence and the failing rank's remedy
+    (``PEER_CAUSE_TAIL``); ``rank`` marks the error with the failing rank, so
+    the driver names that box, whichever rank's error it receives
+    (``worker_box``).
+    """
+    who = "this rank" if own is None else f"rank {own}"
+    lead = f"{cause.rstrip('.')}. The model on {who} was right. " if cause else ""
+    mark = "" if not cause or rank is None else mark_rank("", int(rank))
+    raise PeerLoadFailureError(refusal(
+        RefusalClass.PHYSICS, lead + (PEER_CAUSE_TAIL if cause else PEER_LOAD_TEXT)) + mark)

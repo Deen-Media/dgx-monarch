@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call
+from .gate_capacity_stop import CeremonyCapacityStop
 from .gate_fsdp import (
     FSDP_PROOF_KIND,
     FsdpGateProofError,
@@ -12,7 +13,7 @@ from .gate_fsdp import (
     model_declares_fsdp_proof,
     settled_refusal_tag,
 )
-from .gate_inconclusive import is_no_material
+from .gate_inconclusive import RESCUE_RESULT_KEY, is_no_material
 from .gate_provenance import ProofCohortAttestor
 
 
@@ -35,10 +36,6 @@ def run_identity_ceremony(
     a monkeypatch of that module reaches every seam. The optional observer is
     wrapped by, and cannot replace, cohort attestation.
     """
-    if request.get("uncond_model") is not None:
-        raise ValueError(
-            "the Identity Gate proves one model only; a dual-model request renders "
-            "with slab_weights and lora_low_rss forced off, or refuses under automatic FSDP")
     from .common import _bind_packed_render_model
 
     model, bound_handle = _bind_packed_render_model(
@@ -49,6 +46,10 @@ def run_identity_ceremony(
     )
     handle = (bound_handle if bound_handle is not None
               else runtime["ensure_live"](model.mesh.handle))
+    if request.get("uncond_model") is not None:  # before any side effect
+        from .gate_dual import refuse_unprovable
+
+        refuse_unprovable(model, latent, cfg_value, handle)
     provenance_attestor = ProofCohortAttestor(provenance_attestor)
     fsdp_scope_state = {
         "required": model_declares_fsdp_proof(model, handle),
@@ -99,18 +100,21 @@ def run_identity_ceremony(
                     and result.get("verdict") not in ("PASS", "FAIL")
                     and result.get("proof_kind") != FSDP_PROOF_KIND
                     and not is_no_material(result)
+                    and not result.get(RESCUE_RESULT_KEY)
                 ):
                     # Keep quarantine inside this ceremony capability: another
                     # queue must not dispatch under the rejected risky policy.
                     # A ceremony that had nothing to prove rejected nothing, so
-                    # it takes no lever from the queues behind it. A measured
+                    # it takes no lever from the queues behind it, and neither
+                    # does one a capacity-rescue consent settled: its stock
+                    # reference cannot load, so stock is no fallback. A measured
                     # FAIL is left out: it quarantines only its own
                     # combination, the verdict step has already pushed that
                     # combination's levers off from a per-dispatch clone, and
                     # writing them into the graph would take them from every
                     # other checkpoint on the same Init node.
                     runtime["_force_stock_quarantine"](
-                        model, handle, timeout_s=600)
+                        model, handle, timeout_s=600, uncond=request.get("uncond_model"))
                 return result
         except BaseException as exc:
             # A settled refusal keeps its own class here too: the ceremony
@@ -136,12 +140,13 @@ def run_identity_ceremony(
                 )
             elif (
                 claimed
-                and not isinstance(exc, FsdpGateProofError)
+                and not isinstance(exc, (FsdpGateProofError, CeremonyCapacityStop))
             ):
                 try:
                     with session.activate():
                         runtime["_force_stock_quarantine"](
-                            model, handle, timeout_s=600, cause=exc)
+                            model, handle, timeout_s=600, cause=exc,
+                            uncond=request.get("uncond_model"))
                 except BaseException as quarantine_exc:
                     previous = primary
                     primary, cause = reconcile_error(

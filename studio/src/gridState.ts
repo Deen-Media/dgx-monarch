@@ -1,3 +1,5 @@
+import { parseExactJSON, roundedNumber } from './exactJson.ts';
+
 export interface Cell {
   index: number;
   coordinates: Record<string, unknown>;
@@ -159,10 +161,33 @@ export function axisExample(axis: string): string {
   return axis === 'styles' ? '[["ink"], ["ink", "night"]]' : '[20, 30, 40]';
 }
 
-/** Why Validate every cell cannot run yet, or '' when it can. */
+/** The whole numbers outside -(2**53 - 1) to 2**53 - 1 in a value list, as their digits. */
+function largeNumbers(value: unknown): string[] {
+  if (typeof value === 'bigint') return [value.toString()];
+  if (roundedNumber(value)) return [String(value)];
+  if (value === null || typeof value !== 'object') return [];
+  return Object.values(value).flatMap(largeNumbers);
+}
+
+/** Read an axis list, with each whole number outside that range exact so it can be named. */
+function axisList(text: string): unknown {
+  try {
+    return parseExactJSON(text);
+  } catch {
+    return JSON.parse(text);
+  }
+}
+
+/**
+ * Why Validate every cell cannot run yet, or '' when it can. A browser holds whole numbers
+ * exactly only from -(2**53 - 1) to 2**53 - 1, so an axis value outside that range, or a base
+ * seed above it, would be sent rounded and run other seeds than the ones typed: it is refused by
+ * name, as a draft field refuses one.
+ */
 export function validateBlocker(
   hasWorkflow: boolean,
-  fields: Pick<GridFields, 'axisA' | 'axisB' | 'valuesA' | 'valuesB'>,
+  fields: Pick<GridFields, 'axisA' | 'axisB' | 'valuesA' | 'valuesB'> &
+    Partial<Pick<GridFields, 'seedPolicy' | 'baseSeed'>>,
 ): string {
   if (!hasWorkflow) return 'Load a workflow in Create first. A grid varies the Create draft.';
   if (!fields.axisA) return 'Choose an input for Axis A.';
@@ -176,13 +201,26 @@ export function validateBlocker(
     if (!text.trim()) return `List the values for Axis ${label}, for example ${example}.`;
     let values: unknown;
     try {
-      values = JSON.parse(text);
+      values = axisList(text);
     } catch {
       return `Axis ${label} values are not valid JSON. Write a list such as ${example}.`;
     }
     if (!Array.isArray(values))
       return `Axis ${label} values must be a list in square brackets, such as ${example}.`;
     if (!values.length) return `List at least one value for Axis ${label}.`;
+    const large = largeNumbers(values);
+    if (large.length === 1)
+      return `Axis ${label} holds ${large[0]}, a whole number outside -${Number.MAX_SAFE_INTEGER} to ${Number.MAX_SAFE_INTEGER}, which this browser cannot send exactly. Use a value inside that range.`;
+    if (large.length)
+      return `Axis ${label} holds ${large.slice(0, -1).join(', ')} and ${large.at(-1)}, whole numbers outside -${Number.MAX_SAFE_INTEGER} to ${Number.MAX_SAFE_INTEGER}, which this browser cannot send exactly. Use values inside that range.`;
   }
+  const { seedPolicy, baseSeed } = fields;
+  if (
+    seedPolicy &&
+    seedPolicy !== 'fixed' &&
+    typeof baseSeed === 'number' &&
+    baseSeed > Number.MAX_SAFE_INTEGER
+  )
+    return `The base seed is above ${Number.MAX_SAFE_INTEGER}, the largest whole number this browser sends exactly. Use a smaller base seed.`;
   return '';
 }

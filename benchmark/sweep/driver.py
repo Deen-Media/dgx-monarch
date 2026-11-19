@@ -7,6 +7,7 @@ for expressions the AST walk cannot resolve.
 from __future__ import annotations
 
 import ast
+import http.client
 import json
 import re
 import time
@@ -48,18 +49,28 @@ class SessionWedged(RuntimeError):
     """A timed-out prompt would not clear, so nothing after it is measurable."""
 
 
+def _answer(request: urllib.request.Request | str, timeout: float) -> dict:
+    """The driver's JSON answer. An answer urllib cannot read, such as a body cut short or a
+    malformed status line, raises ConnectionError like any other transport fault: urllib
+    raises http.client's IncompleteRead and BadStatusLine as they are, and neither is an
+    OSError, which is what every caller here catches."""
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            return json.loads(resp.read().decode() or "{}")
+    except http.client.HTTPException as exc:
+        raise ConnectionError(f"{type(exc).__name__}: {exc}") from exc
+
+
 def post(url: str, body: dict, headers: dict | None = None, timeout: float = 120.0) -> dict:
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
     request.add_header("Content-Type", "application/json")
     for key, value in (headers or {}).items():
         request.add_header(key, value)
-    with urllib.request.urlopen(request, timeout=timeout) as resp:
-        return json.loads(resp.read().decode() or "{}")
+    return _answer(request, timeout)
 
 
 def get(url: str, timeout: float = 60.0) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
-        return json.loads(resp.read().decode() or "{}")
+    return _answer(url, timeout)
 
 
 def action_headers(driver: str, action: str) -> dict:
@@ -198,7 +209,12 @@ def recycle(driver: str, attempts: int = 3) -> str:
     """Replace the worker fleet. The 429 is retried: a recycle that never runs
     leaves the old process and its latched bootstrap, so a rate limit that
     outlasts every retry ends the session instead of letting the next cell run
-    on the old fleet."""
+    on the old fleet.
+
+    Every other failure is the answer, as a string, so each caller (the session
+    open and close and every reset) records it: an HTTP status, a transport
+    error, or a response it cannot read (a body that is not JSON, or one cut
+    short), which is not "ok" either."""
     for attempt in range(attempts):
         try:
             post(f"{driver}/dgxm/recycle", {}, action_headers(driver, "recycle"), timeout=300)
@@ -208,7 +224,7 @@ def recycle(driver: str, attempts: int = 3) -> str:
                 return f"http {exc.code}"
             if attempt + 1 < attempts:
                 time.sleep(float(exc.headers.get("Retry-After") or 2))
-        except OSError as exc:
+        except (OSError, ValueError, http.client.HTTPException) as exc:
             return f"{type(exc).__name__}: {exc}"
     raise SessionWedged(f"the recycle stayed rate limited over {attempts} attempts, so the "
                         "next cell would run on the old fleet and its latched bootstrap")
@@ -375,7 +391,9 @@ def free_cache(driver: str, bounded_s: float = 120.0) -> str:
     unload_models cannot turn that off because server.py sets that flag only
     when it is true. The next leg therefore loads cold, so the runner never
     calls this before the warm leg, whose moved seed misses the cache instead.
-    The flag is read at the end of a loop turn, hence the wait.
+    The flag is read at the end of a loop turn, hence the wait. The answer is
+    "idle", "still busy" or the transport error; run_cell ends the session on
+    anything but "idle" (run.cache_wedge).
     """
     try:
         post(f"{driver}/free", {"free_memory": True}, timeout=60)

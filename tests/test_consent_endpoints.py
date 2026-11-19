@@ -95,19 +95,28 @@ def test_every_kind_is_completely_specified():
         "rescue-slab", "waive-unvouched-slab", "waive-first-load-stock",
         "waive-known-wrong:ring-pad", "waive-known-wrong:pixeldit-sp",
         "waive-known-wrong:sol-attn", "waive-known-wrong:shard-quant",
+        "clear-retry",
     }
-    # Every card kind is a member of the protocol-bound audit-row vocabulary
-    # (gate_audit_vocab), and its class and guard come from there, so a card
-    # can never present a bypass as a class it is not.
-    assert set(consent_pending.KIND_SPECS) <= WAIVER_KINDS
+    # Every card kind that grants a bypass is a member of the protocol-bound
+    # audit-row vocabulary (gate_audit_vocab), and its class and guard come
+    # from there, so a card can never present a bypass as a class it is not.
+    # An action kind grants none and writes no row, so it stays outside that
+    # vocabulary, whose every new member moves the Gate protocol.
+    actions = {kind for kind, spec in consent_pending.KIND_SPECS.items() if spec.action}
+    assert actions == {"clear-retry"}
+    assert set(consent_pending.KIND_SPECS) - actions <= WAIVER_KINDS
+    assert not actions & WAIVER_KINDS
     for kind, spec in consent_pending.KIND_SPECS.items():
         assert spec.kind == kind
-        assert spec.refusal_class == KIND_CLASS[kind]
         assert spec.style in {"capacity", "accuracy"}
         assert spec.title and spec.risk and spec.primary_label and spec.env_var
         assert spec.context_fields
-        assert check_guard(kind, spec.default_guard) == spec.default_guard
         assert (spec.measured is not None) == (spec.refusal_class == "K")
+        if spec.action:
+            assert spec.refusal_class == "C" and not spec.auto_eligible
+            continue
+        assert spec.refusal_class == KIND_CLASS[kind]
+        assert check_guard(kind, spec.default_guard) == spec.default_guard
 
 
 def test_known_wrong_math_is_never_auto_eligible():
@@ -131,6 +140,17 @@ def test_every_kind_can_build_the_shipped_refusal_sentence():
 
     for spec in consent_pending.KIND_SPECS.values():
         if not spec.wired:
+            continue
+        if spec.action:
+            # An action kind's refusal waives no guard, so it names its button
+            # and its headless setting in its own sentence (old_model.remedy,
+            # tests/test_capacity_old_model.py).
+            from dgx_monarch import old_model
+
+            offer = old_model.ClearOffer("model.safetensors", (old_model.ShortBox(
+                "head", ("old",), 2, 1, 5),), 2, False)
+            assert f'"{spec.primary_label}"' in old_model.remedy(offer)
+            assert f"{spec.env_var}=1" in old_model.remedy(offer)
             continue
         # A class-K kind's `default_guard` is the unscoped prefix the ledger
         # vocabulary validates and the headless value names. Most raise sites
@@ -674,6 +694,32 @@ def test_inconclusive_after_fail_preserves_quarantine_and_revokes(
     assert consent_pending.pending_count() == 0
     assert first["key"] not in consent_store.read()["consents"]
     assert [row["action"] for row in recorded] == ["grant", "revoke"]
+
+
+@pytest.mark.parametrize(("kind", "listed"), [("no_material", True), ("unproven", False)])
+def test_the_panel_lists_and_accepts_a_rescue_after_a_gate_that_compared_nothing(
+        tmp_path, monkeypatch, kind, listed):
+    """A card with no context of its own reads every scope; a no-material verdict
+    in the gate's scopes holds nothing against it, an unproven one still denies."""
+    from no_material_ledger_rows import write_ceremony_rows
+
+    recorded: list = []
+    monkeypatch.setattr(consent_routes, "record_waiver", _fake_recorder(recorded))
+    path = _checkpoint(tmp_path)
+    card = consent_pending.register_pending(_descriptor(path, capability_context=None))
+    assert card is not None
+    write_ceremony_rows(_ledger(tmp_path, monkeypatch), COMBO, ARTIFACTS, kind=kind)
+
+    state = consent_routes.consent_state()
+    status, payload = consent_routes._accept(card["key"], card["id"])
+
+    assert ([row["key"] for row in state["pending"]] == [card["key"]]) is listed
+    if listed:
+        assert status == 200 and payload["ok"] is True
+        assert [row["action"] for row in recorded] == ["grant"]
+    else:
+        assert status == 409 and "was INCONCLUSIVE" in payload["detail"]
+        assert recorded == [] and consent_pending.pending_count() == 1
 
 
 @pytest.mark.parametrize("terminal", ["INCONCLUSIVE", "RETESTING"])

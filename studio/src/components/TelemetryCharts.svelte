@@ -1,12 +1,21 @@
 <script lang="ts">
   import type { MetricSeries, Presentation } from '../telemetryHistory';
   import { chartPath } from '../telemetryHistory';
+  import { chartChoice, sameMetricOn, seriesLabel } from '../chartChoice';
   import { exportJSON } from '../files';
   let { history, presentation }: { history: MetricSeries[]; presentation?: Presentation } =
     $props();
-  let selected = $state(''),
+  let host = $state(''),
+    selected = $state(''),
     point = $state(-1);
-  const series = $derived(history.find((series) => series.id === selected) ?? history[0]);
+  const choice = $derived(chartChoice(history, host, selected));
+  const series = $derived(choice.series);
+  /** A new host keeps the metric in view when that host reports it too. */
+  function chooseHost(value: string) {
+    selected = sameMetricOn(history, value, series)?.id ?? '';
+    host = value;
+    point = -1;
+  }
   const current = $derived(
     series?.points[
       point < 0 ? series.points.length - 1 : Math.min(point, series.points.length - 1)
@@ -24,17 +33,35 @@
 
 <section class="metric-chart">
   <h3>Metric history</h3>
-  {#if history.length}<label
-      >Host and metric<select
-        value={series?.id ?? ''}
-        onchange={(event) => {
-          selected = event.currentTarget.value;
-          point = -1;
-        }}
-        >{#each history as item}<option value={item.id}>{item.host} · {item.metric.name}</option
-          >{/each}</select
-      ></label
-    >
+  {#if history.length}<div class="chart-choice">
+      {#if choice.hosts.length > 1}<label
+          >Host<select
+            value={choice.host}
+            onchange={(event) => chooseHost(event.currentTarget.value)}
+            >{#each choice.hosts as item (item)}<option value={item}>{item}</option>{/each}</select
+          ></label
+        >{:else}<p>
+          <span>Host</span><strong title={choice.host}>{choice.host}</strong><small
+            >The only source reporting.</small
+          >
+        </p>{/if}
+      {#if choice.metrics.length > 1}<label
+          >Metric<select
+            value={series?.id ?? ''}
+            onchange={(event) => {
+              selected = event.currentTarget.value;
+              point = -1;
+            }}
+            >{#each choice.metrics as item (item.id)}<option value={item.id}
+                >{seriesLabel(item)}</option
+              >{/each}</select
+          ></label
+        >{:else if series}<p>
+          <span>Metric</span><strong>{seriesLabel(series)}</strong><small
+            >The only metric this host reports.</small
+          >
+        </p>{/if}
+    </div>
     {#if series}<p>
         <strong>{formatted(current?.value)}</strong> · {current
           ? new Date(current.time * 1000).toLocaleTimeString()
@@ -43,7 +70,7 @@
       <svg
         viewBox="-4 -4 608 128"
         role="img"
-        aria-label={`${series.metric.name} history; minimum ${formatted(known.length ? Math.min(...known) : null)}, maximum ${formatted(known.length ? Math.max(...known) : null)}`}
+        aria-label={`${seriesLabel(series)} history; minimum ${formatted(known.length ? Math.min(...known) : null)}, maximum ${formatted(known.length ? Math.max(...known) : null)}`}
         ><path
           d={chartPath(series.points)}
           fill="none"
@@ -68,7 +95,7 @@
         <summary>Sample table</summary>
         <div class="sample-table">
           <table>
-            <thead><tr><th>Time</th><th>{series.metric.name}</th></tr></thead><tbody
+            <thead><tr><th>Time</th><th>{seriesLabel(series)}</th></tr></thead><tbody
               >{#each [...series.points].reverse() as sample}<tr
                   ><td>{new Date(sample.time * 1000).toLocaleTimeString()}</td><td
                     >{formatted(sample.value)}</td
@@ -98,6 +125,24 @@
   }
   .metric-chart small {
     font-size: 10px;
+  }
+  .chart-choice {
+    display: grid;
+    gap: 8px;
+  }
+  .chart-choice p {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    font-size: 11px;
+  }
+  .chart-choice p strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chart-choice p span {
+    color: var(--muted);
   }
   .sample-table {
     max-height: 200px;

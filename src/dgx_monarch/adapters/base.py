@@ -164,14 +164,13 @@ def cfg_rank() -> int:
 def make_usp_attention(attn_type_name: str, sync_ulysses: bool = True):
     """Build a Comfy attention callable backed by xFuser.
 
-    Input is `(B,H,L,D)` when `skip_reshape`, otherwise `(B,L,H*D)`. Output is
-    `(B,L,H*D)` unless output reshape is skipped. USP kernels accept no arbitrary
-    bias: no-op masks are dropped exactly and effective masks raise a typed
-    refusal. A family that expresses its bias as ordered query groups instead
-    passes `query_bias_groups`, applied under Ulysses where every rank holds the
-    whole key axis. `TORCH_FLASH` is the Init node default. The `TORCH_*` kernels
-    need only torch; FA, FA3, AITER, FLASHINFER, NPU and the SAGE kernels need their
-    own packages (yunchang.kernels). docs/VALIDATION.md records kernel results by family.
+    Input is `(B,H,L,D)` when `skip_reshape`, otherwise `(B,L,H*D)`. Output is `(B,L,H*D)` unless
+    output reshape is skipped. USP kernels accept no arbitrary bias: no-op masks are dropped exactly
+    and effective masks raise a typed refusal. A family that expresses its bias as ordered query
+    groups instead passes `query_bias_groups`, applied under Ulysses where every rank holds the whole
+    key axis. `TORCH_FLASH` is the Init node default. The `TORCH_*` kernels need only torch; the others
+    need their own packages (yunchang.kernels), and xFuser 0.8.0 will not build FA or FA3 without
+    theirs, a failure held until a render would run the kernel (attention_capability.hold_unbuilt).
     """
     from xfuser.core.long_ctx_attention import xFuserLongContextAttention
     from yunchang.kernels import AttnType
@@ -183,7 +182,11 @@ def make_usp_attention(attn_type_name: str, sync_ulysses: bool = True):
             f"unknown attention kernel {attn_type_name!r}; valid: {[a.name for a in AttnType]}"
         ) from exc
 
-    usp_attn = xFuserLongContextAttention(use_sync=sync_ulysses, attn_type=attn_type)
+    try:
+        usp_attn = xFuserLongContextAttention(use_sync=sync_ulysses, attn_type=attn_type)
+    except ImportError as exc:
+        from .attention_capability import hold_unbuilt
+        return hold_unbuilt(attn_type_name, exc)
     return _make_usp_attention_callable(usp_attn)
 
 

@@ -48,6 +48,7 @@ from dgx_monarch.nodes.loaders import DGXMonarchUNETLoader
 from dgx_monarch.refusal import RefusalClass, RefusalTag, parse_leading_refusal_tag
 from dgx_monarch.safetensors_header import DTYPE_BITS, SafetensorsHeaderError
 from module_location_helpers import from_checkout
+from stock_prefix_checkouts import MASTER, RELEASE, compiled_only, loaded, package, write_checkout
 
 Spec = dict[str, tuple[str, list[int]]]
 
@@ -160,6 +161,8 @@ REFUSALS = {
     "f4_without_metadata": (F4, None, (QM,)),
     "mixed_one_uncovered": (MIXED, None, ("single_blocks.1.mlp_in",)),
     "metadata_names_another_layer": (NVFP4, _layers("single_blocks.9.q_proj"), (QM,)),
+    # JSON null: ComfyUI reads it as a table that names no layer, and loads on.
+    "metadata_is_json_null": (NVFP4, {"_quantization_metadata": "null"}, (QM,)),
     "int8_without_record": (INT8_NO_RECORD, None, ("single_blocks.0.qkv",)),
     "scaled_fp8_with_a_weight_scale": (SCALED_FP8_WEIGHT_SCALE, None, ("blocks.0.attn.k",)),
     # _quantization_metadata turns the legacy conversion off, so scale_weight stays.
@@ -300,6 +303,229 @@ def test_the_staged_flux3_files_pass_and_the_fp8r_variant_refuses():
         assert len(layers) > 0
         found = upstream_gate.refusal_for(str(path))
         assert found is not None and found[1] == 120
+
+
+# SenseNova's two top-level keys (stock_prefix_drift). The newest ComfyUI release
+# keeps a file that holds both whole; master strips the prefix it counts.
+SENSENOVA = {key: ("BF16", [8]) for key in upstream_gate._SENSENOVA_KEYS}
+# The five names master's checkpoint conversion keys on, the rule's two first.
+SENSENOVA_FILE = (*upstream_gate._SENSENOVA_KEYS, "fm_modules.fm_head.conv1.weight",
+                  "language_model.model.embed_tokens.weight", "language_model.model.norm.weight")
+NET6 = [f"net.blocks.{i}.weight" for i in range(6)]
+UNDER_NET = {name: ("BF16", [8]) for name in NET6}
+TOP_FP8 = {"fm_modules.extra.weight": ("F8_E4M3", [32, 32]),
+           "fm_modules.extra.weight_scale": ("F32", [32])}
+NET_FP8 = {"net.blocks.9.q.weight": ("F8_E4M3", [32, 32]), "net.blocks.9.q.weight_scale": ("F32", [32])}
+# (tensors, metadata, refused under the release rule, refused under master's)
+TOP_LEVEL_BACKBONES: dict[str, tuple[Spec, dict[str, str] | None, bool, bool]] = {
+    "an_unrecorded_top_level_scale": ({**SENSENOVA, **UNDER_NET, **TOP_FP8}, None, True, False),
+    "a_table_naming_the_stripped_layer": (
+        {**SENSENOVA, **UNDER_NET, **NET_FP8}, _layers("blocks.9.q", fmt="float8_e4m3fn"), True, False),
+    "an_unrecorded_scale_under_net": ({**SENSENOVA, **UNDER_NET, **NET_FP8}, None, True, True),
+    # The published layout: every key at the top level, so both rules keep them all.
+    "nothing_under_a_prefix": ({**SENSENOVA, **TOP_FP8}, None, True, True),
+}
+# (names, the prefix under the release rule, the prefix under master's)
+TOP_LEVEL_PREFIXES = {
+    "the_two_keys_alone": ([*SENSENOVA], "", "model."),
+    "beside_six_under_net": ([*SENSENOVA, *NET6], "", "net."),
+    "beside_five_under_net": ([*SENSENOVA, *NET6[:5]], "", "model."),
+    "beside_six_under_the_ldm_prefix": (
+        [*SENSENOVA, *(f"{PREFIX}blocks.{i}.weight" for i in range(6))], "", PREFIX),
+    "beside_two_under_model": ([*SENSENOVA, "model.a.weight", "model.b.weight"], "", "model."),
+    "one_key_beside_six_under_net": ([upstream_gate._SENSENOVA_KEYS[0], *NET6], "net.", "net."),
+    "beside_detector_and_tracker": (["detector.a.weight", "tracker.b.weight", *SENSENOVA, *NET6], "", ""),
+    # The five names master's checkpoint conversion keys on (comfy/checkpoint_convert.py),
+    # so a rule moved to another pair of them turns the canary red.
+    "a_whole_sensenova_file_beside_six_under_net": ([*SENSENOVA_FILE, *NET6], "", "net."),
+}
+TOP_SCALE = "an_unrecorded_top_level_scale"  # refused under the release rule alone
+
+
+def _number(path: str, comfy_dir: Path | None = None) -> int | None:
+    found = upstream_gate.refusal_for(path, comfy_dir=comfy_dir)
+    return None if found is None else found[1]
+
+
+@pytest.mark.parametrize("case", sorted(TOP_LEVEL_PREFIXES))
+def test_the_replay_holds_both_comfy_prefix_rules(case):
+    names, release, master = TOP_LEVEL_PREFIXES[case]
+    keys = dict.fromkeys(names, "BF16")
+    assert upstream_gate._unet_prefix(keys, sensenova_whole=True) == release
+    assert upstream_gate._unet_prefix(keys, sensenova_whole=False) == master
+
+
+def test_the_rule_is_read_from_the_checkout_and_nowhere_else(tmp_path):
+    """A named checkout is read as text, from the last prefix function it defines, the
+    one Python runs: both keys in a clause of its own that returns no prefix are the
+    release rule, none of the file's keys is master's. A rule on one key, on another
+    key of the file, on pieces of a key or on a name the module binds, a clause on
+    both keys that returns another prefix, raises or tests more, and a source that
+    is absent, compiled only or unparseable, cannot be told."""
+    keeps = upstream_gate.keeps_sensenova_whole
+    first, second = upstream_gate._SENSENOVA_KEYS
+    one_key = MASTER.replace("    return", f"    if {first!r} in state_dict:\n        return ''\n    return", 1)
+    cases = {
+        "release": (RELEASE, True),
+        "master": (MASTER, False),
+        "the_keys_outside_the_function": (f"KEYS = {upstream_gate._SENSENOVA_KEYS!r}\n\n{MASTER}", False),
+        "the_release_rule_defined_again_as_masters": (f"{RELEASE}\n\n{MASTER}", False),
+        "masters_rule_defined_again_as_the_release_rule": (f"{MASTER}\n\n{RELEASE}", True),
+        "one_key_alone": (one_key, None),
+        "another_key_of_the_file": (RELEASE.replace(repr(second), repr(SENSENOVA_FILE[2])), None),
+        "a_third_key_of_the_file": (RELEASE.replace("in state_dict:", f"in state_dict and {SENSENOVA_FILE[2]!r} "
+                                                    "in state_dict:"), None),
+        "a_key_in_pieces": (RELEASE.replace(repr(first), f"{first[:11]!r} + {first[11:]!r}"), None),
+        "the_keys_in_a_constant_the_function_reads": (
+            f"KEYS = {upstream_gate._SENSENOVA_KEYS!r}\n\n"
+            + MASTER.replace("    return", "    if all(key in state_dict for key in KEYS):\n"
+                             "        return ''\n    return", 1), None),
+        "another_prefix_for_the_two_keys": (RELEASE.replace("        return ''\n", "        return 'fm_modules.'\n", 1),
+                                            None),
+        "a_clause_that_raises": (RELEASE.replace("        return ''\n", "        raise ValueError('convert it')\n", 1),
+                                 None),
+        "whole_only_without_a_strong_prefix": (RELEASE.replace(
+            "in state_dict:\n", "in state_dict and not any(key.startswith('net.') for key in state_dict):\n", 1),
+            None),
+        "the_rule_in_a_helper": (
+            f"def _whole(state_dict):\n    return {first!r} in state_dict and {second!r} in state_dict\n\n\n"
+            + MASTER.replace("    return", "    if _whole(state_dict):\n        return ''\n    return", 1), None),
+        "no_prefix_function": ("PREFIXES = ('net.',)\n", None),
+        "half_written": (RELEASE[:60], None),
+        "too_deep_to_parse": ("x = " + "1+" * 200000 + "1\n", None),
+        "too_large_to_parse": ("x = " + "not " * 100000 + "1\n", None),
+    }
+    for name, (text, rule) in cases.items():
+        assert keeps(write_checkout(tmp_path / name, text)) is rule, name
+    assert keeps(str(write_checkout(tmp_path / "named_as_text", RELEASE))) is True
+    assert keeps(tmp_path / "absent") is None
+    assert keeps(compiled_only(tmp_path / "compiled", RELEASE)) is None
+
+
+@pytest.mark.parametrize("case", sorted(TOP_LEVEL_BACKBONES))
+def test_one_file_gets_each_checkouts_own_verdict(tmp_path, case):
+    """One file and one process, three checkouts: the cached header read keys on the
+    rule, and a checkout whose rule cannot be read refuses what either rule refuses."""
+    tensors, metadata, release_refuses, master_refuses = TOP_LEVEL_BACKBONES[case]
+    path = _write_header(tmp_path / f"{case}.safetensors", tensors, metadata)
+    for name, text, refuses in (("release", RELEASE, release_refuses), ("master", MASTER, master_refuses),
+                                ("unreadable", "def (\n", release_refuses or master_refuses)):
+        assert _number(path, write_checkout(tmp_path / name, text)) == (120 if refuses else None), name
+
+
+def test_a_rule_that_cannot_be_told_reads_a_file_twice_only_if_it_holds_both_keys(tmp_path, monkeypatch):
+    """With no rule to read, a file is read under the second rule only when it holds
+    both rule keys, the only files the two rules read differently. Any other file
+    costs the one header read it always cost; the FSDP launch proof's count of
+    header reads leans on that (tests/test_fsdp_capacity.py)."""
+    from dgx_monarch import safetensors_header
+
+    monkeypatch.delitem(sys.modules, "comfy.model_detection", raising=False)
+    monkeypatch.setitem(sys.modules, "comfy", package())
+    assert upstream_gate.keeps_sensenova_whole() is None
+    reads: list[str] = []
+    read = safetensors_header.read_safetensors_header
+    monkeypatch.setattr(safetensors_header, "read_safetensors_header",
+                        lambda path: reads.append(str(path)) or read(path))
+    plain = _write_header(tmp_path / "plain.safetensors", *PASSES["bf16"])
+    keyed = _write_header(tmp_path / "keyed.safetensors", {**SENSENOVA, **UNDER_NET})
+    assert _number(plain) is None and _number(keyed) is None
+    assert reads == [plain, keyed, keyed]
+
+
+THIRD_ANSWER = "def unet_prefix_from_state_dict(state_dict):\n    return 'fm_modules.'\n"
+BY_SHAPE = ("def unet_prefix_from_state_dict(state_dict):\n"
+            "    return '' if state_dict[next(iter(state_dict))].shape else 'net.'\n")
+# (the source the process loaded, what its file says on disk now, the folders ahead
+# of it on comfy's namespace path, and the refusal number for the TOP_SCALE file)
+LOADED = {
+    "release": (RELEASE, RELEASE, [], 120),
+    "master": (MASTER, MASTER, [], None),
+    "disk_unchanged_and_a_custom_nodes_folder_first": (RELEASE, RELEASE, [MASTER], 120),
+    "disk_changed_after_the_load": (RELEASE, MASTER, [], 120),
+    "a_third_answer": (THIRD_ANSWER, THIRD_ANSWER, [], 120),
+    "a_rule_that_reads_more_than_names": (BY_SHAPE, BY_SHAPE, [], 120),
+}
+# (comfy's namespace path as (source, compiled only), or None for no ComfyUI at all,
+# and the refusal number for the TOP_SCALE file)
+NOT_LOADED: dict[str, tuple[list[tuple[str, bool]] | None, int | None]] = {
+    "release": ([(RELEASE, False)], 120),
+    "master": ([(MASTER, False)], None),
+    "masters_folder_first": ([(MASTER, False), (RELEASE, False)], None),
+    "a_compiled_only_folder_first": ([(RELEASE, True), (MASTER, False)], 120),
+    "no_comfy_to_import": (None, 120),
+}
+
+
+@pytest.mark.parametrize("state", sorted(LOADED))
+def test_a_process_that_loaded_detection_asks_its_own_function(models, monkeypatch, tmp_path_factory, state):
+    """Once ``comfy.model_detection`` is loaded its function answers, since that code
+    runs: whatever its file on disk now says, and whichever folder now comes first on
+    ``comfy``'s namespace path. A third answer, or a function that reads more than
+    names, cannot be told, and the file is refused if either rule refuses it."""
+    ran_text, disk_text, ahead, number = LOADED[state]
+    name = "top_level.safetensors"
+    _write_header(models / name, *TOP_LEVEL_BACKBONES[TOP_SCALE][:2])
+    base = tmp_path_factory.mktemp("checkouts")
+    ran = write_checkout(base / "ran", ran_text)
+    module = loaded(ran)
+    write_checkout(ran, disk_text)
+    folders = [write_checkout(base / f"ahead{index}", text) for index, text in enumerate(ahead)]
+    monkeypatch.setitem(sys.modules, "comfy", package(*folders, ran))
+    monkeypatch.setitem(sys.modules, "comfy.model_detection", module)
+    assert _number(str(models / name)) == number
+    if number is None:
+        loader_preflight.preflight_upstream_gated_artifact(name)
+    else:
+        with pytest.raises(UnsupportedModelError, match=r"#120\.$"):
+            loader_preflight.preflight_upstream_gated_artifact(name)
+
+
+@pytest.mark.parametrize("state", sorted(NOT_LOADED))
+def test_a_process_that_has_not_loaded_detection_reads_what_it_would_import(
+        models, monkeypatch, tmp_path_factory, state):
+    """Before ``comfy.model_detection`` loads, as at a Worker's first load, the gate
+    reads the source the process would import, in ``comfy``'s namespace path order.
+    A compiled-only file there, or no ComfyUI to import at all, cannot be told."""
+    sources, number = NOT_LOADED[state]
+    name = "top_level.safetensors"
+    _write_header(models / name, *TOP_LEVEL_BACKBONES[TOP_SCALE][:2])
+    monkeypatch.delitem(sys.modules, "comfy.model_detection", raising=False)
+    if sources is None:
+        monkeypatch.delitem(sys.modules, "comfy", raising=False)
+        monkeypatch.setattr(sys, "path", [entry for entry in sys.path if not (Path(entry) / "comfy").is_dir()])
+        assert upstream_gate.keeps_sensenova_whole() is None
+    else:
+        base = tmp_path_factory.mktemp("checkouts")
+        monkeypatch.setitem(sys.modules, "comfy", package(*(
+            (compiled_only if compiled else write_checkout)(base / f"folder{index}", text)
+            for index, (text, compiled) in enumerate(sources))))
+    assert _number(str(models / name)) == number
+
+
+def test_both_funnels_read_the_rule_of_the_comfy_they_imported(models, monkeypatch, tmp_path_factory):
+    """The driver and a Worker name no checkout and read the one they imported
+    ComfyUI from; a headless caller that names it gets the same answer."""
+    name = "top_level.safetensors"
+    _write_header(models / name, *TOP_LEVEL_BACKBONES[TOP_SCALE][:2])
+    monkeypatch.delitem(sys.modules, "comfy.model_detection", raising=False)
+    for with_rule in (True, False):
+        checkout = write_checkout(tmp_path_factory.mktemp("checkout"), RELEASE if with_rule else MASTER)
+        monkeypatch.setitem(sys.modules, "comfy", package(checkout))
+        headless = upstream_gate.refusal_for(str(models / name), comfy_dir=checkout)
+        worker = _worker()
+        if with_rule:
+            assert headless is not None and headless[1] == 120
+            with pytest.raises(UnsupportedModelError, match=r"#120\.$"):
+                loader_preflight.preflight_upstream_gated_artifact(name)
+            with pytest.raises(UnsupportedModelError, match=r"#120\.$"):
+                store_fsdp.ensure(worker, name, {}, [])
+            assert worker.store.calls == []
+        else:
+            assert headless is None
+            loader_preflight.preflight_upstream_gated_artifact(name)
+            store_fsdp.ensure(worker, name, {}, [])
+            assert len(worker.store.calls) == 1
 
 
 # Real comfy, CPU only. Keep it last in the file: the conftest comfy guard
@@ -479,3 +705,34 @@ def test_comfy_loads_an_unrecorded_layer_without_error_and_drops_its_scale(
     path = _write_header(tmp_path / f"{layout}_layer.safetensors", {
         "lin.weight": (layout, [8, in_features]), "lin.weight_scale": ("F32", [8])})
     assert upstream_gate.uncovered_scaled_layers(path) == ("lin",)
+
+
+def test_the_rule_the_gate_reads_from_the_checkout_is_comfys_own(real_comfy):
+    """ComfyUI's own function, asked about the rule's two keys and about a whole
+    SenseNova file, each beside six keys under net.: no prefix for both where the
+    release rule holds, ``net.`` for both where master's does. Any other pair is a
+    rule the replay does not hold. The gate's answer from the loaded function and
+    its reading of the checkout's text must both be that rule."""
+    rule = real_comfy.model_detection.unet_prefix_from_state_dict
+    answers = [rule(dict.fromkeys([*names, *NET6])) for names in (SENSENOVA, SENSENOVA_FILE)]
+    assert answers in (["", ""], ["net.", "net."]), (
+        f"ComfyUI gives {answers!r} to the two keys and to a whole SenseNova file beside six "
+        "under net.: a prefix rule stock_prefix_drift does not hold")
+    assert upstream_gate.keeps_sensenova_whole() is (answers[0] == "")
+    assert upstream_gate.keeps_sensenova_whole(_comfy_checkout()[0]) is (answers[0] == "")
+
+
+@pytest.mark.parametrize("case", sorted(TOP_LEVEL_PREFIXES))
+def test_the_replay_picks_comfys_prefix_beside_two_top_level_backbones(real_comfy, case):
+    keys = dict.fromkeys(TOP_LEVEL_PREFIXES[case][0], "BF16")
+    assert upstream_gate._unet_prefix(keys) == (
+        real_comfy.model_detection.unet_prefix_from_state_dict(dict(keys)))
+
+
+@pytest.mark.parametrize("case", sorted(TOP_LEVEL_BACKBONES))
+def test_the_replay_names_comfys_keys_beside_two_top_level_backbones(real_comfy, monkeypatch, case):
+    """The key-for-key check above, on files whose answer depends on the rule."""
+    tensors, metadata = TOP_LEVEL_BACKBONES[case][:2]
+    dtypes = {key: dtype for key, (dtype, _shape) in tensors.items()}
+    replay = upstream_gate.comfy_load_keys(dtypes, metadata or {})
+    assert set(replay) == _comfy_loaded_keys(real_comfy, monkeypatch, tensors, metadata)

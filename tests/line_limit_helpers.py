@@ -6,13 +6,15 @@ DEFAULT_CAP = 500
 
 CEILINGS = {
     # Lifecycle and operator coordinators retain their transaction spines here.
-    "mesh.py": 690, "cli/doctor.py": 770,
+    "mesh.py": 690, "cli/doctor.py": 765,
     "cli/actor_reaper.py": 603, "adoption_evidence.py": 732,
     # Loader, worker, and Comfy integration seams stay with the state they bind.
     "actor/unbake.py": 692, "config.py": 638, "actor/sampling.py": 620,
-    "actor/comfy_bridge.py": 528, "actor/worker.py": 509, "comfy_surface.py": 526,
+    "actor/comfy_bridge.py": 531, "actor/worker.py": 509, "comfy_surface.py": 533,
+    "actor/model_store.py": 511, "actor/lora_partial_load.py": 525,
     # FSDP and capacity pricing are deliberately centralized for exact accounting.
     "adapters/fsdp.py": 589, "actor/capacity_quote.py": 539,
+    "capacity_classic_bake.py": 523, "actor/worker_capacity.py": 518,
     "capacity_agreement.py": 567, "gate_ledger.py": 527,
     "nodes/gate_identity.py": 583, "nodes/loader_preflight.py": 593,
     "runtime_provenance.py": 596, "adapters/flux_family.py": 560,

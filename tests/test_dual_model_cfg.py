@@ -43,9 +43,13 @@ def _install_fake_comfy(monkeypatch):
 
     def calc_cond_batch(model, conds, x, timestep, model_options):
         records["calc"].append((model, len(conds)))
-        # A batch-1 non-contiguous local prediction, so .contiguous() has real work.
-        base = torch.arange(2, dtype=torch.float32).reshape(2, 1)
-        return [base.t()]  # (1, 2) transpose view: non-contiguous, one forward
+        # A batch-1 local prediction with stride 2 along its last dim, like a
+        # family forward ending in a crop view. A transpose of a (2, 1) tensor
+        # would not do: its (1, 1) strides read as contiguous, and the gather
+        # assertion below would pass with the production .contiguous() gone.
+        local = torch.arange(4, dtype=torch.float32).reshape(1, 4)[:, ::2]
+        assert not local.is_contiguous(), "the fixture must hand over a non-contiguous view"
+        return [local]
 
     def cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep,
                      model_options={}, cond=None, uncond=None):  # noqa: B006  mirrors comfy's signature

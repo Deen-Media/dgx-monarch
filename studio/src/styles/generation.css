@@ -63,6 +63,26 @@
   margin-top: 4px;
   overflow-wrap: anywhere;
 }
+.workflow-output {
+  display: block;
+  margin-top: 4px;
+}
+.operation-need {
+  display: block;
+  margin: -10px 0 16px;
+}
+.operation-note {
+  display: block;
+  margin: -10px 0 16px;
+  color: var(--muted);
+}
+/* A field the draft does not use, such as a seed under the Random policy. */
+.field input:disabled {
+  color: var(--muted);
+  background: transparent;
+  border-style: dashed;
+  cursor: not-allowed;
+}
 .import-label {
   font-weight: 500;
   margin: 0;
@@ -135,6 +155,11 @@
   justify-content: space-between;
   gap: 5px;
 }
+.field-context {
+  margin-right: auto;
+  font-weight: 400;
+  color: var(--muted);
+}
 .field-type {
   font-size: 9px;
   text-transform: uppercase;
@@ -170,11 +195,19 @@
 .target-line > .muted {
   margin-left: auto;
 }
+.generate-actions {
+  display: flex;
+  gap: 8px;
+}
 .generate {
-  width: 100%;
+  flex: 1;
   justify-content: space-between;
   padding: 12px 15px !important;
   font-size: 12px;
+}
+.review-settings {
+  flex-shrink: 0;
+  font-size: 11px;
 }
 .generate span {
   font-size: 19px;
@@ -185,10 +218,62 @@
   text-align: center;
   margin-top: 10px;
 }
+.submission-footer > .submit-confirmation {
+  color: var(--status-ready);
+}
 .workspace-center {
   flex: 1;
   min-width: 300px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+/* Create's pane never scrolls sideways, at any pane width. Text with no space to break at, such
+   as an id or a file name, wraps anywhere; a grid column or a fieldset may be narrower than its
+   widest control; and should anything still be wider, the pane clips it instead of scrolling. */
+.controls-panel {
+  overflow-wrap: anywhere;
+}
+.controls-panel,
+.controls-scroll {
+  overflow-x: hidden;
+}
+.controls-panel .input-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.controls-panel fieldset {
+  min-width: 0;
+}
+/* On a short window the field list keeps a usable height and the pane scrolls instead, with the
+   footer pinned at its foot. A field brought into view stops above the footer, and the main
+   prompt never grows taller than the list's floor. */
+.controls-scroll {
+  min-height: min(280px, 40vh);
+}
+.controls-panel {
+  scroll-padding-bottom: var(--footer-room, 0px);
+  scrollbar-width: thin;
+}
+.submission-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+.field textarea.prompt-text {
+  max-height: min(30vh, 420px);
+}
+@media (max-width: 760px) {
+  /* The page scrolls on a phone, under the navigation bar fixed at its foot. */
+  html {
+    scroll-padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  }
+}
+.field-opener {
+  font-size: 11px;
+  padding: 5px 9px;
+  color: var(--muted);
+}
+/* A field rule that sets display must not show a control the field hides, such as a folded box. */
+.field [hidden] {
+  display: none;
 }

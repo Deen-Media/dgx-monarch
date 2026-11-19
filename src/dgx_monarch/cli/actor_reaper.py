@@ -22,6 +22,7 @@ import json
 import os
 import re
 import signal
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -461,11 +462,11 @@ def liveness(
     loop = ledger.get("loop")
     loop_alive: bool | None = None
     if isinstance(loop, dict):
-        try:
-            loop_alive = pi.alive_and_not_zombie(
-                int(loop.get("pid") or 0), int(loop.get("starttime") or 0), proc_root)
-        except (TypeError, ValueError):
-            loop_alive = None
+        # The loop record passes through unvalidated; Infinity reads as None here.
+        loop_pid = actor_ledger.ledger_int(loop.get("pid") or 0)
+        loop_start = actor_ledger.ledger_int(loop.get("starttime") or 0)
+        if loop_pid is not None and loop_start is not None:
+            loop_alive = pi.alive_and_not_zombie(loop_pid, loop_start, proc_root)
     return {
         "schema": LIVENESS_SCHEMA,
         "actors": len(actors),
@@ -550,6 +551,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     addresses = tuple(args.loop_address)
+    try:
+        return _run_mode(args, addresses)
+    except pi.ProcListingError as exc:
+        # No line and a failed exit: the liveness probe reads unknown and the
+        # sweep reports its host unaccounted for, never an empty host.
+        print(f"actor_reaper: cannot list the process table ({exc}); nothing was counted",
+              file=sys.stderr)
+        return 1
+
+
+def _run_mode(args: Any, addresses: tuple[str, ...]) -> int:
     if args.liveness:
         # Read only, on the same rule as --report: a liveness question must
         # never be able to change what it is measuring.

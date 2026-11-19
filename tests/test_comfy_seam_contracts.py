@@ -192,3 +192,87 @@ def test_minimax_audio_seam_drives_the_stock_outer_forward_around_the_adapter():
     assert "MixedLegacyOuter" in source
     assert "partial or mixed ComfyUI update" in source
     assert "time_shift_slope" not in source
+
+
+# Seam 52's source scan, on synthetic trees: every form a new inference-mode,
+# inference-flag or grad-mode read upstream could take must come back as a site,
+# so the seam goes red on it. The rows are the review's mutations of a ComfyUI
+# copy (2026-11-10), each one written as the smallest file that holds it.
+
+
+def _mode_scanner():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("comfy_seam_contracts_scan", SUITE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module._inference_mode_sites
+
+
+MODE_FORMS = {
+    "a torch attribute in a method": (
+        "comfy/model_base.py",
+        "import torch\nclass Lumina2:\n    def extra_conds(self):\n"
+        "        return torch.is_inference_mode_enabled()\n",
+        {("Lumina2.extra_conds", "is_inference_mode_enabled"): 1}),
+    "a renamed from-import": (
+        "comfy/model_base.py",
+        "from torch import is_inference_mode_enabled as _on\ndef extra_conds():\n"
+        "    return _on()\n",
+        {("<module>", "is_inference_mode_enabled"): 1}),
+    "a bare from-import and its read": (
+        "comfy/model_base.py",
+        "from torch import is_grad_enabled\ndef process_conds():\n    return is_grad_enabled()\n",
+        {("<module>", "is_grad_enabled"): 1, ("process_conds", "is_grad_enabled"): 1}),
+    "an alias by assignment": (
+        "comfy/model_base.py",
+        "import torch\n_on = torch.is_inference_mode_enabled\n",
+        {("<module>", "is_inference_mode_enabled"): 1}),
+    "torch under another name": (
+        "comfy/model_base.py",
+        "import torch as _t\ndef extra_conds():\n    return _t.is_inference_mode_enabled()\n",
+        {("extra_conds", "is_inference_mode_enabled"): 1}),
+    "a tensor's inference flag": (
+        "comfy/model_base.py",
+        "def extra_conds(cross_attn):\n    return cross_attn.is_inference()\n",
+        {("extra_conds", "is_inference"): 1}),
+    "a name looked up with getattr": (
+        "comfy/model_base.py",
+        "import torch\ndef extra_conds():\n"
+        "    return getattr(torch, 'is_inference_mode_enabled')()\n",
+        {("extra_conds", "is_inference_mode_enabled"): 1}),
+    "a decorator": (
+        "comfy/utils.py",
+        "import torch\n@torch.inference_mode()\ndef tiled():\n    pass\n",
+        {("tiled", "inference_mode"): 1}),
+    "a directory the first scan left out": (
+        "app/__init__.py",
+        "import torch\n_X = torch.is_inference_mode_enabled\n",
+        {("<module>", "is_inference_mode_enabled"): 1}),
+    "the executor package": (
+        "comfy_execution/graph_utils.py",
+        "def _mode():\n    import torch\n    return torch.inference_mode\n",
+        {("_mode", "inference_mode"): 1}),
+}
+
+
+@pytest.mark.parametrize("form", sorted(MODE_FORMS))
+def test_the_inference_mode_scan_finds_every_read_form(tmp_path, form):
+    relative, source, sites = MODE_FORMS[form]
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    path.write_text(source)
+    found = _mode_scanner()(tmp_path)
+    assert found == {(relative, scope, name): count for (scope, name), count in sites.items()}
+
+
+def test_the_inference_mode_scan_skips_tests_packs_and_data_folders(tmp_path):
+    read = "import torch\n_X = torch.is_inference_mode_enabled\n"
+    for relative in ("tests/a.py", "tests-unit/b.py", "custom_nodes/pack/c.py", "models/d.py",
+                     "input/e.py", "output/f.py", "user/g.py", "temp/h.py", ".ci/i.py",
+                     "comfy/tests/j.py"):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(read)
+    (tmp_path / "comfy" / "kept.py").write_text(read)
+    assert _mode_scanner()(tmp_path) == {("comfy/kept.py", "<module>", "is_inference_mode_enabled"): 1}

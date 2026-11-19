@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..config import ClusterConfig, HostConfig
 from ..runtime_provenance import SOURCE_ONLY_PYCACHE_PREFIX
+from .update_pin_diagnostic import PinDiagnostic, parse_attest_line
 
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,127}")
@@ -102,6 +103,25 @@ def remote_release_matches(
     captured_site: bool = False,
 ) -> bool:
     """Verify source and the full active pinned payload without importing Worker actors."""
+    return remote_release_check(
+        config, host, site=site, tools=tools, identity=identity, host_runner=host_runner,
+        verifier_digest=verifier_digest, link_target=link_target, captured_site=captured_site,
+    )[0]
+
+
+def remote_release_check(
+    config: ClusterConfig,
+    host: HostConfig,
+    *,
+    site: str,
+    tools: str,
+    identity: WorkerReleaseIdentity,
+    host_runner: HostRunner,
+    verifier_digest: str,
+    link_target: str | None = None,
+    captured_site: bool = False,
+) -> tuple[bool, PinDiagnostic | None]:
+    """``remote_release_matches``, plus the ownership refusal the host printed, if any."""
     script = release_attestation_script(
         config, site=site, tools=tools, identity=identity,
         verifier_digest=verifier_digest, link_target=link_target,
@@ -110,8 +130,11 @@ def remote_release_matches(
     try:
         result = host_runner(config, host, script, 90)
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0 and "RELEASE_MATCH" in result.stdout
+        return False, None
+    if result.returncode == 0 and "RELEASE_MATCH" in result.stdout:
+        return True, None
+    stdout = result.stdout if isinstance(result.stdout, str) else ""
+    return False, parse_attest_line(stdout[-4096:])
 
 
 def release_attestation_script(
@@ -174,6 +197,8 @@ if any(name == "dgx_monarch" or name.startswith("dgx_monarch.") for name in sys.
 sys.path[:] = [str(tools_root), *(item for item in sys.path if item not in ("", tools, str(tools_root)))]
 import dgx_monarch as verifier_package
 from dgx_monarch.cli import update_driver_pin as pin_verifier
+from dgx_monarch.cli import update_payload_ownership as ownership
+from dgx_monarch.cli import update_pin_diagnostic as pin_diagnostic
 from dgx_monarch import runtime_provenance as provenance
 def verify_module_origins():
     for name, module in tuple(sys.modules.items()):
@@ -191,10 +216,15 @@ distribution = md.distribution("torchmonarch")
 root = Path(distribution.locate_file("")).resolve(strict=True)
 anchors = set()
 import_suffixes = sorted((*SOURCE_SUFFIXES, *EXTENSION_SUFFIXES, *BYTECODE_SUFFIXES), key=len, reverse=True)
-for item in distribution.files or ():
+files = list(distribution.files or ())
+sources = {{str(item) for item in files if ".." not in str(item).split("/") and str(item).endswith(".py")}}
+for item in files:
     raw = str(item)
     if ".." in raw.split("/"):
         if re.fullmatch(r"(?:[.][.]/)+bin/[^/\\\\:]+", raw): continue
+        digest = "" if item.hash is None else item.hash.mode + "=" + item.hash.value
+        if ownership.prefix_bytecode(raw, digest, "" if item.size is None else str(item.size), sources): continue
+        print(pin_diagnostic.PinDiagnostic("record_outside_site", "torchmonarch", "torchmonarch-" + distribution.version + ".dist-info/RECORD").attest_line(), flush=True)
         raise SystemExit(3)
     try: parts = pin_verifier._installed_path(pin_verifier._safe_archive_path(raw))
     except pin_verifier.DriverPinError: raise SystemExit(3)
@@ -214,7 +244,11 @@ for entry in sys.path:
     for anchor in anchors:
         names = (anchor, *(anchor + suffix for suffix in import_suffixes))
         if any((candidate / name).exists() or (candidate / name).is_symlink() for name in names): raise SystemExit(3)
-actual = (versions[0], distribution.version, source, pin_verifier.site_payload_digest(root, want_pin))
+try: payload_digest = pin_verifier.site_payload_digest(root, want_pin)
+except ownership.PayloadOwnershipError as error:
+    print(error.diagnostic.attest_line(), flush=True)
+    raise SystemExit(1)
+actual = (versions[0], distribution.version, source, payload_digest)
 verify_module_origins()
 if tree_digest(tools_root / "dgx_monarch") != want_verifier: raise SystemExit(4)
 site_matches = want_site == "-" or site_digest == want_site

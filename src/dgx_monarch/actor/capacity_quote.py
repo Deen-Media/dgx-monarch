@@ -25,8 +25,8 @@ from ..capacity_fit import (
     preflight_wall_measured,
 )
 from ..log import get_logger
-from . import store_family
-from .rescue_offer import COLD_MEMO_CLAUSE, build_descriptor, rescue_blocker
+from . import actor_footprint, store_family
+from .rescue_offer import CAST_SLAB_REFUSAL, COLD_MEMO_CLAUSE, build_descriptor, rescue_blocker
 
 log = get_logger(__name__)
 
@@ -41,11 +41,11 @@ VERDICTS = frozenset({
     VERDICT_FITS, VERDICT_REFUSE, VERDICT_RESCUE, VERDICT_UNPRICED, VERDICT_NO_CLAIM,
 })
 
-# What the load would do to the slot. A reuse places nothing and admits; swap
-# and unknown are charged the file, because the quote prices as held and never
-# models the drop: a stock resident's arena is not returned by an in-process
-# unload and a slab resident barely moves MemAvailable. ``unknown`` reads as
-# ``fresh``: a quote can land between a slot's drop and its repopulation.
+# What the load would do to the slot. A reuse places nothing and admits. A swap
+# over a stock resident is credited the GPU copy the store drops before it loads
+# (capacity_lora_bake.credit_stock_swap); other swaps and unknown price as held: a
+# slab resident holds MemAvailable, but no load over one has yet needed its drop
+# credited. ``unknown`` reads as ``fresh``: a quote can land between a drop and a refill.
 WOULD_LOAD_FRESH = "fresh"
 WOULD_LOAD_REUSE = "reuse"
 WOULD_LOAD_SWAP = "swap"
@@ -120,6 +120,10 @@ class RankPrice:
     retained_failed_load_slabs: int = 0
     failed_load_cleanup_pending: bool = False
     reason: str = ""
+    # Advisory (actor_footprint.py): they only decide the old-model card.
+    resident_names: dict[str, str | None] = field(default_factory=_no_residents)
+    resident_bytes: dict[str, int] = field(default_factory=dict)
+    arena_bytes: int = 0
 
     def __post_init__(self) -> None:
         if self.verdict not in VERDICTS:
@@ -154,6 +158,8 @@ class RankPrice:
             "retained_failed_load_slabs": int(self.retained_failed_load_slabs),
             "failed_load_cleanup_pending": bool(self.failed_load_cleanup_pending),
             "reason": self.reason,
+            "resident_names": dict(self.resident_names),
+            "resident_bytes": dict(self.resident_bytes), "arena_bytes": int(self.arena_bytes),
         }
 
     @classmethod
@@ -165,7 +171,7 @@ class RankPrice:
         """
         if not isinstance(row, dict):
             raise ValueError(f"a quote row must be a mapping, got {type(row).__name__}")
-        missing = sorted(ROW_KEYS - set(row))
+        missing = sorted(ROW_KEYS - ADVISORY_ROW_KEYS - set(row))
         if missing:
             raise ValueError(f"quote row is missing {missing}")
         blocker = row["blocker"]
@@ -193,6 +199,7 @@ class RankPrice:
             retained_failed_load_slabs=int(row["retained_failed_load_slabs"]),
             failed_load_cleanup_pending=bool(row["failed_load_cleanup_pending"]),
             reason=row["reason"],
+            **actor_footprint.advisory_fields(row),
         )
 
 
@@ -200,8 +207,11 @@ ROW_KEYS: frozenset[str] = frozenset({
     "verdict", "rung", "use_slab", "priced", "measured", "slab_measured",
     "blocker", "descriptor", "would_load", "holds_resident", "checkpoint_bytes",
     "slot", "shmem_bytes", "retained_failed_load_slabs",
-    "failed_load_cleanup_pending", "reason",
+    "failed_load_cleanup_pending", "reason", *actor_footprint.ADVISORY_ROW_KEYS,
 })
+# An older Worker's row lacks these and still reads, as "unknown": they only
+# ever withhold a card, so a default here never turns a refusal into an admit.
+ADVISORY_ROW_KEYS = actor_footprint.ADVISORY_ROW_KEYS
 
 
 def comfy_managed_active() -> bool:
@@ -251,7 +261,8 @@ def _holds_this_checkpoint(entry: Any, request_key: str) -> bool:
     A caller that states no key gets the charged reading.
     """
     key = entry.get("request_key") if isinstance(entry, dict) else None
-    return bool(request_key) and isinstance(key, str) and key == request_key
+    # ``files_moved``: a LoRA of the stack changed on disk since the load (in_place_fallback.quote_snapshot).
+    return bool(request_key) and isinstance(key, str) and key == request_key and not entry.get("files_moved")
 
 
 def _slot_context(snapshot: dict, slot: str, request_key: str) -> dict[str, Any]:
@@ -322,6 +333,8 @@ def _slab_rung(rung: str, reason: str, slab_fit: SlabFit, size: int,
                context: dict[str, Any]) -> RankPrice:
     """One of the three rungs that return slab, priced by ``slab_load_fit``."""
     if not slab_fit.applies:
+        if rung == RUNG_EXPLICIT and slab_fit.skipped_reason == capacity_fit.SKIP_SLAB_DTYPE_CAST:
+            return RankPrice(VERDICT_REFUSE, rung, use_slab=True, checkpoint_bytes=size, reason=CAST_SLAB_REFUSAL, **context)
         # The rung's sentence is the row's reason on every rung; a probe that
         # made no claim says so in ``priced`` and reports why to the journal,
         # rather than rewriting the ladder's decision text.
@@ -475,7 +488,9 @@ def price(
     if fsdp_launch:
         return _fsdp_rung(path, unet_name, model_options, world, size, charged, context)
 
-    fit = _charge(fit_probe(path, model_options), charged)
+    fit = capacity_lora_bake.credit_stock_swap(capacity_lora_bake.credit_hot_swap(
+        _charge(fit_probe(path, model_options), charged), snapshot.get(slot), request_key, context,
+        slab_weights, stack=(lora_stack, resolve_lora_path)), snapshot.get(slot), context)
     explicit_stock = slab_weights is False or compile_blocks_slab
     if not fit.applies or fit.fits:
         rung = RUNG_EXPLICIT_STOCK if explicit_stock else RUNG_STOCK_FITS

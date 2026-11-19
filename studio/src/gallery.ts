@@ -1,4 +1,5 @@
 import type { Artifact, Job } from './contracts';
+import { writeExactJSON } from './exactJson.ts';
 
 export interface GalleryFilter {
   query: string;
@@ -20,9 +21,12 @@ export interface GalleryEntry {
   project: string;
   searchable: string;
 }
+/** Nesting deeper than this is compared, and shown, as one value. */
+export const COMPARE_DEPTH = 12;
 export function scalarLeaves(value: unknown, prefix = '', depth = 0): Record<string, unknown> {
-  if (depth > 12) return {};
-  if (value === null || typeof value !== 'object') return { [prefix]: value };
+  // Past the bound the rest of the field is one leaf, so a difference inside it still shows.
+  if (depth > COMPARE_DEPTH || value === null || typeof value !== 'object')
+    return { [prefix]: value };
   return Object.fromEntries(
     Object.entries(value).flatMap(([key, item]) =>
       Object.entries(scalarLeaves(item, prefix ? `${prefix}.${key}` : key, depth + 1)),
@@ -134,11 +138,47 @@ export function virtualRows(
     after: Math.max(0, (rows - endRow) * rowHeight),
   };
 }
-export function parameterDifferences(left: unknown, right: unknown) {
+/**
+ * A compared value as exact text: each BigInt as its digits, so seeds above 2**53 - 1 that
+ * differ by one still differ. Null for a number this browser already holds rounded, which can
+ * therefore never be said to match.
+ */
+function exactText(value: unknown): string | null {
+  try {
+    return writeExactJSON(value);
+  } catch {
+    return null;
+  }
+}
+export interface ParameterDifference {
+  key: string;
+  left: unknown;
+  right: unknown;
+  /** The field nests deeper than COMPARE_DEPTH, so its rest is compared as one value. */
+  whole?: boolean;
+}
+export function parameterDifferences(left: unknown, right: unknown): ParameterDifference[] {
   const a = scalarLeaves(left),
     b = scalarLeaves(right);
+  const deep = (value: unknown) => value !== null && typeof value === 'object';
   return [...new Set([...Object.keys(a), ...Object.keys(b)])]
     .sort()
-    .filter((key) => JSON.stringify(a[key]) !== JSON.stringify(b[key]))
-    .map((key) => ({ key, left: a[key], right: b[key] }));
+    .filter((key) => {
+      const text = exactText(a[key]);
+      return text === null || text !== exactText(b[key]);
+    })
+    .map((key) => ({
+      key,
+      left: a[key],
+      right: b[key],
+      ...(deep(a[key]) || deep(b[key]) ? { whole: true } : {}),
+    }));
+}
+/** A compared value as the differences table shows it, with every digit. */
+export function differenceText(value: unknown): string {
+  if (value === undefined) return 'Not recorded';
+  return (
+    exactText(value) ??
+    `A whole number above ${Number.MAX_SAFE_INTEGER} that this browser holds rounded`
+  );
 }

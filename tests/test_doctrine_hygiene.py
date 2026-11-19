@@ -32,7 +32,14 @@ from pathlib import Path
 import pytest
 
 import dgx_monarch
-from dgx_monarch import capacity_agreement, mesh_liveness, mesh_runtime, rdma_ownership, transfer
+from dgx_monarch import (
+    capacity_agreement,
+    mesh_liveness,
+    mesh_runtime,
+    rdma_ownership,
+    sample_deadline,
+    transfer,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -286,6 +293,21 @@ def test_no_pin_anchored_prose_outside_dated_records():
     )
 
 
+def _user_prose() -> list[Path]:
+    """The pages a user reads: the CHANGELOG, the README, docs/ and skills/."""
+    return [REPO / "CHANGELOG.md", REPO / "README.md",
+            *sorted((REPO / "docs").rglob("*.md")), *sorted((REPO / "skills").rglob("*.md"))]
+
+
+def test_no_unwritten_placeholder_reaches_a_user_page():
+    """A sentence marked to be written later must be written before it ships."""
+    found = [f"{path.relative_to(REPO)}:{number}: {line.strip()[:110]}"
+             for path in _user_prose()
+             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+             if "PLACEHOLDER" in line]
+    assert not found, "write these sentences:\n" + "\n".join(found)
+
+
 @pytest.mark.parametrize(("text", "anchored"), [
     # The version after the noun: every other shape puts it before "pin".
     ("The development pin is now 0.7.0, with a regenerated baseline.", True),
@@ -451,6 +473,36 @@ QUOTED_TIMEOUTS: tuple[tuple[Path, str, object, str], ...] = (
      transfer.RDMA_READ_OUTER_MARGIN_S, "{:g}"),
     (TROUBLESHOOTING, "did not answer within {} s",
      capacity_agreement.CAPACITY_QUOTE_DEADLINE_S, "{:g}"),
+    # The sample deadline (#139): its terms, its example log line, the
+    # deadline each measured render gets, and where the cap starts to bind.
+    (TROUBLESHOOTING, "`DGXM_SAMPLE_TIMEOUT` sets the floor, {} s by default",
+     sample_deadline.DEFAULT_FLOOR_S, "{:g}"),
+    (TROUBLESHOOTING, "but is never less than {} s per step",
+     sample_deadline.STEP_FLOOR_S, "{:g}"),
+    (TROUBLESHOOTING, "The allowance is {} s per step at",
+     sample_deadline.ANCHOR_STEP_S, "{:g}"),
+    (TROUBLESHOOTING, "at {} packed rows per rank, the 15 second clip's rows",
+     sample_deadline.ANCHOR_ROWS_PER_RANK, "{:,}"),
+    (TROUBLESHOOTING, "The product is capped at {} s (six hours)",
+     sample_deadline.CEILING_S, "{:g}"),
+    (TROUBLESHOOTING, "Above {} steps the cap binds before the step floor does",
+     sample_deadline.CEILING_S / sample_deadline.STEP_FLOOR_S, "{:g}"),
+    (TROUBLESHOOTING, "INFO {}", sample_deadline.describe(sample_deadline.SampleDeadline(
+        seconds=sample_deadline.deadline_s(
+            20, sample_deadline.ANCHOR_ROWS_PER_RANK, sample_deadline.DEFAULT_FLOOR_S),
+        steps=20, floor_s=sample_deadline.DEFAULT_FLOOR_S, floor_from_env=False,
+        step_s=sample_deadline.step_allowance_s(sample_deadline.ANCHOR_ROWS_PER_RANK),
+        rows=sample_deadline.ANCHOR_ROWS_PER_RANK, ranks=1,
+        rows_per_rank=sample_deadline.ANCHOR_ROWS_PER_RANK, source="minimax_h3")), "{}"),
+    *(
+        (TROUBLESHOOTING, f"| {rows:,} | {sampled} | {{}} min |",
+         sample_deadline.deadline_s(20, rows, sample_deadline.DEFAULT_FLOOR_S) / 60, "{:.0f}")
+        for rows, sampled in ((18_865, "7:31"), (36_895, "22:31"), (54_732, "45:19"),
+                              (73_790, "38:34"), (109_466, "79:33"))
+    ),
+    (TROUBLESHOOTING, "At 20 steps the cap binds from about {} rows per rank",
+     round(sample_deadline.CEILING_S * sample_deadline.ANCHOR_ROWS_PER_RANK
+           / (20 * sample_deadline.ANCHOR_STEP_S), -3), "{:,.0f}"),
 )
 
 

@@ -487,6 +487,31 @@ def test_the_sharded_render_reproduces_the_unsharded_one_row_for_row(
 
 
 @pytest.mark.parametrize("adapter_cls", ADAPTERS)
+@pytest.mark.parametrize("txt_len,img_len", [(5, 8), (4, 9)])
+def test_every_block_is_handed_stocks_row_count_for_each_stream(
+    monkeypatch, comfy_layers_stub, adapter_cls, txt_len, img_len
+):
+    """Issue #54: a bound block fills each fused-norm call to stock's rows for
+    its stream (adapters/adaln_parity_blocks.py), so the forward hands every
+    double block the unpadded text and image rows and every single block the
+    joint rows, on every rank, whatever its window holds."""
+    from dgx_monarch.adapters.adaln_parity_blocks import NORM_ROWS
+
+    seen: list = []
+    for cls in (_ToyDoubleBlock, _ToySingleBlock):
+        def record(self, *args, _call=cls.__call__, **kwargs):
+            seen.append((type(self).__name__, dict(kwargs["transformer_options"][NORM_ROWS])))
+            return _call(self, *args, **kwargs)
+        monkeypatch.setattr(cls, "__call__", record)
+    model = _model_for(adapter_cls)
+    _sharded(monkeypatch, adapter_cls, model, _streams(txt_len, img_len), txt_len, img_len)
+    doubles = [rows for name, rows in seen if name == "_ToyDoubleBlock"]
+    singles = [rows for name, rows in seen if name == "_ToySingleBlock"]
+    assert doubles == [{"txt": txt_len, "img": img_len}] * (2 * len(model.double_blocks))
+    assert singles == [{"joint": txt_len + img_len}] * (2 * len(model.single_blocks))
+
+
+@pytest.mark.parametrize("adapter_cls", ADAPTERS)
 def test_an_even_stream_keeps_the_untouched_xfuser_call(
     monkeypatch, comfy_layers_stub, adapter_cls
 ):

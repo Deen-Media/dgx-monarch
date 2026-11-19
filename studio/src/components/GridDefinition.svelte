@@ -37,7 +37,9 @@
     blocked: boolean;
     onvalidate: () => void;
   } = $props();
-  const reason = $derived(validateBlocker(hasWorkflow, { axisA, axisB, valuesA, valuesB }));
+  const reason = $derived(
+    validateBlocker(hasWorkflow, { axisA, axisB, valuesA, valuesB, seedPolicy, baseSeed }),
+  );
 </script>
 
 <div class="operation-grid">

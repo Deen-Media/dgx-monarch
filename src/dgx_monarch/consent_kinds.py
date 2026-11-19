@@ -47,10 +47,17 @@ class KindSpec:
     # Scoped guards whose card states other evidence than ``measured``, as
     # (guard, text) pairs. The text reads after "Measured: ".
     guard_measured: tuple[tuple[str, str], ...] = ()
+    # An action kind's accept runs this action and grants nothing: no memo,
+    # no ledger row, no bypass of any guard. Such a kind stays outside the
+    # frozen ledger vocabulary, whose every member moves the Gate protocol.
+    action: str = ""
+    # The card's "always" checkbox for an action kind, or "".
+    always_label: str = ""
 
     @property
     def refusal_class(self) -> str:
-        return KIND_CLASS[self.kind]
+        # Every action kind answers a capacity refusal.
+        return "C" if self.action else KIND_CLASS[self.kind]
 
     def measured_for(self, guard: str | None) -> str | None:
         """The evidence a card for this guard states: its own text, or the kind's."""
@@ -73,6 +80,22 @@ _SPECS: tuple[KindSpec, ...] = (
         default_guard="stock_load_preflight",
         context_fields=("combo_key", "weight_dtype"),
         wired=True,
+    ),
+    KindSpec(
+        kind="clear-retry",
+        style="capacity",
+        title="Old model in the way",
+        risk="A model loaded earlier still holds memory this load needs.",
+        evidence=("Clear and retry gives back all the memory the Sparks hold for models, "
+                  "the same as Reset attached mesh, and changes no setting."),
+        primary_label="Clear and retry",
+        env_var="DGXM_ALLOW_CLEAR_RETRY",
+        auto_eligible=False,
+        default_guard="cross_rank_capacity",
+        context_fields=("unet_name",),
+        wired=True,
+        action="recycle",
+        always_label="Always clear and retry",
     ),
     KindSpec(
         kind="waive-unvouched-slab",
@@ -237,3 +260,31 @@ def consent_context(kind: str, **fields: Any) -> dict[str, Any]:
     context = {name: fields[name] for name in spec.context_fields}
     consent_store.canonical_context(context)  # fail closed on non-JSON values
     return context
+
+
+def numbers_from_measured(measured: Mapping[str, Any] | None) -> str | None:
+    """Format the card's figures from structured refusal evidence.
+
+    A class-K refusal can carry a ``detail`` line instead (the pinned kernel
+    and its module count, ``accuracy_waiver.card_tail``), shown in the same place.
+
+    ``headroom_bytes`` is what is available minus the refusing site's price,
+    so ``needs`` comes back as that price, not the file size. For a stock load
+    the price is ``capacity_fit.stock_required_bytes``: the file, or the copy a
+    loader dtype cast builds, the host copy it is placed from, and the host
+    floor. A block that carries no headroom falls back to the file size.
+    """
+    if not isinstance(measured, Mapping):
+        return None
+    detail = measured.get("detail")
+    if isinstance(detail, str) and detail:
+        return detail  # a class-K card's one line about this refusal
+    needs = measured.get("checkpoint_bytes")
+    available = measured.get("mem_available_bytes")
+    if not isinstance(needs, int) or not isinstance(available, int):
+        return None
+    headroom = measured.get("headroom_bytes")
+    if isinstance(headroom, int) and not isinstance(headroom, bool):
+        needs = available - headroom
+    gib = float(1 << 30)
+    return f"needs {needs / gib:.1f} GiB, {available / gib:.1f} GiB available"

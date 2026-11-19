@@ -18,6 +18,9 @@
       live: isActive(summary),
     }),
   );
+  // Each record stays closed, and unrendered, until it is opened.
+  let submissionShown = $state(false),
+    fullShown = $state(false);
 </script>
 
 <button disabled={record.loading} onclick={() => record.refresh()}>Refresh full provenance</button>
@@ -27,6 +30,13 @@
   {@const job = record.value}
   {@const text = writeExactJSON(job)}
   <button onclick={() => exportText(text, `${job.id}.json`)}>Export provenance</button>
-  <pre>{text}</pre>
+  <details class="review-record" ontoggle={(event) => (submissionShown = event.currentTarget.open)}>
+    <summary>Immutable submission record (JSON)</summary>
+    {#if submissionShown}<pre>{writeExactJSON(job.submission)}</pre>{/if}
+  </details>
+  <details class="review-record" ontoggle={(event) => (fullShown = event.currentTarget.open)}>
+    <summary>Full provenance (JSON)</summary>
+    {#if fullShown}<pre>{text}</pre>{/if}
+  </details>
   <RuntimeEvidence {client} {job} />
 {/if}

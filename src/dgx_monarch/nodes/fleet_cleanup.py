@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from .. import mesh_setup
+from .. import mesh_setup, worker_box
 from ..transfer_utils import prefer_error
 from . import consent_waiver
 
@@ -99,7 +99,9 @@ def _drain_fleet_collections(
             result = handle.collect_one(item.future, timeout_s=timeout_s)
         except BaseException as exc:
             # Hand on the same exception object, never tested for truth: a
-            # cancellation may define a __bool__ that is false or raises.
+            # cancellation may define a __bool__ that is false or raises. A
+            # Worker's own words get the box of the actor this job went to.
+            worker_box.name(exc, handle, getattr(item, "rank", None))
             error = exc
         completed.set()
         completions.put((key, result, error))

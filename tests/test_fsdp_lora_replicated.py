@@ -299,3 +299,158 @@ def test_the_replicated_bake_equals_comfys_own_merge(real_comfy, tmp_path):
         assert torch.equal(sharded, expected[SHARDED])
     finally:
         torch.distributed.destroy_process_group()
+
+
+def test_the_fsdp_bake_of_a_comfy_cast_layer_equals_stocks_cast_time_weight(real_comfy, tmp_path):
+    """With the Worker's cast-time bake installed (#145), both keys on ComfyUI's own
+    cast Linear bake under FSDP to the weight comfy.ops' post_cast gives the
+    resident layer, and the ambient verify on every key agrees."""
+    import comfy.ops
+    import torch.distributed.fsdp
+
+    from dgx_monarch.actor import lora_cast_time
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "canary"))
+    try:
+        import bake_equivalence_canary as canary
+    finally:
+        sys.path.pop(0)
+    ops = comfy.ops.disable_weight_init
+    dim = 128  # 32 KiB of bf16: above the size stock force-loads
+
+    class _CastBlock(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = ops.Linear(dim, dim, bias=False, dtype=torch.bfloat16)
+
+    class _CastDiffusionModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = torch.nn.ModuleList([_CastBlock()])
+            self.token_refiner = ops.Linear(dim, dim, bias=False, dtype=torch.bfloat16)
+
+    cast_model = type("MiniMaxH3", (torch.nn.Module,), {})
+    gen = torch.Generator().manual_seed(3)
+    model = cast_model()
+    model.diffusion_model = _CastDiffusionModel()
+    pristine = {}
+    for key in (SHARDED, REPLICATED):
+        value = (torch.randn(dim, dim, generator=gen) * 0.05).to(torch.bfloat16)
+        with torch.no_grad():
+            fsdp_lora.live_tensor(model, key).copy_(value)
+        pristine[key] = value
+    path = _write_file(tmp_path, pristine)
+    lora = {}
+    for unit in ("block", "refiner"):
+        lora[f"{unit}.lora_up.weight"] = torch.randn(dim, 4, generator=gen) * 0.01
+        lora[f"{unit}.lora_down.weight"] = torch.randn(4, dim, generator=gen) * 0.01
+        lora[f"{unit}.alpha"] = torch.tensor(4.0)
+    patches = real_comfy.lora.load_lora(lora, {"block": SHARDED, "refiner": REPLICATED})
+    cpu = torch.device("cpu")
+    twin = copy.deepcopy(model)
+    reference = real_comfy.model_patcher.ModelPatcher(twin, cpu, cpu)
+    reference.add_patches(patches, 0.7)
+    stock = {key: canary.stock_cast_time_weight(twin, reference, key) for key in (SHARDED, REPLICATED)}
+    classic = reference.patch_weight_to_device(REPLICATED, device_to=cpu, return_weight=True)
+    assert not torch.equal(classic, stock[REPLICATED])
+    active = real_comfy.model_patcher.ModelPatcher(model, cpu, cpu)
+    active.add_patches(patches, 0.7)
+    installed = lora_cast_time.install()
+    try:
+        _wrap_one_rank(tmp_path, model)
+        fsdp_lora.apply_stack(SimpleNamespace(swap_verify=-1), active, path, None)
+        assert torch.equal(model.diffusion_model.token_refiner.weight, stock[REPLICATED])
+        assert torch.equal(fsdp_lora.local_shard(model.diffusion_model.blocks[0].lin.weight), stock[SHARDED])
+    finally:
+        torch.distributed.destroy_process_group()
+        if installed:
+            lora_cast_time.uninstall()
+
+
+def test_a_norm_weight_comfy_renames_at_load_bakes_under_fsdp_as_the_resident_layer(real_comfy, tmp_path):
+    """The 2026-11-11 crash's shape on real ComfyUI: ComfyUI's own RMSNorm, 256
+    bytes, inside a sharded block; the file stores its weight as
+    ``<...>_norm.scale``; FLUX.2's real model config renames it; a diff patch at
+    0.5 names the model's key (the distill LoRA's form). Under FSDP the key is
+    found under the file's name and bakes to ComfyUI's classic bake of the
+    resident layer, the bake stock runs for a module this small, while the
+    Linear beside it takes stock's cast-time weight. The ambient verify runs
+    comfy's own reference on both keys."""
+    import comfy.ops
+    import comfy.supported_models
+    import torch.distributed.fsdp
+
+    from dgx_monarch.actor import lora_cast_time
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "canary"))
+    try:
+        import bake_equivalence_canary as canary
+    finally:
+        sys.path.pop(0)
+    ops = comfy.ops.disable_weight_init
+    dim = 128  # the Linear: 32 KiB of bf16, a cast-time key; the norm: 256 bytes, force-loaded
+
+    class _NormBlock(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = ops.Linear(dim, dim, bias=False, dtype=torch.bfloat16)
+            self.query_norm = ops.RMSNorm(dim, dtype=torch.bfloat16)
+
+    class _NormDiffusionModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = torch.nn.ModuleList([_NormBlock()])
+
+    lin_key, norm_key = "diffusion_model.blocks.0.lin.weight", "diffusion_model.blocks.0.query_norm.weight"
+    gen = torch.Generator().manual_seed(9)
+    model = type("RenamedNormModel", (torch.nn.Module,), {})()
+    model.diffusion_model = _NormDiffusionModel()
+    pristine = {lin_key: (torch.randn(dim, dim, generator=gen) * 0.05).to(torch.bfloat16),
+                norm_key: (1.0 + 0.2 * torch.randn(dim, generator=gen)).to(torch.bfloat16)}
+    for key, value in pristine.items():
+        with torch.no_grad():
+            fsdp_lora.live_tensor(model, key).copy_(value)
+    path = tmp_path / "flux.safetensors"
+    _write_safetensors(path, {"blocks.0.lin.weight": pristine[lin_key],
+                              "blocks.0.query_norm.scale": pristine[norm_key]})  # the file's own name
+    lora = {"block.lora_up.weight": torch.randn(dim, 4, generator=gen) * 0.01,
+            "block.lora_down.weight": torch.randn(4, dim, generator=gen) * 0.01,
+            "block.alpha": torch.tensor(4.0),
+            "norm.diff": (torch.randn(dim, generator=gen) * 0.02).to(torch.bfloat16)}
+    patches = real_comfy.lora.load_lora(lora, {"block": lin_key, "norm": norm_key})
+    assert set(patches) == {lin_key, norm_key}
+    cpu = torch.device("cpu")
+    twin = copy.deepcopy(model)
+    # ComfyUI's own config for this family, as the loaded model carries it (a
+    # config object does not deep-copy, so the twin is taken first).
+    model.model_config = comfy.supported_models.Flux2({"hidden_size": dim})
+    reference = real_comfy.model_patcher.ModelPatcher(twin, cpu, cpu)
+    reference.add_patches(patches, 0.5)
+    # Before the cast-time route is installed: comfy's classic bake of the resident norm.
+    resident_norm = reference.patch_weight_to_device(norm_key, device_to=cpu, return_weight=True)
+    stock_lin = canary.stock_cast_time_weight(twin, reference, lin_key)
+    assert not torch.equal(resident_norm, pristine[norm_key])
+    assert not lora_cast_time.stock_patches_at_cast_time(reference, norm_key)
+    active = real_comfy.model_patcher.ModelPatcher(model, cpu, cpu)
+    active.add_patches(patches, 0.5)
+    installed = lora_cast_time.install()
+    try:
+        _wrap_one_rank(tmp_path, model)
+        record = fsdp_lora.apply_stack(SimpleNamespace(swap_verify=-1), active, str(path), None)
+        assert set(record.mapped) == {lin_key, norm_key}
+        norm = model.diffusion_model.blocks[0].query_norm.weight
+        assert type(norm).__name__ == "DTensor"
+        assert torch.equal(fsdp_lora.local_shard(norm), resident_norm)
+        assert torch.equal(fsdp_lora.local_shard(model.diffusion_model.blocks[0].lin.weight), stock_lin)
+        # Dropping the stack restores the norm's rows from the file's ".scale" tensor.
+        empty = real_comfy.model_patcher.ModelPatcher(model, cpu, cpu)
+        fsdp_lora.apply_stack(SimpleNamespace(swap_verify=-1), empty, str(path), record)
+        assert torch.equal(fsdp_lora.local_shard(norm), pristine[norm_key])
+    finally:
+        torch.distributed.destroy_process_group()
+        if installed:
+            lora_cast_time.uninstall()

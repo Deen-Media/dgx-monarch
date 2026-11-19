@@ -140,25 +140,30 @@ _GATE_REASON = {
     "inconclusive": "still inconclusive",
 }
 _GATE_STALE = ("stale or not vouched (a model or LoRA file, the dgx-monarch release or "
-               "source, or the residency, worker, attention, cluster or topology "
-               "settings changed; the ComfyUI commit changed or cannot be read; or "
-               "the gate ledger holds a damaged line or a non-PASS row for this "
-               "combination)")
+               "source, the torch or CUDA build, or the residency, worker, attention, "
+               "cluster or topology settings changed; the ComfyUI commit changed or "
+               "cannot be read; or the gate ledger holds a damaged line or a non-PASS "
+               "row for this combination)")
 
 
-def gate_started(state: str) -> None:
-    """Open the identity-check window and announce its additional render steps."""
+def gate_started(state: str, torch_change: str | None = None) -> None:
+    """Open the identity-check window and announce its additional render steps.
+
+    ``torch_change`` (gate_runtime.torch_change) replaces the general list of
+    causes when a PASS differs from this render only in its torch build.
+    """
     _CEREMONY.active = True
     _CEREMONY.proofs = 0
     _tell_tracker("open")
     notice(
         "gate",
         "auto-gate: this model+stack combination is "
-        f"{_GATE_REASON.get(state, _GATE_STALE)}, so the identity gate runs "
-        "once now: 2-4 short proof renders (3 or 4 under slab residency), then "
+        f"{torch_change or _GATE_REASON.get(state, _GATE_STALE)}, so the identity gate runs "
+        "once now: 2-4 short proof renders (3 or 4 under slab residency; none on a "
+        "graph with no LoRA stack whose model takes no slab residency), then "
         "your render. Later renders of this combination skip the gate. To turn "
         "the gate off, set auto_gate=off on the Init node",
-        "identity gate running (2-4 proof renders)",
+        "identity gate running (up to 4 proof renders)",
         sticky=True,
     )
 
@@ -205,14 +210,39 @@ _GATE_DONE_DENIED = ("The optimized residency paths stay off for this "
                      "falls back to stock residency or is refused, and "
                      "docs/TROUBLESHOOTING.md #61 explains a verdict other "
                      "than PASS")
+# The one non-PASS a consent answers (nodes/gate_inconclusive, "capacity_rescue").
+_GATE_DONE_RESCUED = ("Stock residency cannot load this checkpoint, so there is "
+                      "no stock reference, and a capacity-rescue consent is "
+                      "active: your render runs on slab residency, byte-verified "
+                      "but with no accuracy verdict (docs/TROUBLESHOOTING.md #5)")
 
 
-def gate_finished(result: dict | None) -> None:
-    """Close the identity-check window and report elapsed time without raising."""
+# nodes/gate_inconclusive.BASIS_KEY, spelled here so this leaf imports no node
+# module; tests/test_gate_nothing_to_gate.py holds the two equal.
+NO_MATERIAL_BASIS_KEY = "no_material_basis"
+
+
+def gate_finished(result: dict | None, capacity_stop: bool = False) -> None:
+    """Close the identity-check window and report elapsed time without raising.
+
+    ``capacity_stop`` marks a ceremony that ran no proof render because the
+    request cannot fit the path it would prove; its render runs stock.
+    """
     proofs = int(getattr(_CEREMONY, "proofs", 0))
     _CEREMONY.active = False
     _CEREMONY.proofs = 0
     _tell_tracker("close")
+    if not isinstance(result, dict) and capacity_stop:
+        notice(
+            "gate_done",
+            "auto-gate: the identity gate ran no proof render, because this "
+            "request cannot fit the residency path it would prove. Your render "
+            "runs on stock residency, and the next render of this combination "
+            "checks again. The driver log has the refusal",
+            "gate skipped for capacity, stock residency",
+            severity="warn",
+        )
+        return
     if not isinstance(result, dict):
         # With no verdict, the caller decides stock fallback or refusal. The
         # notice names both and leaves failure detail in the driver log.
@@ -226,6 +256,19 @@ def gate_finished(result: dict | None) -> None:
             severity="warn",
         )
         return
+    if result.get(NO_MATERIAL_BASIS_KEY) is not None:
+        # The Workers stamped nothing to compare with no proof render around it
+        # (nodes/gate_nothing_to_gate.py).
+        notice(
+            "gate_done",
+            "auto-gate: the identity gate ran no proof render: this graph has no LoRA "
+            "stack and the Workers hold its model without slab residency, so there is "
+            "nothing to compare. INCONCLUSIVE (nothing to gate) is recorded; your "
+            "render runs on stock residency and starts now, and later renders of this "
+            "combination skip the gate",
+            "gate: nothing to compare, no proof render",
+        )
+        return
     verdict = str(result.get("verdict") or "?")
     wall = result.get("wall_s")
     spent = (f" in {float(wall):.1f}s"
@@ -233,11 +276,14 @@ def gate_finished(result: dict | None) -> None:
              else "")
     counted = f" over {proofs} proof renders" if proofs else ""
     passed = verdict == "PASS"
+    rescued = not passed and bool(result.get("capacity_rescue"))
     notice(
         "gate_done",
         f"auto-gate: identity gate {verdict}{spent}{counted}. "
-        + (_GATE_DONE_VOUCHED if passed else _GATE_DONE_DENIED),
+        + (_GATE_DONE_VOUCHED if passed
+           else _GATE_DONE_RESCUED if rescued else _GATE_DONE_DENIED),
         (f"gate {verdict}{spent}, render starting" if passed
+         else f"gate {verdict}{spent}, slab residency under consent" if rescued
          else f"gate {verdict}{spent}, optimized residency off"),
         severity="info" if passed else "warn",
     )

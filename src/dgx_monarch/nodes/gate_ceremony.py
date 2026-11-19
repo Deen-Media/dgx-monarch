@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..refusal import RefusalClass
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call
+from . import pending_load_relief
 
 if TYPE_CHECKING:  # annotation only; the raise sites resolve it through runtime
     from .gate_fsdp import FsdpGateProofError
@@ -80,6 +81,7 @@ def gather_ceremony_evidence(
     # first-use ceremony. Preserve an outer auto-gate guard when this helper is
     # called from the automatic path.
     from .common import _AUTO_GATE_ACTIVE, _restore_auto_gate_active
+    from .gate_dual import ceremony_stacks, fold_uncond_cycle
     from .gate_identity import bind_request, capture
     from .slab_proof import establish
 
@@ -129,7 +131,7 @@ def gather_ceremony_evidence(
             model, original_worker_args, handle=handle)
         model_request, key, ceremony_identity, artifacts, artifact_binding = capture(
             ceremony_model, frozen_request.get("uncond_model"))
-        stack = [dict(entry) for entry in model_request.get("loras") or []]
+        stack, cond_stack = ceremony_stacks(model_request, frozen_request)
         # Every render, swap, and ledger row shares this transaction snapshot.
         commit = ceremony_identity["comfy"]
         lazy_swap_applicable = (
@@ -220,6 +222,11 @@ def gather_ceremony_evidence(
                 fsdp_scope_state["cleanup_confirmed"] = True
                 raise runtime["FsdpGateProofError"](
                     sentence, verdict="INCONCLUSIVE")
+        else:  # a residency proof prices the request on its own path first
+            runtime["gate_capacity_stop"].stop_unless_request_fits(
+                ceremony_model, frozen_request, frozen_latent, capacity_row,
+                origin=origin, run_id=run_id, loras=len(stack),
+                worker_args=original_worker_args)
         ledger.begin_retest_required(
             key,
             artifacts,
@@ -242,13 +249,12 @@ def gather_ceremony_evidence(
         cycle_token = runtime["render_setup_token"](
             ceremony_model, frozen_latent, cfg_value, handle)
         provenance_attestor("pre", handle, cycle_token)
-        # B must come from a clean disk load. Without this unload, auto-gating
-        # runs after the user's first render and can use an already-corrupted
-        # lazy-swap resident as its "reference", allowing identically wrong
-        # B/A renders to pass.
+        # B must come from a clean disk load: else auto-gating after the user's first render could take
+        # a corrupted lazy-swap resident as its "reference" and pass identically wrong B/A renders.
         runtime["require_confirmed_fsdp_unload"](
             handle.call_all("unload", timeout_s=600), handle, fsdp_proof_scope,
             phase="baseline")
+        pending_load_relief.note_unloaded()  # B's own render site then frees the driver for it
         b = transaction_render(
             ceremony_model,
             bind_request(runtime["copy_transaction"](frozen_request), artifact_binding),
@@ -303,10 +309,11 @@ def gather_ceremony_evidence(
                     verdict="INCONCLUSIVE",
                 )
         else:
-            raw_cycle = handle.call_all(
+            raw_cycle = fold_uncond_cycle(handle, handle.call_all(
                 "gate_swap_cycle", model_request["unet_name"],
-                dict(model_request.get("options") or {}), stack, ceremony_identity,
-                timeout_s=1800, **runtime["mesh_setup"].token_kwargs(cycle_token))
+                dict(model_request.get("options") or {}), cond_stack, ceremony_identity,
+                timeout_s=1800, **runtime["mesh_setup"].token_kwargs(cycle_token)),
+                frozen_request, artifact_binding, cycle_token)
             slab_proof = establish(
                 ceremony_model, model_request, frozen_request,
                 artifact_binding, ceremony_identity, frozen_latent,
@@ -355,6 +362,9 @@ def gather_ceremony_evidence(
                 "discarding the verdict")
         provenance_attestor("post", handle, cycle_token)
     except BaseException as exc:
+        if isinstance(exc, runtime["gate_capacity_stop"].CeremonyCapacityStop):
+            ceremony_error = exc  # its one row is written; nothing to close or take
+            raise
         fsdp_refusal: FsdpGateProofError | None = None
         settled_tag = None
         retracted = False
@@ -435,7 +445,7 @@ def gather_ceremony_evidence(
                       "(%r); residency levers unchanged", exc)
         if handle is not None and not fsdp_proof_scope and not sol_waiver_abort:
             try:
-                runtime["_force_stock_quarantine"](model, handle, cause=exc)
+                runtime["_force_stock_quarantine"](model, handle, cause=exc, uncond=request.get("uncond_model"))
             except BaseException as cleanup_exc:
                 safe_call(runtime["log"].error,
                           "identity-gate stock quarantine failed while preserving "

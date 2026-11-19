@@ -13,7 +13,7 @@ Endpoint surface; Monarch preserves every typed exception for the driver.
   ack_latent_handoff: retire one generation-bound RDMA descriptor owner
   status / renew_client_lease: snapshot and lease heartbeat, both lock-free
   provenance_baseline: setup-bound GPU-queue/source/event watermark
-  clear_vram: soft/hard cache clearing
+  clear_vram: soft/hard cache clearing; vae_decode (actor/vae_decode.py): one Worker-assisted VAE decode unit
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ from ..log import get_logger
 from ..model_sampling import normalize_model_sampling
 from ..runtime_timing import MeasuredAsyncLock, run_gpu_phase
 from ..transfer import LatentReturn
-from . import sample_protocol, store_fsdp, worker_env, worker_status
+from . import sample_protocol, store_fsdp, store_identity, worker_env, worker_status, worker_switches
 from .cancellation import CancellableSampleMixin
 from .failure import cleanup_on_failure
 from .gate_fsdp_cycle import FsdpGateCycleMixin
@@ -56,6 +56,7 @@ from .sampling import (
     run_custom,
     run_ksampler,
 )
+from .vae_decode import VaeDecodeMixin, drop_resident
 from .worker_compile import compile_dit_allowed
 from .worker_env import _AttentionDispatch, _maybe_compile_dit
 from .worker_status import _latent_signature
@@ -63,7 +64,7 @@ from .worker_status import _latent_signature
 log = get_logger(__name__)
 
 
-class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Actor):
+class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, VaeDecodeMixin, Actor):
     def __init__(self) -> None:
         self.store = ModelStore()
         self.rank: int | None = None
@@ -83,6 +84,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
         self._gpu_exec = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="dgxm-gpu")
         self._init_cancellation()
+        self._switches = worker_switches.apply()  # worker.env, read as each actor starts: never silent
 
     async def _on_gpu(self, fn, *args):
         """Run a blocking GPU, CUDA or NCCL body on the GPU thread, in this actor's context.
@@ -133,15 +135,9 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
         It stays outside ``_gpu_lock`` so a pipelined driver's safety
         preflight can run while the actor's dedicated GPU thread is denoising.
         It reads bounded file windows only and never mutates the model store.
+        The identity seam is read from this module at every call.
         """
-        return {
-            "host": socket.gethostname(),
-            "rank": self.rank,
-            "artifact_sets": [
-                request_artifact_identity(spec["unet_name"], spec.get("loras"))
-                for spec in model_specs
-            ],
-        }
+        return store_identity.identity_reply(self, model_specs, request_artifact_identity)
 
     @concurrent_endpoint
     async def capacity_quote(self, request: dict) -> dict:
@@ -179,15 +175,16 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
         )
         from ..adapters.fsdp import apply_fsdp_capacity_mode
         from ..family_select import override_for_worker
-        from . import attention_context, partial_load_guard
+        from . import attention_context, held_rows_price, partial_load_guard
         store_fsdp.validate_injection(
             self,
             quant_kind,
             lora_stack,
         )
-        partial_load_guard.install(base_patcher, getattr(self, "world", None))
+        partial_load_guard.install(base_patcher, getattr(self, "world", None), self.topology)
         cfg_degree = int(self.topology.get("cfg", 1))
         adapter = adapter_for(base_patcher.model, override_for_worker(self))
+        held_rows_price.install(base_patcher, getattr(adapter, "family", None))  # every world
         getattr(adapter, "prepare_base_model", lambda _model: None)(base_patcher.model)
         sp = int(self.topology.get("ulysses", 1)) * int(self.topology.get("ring", 1))
         # dm-cfg2: a dual_model_cfg family (ig4) runs the split guider at
@@ -316,20 +313,22 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
     @concurrent_endpoint
     async def gate_swap_cycle(self, unet_name: str, options: dict | None = None,
                               lora_stack: list | None = None,
-                              expected_artifact_identity: dict | None = None) -> dict:
+                              expected_artifact_identity: dict | None = None,
+                              slot: str = "cond") -> dict:
         weight_dtype_from_options(options)
         async with self._gpu_lock:
             return await self._on_gpu(
                 self._gate_swap_cycle_impl, unet_name, options, lora_stack,
-                expected_artifact_identity)
+                expected_artifact_identity, slot)
 
     @cleanup_on_failure
     def _gate_swap_cycle_impl(self, unet_name: str, options: dict | None = None,
                               lora_stack: list | None = None,
-                              expected_artifact_identity: dict | None = None) -> dict:
+                              expected_artifact_identity: dict | None = None,
+                              slot: str = "cond") -> dict:
         from .gate_cycle import run
 
-        return run(self, unet_name, options, lora_stack, expected_artifact_identity)
+        return run(self, unet_name, options, lora_stack, expected_artifact_identity, slot)
 
     @concurrent_endpoint
     async def unload(self) -> dict:
@@ -337,6 +336,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
             return await self._on_gpu(self._unload_impl)
 
     def _unload_impl(self) -> dict:
+        drop_resident(self)
         self.store.unload_all()
         # Do not force-free RDMA ownership here: tokenized HandoffRegistry
         # entries retain backing until exact generation/token ACK or actor
@@ -468,11 +468,13 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
 
     @concurrent_endpoint
     async def clear_vram(self, level: str = "soft") -> dict:
-        """soft: free allocator cache; hard: also unload every resident model."""
+        """soft: free allocator cache; hard: also unload every resident model; pool: the device pool alone."""
         async with self._gpu_lock:
             return await self._on_gpu(self._clear_vram_impl, level)
 
     def _clear_vram_impl(self, level: str = "soft") -> dict:
+        if level != "pool":  # the decode relief's ask: the device pool alone, the decode VAE kept
+            drop_resident(self)  # a decode VAE is reloadable cache at soft and hard
         if self._setup_key is None:
             # Before setup there is no allocator to clear, and touching CUDA here
             # would bind the wrong device (worker_status.status_impl).

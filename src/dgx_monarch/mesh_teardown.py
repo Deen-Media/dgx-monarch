@@ -5,10 +5,19 @@ import time
 from contextlib import nullcontext
 from typing import Any
 
-from . import mesh_safety
+from . import mesh_safety, reconcile_running
 from .error_utils import failure_summary, safe_note
 from .log import get_logger
 from .mesh_runtime import mesh_creation_timeout_s
+from .mesh_stop import ACTOR_STOP_S as ACTOR_STOP_S  # re-exported for the teardown callers
+from .mesh_stop import PROC_STOP_DEFAULT_S as PROC_STOP_DEFAULT_S
+from .mesh_stop import RECONCILE_GROUP_S, proc_stop_bound_s, stop_with_reason
+from .mesh_stop import reconcile_join_s as reconcile_join_s
+from .mesh_stop import shutdown_envelope_s as shutdown_envelope_s
+from .mesh_stop import shutdown_phases as shutdown_phases
+from .reconcile_running import cleanup_running as cleanup_running  # re-exported for the refusals' callers
+from .reconcile_running import cleanup_running_sentence as cleanup_running_sentence
+from .reconcile_running import unresolved_refusal as unresolved_refusal
 
 log = get_logger("dgx_monarch.mesh")
 
@@ -78,9 +87,10 @@ _LIVENESS_RELEASE_NOTE = (
     "worker processes were gone)")
 # The instant of the last release, or None. The next creation block consumes
 # it: that bring-up is the one the release authorized, and its poison text is
-# where the operator needs to see it. Time bounded as well as one shot, because
-# the ordinary path is a release whose replacement then succeeds and consumes
-# nothing, and an unrelated failure hours later must not claim the release.
+# where the operator needs to see it. The replacement's attach clears it when
+# it succeeds (mesh_attach._attach_and_retry), so a later attach keeps its
+# retry and a later, unrelated failure carries no release note. Time bounded as
+# well, for a release whose replacement never reaches an attach.
 _RELEASED_PREDECESSOR: float | None = None
 # The released fleet's host addresses; the attach fail-fast applies only to them.
 _RELEASED_ADDRESSES: frozenset[str] | None = None
@@ -118,6 +128,8 @@ def block_cause_sentence(handle: Any) -> str:
 
 def blocked_refusal(handle: Any, door: str) -> str:
     """Format a lifecycle refusal with the recovery action for its cause."""
+    if cleanup_running(handle):
+        return f"the cached mesh cannot be used yet: {cleanup_running_sentence()}"
     sentence = block_cause_sentence(handle)
     if door == GET_MESH_DOOR:
         blocked = getattr(handle, "replacement_blocked", None)
@@ -135,14 +147,23 @@ def note_liveness_release(now: float | None = None, addresses: Any = None) -> No
     _RELEASED_ADDRESSES = None if addresses is None else frozenset(addresses)
 
 
+def clear_liveness_release(addresses: Any) -> None:
+    """Disarm the note once the attach it authorized for ``addresses`` succeeded."""
+    global _RELEASED_PREDECESSOR, _RELEASED_ADDRESSES
+    if _RELEASED_ADDRESSES is None or frozenset(addresses) == _RELEASED_ADDRESSES:
+        _RELEASED_PREDECESSOR = None
+        _RELEASED_ADDRESSES = None
+
+
 def released_predecessor_recently(now: float | None = None, addresses: Any = None) -> bool:
     """Check whether fresh liveness evidence released the predecessor fleet.
 
     This read does not consume the note; ``publish_creation_block`` does that
-    when recording the replacement failure. The attach path uses it to give
+    when recording the replacement failure, and ``clear_liveness_release`` when
+    the replacement attached. The attach path uses it to give
     the replacement one attempt unless a loop moved to a new id during it: a
-    second dial with the same ids cannot win, and after an outage longer than
-    the delivery timeout the fallback is a ComfyUI restart
+    second dial with the same ids cannot win, and the fallback is a ComfyUI
+    restart
     (``mesh_attach._attach_and_retry``, docs/TROUBLESHOOTING.md #2). Other
     attach failures retain a second attempt.
     """
@@ -278,8 +299,7 @@ def stop_failed_setup_procs(handle: Any, run_off_loop: Any) -> BaseException | N
             mesh_safety.begin_deliberate_teardown(id(handle))
             attempted = True
             enter_stop_boundary(handle, retrying)
-            handle.procs.stop(
-                "dgx-monarch failed setup rollback").get(timeout=60)
+            stop_with_reason(handle, "dgx-monarch failed setup rollback", proc_stop_bound_s())
             confirmed = True
         except BaseException as exc:
             stop_error = exc
@@ -302,7 +322,7 @@ def stop_failed_setup_procs(handle: Any, run_off_loop: Any) -> BaseException | N
         return stop_error
 
     try:
-        return run_off_loop(stop_once, 90, "dgxm-setup-rollback")
+        return run_off_loop(stop_once, proc_stop_bound_s() + ACTOR_STOP_S + 30, "dgxm-setup-rollback")
     except TimeoutError as exc:
         # The scratch owner still publishes the eventual outcome.
         return exc
@@ -329,6 +349,7 @@ def retire_retryable_reconcile(handle: Any) -> None:
 
 
 def reconcile_thread_main(handle: Any, exc: BaseException, token: object) -> None:
+    reconcile_running.note_started(handle)  # bounds how long a refusal says the stop is running
     try:
         reconcile_stop(handle, exc, token)
     except BaseException as reconcile_exc:
@@ -357,7 +378,8 @@ def latch_reconcile_launch_failure(handle: Any, detail: str) -> None:
 def reconcile_stop(handle: Any, exc: BaseException, token: object) -> None:
     """Best-effort bounded stop outside the failing caller."""
     try:
-        handle.shutdown(timeout_s=30, _reconcile_token=token)
+        handle.shutdown(timeout_s=RECONCILE_GROUP_S, stop_timeout_s=proc_stop_bound_s(),
+                        _reconcile_token=token)
     except mesh_safety.PriorTeardownUnknownError as shut_exc:
         # Fault evidence does not prove that an outcome-less stop failed.
         safe_note(exc, "supervision cleanup found a prior stop with no known outcome", shut_exc)

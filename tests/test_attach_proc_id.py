@@ -117,9 +117,13 @@ def rig(monkeypatch):
 
 
 def _reading(**ids: str) -> dict[str, dict[str, str]]:
-    """One fleet reading: address -> the probe fields carrying that id."""
+    """One fleet reading: address -> the probe fields carrying that id, from a
+    loop on the torchmonarch this driver imported."""
+    import importlib.metadata
+
     address = {"a": ADDRESS_A, "b": ADDRESS_B}
-    return {address[key]: {"gen": value[:12], "proc_id": value}
+    monarch = importlib.metadata.version("torchmonarch")
+    return {address[key]: {"gen": value[:12], "proc_id": value, "monarch": monarch}
             for key, value in ids.items()}
 
 
@@ -221,6 +225,39 @@ def test_an_unknown_id_refuses_before_anything_dials_and_leaves_the_session_usab
     assert rig.dials == [[worker_proc_id.proc_addr(ADDRESS_A, ID_1)]]
 
 
+@pytest.mark.parametrize("monarch", ["0.0.1", "absent"])
+def test_a_loop_on_another_monarch_refuses_before_anything_dials_and_restarts_nothing(
+        rig, monkeypatch, monarch):
+    """The two Monarch versions checked against each other did not attach: the
+    config push waited out its whole budget twice, and auto-heal then restarted
+    healthy loops. The loop's record
+    names its version, so the driver refuses first, says why, keeps the
+    session usable and restarts nothing; with the versions equal it attaches."""
+    restarts: list[object] = []
+    monkeypatch.setattr(mesh_attach, "restart_after_failed_attach",
+                        lambda *args, **_kwargs: restarts.append(args) or True)
+    other = _reading(a=ID_1)
+    other[ADDRESS_A]["monarch"] = monarch
+    rig.readings.extend([other, _reading(a=ID_1)])
+    runtime = rig.build(["HOSTS"])
+    handoff = SimpleNamespace(transport_failure_safe=False)
+    with pytest.raises(worker_proc_id.WorkerProcIdError, match="no attach ran") as refused:
+        mesh_attach.attach_cluster(runtime, _config(ADDRESS_A, auto_heal=True), handoff)
+    text = str(refused.value)
+    assert f"h1 ({ADDRESS_A})" in text and "`dgxm restart`" in text
+    assert f"forward repair in {worker_proc_id.UPDATE_ENTRY}" in text
+    assert worker_proc_id.VERSION_ENTRY in text
+    assert ("runs torchmonarch 0.0.1 and this driver runs" in text if monarch == "0.0.1"
+            else "earlier release" in text)
+    assert rig.dials == [] and restarts == []
+    assert runtime["_TRANSPORT_POISON"] is None
+    assert handoff.transport_failure_safe is True
+    close = rig.log.traced("close")[0]
+    assert (close["outcome"], close["stage"]) == ("refused", "proc_id")
+    assert mesh_attach.attach_cluster(runtime, _config(ADDRESS_A), None) == "HOSTS"
+    assert rig.dials == [[worker_proc_id.proc_addr(ADDRESS_A, ID_1)]]
+
+
 def test_a_released_fleet_retries_once_when_a_loop_came_back_with_a_new_id(rig):
     """The loop restarted again between the read and the dial. The first
     attempt dialed the old id; the new one can still win, so the released
@@ -236,7 +273,7 @@ def test_a_released_fleet_retries_once_when_a_loop_came_back_with_a_new_id(rig):
 
 def test_a_released_fleet_whose_ids_held_still_fails_fast(rig):
     """Same id after the failed attempt: the loop did not move, so a second
-    dial cannot win (an outage longer than the delivery timeout)."""
+    dial cannot win (a lost config push, or an outage past the reconnect bound)."""
     rig.released.value = True
     rig.readings.append(_reading(a=ID_1))
     runtime = rig.build([RuntimeError("closed channel")])
@@ -314,11 +351,42 @@ def test_a_restarted_loop_the_prime_could_not_reach_is_named_in_a_warning(rig, m
     assert len(warned) == 1 and ADDRESS_A in warned[0] and worker_proc_id.ENTRY in warned[0]
 
 
-def test_the_released_message_names_the_delivery_timeout_fallback():
+def test_the_released_message_names_the_reconnect_bound_fallback():
     with pytest.raises(RuntimeError) as raised:
         mesh_attach.raise_released_attach(
             RuntimeError, [ADDRESS_A], TimeoutError(), auto_heal=False)
     text = str(raised.value)
     assert "no loop came back with a new id" in text
-    assert "delivery timeout" in text and "Restart ComfyUI" in text
+    assert "came back within a day" in text and "Restart ComfyUI" in text
+    assert "delivery timeout" not in text
     assert "cannot attach again" not in text
+
+
+@pytest.mark.parametrize("released", [False, True])
+def test_a_reread_that_finds_a_loop_on_another_monarch_refuses_and_restarts_nothing(
+        rig, monkeypatch, released):
+    """The first dial failed, and the reading after it found the loop restarted
+    on another torchmonarch. A second dial, a poisoned session or a restart of
+    that healthy loop cannot change its version, so the attach refuses as the
+    pre-dial gate does, and says the first attach ran."""
+    restarts: list[object] = []
+    monkeypatch.setattr(mesh_attach, "restart_after_failed_attach",
+                        lambda *args, **_kwargs: restarts.append(args) or True)
+    rig.released.value = released
+    moved = _reading(a=ID_2)
+    moved[ADDRESS_A]["monarch"] = "0.0.1"
+    rig.readings.extend([_reading(a=ID_1), moved])
+    first = RuntimeError("timeout")
+    runtime = rig.build([first])
+    handoff = SimpleNamespace(transport_failure_safe=False)
+    with pytest.raises(worker_proc_id.WorkerProcIdError) as refused:
+        mesh_attach.attach_cluster(runtime, _config(ADDRESS_A, auto_heal=True), handoff)
+    text = str(refused.value)
+    assert text.startswith("the first attach failed (RuntimeError('timeout')), and the id reading")
+    assert f"h1 ({ADDRESS_A}): its Worker loop runs torchmonarch 0.0.1" in text
+    assert "no attach ran" not in text and "stays usable" in text
+    assert refused.value.__cause__ is first
+    assert len(rig.dials) == 1 and rig.raised == [] and restarts == []
+    assert runtime["_TRANSPORT_POISON"] is None and handoff.transport_failure_safe is True
+    close = rig.log.traced("close")[0]
+    assert (close["outcome"], close["stage"]) == ("refused", "proc_id_reread")

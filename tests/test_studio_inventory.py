@@ -365,3 +365,38 @@ def test_memory_and_rail_conversions_and_display_boundary():
     assert freshness(100, 102) == "fresh"
     assert freshness(100, 104) == "stale"
     assert freshness(105, 104) == "unknown"
+
+
+_NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+                 "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen")
+
+
+def test_present_tense_counts_in_the_docs_come_from_the_inventory():
+    """README, STUDIO, STUDIO_ACCEPTANCE and DESIGN state today's counts.
+
+    Dated records keep the counts of the bundle they ran on; these sentences
+    describe the checkout, so the generated inventory sets them.
+    """
+    counts = INVENTORY["counts"]
+    cli = [row for row in INVENTORY["rows"] if row["kind"] in ("cli_command", "cli_option")]
+    waived = sum(row["interfaces"]["studio"]["status"] == "not_represented" for row in cli)
+    contract = json.loads((ROOT / "tests/node_input_contract.json").read_text())
+    unique_id = sum(any(name == "unique_id" for name, *_ in node.get("hidden", []))
+                    for node in contract.values())
+
+    def doc(name: str) -> str:
+        return " ".join((ROOT / name).read_text(encoding="utf-8").split())
+
+    readme, studio, acceptance, design = (doc(name) for name in (
+        "README.md", "docs/STUDIO.md", "docs/STUDIO_ACCEPTANCE.md", "docs/DESIGN.md"))
+    assert f"and {counts['workflow']} example workflows" in readme
+    assert f"Choose one of the {counts['workflow']} packaged workflows" in studio
+    assert (f"covers {counts['node']} node schemas, {counts['node_input']} declared inputs, "
+            f"{counts['workflow']} workflows") in acceptance
+    assert (f"map all {counts['panel_action']} panel handlers and {counts['tui_action']} "
+            "TUI bindings") in acceptance
+    assert f"All {counts['workflow']} bundled workflows inspect and compile" in acceptance
+    assert (f"All {len(cli)} CLI command/option rows are mapped: {len(cli) - waived} have "
+            f"explicit") in acceptance
+    assert f"the {waived} rows of `dgxm studio`" in acceptance
+    assert f"{_NUMBER_WORDS[unique_id].capitalize()} of the {counts['node']} nodes" in design

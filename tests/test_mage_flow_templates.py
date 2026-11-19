@@ -34,6 +34,8 @@ def test_native_mage_conditioning_feeds_both_branches_and_latent(edit, turbo):
     assert ("images.image_1" in cond) is edit
     if edit:
         assert cond["images.image_1"] == [nodes["LoadImage"][0], 0]
-    assert _literal_batches(graph) == [1]
+    # The shipped sampler takes the template's own loader's model.
+    loader_id, _ = nodes["DGXMonarchUNETLoader"]
+    assert _literal_batches(graph, loader_id) == [1]
     graph[cond_id]["inputs"]["batch_size"] = 2
-    assert _literal_batches(graph) == [2]
+    assert _literal_batches(graph, loader_id) == [2]

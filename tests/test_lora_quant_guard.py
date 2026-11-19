@@ -74,7 +74,8 @@ def test_the_refusal_names_the_classic_bake_and_the_entry_quotes_it_word_for_wor
         lora_quant_guard.assert_lora_quant_supported("moss_image", "int8", LORA)
     text = _class_p(caught.value)
     assert "under investigation" not in text
-    assert "dgx-monarch bakes the LoRA into the quantized weights as stock's classic loader does" in text
+    assert "dgx-monarch baked the LoRA into the quantized weights as stock's classic loader does" in text
+    assert "The Workers now bake stock's cast-time weight instead (#145)" in text
     assert "Render this graph in stock ComfyUI on one GPU instead, with its default DynamicVRAM loader" in text
     entry = TROUBLESHOOTING.read_text().split("\n## 129. ", 1)[1].split("\n## ", 1)[0]
     symptom = " ".join(entry.split("**Symptom:**", 1)[1].split("**Cause:**", 1)[0].split())

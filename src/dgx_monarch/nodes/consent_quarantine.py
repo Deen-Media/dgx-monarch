@@ -6,11 +6,19 @@ Context-scoped records expire for both readers when the gate protocol or
 package version changes. Older unscoped records retain their quarantine.
 
 A FAIL copied to an equivalent slab context applies only when the original
-cross-residency comparison failed.
+cross-residency comparison failed. Two INCONCLUSIVEs read through. A ceremony
+whose slab legs agreed and whose stock reference a typed class C capacity
+refusal kept from loading, with no LoRA stack, holds nothing against slab
+residency; it records the premise of a capacity rescue (docs/DESIGN.md, "Where
+the ceremony cannot help"). A gate that had nothing to compare (no LoRA stack,
+no slab residency) holds nothing against it either (``compared_nothing``); its
+row in an explicit-on sibling, a residency it never ran, of any build, never
+decides there, and beneath it only the copies other checks made there that
+read as a denial on their own under this build go (``_liftable``).
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,8 +38,9 @@ _RETESTING_REASON = (
     "until a terminal verdict is recorded; consent cannot enable slab residency"
 )
 _INCONCLUSIVE_REASON = (
-    "the identity gate was INCONCLUSIVE for these exact artifacts; only a later explicit "
-    "PASS can clear an earlier quarantine, so consent cannot enable slab residency"
+    "the identity gate was INCONCLUSIVE for these exact artifacts for a reason other "
+    "than a stock reference that cannot load, so consent cannot enable slab residency "
+    "until a later explicit PASS"
 )
 _CONTEXTLESS_TERMINAL_REASON = (
     "the newest matching identity-gate PASS has no capability context and is diagnostic-"
@@ -114,6 +123,49 @@ _UNKNOWN_UNBOUND = QuarantineDecision("unknown", _UNKNOWN_UNBOUND_REASON)
 _UNKNOWN_VERDICT = QuarantineDecision("unknown", _UNKNOWN_VERDICT_REASON)
 
 
+def stock_reference_unavailable(entry: Mapping[str, Any]) -> bool:
+    """Whether one INCONCLUSIVE row records only that stock residency cannot load.
+
+    Every clause is a fact the ceremony wrote: its slab legs agreed (a zero
+    latent difference), a typed class C capacity refusal kept the stock
+    reference from loading (``capacity_detail`` in the FSDP capacity stop's
+    vocabulary), no LoRA stack rode along and no lever was taken. A
+    same-residency divergence, an untyped refusal, a LoRA stack or a row from
+    before ``capacity_detail`` existed keeps the INCONCLUSIVE denial.
+    """
+    from ..fsdp_reload_price import CAPACITY_CROSS_MODE, classification_class
+
+    loras, diff = entry.get("loras"), entry.get("max_abs_latent_diff")
+    return (entry.get("verdict") == "INCONCLUSIVE"
+            and entry.get("cross_mode") == CAPACITY_CROSS_MODE
+            and type(loras) is int and loras == 0
+            and entry.get("quarantine_levers") == []
+            and type(diff) in (int, float) and diff == 0
+            and classification_class(entry.get("capacity_detail")) == "C")
+
+
+def compared_nothing(entry: Mapping[str, Any]) -> bool:
+    """Whether one INCONCLUSIVE row records only that its gate had nothing to compare.
+
+    The exercised row of a no-material verdict carries the kind, and the Fleet
+    and explicit-on slab rows the same ceremony wrote carry its revocation
+    marker (``gate_inconclusive.revocation_detail``). That ceremony ran no slab
+    residency and no LoRA stack, so the row holds nothing against a rescue: it
+    says less than no row at all, which reads clear. An explicit-on row never
+    reaches this: it never decides there, and the read looks beneath it
+    (``_scope_decision``). A row from before the marker, or from another
+    build, is not bound to this one and reads unknown as before.
+    """
+    from .gate_inconclusive import KIND_NO_MATERIAL, RESULT_KEY, REVOKED_BY_NO_MATERIAL
+
+    loras = entry.get("loras")
+    return (entry.get("verdict") == "INCONCLUSIVE"
+            and type(loras) is int and loras == 0
+            and entry.get("quarantine_levers") == []
+            and (entry.get(RESULT_KEY) == KIND_NO_MATERIAL
+                 or entry.get(REVOKED_BY_NO_MATERIAL) is True))
+
+
 def quarantine_query(combo_key_value: object, artifacts: Any,
                      capability_context: object = None) -> QuarantineQuery:
     """Normalize one consent/gate join without losing the legacy digest alias."""
@@ -184,6 +236,57 @@ def _fail_still_speaks(entry: dict[str, Any], scope: str | None,
             and entry.get("dgx_monarch") == version)
 
 
+def _sibling_revocation(entry: dict[str, Any]) -> bool:
+    """Whether one row is a no-material check's row, of any build, in an explicit-on sibling it never ran."""
+    from .gate_inconclusive import REVOKED_BY_NO_MATERIAL
+
+    return (entry.get("verdict") == "INCONCLUSIVE"
+            and entry.get("stamped") == _SLAB_EQUIVALENCE_STAMP
+            and entry.get(REVOKED_BY_NO_MATERIAL) is True)
+
+
+_TERMINAL = frozenset({"PASS", "FAIL", "INCONCLUSIVE"})
+
+
+def _liftable(line: int, entry: dict[str, Any], closed: dict[tuple[object, object], int],
+              scope: str | None, retests: dict[int, dict[str, Any]], source: str | None,
+              protocol: int, version: str) -> bool:
+    """Whether a check that compared nothing takes this row out from beneath its own.
+
+    Only a row another check copied here (``_copied_here``): one that, read
+    alone under this build, is a denial, or a guard that a later terminal row
+    of the guard's own version, whatever source wrote it, closed here (the row
+    that closed it goes only as a liftable copy itself). ``closed`` holds the
+    newest terminal line of each (protocol, version) among the rows this scope
+    reads, so a FAIL that no longer reads closes nothing.
+    """
+    if not _copied_here(entry, scope, retests):
+        return False
+    pair = (entry.get("gate_protocol"), entry.get("dgx_monarch"))
+    if entry.get("verdict") == "RETESTING" and pair in closed and closed[pair] > line:
+        return True
+    return _scope_decision([(line, entry)], 0, scope, source, protocol, version).state == "denied"
+
+
+def _copied_here(entry: dict[str, Any], scope: str | None,
+                 retests: dict[int, dict[str, Any]]) -> bool:
+    """Whether one row speaks for this context only as a sibling of the context its check ran.
+
+    Such a row is a verdict stamped by slab-mode equivalence, the RETESTING row
+    of a ceremony that names this context among its siblings, or the row
+    ``dgxm gate --repair`` closed that RETESTING row with. A ceremony opens its
+    retest with its own context first, its Fleet context second and its
+    siblings after (``gate_ceremony``), so a sibling is any later place.
+    """
+    if entry.get("stamped") == _SLAB_EQUIVALENCE_STAMP:
+        return True
+    repaired = entry.get("repaired_from_line")
+    guard = (entry if entry.get("verdict") == "RETESTING"
+             else retests.get(repaired) if type(repaired) is int else None)
+    blocked = (guard or {}).get("blocked_contexts")
+    return isinstance(blocked, list) and scope in blocked and blocked.index(scope) >= 2
+
+
 def _scope_decision(rows: Sequence[tuple[int, dict[str, Any]]], damage: int,
                     scope: str | None, source: str | None, protocol: int,
                     version: str) -> QuarantineDecision:
@@ -192,6 +295,18 @@ def _scope_decision(rows: Sequence[tuple[int, dict[str, Any]]], damage: int,
     rows = [(line, entry) for line, entry in rows
             if entry.get("verdict") != "FAIL"
             or _fail_still_speaks(entry, scope, protocol, version)]
+    if rows and _sibling_revocation(rows[-1][1]):
+        # A check that compared nothing on the auto graph never ran this sibling. Its row,
+        # of any build, never decides here and never hides what is under it, nor does any
+        # older such row; beneath them the liftable copies go too (``_liftable``). Nothing
+        # else is taken out: a row a check that ran here left, a stamped PASS, a copy that
+        # reads clear and every other row of another build read by the rules below.
+        retests = {line: entry for line, entry in rows if entry.get("verdict") == "RETESTING"}
+        closed = {(entry.get("gate_protocol"), entry.get("dgx_monarch")): line  # in ledger order: newest wins
+                  for line, entry in rows if entry.get("verdict") in _TERMINAL}
+        rows = [(line, entry) for line, entry in rows[:-1]
+                if not _sibling_revocation(entry)
+                and not _liftable(line, entry, closed, scope, retests, source, protocol, version)]
     if not rows:
         # No matching row, so nothing here is above one.
         return _UNKNOWN_UNSCOPED_DAMAGE if damage else _CLEAR
@@ -221,7 +336,8 @@ def _scope_decision(rows: Sequence[tuple[int, dict[str, Any]]], damage: int,
     if verdict == "RETESTING":
         return _RETESTING
     if verdict == "INCONCLUSIVE":
-        return _INCONCLUSIVE
+        return (_CLEAR if stock_reference_unavailable(latest) or compared_nothing(latest)
+                else _INCONCLUSIVE)
     if verdict != "PASS":
         return _UNKNOWN_VERDICT
     return _CLEAR
@@ -301,6 +417,44 @@ def quarantine_decisions(
                                      if item.state == "denied"), None)
                             or unknown or _CLEAR)
     return decisions
+
+
+def capacity_query(kind: object, combo_key: object, artifacts: object,
+                   artifacts_legacy: object, legacy_complete: object,
+                   capability_context: object) -> QuarantineQuery | None:
+    """The query one class C card or memo is read under; None for another class.
+
+    None for an action kind too: its accept bypasses no guard, so no
+    quarantine can stand in its way (consent_kinds.KindSpec.action).
+    """
+    from .. import consent_pending
+    from ..gate_ledger import ArtifactSetSignature
+
+    spec = consent_pending.KIND_SPECS.get(str(kind or ""))
+    if spec is None or spec.refusal_class != "C" or spec.action:
+        return None
+    if (not isinstance(artifacts, str) or not artifacts
+            or not isinstance(artifacts_legacy, str) or not artifacts_legacy
+            or not isinstance(legacy_complete, bool)):
+        return quarantine_query("", "")
+    signature = ArtifactSetSignature(artifacts, artifacts_legacy, legacy_complete)
+    return quarantine_query(combo_key, signature, capability_context)
+
+
+def offer_decisions(asks: Sequence[tuple[QuarantineQuery, QuarantineQuery | None]],
+                    ) -> list[QuarantineDecision]:
+    """Decide each query, asking an ``unknown`` again under its fallback scope.
+
+    The order ``quarantine_decision_for_load`` reads in, so the panel lists and
+    accepts a card on the evidence the refusal that raised it was offered on.
+    At most two ledger scans for the whole batch.
+    """
+    first = quarantine_decisions(tuple({query for query, _fallback in asks}))
+    retry = {fallback for query, fallback in asks
+             if fallback is not None and first[query].state == "unknown"}
+    second = quarantine_decisions(tuple(retry)) if retry else {}
+    return [second[fallback] if fallback in second and first[query].state == "unknown"
+            else first[query] for query, fallback in asks]
 
 
 def quarantine_decision(combo_key_value: object, artifacts: Any,

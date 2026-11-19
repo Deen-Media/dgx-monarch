@@ -12,8 +12,18 @@
   import { exportJSON } from '../files';
   import { checkImportFile, checkRequestBody, type StudioClient } from '../api';
   import { filterKeyAction, loadWorkflow, workflowChoices, workflowTitle } from '../workflowChoice';
+  import { operationChoices, outputSummary, workflowTraits } from '../workflowTraits';
+  import { editImageNeed } from '../editHandoff';
+  import { durationGroups, inputMetadata, synchronized } from '../frameCounts';
+  import { fieldIssues, inspectionIssues, summaryIssues } from '../fieldIssues';
+  import { followIssues, type IssueRefresh } from '../issueRefresh';
+  import { presentFields } from '../fieldPresentation';
+  import { footerRoom } from '../footerRoom';
   import AssetEditor from '../components/AssetEditor.svelte';
+  import DurationControl from '../components/DurationControl.svelte';
   import Field from '../components/Field.svelte';
+  import InputLineage from '../components/InputLineage.svelte';
+  import IssueSummary from '../components/IssueSummary.svelte';
   import LoraStack from '../components/LoraStack.svelte';
   import PromptStyles from '../components/PromptStyles.svelte';
   import WorkflowLayout from '../components/WorkflowLayout.svelte';
@@ -33,12 +43,14 @@
     busy,
     pending,
     driverState,
+    confirmation = '',
     changeDraft,
     inspect,
     fail,
     undo,
     prepareJob,
     rebind,
+    issueRefresh,
     catalogError = '',
     refreshCatalog,
     workflowQuery = $bindable(''),
@@ -59,23 +71,40 @@
     busy: boolean;
     pending: boolean;
     driverState?: string;
+    /** The brief line after an accepted submit, or ''. */
+    confirmation?: string;
     changeDraft: ChangeDraft;
     inspect: InspectWorkflow;
     fail: ReportError;
     undo: () => void;
-    prepareJob: () => Promise<void>;
+    /** Generate starts a valid job at once; with `review` true it opens Review settings first. */
+    prepareJob: (review?: boolean) => Promise<void>;
     /** Apply values that change a dynamic choice and rebuild the bindings from them. */
     rebind: (values: Draft['values']) => Promise<void>;
+    /** App's inspection guard and the way to show a fresh inspection's issues and connections. */
+    issueRefresh?: IssueRefresh;
     catalogError?: string;
     refreshCatalog: () => Promise<void>;
     /** The workflow filter's text; it starts empty on each mount unless a parent binds it. */
     workflowQuery?: string;
   } = $props();
-  let fieldErrors = $derived(
-    bindings
-      .filter((b) => b.resolved !== false)
-      .map((b) => bindingError(b, draft.values[b.id]))
-      .filter(Boolean),
+  // Prompt and Negative prompt where the roles are known; other text boxes name their node.
+  let names = $derived(presentFields(draft, bindings, catalog.object_info));
+  // A field the draft cannot submit keeps Generate off; the summary names it, by the name the
+  // field shows, its node when another field shows that name too, and why.
+  let invalid = $derived(fieldIssues(bindings, draft.values, draft.workflow, names));
+  let issues = $derived(
+    summaryIssues(invalid, inspectionIssues(bindingErrors, bindings, draft.workflow, names)),
+  );
+  // An edit can resolve a workflow issue, so Create checks the draft again once edits settle.
+  let checking = $state(false);
+  $effect(() =>
+    followIssues(
+      issueRefresh,
+      bindingErrors,
+      { client: () => client, draft: () => draft },
+      (on) => (checking = on),
+    ),
   );
   let visibleBindings = $derived(
     (controlTab === 'advanced'
@@ -83,10 +112,38 @@
       : bindings.filter((b) => b.prominent || b.display?.prominent)
     ).sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0)),
   );
-  // Under Random the companion replaces every seed input at review and shows the seeds it chose.
+  // What the graph loads, makes and saves decides the operations it offers and the output it
+  // names. Until an inspection lists its inputs, nothing is known and every operation stays.
+  let traits = $derived(
+    draft.workflow && bindings.length
+      ? workflowTraits(draft.workflow, bindings, draft.values, catalog.object_info)
+      : null,
+  );
+  let operations = $derived(operationChoices(traits, draft.operation));
+  let operationNeed = $derived(operations.find((o) => o.id === draft.operation)?.need ?? null);
+  let metadata = $derived(inputMetadata(draft.workflow, bindings, catalog.object_info));
+  let durations = $derived(
+    durationGroups(draft.workflow, bindings, catalog.object_info).filter(synchronized),
+  );
+  // Duration follows the last size field it shows, or ends the list when none shows.
+  let durationAnchor = $derived(
+    [...visibleBindings].reverse().find((b) => ['width', 'height'].includes(b.input_name ?? ''))
+      ?.id ?? '',
+  );
+  // Under Random the companion replaces every seed input for each job and records the seeds.
   let randomSeeds = $derived(draft.seed_policy === 'random');
-  // Nothing accepts a connection at the driver origin, so a review could not be queued.
+  // A valid seed field then reads Random each run; one Studio cannot submit stays open to repair.
+  const seedLocked = (binding: Binding) =>
+    randomSeeds && isSeedBinding(binding) && !bindingError(binding, draft.values[binding.id]);
+  // Nothing accepts a connection at the driver origin, so a job could not be queued.
   let stopped = $derived(driverState === NOT_RUNNING);
+  // Under Edit, the image input that Send to edit fills must hold an image the driver offers.
+  let editNeed = $derived(editImageNeed(draft, bindings, catalog.object_info));
+  let generateOff = $derived(
+    busy || !draft.workflow || !!invalid.length || pending || stopped || !!editNeed,
+  );
+  // The footer names the issues under Generate unless the driver or a submit line takes the place.
+  let summarized = $derived(!stopped && !confirmation && issues.length > 0);
   // The template being inspected shows until the inspection ends; then the draft's own.
   let choosing = $state('');
   $effect(() => {
@@ -167,7 +224,9 @@
     >{#each choices.options as w (w.id)}<option value={w.id} title={w.name}
         >{workflowTitle(w)}</option
       >{/each}</select
-  >{#if chosen}<small class="workflow-file mono">{chosen.name}</small>{/if}
+  >{#if chosen}<small class="workflow-file mono">{chosen.name}</small>{/if}{#if traits}<small
+      class="workflow-output">Output: {outputSummary(traits)}</small
+    >{/if}
   <div class="workflow-actions">
     <label class="button import-label"
       >Import JSON<input
@@ -190,15 +249,14 @@
   </div>
   <div class="input-row">
     <div>
-      <label for="generation-operation">Operation</label><select
+      <label for="generation-operation">Job category</label><select
         id="generation-operation"
         value={draft.operation}
+        aria-describedby={operationNeed ? 'operation-note operation-need' : 'operation-note'}
         onchange={(e) => changeDraft({ operation: e.currentTarget.value })}
-        ><option value="image">Image</option><option value="video">Video</option><option
-          value="edit">Edit</option
-        ><option value="upscale">Upscale</option><option value="workflow">Workflow</option><option
-          value="fleet">Fleet</option
-        ></select
+        >{#each operations as operation (operation.id)}<option value={operation.id}
+            >{operation.label}{operation.need ? ' (not supported)' : ''}</option
+          >{/each}</select
       >
     </div>
     <div>
@@ -211,9 +269,13 @@
       >
     </div>
   </div>
-  <small class="seed-policy-note" id="seed-policy-note"
+  <small class="operation-note" id="operation-note"
+    >Labels the job; the workflow decides what runs.</small
+  >{#if operationNeed}<small class="warning operation-need" id="operation-need"
+      >{operationNeed}</small
+    >{/if}<small class="seed-policy-note" id="seed-policy-note"
     >{randomSeeds
-      ? 'Random: review chooses new seeds and shows them before you submit.'
+      ? 'Random: each job gets new seeds. Review settings shows them before it starts.'
       : 'Fixed: jobs use the seed fields as they are.'}</small
   >
   <div class="tabs" aria-label="Generation sections">
@@ -235,25 +297,41 @@
       {#if controlTab === 'inputs' && draft.workflow && !visibleBindings.length}<p class="muted">
           No prominent inputs configured. Use All inputs or customize Layout.
         </p>{/if}
+      {#snippet durationControls()}{#each durations as group (group.key)}<DurationControl
+            {group}
+            values={draft.values}
+            onchange={(values) => changeDraft({ values })}
+          />{/each}{/snippet}
       {#each visibleBindings as binding (binding.id)}<Field
           {binding}
           value={draft.values[binding.id]}
-          note={randomSeeds && isSeedBinding(binding)
-            ? 'Chosen at review: the Random policy replaces this value.'
-            : ''}
+          meta={metadata[binding.id]}
+          presentation={names.get(binding.id)}
+          compact={controlTab === 'inputs'}
+          locked={seedLocked(binding) ? 'Random each run' : ''}
+          note={seedLocked(binding)
+            ? 'Choose the Fixed seed policy to set this seed.'
+            : randomSeeds && isSeedBinding(binding)
+              ? 'Chosen for each job: the Random policy replaces this value.'
+              : ''}
           onchange={(value) => fieldChange(binding, value)}
-        />{/each}
-      {#if bindingErrors.length}<div class="validation-list" role="alert">
+        />{#if binding.id === durationAnchor}{@render durationControls()}{/if}{/each}
+      {#if draft.workflow && !durationAnchor}{@render durationControls()}{/if}
+      {#if bindingErrors.length}<div
+          class="validation-list"
+          role="alert"
+          id="inspection-issues"
+          tabindex="-1"
+        >
           <h3>Workflow needs attention</h3>
+          {#if checking}<p class="muted">Checking these issues again after your edit.</p>{/if}
           {#each bindingErrors as issue}<p>{issue}</p>{/each}
         </div>{/if}
       <PromptStyles {draft} {bindings} {changeDraft} />
-      {#if draft.parent_artifact_ids.length}<div class="surface">
-          <h3>Input lineage</h3>
-          <p class="mono">{draft.parent_artifact_ids.join(', ')}</p>
-          <small>Lineage records ancestry. Workflow asset controls specify the actual input.</small
-          ><button onclick={() => changeDraft({ parent_artifact_ids: [] })}>Clear lineage</button>
-        </div>{/if}
+      {#if draft.parent_artifact_ids.length}<InputLineage
+          ids={draft.parent_artifact_ids}
+          clear={() => changeDraft({ parent_artifact_ids: [] })}
+        />{/if}
     {:else if controlTab === 'assets'}<AssetEditor
         {client}
         {draft}
@@ -276,24 +354,39 @@
       />
     {/if}
   </div>
-  <div class="submission-footer">
+  <div class="submission-footer" use:footerRoom>
     <div class="target-line">
       <span class="status-dot" class:healthy={driverState === 'connected'}></span><span
         >Driver {driverState ?? 'unknown'}</span
       ><span class="muted">Backend admission</span>
     </div>
-    <button
-      class="primary generate"
-      onclick={prepareJob}
-      disabled={busy || !draft.workflow || !!fieldErrors.length || pending || stopped}
-      >Review generation <span>↗</span></button
-    >{#if stopped}<small class="warning"
-        >Start the driver first; see Driver not running above.</small
-      >{:else if fieldErrors.length || bindingErrors.length}<small class="warning"
-        >{fieldErrors.length
-          ? `Resolve ${fieldErrors.length} field issue(s).`
-          : 'Workflow inspection reported issues. Review revalidates the edited inputs.'}</small
-      >{:else if !draft.workflow}<small>Choose or import a workflow to continue.</small
-      >{:else}<small>Review effective settings and warnings before submitting.</small>{/if}
+    <div class="generate-actions">
+      <button
+        class="review-settings"
+        onclick={() => prepareJob(true)}
+        disabled={generateOff}
+        aria-describedby={summarized ? 'generate-issues' : undefined}>Review settings</button
+      ><button
+        class="primary generate"
+        onclick={() => prepareJob()}
+        disabled={generateOff}
+        aria-describedby={summarized ? 'generate-issues' : undefined}
+        >Generate <span>↗</span></button
+      >
+    </div>
+    {#if stopped}<small class="warning">Start the driver first; see Driver not running above.</small
+      >{:else if confirmation}<small class="submit-confirmation" aria-hidden="true"
+        >{confirmation}</small
+      >{:else if editNeed}<small class="warning">{editNeed}</small
+      >{:else if summarized}<IssueSummary
+        {issues}
+        blocking={invalid.length}
+        {checking}
+        bind:controlTab
+      />{:else if !draft.workflow}<small>Choose or import a workflow to continue.</small
+      >{:else}<small
+        >Generate checks the draft and starts the job. Review settings shows it first.</small
+      >{/if}
+    <span class="sr-only" role="status">{confirmation}</span>
   </div>
 </aside>

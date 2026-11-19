@@ -24,14 +24,22 @@ def main() -> None:
     import av
     import folder_paths
     import torch
-    from benchmark.sweep.convert import convert, repo_widget_names
+    from benchmark.sweep.convert import convert, object_info_widget_names, repo_widget_names
     from comfy_api.latest import _io
     from comfy_extras.nodes_video import CreateVideo, SaveVideo
+
+    from dgx_monarch import stock_widget_drift
 
     template = REPO / "example_workflows/dgx-monarch-minimax-h3-mp4.json"
     graph = convert(json.loads(template.read_text()), repo_widget_names())
     inputs = {node["class_type"]: dict(node["inputs"]) for node in graph.values()}
-    create = inputs["CreateVideo"]
+    # The template follows master. A ComfyUI without one of Create Video's
+    # newer widgets drops it at its template value, as its executor drops an
+    # input the node does not declare (dgx_monarch/stock_widget_drift.py).
+    declared = object_info_widget_names(CreateVideo.INPUT_TYPES())
+    absent = stock_widget_drift.missing("CreateVideo", declared)
+    create = stock_widget_drift.without_defaults(inputs["CreateVideo"], absent)
+    assert set(create) - {"images", "audio"} <= set(declared), (sorted(create), declared)
     create["images"] = torch.linspace(0, 1, 24 * 32 * 32 * 3).reshape(24, 32, 32, 3)
     tone = torch.sin(torch.arange(48000) * (2 * torch.pi * 440 / 48000)) * 0.1
     create["audio"] = {"waveform": tone.reshape(1, 1, -1), "sample_rate": 48000}

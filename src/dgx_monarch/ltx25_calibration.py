@@ -48,9 +48,11 @@ _LTX_BF16_BYTES = 2
 # SHIPPED: block factor 27, which is 221,184 B and 1.26x the fitted sharded
 # term. Against the measured per-rank non-weight footprint (floor plus
 # activations) the whole charge is 1.18x at M1 and 1.17x at M2. Never borrow
-# the H3 slope here: the H3 block factor at LTX's width, 96 x 4096 x 2 =
-# 786,432 B a row, is 2.7x the measured cost and would refuse shapes this
-# hardware completes.
+# the H3 slope here: when this was fitted the H3 block factor at LTX's width,
+# 96 x 4096 x 2 = 786,432 B a row, was 2.7x the measured cost and would refuse
+# shapes this hardware completes. The H3 refits since moved it on H3's own
+# evidence, to 59 on 2026-10-29 and 12 on 2026-10-31, which gives 98,304 B,
+# 0.34x; the two factors stay fitted apart.
 #
 # VERDICTS this calibration is pinned to (tests/test_ltx25_activation_preflight):
 #   * every measured pass fits, at its own recorded MemAvailable: Config A and

@@ -5,6 +5,11 @@ parent loss. Lease expiry is armed only by a positive client renewal. Parent
 loss is armed when the watcher binds, including before the first lease, but a
 held lease outranks it. A non-positive renewal disables both triggers.
 
+The tick that returns a verdict is the terminal point. A renewal or a cancel
+that arrives after it, before the exit, changes nothing: by then the client
+has been silent past the grace that token authority and peer cleanup count on,
+so they may already treat this actor as gone.
+
 Grace values keep self-exit after teardown token authority and Monarch's own
 reapers. A wedged dispatch loop stops answering the plain renewal endpoint and
 therefore exits even while the client remains live. This stdlib-only leaf loads
@@ -69,6 +74,8 @@ class ActorLifetime:
         self._armed = False
         self._disabled = False
         self._fired = False
+        # The verdict a tick returned; set once, under the lock, never cleared.
+        self._claimed: Verdict | None = None
 
     @property
     def armed(self) -> bool:
@@ -100,7 +107,8 @@ class ActorLifetime:
         """Extend (or, at ``lease_s <= 0``, cancel) this process's lease.
 
         Invalid or non-positive values disable both triggers until a positive
-        lease arrives. Positive values are clamped to the safe range.
+        lease arrives. Positive values are clamped to the safe range. After a
+        tick has returned a verdict, a renewal is ignored (module docstring).
         """
         moment = self._clock() if now is None else float(now)
         try:
@@ -108,7 +116,7 @@ class ActorLifetime:
         except (TypeError, ValueError):
             lease = 0.0
         with self._lock:
-            if self._fired:
+            if self._fired or self._claimed is not None:
                 return
             if not math.isfinite(lease) or lease <= 0.0:
                 self._disabled = True
@@ -124,37 +132,47 @@ class ActorLifetime:
     def observe(
         self, *, now: float | None = None, ppid: int | None = None
     ) -> Verdict | None:
-        """One tick. Returns the verdict to act on, or None to keep living."""
+        """One tick. Returns the verdict to act on, or None to keep living.
+
+        A verdict is claimed under the same lock that renewals take, so the
+        claim is the terminal point, and later ticks repeat it until the exit.
+        """
         moment = self._clock() if now is None else float(now)
         parent = self._getppid() if ppid is None else int(ppid)
         with self._lock:
             if self._fired:
                 return None
-            if self._parent_pid is None:
-                self._parent_pid = parent
-            if self._disabled:
-                return None
-            # Reparenting is monotonic, so latch its first observation.
-            if parent != self._parent_pid and self._parent_lost_at is None:
-                self._parent_lost_at = moment
-            lease_held = (
-                self._armed
-                and self._deadline is not None
-                and moment < self._deadline
-            )
-            lost_at = self._parent_lost_at
-            if (lost_at is not None
-                    and moment - lost_at >= PARENT_LOSS_GRACE_S
-                    and not lease_held):
-                return Verdict(
-                    PARENT_LOSS,
-                    f"spawning process {self._parent_pid} gone for "
-                    f"{moment - lost_at:.0f}s",
-                )
-            if self._armed and self._deadline is not None and moment >= self._deadline:
-                silence = moment - (self._last_renew if self._last_renew is not None else moment)
-                return Verdict(LEASE_EXPIRY, f"no client lease for {silence:.0f}s")
+            if self._claimed is None:
+                self._claimed = self._verdict(moment, parent)
+            return self._claimed
+
+    def _verdict(self, moment: float, parent: int) -> Verdict | None:
+        """The tick's decision; the caller holds the lock."""
+        if self._parent_pid is None:
+            self._parent_pid = parent
+        if self._disabled:
             return None
+        # Reparenting is monotonic, so latch its first observation.
+        if parent != self._parent_pid and self._parent_lost_at is None:
+            self._parent_lost_at = moment
+        lease_held = (
+            self._armed
+            and self._deadline is not None
+            and moment < self._deadline
+        )
+        lost_at = self._parent_lost_at
+        if (lost_at is not None
+                and moment - lost_at >= PARENT_LOSS_GRACE_S
+                and not lease_held):
+            return Verdict(
+                PARENT_LOSS,
+                f"spawning process {self._parent_pid} gone for "
+                f"{moment - lost_at:.0f}s",
+            )
+        if self._armed and self._deadline is not None and moment >= self._deadline:
+            silence = moment - (self._last_renew if self._last_renew is not None else moment)
+            return Verdict(LEASE_EXPIRY, f"no client lease for {silence:.0f}s")
+        return None
 
     def fire(
         self,

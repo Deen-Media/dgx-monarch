@@ -21,7 +21,7 @@ jobs:
         python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
       - name: Leak assertion (tracked working tree)
@@ -46,15 +46,14 @@ jobs:
           # CPU-only torch lacks CUDA device guards needed by FakeTensorMode tests.
           # Use the validated production build; hosted runners still do no GPU work.
           pip install --no-cache-dir torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132
-          mkdir -p xfuser-compat-wheels
-          python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
+          # pip takes stock xfuser 0.8.0 from the index; the constraint holds torch to the build above.
           torch_dist_version="$(python -c 'from importlib.metadata import version; print(version("torch"))')"
-          printf 'torch==%s\n' "$torch_dist_version" > xfuser-compat-wheels/torch-constraint.txt
-          pip install --find-links xfuser-compat-wheels \
-            --constraint xfuser-compat-wheels/torch-constraint.txt \
+          printf 'torch==%s\n' "$torch_dist_version" > "$RUNNER_TEMP/torch-constraint.txt"
+          pip install --constraint "$RUNNER_TEMP/torch-constraint.txt" \
             -e .[dev] --no-build-isolation
           python tools/check_dependencies.py
           python -c 'import torch; actual = (torch.__version__, torch.version.cuda, torch.cuda.is_available()); assert actual == ("2.12.0+cu132", "13.2", False), actual'
+          python -c 'from importlib.metadata import version; actual = version("xfuser"); assert actual == "0.8.0", actual'
       - name: ruff
         run: ruff check __init__.py src tests benchmark tools studio/tests
       - name: Trust citations
@@ -62,16 +61,8 @@ jobs:
       - name: Protected test inventory
         run: python tools/check_protected_tests.py --check
       - name: Refusal ledger is current
-        run: |
-          ledger=tests/refusal_class_ledger.json
-          saved="$RUNNER_TEMP/refusal_class_ledger.json"
-          cp "$ledger" "$saved"
-          trap 'cp "$saved" "$ledger"' EXIT
-          PYTHONPATH=src python tests/test_refusal_classes.py --write
-          if ! cmp --silent "$saved" "$ledger"; then
-            diff -u "$saved" "$ledger"
-            exit 1
-          fi
+        # The check mode compares in memory and writes nothing; scripts/test_cpu.sh runs the same command.
+        run: PYTHONPATH=src python tests/test_refusal_classes.py --check
       - name: mypy (full package)
         run: |
           # The dev extra does not pin mypy, so print the version this run uses.
@@ -197,21 +188,22 @@ jobs:
               "tests/test_leak_check.py",
               "tests/test_node_contract.py",
               "tools/gen_templates.py",
-              "tools/build_xfuser_compat_wheel.py",
               "tools/check_dgx_monarch_segments.mjs",
               "tools/leak_allowlist.toml",
               "tools/leak_check.py",
               "tests/canary/bake_equivalence_canary.py",
+              "tests/canary/canary_sessions.py",
               "tests/canary/comfy_entrypoint_canary.py",
               "tests/canary/comfy_seam_contracts.py",
               "tests/canary/import_canary.py",
               "tests/canary/monarch_surface_canary.py",
               "tests/canary/monarch_cpu_smoke.py",
+              "tests/canary/monarch_lost_rank_smoke.py",
               "tests/canary/slab_hook_canary.py",
               "tests/canary/template_widget_canary.py",
               "tests/canary/video_export_canary.py",
               "tests/canary/xfuser_import_surface.py",
-              "tests/fixtures/torchmonarch_pin_0_7_0.json",
+              "tests/fixtures/torchmonarch_pin_0_8_0.json",
               "tests/fixtures/workflows/krea2_uly2_api.json",
               "tests/fixtures/workflows/minimax_h3_t2va_uly2_api.json",
               "tests/fixtures/workflows/wandancer_global_local_uly2_api.json",
@@ -231,11 +223,13 @@ jobs:
           canary_members = {name for name in members if name.startswith("tests/canary/")}
           expected_canaries = {
               "tests/canary/bake_equivalence_canary.py",
+              "tests/canary/canary_sessions.py",
               "tests/canary/comfy_entrypoint_canary.py",
               "tests/canary/comfy_seam_contracts.py",
               "tests/canary/import_canary.py",
               "tests/canary/monarch_surface_canary.py",
               "tests/canary/monarch_cpu_smoke.py",
+              "tests/canary/monarch_lost_rank_smoke.py",
               "tests/canary/slab_hook_canary.py",
               "tests/canary/template_widget_canary.py",
               "tests/canary/video_export_canary.py",
@@ -348,7 +342,7 @@ jobs:
         python: ["3.12"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
       - name: Leak assertion (tracked working tree)
@@ -373,14 +367,13 @@ jobs:
           # CPU-only torch lacks CUDA device guards needed by FakeTensorMode tests.
           # Use the validated production build; hosted runners still do no GPU work.
           pip install --no-cache-dir torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132
-          mkdir -p xfuser-compat-wheels
-          python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
+          # pip takes stock xfuser 0.8.0 from the index; the constraint holds torch to the build above.
           torch_dist_version="$(python -c 'from importlib.metadata import version; print(version("torch"))')"
-          printf 'torch==%s\n' "$torch_dist_version" > xfuser-compat-wheels/torch-constraint.txt
-          pip install --find-links xfuser-compat-wheels \
-            --constraint xfuser-compat-wheels/torch-constraint.txt \
+          printf 'torch==%s\n' "$torch_dist_version" > "$RUNNER_TEMP/torch-constraint.txt"
+          pip install --constraint "$RUNNER_TEMP/torch-constraint.txt" \
             -e .[dev] --no-build-isolation
           python tools/check_dependencies.py
           python -c 'import torch; actual = (torch.__version__, torch.version.cuda, torch.cuda.is_available()); assert actual == ("2.12.0+cu132", "13.2", False), actual'
+          python -c 'from importlib.metadata import version; actual = version("xfuser"); assert actual == "0.8.0", actual'
       - name: pytest (no-GPU unit suite)
         run: bash scripts/test_cpu.sh

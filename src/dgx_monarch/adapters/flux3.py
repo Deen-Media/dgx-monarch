@@ -33,7 +33,7 @@ from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from .attention_patches import assert_usp_attention_patches_safe
 from .base import Adapter, InjectionContext, UnsupportedModelError, sp_gather, usp_options
-from .flux3_adaln_parity import bind_adaln_parity
+from .flux3_adaln_parity import bind_adaln_parity, loads_norm_global
 from .flux3_packing import (
     assert_joint_layout,
     joint_pad_count,
@@ -71,6 +71,30 @@ def _normal(value):
     if isinstance(value, list):
         return [_normal(item) for item in value]
     return value
+
+
+def refuse_unroutable_blocks(blocks) -> None:
+    """Refuse a sharded render whose blocks the fused-norm parity route cannot bind.
+
+    The route is what makes each rank's piece of a span round as stock's call
+    for the whole span does. A stock ``Block.forward`` that no longer reads
+    its ``modulated_norm`` global is a block ComfyUI changed, and nobody has
+    measured what the sharded forward computes on it, so the render refuses
+    at inject on every rank, before any block is bound, as MOSS-Image refuses
+    a tree it does not recognize.
+    """
+    changed = sorted({type(block).__name__ for block in blocks
+                      if not loads_norm_global(type(block).forward)})
+    if changed:
+        raise UnsupportedModelError(refusal(
+            RefusalClass.PHYSICS,
+            f"flux3: this ComfyUI's {', '.join(changed)}.forward no longer reads its "
+            "modulated_norm global, so the fused-norm parity route cannot bind and the "
+            "sharded forward cannot show that it computes what one GPU computes. Use a "
+            "topology without sequence parallelism, such as 'single' (mode=local with "
+            "gpus_per_host=1), or a dgx-monarch release that supports this ComfyUI "
+            "(docs/TROUBLESHOOTING.md #121).",
+        ))
 
 
 class Flux3Adapter(Adapter):
@@ -134,6 +158,8 @@ class Flux3Adapter(Adapter):
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         attn = ctx.usp_attention
         refuse_indivisible_heads(diffusion_model.single_blocks[0].num_heads, ulysses_degree())
+        sharded = [*diffusion_model.content_mode_blocks["image"], *diffusion_model.single_blocks]
+        refuse_unroutable_blocks(sharded)
 
         def usp_forward(self, x, timestep, context=None, ref_latents=None,
                         transformer_options={}, txt_states=None, ref_states=None,
@@ -214,13 +240,8 @@ class Flux3Adapter(Adapter):
             bind_stock_attention(block, "flux3 text early block attention")
         for block in diffusion_model.content_mode_blocks["image_cond"]:
             bind_stock_attention(block, "flux3 reference early block attention")
-        # Bind every block first; all() over a generator would stop at the first miss.
-        sharded = [*diffusion_model.content_mode_blocks["image"], *diffusion_model.single_blocks]
-        routable = [bind_adaln_parity(block) for block in sharded]
-        if not all(routable):
-            log.warning("flux3: stock Block.forward reads no modulated_norm global, so "
-                        "the fused-norm parity route is off and a sharded render can "
-                        "differ from one GPU by a few bf16 steps (docs/ADAPTERS.md)")
+        for block in sharded:  # refuse_unroutable_blocks has proven each one routable
+            bind_adaln_parity(block)
         self.bind(diffusion_model, "_forward", usp_forward)
         log.info("flux3 USP injected: %d image blocks, %d single blocks, sp=%d",
                  len(diffusion_model.content_mode_blocks["image"]),

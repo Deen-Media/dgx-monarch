@@ -239,9 +239,11 @@ def drive(monkeypatch, text_rows, grid, refs=(), *, world, pure_ulysses, batch=1
         thread.start()
     for thread in threads:
         thread.join(timeout=90)
-    for error in errors:
-        if error is not None:
-            raise error
+    # The rank that failed first carries the cause; a peer its abort released
+    # only saw the broken barrier, so that error never stands in for the cause.
+    failed = [error for error in errors if error is not None]
+    for error in sorted(failed, key=lambda error: isinstance(error, threading.BrokenBarrierError)):
+        raise error
     harness.models = models
     return outputs, harness
 
@@ -335,6 +337,28 @@ def test_a_query_length_neither_call_owns_refuses(monkeypatch, comfy_leaves):
     with pytest.raises(base.UnsupportedModelError, match="neither the joint"):
         drive(monkeypatch, 4, (3, 3), world=WORLD, pure_ulysses=True, strict=False,
               double_cls=_ThirdCall)
+
+
+def test_a_refusing_rank_error_wins_over_its_peer_broken_barrier(monkeypatch, comfy_leaves):
+    """Rank 1 refuses while rank 0 waits in a collective: drive raises the refusal.
+
+    Rank 1's abort leaves rank 0 a BrokenBarrierError, which says only that its
+    peer left. Raising errors in rank order would report that and lose the
+    cause, which is the order a loaded CPU suite produced once (2026-11-07).
+    """
+
+    class _RankOneThirdCall(_ToyDouble):
+        def __call__(self, img, instruct, *args, transformer_options=None, **kwargs):
+            if _rank() != 1:
+                return super().__call__(img, instruct, *args,
+                                        transformer_options=transformer_options, **kwargs)
+            q, k, v = self.qkv(img[:, :1], _Modulation(1))
+            _attend("image", self.index, q, k, v, args[1][:, :1], transformer_options)
+            return img, instruct
+
+    with pytest.raises(base.UnsupportedModelError, match="neither the joint"):
+        drive(monkeypatch, 4, (3, 3), world=WORLD, pure_ulysses=True, strict=False,
+              double_cls=_RankOneThirdCall)
 
 
 @pytest.mark.parametrize("pure_ulysses", [True, False])

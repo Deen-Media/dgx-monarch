@@ -32,9 +32,12 @@ FP32_ISLANDS_MAX_BYTES = 4 * 1024 * 1024 * 1024
 # Safetensors header dtype names for the two admitted cores and the islands.
 CORE_HEADER_DTYPES = {"BF16": "bf16", "F16": "fp16"}
 ISLAND_HEADER_DTYPE = "F32"
+# ComfyUI's per-block attention pin, a uint8 JSON tensor ComfyAttention pops at
+# load: it is no weight, so the precision proof does not count it, for any family.
+PIN_CONFIG_SUFFIX = ".comfy_attention.config"
 # Modules a family runs outside its diffusion model's forward. ComfyUI calls
 # ``BaseModel.extra_conds`` once per sampling, before the denoise loop, and
-# four supported families reach into the diffusion model from there (Flux3's
+# four supported families run diffusion-model modules from there (Flux3's
 # early text and reference streams through the class-scoped table below). No FSDP2
 # pre-forward hook has gathered anything at that point, so a sharded weight is
 # a DTensor meeting a plain text state, which fails at the first addmm. Key the
@@ -96,6 +99,16 @@ CLASS_OUTSIDE_FORWARD_MODULE_PATHS: dict[str, tuple[str, ...]] = {
 REFUSED_OUTSIDE_FORWARD_CALLS: dict[str, tuple[str, ...]] = {
     "MOSSImage": ("preprocess_refs",),
 }
+# Diffusion-model methods a family's extra_conds calls that touch no module and
+# no parameter, so FSDP has nothing to gather or replicate for them and the wrap
+# reads nothing here. Flux.extra_conds (ComfyUI 61e524b, v0.45.0) calls
+# preprocess_token_masks for UltraTex token masks: plain tensor work and
+# process_img, which pads, rearranges and builds position ids
+# (adapters/flux_views.py). The canary runs the call on a tiny real model with
+# every parameter watched, so it fails the day the method reaches one.
+MODULE_FREE_OUTSIDE_FORWARD_CALLS: dict[str, tuple[str, ...]] = {
+    "Flux": ("preprocess_token_masks",),
+}
 
 
 def islands_within_ceiling(fp32_bytes: int, total_bytes: int) -> bool:
@@ -121,6 +134,32 @@ def classify_fp32_islands(
     if not islands_within_ceiling(fp32_bytes, total_parameter_bytes):
         return None
     return FP32_ISLANDS_PROFILE, len(fp32_parameters), fp32_bytes
+
+
+def proof_bytes_by_dtype(tensors: dict[str, Any], islands: frozenset[str] = frozenset()) -> dict[str, int]:
+    """Bytes per dtype for ``header_core_kind``, from parsed header descriptors.
+
+    A uint8 attention pin (``PIN_CONFIG_SUFFIX``) is skipped, for every family:
+    a pinned bf16 or fp16 file then reaches the shard build, which drops the
+    pins, so nothing approximate runs, no card asks, and the record says
+    dropped (FSDP shard build) on every ``+fsdp`` preset. A tensor named in
+    ``islands`` counts as island bytes (``ISLAND_HEADER_DTYPE``) whatever its
+    dtype, under the same ceiling: MiniMax-H3-Image's F16 adaLN linears
+    (``minimax_h3_image_header.f16_islands``), which the family's FSDP wrap must
+    replicate as it replicates every F32 island.
+    """
+    out: dict[str, int] = {}
+    for name, info in tensors.items():
+        if not isinstance(info, dict):
+            continue
+        dtype = str(info.get("dtype", ""))
+        if dtype == "U8" and name.endswith(PIN_CONFIG_SUFFIX):
+            continue
+        offsets = info.get("data_offsets") or (0, 0)
+        size = int(offsets[1]) - int(offsets[0]) if len(offsets) == 2 else 0
+        key = ISLAND_HEADER_DTYPE if name in islands else dtype
+        out[key] = out.get(key, 0) + max(size, 0)
+    return out
 
 
 def header_core_kind(bytes_by_dtype: dict[str, int]) -> str:

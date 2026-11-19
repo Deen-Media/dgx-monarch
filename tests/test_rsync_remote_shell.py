@@ -4,11 +4,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import sys
 
 import pytest
 
+from conftest import REAL_SUBPROCESS_RUN
 from dgx_monarch.cli import lifecycle
 from dgx_monarch.config import ClusterConfig, HostConfig
 
@@ -29,7 +29,8 @@ def test_rsync_inserts_explicit_login_before_the_validated_host(tmp_path, name):
     config = ClusterConfig(hosts=(host,), ssh_key=key)
     source = tmp_path / "source.txt"
     source.write_text("fixture")
-    result = subprocess.run(
+    # The fake ssh first on PATH is the remote shell, so the unguarded run sends nothing.
+    result = REAL_SUBPROCESS_RUN(
         [rsync, "--dry-run", "-a", "-e", lifecycle._rsync_remote_shell(config, host),
          "--", str(source), lifecycle._rsync_target(host) + ":fixture-destination/"],
         env={**os.environ, "PATH": f"{binary}:{os.environ['PATH']}", "DGXM_SSH_TRACE": str(trace)},

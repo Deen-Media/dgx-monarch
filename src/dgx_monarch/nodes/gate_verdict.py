@@ -14,6 +14,10 @@ from typing import Any
 
 from ..transfer_utils import safe_call
 from .gate_ceremony import CeremonyEvidence
+from .gate_proof_request import report_fields
+
+# What a rank's swap cycle reports with no LoRA stack (actor/gate_cycle.py).
+NO_STACK_CYCLE_REASON = "no lora stack: lazy swap is not applicable"
 
 
 def publish_ceremony_verdict(
@@ -83,13 +87,20 @@ def publish_ceremony_verdict(
             verdict = "PASS" if identical else "INCONCLUSIVE"
             reasons = ([] if identical else [*reasons,
                 "same-residency repeat diverged despite a passing cross-residency comparison"])
-        elif cross_mode["verdict"] in ("ERROR", "CAPACITY") and verdict == "PASS":
+        elif cross_mode["verdict"] in ("ERROR", "CAPACITY") and (
+                verdict == "PASS" or (verdict == "INCONCLUSIVE" and not lazy_swap_applicable)):
             # An unavailable or incomplete stock reference can only ever be
-            # INCONCLUSIVE. CAPACITY explains why; it grants nothing.
+            # INCONCLUSIVE. CAPACITY explains why; it grants nothing. With no
+            # lazy swap to prove, the cross leg is the whole proof, so its
+            # failure is the reason, not the swap cycle's "not applicable".
             verdict = "INCONCLUSIVE"
             if not slab_proof.error:
+                if not lazy_swap_applicable:
+                    reasons = [reason for reason in reasons
+                               if reason != NO_STACK_CYCLE_REASON]
                 reasons = [*reasons,
-                           "stock reference cannot load here (capacity refusal)"
+                           "the stock reference cannot load here (capacity refusal), "
+                           "so the slab render has nothing to be compared with"
                            if cross_mode["verdict"] == "CAPACITY"
                            else "cross-residency reference leg failed"]
 
@@ -112,11 +123,7 @@ def publish_ceremony_verdict(
         "inconclusive_reasons": reasons,
         "latents_identical": identical,
         "max_abs_latent_diff": max_diff,
-        "seed": frozen_request.get("noise_seed"),
-        "steps": frozen_request.get("steps"),
-        "cfg": frozen_request.get("cfg"),
-        "sampler": frozen_request.get("sampler_name"),
-        "scheduler": frozen_request.get("scheduler"),
+        **report_fields(frozen_request),
         "wall_s": round(_time.perf_counter() - t0, 1),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "cross_mode": cross_mode,
@@ -192,7 +199,6 @@ def publish_ceremony_verdict(
                       "(max latent diff %s) for %s.",
                       origin, max_diff, model.unet_name)
         from .. import residency_mode
-        from .gate_quarantine_scope import combination_label
 
         # The next dispatch of this combination turns comfy_managed off for
         # the whole Init node (nodes/render_quarantine), so say so here too.
@@ -202,7 +208,7 @@ def publish_ceremony_verdict(
                   "ledger keeps the FAIL for later sessions. Renders of this combination use comfy's stock "
                   "path where one exists; a live comfy_managed worker refuses them until a mesh reset. Report "
                   "this with your comfy commit and dgxm status.", " + ".join(levers),
-                  combination_label(model),
+                  f"{model.unet_name} (combination {key})",  # a dual proof's own key
                   " The next dispatch of this combination turns comfy_managed off for the whole Init node."
                   if managed else "")
         quarantined = runtime["_model_with_worker_overrides"](model, quarantined_args, handle=handle)
@@ -248,21 +254,48 @@ def publish_ceremony_verdict(
         detail = {"model": model_request["unet_name"], "loras": len(stack), "origin": origin,
                   "run_id": run_id, "max_abs_latent_diff": max_diff,
                   "quarantine_levers": quarantine_levers,
-                  **({"cross_mode": cross_mode["verdict"]} if cross_mode else {})}
-        ledger.record(key, artifacts, commit, verdict,
-                      runtime["_gate_inconclusive"].ledger_detail(detail, result), capability_context)
-        if not fsdp_proof_scope:
-            ledger.record(
-                key, artifacts, commit, verdict, detail, fleet_capability_context)
-        for sibling in sibling_contexts:
-            ledger.record(key, artifacts, commit, verdict,
-                          {**detail, "stamped": "slab-mode-equivalence"}, sibling)
+                  **({"cross_mode": cross_mode["verdict"]} if cross_mode else {}),
+                  **({"capacity_detail": cross_mode.get("capacity_detail")}
+                     if cross_mode and cross_mode["verdict"] == "CAPACITY" else {})}
+        record_verdict_rows(
+            runtime, ledger, key, artifacts, commit, verdict, detail, result,
+            capability_context,
+            None if fsdp_proof_scope else fleet_capability_context, sibling_contexts)
         runtime["record_ceremony_certificate"](
             ledger, key, artifacts, commit, cross_mode, capability_context, detail)
-        report_row = {k: v for k, v in result.items()
-                      if k != "latent" and not k.startswith("_")}
-        with open(os.path.join(runtime["_ledger_dir"](), "dgxm_gate_reports.jsonl"), "a") as f:
-            f.write(json.dumps(report_row) + "\n")
+        if verdict == "INCONCLUSIVE" and not fsdp_proof_scope:
+            # After the rows: the consent read must see this verdict, not the
+            # RETESTING row it supersedes.
+            runtime["_gate_inconclusive"].settle_stock_reference_unavailable(
+                model, result, detail)
+        append_report_row(runtime, result)
     except Exception as exc:
         safe_call(runtime["log"].warning, "could not persist identity-gate verdict: %r", exc)
     return result
+
+
+def record_verdict_rows(runtime: Mapping[str, Any], ledger: Any, key: str, artifacts: Any,
+                        commit: Any, verdict: str, detail: dict, result: Mapping[str, Any],
+                        capability_context: Any, fleet_capability_context: Any | None,
+                        sibling_contexts: list) -> None:
+    """The ledger rows one verdict writes: the context it exercised, the Fleet
+    context (None under an FSDP proof scope, which has none), and every
+    explicit-on slab sibling. Shared with nodes/gate_nothing_to_gate.py, which
+    passes neither, so its no-render verdict writes the exercised row this way
+    and revokes nothing it did not exercise."""
+    classified = runtime["_gate_inconclusive"]
+    ledger.record(key, artifacts, commit, verdict,
+                  classified.ledger_detail(detail, result), capability_context)
+    revocation = classified.revocation_detail(detail, result)
+    if fleet_capability_context is not None:
+        ledger.record(key, artifacts, commit, verdict, revocation, fleet_capability_context)
+    for sibling in sibling_contexts:
+        ledger.record(key, artifacts, commit, verdict,
+                      {**revocation, "stamped": "slab-mode-equivalence"}, sibling)
+
+
+def append_report_row(runtime: Mapping[str, Any], result: Mapping[str, Any]) -> None:
+    """Append one gate report row: the result without its latent or private keys."""
+    report_row = {k: v for k, v in result.items() if k != "latent" and not k.startswith("_")}
+    with open(os.path.join(runtime["_ledger_dir"](), "dgxm_gate_reports.jsonl"), "a") as f:
+        f.write(json.dumps(report_row) + "\n")

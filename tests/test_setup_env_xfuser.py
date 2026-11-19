@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -38,10 +40,15 @@ elif [[ "$*" == *'comfyui_version.py'* ]]; then
   # The ComfyUI version check runs for real, on the fake ComfyUI's file.
   exec "${REAL_PYTHON:-python3}" "$@"
 elif [[ "$*" == *'import torchaudio'* ]]; then
-  [[ "${NO_TORCHAUDIO:-}" != 1 ]] || exit 1
+  # Import for real, with no site directory: the environment's purelib, which
+  # the fake sysconfig names, is all this interpreter can see.
+  site="$HOME/site-packages"
+  [[ "${NO_TORCHAUDIO:-}" != 1 ]] || site="$HOME/no-site"
+  PYTHONPATH="$site" exec "${REAL_PYTHON:-python3}" -S "$@"
 fi
 """,
     )
+    _torchaudio(home, "working")
     _write_executable(
         bindir / "pip",
         """#!/usr/bin/env bash
@@ -60,6 +67,29 @@ printf '\\n'
 """,
     )
     return home, log
+
+
+def _torchaudio(home: Path, state: str) -> None:
+    """Put torchaudio in the fake purelib: absent, working, or installed but broken.
+
+    The broken build is the one INSTALL describes: a distribution pip installed
+    whose import fails against this torch, here with an undefined symbol.
+    """
+    site = home / "site-packages"
+    shutil.rmtree(site, ignore_errors=True)
+    site.mkdir()
+    if state == "absent":
+        return
+    metadata = site / "torchaudio-2.11.1.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text("Metadata-Version: 2.1\nName: torchaudio\nVersion: 2.11.1\n")
+    if state == "metadata-only":  # a leftover dist-info with no module
+        return
+    package = site / "torchaudio"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "" if state == "working" else
+        "raise OSError('libtorchaudio.so: undefined symbol: _ZN3c1017RegisterOperators')\n")
 
 
 def _run(
@@ -85,19 +115,21 @@ def _run(
     return result
 
 
-def test_comfy_bootstrap_constrains_xfuser_resolution_to_existing_cuda_torch(tmp_path):
+def test_comfy_bootstrap_installs_stock_xfuser_from_the_index_under_the_torch_constraint(tmp_path):
     home, log = _fake_home(tmp_path)
     result = _run(home, log, fail_probe=False)
 
     assert result.returncode == 0, result.stderr
     closure = next(
         line for line in log.read_text().splitlines()
-        if "xfuser==0.7.0+dgxm.npuimport1" in line
+        if "xfuser==0.8.0" in line
     )
     assert "constraint=torch==2.12.0+cu132" in closure
-    assert "arg=--find-links" in closure
-    assert "arg=xfuser==0.7.0+dgxm.npuimport1" in closure
+    # Stock 0.8.0 comes from the index: no local wheel directory, no builder.
+    assert "--find-links" not in log.read_text()
+    assert "arg=xfuser==0.8.0" in closure
     assert "arg=yunchang==0.6.4" in closure
+    assert "npuimport1" not in log.read_text()
 
 
 def test_missing_torch_metadata_stops_before_comfy_dependency_resolution(tmp_path):
@@ -108,10 +140,10 @@ def test_missing_torch_metadata_stops_before_comfy_dependency_resolution(tmp_pat
     assert "torch distribution metadata" in result.stderr
     assert "requirements.txt" not in log.read_text()
     assert "diffusers==" not in log.read_text()
-    assert "xfuser==0.7.0+dgxm.npuimport1" not in log.read_text()
+    assert "xfuser==" not in log.read_text()
 
 
-def test_worker_stream_carries_the_canonical_builder_without_a_peer_checkout(tmp_path):
+def test_worker_stream_installs_stock_xfuser_without_a_peer_checkout(tmp_path):
     local_home, _ = _fake_home(tmp_path / "local")
     remote_home, _ = _fake_home(tmp_path / "remote")
     fake_bin = tmp_path / "bin"
@@ -145,15 +177,17 @@ env HOME="$REMOTE_HOME" bash -s < "$STREAM_CAPTURE" > "$REMOTE_OUTPUT" 2>&1
 
     assert result.returncode == 0, result.stderr
     payload = stream.read_text()
-    assert "OFFICIAL_SHA256" in payload
-    assert "PATCHED_RING" in payload
+    # The peer installs from the index, so the stream carries no builder or wheel.
+    assert "XFUSER_PIN=xfuser==0.8.0" in payload
+    assert "build_xfuser_compat_wheel" not in payload
+    assert "OFFICIAL_SHA256" not in payload
     remote_pip = remote_output.read_text()
     closure = next(
         line for line in remote_pip.splitlines()
-        if "xfuser==0.7.0+dgxm.npuimport1" in line
+        if "xfuser==0.8.0" in line
     )
     assert "constraint=torch==2.12.0+cu132" in closure
-    assert "arg=--find-links" in closure
+    assert "--find-links" not in closure
 
 
 def test_metadata_without_runtime_cuda_suffix_constrains_every_comfy_resolution(tmp_path):
@@ -229,4 +263,95 @@ def test_working_torchaudio_skips_the_donor_step_and_the_warning(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "torchaudio" not in result.stderr
+    assert "comfy layer done" in result.stdout
+
+
+@pytest.mark.parametrize(("version", "requirements"), [
+    ("0.39.2", ""),       # a ComfyUI that does not list torchaudio
+    ("0.37.1", ""),       # one that still needs it
+])
+def test_an_installed_torchaudio_that_fails_to_import_is_not_treated_as_absent(
+    tmp_path, version, requirements,
+):
+    """A broken build stays installed, and Transformers imports it when present.
+
+    Skipping the donor step does not make it absent, so the helper must stop
+    with the repair instead of printing done (docs/INSTALL.md).
+    """
+    home, log = _fake_home(tmp_path)
+    _comfy(home, version, requirements)
+    _torchaudio(home, "broken")
+    result = _run(home, log, fail_probe=False)
+
+    assert result.returncode != 0
+    assert "torchaudio 2.11.1 is installed but does not import" in result.stderr
+    assert "pip uninstall torchaudio" in result.stderr
+    assert "WARNING" not in result.stderr
+    assert "comfy layer done" not in result.stdout
+
+
+@pytest.mark.parametrize("version", ["0.39.2", "0.37.1"])
+@pytest.mark.parametrize("state", ["absent", "working"])
+def test_absent_and_working_torchaudio_keep_their_outcomes(tmp_path, version, state):
+    home, log = _fake_home(tmp_path)
+    _comfy(home, version)
+    _torchaudio(home, state)
+    result = _run(home, log, fail_probe=False)
+
+    if state == "working":
+        assert result.returncode == 0, result.stderr
+        assert "torchaudio" not in result.stderr
+        assert "comfy layer done" in result.stdout
+    elif version == "0.39.2":
+        assert result.returncode == 0, result.stderr
+        assert "WARNING: no working torchaudio; this ComfyUI does not list it" in result.stderr
+        assert "comfy layer done" in result.stdout
+    else:
+        assert result.returncode != 0
+        assert "FAIL: no working torchaudio" in result.stderr
+        assert "is installed but does not import" not in result.stderr
+
+
+@pytest.mark.parametrize("donor_state", ["working", "broken"])
+def test_a_donor_copy_must_import_before_the_layer_reports_done(tmp_path, donor_state):
+    home, log = _fake_home(tmp_path)
+    _comfy(home, "0.37.1")
+    _torchaudio(home, "broken")
+    donor = tmp_path / "donor env"
+    donor_site = donor / "lib" / "site-packages"
+    donor_site.mkdir(parents=True)
+    (donor / "bin").mkdir()
+    _write_executable(donor / "bin" / "python",
+                      f"#!/usr/bin/env bash\nprintf '%s\\n' {shlex.quote(str(donor_site))}\n")
+    package = donor_site / "torchaudio"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "" if donor_state == "working" else "raise OSError('undefined symbol')\n")
+    (donor_site / "torchaudio-2.11.0.dist-info").mkdir()
+    (donor_site / "torchaudio-2.11.0.dist-info" / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: torchaudio\nVersion: 2.11.0\n")
+    result = _run(home, log, fail_probe=False,
+                  extra_env={"DGXM_TORCHAUDIO_DONOR": str(donor)})
+
+    assert "torchaudio copied from" in result.stdout
+    if donor_state == "working":
+        assert result.returncode == 0, result.stderr
+        assert "comfy layer done" in result.stdout
+    else:
+        assert result.returncode != 0
+        assert "does not import after the copy" in result.stderr
+        assert "comfy layer done" not in result.stdout
+
+
+def test_a_leftover_dist_info_with_no_module_reads_absent(tmp_path):
+    """Transformers checks the import system before it imports torchaudio, so a
+    dist-info with no module is never imported and ComfyUI starts: absent."""
+    home, log = _fake_home(tmp_path)
+    _comfy(home, "0.39.2")
+    _torchaudio(home, "metadata-only")
+    result = _run(home, log, fail_probe=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "WARNING: no working torchaudio; this ComfyUI does not list it" in result.stderr
+    assert "is installed but does not import" not in result.stderr
     assert "comfy layer done" in result.stdout
