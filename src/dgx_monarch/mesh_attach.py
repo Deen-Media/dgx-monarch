@@ -202,8 +202,8 @@ def _stand_down_at_exit(runtime: dict[str, Any], trace: attach_trace.AttachTrace
         runtime["mesh_factory"].safe_transport_failure(handoff)
         trace.closed("refused", stage="exiting")
         raise runtime["MeshAttachError"](
-            "the driver is exiting, so this attach stops here: Monarch's exit step stops "
-            "its client, and no Worker service was restarted") from cause
+            f"{driver_exit.REFUSAL_OPENING} this attach stops here: Monarch's exit step "
+            "stops its client, and no Worker service was restarted") from cause
 
 
 def _read_retry_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,

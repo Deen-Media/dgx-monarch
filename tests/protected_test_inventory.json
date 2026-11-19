@@ -1069,6 +1069,28 @@
       "test_the_rule_the_gate_reads_from_the_checkout_is_comfys_own": "cb1150fdb92f2501",
       "test_the_staged_flux3_files_pass_and_the_fp8r_variant_refuses": "1ee090553c768e7a"
     },
+    "tests/test_exit_sends_nothing.py": {
+      "test_a_call_that_waited_for_the_lock_when_the_exit_began_sends_nothing": "ba8f7e6fbf448845",
+      "test_a_cancel_at_exit_sends_nothing_and_warns_of_nothing": "3a5fd456c05eeee3",
+      "test_a_different_errors_traceback_that_names_the_refusal_still_prints_at_exit": "5b7b2986c04abeaf",
+      "test_a_fleet_jobs_artifact_proof_is_not_sent_at_exit": "2ecdc95365bc2de9",
+      "test_a_lock_free_dispatch_whose_exit_begins_after_its_own_check_sends_nothing": "51b34386aab30dba",
+      "test_a_pack_line_that_carries_the_refusal_as_text_is_not_printed_at_exit": "c1da6fa11f58e708",
+      "test_a_price_sends_no_quote_at_exit": "09d87bb346d924c8",
+      "test_a_remote_decode_unit_is_not_sent_at_exit": "c1493c3f54ccb6f2",
+      "test_a_reset_that_starts_at_exit_stops_nothing": "a06ffc581dadf7a3",
+      "test_a_sample_dispatch_sends_nothing_at_exit": "8d2aed2e12435967",
+      "test_a_setup_that_starts_at_exit_sends_no_teardown_and_no_setup": "0600ca436d728acc",
+      "test_a_setup_the_exit_cuts_sends_no_rollback": "02953c529dd35dcd",
+      "test_always_clear_and_retry_resets_nothing_at_exit": "2a7fea1bacc7e1a1",
+      "test_an_all_rank_call_sends_nothing_at_exit": "a95df253cc810c3f",
+      "test_an_exit_during_the_topology_teardown_sends_no_setup_and_no_rollback": "e98c8ac3fa9e5af7",
+      "test_at_exit_the_check_comes_before_the_lock": "28c989a5b018aaf8",
+      "test_every_refusal_the_exit_raises_names_a_marker_and_the_notice_none": "ffc361ebe0f38dcc",
+      "test_no_pack_log_line_reports_a_call_the_exit_did_not_send": "2cc6d78fab33d910",
+      "test_the_lease_renewer_sends_nothing_and_ends_at_exit": "08cb7ab7f40eaff4",
+      "test_worker_arguments_are_not_sent_at_exit": "998d79719683bc05"
+    },
     "tests/test_expander_prompt.py": {
       "test_a_filled_task_prompt_that_holds_the_marker_passes": "9be6b8d55ce628ba",
       "test_a_fleet_render_that_reads_the_expander_refuses_at_the_loader": "16a83cf293d292f4",

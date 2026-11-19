@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any
 
+from .. import driver_exit
 from ..fsdp_proof_scope import topology_resolves_fsdp
 from ..gate_ledger import ArtifactSetSignature, gate_verdict_token
 from ..log import get_logger
@@ -215,7 +216,10 @@ def quarantine_unproven_paths(model, cause: BaseException | None = None, uncond:
 
     ``gate_quarantine_scope`` interprets ``cause``: a class-K accuracy refusal
     changes no residency setting; other aborts affect only their own combination.
+    Once the driver is exiting nothing is quarantined: its exit proves nothing (driver_exit).
     """
+    if driver_exit.exiting():
+        return
     from .consent_rescue import unproven_quarantine_levers
     from .gate_quarantine_scope import write_scoped_quarantine
 
@@ -231,6 +235,8 @@ def force_stock_quarantine(model, handle, timeout_s: float = 600.0,
     failure (#47) writes the quarantine but pushes nothing: the actors are
     gone, and a stale mesh refuses every price until it is replaced.
     """
+    if driver_exit.exiting():  # nothing written or pushed (quarantine_unproven_paths)
+        return []
     from ..delivery_faults import WorkerDeliveryError
     from .gate_quarantine_scope import measured_abort_guard
 
@@ -248,9 +254,7 @@ def force_stock_quarantine(model, handle, timeout_s: float = 600.0,
             handle.active_worker_args = {}
         return []
     try:
-        return apply_worker_policy(
-            handle, resolve_effective_worker_args(model, handle),
-            timeout_s=timeout_s)
+        return apply_worker_policy(handle, resolve_effective_worker_args(model, handle), timeout_s=timeout_s)
     except BaseException as exc:
         # A failed or interrupted quarantine push must never release the
         # ceremony owner with risky worker residency still authorized.
@@ -292,8 +296,7 @@ def model_for_request(model, request: dict):
             and worker_args.get("slab_weights") is False):
         return model
     log.warning("dual-model request: forcing stock residency for both model slots")
-    return model_with_worker_overrides(
-        model, {"lora_low_rss": False, "slab_weights": False})
+    return model_with_worker_overrides(model, {"lora_low_rss": False, "slab_weights": False})
 
 
 def capture(model, uncond_model_request: dict | None = None) -> tuple[
@@ -310,15 +313,13 @@ def capture(model, uncond_model_request: dict | None = None) -> tuple[
         "loras": [dict(entry) for entry in model.loras],
     }
     model_request = copy.deepcopy(raw_request)
-    identity = request_artifact_identity(
-        model_request["unet_name"], model_request.get("loras"))
+    identity = request_artifact_identity(model_request["unet_name"], model_request.get("loras"))
     uncond_request = copy.deepcopy(uncond_model_request)
     artifact_sets = [identity]
     if uncond_request is not None:
         artifact_sets.append(request_artifact_identity(
             uncond_request["unet_name"], uncond_request.get("loras")))
-    artifacts = artifact_set_signature(
-        item["signature"] for item in identity["artifacts"])
+    artifacts = artifact_set_signature(item["signature"] for item in identity["artifacts"])
     if artifacts.current != identity["digest"]:
         raise RuntimeError("identity-gate artifact snapshot is inconsistent")
     key = request_combo_key(model_request)

@@ -19,16 +19,20 @@ class SilentInLogs:
     raises that, only once the exit has begun. A new call it did not send to the
     Workers is no failure, so a handler that catches the error and logs it as an
     argument or as the record's exception (itself or as an explicit cause; a
-    warning that an unload or a status poll failed) prints nothing. A line that
-    carries only the error's text still prints. The filter also reads the exit
-    flag, so before the exit it drops no record at all.
+    warning that an unload or a status poll failed) prints nothing, and neither
+    does one that logs its text: a message that names it (``driver_exit.TEXT_MARKS``:
+    the class name, or the sentence every exit refusal opens with) is dropped
+    too. Only the message is read, never a traceback, so a different error
+    logged with its traceback still prints. The filter also reads the exit flag,
+    so before the exit it drops no record at all.
     """
 
 
 def _reports_silent(record: logging.LogRecord) -> bool:
     """Whether the record's arguments or exception carry a ``SilentInLogs``, as itself or
-    as an explicit cause (``raise ... from``). An error raised while one was being
-    handled, linked only by ``__context__``, is another failure and is kept."""
+    as an explicit cause (``raise ... from``), or its message names the exit's refusal.
+    An error raised while one was being handled, linked only by ``__context__``, is
+    another failure and is kept, and so is its traceback text."""
     args = record.args
     values = list(args.values()) if isinstance(args, dict) else list(args or ())
     if record.exc_info:
@@ -40,7 +44,17 @@ def _reports_silent(record: logging.LogRecord) -> bool:
             if isinstance(value, SilentInLogs):
                 return True
             value = value.__cause__
-    return False
+    return _names_the_refusal(record)
+
+
+def _names_the_refusal(record: logging.LogRecord) -> bool:
+    """Whether the record's message, as formatted (not its traceback), names the exit's refusal."""
+    marks = getattr(sys.modules.get("dgx_monarch.driver_exit"), "TEXT_MARKS", ())
+    try:
+        message = record.getMessage()
+    except Exception:  # a record whose arguments do not format is kept, as logging keeps it
+        return False
+    return any(mark in message for mark in marks)
 
 
 def _driver_exiting() -> bool:

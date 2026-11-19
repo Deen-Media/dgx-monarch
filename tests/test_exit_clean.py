@@ -150,27 +150,32 @@ def test_an_exit_inside_a_heals_own_stop_is_quiet(tmp_path, mode):
         assert records[-1].get("interrupted") is True, detail
 
 
-def test_a_queue_behind_the_cut_render_holds_one_entry_and_prints_nothing(tmp_path):
+@pytest.mark.parametrize("mode", ["queue", "queue_wrapped"])
+def test_a_queue_behind_the_cut_render_holds_one_entry_and_prints_nothing(tmp_path, mode):
     """A real interpreter exit with ComfyUI's prompt worker holding a queue: the
     render the exit cuts, then four queued prompts entering ``mesh.ensure_live``
-    on the real handle. Exactly one entry starts and holds at the entry
-    (driver_exit.hold_at_entry); none raises, none prints, the exit shows its
-    one notice and no WARNING or ERROR, and the process ends at once after its
-    last exit hook, the held daemon thread with it, with code 0."""
+    on the real handle, directly or (``queue_wrapped``) through a node method
+    under the pack's wrapper, which holds before the node's own work. Exactly
+    one entry starts and holds at the entry (driver_exit.hold_at_entry); none
+    raises, none prints, the exit shows its one notice and no WARNING or ERROR,
+    and the process ends right after its last exit hook, the held daemon thread
+    with it, with code 0. The 5 s bound leaves a slow runner room; a held thread
+    that lengthened the exit would add the 30 s hold."""
     pytest.importorskip("monarch.actor")
-    proc, _records, _exited = _run(tmp_path, "queue")
+    proc, _records, _exited = _run(tmp_path, mode)
     ended = time.time()
     detail = f"stdout: {proc.stdout[-2000:]}\nstderr: {proc.stderr[-3000:]}"
     assert proc.returncode == 0, detail
     entries = (tmp_path / "entries.txt").read_text().splitlines()
     assert len(entries) == 1 and entries[0].startswith("entered "), entries  # one enters; it holds
+    # (queue_wrapped: no "inside the node" line, so the wrapper held before the node's own work)
     assert "panicked" not in proc.stderr and "Fatal Python error" not in proc.stderr, detail
     assert _error_lines(proc.stderr) == [], detail
     assert [line for line in proc.stderr.splitlines() if " WARNING " in line] == [], detail
     assert "Traceback" not in proc.stderr and "DriverExitingError" not in proc.stderr, detail
     assert proc.stderr.count(NOTICE) == 1, detail
     last_hook = float((tmp_path / "last_hook.txt").read_text())
-    assert ended - last_hook < 1.0, ended - last_hook  # the held thread lengthens nothing
+    assert ended - last_hook < 5.0, ended - last_hook  # the held thread lengthens nothing
 
 
 def test_a_worker_killed_while_the_driver_is_not_exiting_is_evicted_and_stopped(tmp_path):

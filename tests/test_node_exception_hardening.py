@@ -1564,6 +1564,55 @@ def test_cross_mode_hostile_error_diagnostics_are_total(monkeypatch):
     assert latent is None
 
 
+@pytest.mark.parametrize("leg", ["refused_at_exit", "cut_at_exit", "not_exiting"])
+def test_a_cross_mode_leg_the_exit_cut_aborts_with_no_verdict_and_no_line(monkeypatch, leg):
+    """The identity gate's stock reference leg is in flight when the driver
+    begins to exit: its next send is refused (driver_exit.DriverExitingError),
+    or Monarch's exit step cuts a call. That leg proves nothing, so the error
+    propagates as itself and the ceremony aborts on it: no ERROR verdict for
+    the ceremony to record, and no WARNING that names the error. Not exiting,
+    the failed leg answers ERROR and warns, as before."""
+    from dgx_monarch import driver_exit
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    failure = (driver_exit.DriverExitingError(driver_exit.SENT_NOTHING)
+               if leg == "refused_at_exit" else RuntimeError("stock reference failed"))
+    warnings: list[str] = []
+    monkeypatch.setattr(gate_cross_mode.first_render, "cross_residency_check", lambda: None)
+    runtime = {
+        "_temporary_worker_policy": lambda *_args, **_kwargs: nullcontext([]),
+        "_model_with_worker_overrides": lambda model, *_args, **_kwargs: model,
+        "copy_transaction": lambda value: value,
+        "is_artifact_binding_error": lambda _exc: False,
+        "is_stock_load_capacity_error": lambda _exc: False,
+        "is_memory_exhaustion": gate.is_memory_exhaustion,
+        "log": SimpleNamespace(warning=lambda message, *args: warnings.append(message % args)),
+    }
+    if leg != "not_exiting":
+        flag.set()
+
+    def run():
+        return gate_cross_mode.run_cross_residency_reference(
+            runtime=runtime, ceremony_model=object(),
+            handle=SimpleNamespace(call_all=lambda *_args, **_kwargs: None),
+            original_worker_args={},
+            slab_proof=SimpleNamespace(error=None, expected=True, cycle=None),
+            frozen_request={}, frozen_latent={}, artifact_binding={}, cfg_value=1.0,
+            steps_hint=1, stock_latent={"samples": object()},
+            transaction_render=lambda *_args, **_kwargs: (_ for _ in ()).throw(failure),
+            bind_request=lambda request, _binding: request)
+
+    if leg == "not_exiting":
+        verdict, latent = run()
+        assert verdict["verdict"] == "ERROR" and latent is None
+        assert len(warnings) == 1 and "stock reference failed" in warnings[0]
+        return
+    with pytest.raises(type(failure)) as raised:
+        run()
+    assert raised.value is failure and warnings == []
+
+
 def test_auto_gate_cleanup_cancellation_outranks_ordinary_primary():
     primary = RuntimeError("ceremony failed")
     cancellation = _Cancelled("active-context restoration cancelled")

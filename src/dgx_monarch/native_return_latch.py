@@ -19,6 +19,7 @@ import threading
 import time
 from typing import Any
 
+from . import driver_exit
 from .error_utils import failure_text, safe_call
 from .log import get_logger
 
@@ -47,8 +48,15 @@ def _reason(error: BaseException) -> str:
 
 
 def record(error: BaseException) -> None:
-    """Latch native return off after a failed native read; never raises."""
+    """Latch native return off after a failed native read; never raises.
+
+    Once the driver is exiting, a failed read (one its exit refused, or one cut
+    by Monarch's exit step) is no fault of the native return, and no next setup
+    will read the latch: nothing is latched and nothing is logged (driver_exit).
+    """
     try:
+        if driver_exit.exiting():
+            return
         now = time.time()
         with _LOCK:
             first = not _STATE["latched"]
@@ -84,11 +92,16 @@ def snapshot() -> dict[str, Any]:
 
 
 def typed_read(read: Any, descriptor: Any, *guard: Any) -> Any:
-    """Run one latent read; a failed native read that latched surfaces typed."""
+    """Run one latent read; a failed native read that latched surfaces typed.
+
+    Once the driver is exiting, the failure surfaces as itself: an earlier
+    fault's latch does not make the exit's refusal a native return fault.
+    """
     try:
         return read(descriptor, *guard)
     except Exception as failure:
-        if isinstance(descriptor, dict) and descriptor.get("kind") == "rdma" and latched():
+        if (isinstance(descriptor, dict) and descriptor.get("kind") == "rdma" and latched()
+                and not driver_exit.exiting()):
             raise latched_error(failure) from failure
         raise
 

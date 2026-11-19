@@ -216,9 +216,9 @@ def lead_with_refusal(method: _Method) -> _Method:
         depth = getattr(_ENTRY, "depth", 0)
         if not depth:  # a node that starts at exit does none of its own work
             driver_exit.hold_at_entry()
-        _ENTRY.depth = depth + 1
-        _clear()
-        try:
+        try:  # the depth goes up inside the try, so the finally always puts it back
+            _ENTRY.depth = depth + 1
+            _clear()
             return method(*args, **kwargs)
         except Exception as exc:
             refusal = surfaced(exc, forced_stock_state())

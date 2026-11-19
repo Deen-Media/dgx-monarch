@@ -2830,6 +2830,51 @@ def test_generic_oom_in_reference_render_stays_inconclusive(monkeypatch, tmp_pat
     assert [a["slab_weights"] for a in applies] == [False, True]  # restored
 
 
+@pytest.mark.parametrize("leg", ["refused_at_exit", "cut_at_exit", "not_exiting"])
+def test_an_exit_during_the_stock_reference_leg_writes_nothing_to_the_ledger(
+        monkeypatch, tmp_path, leg):
+    """The driver begins to exit while the identity gate's stock reference leg
+    renders: the leg's send is refused (driver_exit.DriverExitingError), or
+    Monarch's exit step cuts it. That leg proves nothing, so the ceremony aborts
+    on its error: no verdict row or other record reaches the ledger, nothing is
+    written under the ledger's folder, and no residency setting goes off. The
+    rig's all-rank calls have no exit check, so this row holds the leg's own
+    check (nodes/gate_cross_mode.py), not the refusal of the provenance call
+    after it. Not exiting, the failed leg still records INCONCLUSIVE rows."""
+    from dgx_monarch import driver_exit
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    wa = {"lora_low_rss": True, "slab_weights": True}
+    _handle, ledger, model = _cross_mode_rig(
+        monkeypatch, tmp_path, [torch.zeros(1), torch.zeros(1)], wa)
+    failure = (driver_exit.DriverExitingError(driver_exit.SENT_NOTHING) if leg == "refused_at_exit"
+               else RuntimeError("the stock reference render failed"))
+    staged = gate_mod.run_render
+    renders: list[int] = []
+
+    def render(*args, **kwargs):
+        renders.append(1)
+        if len(renders) < 3:
+            return staged(*args, **kwargs)
+        if leg != "not_exiting":
+            flag.set()  # the exit begins during the stock reference leg
+        raise failure
+
+    monkeypatch.setattr(gate_mod, "run_render", render)
+    if leg == "not_exiting":
+        result = _run(model)
+        assert result["cross_mode"]["verdict"] == "ERROR"
+        assert [record[3] for record in ledger.records] == ["INCONCLUSIVE", "INCONCLUSIVE"]
+        return
+    with pytest.raises(BaseException) as raised:
+        _run(model)
+    assert failure in (raised.value, raised.value.__cause__), raised.value
+    assert len(renders) == 3 and ledger.records == []
+    assert list(tmp_path.iterdir()) == []
+    assert model.mesh.worker_args == {"lora_low_rss": True, "slab_weights": True}
+
+
 def test_oom_during_stock_policy_apply_stays_inconclusive(monkeypatch, tmp_path):
     """An OOM while applying the stock policy never reaches the reference load,
     so the leg reads ERROR, not a CAPACITY refusal."""

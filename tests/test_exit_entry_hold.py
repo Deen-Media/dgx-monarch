@@ -350,6 +350,54 @@ def test_a_node_already_running_or_called_from_inside_another_is_not_held(flag, 
     assert ran == ["outer", "inner"]
 
 
+def test_the_wrapper_puts_its_depth_back_whatever_raises_inside_it(flag, monkeypatch):
+    """The wrapper raises the thread's node depth inside its try, so its finally
+    puts the depth back whatever raises there, even before the node's own work
+    starts (here the note's reset raises, as an asynchronous exception could at
+    that line). A depth left at 1 would let the thread's next outermost node
+    pass the hold at exit."""
+    from dgx_monarch.nodes import refusal_lead
+
+    resets: list[int] = []
+
+    def clear_once() -> None:
+        resets.append(1)
+        if len(resets) == 1:
+            raise _Stop("raised between the depth and the node's own work")
+
+    monkeypatch.setattr(refusal_lead, "_clear", clear_once)
+
+    @refusal_lead.lead_with_refusal
+    def node() -> str:
+        return "ran"
+
+    with pytest.raises(_Stop):
+        node()
+    assert getattr(refusal_lead._ENTRY, "depth", 0) == 0
+    flag.set()
+    with pytest.raises(driver_exit.DriverExitingError, match="waited"):
+        node()  # the next outermost entry still holds, then refuses at the bound
+
+
+def test_reset_forgets_the_one_refusal_so_the_next_exit_refuses_at_its_bound(flag, monkeypatch):
+    """``driver_exit.reset`` (the conftest, after each row) clears the exit flag
+    and the mark of this exit's one refusal at the bound. Kept, the mark would
+    make the next exit's first entry wait for the process to end instead of
+    raising at its bound."""
+    monkeypatch.setattr(driver_exit, "HOLD_AFTER_REFUSAL_S", 5.0)
+    flag.set()
+    with pytest.raises(driver_exit.DriverExitingError, match="waited"):
+        driver_exit.hold_at_entry()
+    assert driver_exit._REFUSED_AT_BOUND.is_set()
+    driver_exit.reset()
+    assert not flag.is_set() and not driver_exit._REFUSED_AT_BOUND.is_set()
+    flag.set()
+    started = time.monotonic()
+    with pytest.raises(driver_exit.DriverExitingError, match="waited"):
+        driver_exit.hold_at_entry()
+    assert time.monotonic() - started < BOUND_S + 2.0
+
+
 @pytest.mark.parametrize("failure", ["exit", "other"])
 def test_the_pipelines_gate_lookup_passes_the_exits_refusal_through(monkeypatch, failure):
     """The Pipeline asks auto_gate_required whether a ceremony is due. Its lookup
@@ -399,7 +447,7 @@ def test_the_shipped_bound_is_the_30_s_the_docs_state():
 
 
 def test_nothing_past_the_entry_holds(flag, monkeypatch):
-    """A new call past the entry raises at once and never holds (R40 item 2)."""
+    """A new call past the entry raises at once and never holds."""
     handle, _old, _new = _handle(_Workers([]))
     monkeypatch.setattr(driver_exit, "HOLD_AT_EXIT_S", 30.0)
     flag.set()

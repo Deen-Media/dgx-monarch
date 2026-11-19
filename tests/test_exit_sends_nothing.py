@@ -72,6 +72,34 @@ def test_an_all_rank_call_sends_nothing_at_exit(flag, exiting):
     assert len(workers.status.calls) == 1
 
 
+@EXITING
+def test_a_lock_free_dispatch_whose_exit_begins_after_its_own_check_sends_nothing(
+        flag, monkeypatch, exiting):
+    """A setup-independent endpoint that is not session-scoped (a status poll, an
+    artifact proof, a latent ACK) dispatches without the handle's lock. The
+    all-rank call checks the exit at its top; if the exit begins after that
+    check and before the send (here inside the endpoint check), the check at the
+    send itself (mesh_setup.dispatch_endpoint) stops it. Not exiting, it sends."""
+    workers = _Workers([])
+    workers.status = _Endpoint(_Future(_ValueMesh([{"rank": 0}, {"rank": 1}])))
+    handle, _old, _new = _handle(workers)
+    original = mesh_setup.require_endpoint
+
+    def require_endpoint(*args, **kwargs):
+        if exiting:
+            flag.set()  # the exit begins between the call's own check and its send
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(mesh_setup, "require_endpoint", require_endpoint)
+    if exiting:
+        with pytest.raises(driver_exit.DriverExitingError, match="sent nothing new"):
+            handle.call_all("status", timeout_s=1.0)
+        assert workers.status.calls == []
+        return
+    assert handle.call_all("status", timeout_s=1.0) == [{"rank": 0}, {"rank": 1}]
+    assert len(workers.status.calls) == 1
+
+
 class _LockHolder:
     """Another thread holding the handle's lock (a setup, a stop) until released."""
 
@@ -97,7 +125,9 @@ def test_a_call_that_waited_for_the_lock_when_the_exit_began_sends_nothing(flag,
     """The call passed its own check, then waited for the handle's lock (or the
     render session that shares it), and the exit began while it waited. The
     check under the lock, at the send itself (mesh_setup.dispatch_endpoint and
-    the sample's enqueue), stops it. Not exiting, it sends once the lock frees."""
+    the sample's enqueue), stops it; the sample's check comes before its lease
+    is counted, so it leaves no lease and no abandoned mark that would refuse
+    the next dispatch. Not exiting, it sends once the lock frees."""
     workers = _Workers([])
     workers.clear_vram = _Endpoint(_Future(_ValueMesh([{}, {}])))
     workers.compute_sigmas = _Endpoint(_Future(_ValueMesh([{}, {}])))
@@ -134,9 +164,11 @@ def test_a_call_that_waited_for_the_lock_when_the_exit_began_sends_nothing(flag,
              "sample": sent}[call]
     if exiting:
         assert isinstance(outcome[0], driver_exit.DriverExitingError) and calls == []
+        assert not any(handle.sample_leases.values()) and handle.abandoned_sample_leases == {}
         return
     assert not isinstance(outcome[0], BaseException) and len(calls) == 1
     if call == "sample":
+        assert handle.sample_leases == {token.generation: 1}
         mesh_setup.release_sample(outcome[0])
 
 
@@ -461,3 +493,119 @@ def test_no_pack_log_line_reports_a_call_the_exit_did_not_send(flag, monkeypatch
     assert _loud(kept) == ["cleanup failed: KeyError('fleet')"]
     routes._log_refresh_failure(RuntimeError("status endpoint raised"))
     assert _loud(kept)[-1] == "worker status refresh failed: RuntimeError('status endpoint raised')"
+
+
+def _text_forms() -> dict[str, object]:
+    """Each way a handler turns the refusal into text before it logs it."""
+    from dgx_monarch.error_utils import failure_summary
+
+    return {
+        "type_name": lambda error: ("unload failed (%s)", (type(error).__name__,)),
+        "str": lambda error: ("unload failed: %s", (str(error),)),
+        "repr": lambda error: ("unload failed: %s", (repr(error),)),
+        "f_string": lambda error: (f"unload failed ({type(error).__name__}: {error})", ()),
+        "summary_helper": lambda error: ("unload failed (%s)", (failure_summary(error),)),
+    }
+
+
+@pytest.mark.parametrize("form", ["type_name", "str", "repr", "f_string", "summary_helper"])
+@EXITING
+def test_a_pack_line_that_carries_the_refusal_as_text_is_not_printed_at_exit(
+        flag, monkeypatch, form, exiting):
+    """Once the exit has begun, a pack log line whose message names the exit's
+    refusal as text, by its type name, its str or repr, an f-string or the
+    pack's summary helper, is not printed, as one that carries it as an object
+    is not (log.SilentInLogs, driver_exit.TEXT_MARKS). Before the exit every
+    form prints."""
+    from dgx_monarch.nodes import routes
+
+    kept = _kept(monkeypatch, routes.log.name)
+    refused = driver_exit.DriverExitingError(driver_exit.SENT_NOTHING)
+    message, args = _text_forms()[form](refused)  # type: ignore[operator]
+    if exiting:
+        flag.set()
+    routes.log.warning(message, *args)
+    assert [record.getMessage() for record in kept] == ([] if exiting else [message % args])
+
+
+def test_every_refusal_the_exit_raises_names_a_marker_and_the_notice_none(flag, monkeypatch):
+    """Each refusal is raised here by the code that raises it at exit: the
+    send's (refuse_new_call), the not-started one (hold_at_entry), the attach's
+    (mesh_attach) and the render's (restart_reattach). Each opens its sentence
+    with driver_exit.REFUSAL_OPENING, so the filter drops a line that quotes it;
+    the notice opens differently, names no marker, and still prints at exit. A
+    scan of the source finds no other literal that says the driver is exiting,
+    so a new refusal text cannot drift from the marker."""
+    import ast
+    from pathlib import Path
+
+    from dgx_monarch import log, mesh_attach, restart_reattach
+
+    flag.set()
+    raised: dict[str, str] = {}
+    try:
+        driver_exit.refuse_new_call()
+    except driver_exit.DriverExitingError as exc:
+        raised["send"] = str(exc)
+    lock = threading.RLock()
+    with lock:  # a thread that owns the handle's lock refuses at once
+        try:
+            driver_exit.hold_at_entry(SimpleNamespace(lock=lock))
+        except driver_exit.DriverExitingError as exc:
+            raised["not_started"] = str(exc)
+    runtime = {"mesh_factory": SimpleNamespace(safe_transport_failure=lambda _handoff: None),
+               "MeshAttachError": RuntimeError}
+    try:
+        mesh_attach._stand_down_at_exit(runtime, SimpleNamespace(closed=lambda *_a, **_k: None))
+    except RuntimeError as exc:
+        raised["attach"] = str(exc)
+    try:
+        restart_reattach._stand_down_at_exit(RuntimeError("the old fleet's stop"))
+    except Exception as exc:
+        raised["render"] = str(exc)
+    assert sorted(raised) == ["attach", "not_started", "render", "send"]
+
+    def quoted(text: str) -> bool:
+        return log._names_the_refusal(logging.LogRecord("x", logging.WARNING, "", 0, "%s", (text,), None))
+
+    for name, text in raised.items():
+        sentence = text[text.index("]") + 1:].strip() if text.startswith("[dgxm:") else text
+        assert sentence.startswith(driver_exit.REFUSAL_OPENING) and quoted(text), (name, text)
+    assert not quoted(driver_exit.NOTICE)
+    kept = _kept(monkeypatch, "dgx_monarch.mesh")
+    driver_exit._log.info(driver_exit.NOTICE)
+    assert [record.getMessage() for record in kept] == [driver_exit.NOTICE]
+
+    found = []
+    for path in sorted(Path(driver_exit.__file__).parent.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        docs = {id(node.body[0].value) for node in ast.walk(tree)
+                if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.body and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)}
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs
+                    and "driver is exiting" in node.value.lower()):
+                found.append(node.value)
+    assert sorted(found) == sorted([driver_exit.REFUSAL_OPENING, driver_exit.NOTICE]), found
+
+
+def test_a_different_errors_traceback_that_names_the_refusal_still_prints_at_exit(flag, monkeypatch):
+    """Only the record's message is read, never its traceback. A different error
+    raised while the refusal was handled, logged with its traceback ("During
+    handling of the above exception ..."), still prints at exit, though that
+    traceback names the refusal."""
+    from dgx_monarch.nodes import routes
+
+    kept = _kept(monkeypatch, routes.log.name)
+    flag.set()
+    refused = driver_exit.DriverExitingError(driver_exit.SENT_NOTHING)
+    try:
+        try:
+            raise refused
+        except driver_exit.DriverExitingError:
+            {}["fleet"]  # a different failure while the refusal is handled
+    except KeyError:
+        routes.log.error("cleanup failed", exc_info=True)
+    assert [record.getMessage() for record in kept] == ["cleanup failed"]
+    assert "DriverExitingError" in logging.Formatter().format(kept[0])  # its traceback names it

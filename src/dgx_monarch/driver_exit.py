@@ -28,16 +28,21 @@ interpreter stops it) waits at its node's wrapper (``nodes.refusal_lead``) or at
 the top of ``mesh.get_mesh`` and ``mesh.ensure_live`` (``hold_at_entry``) until
 the process ends; only the first
 to reach ``HOLD_AT_EXIT_S`` raises. Past the entry, each new send (a price, a setup,
-a dispatch, an all-rank call, an RDMA read, a stop, a reset) raises
-``DriverExitingError`` (``refuse_new_call``), and the best-effort ones (the
-cancel, an RDMA drop, the lease renewal, a setup's rollback) skip themselves.
-Once the exit has begun, the pack's loggers drop a record that carries that
-error as an object (an argument or the record's exception, itself or as an
-explicit cause; ``log.SilentInLogs``); a line that carries only its text still
-prints, and the one route that turned it into text, the Worker-assisted
-decode's record, checks the exit itself. What runs to its end: a call in
-flight, a stop under way, the cleanup of a fleet bring-up under way, and the
-steps of an attach after its dial.
+a dispatch, an all-rank call, an RDMA read, a reset, the stop ``mesh.get_mesh``
+sends for a config change) raises ``DriverExitingError`` (``refuse_new_call``),
+and the best-effort ones (the cancel, an RDMA drop, the lease renewal, a setup's
+rollback) skip themselves. ``MeshHandle.shutdown`` has no check of its own: a
+stop that a teardown already under way sends still runs.
+Once the exit has begun, a pack log line that carries that error, as an object
+or as text, is not printed: the pack's loggers drop a record whose arguments or
+exception carry it (itself or as an explicit cause), or whose message names it
+(``TEXT_MARKS``: its class name, or the sentence every exit refusal opens with;
+``log.SilentInLogs``). Where more than a line is at stake, the route checks the
+exit itself: the native-return latch (``native_return_latch``), the identity
+gate's stock quarantine and its stock reference leg (``nodes.gate_identity``,
+``nodes.gate_cross_mode``), and the Worker-assisted decode, which then decodes
+here. What runs to its end: a call in flight, a stop under way, the cleanup of a
+fleet bring-up under way, and the steps of an attach after its dial.
 
 The hook sets the flag only once the main thread has ended. Python marks it
 ended before it runs exit hooks (checked on 3.11, 3.12 and 3.13), so a call
@@ -137,13 +142,20 @@ class DriverExitingError(RuntimeError, SilentInLogs):
 
     ``SilentInLogs``: once the exit has begun, the pack's loggers drop a record
     that carries this error as an object (an argument or the record's exception,
-    itself or as an explicit cause), so a handler that catches it and warns (an
-    unload or a status poll that "failed") prints nothing. A line that carries
-    only its text still prints.
+    itself or as an explicit cause) or names it in its message (``TEXT_MARKS``),
+    so a handler that catches it and warns (an unload or a status poll that
+    "failed") prints nothing, whether it logs the error or its text.
     """
 
 
-SENT_NOTHING = ("the driver is exiting, so it sent nothing new to the Worker actors: "
+# The sentence every refusal the exit raises opens with: the send's and the
+# not-started one here, the attach's (mesh_attach) and the render's
+# (restart_reattach). The notice opens differently ("The driver is exiting:").
+REFUSAL_OPENING = "the driver is exiting, so"
+# What a log message carries when it names the exit's refusal as text; once the
+# exit has begun, the pack's loggers drop such a line (log.SilentInLogs).
+TEXT_MARKS = (DriverExitingError.__name__, REFUSAL_OPENING)
+SENT_NOTHING = (f"{REFUSAL_OPENING} it sent nothing new to the Worker actors: "
                 "Monarch's exit step stops them")
 
 
@@ -179,7 +191,7 @@ HOLD_AT_EXIT_S = 30.0
 HOLD_AFTER_REFUSAL_S: float | None = None
 _PROCESS_ENDS = threading.Event()  # never set: the process ends first
 _REFUSED_AT_BOUND = threading.Event()  # this exit's one refusal at the bound has been raised
-NOT_STARTED = ("the driver is exiting, so this render, load or node did not start: "
+NOT_STARTED = (f"{REFUSAL_OPENING} this render, load or node did not start: "
                "Monarch's exit step stops the Worker actors, and nothing was sent to them")
 
 

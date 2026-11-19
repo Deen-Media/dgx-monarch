@@ -197,8 +197,8 @@ def auto_gate_context(
                 )
         return state, gate_verdict_token(
             key, artifacts.current, commit, capability_context)
-    except (FsdpGateProofError, WorkerRuntimeMismatch, DriverExitingError):
-        raise  # two torch builds hold no Gate authority (worker_runtime.py); an exit is no verdict
+    except (FsdpGateProofError, WorkerRuntimeMismatch):
+        raise  # two torch builds hold no Gate authority; the user sees which (worker_runtime.py)
     except Exception as exc:
         if fsdp_proof_required:
             raise FsdpGateProofError(

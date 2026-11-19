@@ -228,7 +228,11 @@ closing ComfyUI therefore prints at most the cut render's own error, then
 nothing for the queue's DGX Monarch renders, for any length of queue. A queued
 prompt's stock ComfyUI nodes that run before its first DGX Monarch node still
 run and print what they print, and a prompt with no DGX Monarch node renders as
-usual. If the process is still alive 30 s after the waiting render started,
+usual. So do the DGX Monarch nodes that have no wrapper and reach no mesh (Load
+LoRA, the two Model Sampling nodes, the Qwen Image 2.1 Cache, Skip Layer
+Guidance, MiniMax H3 Context Windows and the guiders): they run and return, and
+a refusal of their own, such as Load LoRA's FSDP check, prints for that prompt
+as it would at any time. If the process is still alive 30 s after the waiting render started,
 because an exit hook hung, that render stops with "the driver is exiting, so
 this render, load or node did not start", which ComfyUI logs as its error;
 every render after it waits until the process ends, so that is the one error
@@ -2589,14 +2593,27 @@ to its end is work already started: a call in flight, a stop under way, the
 cleanup of a fleet bring-up under way, and the steps of an attach after its
 dial. A render, load or node that starts after the notice waits at the pack's
 entry, logging nothing, until the process ends; ComfyUI starts no other prompt
-while it waits. A price, a setup, a dispatch, an RDMA latent read, a stop, a
-reset or a status poll that a render already under way would send next is not
-sent, and the lease renewals stop. A Worker-assisted VAE decode decodes its
-remaining units on the driver, as it would with the option off, and logs
-nothing. So a closing ComfyUI prints at most the cut render's own error, then
+while it waits. A price, a setup, a dispatch, an RDMA latent read, a reset, a
+status poll or the stop that replaces a fleet whose config changed, which a
+render already under way would send next, is not sent, and the lease renewals
+stop; a stop that a teardown already under way sends still runs. A
+Worker-assisted VAE decode decodes its remaining units on the driver, as it
+would with the option off. Once the exit has begun, no DGX Monarch log line
+that carries the exit's refusal, as the error itself or as its text, is
+printed. A sample refused at its dispatch leaves no lease and no abandoned
+mark. The cut render leaves no mark that outlives the exit either: a native
+latent read the exit refused or cut does not latch native return off
+([#115](#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)),
+and an identity gate ceremony the exit cut records no verdict for its stock
+reference leg and turns no residency setting off. So a closing ComfyUI prints
+at most the cut render's own error, then
 nothing for the queue's DGX Monarch renders, however many prompts were queued;
 a queued prompt's stock ComfyUI nodes that run before its first DGX Monarch
-node still print what they print. Before, each queued prompt that started
+node still print what they print, and so do the DGX Monarch nodes with no
+wrapper and no mesh call (Load LoRA, the two Model Sampling nodes, the Qwen
+Image 2.1 Cache, Skip Layer Guidance, MiniMax H3 Context Windows and the
+guiders), whose own refusals, such as Load LoRA's FSDP check, print as at any
+time. Before, each queued prompt that started
 priced on the closing Workers and printed its error, and from about 1 s after
 the notice Monarch panicked on the send (`SendError` on stderr). If the
 process is still alive 30 s after the waiting render started, because an exit
@@ -7276,7 +7293,11 @@ failed read's exception type as `reason`, `latched_unix_s`, `fault_count`,
 read on the driver trips the latch: a queue-pair initialization timeout, a
 registration or read failure, a read timeout, a policy readback refusal, a
 failed ACK, or a refusal before the read starts, including a read on a lease
-that already retired. Ownership settles as
+that already retired. A read that fails once ComfyUI is closing, because the
+driver's exit refused it or Monarch's exit step cut it, is the one exception: it
+trips nothing and logs nothing, since no later setup will read the latch
+([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
+Ownership settles as
 [#29](#29-large-rdma-latent-return-fails-after-workers-finish-rendering)
 describes: nothing is dropped or acknowledged without proof, a started read
 keeps its destination, and the failed render's lease stays abandoned. Before

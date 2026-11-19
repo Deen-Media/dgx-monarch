@@ -1041,12 +1041,21 @@ def test_a_latent_read_that_starts_at_exit_reads_nothing_and_drops_nothing(monke
     """A sample ends as the driver begins to exit, with the RDMA latent return
     on: the read of the Worker's buffer is not started (driver_exit.refuse_new_call)
     and its release is skipped, as the cancel is; Monarch's exit step stops the
-    actor that holds the buffer. Not exiting, the read and the drop run as before."""
-    from dgx_monarch import driver_exit
+    actor that holds the buffer. The refused read is no fault of the native
+    return: it latches nothing and logs nothing (native_return_latch). Not
+    exiting, the read and the drop run as before."""
+    import logging
+
+    from dgx_monarch import driver_exit, native_return_latch
 
     flag = threading.Event()
     monkeypatch.setattr(driver_exit, "_EXITING", flag)
     events = []
+    lines: list[logging.LogRecord] = []
+    keep = logging.Handler()
+    keep.emit = lines.append  # type: ignore[method-assign]
+    latch_log = logging.getLogger("dgx_monarch.native_return_latch")
+    monkeypatch.setattr(latch_log, "handlers", [*latch_log.handlers, keep])
 
     class Buffer(_FakeRDMABuffer):
         def read_into(self, dst, timeout=None):
@@ -1083,3 +1092,6 @@ def test_a_latent_read_that_starts_at_exit_reads_nothing_and_drops_nothing(monke
     with pytest.raises(driver_exit.DriverExitingError):
         read_latent_result(desc, Guard())
     assert "read" not in events and "drop" not in events, events
+    state = native_return_latch.snapshot()
+    assert state["latched"] is False and state["fault_count"] == 0
+    assert [record.getMessage() for record in lines] == []

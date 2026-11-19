@@ -34,7 +34,9 @@ the actor process ids as one JSON line. Then, by mode:
   in ``PROBE_ENTRIES`` before it starts. The main thread returns. A hook
   registered before the mesh build (so it runs after Monarch's exit step)
   waits until the first queued entry has started, then writes the time it
-  returned to ``PROBE_LAST_HOOK``.
+  returned to ``PROBE_LAST_HOOK``. ``queue_wrapped``: the same, each queued
+  prompt entering a node method under ``refusal_lead.lead_with_refusal`` that
+  marks ``inside the node`` before its own ``mesh.ensure_live``.
 
 The last stdout line is always a JSON object.
 """
@@ -123,7 +125,7 @@ def main() -> None:
 
         atexit.register(_join_render)
     queued = threading.Event()
-    if mode == "queue":
+    if mode in ("queue", "queue_wrapped"):
         import atexit
 
         def _until_queued() -> None:
@@ -191,7 +193,18 @@ def main() -> None:
         _RENDER[0].start()
         entered.wait(60)
         time.sleep(float(os.environ.get("PROBE_HEAL_DELAY_S", "0.5")))  # inside the heal's 2 s stop
-    elif mode == "queue":
+    elif mode in ("queue", "queue_wrapped"):
+        from dgx_monarch.nodes.refusal_lead import lead_with_refusal
+
+        @lead_with_refusal
+        def _node() -> object:  # a node method under the pack's wrapper, as a sampler's is
+            with open(os.environ["PROBE_ENTRIES"], "a") as out:
+                out.write("inside the node\n")
+            return mesh.ensure_live(handle)
+
+        def _entry() -> object:
+            return _node() if mode == "queue_wrapped" else mesh.ensure_live(handle)
+
         def _prompt_worker() -> None:
             _calls(handle, record)  # the render the exit cuts
             for _prompt in range(4):  # the prompts queued behind it
@@ -199,7 +212,7 @@ def main() -> None:
                     out.write(f"entered {time.time()!r}\n")
                 queued.set()
                 try:
-                    mesh.ensure_live(handle)
+                    _entry()
                 except BaseException as exc:
                     with open(os.environ["PROBE_ENTRIES"], "a") as out:
                         out.write(f"raised {type(exc).__name__}\n")

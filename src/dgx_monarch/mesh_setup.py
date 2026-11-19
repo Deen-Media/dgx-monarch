@@ -346,8 +346,7 @@ def _dispatch_sample_bound(
             from .mesh_session import require_mutation_authority
 
             require_endpoint(handle, "sample")
-            require_mutation_authority(
-                handle, "dispatch sample", require_owner=True)
+            require_mutation_authority(handle, "dispatch sample", require_owner=True)
             require_no_abandoned_samples(handle, "dispatch another sample")
             if setup_token is None:
                 raise RuntimeError("setup-bound endpoint sample requires a SetupToken")
@@ -356,9 +355,10 @@ def _dispatch_sample_bound(
                 raise RuntimeError("sample authority belongs to a different mesh handle")
             if sample_authority.generation != setup_token.generation:
                 raise RuntimeError("sample authority belongs to a different setup generation")
+            driver_exit.refuse_new_call()  # waited for the lock: no lease, no abandoned mark
             sample_authority._register_locked()
             sample_authority._mark_enqueue_started_locked()
-            future = driver_exit.send_unless_exiting(send)  # a dispatch that waited for the lock
+            future = send()
             sample_authority._bind_future_locked(future)
         return sample_authority
     except BaseException as exc:
