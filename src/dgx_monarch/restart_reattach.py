@@ -361,7 +361,7 @@ def _retire(handle: Any, moves: Moves, refused: BaseException) -> str:
             _refuse_retire(handle, moves, refused)
         _stand_down_at_exit(refused)
         try:
-            handle.shutdown(timeout_s=STOP_BOUND_S, _reconcile_token=token)
+            handle.shutdown(timeout_s=STOP_BOUND_S, _reconcile_token=token, _refuse_at_exit=True)
         except PriorTeardownUnknownError as exc:
             _stand_down_at_exit(refused)
             _refuse_retire(handle, moves, exc)

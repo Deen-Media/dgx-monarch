@@ -897,6 +897,39 @@ def test_an_exit_after_the_stop_ends_the_detour_with_the_exit_refusal(
     assert len(driver.dials) == 1 and attaches == []  # no attach was even begun
 
 
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_a_detour_stop_that_waits_for_the_lock_as_the_exit_begins_stops_nothing(
+        driver, monkeypatch, exiting):
+    """The restart detour passed its exit check and stops the stale fleet; that
+    stop (MeshHandle.shutdown) waits for the fleet's lifecycle lock, and the
+    exit begins as the wait begins. The stop refuses under the lock
+    (``_refuse_at_exit``): nothing is sent to the stale fleet, nothing new is
+    dialed, and the render's error is the exit refusal. Not exiting, the stop
+    is sent with the short bound and the detour attaches the new ids."""
+    from dgx_monarch import driver_exit, mesh_setup
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    real_lock = mesh_setup.lifecycle_lock
+
+    def lifecycle_lock(target, operation, timeout_s=10.0):
+        if exiting and operation == "shutdown":
+            driver_exit._EXITING.set()  # the exit begins as the stop waits for the lock
+        return real_lock(target, operation, timeout_s)
+
+    monkeypatch.setattr(mesh_setup, "lifecycle_lock", lifecycle_lock)
+    refused = _restarted(driver)
+    if not exiting:
+        outcome = restart_reattach.heal(handle, refused)
+        assert outcome.handle is not handle and driver.procs[0].stops == [restart_reattach.STOP_BOUND_S]
+        return
+    with pytest.raises(WorkerDeliveryError) as raised:
+        restart_reattach.heal(handle, refused)
+    assert "the driver is exiting, so this render stops here" in str(raised.value)
+    assert driver.procs[0].stops == [] and len(driver.dials) == 1
+    assert handle.teardown_complete is not True
+
+
 def _exit_rig(driver, monkeypatch):
     """A fresh exit flag, the real log methods through their filters, and a count of
     the id readings. Each reading is one ``listener_generation.fleet`` call, which on

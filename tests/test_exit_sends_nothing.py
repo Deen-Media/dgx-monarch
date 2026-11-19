@@ -182,13 +182,17 @@ def test_a_direct_send_that_waited_for_the_lock_when_the_exit_began_changes_noth
     it before it changes anything: a policy update clears no policy marker
     and publishes no DIRTY state; a reset, and the stop get_mesh sends for a
     config change (``_refuse_at_exit``), send no group teardown and no proc
-    stop and keep the READY setup. A stop with no such flag (a teardown
-    already under way) still runs at exit. Not exiting, each sends as before."""
+    stop, take no deliberate-teardown token and keep the READY setup. A stop
+    with no such flag (a teardown already under way) still runs at exit. Not
+    exiting, each sends as before."""
     workers = _Workers([_Future(_acks())])
     workers.apply_worker_args = _Endpoint(_Future(_ValueMesh([{}, {}])))
     handle, _old, _new = _handle(workers)
     before = (handle.worker_args_key, dict(handle.active_worker_args or {}),
               handle.setup_cleanup_state, handle.setup_key)
+    from dgx_monarch import mesh_safety
+
+    version = mesh_safety.teardown_state_version()  # a deliberate teardown's token bumps it
     outcome: list[object] = []
     run = {
         "policy": lambda: handle.apply_worker_args({"slab_weights": False}),
@@ -219,6 +223,9 @@ def test_a_direct_send_that_waited_for_the_lock_when_the_exit_began_changes_noth
         assert sent == []
         assert (handle.worker_args_key, dict(handle.active_worker_args or {}),
                 handle.setup_cleanup_state, handle.setup_key) == before
+        # No deliberate-teardown token was taken (and given back) either.
+        assert mesh_safety.teardown_state_version() == version
+        assert not mesh_safety.token_present(id(handle))
         return
     assert not isinstance(outcome[0], BaseException), outcome
     assert sent

@@ -279,8 +279,10 @@ class MeshHandle:
         Local meshes also require an explicit process stop during eviction.
         ``owns_hosts`` controls only external Worker coordinators; this handle owns
         its ProcMesh in every mode. ``_refuse_at_exit``: the stop for a config
-        change, which sends nothing once the driver is exiting, even after it
-        waited for the lifecycle lock (driver_exit); every other stop runs.
+        change (``get_mesh``) and the restart detour's stop of the stale fleet
+        (``restart_reattach``), which send nothing once the driver is exiting,
+        even after they waited for the lifecycle lock (driver_exit); every other
+        stop runs.
         """
         if getattr(self, "teardown_complete", False):
             # A recycle (or an earlier clean detach) already stopped these
