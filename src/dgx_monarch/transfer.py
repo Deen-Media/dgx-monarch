@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from . import native_return_latch, rdma_ownership, rdma_poison, rdma_settlement, transfer_utils
+from . import driver_exit, native_return_latch, rdma_ownership, rdma_poison, rdma_settlement, transfer_utils
 from .log import get_logger
 from .rdma_read_driver import run_owned_off_loop as run_blocking_off_loop
 from .rdma_receiver import _read_and_release
@@ -64,8 +64,10 @@ def _publish_constructor_intent(part: dict, keepalive: Any) -> _RDMAPoisonOwner:
 
 
 def _report_poison_safely() -> None:
-    """Claim and report the process's first durable RDMA poison owner; never raises."""
+    """Claim and report the process's first durable RDMA poison owner, unless exiting; never raises."""
     try:
+        if driver_exit.exiting():  # a read the exit cut leaves its drops unconfirmed; the owner stays
+            return
         _RDMA_POISON_REPORTER.report(
             _RDMA_POISON_LOCK, _RDMA_POISONED_OWNERS, log.error, _safe_log)
     except BaseException:
@@ -73,8 +75,7 @@ def _report_poison_safely() -> None:
 
 
 def _unowned_failures(failures: list[_RDMADropFailure]) -> list[_RDMADropFailure]:
-    return rdma_poison.unowned_failures(
-        failures, _RDMA_POISON_LOCK, _RDMA_POISONED_OWNERS)
+    return rdma_poison.unowned_failures(failures, _RDMA_POISON_LOCK, _RDMA_POISONED_OWNERS)
 
 
 def _poison_failed_drops(failures: list[_RDMADropFailure], *, keepalive: Any,

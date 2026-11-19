@@ -41,8 +41,11 @@ exception carry it (itself or as an explicit cause), or whose message names it
 exit itself: the native-return latch (``native_return_latch``), the identity
 gate's stock quarantine and its stock reference leg (``nodes.gate_identity``,
 ``nodes.gate_cross_mode``), and the Worker-assisted decode, which then decodes
-here. What runs to its end: a call in flight, a stop under way, the cleanup of a
-fleet bring-up under way, and the steps of an attach after its dial.
+here. So does a line about a call Monarch's exit step cut, whose error names
+no marker: the identity gate's abort lines (``nodes.gate_ceremony``,
+``nodes.gate_abort``) and the RDMA poison report (``transfer``). What runs to
+its end: a call in flight, a stop under way, the cleanup of a fleet bring-up
+under way, and the steps of an attach after its dial.
 
 The hook sets the flag only once the main thread has ended. Python marks it
 ended before it runs exit hooks (checked on 3.11, 3.12 and 3.13), so a call

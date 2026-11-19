@@ -110,7 +110,7 @@ coverage in [`test_gate_ledger.py:23-27`](../tests/test_gate_ledger.py#L23-L27 "
   [`test_gate_ledger.py:1017-1044`](../tests/test_gate_ledger.py#L1017-L1044 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"), and
   [`test_gate_ledger.py:1047-1089`](../tests/test_gate_ledger.py#L1047-L1089 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
   [`test_runtime_provenance.py:132-149`](../tests/test_runtime_provenance.py#L132-L149 "anchor:test_source_inventory_rejects_unreadable_included_subtree"),
-  [`test_gate_orchestration.py:3530-3548`](../tests/test_gate_orchestration.py#L3530-L3548 "anchor:test_normal_render_source_manifest_failure_forces_stock_without_grant"), and
+  [`test_gate_orchestration.py:3594-3612`](../tests/test_gate_orchestration.py#L3594-L3612 "anchor:test_normal_render_source_manifest_failure_forces_stock_without_grant"), and
   [`test_fleet.py:1473-1501`](../tests/test_fleet.py#L1473-L1501 "anchor:test_fleet_source_manifest_failure_forces_stock_without_a_grant").
 
 ## Ledger row lifecycle
@@ -187,7 +187,7 @@ process authority. The schema, strict append, and its
 placement before ceremony side effects are
 [`gate_ledger.py:160-189`](../src/dgx_monarch/gate_ledger.py#L160-L189 "anchor:_valid_entry_schema"),
 [`gate_ledger.py:487-524`](../src/dgx_monarch/gate_ledger.py#L487-L524 "anchor:begin_retest_required"), and
-[`gate_ceremony.py:211-257`](../src/dgx_monarch/nodes/gate_ceremony.py#L211-L257 "anchor:gather_ceremony_evidence").
+[`gate_ceremony.py:212-257`](../src/dgx_monarch/nodes/gate_ceremony.py#L212-L257 "anchor:gather_ceremony_evidence").
 Atomic multi-context denial, malformed-guard refusal, strict write/lock
 failure, and side-effect ordering are covered by
 [`test_gate_ledger.py:491-526`](../tests/test_gate_ledger.py#L491-L526 "anchor:test_retest_guard_atomically_denies_every_context_until_exact_finals"),
@@ -289,7 +289,7 @@ copied from historical evidence.
    clone, and pre-verdict drift check are enforced at
    [`gate_session.py:20-179`](../src/dgx_monarch/nodes/gate_session.py#L20-L179 "anchor:run_identity_ceremony"),
    [`gate_identity.py:268-283`](../src/dgx_monarch/nodes/gate_identity.py#L268-L283 "anchor:model_with_worker_overrides"), and
-   [`gate_ceremony.py:101-363`](../src/dgx_monarch/nodes/gate_ceremony.py#L101-L363 "anchor:gather_ceremony_evidence"); policy
+   [`gate_ceremony.py:102-363`](../src/dgx_monarch/nodes/gate_ceremony.py#L102-L363 "anchor:gather_ceremony_evidence"); policy
    drift is covered by
    [`test_gate_orchestration.py:2119-2150`](../tests/test_gate_orchestration.py#L2119-L2150 "anchor:test_identity_ceremony_rejects_policy_drift_before_pass").
    The immutable transaction walker accepts only the direct class exported
@@ -370,7 +370,7 @@ copied from historical evidence.
    [`test_gate_orchestration.py:2748-2763`](../tests/test_gate_orchestration.py#L2748-L2763 "anchor:test_config_supplied_auto_stamps_only_the_explicit_on_variant"), and
    [`test_gate_orchestration.py:2766-2777`](../tests/test_gate_orchestration.py#L2766-L2777 "anchor:test_pass_with_unvouched_family_never_stamps"),
    with partial-rank refusal covered by
-   [`test_gate_orchestration.py:3235-3269`](../tests/test_gate_orchestration.py#L3235-L3269 "anchor:test_explicit_slab_without_all_rank_residency_never_passes_or_crosses").
+   [`test_gate_orchestration.py:3299-3333`](../tests/test_gate_orchestration.py#L3299-L3333 "anchor:test_explicit_slab_without_all_rank_residency_never_passes_or_crosses").
 5. **CAPACITY never grants; generic OOM in the cross-residency reference leg
    remains ERROR then INCONCLUSIVE.** Only a typed capacity refusal is
    classified as `CAPACITY`: a `StockLoadCapacityError`, raised at a load or
@@ -396,8 +396,8 @@ copied from historical evidence.
    [`test_gate_orchestration.py:2780-2799`](../tests/test_gate_orchestration.py#L2780-L2799 "anchor:test_capacity_refusal_stays_inconclusive_with_no_pass_grant"),
    [`test_gate_orchestration.py:2802-2814`](../tests/test_gate_orchestration.py#L2802-L2814 "anchor:test_wrapped_capacity_refusal_is_classified_but_grants_nothing"),
    [`test_gate_orchestration.py:2817-2830`](../tests/test_gate_orchestration.py#L2817-L2830 "anchor:test_generic_oom_in_reference_render_stays_inconclusive"),
-   [`test_gate_orchestration.py:2878-2897`](../tests/test_gate_orchestration.py#L2878-L2897 "anchor:test_oom_during_stock_policy_apply_stays_inconclusive"), and
-   [`test_gate_orchestration.py:2900-2911`](../tests/test_gate_orchestration.py#L2900-L2911 "anchor:test_oom_cross_leg_under_auto_stays_inconclusive").
+   [`test_gate_orchestration.py:2942-2961`](../tests/test_gate_orchestration.py#L2942-L2961 "anchor:test_oom_during_stock_policy_apply_stays_inconclusive"), and
+   [`test_gate_orchestration.py:2964-2975`](../tests/test_gate_orchestration.py#L2964-L2975 "anchor:test_oom_cross_leg_under_auto_stays_inconclusive").
 6. **The cross-residency leg runs whenever worker reports prove coherent,
    policy-expected all-rank slab residency, including a vouched auto default.**
    The proof derives all-rank active state from one exact current cycle cohort,
@@ -408,7 +408,7 @@ copied from historical evidence.
    [`slab_proof.py:24-91`](../src/dgx_monarch/nodes/slab_proof.py#L24-L91 "anchor:_cycle_state") and
    [`slab_proof.py:94-177`](../src/dgx_monarch/nodes/slab_proof.py#L94-L177 "anchor:establish").
    For a valid proof, every worker must then leave slab before a fresh stock
-   load at [`gate_ceremony.py:240-262`](../src/dgx_monarch/nodes/gate_ceremony.py#L240-L262 "anchor:gather_ceremony_evidence").
+   load at [`gate_ceremony.py:241-262`](../src/dgx_monarch/nodes/gate_ceremony.py#L241-L262 "anchor:gather_ceremony_evidence").
    FSDP disables slab residency, and it takes a LoRA stack only with
    `lora_low_rss` on at
    [`fsdp.py:355-367`](../src/dgx_monarch/adapters/fsdp.py#L355-L367 "anchor:validate_fsdp_launch_loras"),
@@ -451,8 +451,8 @@ copied from historical evidence.
    publishes only INCONCLUSIVE capability verdicts; an auto/vouched slab
    ceremony likewise stamps no sibling PASS authority. The explicit and
    auto/vouched production regressions are
-   [`test_gate_orchestration.py:3491-3527`](../tests/test_gate_orchestration.py#L3491-L3527 "anchor:test_no_lora_cross_pass_cannot_override_explicit_slab_repeat_divergence") and
-   [`test_gate_orchestration.py:3551-3588`](../tests/test_gate_orchestration.py#L3551-L3588 "anchor:test_no_lora_cross_pass_cannot_stamp_auto_vouched_slab_sibling_passes").
+   [`test_gate_orchestration.py:3555-3591`](../tests/test_gate_orchestration.py#L3555-L3591 "anchor:test_no_lora_cross_pass_cannot_override_explicit_slab_repeat_divergence") and
+   [`test_gate_orchestration.py:3615-3652`](../tests/test_gate_orchestration.py#L3615-L3652 "anchor:test_no_lora_cross_pass_cannot_stamp_auto_vouched_slab_sibling_passes").
    A packed result is PASS-eligible only when both values use the exact direct
    ComfyUI `NestedTensor` class, expose the same nonempty modality count, and
    every leaf is an exact `torch.Tensor` that agrees in full shape, dtype,
@@ -485,15 +485,15 @@ copied from historical evidence.
    cases are covered by
    [`test_gate_orchestration.py:2153-2171`](../tests/test_gate_orchestration.py#L2153-L2171 "anchor:test_cross_mode_divergence_fails_and_quarantines_slab")
    and
-   [`test_gate_orchestration.py:2914-2927`](../tests/test_gate_orchestration.py#L2914-L2927 "anchor:test_cross_mode_refuses_a_worker_that_stayed_in_slab"),
-   [`test_gate_orchestration.py:2930-2941`](../tests/test_gate_orchestration.py#L2930-L2941 "anchor:test_cross_mode_unloads_before_the_stock_reference"),
-   [`test_gate_orchestration.py:2944-2971`](../tests/test_gate_orchestration.py#L2944-L2971 "anchor:test_cross_mode_fail_quarantines_slab_even_when_swaps_inconclusive"),
-   [`test_gate_orchestration.py:2974-2985`](../tests/test_gate_orchestration.py#L2974-L2985 "anchor:test_both_levers_quarantine_when_both_findings_hold"), and
-   [`test_gate_orchestration.py:2988-3012`](../tests/test_gate_orchestration.py#L2988-L3012 "anchor:test_cross_mode_triggers_on_worker_reported_residency"),
+   [`test_gate_orchestration.py:2978-2991`](../tests/test_gate_orchestration.py#L2978-L2991 "anchor:test_cross_mode_refuses_a_worker_that_stayed_in_slab"),
+   [`test_gate_orchestration.py:2994-3005`](../tests/test_gate_orchestration.py#L2994-L3005 "anchor:test_cross_mode_unloads_before_the_stock_reference"),
+   [`test_gate_orchestration.py:3008-3035`](../tests/test_gate_orchestration.py#L3008-L3035 "anchor:test_cross_mode_fail_quarantines_slab_even_when_swaps_inconclusive"),
+   [`test_gate_orchestration.py:3038-3049`](../tests/test_gate_orchestration.py#L3038-L3049 "anchor:test_both_levers_quarantine_when_both_findings_hold"), and
+   [`test_gate_orchestration.py:3052-3076`](../tests/test_gate_orchestration.py#L3052-L3076 "anchor:test_cross_mode_triggers_on_worker_reported_residency"),
    plus the policy refusals at
-   [`test_gate_orchestration.py:3133-3155`](../tests/test_gate_orchestration.py#L3133-L3155 "anchor:test_auto_unvouched_active_slab_is_a_policy_error"),
-   [`test_gate_orchestration.py:3158-3185`](../tests/test_gate_orchestration.py#L3158-L3185 "anchor:test_auto_partial_unvouched_slab_cannot_pass"), and
-   [`test_gate_orchestration.py:3188-3208`](../tests/test_gate_orchestration.py#L3188-L3208 "anchor:test_explicit_stock_context_refuses_unexpected_active_slab").
+   [`test_gate_orchestration.py:3197-3219`](../tests/test_gate_orchestration.py#L3197-L3219 "anchor:test_auto_unvouched_active_slab_is_a_policy_error"),
+   [`test_gate_orchestration.py:3222-3249`](../tests/test_gate_orchestration.py#L3222-L3249 "anchor:test_auto_partial_unvouched_slab_cannot_pass"), and
+   [`test_gate_orchestration.py:3252-3272`](../tests/test_gate_orchestration.py#L3252-L3272 "anchor:test_explicit_stock_context_refuses_unexpected_active_slab").
 7. **A live ceremony diagnoses implicated levers; persisted FAIL always returns
    to the complete stock residency policy.** A slab-vs-stock divergence
    disables `slab_weights`; an in-mode lazy-swap
@@ -514,8 +514,8 @@ copied from historical evidence.
    [`test_gate_orchestration.py:1353-1382`](../tests/test_gate_orchestration.py#L1353-L1382 "anchor:test_persisted_quarantine_lookup_error_forces_both_paths_off"),
    [`test_gate_orchestration.py:1385-1412`](../tests/test_gate_orchestration.py#L1385-L1412 "anchor:test_persisted_fail_forces_all_risky_levers_off_via_real_ledger"),
    [`test_gate_orchestration.py:1415-1437`](../tests/test_gate_orchestration.py#L1415-L1437 "anchor:test_persisted_quarantine_skips_when_fail_was_superseded"),
-   [`test_gate_orchestration.py:2944-2971`](../tests/test_gate_orchestration.py#L2944-L2971 "anchor:test_cross_mode_fail_quarantines_slab_even_when_swaps_inconclusive"),
-   and [`test_gate_orchestration.py:2974-2985`](../tests/test_gate_orchestration.py#L2974-L2985 "anchor:test_both_levers_quarantine_when_both_findings_hold").
+   [`test_gate_orchestration.py:3008-3035`](../tests/test_gate_orchestration.py#L3008-L3035 "anchor:test_cross_mode_fail_quarantines_slab_even_when_swaps_inconclusive"),
+   and [`test_gate_orchestration.py:3038-3049`](../tests/test_gate_orchestration.py#L3038-L3049 "anchor:test_both_levers_quarantine_when_both_findings_hold").
    The real submit path dispatching that clone, with the graph's own dict
    unchanged, is covered by
    [`test_gating_off_posture.py:163-222`](../tests/test_gating_off_posture.py#L163-L222 "anchor:test_the_submit_dispatches_the_quarantine_clone_with_gating_off"),
@@ -633,7 +633,7 @@ copied from historical evidence.
     [`test_gate_orchestration.py:190-204`](../tests/test_gate_orchestration.py#L190-L204 "anchor:test_normal_render_unscoped_damage_never_uses_cached_pass"),
     [`test_gate_orchestration.py:835-874`](../tests/test_gate_orchestration.py#L835-L874 "anchor:test_dual_model_render_never_reuses_primary_only_pass"),
     [`test_gate_orchestration.py:877-909`](../tests/test_gate_orchestration.py#L877-L909 "anchor:test_pipeline_dual_model_bypasses_primary_pass_and_forces_stock"),
-    [`test_gate_orchestration.py:3352-3410`](../tests/test_gate_orchestration.py#L3352-L3410 "anchor:test_dual_model_authorization_never_mints_primary_only_grant"),
+    [`test_gate_orchestration.py:3416-3474`](../tests/test_gate_orchestration.py#L3416-L3474 "anchor:test_dual_model_authorization_never_mints_primary_only_grant"),
     [`test_runtime_remediation.py:123-138`](../tests/test_runtime_remediation.py#L123-L138 "anchor:test_normal_residency_grant_binds_every_reconstructible_boundary"),
     [`test_runtime_remediation.py:141-174`](../tests/test_runtime_remediation.py#L141-L174 "anchor:test_normal_residency_grant_rejects_tampering"),
     [`test_runtime_remediation.py:177-188`](../tests/test_runtime_remediation.py#L177-L188 "anchor:test_risky_normal_render_requires_driver_mode_and_grant"), and
@@ -657,7 +657,7 @@ copied from historical evidence.
     refusal, bounded positive-cache eviction, and non-evicting denial are covered by
     [`test_gate_orchestration.py:207-232`](../tests/test_gate_orchestration.py#L207-L232 "anchor:test_auto_gate_ignores_cached_pass_when_ledger_damage_is_unhealed"),
     [`test_gate_orchestration.py:235-257`](../tests/test_gate_orchestration.py#L235-L257 "anchor:test_auto_gate_does_not_cache_unconsumable_pass_over_retesting"),
-    [`test_gate_orchestration.py:3413-3488`](../tests/test_gate_orchestration.py#L3413-L3488 "anchor:test_damaged_real_ledger_cached_pass_requires_exact_reproof"),
+    [`test_gate_orchestration.py:3477-3552`](../tests/test_gate_orchestration.py#L3477-L3552 "anchor:test_damaged_real_ledger_cached_pass_requires_exact_reproof"),
     [`test_fleet.py:715-750`](../tests/test_fleet.py#L715-L750 "anchor:test_fleet_cached_pass_cannot_bridge_unhealed_ledger_damage"),
     [`test_gate_orchestration.py:912-935`](../tests/test_gate_orchestration.py#L912-L935 "anchor:test_auto_gate_session_cache_evicts_oldest_context") and
     [`test_gate_orchestration.py:938-952`](../tests/test_gate_orchestration.py#L938-L952 "anchor:test_process_denial_survives_bounded_positive_cache_pressure").
@@ -670,15 +670,15 @@ copied from historical evidence.
     ledger publication. An injected observer runs only after this mandatory
     check, so it cannot replace the cohort authority. The bracket is
     [`gate_provenance.py:19-110`](../src/dgx_monarch/nodes/gate_provenance.py#L19-L110 "anchor:ProofCohortAttestor") and
-    [`gate_ceremony.py:237-363`](../src/dgx_monarch/nodes/gate_ceremony.py#L237-L363 "anchor:gather_ceremony_evidence"), covered by
+    [`gate_ceremony.py:238-363`](../src/dgx_monarch/nodes/gate_ceremony.py#L238-L363 "anchor:gather_ceremony_evidence"), covered by
     [`test_gate_orchestration.py:1588-1645`](../tests/test_gate_orchestration.py#L1588-L1645 "anchor:test_provenance_bracket_precedes_every_gate_pass_publication"),
-    [`test_gate_orchestration.py:3591-3647`](../tests/test_gate_orchestration.py#L3591-L3647 "anchor:test_default_provenance_attestor_rejects_incomplete_or_mixed_cohort_preproof"),
-    [`test_gate_orchestration.py:3651-3686`](../tests/test_gate_orchestration.py#L3651-L3686 "anchor:test_default_provenance_rpc_failure_never_publishes_a_terminal_row"),
-    [`test_gate_orchestration.py:3690-3716`](../tests/test_gate_orchestration.py#L3690-L3716 "anchor:test_post_provenance_source_mismatch_cannot_publish_a_terminal_row"),
-    [`test_gate_orchestration.py:3720-3746`](../tests/test_gate_orchestration.py#L3720-L3746 "anchor:test_post_provenance_rejects_setup_generation_drift_before_publication"),
-    [`test_gate_orchestration.py:3750-3774`](../tests/test_gate_orchestration.py#L3750-L3774 "anchor:test_injected_provenance_observer_cannot_bypass_mandatory_cohort_check"),
-    [`test_gate_orchestration.py:3777-3808`](../tests/test_gate_orchestration.py#L3777-L3808 "anchor:test_fresh_ceremony_establishes_setup_after_denial_before_pre_attestation"), and
-    [`test_gate_orchestration.py:3811-3836`](../tests/test_gate_orchestration.py#L3811-L3836 "anchor:test_post_provenance_malformed_row_cannot_publish_a_terminal_row").
+    [`test_gate_orchestration.py:3655-3711`](../tests/test_gate_orchestration.py#L3655-L3711 "anchor:test_default_provenance_attestor_rejects_incomplete_or_mixed_cohort_preproof"),
+    [`test_gate_orchestration.py:3715-3750`](../tests/test_gate_orchestration.py#L3715-L3750 "anchor:test_default_provenance_rpc_failure_never_publishes_a_terminal_row"),
+    [`test_gate_orchestration.py:3754-3780`](../tests/test_gate_orchestration.py#L3754-L3780 "anchor:test_post_provenance_source_mismatch_cannot_publish_a_terminal_row"),
+    [`test_gate_orchestration.py:3784-3810`](../tests/test_gate_orchestration.py#L3784-L3810 "anchor:test_post_provenance_rejects_setup_generation_drift_before_publication"),
+    [`test_gate_orchestration.py:3814-3838`](../tests/test_gate_orchestration.py#L3814-L3838 "anchor:test_injected_provenance_observer_cannot_bypass_mandatory_cohort_check"),
+    [`test_gate_orchestration.py:3841-3872`](../tests/test_gate_orchestration.py#L3841-L3872 "anchor:test_fresh_ceremony_establishes_setup_after_denial_before_pre_attestation"), and
+    [`test_gate_orchestration.py:3875-3900`](../tests/test_gate_orchestration.py#L3875-L3900 "anchor:test_post_provenance_malformed_row_cannot_publish_a_terminal_row").
     Later normal and Fleet workers independently recompute the same source-bound
     token before model load. Source-token and driver/worker skew are covered by
     [`test_gate_ledger.py:1047-1089`](../tests/test_gate_ledger.py#L1047-L1089 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
@@ -902,7 +902,7 @@ copied from historical evidence.
   [`gate_verdict.py:232-263`](../src/dgx_monarch/nodes/gate_verdict.py#L232-L263 "anchor:publish_ceremony_verdict"), covered by
   [`test_gate_ledger.py:491-526`](../tests/test_gate_ledger.py#L491-L526 "anchor:test_retest_guard_atomically_denies_every_context_until_exact_finals"),
   [`test_gate_ledger.py:1017-1044`](../tests/test_gate_ledger.py#L1017-L1044 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"),
-  [`test_gate_orchestration.py:3323-3349`](../tests/test_gate_orchestration.py#L3323-L3349 "anchor:test_known_commit_pass_can_be_session_cached_when_persistence_fails"), and
+  [`test_gate_orchestration.py:3387-3413`](../tests/test_gate_orchestration.py#L3387-L3413 "anchor:test_known_commit_pass_can_be_session_cached_when_persistence_fails"), and
   [`test_gate_orchestration.py:235-257`](../tests/test_gate_orchestration.py#L235-L257 "anchor:test_auto_gate_does_not_cache_unconsumable_pass_over_retesting").
 - An unknown-ComfyUI PASS follows the same session-only rule and never becomes
   a persisted reusable grant. That commit-specific boundary is covered by
@@ -1017,8 +1017,8 @@ copied from historical evidence.
   a provisional FSDP PASS performs the same cleanup on the exact ceremony
   handle before refusing the full render. The
   abort path, and the price that precedes it, are
-  [`gate_ceremony.py:335-460`](../src/dgx_monarch/nodes/gate_ceremony.py#L335-L460 "anchor:gather_ceremony_evidence"),
-  [`gate_ceremony.py:192-231`](../src/dgx_monarch/nodes/gate_ceremony.py#L192-L231 "anchor:gather_ceremony_evidence"),
+  [`gate_ceremony.py:336-460`](../src/dgx_monarch/nodes/gate_ceremony.py#L336-L460 "anchor:gather_ceremony_evidence"),
+  [`gate_ceremony.py:193-231`](../src/dgx_monarch/nodes/gate_ceremony.py#L193-L231 "anchor:gather_ceremony_evidence"),
   [`fsdp_reload_price.py:247-288`](../src/dgx_monarch/fsdp_reload_price.py#L247-L288 "anchor:price_fsdp_clean_reload") and
   [`gate_session.py:20-179`](../src/dgx_monarch/nodes/gate_session.py#L20-L179 "anchor:run_identity_ceremony"),
   [`gate_fsdp.py:184-243`](../src/dgx_monarch/nodes/gate_fsdp.py#L184-L243 "anchor:cleanup_aborted_fsdp_proof"),

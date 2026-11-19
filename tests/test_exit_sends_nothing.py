@@ -480,7 +480,9 @@ def test_no_pack_log_line_reports_a_call_the_exit_did_not_send(flag, monkeypatch
     except RuntimeError as wrapped:
         routes.log.warning("unload failed (%r)", wrapped)
         routes.log.error("unload failed", exc_info=True)
-    routes.log.warning("unload failed (%(cause)r)", {"cause": refused})  # mapping-style arguments
+        # Mapping-style arguments: the wrapped error's text names no marker, so
+        # only the object rule (the mapping's values, through the cause) drops it.
+        routes.log.warning("unload failed (%(cause)s)", {"cause": wrapped})
     assert kept == []
     try:
         try:
@@ -588,6 +590,30 @@ def test_every_refusal_the_exit_raises_names_a_marker_and_the_notice_none(flag, 
                     and "driver is exiting" in node.value.lower()):
                 found.append(node.value)
     assert sorted(found) == sorted([driver_exit.REFUSAL_OPENING, driver_exit.NOTICE]), found
+
+
+def test_a_record_whose_arguments_do_not_format_is_kept_at_exit(flag, monkeypatch):
+    """The text rule formats the record's message to read it. A record whose
+    arguments do not format is kept, as logging keeps it (its handler reports
+    the formatting fault), and the log call itself does not raise. Only a
+    stream handler, as the pack's own, and this row's recorder are attached:
+    pytest's capture handler raises on a formatting fault where logging's own
+    handlers report it and go on."""
+    import io
+
+    from dgx_monarch.nodes import routes
+
+    kept: list[logging.LogRecord] = []
+    keep = logging.Handler()
+    keep.emit = kept.append  # type: ignore[method-assign]
+    stream = logging.StreamHandler(io.StringIO())
+    monkeypatch.setattr(routes.log, "handlers", [stream, keep])
+    monkeypatch.setattr(routes.log, "propagate", False)
+    flag.set()
+    routes.log.warning("unload failed after %d attempts", "three")  # %d of a str does not format
+    assert len(kept) == 1 and kept[0].args == ("three",)
+    with pytest.raises(TypeError):
+        kept[0].getMessage()
 
 
 def test_a_different_errors_traceback_that_names_the_refusal_still_prints_at_exit(flag, monkeypatch):

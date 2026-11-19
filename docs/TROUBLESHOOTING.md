@@ -2601,12 +2601,18 @@ Worker-assisted VAE decode decodes its remaining units on the driver, as it
 would with the option off. Once the exit has begun, no DGX Monarch log line
 that carries the exit's refusal, as the error itself or as its text, is
 printed. A sample refused at its dispatch leaves no lease and no abandoned
-mark. The cut render leaves no mark that outlives the exit either: a native
-latent read the exit refused or cut does not latch native return off
+mark. The cut render leaves no verdict and no lever behind: a native latent
+read the exit refused or cut does not latch native return off and reports no
+poisoned ownership
 ([#115](#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)),
-and an identity gate ceremony the exit cut records no verdict for its stock
-reference leg and turns no residency setting off. So a closing ComfyUI prints
-at most the cut render's own error, then
+and an identity gate ceremony the exit cut writes no verdict row, turns no
+residency setting off and logs no abort. Two ledger rows of such a ceremony do
+stay on disk, and neither changes a decision: the RETESTING row it wrote before
+its first step, which stays open as a killed ceremony's does until the next
+ceremony of that combination supersedes it
+([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)), and,
+for an FSDP clean-reload proof, the INCONCLUSIVE row that closes that retest.
+So a closing ComfyUI prints at most the cut render's own error, then
 nothing for the queue's DGX Monarch renders, however many prompts were queued;
 a queued prompt's stock ComfyUI nodes that run before its first DGX Monarch
 node still print what they print, and so do the DGX Monarch nodes with no
@@ -7295,7 +7301,11 @@ registration or read failure, a read timeout, a policy readback refusal, a
 failed ACK, or a refusal before the read starts, including a read on a lease
 that already retired. A read that fails once ComfyUI is closing, because the
 driver's exit refused it or Monarch's exit step cut it, is the one exception: it
-trips nothing and logs nothing, since no later setup will read the latch
+does not trip the latch and its WARNING does not print, since no later setup
+will read the latch. A read cut mid-flight still keeps its destination owned
+until the process ends, as any failed read does, and the ERROR that reports
+that poisoned ownership does not print at exit either: its drops are left
+unconfirmed on purpose then
 ([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
 Ownership settles as
 [#29](#29-large-rdma-latent-return-fails-after-workers-finish-rendering)

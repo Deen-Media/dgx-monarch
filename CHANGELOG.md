@@ -461,10 +461,13 @@ sections after them list every change.
   way, the cleanup of a fleet bring-up under way and the steps of an attach
   after its dial run to their end. Once the exit has begun, no DGX Monarch log
   line that carries the exit's refusal, as the error itself or as its text, is
-  printed. The cut render leaves no mark behind: a native latent read the exit
-  refused or cut no longer latches native return off with a WARNING, and an
-  identity gate ceremony the exit cut no longer turns residency settings off
-  or logs its abort. Before, each queued prompt that started priced on the
+  printed. The cut render leaves no verdict and no lever behind: a native
+  latent read the exit refused or cut no longer latches native return off with
+  a WARNING or reports its poisoned ownership at ERROR, and an identity gate
+  ceremony the exit cut no longer turns residency settings off or logs its
+  abort (it writes no verdict row, as before). Its open RETESTING row, and for
+  an FSDP proof the INCONCLUSIVE row that closes it, stay in the ledger and
+  change no decision. Before, each queued prompt that started priced on the
   closing Workers and printed its error, and from about 1 s after the notice
   Monarch panicked natively on the send. If the process is still alive 30 s after the waiting
   render started, because an exit hook hung, that render stops with "the
