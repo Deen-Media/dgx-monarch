@@ -1456,6 +1456,12 @@
       "waivable": false
     },
     {
+      "site": "restart_reattach.py::refuse_if_restarted::WorkerDeliveryError#0",
+      "class": "C",
+      "guard": "cross_rank_capacity",
+      "waivable": false
+    },
+    {
       "site": "topology.py::choose_auto_topology::UnsupportedModelError#0",
       "class": "K",
       "guard": null,

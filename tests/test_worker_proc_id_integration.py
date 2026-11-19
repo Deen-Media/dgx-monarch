@@ -253,9 +253,10 @@ def test_a_render_after_every_loop_restarts_attaches_again_inside_the_render(
         tmp_path, cleanup):
     """docs/TROUBLESHOOTING.md #2, issue #47. Both loops restart under a live
     mesh, and nothing reaches them before the render, so the render's own price
-    request is the message each old channel session loses. The wait asks once
-    more, Monarch reports that request undeliverable, and the wait ends there
-    instead of at its 30 s deadline. The re-attach then reads the new ids,
+    request is the first message on each old channel session. Monarch sends it
+    again on a fresh session, the new loop reports it undeliverable at once, and
+    the wait ends at its first poll instead of at its 30 s deadline, with no
+    second request. The re-attach then reads the new ids,
     retires the stale mesh through the deliberate teardown and the (stood-in)
     liveness release, and attaches by the new ids, and the price answers on the
     new mesh. In mutation runs, removing the short circuit made this price wait
@@ -288,7 +289,9 @@ def test_a_render_after_every_loop_restarts_attaches_again_inside_the_render(
     render = _line(driver, 120)
     assert render["ok"], render
     deadline = capacity_agreement.CAPACITY_QUOTE_DEADLINE_S
-    assert render["refused_after_s"] < 5.0, render
+    # One poll: on the pin before 0.8.0 only a second request, sent 2 s in,
+    # came back, and the wait ended about 2.5 s in.
+    assert render["refused_after_s"] < 1.5, render
     assert render["wall_s"] < deadline / 2, render
     assert render["old_retired"] and render["new_mesh"], render
     # The fault text spells the mesh ActorMesh._name reads, so the filter that
@@ -454,3 +457,39 @@ def test_a_call_in_flight_or_after_a_deliberate_stop_names_the_reason_and_stays_
     assert "parent draining" not in stopped["in_flight"] + stopped["straggler"], stopped
     assert stopped["errors"] == [], stopped
     assert _line(driver, 30)["step"] == "done"
+
+
+def test_an_exit_while_an_attach_waits_stands_the_attach_down_quietly(tmp_path, cleanup):
+    """ComfyUI exits normally while the driver's attach waits on a loop that
+    does not answer (frozen here), auto_heal on. The exit's notice is logged,
+    attempt 1 ends in the exit refusal, and nothing else follows: no id
+    reading over ssh, no second attempt, no transport poison, no restart of
+    the Worker services, and nothing above INFO after the notice. Before,
+    that attach was retried, the transport poisoned and, with auto_heal on,
+    the Worker services restarted while ComfyUI was closing. About 4 s."""
+    from dgx_monarch import driver_exit
+
+    a = _Loop(tmp_path / "a")
+    cleanup.append(a)
+    b = _Loop(tmp_path / "b")
+    cleanup.append(b)
+    os.killpg(b.proc.pid, signal.SIGSTOP)  # its listener takes the dial, but nothing answers
+    try:
+        spec = {"mode": "exit_attach", "hosts": [["a", a.address], ["b", b.address]],
+                "homes": {"a": str(a.home), "b": str(b.home)}, "delay_s": 0.5}
+        driver = _client(tmp_path, spec, "20s")
+        cleanup.append(driver)
+        first, report = _line(driver, 60), _line(driver, 60)
+        code = driver.wait(30)
+    finally:
+        os.killpg(b.proc.pid, signal.SIGCONT)
+    err = driver.errors_path.read_text()  # type: ignore[attr-defined]
+    detail = f"{first} {report}\n{err[-3000:]}"
+    assert code == 0 and first["step"] == "main_returns", detail
+    assert err.count(driver_exit.NOTICE) == 1, detail
+    after = err.split(driver_exit.NOTICE, 1)[1].splitlines()
+    assert [line for line in after if " WARNING " in line or " ERROR " in line] == [], detail
+    assert report["step"] == "exit_attach" and report["exiting"] is True, detail
+    assert "the driver is exiting, so this attach stops here" in report["error"], detail
+    assert report["attempts"] == 1 and report["post_fail_restarts"] == 0, detail
+    assert report["poisoned"] is False and report["pre_attach_heals"] == 1, detail  # before the exit

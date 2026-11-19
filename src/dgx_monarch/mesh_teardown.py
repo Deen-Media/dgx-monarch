@@ -87,9 +87,10 @@ _LIVENESS_RELEASE_NOTE = (
     "worker processes were gone)")
 # The instant of the last release, or None. The next creation block consumes
 # it: that bring-up is the one the release authorized, and its poison text is
-# where the operator needs to see it. Time bounded as well as one shot, because
-# the ordinary path is a release whose replacement then succeeds and consumes
-# nothing, and an unrelated failure hours later must not claim the release.
+# where the operator needs to see it. The replacement's attach clears it when
+# it succeeds (mesh_attach._attach_and_retry), so a later attach keeps its
+# retry and a later, unrelated failure carries no release note. Time bounded as
+# well, for a release whose replacement never reaches an attach.
 _RELEASED_PREDECESSOR: float | None = None
 # The released fleet's host addresses; the attach fail-fast applies only to them.
 _RELEASED_ADDRESSES: frozenset[str] | None = None
@@ -146,14 +147,23 @@ def note_liveness_release(now: float | None = None, addresses: Any = None) -> No
     _RELEASED_ADDRESSES = None if addresses is None else frozenset(addresses)
 
 
+def clear_liveness_release(addresses: Any) -> None:
+    """Disarm the note once the attach it authorized for ``addresses`` succeeded."""
+    global _RELEASED_PREDECESSOR, _RELEASED_ADDRESSES
+    if _RELEASED_ADDRESSES is None or frozenset(addresses) == _RELEASED_ADDRESSES:
+        _RELEASED_PREDECESSOR = None
+        _RELEASED_ADDRESSES = None
+
+
 def released_predecessor_recently(now: float | None = None, addresses: Any = None) -> bool:
     """Check whether fresh liveness evidence released the predecessor fleet.
 
     This read does not consume the note; ``publish_creation_block`` does that
-    when recording the replacement failure. The attach path uses it to give
+    when recording the replacement failure, and ``clear_liveness_release`` when
+    the replacement attached. The attach path uses it to give
     the replacement one attempt unless a loop moved to a new id during it: a
-    second dial with the same ids cannot win, and after an outage longer than
-    the delivery timeout the fallback is a ComfyUI restart
+    second dial with the same ids cannot win, and the fallback is a ComfyUI
+    restart
     (``mesh_attach._attach_and_retry``, docs/TROUBLESHOOTING.md #2). Other
     attach failures retain a second attempt.
     """

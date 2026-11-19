@@ -44,6 +44,23 @@ _FIXED_RDMA = {
     "rdma_qps_per_cq": 64, "rdma_cq_poller_per_device": True,
     "rdma_runtime_worker_threads": 4,
 }
+# How long a channel with nothing to send keeps reconnecting to a peer that
+# went away. Past this bound torchmonarch closes it for the life of the
+# process, and the pinned release never dials that address again (it redials
+# only a channel that a delivery timeout, a stale session or a server close
+# ended), so a Worker down longer than the 60 s default, a reboot for one,
+# stayed unreachable until ComfyUI restarted (docs/TROUBLESHOOTING.md #2).
+# One day covers a reboot and a maintenance stop. The attach config push
+# carries the driver's value to the Worker loops and their actors, which set
+# the same value here themselves, so the cost falls on every process, once per
+# peer address that went away: that channel tries a TCP connect about once a
+# second until the peer returns or the day runs out. A Worker loop does so for
+# the address of every ComfyUI that ended without a clean stop. A message sent
+# to such an address while its channel waits is neither delivered nor returned
+# undeliverable until then; only the caller's own timeout or supervision ends
+# that call.
+_FIXED_CHANNEL = {"channel_reconnect_timeout": "1day"}
+_CHANNEL_ENV = {"channel_reconnect_timeout": "HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT"}
 
 
 @dataclass(frozen=True)
@@ -247,6 +264,7 @@ def policy_environment(policy: MonarchPolicy, host: str = "") -> dict[str, str]:
               for key, value in fields.items()}
     result.update({f"MONARCH_{key.upper()}": str(value).lower() if isinstance(value, bool) else str(value)
                    for key, value in _FIXED_RDMA.items()})
+    result.update({_CHANNEL_ENV[key]: value for key, value in _FIXED_CHANNEL.items()})
     result.update({POLICY_ENV: encode_policy(policy, host), "DGXM_RDMA_QP_SPLIT": str(chunks)})
     if policy.diagnostics.otlp_endpoint:
         if not policy.diagnostics.otlp_logs:
@@ -341,7 +359,8 @@ def _native_settings(policy: MonarchPolicy) -> dict[str, Any]:
     expected.pop("application_chunks")
     expected["ibverbs_target"] = expected.pop("target")
     expected["qp_init_timeout"] = f"{expected.pop('qp_init_timeout_s')}s"
-    return {**_FIXED_RDMA, **{f"rdma_{key}": value for key, value in expected.items()}}
+    return {**_FIXED_RDMA, **_FIXED_CHANNEL,
+            **{f"rdma_{key}": value for key, value in expected.items()}}
 
 
 def application_chunks() -> int | None:

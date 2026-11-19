@@ -23,6 +23,11 @@ the actor process ids as one JSON line. Then, by mode:
 - ``collect``: the same holding actor, spawned under the Worker mesh's own
   name, with the call awaited by the render's own collect
   (``mesh_lease.collect_sample``) on a daemon thread; the main thread returns.
+- ``heal``: a render's restart heal (``restart_reattach.heal``) on a daemon
+  thread, for a fleet whose Worker processes are gone, as after a restart: its
+  stop kills the actor processes as it starts, and the main thread returns half
+  a second into that stop. ``heal_sigint``: the same, then the main thread
+  waits for SIGINT as in ``sigint``.
 
 The last stdout line is always a JSON object.
 """
@@ -64,6 +69,26 @@ def _actor_processes() -> list[int]:
     return found
 
 
+_RENDER: list[threading.Thread] = []
+
+
+def _join_render() -> None:
+    """Registered before the mesh build, so it runs after Monarch's exit step and
+    the exit flag's hook: the render's thread gets to finish whatever it does
+    after the exit began, so a line it logs then is never lost to the race with
+    the interpreter's end."""
+    for thread in _RENDER:
+        thread.join(30)
+
+
+def _group_of(pid: int) -> int | None:
+    """A process's group, or None once it is gone (``heal`` kills its actors)."""
+    try:
+        return os.getpgid(pid)
+    except ProcessLookupError:
+        return None
+
+
 def _calls(handle, record: dict) -> None:
     try:
         while True:
@@ -86,6 +111,10 @@ def main() -> None:
     from dgx_monarch import mesh
 
     mode = sys.argv[1] if len(sys.argv) > 1 else "idle"
+    if mode in ("heal", "heal_sigint"):
+        import atexit
+
+        atexit.register(_join_render)
     handle = mesh.get_mesh(mode="local", gpus_per_host=1, comfy_dir=os.environ["PROBE_COMFY_DIR"])
     handle.workers.status.call().get(timeout=60)
     actors = _actor_processes()
@@ -116,18 +145,47 @@ def main() -> None:
         threading.Thread(target=_collect, name="render", daemon=True).start()
         time.sleep(1.5)
         actors = _actor_processes()
+    elif mode in ("heal", "heal_sigint"):
+        from dgx_monarch import restart_reattach
+        from dgx_monarch.delivery_faults import WorkerDeliveryError
+
+        entered = threading.Event()
+        real_shutdown, gone = handle.shutdown, list(actors)
+
+        def shutdown(*args, **kwargs):  # the heal's own stop, of processes a restart ended
+            for pid in gone:
+                os.kill(pid, signal.SIGKILL)
+            entered.set()
+            return real_shutdown(*args, **kwargs)
+
+        handle.shutdown = shutdown
+        refused = WorkerDeliveryError("[dgxm:C guard=cross_rank_capacity waivable=0] undeliverable",
+                                      moves=restart_reattach.Moves(moved=("tcp://127.0.0.1:1",)))
+
+        def _heal() -> None:
+            try:
+                record["calls"] += 1
+                restart_reattach.heal(handle, refused)
+                record["held"] = "healed"
+            except BaseException as exc:
+                record["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+
+        _RENDER.append(threading.Thread(target=_heal, name="render", daemon=True))
+        _RENDER[0].start()
+        entered.wait(60)
+        time.sleep(float(os.environ.get("PROBE_HEAL_DELAY_S", "0.5")))  # inside the heal's 2 s stop
     elif mode != "idle":
         threading.Thread(target=_calls, args=(handle, record), name="inflight", daemon=True).start()
         while record["calls"] < 3 and record["error"] is None:
             time.sleep(0.05)
-    groups = sorted({os.getpgid(pid) for pid in actors})
+    groups = sorted({group for group in map(_group_of, actors) if group is not None})
     ready = json.dumps({"actors": actors, "actor_groups": groups, "group": os.getpgrp()})
     print(ready, flush=True)
     if os.environ.get("PROBE_READY"):  # the caller waits for this file, then signals
         with open(os.environ["PROBE_READY"] + ".part", "w") as f:
             f.write(ready)
         os.replace(os.environ["PROBE_READY"] + ".part", os.environ["PROBE_READY"])
-    if mode in ("sigint", "hold"):
+    if mode in ("sigint", "hold", "heal_sigint"):
         try:
             time.sleep(60)
         except KeyboardInterrupt:

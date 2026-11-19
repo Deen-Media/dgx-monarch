@@ -298,6 +298,10 @@ sections after them list every change.
   variables that are set and asks you to unset them, or lower them to add up
   to 90 s or less, and restart ComfyUI
   ([TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+- `HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT` set where ComfyUI starts to any value
+  but the policy's own `1day` refuses the mesh build and asks for it to be
+  unset
+  ([TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
 - On an older ComfyUI a MiniMax H3 file with a stacked output head refuses
   under sequence parallelism, and asks for ComfyUI 0.45.0
   ([TROUBLESHOOTING #147](docs/TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
@@ -394,6 +398,58 @@ sections after them list every change.
 
 ### Everyday use
 
+- A ComfyUI that stays up reaches a Worker again after it was down for up to
+  a day, a reboot included. torchmonarch stops reconnecting a quiet channel
+  after 60 s and then never dials that address again, so a Worker down longer
+  than a minute needed a ComfyUI restart; dgx-monarch now sets
+  `channel_reconnect_timeout` to one day in the driver, each Worker and each
+  actor, and reads it back. The cost falls on every one of those processes,
+  once for each peer address that went away: that channel tries a TCP connect
+  about once a second until the peer returns or the day runs out, so a Worker
+  keeps retrying the address of every ComfyUI that ended without a clean stop;
+  and a message sent to such an address in that time is neither delivered nor
+  returned undeliverable until then, so only the caller's own timeout or
+  Monarch's supervision ends that call
+  ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
+- After the Worker loops restart under a live mesh, the render's price wait
+  ends at its first poll, about half a second in, and no longer asks each rank
+  a second time: torchmonarch 0.8.0 returns that first price to the old actors
+  at once.
+- When Monarch reports the old actors dead to the price before any delivery
+  failure comes back, the render reads every loop's id before the fleet is
+  evicted, with 3 s per host. When every loop serves a new id, a sampler
+  render, or the UNET Loader's eager load, leaves the fleet unevicted for the
+  heal, as after a delivery failure, attaches again at once and carries on,
+  where it refused with "click Reset attached mesh"; a Pipeline or Identity
+  Gate render retires it instead (next item). Anything else is evicted as
+  before. These were checked on CPU; the pair checks have not run.
+- A KSampler Pipeline or Identity Gate render, which cannot leave the mesh its
+  session started on, now retires the stale mesh when every Worker loop
+  restarted, with the same short stop and liveness proof, and refuses with
+  "The Worker loops restarted; queue again"; queuing the workflow again
+  attaches a fresh mesh. After a delivery failure every re-queue used to
+  refuse until a KSampler render attached again, and after a SupervisionError
+  the fleet was evicted first and the refusal waited for its stop. Loops
+  that did not all restart, a teardown in progress, a prior stop with no
+  known outcome, and an earlier pipelined render's result still in flight
+  keep the old behaviour, except that while the driver's own cleanup is
+  still stopping that fleet the refusal says so and to try again when it
+  ends; the gate's quarantine on an aborted run is unchanged. Checked on CPU;
+  the pair checks have not run.
+- A normal ComfyUI exit while a render attaches again after a Worker restart,
+  or while a Pipeline or Gate render retires the stale mesh, ends that detour
+  with no warning and no error after the exit's notice: the render's own stop
+  of the stale mesh logs nothing, an id reading, probe or attach under way runs
+  to its end (a reading of the Workers' ids over ssh that had started still
+  asks each host it had yet to ask, up to 3 s per host or 10 s in a
+  re-attach, and then the render stops), and the render ends with "the driver
+  is exiting". Any attach the exit reaches, a first one included, now ends
+  once its attempt fails, with no id reading, no second attempt, no transport
+  poison and no restart of the Worker
+  services, where with `auto_heal` on it used to restart them while ComfyUI
+  was closing; only `auto_heal`'s check already under way before an attach
+  runs to its end, and may still restart a Worker service it found dead
+  ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 - A graph with no LoRA stack whose model takes no slab residency no longer
   pays two proof renders before its first render. The first-use gate could
   only record that there was nothing to compare there, and that verdict

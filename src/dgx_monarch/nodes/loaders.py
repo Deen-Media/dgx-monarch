@@ -336,7 +336,7 @@ class DGXMonarchUNETLoader:
                     handle, exc, respawn=respawn_after_restart).handle
                 topo = topology_from_preset(mesh.topology_preset, handle.world)
                 render_preflight.preflight_sol_sequence_parallel(topo, mesh.attention)
-                results = eager_load(handle, topo)
+                results = restart_reattach.retry_after_heal(lambda: eager_load(handle, topo), exc)
             except OldModelRefusal as exc:
                 # Always clear and retry, outside the session: clear once,
                 # attach a fresh fleet, run the same preflights on its

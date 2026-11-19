@@ -833,6 +833,157 @@ def _release_the_latch(monkeypatch, *addresses: str):
     return handle
 
 
+def test_a_later_attach_after_the_released_replacement_attached_keeps_its_retry(
+        monkeypatch, attach_rig):
+    """The note a liveness release arms is spent once the replacement it
+    authorized attaches. Before that rule it stayed armed for the rest of the
+    creation timeout, so the next attach to the same hosts in that window (a
+    config-change recycle, a re-attach in which no loop moved its id) got one
+    attempt where it should get two."""
+    _release_the_latch(monkeypatch, ADDRESS_A)
+    replacement, later = object(), object()
+    mesh_mod = attach_rig.rig([replacement, RuntimeError("blip"), later],
+                              _Listeners([True, True, True]))
+    assert mesh_mod._attach_cluster(attach_rig.config(ADDRESS_A)) is replacement
+    assert mesh_teardown.released_predecessor_recently() is False
+    assert mesh_mod._attach_cluster(attach_rig.config(ADDRESS_A)) is later
+    assert len(attach_rig.attempts) == 3  # the later attach retried in process
+    assert mesh_mod._TRANSPORT_POISON is None and attach_rig.restarts == []
+
+
+def test_a_later_creation_failure_after_the_released_replacement_attached_has_no_note(
+        monkeypatch, attach_rig):
+    """A creation failure after the released fleet's replacement attached is
+    not the bring-up the release authorized, so its poison text carries no
+    liveness note. Before the attach spent the note, a failure anywhere in the
+    creation timeout's window was labelled with it."""
+    _release_the_latch(monkeypatch, ADDRESS_A)
+    mesh_mod = attach_rig.rig([object()], _Listeners([True]))
+    mesh_mod._attach_cluster(attach_rig.config(ADDRESS_A))
+    later = SimpleNamespace(teardown_complete=False)
+    mesh_teardown.publish_creation_block(later, "a later bring-up failed")
+    assert later.replacement_blocked == "a later bring-up failed"
+
+
+@pytest.mark.parametrize("when", ["before_the_dial", "during_the_heal", "during_the_prime",
+                                  "during_the_prime_unsent", "during_attempt_1",
+                                  "during_the_reread", "during_attempt_2", "not_exiting"])
+def test_an_attach_the_exit_reaches_stands_down_quietly(monkeypatch, attach_rig, when):
+    """Once the driver is exiting, Monarch's exit step stops the client, so an
+    attach under way makes no dial, reads no id again over ssh, makes no
+    second attempt, poisons nothing and restarts no Worker service (auto_heal
+    is on here): it ends with the exit refusal. Before, an attempt that the
+    exit failed was retried, the transport poisoned and, with auto_heal on,
+    the Worker services restarted while ComfyUI was closing. Not exiting,
+    the attach retries as it always did."""
+    from dgx_monarch import attach_trace, driver_exit, mesh_attach, worker_proc_id
+    from dgx_monarch.cli import listener_generation
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    exiting = driver_exit._EXITING
+    blip = RuntimeError("attach failed: config push failed during attach")
+    mesh_mod = attach_rig.rig([blip, blip if when == "during_attempt_2" else object()],
+                              _Listeners([True, True]), auto_heal=True)
+    healed: list[int] = []
+
+    def heal_dead_loops(*_args, **_kwargs):
+        healed.append(1)
+        if when == "during_the_heal":
+            exiting.set()  # a heal already under way runs to its end; nothing follows it
+
+    monkeypatch.setattr(mesh_mod, "_heal_dead_loops", heal_dead_loops)
+    readings: list[int] = []
+    real_fleet = listener_generation.fleet
+
+    def fleet(config, **kwargs):
+        readings.append(1)
+        if when == "during_the_reread" and len(readings) == 2:
+            exiting.set()  # the exit hook ran while the ids were read again
+        return real_fleet(config, **kwargs)
+
+    monkeypatch.setattr(listener_generation, "fleet", fleet)
+    real_once = mesh_mod._attach_once
+
+    def attach_once(dial):
+        if when == "during_attempt_1" or (when == "during_attempt_2" and attach_rig.attempts):
+            exiting.set()  # the exit hook ran while this attempt waited
+        return real_once(dial)
+
+    monkeypatch.setattr(mesh_mod, "_attach_once", attach_once)
+    if when == "before_the_dial":
+        exiting.set()
+    if when in ("during_the_prime", "during_the_prime_unsent"):
+        # A loop whose id moved gets the throwaway message; the unsent case is
+        # one the prime could not reach, whose warning must not follow the exit.
+        monkeypatch.setattr(mesh_attach, "_LAST_DIALED", {ADDRESS_A: "aaaaaaaaaaaa0000"})
+        unsent = [ADDRESS_A] if when.endswith("unsent") else []
+        monkeypatch.setattr(worker_proc_id, "prime",
+                            lambda addresses: exiting.set() or unsent)
+    lines: list[str] = []
+    monkeypatch.setattr(attach_trace, "_LAST_SEEN", {})
+    real_warning = mesh_mod.log.warning
+    monkeypatch.setattr(mesh_mod.log, "warning",
+                        lambda *a, **k: lines.append(a[0] % a[1:] if len(a) > 1 else a[0])
+                        or real_warning(*a, **k))
+    config = attach_rig.config(ADDRESS_A, auto_heal=True)
+    if when == "not_exiting":
+        mesh_mod._attach_cluster(config)
+        assert len(attach_rig.attempts) == 2 and len(readings) == 2 and lines
+        return
+    with pytest.raises(mesh_mod.MeshAttachError, match="the driver is exiting"):
+        mesh_mod._attach_cluster(config)
+    dials = {"before_the_dial": 0, "during_the_heal": 0, "during_the_prime": 0,
+             "during_the_prime_unsent": 0, "during_attempt_1": 1, "during_the_reread": 1,
+             "during_attempt_2": 2}[when]
+    reads = {"before_the_dial": 0, "during_the_heal": 0, "during_the_reread": 2,
+             "during_attempt_2": 2}.get(when, 1)
+    assert len(attach_rig.attempts) == dials and len(readings) == reads
+    assert healed == ([] if when == "before_the_dial" else [1])  # the heal ran only before the exit
+    assert attach_rig.restarts == [] and mesh_mod._TRANSPORT_POISON is None
+    # Only the retry's warning, logged before the exit began, in the last case.
+    assert [("retrying once in-process" in line) for line in lines] == (
+        [True] if when == "during_attempt_2" else [])
+
+
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_an_exit_during_the_attachs_first_reading_sends_no_throwaway_message(
+        monkeypatch, attach_rig, exiting):
+    """A heal's replacement attach dials a loop whose id moved, so it sends that
+    loop the throwaway message and waits for it to settle before the dial. The
+    exit begins while the attach's first reading asks the hosts: no throwaway
+    message goes out, nothing is dialed, and the attach ends in the exit refusal.
+    Before, the prime still sent and waited, and only then did the attach stand
+    down. Not exiting, the moved loop is primed and the attach dials as before."""
+    from dgx_monarch import driver_exit, mesh_attach, worker_proc_id
+    from dgx_monarch.cli import listener_generation
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    mesh_mod = attach_rig.rig([object()], _Listeners([True]))
+    monkeypatch.setattr(mesh_attach, "_LAST_DIALED", {ADDRESS_A: "aaaaaaaaaaaa0000"})
+    primed: list[list[str]] = []
+    monkeypatch.setattr(worker_proc_id, "prime",
+                        lambda addresses: primed.append(list(addresses)) or [])
+    readings: list[int] = []
+    real_fleet = listener_generation.fleet
+
+    def fleet(config, **kwargs):
+        readings.append(1)
+        if exiting:
+            driver_exit._EXITING.set()  # the exit hook ran while the ids were read
+        return real_fleet(config, **kwargs)
+
+    monkeypatch.setattr(listener_generation, "fleet", fleet)
+    config = attach_rig.config(ADDRESS_A)
+    if not exiting:
+        mesh_mod._attach_cluster(config)
+        assert primed == [[ADDRESS_A]] and len(attach_rig.attempts) == 1
+        return
+    with pytest.raises(mesh_mod.MeshAttachError, match="the driver is exiting"):
+        mesh_mod._attach_cluster(config)
+    assert len(readings) == 1 and primed == [] and attach_rig.attempts == []
+    assert attach_rig.restarts == [] and mesh_mod._TRANSPORT_POISON is None
+
+
 def test_a_released_replacement_fails_fast_after_exactly_one_attempt(
         monkeypatch, attach_rig):
     """A released fleet whose loops serve the same id after the failed
@@ -846,7 +997,7 @@ def test_a_released_replacement_fails_fast_after_exactly_one_attempt(
     assert raised.value.__cause__ is attach_rig.attempts[0]
     text = str(raised.value)
     assert "no loop came back with a new id" in text
-    assert "delivery timeout" in text and "Restart ComfyUI" in text
+    assert "came back within a day" in text and "Restart ComfyUI" in text
     assert "docs/TROUBLESHOOTING.md #2, #101" in text
     assert mesh_mod._TRANSPORT_POISON == "cluster attach failed: RuntimeError('worker gone')"
     assert attach_rig.slept == []          # no wait ran either

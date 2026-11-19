@@ -331,12 +331,15 @@ Svelte runtime with small Vite, clsx and esm-env helpers. Their notices are in
 **One Spark died mid-render.**
 Once the box is back, close ComfyUI, run `dgxm restart` so both Worker
 services restart together, and start ComfyUI again ([TROUBLESHOOTING.md #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
-A ComfyUI process attaches again on its own only to a Worker service that came
-back within Monarch's 30 s message delivery timeout, since each start serves a
-new id (checked on the pair on 2026-10-15). A sampler render after both
+A ComfyUI process attaches again on its own to a Worker service that came
+back within a day, since each start serves a new id and the driver's channel
+keeps reconnecting that long (the 30 s case was checked on the pair on
+2026-10-15; the longer outages on CPU only). A sampler render after both
 services restarted now attaches again within that render, with no Reset
-click (CPU-tested; its pair recheck is pending). A box that was down longer leaves
-the driver's channel to it closed. A dead actor process retires the
+click, and a pipelined or Identity Gate render refuses once with "queue
+again", after which the next render attaches (CPU-tested; their pair recheck
+is pending). A box that was down longer than a
+day leaves the driver's channel to it closed. A dead actor process retires the
 whole attached mesh, and its error names the endpoint and host
 ([TROUBLESHOOTING.md #4](TROUBLESHOOTING.md#4-supervisionerror--process-exited-with-non-zero-code)). A worker exception is different: it comes back to the
 caller and leaves its actor alive.
