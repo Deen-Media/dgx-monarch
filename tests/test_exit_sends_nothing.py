@@ -172,6 +172,58 @@ def test_a_call_that_waited_for_the_lock_when_the_exit_began_sends_nothing(flag,
         mesh_setup.release_sample(outcome[0])
 
 
+@pytest.mark.parametrize("call", ["policy", "reset", "config_change_stop", "teardown_stop"])
+@EXITING
+def test_a_direct_send_that_waited_for_the_lock_when_the_exit_began_changes_nothing(
+        flag, call, exiting):
+    """A send that does not go through dispatch_endpoint passed its own check,
+    then waited for the handle's lock (another thread's setup or stop holds
+    it), and the exit began while it waited. The check under the lock stops
+    it before it changes anything: a policy update clears no policy marker
+    and publishes no DIRTY state; a reset, and the stop get_mesh sends for a
+    config change (``_refuse_at_exit``), send no group teardown and no proc
+    stop and keep the READY setup. A stop with no such flag (a teardown
+    already under way) still runs at exit. Not exiting, each sends as before."""
+    workers = _Workers([_Future(_acks())])
+    workers.apply_worker_args = _Endpoint(_Future(_ValueMesh([{}, {}])))
+    handle, _old, _new = _handle(workers)
+    before = (handle.worker_args_key, dict(handle.active_worker_args or {}),
+              handle.setup_cleanup_state, handle.setup_key)
+    outcome: list[object] = []
+    run = {
+        "policy": lambda: handle.apply_worker_args({"slab_weights": False}),
+        "reset": handle.recycle_detailed,
+        "config_change_stop": lambda: handle.shutdown(timeout_s=5.0, _refuse_at_exit=True),
+        "teardown_stop": lambda: handle.shutdown(timeout_s=5.0),
+    }[call]
+
+    def caller() -> None:
+        try:
+            outcome.append(run())
+        except BaseException as exc:
+            outcome.append(exc)
+
+    holder = _LockHolder(handle)
+    waiting = threading.Thread(target=caller, daemon=True)
+    waiting.start()
+    time.sleep(0.3)
+    assert waiting.is_alive() and outcome == []  # past its own check, waiting for the lock
+    if exiting:
+        flag.set()
+    holder.done()
+    waiting.join(10.0)
+    sent = (workers.apply_worker_args.calls if call == "policy"
+            else [*workers.teardown_group.calls, *handle.procs.reasons])
+    if exiting and call != "teardown_stop":
+        assert isinstance(outcome[0], driver_exit.DriverExitingError), outcome
+        assert sent == []
+        assert (handle.worker_args_key, dict(handle.active_worker_args or {}),
+                handle.setup_cleanup_state, handle.setup_key) == before
+        return
+    assert not isinstance(outcome[0], BaseException), outcome
+    assert sent
+
+
 @pytest.mark.parametrize("call", ["all_rank", "sample", "reset"])
 def test_at_exit_the_check_comes_before_the_lock(flag, call):
     """An all-rank call, a sample dispatch and a reset that start at exit refuse
@@ -359,8 +411,10 @@ def test_an_exit_during_the_topology_teardown_sends_no_setup_and_no_rollback(
         flag, monkeypatch, exiting):
     """The exit begins while the old groups are torn down. The setup that would
     follow is not sent, and neither is the rollback a failed setup sends: no
-    second teardown, no stop of the procs and no ERROR. Not exiting, the setup
-    follows the teardown as before."""
+    second teardown, no stop of the procs and no ERROR. The check comes before
+    the setup's DIRTY mark, so the handle shows the teardown done (no cleanup
+    state) and no setup in progress. Not exiting, the setup follows the
+    teardown as before."""
     teardown = _ExitAs(flag, _acks()) if exiting else _Future(_acks())
     workers = _Workers([teardown, _Future(_acks())])
     handle, _old, new = _handle(workers)
@@ -375,6 +429,7 @@ def test_an_exit_during_the_topology_teardown_sends_no_setup_and_no_rollback(
     assert len(workers.teardown_group.calls) == 1  # the teardown under way, no rollback
     assert all(endpoint.envs == [] for endpoint in workers.setup_endpoints)
     assert handle.procs.reasons == [] and _loud(kept) == [], _loud(kept)
+    assert handle.setup_cleanup_state is None and handle.setup_key is None
 
 
 @EXITING

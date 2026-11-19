@@ -117,6 +117,7 @@ def recycle_detailed_impl(
     try:
         lock_scope.__enter__()
         entered = True
+        driver_exit.refuse_new_call()  # a reset that waited for the lock: no teardown, no stop
         mesh_setup.require_no_sample_leases(
             handle, "reset the Attached mesh", allow_abandoned=True)
         require_mutation_authority(handle, "reset the Attached mesh")

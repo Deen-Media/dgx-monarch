@@ -1073,6 +1073,7 @@
       "test_a_call_that_waited_for_the_lock_when_the_exit_began_sends_nothing": "ba8f7e6fbf448845",
       "test_a_cancel_at_exit_sends_nothing_and_warns_of_nothing": "3a5fd456c05eeee3",
       "test_a_different_errors_traceback_that_names_the_refusal_still_prints_at_exit": "5b7b2986c04abeaf",
+      "test_a_direct_send_that_waited_for_the_lock_when_the_exit_began_changes_nothing": "686f2b733b2b8668",
       "test_a_fleet_jobs_artifact_proof_is_not_sent_at_exit": "2ecdc95365bc2de9",
       "test_a_lock_free_dispatch_whose_exit_begins_after_its_own_check_sends_nothing": "51b34386aab30dba",
       "test_a_pack_line_that_carries_the_refusal_as_text_is_not_printed_at_exit": "c1da6fa11f58e708",
@@ -1085,7 +1086,7 @@
       "test_a_setup_the_exit_cuts_sends_no_rollback": "02953c529dd35dcd",
       "test_always_clear_and_retry_resets_nothing_at_exit": "2a7fea1bacc7e1a1",
       "test_an_all_rank_call_sends_nothing_at_exit": "a95df253cc810c3f",
-      "test_an_exit_during_the_topology_teardown_sends_no_setup_and_no_rollback": "e98c8ac3fa9e5af7",
+      "test_an_exit_during_the_topology_teardown_sends_no_setup_and_no_rollback": "dd24666ab995b502",
       "test_at_exit_the_check_comes_before_the_lock": "28c989a5b018aaf8",
       "test_every_refusal_the_exit_raises_names_a_marker_and_the_notice_none": "ffc361ebe0f38dcc",
       "test_no_pack_log_line_reports_a_call_the_exit_did_not_send": "4e307f44dedf4dc5",
@@ -2676,6 +2677,7 @@
       "test_without_a_consent_the_same_load_offers_a_rescue": "b50a88b3d4d54524"
     },
     "tests/test_restart_reattach.py": {
+      "test_a_config_change_stop_that_waits_for_the_lock_as_the_exit_begins_stops_nothing": "7ce13889e32f5fe0",
       "test_a_config_change_the_exit_reaches_starts_no_stop": "ace2e1b0bc3e3bb1",
       "test_a_death_another_path_owns_refuses_without_a_stop": "87074d3ed232637e",
       "test_a_detour_that_cannot_heal_raises_its_refusal_without_a_retry": "e303c362b3a442d5",

@@ -29,7 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from . import mesh_safety, mesh_teardown
+from . import driver_exit, mesh_safety, mesh_teardown
 from .log import get_logger
 
 log = get_logger(__name__)
@@ -347,6 +347,8 @@ def try_release(handle: Any, *, runner: Callable[..., Any] | None = None,
     evidence = _still_answers(getattr(handle, "_liveness_evidence", None))
     if evidence is None:
         evidence = probe_fleet(handle, runner=runner, scanner=scanner)
+        if driver_exit.exiting():  # an exit during the probe: no latch change and no line
+            return False
         handle._liveness_evidence = evidence
     log.warning("liveness fold answer=%s hosts=%s",
                 evidence.answer, _fold_text(evidence))

@@ -263,7 +263,8 @@ def test_a_cluster_file_edit_still_replaces_the_fleet(isolated_mesh_runtime, mon
     handle = types.SimpleNamespace(
         defunct=False, config_mtime=0.0, config_fingerprint=mesh.config_fingerprint(path),
         n_hosts=1, gpus_per_host=1, comfy_dir="/fake/comfy",
-        shutdown=lambda timeout_s, stop_timeout_s=None: stopped.append((timeout_s, stop_timeout_s)))
+        shutdown=lambda timeout_s, stop_timeout_s=None, _refuse_at_exit=False: stopped.append(
+            (timeout_s, stop_timeout_s)))
 
     def replacement_reached(_config, _handoff):
         raise RuntimeError("replacement attach reached")

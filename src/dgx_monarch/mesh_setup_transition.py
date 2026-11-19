@@ -176,6 +176,7 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
     with handle.lock:
         from .mesh_session import require_mutation_authority
 
+        driver_exit.refuse_new_call()  # a caller that waited for the lock: nothing cleared, nothing sent
         mesh_setup.require_not_dirty(handle, "apply worker arguments")
         if handle.setup_key is None:
             raise RuntimeError("cannot apply worker arguments before setup is READY")
@@ -347,6 +348,7 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
         # groups before dispatch returns or the rollback handler starts.
         # Keep the generation DIRTY from before enqueue until READY is
         # atomically published or every rank confirms rollback.
+        driver_exit.refuse_new_call()  # an exit during the teardown above: no mark, no setup
         handle.setup_cleanup_state = mesh_setup.cleanup_in_progress(
             handle.setup_generation, "distributed setup", budget.rank_setup_s)
         fabric_env = handle.config.resolved_fabric_env()
@@ -356,7 +358,6 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
         failed: dict[str, Any] = {"rank": None, "ahead": None, "spare": 0.0}
         try:
             deadline = mesh_setup.deadline_after(budget.rank_setup_s)
-            driver_exit.refuse_new_call()  # an exit during the teardown above
             futures = mesh_setup.dispatch_setup(
                 handle, topology, attention, sync_ulysses, worker_args,
                 fabric_env, master_addr, master_port, fleet)

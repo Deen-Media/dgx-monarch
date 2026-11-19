@@ -28,11 +28,13 @@ interpreter stops it) waits at its node's wrapper (``nodes.refusal_lead``) or at
 the top of ``mesh.get_mesh`` and ``mesh.ensure_live`` (``hold_at_entry``) until
 the process ends; only the first
 to reach ``HOLD_AT_EXIT_S`` raises. Past the entry, each new send (a price, a setup,
-a dispatch, an all-rank call, an RDMA read, a reset, the stop ``mesh.get_mesh``
-sends for a config change) raises ``DriverExitingError`` (``refuse_new_call``),
-and the best-effort ones (the cancel, an RDMA drop, the lease renewal, a setup's
-rollback) skip themselves. ``MeshHandle.shutdown`` has no check of its own: a
-stop that a teardown already under way sends still runs.
+a policy update, a dispatch, an all-rank call, an RDMA read, a reset, the stop
+``mesh.get_mesh`` sends for a config change) raises ``DriverExitingError``
+(``refuse_new_call``), and the best-effort ones (the cancel, an RDMA drop, the
+lease renewal, a setup's rollback) skip themselves. A send that can wait after
+its check (for the handle's lock, the lifecycle lock or a teardown) checks
+again after the wait, before it changes anything. ``MeshHandle.shutdown`` has
+no check of its own: a stop that a teardown already under way sends still runs.
 Once the exit has begun, a pack log line that carries that error, as an object
 or as text, is not printed: the pack's loggers drop a record whose arguments or
 exception carry it (itself or as an explicit cause), or whose message names it

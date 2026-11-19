@@ -2593,10 +2593,12 @@ to its end is work already started: a call in flight, a stop under way, the
 cleanup of a fleet bring-up under way, and the steps of an attach after its
 dial. A render, load or node that starts after the notice waits at the pack's
 entry, logging nothing, until the process ends; ComfyUI starts no other prompt
-while it waits. A price, a setup, a dispatch, an RDMA latent read, a reset, a
-status poll or the stop that replaces a fleet whose config changed, which a
-render already under way would send next, is not sent, and the lease renewals
-stop; a stop that a teardown already under way sends still runs. A
+while it waits. A price, a setup, a worker policy update, a dispatch, an RDMA
+latent read, a reset, a status poll or the stop that replaces a fleet whose
+config changed, which a render already under way would send next, is not sent,
+even one that was already waiting for the fleet's lock when the exit began, and
+the lease renewals stop; a stop that a teardown already under way sends still
+runs. A
 Worker-assisted VAE decode decodes its remaining units on the driver, as it
 would with the option off. Once the exit has begun, no DGX Monarch log line
 that carries the exit's refusal, as the error itself or as its text, is

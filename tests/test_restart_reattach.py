@@ -699,6 +699,32 @@ def test_a_config_change_the_exit_reaches_starts_no_stop(driver, monkeypatch, ex
     assert driver.procs[0].stops == ([] if exiting else [driver.procs[0].stops[0]])
 
 
+def test_a_config_change_stop_that_waits_for_the_lock_as_the_exit_begins_stops_nothing(
+        driver, monkeypatch):
+    """get_mesh passed its own exit check and calls the previous fleet's stop
+    for a config change, which waits for that fleet's lifecycle lock; the exit
+    begins while it waits. The stop refuses under the lock (``_refuse_at_exit``):
+    the exit's refusal surfaces as itself, not as "old workers could not be
+    stopped safely", nothing is stopped or poisoned and nothing new is dialed."""
+    from dgx_monarch import driver_exit, mesh_setup
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    handle.config_fingerprint = "the file before its edit"
+    real_lock = mesh_setup.lifecycle_lock
+
+    def lifecycle_lock(target, operation, timeout_s=10.0):
+        if operation == "shutdown":
+            driver_exit._EXITING.set()  # the exit begins while the stop waits for the lock
+        return real_lock(target, operation, timeout_s)
+
+    monkeypatch.setattr(mesh_setup, "lifecycle_lock", lifecycle_lock)
+    with pytest.raises(driver_exit.DriverExitingError):
+        mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    assert len(driver.dials) == 1 and mesh_mod._TRANSPORT_POISON is None
+    assert driver.procs[0].stops == [] and handle.teardown_complete is not True
+
+
 def test_a_heal_whose_stop_is_confirmed_after_an_earlier_release_keeps_its_retry(
         driver, monkeypatch):
     """A first restart ends in a liveness release, which arms the release
