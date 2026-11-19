@@ -2683,6 +2683,8 @@
       "test_a_supervision_error_after_a_restart_heals_before_any_eviction": "a65b2d65da186a23",
       "test_a_supervision_error_without_a_full_restart_evicts_and_refuses_as_before": "d08a8db7145016b3",
       "test_an_attach_the_exit_stands_down_leaves_the_transport_unpoisoned": "fa2cbf1bf578ec4a",
+      "test_an_exit_after_the_heal_returns_dispatches_nothing_on_the_new_mesh": "362eeffe69b509da",
+      "test_an_exit_after_the_loaders_heal_returns_loads_nothing_on_the_new_mesh": "298bf411ef50a80e",
       "test_an_exit_after_the_stop_ends_the_detour_with_the_exit_refusal": "df6e52f266f57726",
       "test_an_exit_inside_the_retires_stop_leaves_the_renders_thread_quiet": "2733b5ddee07be7d",
       "test_an_explicit_loader_attaches_again_and_loads_once_more": "c2b51c4b9e43ddca",
@@ -2706,7 +2708,7 @@
       "test_the_record_reads_the_markers_the_fault_marker_site_matches": "2ec0cf7fd7337974",
       "test_the_submit_guard_leaves_only_a_full_restart_to_the_heal_unevicted": "9e8fe40530352341",
       "test_the_watched_mesh_name_is_the_one_the_fleet_spawns": "83137078c2bb6e01",
-      "test_through_the_submit_path_an_exit_starts_no_reading_and_no_second_dispatch": "5440acf562ae79d1",
+      "test_through_the_submit_path_an_exit_starts_no_reading_and_no_second_dispatch": "fd71dc850bafd863",
       "test_without_a_failure_the_wait_keeps_its_deadline_and_asks_each_rank_once": "8ff7774a0b766f83"
     },
     "tests/test_run_matrix_refusal_row.py": {

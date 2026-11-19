@@ -231,7 +231,7 @@ def _attempt_after_restart(
     token = _REATTACH_FACTS.set(
         {"reattach": restart_reattach.EVENT, "reattach_s": round(outcome.wall_s, 2)})
     try:
-        return attempt()
+        return restart_reattach.retry_after_heal(attempt, exc)
     finally:
         _REATTACH_FACTS.reset(token)
 

@@ -212,7 +212,8 @@ probe or an attach already under way runs to its end, an attach's trace lines
 at INFO. A reading of the Workers' ids over ssh that had started still asks
 each host it had yet to ask, up to 3 s per host (10 s in a re-attach), and
 then the render stops. Nothing starts after the notice: no id reading, no
-probe, no attach, no second attempt and no Worker restart. The render ends
+probe, no attach, no second attempt, no dispatch on the new mesh and no Worker
+restart. The render ends
 with "the driver is exiting, so this render stops here", which ComfyUI may log
 as the interrupted render's own error. On loopback
 on 2026-11-18, exits 0.5 to 8.0 s into the detour, by a normal return or by

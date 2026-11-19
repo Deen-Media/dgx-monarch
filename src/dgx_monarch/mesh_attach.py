@@ -171,6 +171,7 @@ def _traced_attach(runtime: dict[str, Any], config: ClusterConfig,
     moved = [host.address for host, value in pairs
              if _LAST_DIALED.get(host.address, value) != value]
     if moved:
+        _stand_down_at_exit(runtime, trace, handoff=handoff)  # a reading the exit overtook: no prime
         unprimed = worker_proc_id.prime(moved)
         trace.emit("proc_id_prime", attempt=attempt, addresses=moved,
                    unprimed=unprimed)

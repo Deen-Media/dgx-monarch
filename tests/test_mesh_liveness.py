@@ -945,6 +945,45 @@ def test_an_attach_the_exit_reaches_stands_down_quietly(monkeypatch, attach_rig,
         [True] if when == "during_attempt_2" else [])
 
 
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_an_exit_during_the_attachs_first_reading_sends_no_throwaway_message(
+        monkeypatch, attach_rig, exiting):
+    """A heal's replacement attach dials a loop whose id moved, so it sends that
+    loop the throwaway message and waits for it to settle before the dial. The
+    exit begins while the attach's first reading asks the hosts: no throwaway
+    message goes out, nothing is dialed, and the attach ends in the exit refusal.
+    Before, the prime still sent and waited, and only then did the attach stand
+    down. Not exiting, the moved loop is primed and the attach dials as before."""
+    from dgx_monarch import driver_exit, mesh_attach, worker_proc_id
+    from dgx_monarch.cli import listener_generation
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    mesh_mod = attach_rig.rig([object()], _Listeners([True]))
+    monkeypatch.setattr(mesh_attach, "_LAST_DIALED", {ADDRESS_A: "aaaaaaaaaaaa0000"})
+    primed: list[list[str]] = []
+    monkeypatch.setattr(worker_proc_id, "prime",
+                        lambda addresses: primed.append(list(addresses)) or [])
+    readings: list[int] = []
+    real_fleet = listener_generation.fleet
+
+    def fleet(config, **kwargs):
+        readings.append(1)
+        if exiting:
+            driver_exit._EXITING.set()  # the exit hook ran while the ids were read
+        return real_fleet(config, **kwargs)
+
+    monkeypatch.setattr(listener_generation, "fleet", fleet)
+    config = attach_rig.config(ADDRESS_A)
+    if not exiting:
+        mesh_mod._attach_cluster(config)
+        assert primed == [[ADDRESS_A]] and len(attach_rig.attempts) == 1
+        return
+    with pytest.raises(mesh_mod.MeshAttachError, match="the driver is exiting"):
+        mesh_mod._attach_cluster(config)
+    assert len(readings) == 1 and primed == [] and attach_rig.attempts == []
+    assert attach_rig.restarts == [] and mesh_mod._TRANSPORT_POISON is None
+
+
 def test_a_released_replacement_fails_fast_after_exactly_one_attempt(
         monkeypatch, attach_rig):
     """A released fleet whose loops serve the same id after the failed

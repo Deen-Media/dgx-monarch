@@ -967,10 +967,11 @@ def test_a_reading_the_exit_overtakes_ends_in_the_exit_refusal(driver, monkeypat
     assert driver.procs[0].stops == [] and len(driver.dials) == 1 and driver.events == []
 
 
-def _owned_submit(monkeypatch, handle, error, during=None):
+def _owned_submit(monkeypatch, handle, error, during=None, *, raises=True):
     """The real submit_render for a sampler render that owns its session, with the
     real heal: its dispatch binds ``handle``, runs ``during``, meets ``error``, and
-    any later dispatch answers."""
+    any later dispatch answers. Returns the render's error, or with ``raises``
+    false its result, and one entry per dispatch."""
     from dgx_monarch.nodes import recycle_drain, render_submit
 
     dispatches: list[int] = []
@@ -988,6 +989,8 @@ def _owned_submit(monkeypatch, handle, error, during=None):
 
     monkeypatch.setattr(render_submit, "_submit_render_guarded", guarded)
     monkeypatch.setattr(recycle_drain, "drop_residency_memos", lambda: None)
+    if not raises:
+        return render_submit.submit_render(None, {}, {}, None, 1), dispatches
     with pytest.raises(WorkerDeliveryError) as raised:
         render_submit.submit_render(None, {}, {}, None, 1)
     return raised.value, dispatches
@@ -1048,6 +1051,81 @@ def test_through_the_submit_path_an_exit_starts_no_reading_and_no_second_dispatc
         return
     assert rig.reads == 0 and handle.defunct is False
     assert driver.procs[0].stops == [] and len(driver.dials) == 1 and driver.events == []
+
+
+def _exit_as_heal_returns(monkeypatch, flag, kept=None) -> None:
+    """The driver begins to exit just after ``restart_reattach.heal`` returns, before
+    its caller's one retry; what was logged before that came before the exit."""
+    real_heal = restart_reattach.heal
+
+    def heal(*args, **kwargs):
+        outcome = real_heal(*args, **kwargs)
+        if kept is not None:
+            kept.clear()
+        flag.set()
+        return outcome
+
+    monkeypatch.setattr(restart_reattach, "heal", heal)
+
+
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_an_exit_after_the_heal_returns_dispatches_nothing_on_the_new_mesh(
+        driver, monkeypatch, exiting):
+    """Through the real submit path and the real heal, for a sampler render that owns
+    its session. The exit begins after the heal returned the new mesh and before the
+    render dispatches again: the render ends in the exit refusal, with no second
+    dispatch, so no price and no call reach the new mesh, and nothing above INFO
+    on its thread. On the commit before, it dispatched again and rendered while
+    ComfyUI closed. Not exiting, it dispatches once more and renders, as before."""
+    rig = _exit_rig(driver, monkeypatch)
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    error = _delivery_error(driver)
+    if exiting:
+        _exit_as_heal_returns(monkeypatch, rig.flag, rig.kept)
+    rig.listen()
+    result, dispatches = _owned_submit(monkeypatch, handle, error, raises=exiting)
+    assert rig.reads == 2 and len(driver.dials) == 2  # the heal's reading and its attach
+    if not exiting:
+        assert result == "pending" and len(dispatches) == 2
+        return
+    assert _EXIT_REFUSAL in str(result) and result.__cause__ is error
+    assert len(dispatches) == 1  # no second dispatch: no price and no call on the new mesh
+    assert rig.loud() == [], rig.loud()
+
+
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_an_exit_after_the_loaders_heal_returns_loads_nothing_on_the_new_mesh(
+        loader_rig, monkeypatch, exiting):
+    """The UNET Loader's eager load: the exit begins after the heal returned the
+    new mesh and before the second load. The load ends in the exit refusal with no
+    setup, no price and no load on the new mesh, and nothing above INFO. On the
+    commit before, it priced and loaded on the new mesh while ComfyUI closed. Not
+    exiting, it loads once more on the new mesh, as before."""
+    import logging
+
+    from dgx_monarch import driver_exit
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    kept: list[logging.LogRecord] = []
+    keep = logging.Handler()
+    keep.emit = kept.append  # type: ignore[method-assign]
+    for name in (*_EXIT_PATH_LOGGERS, "dgx_monarch.nodes.loaders"):
+        logger = logging.getLogger(name)
+        monkeypatch.setattr(logger, "handlers", [*logger.handlers, keep])
+    if exiting:
+        _exit_as_heal_returns(monkeypatch, driver_exit._EXITING, kept)
+    before_heal = [("price",), ("ensure_live",), ("setup", "stale"), ("agree", "stale"),
+                   ("heal", "stale"), ("drop_memos",), ("price",), ("ensure_live",)]
+    if not exiting:
+        loader_rig.load()
+        assert loader_rig.events == [*before_heal, ("setup", "fresh"), ("agree", "fresh"),
+                                     ("load_model", "fresh"), ("record", "fresh")]
+        return
+    with pytest.raises(WorkerDeliveryError, match=_EXIT_REFUSAL):
+        loader_rig.load()
+    assert loader_rig.events == before_heal  # nothing on the new mesh after the heal
+    loud = [record.getMessage() for record in kept if record.levelno >= logging.WARNING]
+    assert loud == [], loud
 
 
 def test_a_real_handle_evicted_with_its_stop_done_heals_without_a_second_stop(driver):

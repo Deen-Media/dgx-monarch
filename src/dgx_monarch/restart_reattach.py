@@ -459,4 +459,12 @@ def heal(handle: Any, refused: BaseException, *,
     return Reattached(fresh, wall, moves.moved, teardown)
 
 
+def retry_after_heal(retry: Callable[[], Any], refused: BaseException) -> Any:
+    """Run the caller's one retry on the mesh ``heal`` attached, unless the driver began
+    to exit since ``heal`` returned: then no price and no dispatch, and the exit refusal.
+    A sampler render's re-dispatch and the eager load's second load both come here."""
+    _stand_down_at_exit(refused)  # an exit after heal returned: nothing reaches the new mesh
+    return retry()
+
+
 from .restart_pinned import refuse_pinned as refuse_pinned  # noqa: E402  # re-exported for render_submit
