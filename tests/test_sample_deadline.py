@@ -381,3 +381,107 @@ def test_cfg_parallel_leaves_every_rank_all_the_rows(monkeypatch):
         monkeypatch, (109_466, "wan_scail"), Topology(cfg=2, world=2))
     assert timeout == 12_000.0
     assert "109466 rows over 1 rank(s)" in lines[0]
+
+
+# 8. A MiniMax H3 step makes one model call per conditioning entry
+
+
+def _cond(entries: int = 1) -> list:
+    import torch
+
+    return [[torch.zeros(1, 404, 8), {}] for _ in range(entries)]
+
+
+def _sampler_request(monkeypatch, node: str, cfg: float, positive: list, *,
+                     negative: bool = True) -> tuple[dict, dict, float]:
+    """The request, tagged latent and cfg the sampler node hands run_render.
+    ``dual`` is DGX Monarch Dual Model Guider with its second model wired."""
+    import torch
+
+    from dgx_monarch.nodes import guiders, samplers
+    from dgx_monarch.nodes.common import ModelSpec
+
+    seen: list = []
+    monkeypatch.setattr(samplers, "run_render", lambda _model, request, latent, cfg_value, steps_hint:
+                        seen.append((request, latent, cfg_value)) or {"samples": torch.zeros(1)})
+    latent = {"samples": torch.zeros(1, 24, 107, 48, 84)}
+    if node == "ksampler":
+        samplers.DGXMonarchKSampler().sample(
+            "model", 1, STEPS, cfg, "euler", "simple", positive, _cond(), latent)
+    else:
+        second = ModelSpec(mesh=types.SimpleNamespace(), unet_name="second.safetensors", slot="uncond")
+        (guider,) = (guiders.DGXMonarchDualModelGuider().get_guider(
+                        "model", positive, cfg, second, _cond() if negative else None) if node == "dual"
+                     else guiders.DGXMonarchBasicGuider().get_guider("model", positive) if cfg == 1.0
+                     else guiders.DGXMonarchCFGGuider().get_guider("model", positive, _cond(), cfg))
+        monkeypatch.setattr(samplers, "_canonical_noise_for_wire", lambda _noise: None)
+        samplers.DGXMonarchSamplerCustom().sample(
+            types.SimpleNamespace(seed=1), guider, object(), torch.linspace(1.0, 0.0, STEPS + 1),
+            latent)
+    return seen[0]
+
+
+def _submitted(monkeypatch, request, latent, cfg, counted):
+    from dgx_monarch.nodes import common
+    from dgx_monarch.nodes.pending import PendingRenderHandoff
+    from render_sessions_helpers import _real_handle, _stub_direct_submit
+
+    spec = _stub_direct_submit(monkeypatch, _real_handle(), lambda *_a, **_k: object())
+    monkeypatch.setattr(render_rows, "packed_rows_for_request", lambda *_a: counted)
+    with _records(render_rows.log) as records:
+        pending = common.submit_render(spec, request, latent, cfg_value=cfg, steps_hint=STEPS,
+                                       handoff=PendingRenderHandoff())
+    try:
+        lines = [r.getMessage() for r in records if r.getMessage().startswith("sample deadline:")]
+        return pending._timeout, lines
+    finally:
+        pending.abandon()
+
+
+@pytest.mark.parametrize(("node", "cfg", "entries", "calls"), [
+    ("ksampler", 2.0, 1, 2),     # the positive and the negative, CFG on
+    ("ksampler", 1.0, 2, 2),     # two positive entries (Conditioning Combine), CFG 1
+    ("ksampler", 3.0, 2, 3),
+    ("custom", 2.0, 1, 2),       # the cfg guider's pair
+    ("custom", 1.0, 3, 3),       # the basic guider: positive entries only
+])
+def test_each_model_call_of_an_h3_step_gets_its_allowance(monkeypatch, node, cfg, entries, calls):
+    """The 15 s clip on the pair samples 54,732 rows per rank; the anchor gives
+    one call of that about 300 s. The request states how many calls a step makes."""
+    request, latent, cfg_value = _sampler_request(monkeypatch, node, cfg, _cond(entries))
+    timeout, lines = _submitted(monkeypatch, request, latent, cfg_value, (54_732, "minimax_h3"))
+    assert timeout == pytest.approx(STEPS * calls * 600.0 * 54_732 / 109_466)
+    assert f"{calls} model calls a step" in lines[0]
+    assert "600 s per model call at 109466" in lines[0]
+
+
+@pytest.mark.parametrize(("cfg", "negative", "calls"), [
+    (2.0, True, 2),      # the negative runs on the second model at every step
+    (2.0, False, 2),     # no negative wired: the second model still runs, image-only
+    (1.0, True, 1),      # stock Guider_DualModel skips the uncond pass at CFG 1.0
+])
+def test_a_two_checkpoint_guiders_negative_is_a_call_of_the_step(monkeypatch, cfg, negative, calls):
+    """DGX Monarch Dual Model Guider with its second model wired: the negative
+    pass runs on that model, which the ring pad check leaves to that model, but
+    the step waits for it all the same."""
+    request, latent, cfg_value = _sampler_request(monkeypatch, "dual", cfg, _cond(), negative=negative)
+    assert request["guider"]["kind"] == "dual_model" and request["uncond_model"]
+    monkeypatch.setattr(render_rows, "packed_rows_for_request", lambda *_a: (54_732, "minimax_h3"))
+    seconds = render_rows.sample_deadline_s("model", request, latent, Topology(world=1), STEPS, cfg_value)
+    assert seconds == pytest.approx(STEPS * calls * 600.0 * 54_732 / 109_466)
+
+
+def test_one_call_a_step_keeps_the_measured_deadline_and_its_line(monkeypatch):
+    request, latent, cfg_value = _sampler_request(monkeypatch, "ksampler", 1.0, _cond())
+    timeout, lines = _submitted(monkeypatch, request, latent, cfg_value, (54_732, "minimax_h3"))
+    assert timeout == pytest.approx(6000.0, abs=1.0)
+    assert "model call" not in lines[0] and "600 s per step at 109466" in lines[0]
+
+
+def test_the_reference_and_pose_families_keep_one_allowance_a_step(monkeypatch):
+    """Their cond and uncond run as one batch; their measured CFG-5 render sits
+    2.26 times inside its deadline on the pair (BENCHMARKS)."""
+    request, latent, cfg_value = _sampler_request(monkeypatch, "ksampler", 5.0, _cond())
+    timeout, lines = _submitted(monkeypatch, request, latent, cfg_value, (48_832, "wan_scail"))
+    assert timeout == pytest.approx(STEPS * 600.0 * 48_832 / 109_466)
+    assert "model call" not in lines[0]

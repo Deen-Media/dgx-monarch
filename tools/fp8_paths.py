@@ -46,7 +46,9 @@ Line numbers are ComfyUI 0.43.0 (426f5eea5):
   PerformanceFeature; a bare ``--fast`` adds all of them, autotune included.
 
 ``--comfy-dir`` re-reads those clauses from a checkout as text and warns when
-one is gone, so a ComfyUI update cannot silently outdate the table.
+one is gone, so a ComfyUI update cannot silently outdate the table. The keys
+the load keeps then follow that checkout's prefix rule, which the upstream gate
+reads; without it, or where that rule cannot be read, ComfyUI master's.
 """
 from __future__ import annotations
 
@@ -72,6 +74,7 @@ if _ADDED_SRC:
     sys.path.insert(0, _SRC)
 try:
     from dgx_monarch.safetensors_header import read_safetensors_header
+    from dgx_monarch.stock_prefix_drift import keeps_sensenova_whole
     from dgx_monarch.upstream_gate import comfy_load_keys
 finally:
     if _ADDED_SRC:
@@ -220,12 +223,15 @@ def _loaded_layers(confs: dict[str, dict], keys: dict[str, str]) -> dict[str, di
             if name in loaded or any(name.endswith("." + layer) for layer in loaded)}
 
 
-def read_facts(path: Path) -> Facts:
+def read_facts(path: Path, comfy_dir: Path | None = None) -> Facts:
+    """The file's facts, under the prefix rule ``comfy_dir`` reads as
+    (``keeps_sensenova_whole``); with no checkout, or a rule it cannot read, master's."""
     facts = Facts(name=path.name)
     try:
         facts.size_bytes = path.stat().st_size
         header = read_safetensors_header(path)
-        keys = comfy_load_keys({key: d.dtype for key, d in header.tensors.items()}, header.metadata)
+        keys = comfy_load_keys({key: d.dtype for key, d in header.tensors.items()}, header.metadata,
+                               comfy_dir is not None and keeps_sensenova_whole(comfy_dir) is True)
         facts.kitchen = any(key.endswith(".comfy_quant") for key in keys)
         confs, facts.sources = _layer_confs(path, header)
         confs = _loaded_layers(confs, keys)
@@ -399,8 +405,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     fp8_compute = not args.no_fp8_compute
     rows = []
+    comfy_dir = args.comfy_dir.expanduser() if args.comfy_dir else None
     for path in iter_files([t.expanduser() for t in args.targets]):
-        facts = read_facts(path)
+        facts = read_facts(path, comfy_dir)
         rows.append((facts, [predict(facts, fast, loader_fast, fp8_compute) for _, fast, loader_fast in SETTINGS]))
     drift = check_rule(args.comfy_dir.expanduser()) if args.comfy_dir else None
     if args.json:

@@ -59,8 +59,8 @@ ComfyUI's whole-load condition leaves only its reserve for what the sampler
 takes beyond ComfyUI's own estimate, and that grows with the latent, so at
 the tightest reading that still loads whole a long clip runs the host under
 its floor with the backup standing by unused. So where a patched model is
-loaded whole and the room above the floor is under the ask (``_sampling_ask``,
-1.5 times ComfyUI's full estimate for this latent), ``check`` takes the
+loaded whole and the room above the floor, with the Worker's idle device pool,
+is under the ask (``_sampling_ask``, 1.5 times ComfyUI's full estimate), ``check`` takes the
 route's last step alone: the backup and the patches go, no weight moves, and
 the slot is a low-RSS slot. With more room than that the backup stays, and a
 stack change swaps in place as before. The weights are the classic bake's
@@ -153,6 +153,34 @@ def _host_room() -> int:
     import psutil
 
     return int(psutil.virtual_memory().available) - ABSOLUTE_HOST_FLOOR_BYTES
+
+
+def _idle_pool(patcher: Any) -> int:
+    """Device memory this Worker holds reserved and unused, which its sampler takes before the box gives more.
+
+    The term ComfyUI's own free reading adds on a Worker (``comfy_bridge._uma_free_memory``). A Worker
+    keeps the pool its last sampler grew, and MemAvailable does not count it: without it a second
+    render on a warm Worker would be weighed as if it started cold. Zero off a CUDA device, or unread.
+    """
+    try:
+        device = getattr(patcher, "load_device", None)
+        if getattr(device, "type", None) != "cuda":
+            return 0
+        import torch
+
+        stats = torch.cuda.memory_stats(device)
+        return max(0, int(stats["reserved_bytes.all.current"]) - int(stats["active_bytes.all.current"]))
+    except Exception:
+        return 0
+
+
+def carries_stack(patcher: Any) -> bool:
+    """Whether ComfyUI's load carries a LoRA stack these checks weigh: one answer for ``check`` and the pair's vote.
+
+    A dynamic patcher (comfy-managed residency) takes no LoRA here, and its load fills ComfyUI's backup with
+    the small weights it force-loads, no stack's originals. A model with no patches has no stack either.
+    """
+    return not patcher.is_dynamic() and bool(getattr(patcher, "patches", None))
 
 
 def _host_copies_are_file_pages() -> bool:
@@ -335,7 +363,8 @@ def free_backup_for_sampling(patcher: Any, noise_shape: Any, conds: Any) -> bool
     ``True`` when it freed it. The model must be whole and patched, hold a
     backup, sit on a device that shares the host's memory and belong to a
     slot of the Worker's store; the room is the host's available memory above
-    its floor, the ask ``_sampling_ask`` (1.5 times ComfyUI's full estimate).
+    its floor and the device pool the Worker holds reserved and unused
+    (``_idle_pool``), the ask ``_sampling_ask`` (1.5 times ComfyUI's full estimate).
     No weight moves: the weights on the
     device are the baked ones already, and ComfyUI needs the backup only to
     change the stack in place, which the slot then does by a reload from disk
@@ -353,13 +382,14 @@ def free_backup_for_sampling(patcher: Any, noise_shape: Any, conds: Any) -> bool
     ask = _sampling_ask(patcher, noise_shape, conds)
     if ask is None:
         return False
-    room = _host_room()
-    if room >= ask:
+    room, pool = _host_room(), _idle_pool(patcher)
+    if room + pool >= ask:
         return False
-    figures = (max(0, room) / _GIB, ABSOLUTE_HOST_FLOOR_BYTES / _GIB, ask / _GIB)
+    figures = (max(0, room + pool) / _GIB, ABSOLUTE_HOST_FLOOR_BYTES / _GIB, ask / _GIB)
+    counted = " (its idle device pool counted)" if pool > 0 else ""
     weighed = ("LoRA bake: ComfyUI loaded this model whole with a LoRA stack and lora_low_rss off, and "
-               "%.1f GiB is available above the %.0f GiB floor where the sampler may ask %.1f GiB (1.5 "
-               "times ComfyUI's estimate for this latent)")
+               f"%.1f GiB is available above the %.0f GiB floor{counted} where the sampler may ask %.1f GiB "
+               "(1.5 times ComfyUI's estimate for this latent)")
     if mesh_safety.env_enabled(BACKUP_FREE_DISABLE_ENV):
         kept = (f"{weighed}. ComfyUI's weight backup is kept through the render: the step that frees it "
                 f"is off ({BACKUP_FREE_DISABLE_ENV}=1 on the Worker)")
@@ -396,7 +426,7 @@ def check(patcher: Any, sampling: tuple[Any, Any] | None = None) -> None:
     whole load is left as it is.
     """
     model = getattr(patcher, "model", None)
-    if model is None or patcher.is_dynamic() or not getattr(patcher, "patches", None):
+    if model is None or not carries_stack(patcher):
         return
     partly = bool(getattr(model, "model_lowvram", False))
     if not partly and sampling is None:

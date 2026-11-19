@@ -6,8 +6,9 @@ driver checks it at the loader before capacity, mesh healing, setup, or RPC;
 Init may already have created the fleet. The worker uses the same message at
 its load entry point.
 
-Only standard-library modules load eagerly. Detection and the header reader
-import at call time so headless callers can import the gate.
+Only stdlib modules and the stdlib-only ``stock_prefix_drift`` load eagerly.
+Detection and the header reader import at call time so headless callers can
+import the gate.
 """
 from __future__ import annotations
 
@@ -17,6 +18,10 @@ import struct
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
+
+from .stock_prefix_drift import SENSENOVA_KEYS as _SENSENOVA_KEYS  # noqa: F401  (the tests read it here)
+from .stock_prefix_drift import keeps_sensenova_whole
+from .stock_prefix_drift import unet_prefix as _unet_prefix
 
 if TYPE_CHECKING:
     from .safetensors_header import SafetensorsHeader
@@ -98,13 +103,6 @@ SCALED_WEIGHT_DTYPES = ("I8", "F4", "U8")
 # stores <layer>.scale_weight, which only the legacy conversion renames.
 _SCALE_SUFFIXES = (".weight_scale", ".scale_weight")
 
-# comfy.model_detection.unet_prefix_from_state_dict's candidates, in its order.
-_UNET_PREFIXES = ("model.diffusion_model.", "model.model.", "net.")
-_SENSENOVA_KEYS = (
-    "fm_modules.vision_model_mot_gen.embeddings.patch_embedding.weight",
-    "language_model.model.layers.0.self_attn.q_proj_mot_gen.weight",
-)
-
 # The closed default. A header neither reader below could read, with no proof
 # that stock ComfyUI cannot read it, would otherwise load past every refusal above.
 UNREAD_HEADER_TROUBLESHOOTING = 152
@@ -124,6 +122,7 @@ UNREAD_HEADER_REFUSAL = (
 
 class QuantMetadataError(ValueError):
     """``_quantization_metadata`` that ComfyUI's ``convert_old_quants`` cannot parse either."""
+    keyed = True  # whether the other prefix rule reads the file's keys differently
 
 
 class _Dtype(NamedTuple):
@@ -199,9 +198,22 @@ def uncovered_scaled_layers(path: str) -> tuple[str, ...]:
     every ``scale_weight`` the legacy conversion left unrenamed: a plain
     Linear drops both as unexpected keys. Layer names are the ones the model
     sees, after ComfyUI's prefix strip. An L2P layout answers none, because
-    #91 refuses it first.
+    #91 refuses it first. The prefix rules are ``_rules()``; the first that finds
+    a layer names them. A table ComfyUI cannot parse raises at the first rule
+    that reaches it: under any rule it leaves no layer to name.
     """
-    return _read_by_identity(*_identity(path))[1]
+    for whole in _rules():
+        _l2p, layers, _h3_image, keyed = _read_by_identity(*_identity(path), whole)
+        if layers or not keyed:
+            return layers
+    return ()
+
+
+def _rules(comfy_dir: str | os.PathLike[str] | None = None) -> tuple[bool, ...]:
+    """The prefix rules to read a file under: the one the ComfyUI an answer is for has,
+    or both where that cannot be told; the second only for a file they read differently."""
+    rule = keeps_sensenova_whole(comfy_dir)
+    return (True, False) if rule is None else (rule,)
 
 
 def _convert_old_quants(keys: dict[str, str], metadata: dict[str, str]) -> dict[str, str]:
@@ -247,24 +259,8 @@ def _convert_old_quants(keys: dict[str, str], metadata: dict[str, str]) -> dict[
     return out
 
 
-def _unet_prefix(keys: dict[str, str]) -> str:
-    """``comfy.model_detection.unet_prefix_from_state_dict`` on key names."""
-    if (any(key.startswith("detector.") for key in keys)
-            and any(key.startswith("tracker.") for key in keys)):
-        return ""
-    if all(key in keys for key in _SENSENOVA_KEYS):
-        return ""
-    counts = dict.fromkeys(_UNET_PREFIXES, 0)
-    for key in keys:
-        for prefix in _UNET_PREFIXES:
-            if key.startswith(prefix):
-                counts[prefix] += 1
-                break
-    top = max(counts, key=counts.__getitem__)
-    return top if counts[top] > 5 else "model."
-
-
-def comfy_load_keys(dtypes: dict[str, str], metadata: dict[str, str]) -> dict[str, str]:
+def comfy_load_keys(dtypes: dict[str, str], metadata: dict[str, str],
+                    sensenova_whole: bool | None = None) -> dict[str, str]:
     """The keys, with their dtypes, ComfyUI's diffusion-model load hands the model.
 
     The steps of ``comfy.sd.load_diffusion_model_state_dict`` (ComfyUI
@@ -273,11 +269,11 @@ def comfy_load_keys(dtypes: dict[str, str], metadata: dict[str, str]) -> dict[st
     survivors. So a ``_quantization_metadata`` name covers a layer only when it
     is the layer's stripped name or its full name under that prefix, and a
     ``comfy_quant`` key or ``scaled_fp8`` marker outside the prefix reaches
-    nothing. tests/test_dropped_scale_gate.py checks the result against
-    ComfyUI's own load, key for key.
+    nothing. The prefix rule is ``_unet_prefix``'s. tests/test_dropped_scale_gate.py
+    checks the result against ComfyUI's own load, key for key.
     """
     keys = _convert_old_quants(dtypes, metadata)
-    prefix = _unet_prefix(keys)
+    prefix = _unet_prefix(keys, sensenova_whole)
     stripped = {key[len(prefix):]: dtype for key, dtype in keys.items()
                 if key.startswith(prefix)}
     return _convert_old_quants(stripped, metadata) if stripped else keys
@@ -305,10 +301,11 @@ def _identity(path: str) -> tuple[str, int, int, int]:
 
 @lru_cache(maxsize=16)
 def _read_by_identity(
-    path: str, _mtime_ns: int, _ctime_ns: int, _size: int
-) -> tuple[bool, tuple[str, ...], int | None]:
-    """One header read per file identity: (L2P key layout, uncovered layers,
-    a MiniMax-H3-Image refusal number or None).
+    path: str, _mtime_ns: int, _ctime_ns: int, _size: int, sensenova_whole: bool
+) -> tuple[bool, tuple[str, ...], int | None, bool]:
+    """One header read per file identity and prefix rule (so one process can answer
+    for two checkouts): (L2P key layout, uncovered layers, an H3-Image number or None,
+    whether the two rules pick the file's prefix differently, so the other reads it differently).
 
     An L2P layout returns before the scale check, and its test never raises on
     the metadata, so a malformed ``_quantization_metadata`` cannot turn #91 off.
@@ -339,8 +336,9 @@ def _read_by_identity(
     # Both family tests read ComfyUI's exact keys first (adapters/gate_keys.py),
     # so an extra tensor that moves the header detector's reading cancels neither.
     names = list(header.tensors)
+    keyed = _unet_prefix(header.tensors, True) != _unet_prefix(header.tensors, False)
     comfy_keys = gate_keys.comfy_detection_keys(
-        {key: info.dtype for key, info in header.tensors.items()}, header.metadata)
+        {key: info.dtype for key, info in header.tensors.items()}, header.metadata, sensenova_whole)
     if gate_keys.reads_zimage_l2p(names, comfy_keys):
         if isinstance(header, _LenientHeader) or not is_zimage_l2p_from_keys(names):
             # detect.sniff_zimage_l2p reads strictly and by its own needles, so it
@@ -349,7 +347,7 @@ def _read_by_identity(
                 "upstream gate: %s carries the Z-Image L2P decoder (%s) and no dec_net head",
                 path, ", ".join(sorted(key for key in names if key.startswith(
                     "local_decoder.") or ".local_decoder." in key)[:4]))
-        return True, (), None
+        return True, (), None, keyed
     # Decided from keys and the config metadata alone, before any quantization
     # metadata is parsed, so a damaged ``_quantization_metadata`` cannot cancel it.
     h3_image = gate_keys.reads_minimax_h3_image(names, comfy_keys)
@@ -357,11 +355,12 @@ def _read_by_identity(
                        if h3_image and h3_image_header.grid_missing(header.metadata) else None)
     try:
         uncovered = _dropped_scale_layers(comfy_load_keys(
-            {key: info.dtype for key, info in header.tensors.items()}, header.metadata))
-    except QuantMetadataError:
+            {key: info.dtype for key, info in header.tensors.items()}, header.metadata, sensenova_whole))
+    except QuantMetadataError as exc:
         if not h3_image:
             # No verdict. Stock ComfyUI fails to parse the same metadata at load
             # (comfy.utils.convert_old_quants), so no scale is silently dropped.
+            exc.keyed = keyed
             raise
         # This family fails closed before any load: the grid refusal stands, or
         # the metadata refusal answers for metadata ComfyUI cannot parse either.
@@ -373,15 +372,17 @@ def _read_by_identity(
         get_logger(__name__).info(
             "upstream gate: %s carries %d weight scale(s) ComfyUI would drop (%s)",
             path, len(uncovered), ", ".join(uncovered[:4]))
-    return False, uncovered, h3_image_number
+    return False, uncovered, h3_image_number, keyed
 
 
-def _verdict(path: str | None) -> tuple[int, tuple[str, ...]] | None:
-    """(TROUBLESHOOTING number, uncovered layers) for a refused path, or None.
+def _verdict(path: str | None, comfy_dir: str | os.PathLike[str] | None = None) -> tuple[int, tuple[str, ...]] | None:
+    """(TROUBLESHOOTING number, uncovered layers) for a refused path, or None,
+    under the prefix rules of ``_rules(comfy_dir)``: the first that refuses answers.
 
     Total. An unnamed, missing or non-safetensors path answers None. So does a
     file no stock reader can read either, or one whose quantization metadata
-    ComfyUI cannot parse (``_stock_fails_too``): that load fails by itself.
+    ComfyUI cannot parse (``_stock_fails_too``) and that no rule read refuses
+    before the metadata counts: that load fails by itself.
     Any other failed read refuses (#152), because a load that skipped the gate
     could render wrong. One header read answers every question; an L2P layout
     is read once more, for the log line alone, through
@@ -398,27 +399,34 @@ def _verdict(path: str | None) -> tuple[int, tuple[str, ...]] | None:
         identity = _identity(str(path))
     except (OSError, ValueError):
         return None
-    try:
-        l2p_layout, layers, h3_image_number = _read_by_identity(*identity)
-    except Exception as exc:
-        if _stock_fails_too(exc):
-            return None
-        from .log import get_logger
+    for whole in _rules(comfy_dir):
+        try:
+            l2p_layout, layers, h3_image_number, keyed = _read_by_identity(*identity, whole)
+        except Exception as exc:
+            if _stock_fails_too(exc):  # no verdict under this rule; the other may refuse first
+                if isinstance(exc, QuantMetadataError) and exc.keyed:
+                    continue
+                return None
+            from .log import get_logger
 
-        get_logger(__name__).warning(
-            "upstream gate: %s: the header read failed with no verdict on the file (%r)",
-            path, exc)
-        return UNREAD_HEADER_TROUBLESHOOTING, ()
-    if l2p_layout:
-        from .adapters import detect
+            get_logger(__name__).warning(
+                "upstream gate: %s: the header read failed with no verdict on the file (%r)",
+                path, exc)
+            return UNREAD_HEADER_TROUBLESHOOTING, ()
+        if l2p_layout:
+            from .adapters import detect
 
-        detect.sniff_zimage_l2p(str(path))  # the log line; the layout read above is the verdict
-        return TROUBLESHOOTING, ()
-    if h3_image_number == H3_IMAGE_GRID_TROUBLESHOOTING:
-        return h3_image_number, ()
-    if layers:
-        return DROPPED_SCALE_TROUBLESHOOTING, layers
-    return (h3_image_number, ()) if h3_image_number is not None else None
+            detect.sniff_zimage_l2p(str(path))  # the log line; the layout read above is the verdict
+            return TROUBLESHOOTING, ()
+        if h3_image_number == H3_IMAGE_GRID_TROUBLESHOOTING:
+            return h3_image_number, ()
+        if layers:
+            return DROPPED_SCALE_TROUBLESHOOTING, layers
+        if h3_image_number is not None:
+            return h3_image_number, ()
+        if not keyed:  # the other rule reads this file the same way
+            break
+    return None
 
 
 def _stock_fails_too(exc: Exception) -> bool:
@@ -439,13 +447,14 @@ def _scale_fields(layers: tuple[str, ...]) -> dict[str, object]:
     return {"count": len(layers), "first": layers[0][:160]}
 
 
-def refusal_for(path: str | None) -> tuple[str, int] | None:
+def refusal_for(path: str | None, comfy_dir: str | os.PathLike[str] | None = None) -> tuple[str, int] | None:
     """The refusal body and its TROUBLESHOOTING number for ``path``, or None.
 
-    Total, as ``_verdict`` is. The sweep matrix and the tests read it;
-    the load funnels raise through ``raise_refusal``.
+    Total, as ``_verdict`` is. The sweep matrix and the tests read it; the load
+    funnels raise through ``raise_refusal``. A headless caller passes the driver's
+    ComfyUI checkout as ``comfy_dir``, so it gets the driver's answer.
     """
-    verdict = _verdict(path)
+    verdict = _verdict(path, comfy_dir)
     if verdict is None:
         return None
     number, layers = verdict

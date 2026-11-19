@@ -278,12 +278,12 @@ def prune_dead_rows(
 
 def loop_identity(
     address: str, *, pid: int | None = None, proc_root: str = proc_identity.PROC_ROOT,
-    proc_id: str | None = None,
+    proc_id: str | None = None, monarch: str | None = None,
 ) -> dict[str, Any]:
     """Return this loop's identity for actor ownership records.
 
     ``proc_id`` is the id value the loop serves; a record without one is a
-    loop that serves the bare address.
+    loop that serves the bare address. ``monarch`` is the torchmonarch it imported.
     """
     loop_pid = os.getpid() if pid is None else int(pid)
     stat = proc_identity.read_stat(loop_pid, proc_root)
@@ -294,6 +294,8 @@ def loop_identity(
     }
     if proc_id is not None:
         identity["proc_id"] = str(proc_id)
+    if monarch is not None:
+        identity["monarch"] = str(monarch)
     return identity
 
 
@@ -417,13 +419,13 @@ def tick(
     home: str | None = None,
     now: float | None = None,
     writer: Callable[..., bool] = write_ledger,
-    proc_id: str | None = None,
+    proc_id: str | None = None, monarch: str | None = None,
 ) -> dict[str, Any]:
     """One tracker observation: read, adopt, refresh, write when it changed."""
     moment = time.time() if now is None else float(now)
     boot = proc_identity.boot_id(proc_root)
     current = read_ledger(path, home=home, boot=boot, proc_root=proc_root)
-    loop = loop_identity(address, pid=loop_pid, proc_root=proc_root, proc_id=proc_id)
+    loop = loop_identity(address, pid=loop_pid, proc_root=proc_root, proc_id=proc_id, monarch=monarch)
     merged = {
         "version": LEDGER_VERSION,
         "boot_id": boot,
@@ -445,27 +447,27 @@ def tick(
 def publish_loop(
     address: str,
     *,
-    proc_id: str,
+    proc_id: str, monarch: str | None = None,
     loop_pid: int | None = None,
     proc_root: str = proc_identity.PROC_ROOT,
     path: str | None = None,
     home: str | None = None,
 ) -> bool:
-    """Write this loop's record, served id included, before the loop serves.
+    """Write this loop's record, served id and torchmonarch version included, before the loop serves.
 
     The tracker thread's first tick can land after the listener exists, and
     the driver's probe would then read the previous loop's record. Returns
-    whether the file now names this loop with this id; never raises.
+    whether the file now names this loop with this id and version; never raises.
     """
     try:
         tick(address, loop_pid=loop_pid, proc_root=proc_root, path=path,
-             home=home, proc_id=proc_id)
+             home=home, proc_id=proc_id, monarch=monarch)
         loop = read_ledger(path, home=home, proc_root=proc_root)["loop"]
     except Exception:
         return False
     owner = os.getpid() if loop_pid is None else int(loop_pid)
     return (isinstance(loop, dict) and loop.get("proc_id") == proc_id
-            and loop.get("pid") == owner)
+            and loop.get("monarch") == monarch and loop.get("pid") == owner)
 
 
 def _track(address: str, tick_s: float, sleeper: Callable[[float], None],

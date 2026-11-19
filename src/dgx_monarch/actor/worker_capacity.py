@@ -15,7 +15,7 @@ import socket
 from dataclasses import replace
 from typing import Any
 
-from .. import capacity_classic_bake
+from .. import capacity_classic_bake, capacity_fit
 from ..log import get_logger
 from ..transfer_utils import failure_summary
 from . import actor_footprint, capacity_quote, in_place_fallback, resident_ledger, store_fsdp
@@ -385,7 +385,7 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
     # The store decides this slot's hot swap when its load runs: by then an earlier slot of the
     # same request (the conditional model of a pair) holds its model, whatever it holds now.
     other_held = other is not None or other_loads_first
-    return capacity_quote.price(
+    row = capacity_quote.price(
         path=path,
         unet_name=unet_name,
         model_options=_to_comfy_model_options(options),
@@ -414,6 +414,33 @@ def _price(worker: Any, store: Any, spec: dict, *, snapshot: dict,
         budget_bytes_already_charged=charged,
         request_key=request_key,
     )
+    return _with_cleared_price(row, worker, store, spec, path, _to_comfy_model_options(options),
+                               in_place_bake_proven)
+
+
+def _with_cleared_price(row: RankPrice, worker: Any, store: Any, spec: dict, path: str,
+                        model_options: dict, in_place_bake_proven: bool) -> RankPrice:
+    """The row with ``cleared_required_bytes``, what a cleared box pays where a classic bake is in play.
+
+    A clear empties the slot, so the fresh fleet bakes the stack where this row may price a hot swap
+    that bakes nothing (``in_place_fallback.route`` on an empty slot; ``old_model._numbers``).
+    """
+    loras = spec.get("loras")
+    if (not loras or row.verdict == capacity_quote.VERDICT_FITS or row.use_slab or not row.priced
+            or not row.measured or store_fsdp.active(worker)):
+        return row  # only a row that stops the load can raise a card
+    args = in_place_fallback.route(store, None, False, in_place_bake_proven)
+    if args is None:
+        return row
+    try:
+        cleared = capacity_classic_bake.cleared_required_bytes(
+            capacity_fit.stock_load_fit(path, model_options), path, loras,
+            capacity_quote.default_resolve_lora_path, in_place=args["in_place"],
+            comfy_reserve_bytes=args["comfy_reserve_bytes"])
+    except Exception as exc:  # no figure: the card weighs the row's own price, as before
+        log.warning("capacity quote could not price a cleared box (%s)", failure_summary(exc))
+        return row
+    return replace(row, measured={**row.measured, "cleared_required_bytes": int(cleared)})
 
 
 def _pinned_staging() -> bool | None:

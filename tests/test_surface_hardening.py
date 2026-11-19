@@ -321,7 +321,7 @@ def test_poller_has_no_lab_specific_loop_fallback(monkeypatch, tmp_path):
     assert Poller().loops == ()
 
 
-def test_textual_polling_offloads_blocking_tick(monkeypatch):
+def test_textual_polling_offloads_blocking_tick(forget_modules_imported_here, monkeypatch):
     rich = types.ModuleType("rich")
     rich_text = types.ModuleType("rich.text")
     rich_console = types.ModuleType("rich.console")

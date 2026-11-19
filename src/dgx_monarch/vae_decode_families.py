@@ -65,6 +65,21 @@ def _qualified(cls: type) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
+_QUANTIZED = ("this VAE holds quantized layers, which Load VAE builds in a compute dtype of its own "
+              "and a Worker would build in the VAE dtype, so a Worker's decode could differ")
+
+
+def _quantized(fsm: Any) -> bool:
+    """Whether a splittable VAE holds a quantized layer (a comfy_quant entry in its file).
+
+    Load VAE builds those layers to compute in a dtype of its own, float16 unless the
+    loader passes one, while a Worker builds them in the driver's VAE dtype, so a
+    Worker's decode may not be the driver's.
+    """
+    modules = getattr(fsm, "modules", None)
+    return callable(modules) and any(getattr(module, "quant_format", None) for module in modules())
+
+
 def _formula(vae: Any) -> tuple | None:
     value = getattr(vae, "upscale_index_formula", None)
     return tuple(value) if isinstance(value, (tuple, list)) else None
@@ -88,7 +103,7 @@ def classify(vae: Any) -> tuple[Family | None, str]:
         if not getattr(vae, "handles_tiling", False) or getattr(fsm, "decoder", None) is None:
             return None, ("this ComfyUI decodes the MiniMax H3 VAE some other way than its own "
                           "chunked decode, so the split cannot replay it")
-        return _H3, ""
+        return (None, _QUANTIZED) if _quantized(fsm) else (_H3, "")
     if name == "comfy.ldm.cogvideo.vae.AutoencoderKLCogVideoX":
         return None, "CogVideoX tiles frames inside its spatial loop, so its tiles are not independent"
     if getattr(vae, "latent_dim", None) != 3 or getattr(vae, "handles_tiling", False):
@@ -111,6 +126,8 @@ def classify(vae: Any) -> tuple[Family | None, str]:
             family = "hunyuan_video15"
     if family is None:
         return None, f"no split for {name}: {_SUPPORTED}"
+    if _quantized(fsm):
+        return None, _QUANTIZED
     return Family(family, MULTIDIM, _TILED), ""
 
 

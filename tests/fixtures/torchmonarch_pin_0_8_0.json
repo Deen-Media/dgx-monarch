@@ -1,7 +1,7 @@
 {
   "capabilities": {
-    "architecture": "aarch64",
-    "python": "3.12.3",
+    "architecture": "x86_64",
+    "python": "3.12.16",
     "rdma": {
       "empty_action": "ok",
       "hardware": "not_probed",
@@ -10,15 +10,15 @@
     "schema": 1,
     "torch": {
       "cuda_build": "13.2",
-      "distribution_version": "2.12.0+cu132",
+      "distribution_version": "2.15.0+cu132",
       "import_status": "ok",
       "package": {
         "distribution_owned": true
       },
-      "runtime_version": "2.12.0+cu132"
+      "runtime_version": "2.15.0+cu132"
     },
     "torchmonarch": {
-      "distribution_version": "0.7.0",
+      "distribution_version": "0.8.0",
       "import_status": "ok",
       "native": {
         "distribution_owned": true
@@ -31,15 +31,21 @@
   "distribution": "torchmonarch",
   "environment": {
     "implementation": "cpython",
-    "machine": "aarch64",
-    "python": "3.12.3",
+    "machine": "x86_64",
+    "python": "3.12.16",
     "system": "Linux"
   },
-  "manifest_digest": "8e0663ca325c347cb48202e594646ca71bd78f07702d33ec3bc708ed822d3af7",
+  "manifest_digest": "04ca3bc82d208b66aa9fa777f230178ec86e9466688c12a56d5af80d27093ecb",
   "schema": 2,
   "semantics": {
     "actor_queue_dispatch_default": {
       "outcome": "key_absent"
+    },
+    "lifecycle_config_defaults": {
+      "get_proc_state_max_idle": "1m",
+      "outcome": "observed",
+      "proc_stop_max_idle": "30s",
+      "use_direct_spawn": true
     },
     "mesh_factory_private_ownership": {
       "host_inner_identity": true,
@@ -58,10 +64,9 @@
         }
       ]
     },
-    "raw_python_task_await_in_asyncio": {
-      "exception_type": "builtins.RuntimeError",
-      "message": "Attempting to __await__ a PythonTask when the asyncio event loop is active. PythonTask objects should only be awaited in coroutines passed to PythonTask.from_coroutine",
-      "outcome": "raised"
+    "raw_handle_await_in_asyncio": {
+      "outcome": "returned",
+      "result_type": "builtins.tuple"
     },
     "unhandled_fault_hook_assignment": {
       "outcome": "writable"
@@ -90,6 +95,48 @@
       "detail": null,
       "kind": "builtins.method_descriptor",
       "signature": "(self, /)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.handle.Handle": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.handle.Handle.__await__": {
+      "detail": null,
+      "kind": "builtins.wrapper_descriptor",
+      "signature": "(self, /)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.handle.Handle.as_asyncio": {
+      "detail": null,
+      "kind": "builtins.method_descriptor",
+      "signature": "(self, /)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.handle.Handle.get": {
+      "detail": null,
+      "kind": "builtins.method_descriptor",
+      "signature": "(self, /, timeout=None)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.handle.Handle.poll": {
+      "detail": null,
+      "kind": "builtins.method_descriptor",
+      "signature": "(self, /)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.handle._new_handle_pair": {
+      "detail": null,
+      "kind": "builtins.builtin_function_or_method",
+      "signature": "()",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.host_mesh.BootstrapCommand": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": "(program, arg0, args, env, inherit_env=True)",
       "status": "ok"
     },
     "monarch._rust_bindings.monarch_hyperactor.mailbox.PortId": {
@@ -134,34 +181,22 @@
       "signature": "(value, label=None)",
       "status": "ok"
     },
-    "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask": {
+    "monarch._rust_bindings.monarch_hyperactor.supervision.MeshFailure": {
       "detail": null,
       "kind": "builtins.type",
       "signature": null,
       "status": "ok"
     },
-    "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask.__await__": {
+    "monarch._rust_bindings.monarch_hyperactor.supervision.MeshFailure.mesh_name": {
       "detail": null,
-      "kind": "builtins.wrapper_descriptor",
-      "signature": "(self, /)",
+      "kind": "builtins.getset_descriptor",
+      "signature": null,
       "status": "ok"
     },
-    "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask.block_on": {
+    "monarch._rust_bindings.monarch_hyperactor.supervision.SupervisionError": {
       "detail": null,
-      "kind": "builtins.method_descriptor",
-      "signature": "(self, /)",
-      "status": "ok"
-    },
-    "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask.sleep": {
-      "detail": null,
-      "kind": "builtins.builtin_function_or_method",
-      "signature": "(seconds)",
-      "status": "ok"
-    },
-    "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask.with_timeout": {
-      "detail": null,
-      "kind": "builtins.method_descriptor",
-      "signature": "(self, /, seconds)",
+      "kind": "builtins.type",
+      "signature": null,
       "status": "ok"
     },
     "monarch._src.actor.actor_mesh.ActorMesh._name": {
@@ -176,10 +211,34 @@
       "signature": null,
       "status": "ok"
     },
+    "monarch._src.actor.actor_mesh.ActorMesh.initialized": {
+      "detail": null,
+      "kind": "builtins.property",
+      "signature": null,
+      "status": "ok"
+    },
     "monarch._src.actor.actor_mesh.ActorMesh.slice": {
       "detail": null,
       "kind": "builtins.function",
       "signature": "(self, **kwargs: Any) -> Self",
+      "status": "ok"
+    },
+    "monarch._src.actor.actor_mesh.ActorMesh.stop": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self, reason: 'str' = 'stopped by client') -> 'Future[None]'",
+      "status": "ok"
+    },
+    "monarch._src.actor.actor_mesh.Context.actor_instance": {
+      "detail": null,
+      "kind": "builtins.getset_descriptor",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.actor_mesh.Instance._as_rust": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self) -> 'HyInstance'",
       "status": "ok"
     },
     "monarch._src.actor.actor_mesh.context": {
@@ -188,10 +247,16 @@
       "signature": "() -> 'Context'",
       "status": "ok"
     },
+    "monarch._src.actor.bootstrap_main.invoke_main": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "() -> None",
+      "status": "ok"
+    },
     "monarch._src.actor.host_mesh.HostMesh": {
       "detail": null,
       "kind": "abc.ABCMeta",
-      "signature": "(hy_host_mesh: monarch._rust_bindings.monarch_hyperactor.pytokio.Shared, region: monarch._rust_bindings.monarch_hyperactor.shape.Region, stream_logs: bool, is_fake_in_process: bool, code_sync_proc_mesh: Optional[ForwardRef('_Lazy[ProcMesh]')]) -> None",
+      "signature": "(hy_host_mesh: monarch._rust_bindings.monarch_hyperactor.handle.Handle, region: monarch._rust_bindings.monarch_hyperactor.shape.Region, stream_logs: bool, is_fake_in_process: bool, code_sync_proc_mesh: Optional[ForwardRef('_Lazy[ProcMesh]')]) -> None",
       "status": "ok"
     },
     "monarch._src.actor.host_mesh.HostMesh.is_fake_in_process": {
@@ -212,9 +277,45 @@
       "signature": null,
       "status": "ok"
     },
+    "monarch._src.actor.logging.LoggingManager.initialize_local_log_level": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.logging.LoggingManager.spawn_log_level_actor": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.logging._LogLevelSetter": {
+      "detail": null,
+      "kind": "abc.ABCMeta",
+      "signature": null,
+      "status": "ok"
+    },
     "monarch._src.actor.proc_mesh.ProcMesh": {
       "detail": null,
       "kind": "abc.ABCMeta",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.proc_mesh.ProcMesh._start_root_logging": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.proc_mesh.SetupActor": {
+      "detail": null,
+      "kind": "abc.ABCMeta",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.proc_mesh.SetupActor.startup_actor_from_setup_function": {
+      "detail": null,
+      "kind": "builtins.function",
       "signature": null,
       "status": "ok"
     },
@@ -239,7 +340,13 @@
     "monarch._src.job.service_identity.service_proc_addr": {
       "detail": null,
       "kind": "builtins.function",
-      "signature": "(address: str, proc_id: monarch._rust_bindings.monarch_hyperactor.proc.ProcId | None) -> str",
+      "signature": "(address: str, proc_id: monarch._rust_bindings.monarch_hyperactor.proc.ProcId) -> str",
+      "status": "ok"
+    },
+    "monarch._src.rdma.rdma._rdma_manager_init_cache": {
+      "detail": null,
+      "kind": "weakref.WeakKeyDictionary",
+      "signature": null,
       "status": "ok"
     },
     "monarch.actor.Actor": {
@@ -416,6 +523,12 @@
       "signature": "(method: Any = None, *, propagate: Any = None, explicit_response_port: bool = False, instrument: bool = True) -> Any",
       "status": "ok"
     },
+    "monarch.actor.get_meter": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "() -> opentelemetry.metrics.Meter",
+      "status": "ok"
+    },
     "monarch.actor.run_worker_loop_forever": {
       "detail": null,
       "kind": "builtins.function",
@@ -434,10 +547,22 @@
       "signature": null,
       "status": "ok"
     },
+    "monarch.config.configure": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(**kwargs: 'ConfigureKwargsType') -> None",
+      "status": "ok"
+    },
+    "monarch.config.get_global_config": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "() -> Dict[str, Any]",
+      "status": "ok"
+    },
     "monarch.rdma.RDMABuffer": {
       "detail": null,
       "kind": "builtins.type",
-      "signature": "(data: 'torch.Tensor | memoryview') -> None",
+      "signature": "(data: 'Tensor | memoryview') -> None",
       "status": "ok"
     },
     "monarch.rdma.RDMABuffer.drop": {
@@ -449,7 +574,7 @@
     "monarch.rdma.RDMABuffer.read_into": {
       "detail": null,
       "kind": "builtins.function",
-      "signature": "(self, dst: 'torch.Tensor | memoryview', *, timeout: int = 60) -> monarch._src.actor.future.Future[NoneType]",
+      "signature": "(self, dst: 'Tensor | memoryview', *, timeout: int = 60) -> monarch._src.actor.future.Future[NoneType]",
       "status": "ok"
     },
     "monarch.rdma.is_ibverbs_available": {
@@ -459,5 +584,5 @@
       "status": "ok"
     }
   },
-  "version": "0.7.0"
+  "version": "0.8.0"
 }

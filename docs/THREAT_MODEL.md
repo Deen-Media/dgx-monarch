@@ -382,9 +382,16 @@ case: its known external test-data/cache records and a verified empty
 `tests/__init__.py`. The initializer makes the ancillary `tests` namespace a
 regular Python package. This allowance does not extend to runtime packages,
 nonempty initializers, overlapping pinned files or ambiguous ownership. All
-pinned wheel files still require their original hashes. External record paths
-are classified without reading or changing their targets. Installed metadata
-establishes local ownership, not publisher authenticity.
+pinned wheel files still require their original hashes. One named exception
+lets the official xfuser 0.8.0 wheel share `tests/conftest.py`, a test file
+torchmonarch also ships, outside its runtime packages: that path may hold
+either wheel's bytes when xfuser's record of it is the official one, it counts
+at the pinned hash, and a missing copy still refuses. External record paths
+are classified without reading or changing their targets; the only external
+records accepted are console scripts, the color-matcher 0.6.0 records named
+above, and the bytecode pip compiled for a record's own sources under a
+pycache prefix, which no import can load by name.
+Installed metadata establishes local ownership, not publisher authenticity.
 
 The recovery updater explicitly trusts a separately reviewed controller
 checkout at the selected target commit. It binds that controller separately
@@ -635,17 +642,23 @@ Monarch export is off by default. `[monarch.diagnostics] metrics = true`
 creates dgx-monarch's phase and occupancy instruments, which leave the host
 only through an `otlp_endpoint`
 ([CLUSTER.md](CLUSTER.md#monarchdiagnostics)). With an endpoint set, the
-driver, every actor and every Worker send Monarch's metrics and its upstream
-raw logs, as well as those instruments, to the collector that endpoint names.
-Loading the file refuses an endpoint unless `otlp_logs = true` acknowledges
-the logs.
-dgx-monarch sanitizes only its own metric labels; the upstream logs may hold
-more, and an `http://` endpoint carries them unencrypted. Use a collector you
-control. An ambient `OTEL_EXPORTER_OTLP_ENDPOINT` would start that export
-without the file's acknowledgement, so the driver refuses every mesh build
-while the variable is set and export is off, or while it names a different
-endpoint. Actors start with the variable removed when export is off, and the
-Worker loop's environment filter drops it
+driver, every actor and every Worker send Monarch's metrics, its upstream
+raw logs and its spans, as well as those instruments, to the collector that
+endpoint names. Every post carries the user and host names, and the logs
+carry process command lines. Monarch has no switch for spans alone. Loading
+the file refuses an endpoint unless
+`otlp_logs = true` acknowledges the logs and spans.
+dgx-monarch sanitizes only its own metric labels; the upstream logs and spans
+may hold more, and an `http://` endpoint carries them unencrypted. Use a
+collector you control. An ambient `OTEL_EXPORTER_OTLP_ENDPOINT` would start
+that export without the file's acknowledgement, so the driver refuses every
+mesh build while the variable is set and export is off, or while it names a
+different endpoint. Monarch also starts one signal's export from
+`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `..._METRICS_ENDPOINT` or
+`..._TRACES_ENDPOINT` alone, so the driver refuses any of those, whatever the
+policy says. Actors start with the base variable removed when export is off
+and the three per-signal variables always removed, and the Worker loop's
+environment filter drops them all
 ([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
 
 `dgxm diagnostics` changes no runtime state. For a bounded time it polls

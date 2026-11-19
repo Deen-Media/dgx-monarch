@@ -168,8 +168,9 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
 
         def on_failure(exc: BaseException) -> None:
             runtime_observer.submission_failed(guard, exc)
-            if (guard.dispatch_started and guard.handle is not None
-                    and isinstance(exc, Exception)):
+            # A first attempt's full restart goes unevicted to heal or refuse_pinned below.
+            if (guard.dispatch_started and guard.handle is not None and isinstance(exc, Exception)
+                    and not (restart_reattach.heals_unevicted(exc) and len(guards) == 1)):
                 mark_defunct_on_supervision_failure(guard.handle, exc)
 
         return run_guarded_submit(guard, body, on_failure)
@@ -191,7 +192,7 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
         return attempt()
     except WorkerDeliveryError as exc:
         if inherited:
-            raise
+            restart_reattach.refuse_pinned(guards[-1].handle, exc)
         return _attempt_after_restart(
             attempt, guards[-1].handle, exc, model, request, latent)
     except OldModelRefusal as exc:
@@ -230,7 +231,7 @@ def _attempt_after_restart(
     token = _REATTACH_FACTS.set(
         {"reattach": restart_reattach.EVENT, "reattach_s": round(outcome.wall_s, 2)})
     try:
-        return attempt()
+        return restart_reattach.retry_after_heal(attempt, exc)
     finally:
         _REATTACH_FACTS.reset(token)
 
@@ -362,7 +363,7 @@ def _submit_render_guarded(
         stamp_in_place_bake_permission(  # only an exact gate PASS lets a Worker bake a classic stack in place
             request, model, handle, resolved_topology=topo, resolved_attention=sample_attention)
         spec = model.mesh
-        validate_render_topology(model, topo, latent["samples"])
+        validate_render_topology(model, topo, latent["samples"], request)
         topology_label = topo.describe()
         log.info("render topology: %s (%s)", topology_label, reason)
         _collect_earlier_results_before_setup_change(handle, topo, spec)
@@ -418,7 +419,7 @@ def _submit_render_guarded(
                 "sync_ulysses": spec.sync_ulysses,
             }
 
-    timeout = render_rows.sample_deadline_s(model, request, latent, topo, steps_hint)
+    timeout = render_rows.sample_deadline_s(model, request, latent, topo, steps_hint, cfg_value)
     from ..telemetry import render_progress
 
     # What the finished render's summary records beside its wall time: the

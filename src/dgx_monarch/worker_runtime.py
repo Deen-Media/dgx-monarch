@@ -1,15 +1,15 @@
-"""Each rank's torch and CUDA build, and the rule Gate authority holds them to.
+"""Each rank's torch, CUDA and xFuser build, and the rule Gate authority holds them to.
 
 A capability context names the driver's build (``gate_runtime``), so a PASS
-proven under one torch never vouches for another. That only holds when every
-rank runs the driver's build, and a Worker host can change its torch on its
-own. So each rank reports its build three ways: in its setup reply, in each
-Gate provenance row, and by checking a grant's build against its own.
+proven under one build never vouches for another. That only holds when every
+rank runs the driver's build, and a Worker host can change its torch or xFuser
+on its own. So each rank reports its build three ways: in its setup reply, in
+each Gate provenance row, and by checking a grant's build against its own.
 
 The driver refuses Gate authority on a pair whose ranks do not all report the
 driver's build, a report that lacks the build included, and names each box's
-torch and CUDA in plain words (``box_names``). The context string does not
-change, so a pair that matches keeps its PASS rows.
+torch, CUDA and xFuser in plain words (``box_names``). The context string does
+not change, so a pair that matches keeps its PASS rows.
 """
 from __future__ import annotations
 
@@ -22,20 +22,26 @@ from .gate_runtime import RUNTIME_FIELD
 from .refusal import RefusalClass, refusal
 
 # The fix every refusal here names; cohort_runtime spells it out at its raise site.
-FIX_TEXT = ("Use one torch and CUDA build on every box: update the box that differs, and "
-            "`dgxm doctor`'s `torch version match` row shows when they match "
+FIX_TEXT = ("Use one torch and CUDA build on every box, and one xFuser build: update the box "
+            "that differs, or restart its Worker if that box already holds the build on disk "
+            "(in local mode, reset the attached mesh or restart ComfyUI). `dgxm doctor`'s "
+            "`torch version match` and `xfuser build match` rows read what each disk holds "
             "(docs/TROUBLESHOOTING.md #8).")
 
 
 class WorkerRuntimeMismatch(UnsupportedModelError):
-    """A pair whose ranks do not all run the driver's torch and CUDA build."""
+    """A pair whose ranks do not all run the driver's torch, CUDA and xFuser build."""
 
 
 def build_words(runtime: object) -> str:
-    """One build in plain words: 'torch 2.15.0 with CUDA 13.2', or 'no torch build'."""
+    """One build in plain words: 'torch 2.15.0 with CUDA 13.2 and xFuser 0.8.0', or 'no torch build'.
+
+    A report from before 1.5.0 names no xFuser, and its words leave it out.
+    """
     if not isinstance(runtime, dict):
         return "no torch build"
-    return f"torch {runtime.get('torch', 'unknown')} with CUDA {runtime.get('cuda', 'unknown')}"
+    return (f"torch {runtime.get('torch', 'unknown')} with CUDA {runtime.get('cuda', 'unknown')}"
+            f"{gate_runtime.xfuser_words(runtime)}")
 
 
 _NO_REPORT = "sent no report of its build"
@@ -78,7 +84,7 @@ def mismatch(handle: Any, rows: Iterable[object], driver: dict | None = None) ->
     if not differs:
         return None
     each = "; ".join(f"{box} {' and '.join(phrases)}" for box, phrases in found.items())
-    return (f"Gate authority needs every box on the driver's torch build, and they differ: "
+    return (f"Gate authority needs every box on the driver's build, and they differ: "
             f"the driver runs {build_words(driver)}; {each}. A Gate proof on one build says "
             f"nothing about another, so no PASS is used, no ceremony runs and no grant is "
             f"issued.")
@@ -102,9 +108,11 @@ def cohort_runtime(handle: Any) -> dict[str, str]:
         text = mismatch(handle, physical, driver)
         if text is not None:
             raise WorkerRuntimeMismatch(refusal(RefusalClass.PHYSICS, (
-                f"{text} Use one torch and CUDA build on every box: update the box that "
-                "differs, and `dgxm doctor`'s `torch version match` row shows when they "
-                "match (docs/TROUBLESHOOTING.md #8).")))
+                f"{text} Use one torch and CUDA build on every box, and one xFuser build: "
+                "update the box that differs, or restart its Worker if that box already holds the "
+                "build on disk (in local mode, reset the attached mesh or restart ComfyUI). "
+                "`dgxm doctor`'s `torch version match` and `xfuser build match` rows read what each "
+                "disk holds (docs/TROUBLESHOOTING.md #8).")))
     return driver
 
 

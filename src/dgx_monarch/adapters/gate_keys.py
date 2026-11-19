@@ -44,7 +44,8 @@ _ZIMAGE_PIXEL_KEY: Final = "dec_net.cond_embed.weight"
 _ZIMAGE_NEEDLES: Final = next(needles for family, needles in _SIGNATURES if family == "zimage")
 
 
-def comfy_detection_keys(dtypes: dict[str, str], metadata: dict[str, str]) -> frozenset[str]:
+def comfy_detection_keys(dtypes: dict[str, str], metadata: dict[str, str],
+                         sensenova_whole: bool | None = None) -> frozenset[str]:
     """The key names ComfyUI's detection reads for this header. It never raises.
 
     ``upstream_gate.comfy_load_keys`` replays ComfyUI's diffusion-model load on
@@ -52,15 +53,16 @@ def comfy_detection_keys(dtypes: dict[str, str], metadata: dict[str, str]) -> fr
     quantization table makes the replay raise, ComfyUI's load raises before
     detection too; the names after the one prefix strip then stand in, because
     the family tests answer before any quantization metadata counts (#91 does).
+    ``sensenova_whole`` picks the prefix rule, as for ``comfy_load_keys``.
     """
     from .. import upstream_gate
 
     try:
-        return frozenset(upstream_gate.comfy_load_keys(dtypes, metadata))
+        return frozenset(upstream_gate.comfy_load_keys(dtypes, metadata, sensenova_whole))
     except Exception:
         # Stock's own load fails on this table, so these names only pick the
         # sentence of a refusal; with or without the strip the verdict is the same.
-        prefix = upstream_gate._unet_prefix(dtypes)
+        prefix = upstream_gate._unet_prefix(dtypes, sensenova_whole)
         stripped = frozenset(key[len(prefix):] for key in dtypes if key.startswith(prefix))
         return stripped or frozenset(dtypes)
 

@@ -260,6 +260,10 @@ def test_event_driver_sends_comfy_events_and_refuses_marked_prompts(event_driver
     async def collect() -> list[dict]:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(event_driver.origin + "/ws", params={"clientId": "tooling"}) as socket:
+                # The fixture counts every event due before a socket attaches as sent to it, and answers the
+                # handshake before it counts. Its status frame follows the count, so wait for that frame: a
+                # prompt queued sooner can lose its three start events on a busy machine.
+                assert (await socket.receive_json(timeout=10))["type"] == "status"
                 for identity, text in ((plain, "plain"), (refused, "fox QA-FAIL-c")):
                     prompt = {"1": {"class_type": "StudioCPUFixture",
                                     "inputs": {"prompt": text, "seed": 1, "strength": 1.0}}}

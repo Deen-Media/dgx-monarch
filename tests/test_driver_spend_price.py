@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import sys
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -102,6 +103,8 @@ class _Triple:
         return ("clip",)
 
 
+# Captured at import, before the rig stubs it.
+_REAL_ARTIFACT_BYTES = loader_graph._artifact_bytes
 MAPPING = {driver_spend_price.GUIDE_CLASS: _Guide, driver_spend_price.REFERENCE_CLASS: _Reference,
            "CLIPLoader": _ClipLoader, "DualCLIPLoader": _DualClip, "UNETLoader": _Unet, "TripleCLIPLoader": _Triple}
 
@@ -281,7 +284,7 @@ def test_a_still_with_room_is_admitted_with_one_line_and_runs_as_stock(rig, capl
 @pytest.mark.parametrize("reached", [False, True], ids=["loader not reached", "loader reached"])
 def test_a_clip_short_of_room_refuses_before_anything_encodes(rig, reached):
     if reached:
-        graph_load_price._PRICED_PROMPTS[f"{PROMPT}\x00h3.safetensors"] = None
+        graph_load_price._PRICED_PROMPTS[f"{driver_spend_marks.queue_key(PROMPT)}\x00h3.safetensors"] = None
     rig.box.value = 20 * GIB
     with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
         _guide(5, width=448, height=256)
@@ -316,6 +319,101 @@ def test_the_line_is_the_floor_after_the_rescues(rig, monkeypatch):
     with pytest.raises(driver_spend_price.DriverSpendCapacityError):
         _guide(1)
     assert unloads == [1] and len(_Guide.calls) == 1
+
+
+def test_a_room_a_byte_short_of_the_need_never_prints_as_the_need(rig):
+    """Review of the 1.5.0 promotion: both figures were rounded to the nearest tenth, so a
+    box a byte short of 14.0 GiB above its floor read "needs 14.0 GiB ... has 14.0 GiB"."""
+    rig.box.value = rig.floor + 14 * GIB - 1
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    assert ("needs 14.0 GiB on the driver's box, and the box has 13.9 GiB above its 5.0 GiB floor."
+            in _refused(exc_info))
+    rig.box.value = rig.floor + int(13.96 * GIB)
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    assert "and the box has 13.9 GiB above" in _refused(exc_info)
+
+
+class _TextEncoder:
+    """Stands in for the class ComfyUI logs for a loaded text encoder."""
+
+
+# Every way driver_unload._after_refusal raises the spend refusal, and what the text then says
+# the driver did before refusing: None where it did nothing.
+_RAISE_PATHS = {
+    "the unload switch": None,
+    "a render running, a model held": ("The driver did not unload the 1 model (_TextEncoder) ComfyUI holds "
+                                       "on this host before refusing, because a render is still running"),
+    "a render running, nothing held": None,
+    "the unload fails": ("The driver tried to unload the 1 model (_TextEncoder) ComfyUI holds on this host "
+                         "before refusing, and the unload failed (RuntimeError)"),
+    "unloaded, no fleet to trim": ("Before refusing, the driver unloaded the 1 model (_TextEncoder) ComfyUI "
+                                   "held on this host: MemAvailable read 8.0 GiB before the unload and 9.0 GiB "
+                                   "after it, and the figures above are the reading after it."),
+    "ComfyUI keeps its model, no fleet": None,
+    "nothing held, no fleet": None,
+    "the trim fails": ("Before refusing, the driver asked the actors on the mesh to release their allocator "
+                       "caches, and that request failed (RuntimeError), so the figures above are the reading "
+                       "before it."),
+    "unloaded and trimmed": ("Before refusing, the driver unloaded the 1 model (_TextEncoder) ComfyUI held on "
+                             "this host: MemAvailable read 8.0 GiB before the unload and 9.0 GiB after it. It "
+                             "then asked the 2 actors on the mesh to release their allocator caches: "
+                             "MemAvailable read 9.0 GiB before the trim and 10.0 GiB after it"),
+}
+
+
+@pytest.mark.parametrize("path", list(_RAISE_PATHS))
+def test_the_refusal_says_what_the_driver_did_before_it_and_nothing_else(rig, monkeypatch, path):
+    """Review of the 1.5.0 promotion: every spend refusal said the room was read "after
+    ComfyUI's models were unloaded and the Workers' idle caches released", on paths where neither
+    ran, beside a tail saying the models were kept. ComfyUI's model list here is a stand-in whose
+    ``unload_all_models`` frees 1 GiB; the driver's own unload runs over it."""
+    held = [SimpleNamespace(model=SimpleNamespace(model=_TextEncoder()))]
+    if "nothing held" in path:
+        held = []
+
+    def unload_all_models():
+        if path == "the unload fails":
+            raise RuntimeError("unload")
+        if path != "ComfyUI keeps its model, no fleet":
+            held.clear()
+            rig.box.value += 1 * GIB
+
+    management = SimpleNamespace(current_loaded_models=held, unload_all_models=unload_all_models,
+                                 soft_empty_cache=lambda: None)
+    monkeypatch.setattr(driver_unload, "comfy_model_management", lambda: management)
+    monkeypatch.setattr(driver_unload, "_SETTLE_S", 0.0)
+    if path == "the unload switch":
+        monkeypatch.setenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, "1")
+    if path.startswith("a render running"):
+        monkeypatch.setattr(driver_unload, "busy_reason", lambda handle: "a render is still running in this driver")
+    if path in ("the trim fails", "unloaded and trimmed"):
+        fleet = object()
+        monkeypatch.setattr(vae_decode_relief, "_serving", lambda: (fleet, ""))
+        monkeypatch.setattr(driver_unload, "trimmable", lambda handle: handle is fleet)
+
+        def trim(handle, level=driver_unload.TRIM_LEVEL):
+            if path == "the trim fails":
+                raise RuntimeError("trim")
+            before, rig.box.value = rig.box.value, rig.box.value + 1 * GIB
+            return driver_unload.Trimmed(2, before, rig.box.value)
+
+        monkeypatch.setattr(driver_unload, "trim_actors", trim)
+        if path == "the trim fails":
+            held.clear()
+    rig.box.value = 8 * GIB
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    text = _refused(exc_info)
+    assert "were unloaded" not in text and "idle caches released" not in text
+    said = _RAISE_PATHS[path]
+    if said is None:
+        assert "Before refusing" not in text and "did not unload" not in text, text
+    else:
+        assert said in text, text
+    room = rig.box.value - rig.floor
+    assert f"the box has {room / GIB:.1f} GiB above its 5.0 GiB floor" in text, "the reading that stands"
 
 
 def test_a_clip_whose_activations_do_not_resolve_carries_no_margin(rig):
@@ -504,6 +602,42 @@ def test_a_model_on_the_driver_is_charged_its_file_whole(rig):
         _Unet().load_unet("dit.safetensors", "default")
     rig.box.value = rig.floor + 5000
     assert _Unet().load_unet("dit.safetensors", "default") == ("model",)
+
+
+class _ClipVision:
+    """ComfyUI's v1 Load CLIP Vision in shape: one ``clip_name`` from the clip_vision folder."""
+
+    FUNCTION = "load_clip"
+    calls: list = []
+
+    def load_clip(self, clip_name):
+        self.calls.append(clip_name)
+        return ("clip_vision",)
+
+
+def test_a_clip_vision_file_is_priced_as_the_loader_charges_it(rig, monkeypatch, tmp_path):
+    """Review of the 1.5.0 promotion: the loader charges a CLIP Vision file as an encoder,
+    resolved in its own folder, but this price left Load CLIP Vision unwrapped on the premise that
+    the loader did not, so a re-queue that loaded one ran unpriced where Load CLIP is priced."""
+    _ClipVision.calls = []
+    monkeypatch.setattr(_ClipVision, "load_clip", _ClipVision.__dict__["load_clip"])
+    monkeypatch.setitem(sys.modules["nodes"].NODE_CLASS_MAPPINGS, "CLIPVisionLoader", _ClipVision)
+    driver_spend_price.install()
+    monkeypatch.setattr(loader_graph, "_artifact_bytes", _REAL_ARTIFACT_BYTES)
+    size = int(1.18 * GIB)
+    folder_paths = SimpleNamespace(get_full_path=lambda folder, name: (
+        str(tmp_path / name) if folder == "clip_vision" and name == "vision.safetensors" else None))
+    monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
+    monkeypatch.setattr(driver_footprint, "file_size_bytes", lambda path: size)
+    rig.context["node"] = "8"
+    charge = int(size * loader_graph.TE_RESIDENT_RATIO)
+    rig.box.value = rig.floor + charge - 1
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _ClipVision().load_clip("vision.safetensors")
+    assert "CLIPVisionLoader loading vision.safetensors needs 1.4 GiB" in _refused(exc_info)
+    assert _ClipVision.calls == []
+    rig.box.value = rig.floor + charge
+    assert _ClipVision().load_clip("vision.safetensors") == ("clip_vision",)
 
 
 def test_a_file_comfy_already_holds_is_charged_again(rig, monkeypatch):
@@ -725,7 +859,7 @@ def test_a_24_gib_reserve_moves_the_line_and_the_words_state_it(rig, monkeypatch
     rig.box.value = reserve + 14 * GIB - 1  # admitted at the default floor, under the reserve here
     with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
         _guide(1)
-    assert "has 14.0 GiB above its 24.0 GiB floor" in _refused(exc_info) and len(_Guide.calls) == 1
+    assert "has 13.9 GiB above its 24.0 GiB floor" in _refused(exc_info) and len(_Guide.calls) == 1
     monkeypatch.setattr(driver_spend_price, "_pool_free_bytes", lambda: 2 * GIB)
     rig.box.value = reserve + 12 * GIB
     _guide(1)
@@ -747,7 +881,7 @@ def test_a_24_gib_reserve_moves_the_line_and_the_words_state_it(rig, monkeypatch
 @pytest.mark.parametrize(("init", "config_args", "attached", "floor"), [
     ({}, {"uma_reserve_gb": 24.0}, None, 24),  # the config file the Init node names, before a mesh is up
     ({"uma_reserve_gb": 30.0}, {"uma_reserve_gb": 24.0}, None, 30),  # the Init node's over the config's
-    ({}, {"uma_reserve_gb": 9.0}, {"uma_reserve_gb": 24.0}, 24),  # the attached mesh's policy first
+    ({}, {"uma_reserve_gb": 9.0}, {"uma_reserve_gb": 24.0}, 9),  # the file, not a mesh built from older contents
     ({"uma_reserve_gb": 2.0}, None, None, 5),  # never under the 5 GiB floor
     ({"uma_reserve_gb": ["40", 0]}, None, None, 5),  # a linked input is not known before it runs
 ])
@@ -758,6 +892,142 @@ def test_the_floor_reads_the_init_node_over_the_configured_policy(rig, monkeypat
     with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
         _guide(1)
     assert f"above its {floor}.0 GiB floor" in _refused(exc_info)
+
+
+@pytest.mark.parametrize(("attached", "edited", "floor"), [(24.0, 5.0, 5), (5.0, 24.0, 24)],
+                         ids=["the reserve lowered in the file", "the reserve raised in the file"])
+def test_a_sole_attached_mesh_from_the_files_older_contents_does_not_set_the_floor(rig, monkeypatch, attached,
+                                                                                   edited, floor):
+    """The file was edited after the mesh was built. ``get_mesh`` replaces such a mesh with one built from the
+    file at the Init node's next run, and a stock loader can spend before that run: the file decides."""
+    _settings(rig, monkeypatch, {}, config_args={"uma_reserve_gb": edited}, attached={"uma_reserve_gb": attached})
+    rig.box.value = 1 * GIB
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    assert f"above its {floor}.0 GiB floor" in _refused(exc_info)
+
+
+@pytest.mark.parametrize(("attached", "floor"), [(24.0, 24), (None, 5)],
+                         ids=["a mesh attached at the Init node's last run", "no mesh attached"])
+def test_an_init_node_whose_config_path_is_a_link_reads_the_attached_mesh_or_nothing(rig, monkeypatch, attached,
+                                                                                   floor):
+    """A linked `config_path` is a value another node computes at the Init node's run, so the graph cannot name
+    the file. The mesh that run attached holds its policy; with none attached, no configured policy is read and
+    the Init node's own reserve stands, as for a file that cannot be read. The default file, which the link may
+    not name, is never read in its place."""
+    _settings(rig, monkeypatch, {"config_path": ["11", 0]}, config_args={"uma_reserve_gb": 9.0},
+              attached=None if attached is None else {"uma_reserve_gb": attached})
+    assert f"above its {floor}.0 GiB floor" in _floor_read(rig)
+
+
+@pytest.mark.parametrize("attached", [24.0, None], ids=["a stale mesh attached", "no mesh attached"])
+def test_an_init_node_whose_mode_is_a_link_reads_the_file(rig, monkeypatch, attached):
+    """Every mode takes the same `[worker_args]` table from the file, so a linked `mode` hides nothing: the file's
+    9 GiB stands, whatever a mesh built earlier holds."""
+    _settings(rig, monkeypatch, {"mode": ["11", 0]}, config_args={"uma_reserve_gb": 9.0},
+              attached=None if attached is None else {"uma_reserve_gb": attached})
+    assert "above its 9.0 GiB floor" in _floor_read(rig)
+
+
+@pytest.mark.parametrize("mode", ["auto", "cluster", "local", ["11", 0]],
+                         ids=["auto", "cluster", "local", "a linked mode"])
+def test_a_real_config_file_is_read_through_the_loaders_get_mesh_reads(rig, monkeypatch, tmp_path, mode):
+    """A real cluster file, the repository's example with a `[worker_args]` table, read through the real
+    `load_cluster_config` and `local_config`, as `get_mesh` reads it in each mode; a stale mesh at 40 GiB is
+    attached and not read."""
+    real_find, real_local = config.find_config_path, config.local_config
+    path = tmp_path / "cluster.toml"
+    example = (Path(__file__).resolve().parents[1] / "cluster.example.toml").read_text(encoding="utf-8")
+    path.write_text(example + "\n[worker_args]\numa_reserve_gb = 24.0\n", encoding="utf-8")
+    _settings(rig, monkeypatch, {"config_path": str(path), "mode": mode}, attached={"uma_reserve_gb": 40.0})
+    monkeypatch.setattr(config, "find_config_path", real_find)
+    monkeypatch.setattr(config, "local_config", real_local)
+    assert "above its 24.0 GiB floor" in _floor_read(rig)
+
+
+def _mesh_through_a_switch(rig, monkeypatch, choice: object, reserves: tuple[float, float]) -> None:
+    """Two Init nodes into a lazy switch whose output is the loader's mesh, as a switch passes any type."""
+    graph = {"1": {"class_type": "DGXMonarchInit",
+                   "inputs": {"topology": "auto", "mode": "auto", "uma_reserve_gb": reserves[0]}},
+             "3": {"class_type": "DGXMonarchInit",
+                   "inputs": {"topology": "auto", "mode": "auto", "uma_reserve_gb": reserves[1]}},
+             "8": {"class_type": "PrimitiveBoolean", "inputs": {"value": True}},
+             "5": {"class_type": "ComfySwitchNode", "inputs": {"switch": choice, "on_true": ["1", 0],
+                                                               "on_false": ["3", 0]}},
+             "2": {"class_type": "DGXMonarchUNETLoader", "inputs": {"mesh": ["5", 0], "unet_name": "h3.safetensors"}},
+             "6": {"class_type": "KSampler", "inputs": {"model": ["2", 0]}},
+             "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0]}}}
+    _loader_pair(rig, monkeypatch, graph)
+
+
+@pytest.mark.parametrize("reserves", [(0.0, 24.0), (24.0, 0.0)],
+                         ids=["24 on the false branch", "24 on the true branch"])
+def test_two_init_nodes_through_an_undecided_switch_price_at_their_reserve(rig, monkeypatch, reserves):
+    """Either branch may run, so the stricter reserve prices; following one branch, or taking the first
+    reading, fails one of the two orders."""
+    _mesh_through_a_switch(rig, monkeypatch, ["8", 0], reserves)
+    assert "above its 24.0 GiB floor" in _floor_read(rig)
+
+
+@pytest.mark.parametrize(("choice", "floor"), [(True, 24), (False, 5)])
+def test_a_decided_switch_reads_only_the_selected_init_node(rig, monkeypatch, choice, floor):
+    _mesh_through_a_switch(rig, monkeypatch, choice, (24.0, 0.0))
+    assert f"above its {floor}.0 GiB floor" in _floor_read(rig)
+
+
+def _loader_pair(rig, monkeypatch, graph: dict, known_loader: bool = False) -> None:
+    """The real reader on ``graph``, a prompt with two DGX Monarch loaders, each from its own Init node; with
+    ``known_loader`` the node registry knows the loader class as one that is not an output, as a driver does."""
+    _settings(rig, monkeypatch, None)
+    rig.graphs["graph"] = graph
+    if known_loader:
+        registry = sys.modules["nodes"].NODE_CLASS_MAPPINGS
+        monkeypatch.setitem(registry, "DGXMonarchUNETLoader", type("Loader", (), {"OUTPUT_NODE": False}))
+
+
+def _pipeline(init: str, loader: str, reserve: float) -> dict:
+    return {init: {"class_type": "DGXMonarchInit",
+                   "inputs": {"topology": "auto", "mode": "auto", "uma_reserve_gb": reserve}},
+            loader: {"class_type": "DGXMonarchUNETLoader",
+                     "inputs": {"mesh": [init, 0], "unet_name": "h3.safetensors"}}}
+
+
+def _floor_read(rig) -> str:
+    rig.box.value = 1 * GIB
+    with pytest.raises(driver_spend_price.DriverSpendCapacityError) as exc_info:
+        _guide(1)
+    return _refused(exc_info)
+
+
+def test_a_loader_behind_a_switchs_unselected_branch_does_not_set_the_floor(rig, monkeypatch):
+    graph = {**_pipeline("1", "2", 24.0), **_pipeline("3", "4", 0.0),
+             "5": {"class_type": "ComfySwitchNode", "inputs": {"switch": False, "on_true": ["2", 0],
+                                                               "on_false": ["4", 0]}},
+             "6": {"class_type": "KSampler", "inputs": {"model": ["5", 0]}},
+             "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0]}}}
+    _loader_pair(rig, monkeypatch, graph)
+    assert "above its 5.0 GiB floor" in _floor_read(rig)
+
+
+def test_a_loader_that_feeds_nothing_that_runs_does_not_set_the_floor(rig, monkeypatch):
+    graph = {**_pipeline("1", "2", 24.0), **_pipeline("3", "4", 0.0),
+             "6": {"class_type": "KSampler", "inputs": {"model": ["4", 0]}},
+             "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0]}}}
+    _loader_pair(rig, monkeypatch, graph, known_loader=True)
+    assert "above its 5.0 GiB floor" in _floor_read(rig)
+
+
+@pytest.mark.parametrize("first", ["strict", "loose"])
+def test_two_live_loaders_price_at_the_stricter_floor_whatever_their_order(rig, monkeypatch, first):
+    """Both renders run on this box in this prompt, so a spend keeps the larger reserve either Init node asks."""
+    strict, loose = _pipeline("1", "2", 24.0), _pipeline("3", "4", 0.0)
+    renders = {"6": {"class_type": "KSampler", "inputs": {"model": ["2", 0]}},
+               "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0]}},
+               "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0]}},
+               "9": {"class_type": "SaveImage", "inputs": {"images": ["8", 0]}}}
+    graph = {**strict, **loose, **renders} if first == "strict" else {**loose, **strict, **renders}
+    _loader_pair(rig, monkeypatch, graph)
+    assert "above its 24.0 GiB floor" in _floor_read(rig)
 
 
 def test_a_config_that_cannot_be_read_leaves_the_init_nodes_reserve(rig, monkeypatch):

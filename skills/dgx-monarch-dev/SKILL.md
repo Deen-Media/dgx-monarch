@@ -27,11 +27,11 @@ data, and cite dated evidence for empirical constants.
    source file, the MIT INT8 GEMM kernel in
    `src/dgx_monarch/kernels/int8_gemm_triton.py`, is a reviewed exception
    (DESIGN §3.1).
-2. xfuser stays external. Do not vendor it. The temporary compatibility wheel
-   (`tools/build_xfuser_compat_wheel.py`) is rebuilt from a SHA-verified
-   official wheel and changes only the version metadata and the optional NPU
-   import, which it makes lazy. Retain this workaround until official xFuser
-   and yunchang releases build CUDA attention without it.
+2. xfuser stays external. Do not vendor it. Stock 0.8.0 comes from the package
+   index; the patched `0.7.0+dgxm.npuimport1` that 1.4.0 built still runs,
+   and `src/dgx_monarch/xfuser_build.py` holds the exact list that doctor and
+   Worker setup enforce. Moving xFuser to another version needs the hardware
+   fidelity controls first, then a change to that list.
 3. For new behavior, identify the source in the PR, such as a specification
    section or public API document.
 4. Public node and package identities stay `dgx-monarch` and `DGXMonarch*`.
@@ -163,20 +163,27 @@ within its recorded scope; positive-step qualification is limited to the recorde
    comparison cannot detect changes to dispatch behavior.
 3. Update the pin in every declaration (`pyproject.toml`, `requirements.txt`,
    `scripts/setup_env.sh`, `TORCHMONARCH_PIN`, and the tests that assert the
-   old version) and bump `__version__` in the same commit. The gate ledger
-   binds trusted `PASS` rows to the package version, so a pin-only change can
-   reuse a PASS measured on a different runtime. Regenerate the checked baseline
-   on aarch64 as `tests/fixtures/torchmonarch_pin_<version>.json`, with the
-   version's dots written as underscores (`tests/test_monarch_surface.py`
-   builds the name from `TORCHMONARCH_PIN`; for 0.7.0 it is
-   `torchmonarch_pin_0_7_0.json`). Update `.github/workflows/ci.yml` and
+   old version). A trusted Gate `PASS` row binds the source manifest digest,
+   which the `TORCHMONARCH_PIN` edit changes, so no PASS measured under the
+   old pin authorizes the new one. The release that carries the new pin must
+   still declare another `__version__` than the release that carried the old
+   one, so that no two released builds share a version: bump it in the same
+   commit unless the pin moves inside a version not yet released. Take the
+   checked baseline from the canary workflow's own environment:
+   push the branch, dispatch `torchmonarch-canary` on it, and commit its
+   `pin.json` artifact as `tests/fixtures/torchmonarch_pin_<version>.json`,
+   with the version's dots written as underscores (`tests/test_monarch_surface.py`
+   builds the name from `TORCHMONARCH_PIN`; for 0.8.0 it is
+   `torchmonarch_pin_0_8_0.json`). A snapshot taken elsewhere carries other
+   Torch strings, which the checked-pin step blocks on. Update `.github/workflows/ci.yml` and
    `.github/workflows/torchmonarch-canary.yml`, which name that file, and
    review `PIN_SEMANTICS` in `tests/test_monarch_surface.py`.
 4. After active work has stopped, deploy the same version atomically on every
-   host. A mixed-version mesh can attach
-   and spawn before every endpoint call times out without a version message.
-   Update the source checkout and exact dependency pin on all hosts, then
-   restart and run doctor.
+   host. The attach refuses, before it dials, a Worker loop whose recorded
+   torchmonarch is not the one the driver loaded, and a driver keeps the
+   version it loaded until it restarts, so a half-deployed pin stops renders
+   until every side matches. Update the source checkout and exact dependency
+   pin on all hosts, then restart the Workers and ComfyUI and run doctor.
 5. Hardware gate: measure `status` latency during a live render (poll
    `dgxm status` or `dgxm top` while a render holds the GPU) and compare it
    against the dated concurrency result in docs/VALIDATION.md. The
@@ -199,9 +206,8 @@ setup-service script modules. Review both sets on a bump.
 1. `ruff`, mypy, pytest, template generation and `python -m build` pass.
    Smoke-test a fresh Git checkout directly under ComfyUI `custom_nodes`:
    install it with an explicit `COMFY_PYTHON` and the docs/INSTALL.md recipe,
-   which builds the xFuser compatibility wheel, then runs
-   `"$COMFY_PYTHON" -m pip install -e` on the checkout with that wheel and the
-   torch constraint.
+   which runs `"$COMFY_PYTHON" -m pip install -e` on the checkout under the
+   torch constraint and takes stock xFuser 0.8.0 from the index.
 2. Run the authorized hand-run hardware checks against the exact public source
    SHA, including each feature-specific validation, under the
    [hardware-smoke contract](../../docs/THREAT_MODEL.md#github-actions-to-trusted-hardware).

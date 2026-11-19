@@ -117,6 +117,8 @@ class Store:
                 cursor INTEGER PRIMARY KEY AUTOINCREMENT, document TEXT NOT NULL, size INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS artifacts_by_job ON objects(json_extract(document,'$.job_id')) WHERE kind='artifacts';
             CREATE INDEX IF NOT EXISTS jobs_by_prompt ON objects(json_extract(document,'$.prompt_id')) WHERE kind='jobs';
+            CREATE INDEX IF NOT EXISTS artifacts_by_source ON objects(json_extract(document,'$.source_artifact_id'))
+                WHERE kind='artifacts';
         """)
         row = self.db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
         if row is not None and row[0] != "1":
@@ -195,6 +197,14 @@ class Store:
                                    "FROM objects WHERE kind='jobs' AND json_extract(document,'$.prompt_id') IS NOT NULL")
             return {row["prompt_id"]: {"id": row["id"], "prompt_id": row["prompt_id"], "state": row["state"],
                                        **({"reconciliation": True} if row["reconciled"] else {})} for row in rows}
+
+    def upload_copy(self, source_artifact_id: str) -> dict[str, Any] | None:
+        """The input copy Send to edit stored of this output, the first if there are several."""
+        with self.lock:
+            row = self.db.execute("SELECT document FROM objects WHERE kind='artifacts' "
+                                  "AND json_extract(document,'$.source_artifact_id')=? ORDER BY updated,id LIMIT 1",
+                                  (source_artifact_id,)).fetchone()
+        return None if row is None else json.loads(row[0])
 
     def artifacts_for_jobs(self, identities: builtins.list[str]) -> builtins.list[dict[str, Any]]:
         result: builtins.list[dict[str, Any]] = []

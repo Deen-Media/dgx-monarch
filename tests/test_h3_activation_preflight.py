@@ -48,7 +48,7 @@ from dgx_monarch import (
     h3_rows,
     mesh_safety,
 )
-from dgx_monarch.nodes import loader_graph, loader_preflight, render_preflight
+from dgx_monarch.nodes import loader_graph, loader_preflight, recycle_drain, render_preflight
 from dgx_monarch.refusal import GUARDS, parse_refusal_tag
 
 REPO = Path(__file__).resolve().parents[1]
@@ -1499,6 +1499,8 @@ def _render_rig(monkeypatch, tmp_path, *, size: int, mem: int,
     mesh = types.SimpleNamespace(
         topology_preset=preset, worker_args=dict(worker_args or {}),
         world=world, handle=handle)
+    if preset != "auto":
+        recycle_drain.note_loader_ran(UNET_NAME)  # an explicit preset's loader node ran for it
     model = types.SimpleNamespace(unet_name=UNET_NAME, mesh=mesh,
                                   options=dict(options or {}))
     return model, _latent(canvas)

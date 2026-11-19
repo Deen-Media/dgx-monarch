@@ -37,22 +37,24 @@ in the same words, and never reaches it.
 
 The load is still to come (``load_pending``):
 
-- under ``auto``, unless a finished render or a pipelined submission placed
-  this checkpoint (``render_preflight``'s memos);
+- under ``auto``, unless a finished render, a pipelined submission or a load
+  that succeeded placed this checkpoint (``dit_resident``, the residency rule
+  every render-site check reads);
 - under an explicit preset, only where the loader deferred its placement
   (``note_deferred``, at the identity gate's or the dual-model deferral), since
   otherwise the loader placed it at its node;
-- after every rank unloaded (each ``call_all("unload")`` site and a hard Clear
-  VRAM) or the Workers' processes stopped (``recycle_drain.drop_residency_memos``),
-  which ``note_unloaded`` marks, whatever the memos and an explicit preset's
-  eager placement say, until a load succeeds (``note_placed``: the loader's
-  eager placement, the no-render path's load, or a successful render). A check
+- after every rank unloaded (each ``call_all("unload")`` site, a hard Clear VRAM
+  and the mesh's doors, ``residency_doors``) or the Workers' processes stopped,
+  which ``note_unloaded`` marks, whatever the memos, an explicit preset's
+  eager placement and a caller's ``weights_loaded`` say, until a load succeeds
+  (``note_placed``: the loader's eager placement, the no-render path's load,
+  or a successful render). The mark also drains the memos. A check
   that reads the mark leaves it, since a load it lets through may still fail.
   The no-render path, which loads with no render, passes
   ``weights_loaded=False`` itself (``gate_nothing_to_gate``);
 - inside the gate's capacity check, as that check's own ``weights_loaded`` says.
 
-A render whose model a finished render, a pipelined submission or the loader
+A render whose model a finished render, a pipelined submission or a load
 placed prices nothing here. Where the memos do not know what the Workers hold
 (a retry after a failed or interrupted render, a swap for a model they hold;
 a driver restart is not one, since the Workers' processes die with it), the
@@ -107,6 +109,7 @@ from typing import Any
 
 from ..log import get_logger
 from ..transfer_utils import safe_call
+from . import recycle_drain
 
 log = get_logger(__name__)
 
@@ -118,6 +121,10 @@ _DEFERRED: set[str] = set()
 # Session lifetime: every rank unloaded or stopped since the last load that
 # succeeded (note_placed).
 _UNLOADED = False
+# Session lifetime: the checkpoint the last load that succeeded placed in each
+# model slot, until every rank unloads or stops (note_unloaded), like the
+# render-site memos.
+_PLACED: dict[str, str] = {}
 # A status read before setup, on the short path only (nodes/routes.py reads it at 10 s too).
 _STATUS_TIMEOUT_S = 10.0
 
@@ -130,51 +137,99 @@ def note_deferred(unet_name: object) -> None:
     """The loader left this checkpoint's placement to a later load (nodes/loaders.py)."""
     if isinstance(unet_name, str):
         _DEFERRED.add(unet_name)
+        recycle_drain.note_loader_ran(unet_name)
 
 
-def note_placed(unet_name: object) -> None:
-    """A load of this checkpoint succeeded: the loader's eager placement, the
-    no-render path's load, or a successful render (render_preflight)."""
+def note_placed(unet_name: object, slot: str = "cond") -> None:
+    """A load of this checkpoint into ``slot`` succeeded: the loader's eager
+    placement, the no-render path's load, or a successful render (render_preflight)."""
     global _UNLOADED
     if isinstance(unet_name, str):
         _UNLOADED = False
+        _PLACED[slot] = unet_name
         _DEFERRED.discard(unet_name)
+        recycle_drain.note_loader_ran(unet_name)
 
 
 def note_unloaded() -> None:
-    """Every rank unloaded its models or stopped; the load waits for ``note_placed``."""
+    """Every rank unloaded its models or stopped; the load waits for ``note_placed``.
+
+    The render-site memos named what the ranks held, so they go too: a memo
+    stamped after this (a pipelined submission, a cleared pending load, a load
+    that succeeded) counts again (``dit_resident``).
+    """
+    from . import render_preflight
+
     global _UNLOADED
     _UNLOADED = True
+    _PLACED.clear()
+    render_preflight.note_successful_render(None)
+    render_preflight.note_submitted_render(None)
+    render_preflight.note_driver_charged_render(None)
 
 
 def reset() -> None:
-    """Forget every deferral and unload (tests only)."""
+    """Forget every deferral, unload, placement and loader run (tests only)."""
     global _UNLOADED
     _UNLOADED = False
+    _PLACED.clear()
     _DEFERRED.clear()
+    recycle_drain.reset_drops()
+
+
+def dit_resident(unet_name: object, *, charged: bool = False) -> bool:
+    """Whether this driver knows the Workers hold this checkpoint now: the one
+    residency rule the render-site checks and ``load_pending`` read. A finished
+    render, a pipelined submission or a load that succeeded in either slot
+    placed it, and no drop of every rank's models came since (each drains these
+    memos through ``note_unloaded``). ``charged`` also counts a pending load the
+    driver footprint cleared (``render_preflight._LAST_DRIVER_CHARGED_UNET``),
+    which the gate's capacity stop and the reference and pose check never count."""
+    from . import render_preflight
+
+    memos: tuple[str | None, ...] = (
+        render_preflight._LAST_RENDERED_UNET, render_preflight._LAST_SUBMITTED_UNET, *_PLACED.values())
+    if charged:
+        memos += (render_preflight._LAST_DRIVER_CHARGED_UNET,)
+    return isinstance(unet_name, str) and unet_name in memos
+
+
+def model_spec(model: Any) -> dict:
+    """The model spec this render dispatches, LoRA stack included: ``render_submit``
+    sets ``request["model"]`` from the model only after the render-site checks
+    ran, so every check that asks the Workers reads it here (``ModelSpec.request_dict``)."""
+    request_dict = getattr(model, "request_dict", None)
+    if callable(request_dict):
+        return dict(request_dict())
+    return {"unet_name": getattr(model, "unet_name", None),
+            "options": dict(getattr(model, "options", None) or {}),
+            "loras": list(getattr(model, "loras", None) or ())}
 
 
 def load_pending(model: Any, weights_loaded: bool | None) -> bool:
-    """Whether the render's model load is still to come, as described above."""
-    from . import render_preflight
+    """Whether the render's model load is still to come, as described above.
 
-    if weights_loaded is not None:
-        return not weights_loaded
+    The unload mark comes first: no word, the capacity check's included, can
+    say a load placed what every rank has since dropped.
+    """
     if _UNLOADED:
         return True
+    if weights_loaded is not None:
+        return not weights_loaded
     unet_name = getattr(model, "unet_name", None)
-    if unet_name in (render_preflight._LAST_RENDERED_UNET, render_preflight._LAST_SUBMITTED_UNET):
+    if dit_resident(unet_name):
         return False
     preset = str(getattr(getattr(model, "mesh", None), "topology_preset", "auto") or "auto")
     return preset == "auto" or unet_name in _DEFERRED
 
 
-def workers_stop(mesh: Any, request: dict, unet_name: str, options: Any, *,
+def workers_stop(mesh: Any, spec: dict, unet_name: str, options: Any, *,
                  sure: bool = True) -> bool:
     """Whether a Worker on this box would stop this load at its own price.
 
     Where the fleet completed its distributed setup: one read-only quote, the
-    one the ranks' agreement reads, carrying the request's own model spec. A
+    one the ranks' agreement reads, carrying the render's own model spec
+    (``model_spec``), LoRA stack included. A
     reuse, a swap the Worker's credit covers, a rank that cannot price and a
     fleet that cannot be asked all say no. Before setup (``auto`` sets up at
     the first render) the quote cannot be asked (``mesh_setup.require_endpoint``),
@@ -192,7 +247,7 @@ def workers_stop(mesh: Any, request: dict, unet_name: str, options: Any, *,
     """
     started = time.monotonic()
     try:
-        stop, read = _workers_stop(mesh, request, unet_name, options, sure)
+        stop, read = _workers_stop(mesh, spec, unet_name, options, sure)
     except Exception as exc:
         stop, read = False, f"a read that failed ({type(exc).__name__})"
     safe_call(log.debug, "pending load: %s for %s took %.0f ms and %s the load", read,
@@ -201,7 +256,7 @@ def workers_stop(mesh: Any, request: dict, unet_name: str, options: Any, *,
     return stop
 
 
-def _workers_stop(mesh: Any, request: dict, unet_name: str, options: Any,
+def _workers_stop(mesh: Any, spec: dict, unet_name: str, options: Any,
                   sure: bool = True) -> tuple[bool, str]:
     """``workers_stop``'s answer, and which read gave it."""
     from ..actor.capacity_quote import VERDICT_REFUSE, VERDICT_RESCUE
@@ -218,7 +273,6 @@ def _workers_stop(mesh: Any, request: dict, unet_name: str, options: Any,
         if not sure:
             return False, "before setup" + unsure
         return _holds_nothing(fleet), "the status read before setup"
-    spec = request.get("model")
     spec = spec if isinstance(spec, dict) else {}
     asked = old_model_clear.driver_host_answers(
         mesh, unet_name, spec.get("options", options), "cond", loras=spec.get("loras"))
@@ -390,9 +444,8 @@ def _relieve(model: Any, request: dict, *, family: str, path: str,
             and worker_args.get("lora_low_rss") is not False)
     options = dict(getattr(model, "options", None) or {})
     unet_name = str(getattr(model, "unet_name", "") or "")
-    spec = request.get("model")
-    loras = list((spec if isinstance(spec, dict) else {}).get("loras")
-                 or getattr(model, "loras", None) or ())
+    spec = model_spec(model)
+    loras = list(spec.get("loras") or ())
     # The Worker's policy: lora_low_rss is on unless set off (actor/comfy_bridge.py).
     low_rss = worker_args.get("lora_low_rss") is not False
     floor = no_quote_floor(worker_args, family)
@@ -424,7 +477,7 @@ def _relieve(model: Any, request: dict, *, family: str, path: str,
             floor_fit = (fit if (floor == FLOOR_SLAB) == slab
                          else _local_fit(path, options, floor == FLOOR_SLAB, stack, reserve))
             sure = _short(floor_fit)
-        if not workers_stop(mesh, request, unet_name, options, sure=sure):
+        if not workers_stop(mesh, spec, unet_name, options, sure=sure):
             safe_call(log.info if short else log.debug, "pending load: %s, but no Worker on "
                       "this box would stop it, so the driver frees nothing more", reading)
             return

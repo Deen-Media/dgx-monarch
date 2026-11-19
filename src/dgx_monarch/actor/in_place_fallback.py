@@ -265,10 +265,23 @@ def route(store: Any, stored: Any, held: bool, allowed: bool | str) -> dict[str,
     ``allowed`` is ``True`` when the store may bake in place, ``False`` when
     the gate's permission did not come, or the clause that says why the store
     will not offer it (``SET_ASIDE``).
+
+    ``held_bytes`` is what the slot's drop returns, and nothing where that
+    drop copies weights to the host first (``capacity_lora_bake.drop_copies_to_host``,
+    the swap credit's own rule): the quote credits it nothing there, so the
+    choice between the two bakes must not take it.
     """
     if store.lora_low_rss or getattr(store, "slab_weights", False) is True:
         return None
-    return {"held_bytes": held_bytes(stored), "bare_load": not (held and is_bare_stock(stored)),
+    from ..capacity_lora_bake import drop_copies_to_host
+    from . import resident_ledger
+
+    stays = getattr(store, "uncond" if stored is getattr(store, "current", None) else "current", None)
+    model = getattr(getattr(stored, "base_patcher", None), "model", None)
+    copies = stored is not None and drop_copies_to_host(
+        bool(getattr(model, "model_lowvram", False)), stays is not None,
+        resident_ledger.drop_copies_nothing(stored, stays))
+    return {"held_bytes": 0 if copies else held_bytes(stored), "bare_load": not (held and is_bare_stock(stored)),
             "in_place": True if allowed is True else (allowed or capacity_classic_bake.GATE_HAS_NOT_PASSED),
             "comfy_reserve_bytes": worker_reserve()}
 

@@ -22,7 +22,7 @@ _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _NONCE = re.compile(r"[0-9a-f]{32}\Z")
 _VERSION = re.compile(r"[A-Za-z0-9.+_-]{1,64}\Z")
 MAX_WORKERS = 256
-_ADMIN_REASON = "torchmonarch_0_7_admin_handle_has_no_stop_or_partial_start_recovery_api"
+_ADMIN_REASON = "torchmonarch_0_8_admin_handle_has_no_stop_or_partial_start_recovery_api"
 _FETCH_WINDOW_S, _POLL_INTERVAL_S = 2.0, 0.5
 # Fixed refusal sentences carry no caller data, so the CLI may print them verbatim.
 _DURATION = "capture duration must be between 0.1 and 300 seconds"
@@ -35,12 +35,12 @@ REFUSALS = frozenset({_DURATION, _EVENTS, _BYTES, _DESTINATION, _METADATA})
 
 def capabilities() -> dict[str, Any]:
     """Exact-version support boundary; this function starts nothing."""
-    return {"schema": 1, "torchmonarch": "0.7.0",
+    return {"schema": 1, "torchmonarch": "0.8.0",
             "phase_capture": {"available": True, "scope": "existing_telemetry"},
             "topology_summary": {"available": True, "scope": "reported_worker_ranks"},
             **{name: {"available": False, "reason": _ADMIN_REASON}
                for name in ("attached_admin", "distributed_sql", "owned_process_stacks")},
-            "source": "https://github.com/meta-pytorch/monarch/blob/v0.7.0/python/monarch/_rust_bindings/monarch_hyperactor/host_mesh.pyi#L179"}
+            "source": "https://github.com/meta-pytorch/monarch/blob/v0.8.0/python/monarch/_rust_bindings/monarch_hyperactor/host_mesh.pyi#L229"}
 
 
 def _number(value: object) -> float | None:

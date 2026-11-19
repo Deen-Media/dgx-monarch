@@ -392,6 +392,95 @@ def test_prior_worker_drift_is_an_actionable_pre_mutation_refusal(
     assert not list((tmp_path / "worktrees").glob("update-*"))
 
 
+def test_attest_prior_records_every_host_whose_attestation_refused_on_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """The real attest_prior over every host: each host's bounded refusal line
+    lands in prior_refusals, the second host's too after the first refused."""
+    from dgx_monarch.cli.update_pin_diagnostic import PinDiagnostic
+
+    repo, sha = _checkout(tmp_path)
+    harness = _HostHarness()
+    manager = _manager(tmp_path, monkeypatch, harness)
+    manager.prepare(repo, _metadata(repo, sha))
+    refusal = PinDiagnostic("record_outside_site", "xfuser", "xfuser-0.8.0.dist-info/RECORD")
+    answer = harness.host
+
+    def host(config, host_config, script, timeout):
+        if "echo RELEASE_MATCH" in script and not _operation(script, "snapshot"):
+            return subprocess.CompletedProcess([], 1, "noise\n" + refusal.attest_line() + "\n", "")
+        return answer(config, host_config, script, timeout)
+
+    manager._host_run = host
+    first = manager.config.hosts[0]
+    manager.config = replace(manager.config, hosts=(
+        first, replace(first, name="remote-b", address="tcp://10.0.0.9:26600")))
+    assert not manager.attest_prior(_metadata(repo, sha), "d" * 64)
+    assert manager.prior_refusals == [(first.name, refusal), ("remote-b", refusal)]
+
+
+def _staging_ops(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **release_fields):
+    repo, sha = _checkout(tmp_path)
+    config_path = tmp_path / "cluster.toml"
+    config_path.write_text("[cluster]\n", encoding="utf-8")
+    root, site = tmp_path / "release", tmp_path / "release" / "site"
+    site.mkdir(parents=True)
+    release = SimpleNamespace(
+        ensure_supported=lambda: None,
+        prepare=lambda *_args: SimpleNamespace(root=root, site=site, remote_staged=1),
+        cleanup=lambda: OperationResult(Certainty.SUCCEEDED), **release_fields,
+    )
+    ops = update_command.SystemUpdateOps(
+        repo, ClusterConfig(source=str(config_path)), release_manager=release,
+        pin_transition=_PinHarness(), worktree_root=tmp_path / "worktrees",  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(ops, "resolve_target", lambda _ref: sha)
+    monkeypatch.setattr(ops, "activity_snapshot", lambda: ActivitySnapshot(False, False, 0, 0))
+    monkeypatch.setattr(update_command, "_candidate_dependencies_available", lambda *_args: True)
+    return ops
+
+
+def test_a_worker_s_ownership_refusal_names_its_host_beside_prior_worker_drift(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+):
+    """The bare prior_worker_drift of issue 158's Worker side: the host's own
+    refusal line now reaches the terminal, and the receipt keeps a fixed text."""
+    from dgx_monarch.cli.update_pin_diagnostic import PinDiagnostic
+
+    release_fields: dict = {}
+
+    def attest_prior(*_args):
+        release_fields["self"].prior_refusals = [
+            ("worker-b", PinDiagnostic("record_outside_site", "xfuser", "xfuser-0.8.0.dist-info/RECORD"))]
+        return False
+
+    ops = _staging_ops(monkeypatch, tmp_path, attest_prior=attest_prior, prior_refusals=[])
+    release_fields["self"] = ops._releases
+    monkeypatch.setattr(update_command, "_dependencies_available", lambda *_args: True)
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert (result.code, result.exit_code) == ("prior_worker_drift", 2)
+    assert "worker-b" not in result.message and "the host lines above" in result.message
+    printed = capsys.readouterr().err
+    assert "worker-b: the Worker's torchmonarch check refused" in printed
+    assert "grep '^\\.\\./'" in printed
+
+
+def test_unmet_target_dependencies_refuse_with_a_code_and_point_at_the_named_lines(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    """Before, this refusal read "release staging failed before any live change"
+    and named nothing; the check now prints each requirement and interpreter."""
+    ops = _staging_ops(monkeypatch, tmp_path)
+    monkeypatch.setattr(update_command, "_dependencies_available", lambda *_args: False)
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert (result.code, result.exit_code) == ("target_dependencies_unsatisfied", 2)
+    assert "name each requirement and the interpreter that failed it" in result.message
+
+
 def test_failed_stage_reports_unconfirmed_cleanup_in_receipt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
@@ -920,3 +1009,51 @@ def test_pin_conflict_details_are_local_and_absent_from_receipt(monkeypatch, tmp
     assert str(tmp_path) not in receipt
     assert cleaned == [True]
     assert not list((tmp_path / "worktrees").glob("update-*"))
+
+
+def test_attest_prior_names_every_host_whose_release_differs_without_an_ownership_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """A Worker whose payload digest differs prints no refusal line; the real
+    attest_prior still records its host, so prior_worker_drift can name it."""
+    repo, sha = _checkout(tmp_path)
+    harness = _HostHarness()
+    manager = _manager(tmp_path, monkeypatch, harness)
+    manager.prepare(repo, _metadata(repo, sha))
+    answer = harness.host
+
+    def host(config, host_config, script, timeout):
+        if "echo RELEASE_MATCH" in script and not _operation(script, "snapshot"):
+            return subprocess.CompletedProcess([], 1, "payload digest differs\n", "")
+        return answer(config, host_config, script, timeout)
+
+    manager._host_run = host
+    first = manager.config.hosts[0]
+    manager.config = replace(manager.config, hosts=(
+        first, replace(first, name="remote-b", address="tcp://10.0.0.9:26600")))
+    assert not manager.attest_prior(_metadata(repo, sha), "d" * 64)
+    assert manager.prior_refusals == [(first.name, None), ("remote-b", None)]
+
+
+def test_attest_prior_names_a_host_whose_installation_did_not_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """A host whose installation snapshot fails stops the attestation before
+    any release check; it is still named, and a host that answered is not."""
+    repo, sha = _checkout(tmp_path)
+    harness = _HostHarness()
+    manager = _manager(tmp_path, monkeypatch, harness)
+    manager.prepare(repo, _metadata(repo, sha))
+    answer = harness.host
+
+    def host(config, host_config, script, timeout):
+        if host_config.name == "remote-b" and _operation(script, "snapshot"):
+            return subprocess.CompletedProcess([], 1, "", "no answer")
+        return answer(config, host_config, script, timeout)
+
+    manager._host_run = host
+    first = manager.config.hosts[0]
+    manager.config = replace(manager.config, hosts=(
+        first, replace(first, name="remote-b", address="tcp://10.0.0.9:26600")))
+    assert not manager.attest_prior(_metadata(repo, sha), "d" * 64)
+    assert manager.prior_refusals == [("remote-b", None)]

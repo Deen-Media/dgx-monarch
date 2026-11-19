@@ -148,6 +148,16 @@ GATES_OUTSIDE_THE_DEV_EXTRA = {
         "the quantized-shard suite behind this gate runs on a rig venv, and "
         "the wrapper's structural ops are exercised there against the real "
         "QuantizedTensor rather than a stand-in"),
+    "comfy_kitchen.int8_decode": (
+        "comfy-kitchen ships with ComfyUI, which the host application owns; the "
+        "test behind this gate reads the real extension's INT8 decode functions "
+        "through the INT8 GEMM proxy on a rig venv, and the stub-backed proxy "
+        "test beside it runs everywhere"),
+    "comfy_aimdo.host_buffer": (
+        "comfy-aimdo ships with ComfyUI's dynamic VRAM, which the host "
+        "application owns; the test behind this gate runs stock ComfyUI's "
+        "dynamic load on the CPU where ComfyUI resolves, and the pair's "
+        "two-process test covers the same rule with a stand-in patcher"),
     "comfy.model_base": (
         "ComfyUI itself, which the host application owns; the render-memory "
         "canary behind this gate pins the mirrored formula against comfy's "
@@ -461,7 +471,7 @@ def test_torchmonarch_canary_is_read_only_artifacted_and_never_auto_bumps():
     assert 'pip install --upgrade torchmonarch' in workflow
     assert "--pre" not in workflow
     assert workflow.count("dgxm-torchmonarch-canary") >= 2
-    assert "tests/fixtures/torchmonarch_pin_0_7_0.json" in workflow
+    assert "tests/fixtures/torchmonarch_pin_0_8_0.json" in workflow
     assert "snapshot --output \"$ARTIFACTS/pin.json\"" in workflow
     assert "snapshot --output \"$ARTIFACTS/latest.json\"" in workflow
     assert "latest-vs-pin-report.md" in workflow
@@ -478,7 +488,6 @@ def test_torchmonarch_canary_is_read_only_artifacted_and_never_auto_bumps():
     assert (REPO / "src" / "dgx_monarch" / "monarch_surface.py").is_file()
     assert (REPO / "src" / "dgx_monarch" / "monarch_surface_report.py").is_file()
     assert (REPO / "tests" / "canary" / "monarch_surface_canary.py").is_file()
-    assert (REPO / "tests" / "fixtures" / "torchmonarch_pin_0_7_0.json").is_file()
 
 
 def test_torchmonarch_probe_surfaces_are_carried_by_sdist_patterns():

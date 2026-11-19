@@ -115,19 +115,21 @@ def _run(
     return result
 
 
-def test_comfy_bootstrap_constrains_xfuser_resolution_to_existing_cuda_torch(tmp_path):
+def test_comfy_bootstrap_installs_stock_xfuser_from_the_index_under_the_torch_constraint(tmp_path):
     home, log = _fake_home(tmp_path)
     result = _run(home, log, fail_probe=False)
 
     assert result.returncode == 0, result.stderr
     closure = next(
         line for line in log.read_text().splitlines()
-        if "xfuser==0.7.0+dgxm.npuimport1" in line
+        if "xfuser==0.8.0" in line
     )
     assert "constraint=torch==2.12.0+cu132" in closure
-    assert "arg=--find-links" in closure
-    assert "arg=xfuser==0.7.0+dgxm.npuimport1" in closure
+    # Stock 0.8.0 comes from the index: no local wheel directory, no builder.
+    assert "--find-links" not in log.read_text()
+    assert "arg=xfuser==0.8.0" in closure
     assert "arg=yunchang==0.6.4" in closure
+    assert "npuimport1" not in log.read_text()
 
 
 def test_missing_torch_metadata_stops_before_comfy_dependency_resolution(tmp_path):
@@ -138,10 +140,10 @@ def test_missing_torch_metadata_stops_before_comfy_dependency_resolution(tmp_pat
     assert "torch distribution metadata" in result.stderr
     assert "requirements.txt" not in log.read_text()
     assert "diffusers==" not in log.read_text()
-    assert "xfuser==0.7.0+dgxm.npuimport1" not in log.read_text()
+    assert "xfuser==" not in log.read_text()
 
 
-def test_worker_stream_carries_the_canonical_builder_without_a_peer_checkout(tmp_path):
+def test_worker_stream_installs_stock_xfuser_without_a_peer_checkout(tmp_path):
     local_home, _ = _fake_home(tmp_path / "local")
     remote_home, _ = _fake_home(tmp_path / "remote")
     fake_bin = tmp_path / "bin"
@@ -175,15 +177,17 @@ env HOME="$REMOTE_HOME" bash -s < "$STREAM_CAPTURE" > "$REMOTE_OUTPUT" 2>&1
 
     assert result.returncode == 0, result.stderr
     payload = stream.read_text()
-    assert "OFFICIAL_SHA256" in payload
-    assert "PATCHED_RING" in payload
+    # The peer installs from the index, so the stream carries no builder or wheel.
+    assert "XFUSER_PIN=xfuser==0.8.0" in payload
+    assert "build_xfuser_compat_wheel" not in payload
+    assert "OFFICIAL_SHA256" not in payload
     remote_pip = remote_output.read_text()
     closure = next(
         line for line in remote_pip.splitlines()
-        if "xfuser==0.7.0+dgxm.npuimport1" in line
+        if "xfuser==0.8.0" in line
     )
     assert "constraint=torch==2.12.0+cu132" in closure
-    assert "arg=--find-links" in closure
+    assert "--find-links" not in closure
 
 
 def test_metadata_without_runtime_cuda_suffix_constrains_every_comfy_resolution(tmp_path):

@@ -58,8 +58,12 @@ def indivisible_batch_refusal(preset: object, topo: Topology, batch: int) -> Val
         label=_preset_label(preset), world=topo.world, dp=topo.dp, batch=batch)))
 
 
-def validate_render_topology(model, topo: Topology, latent_samples) -> None:
-    """Reject unusable explicit DP/CFG shapes on the driver before NCCL/setup."""
+def validate_render_topology(model, topo: Topology, latent_samples, request: Mapping | None = None) -> None:
+    """Reject unusable explicit DP/CFG shapes on the driver before NCCL/setup.
+
+    With the render's ``request``, also an adaptive-step sampler under dp with
+    FSDP (``adaptive_steps``), on the world the render runs.
+    """
     if getattr(topo, "cfg", 1) > 1 and is_direct_nested_tensor(
         latent_samples, "input latent samples"
     ):
@@ -84,6 +88,10 @@ def validate_render_topology(model, topo: Topology, latent_samples) -> None:
     batch = int(latent_samples.shape[0])
     if batch % topo.dp:
         raise indivisible_batch_refusal(model.mesh.topology_preset, topo, batch)
+    if request is not None:
+        from .adaptive_steps import refuse
+
+        refuse(request, topo)
 
 
 # ComfyUI's own latent sources whose batch this walk can read from the graph

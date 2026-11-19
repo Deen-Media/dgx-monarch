@@ -1,5 +1,6 @@
 import { bindingType, fieldLabel } from './model.ts';
 import type { Binding, Draft } from './model.ts';
+import { carries } from './textThrough.ts';
 import { bindingIndex, workflowGraph } from './workflowGraph.ts';
 import type { GraphNode, ObjectInfo } from './workflowGraph.ts';
 
@@ -36,6 +37,8 @@ const NAMED_ROLES: Record<string, PromptRole> = {
 // guidance or a zeroed copy; a longer path is not followed.
 const MAX_HOPS = 8;
 const FOLLOWED = new Set(['CONDITIONING', 'STRING']);
+/** The types of an input that takes whatever its source gives, as an API prompt declares them. */
+const MATCH_TYPES = new Set(['COMFY_MATCHTYPE_V3', '*']);
 const isObject = (value: unknown): value is Json =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -50,14 +53,18 @@ export function layoutLabel(b: Binding): string {
 
 /**
  * Who reads each node's outputs, on which input and from which output slot, following text and
- * conditioning only.
+ * conditioning only. An input that takes any type, such as a switch's branch in an API prompt,
+ * is followed when the output it reads gives text; a saved workflow types those sockets itself.
  */
 function inputReaders(nodes: GraphNode[]): Readers {
   const readers: Readers = new Map();
+  const byKey = new Map(nodes.map((node) => [node.key, node]));
+  const gives = (key: string, slot: number) => byKey.get(key)?.outputTypes[slot] === 'STRING';
   for (const node of nodes)
     for (const [input, source] of node.sources) {
       const type = node.inputTypes.get(input);
-      if (!source || (type && !FOLLOWED.has(type) && !SOCKET_ROLES[input])) continue;
+      const any = !!type && MATCH_TYPES.has(type) && !!source && gives(source.key, source.slot);
+      if (!source || (type && !FOLLOWED.has(type) && !SOCKET_ROLES[input] && !any)) continue;
       if (!readers.has(source.key)) readers.set(source.key, []);
       readers.get(source.key)!.push({ node, input, slot: source.slot });
     }
@@ -83,7 +90,7 @@ function reachedRoles(readers: Readers, start: GraphNode): Set<PromptRole> {
       for (const { node, input } of frontier) {
         const role = socketRole(node, input);
         if (role) found.add(role);
-        else if (!seen.has(node.key)) {
+        else if (!seen.has(node.key) && carries(node, input)) {
           seen.add(node.key);
           next.push(...(readers.get(node.key) ?? []));
         }
@@ -99,9 +106,16 @@ function reachedRoles(readers: Readers, start: GraphNode): Set<PromptRole> {
 }
 
 /**
- * Each text input's role in the graph. A node whose text reaches one sampler input gives every
- * text input it holds that role. When it reaches both, as a node that encodes a prompt and a
- * negative prompt together does, or neither, an input named after a role takes that role.
+ * Each text input's role in the graph. A node whose text reaches one sampler input gives that
+ * role to every typed text input it passes on (`carries`), so a typed prompt that reaches the
+ * sampler through text nodes keeps it, and a text node's pattern, template or instruction, or
+ * what a text generator is asked, never takes it. When the text reaches both inputs, as a node
+ * that encodes a prompt and a negative prompt together does, or neither, an input it passes on
+ * that is named after a role takes that role. An input named for the negative prompt keeps that
+ * role even when its node's text reaches only the positive input, as when a node's prompt
+ * output alone is used, and on a node that holds inputs named for both roles each keeps its
+ * own, whichever output is used; the wires decide only for a node with one named side. Any
+ * other input has no role.
  */
 export function graphRoles(
   workflow: Json | null | undefined,
@@ -117,8 +131,16 @@ export function graphRoles(
     const texts = [...own(node).values()];
     if (!texts.length) continue;
     const reached = reachedRoles(readers, node);
+    const names = new Set(texts.map((b) => NAMED_ROLES[b.input_name ?? '']));
+    const both = names.has('prompt') && names.has('negative');
     for (const binding of texts) {
-      const role = reached.size === 1 ? [...reached][0] : NAMED_ROLES[binding.input_name ?? ''];
+      const input = binding.input_name ?? '';
+      if (!carries(node, input, { multiline: binding.schema?.multiline })) continue;
+      // A negative prompt input keeps its name, and so does each named input of a node that
+      // holds both; one way only, so an encoder's lone `prompt` on the negative side is the negative.
+      const named = NAMED_ROLES[input];
+      const kept = named === 'negative' || (both && !!named);
+      const role = reached.size === 1 && !kept ? [...reached][0] : named;
       if (role) roles.set(binding.id, role);
     }
   }

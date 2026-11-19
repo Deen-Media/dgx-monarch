@@ -2,8 +2,454 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-13
+
+**Upgrading from 1.4.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-140). If a host's
+Workers run from a release slot, use only `dgxm update --verify`
+([TROUBLESHOOTING #118](docs/TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
+The first update from 1.4.0 runs the 1.4.0 updater, so its checks govern that
+update. It can stop with "foreign distribution inventory is ambiguous" when a
+package that ships files in torchmonarch's directories was installed with
+`PYTHONPYCACHEPREFIX` set to a writable directory, as an environment build
+script can do; a reinstall of that package without the prefix clears it, and
+this release's updater, run from a checkout of this release, accepts it
+([TROUBLESHOOTING #155](docs/TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+The torchmonarch pin moves from 0.7.0 to 0.8.0, which requires two more
+packages, `nvidia-ml-py` and `psutil`, on the driver and on every Worker
+host. Before the update, install `nvidia-ml-py` into the driver's Python and
+into the Python cluster.toml names on every Worker host: neither update mode
+installs it, and an update to this pin stops before any change until every
+Python holds it. The 1.4.0 updater names only the first Python that lacks
+it, so install it on every one before you start; this release's updater
+names each
+([INSTALL](docs/INSTALL.md#upgrading-from-140)). The xFuser
+requirement now admits stock xFuser 0.8.0 beside the patched build 1.4.0
+installed, so the first update from 1.4.0 keeps the xFuser you have. Stock
+xFuser 0.8.0 goes in after that update, never before it: the 1.4.0 updater's
+verified mode refuses the `tests/conftest.py` it shares with torchmonarch
+([TROUBLESHOOTING #104](docs/TROUBLESHOOTING.md#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
+Gate protocol 14 does not change, but a saved Gate grant names the package
+version, and now the xFuser build too, so each model, residency and LoRA
+combination runs its first-use Gate again, once, and once more after the move
+to xFuser 0.8.0
+([TROUBLESHOOTING #114](docs/TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
+This release needs ComfyUI 0.45.0 or newer on the driver and on every Worker,
+at the same commit on each
+([TROUBLESHOOTING #147](docs/TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+The INT8 GEMM kernel that is now the default needs the Python headers on the
+driver and every Worker host
+([TROUBLESHOOTING #138](docs/TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
+The three lists below hold the changes an install on 1.4.0 meets first; the
+sections after them list every change.
+
+**Defaults that changed.**
+
+- INT8 ConvRot linears now run a Triton GEMM kernel by default, with identical
+  output. Without the Python headers a process runs stock CUTLASS and logs one
+  WARNING. `[worker_args] int8_gemm = "cutlass"` and `DGXM_INT8_GEMM=cutlass`
+  turn it off
+  ([TROUBLESHOOTING #138](docs/TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
+- The MiniMax H3 activation preflight now charges each rank an 11.0 GiB floor
+  and 129,024 bytes per row on the rank, in place of 1,032,192 bytes per row,
+  so one Spark admits the 15 second clip, 362 frames at 1344x768
+  ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Before a render-site capacity check refuses, the driver unloads the models
+  ComfyUI holds on its host and asks the actors to release their allocator
+  caches; `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both off
+  ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- A first use whose text models were staged before the model's load no
+  longer fails for room the driver itself held, as p-h3-image did on a pair
+  under an explicit `uly2`; under `auto`, the template's own setting, the
+  loader already charges those models and it still refuses there with its
+  slab card. Once the render-site checks pass, the driver now
+  prices a model load still to come at the Workers' own price, and where that
+  reads short and the Worker on its box would stop the load, it unloads the
+  models ComfyUI holds, which ComfyUI loads again when they are next used,
+  and asks the actors to release their caches. It adds no refusal and
+  changes no refusal's words, and `DGXM_DISABLE_DRIVER_UNLOAD=1` turns it off
+  too
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+- The deadline for a render's sample call grows with the work for MiniMax H3
+  and Wan SCAIL, SCAIL-2 and Animate 2, up to six hours, and
+  `DGXM_SAMPLE_TIMEOUT` stays the floor
+  ([TROUBLESHOOTING #139](docs/TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-when-the-sample-deadline-passes)).
+- A capacity-rescue consent now keeps slab residency when stock residency
+  cannot load the checkpoint, and `DGXM_ALLOW_SLAB_RESCUE=1`,
+  `DGXM_AUTO_RESCUE=1` and the Auto-allow toggle each count as that consent
+  ([TROUBLESHOOTING #5](docs/TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
+  [#53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+- `compile_dit` no longer forces stock residency on the families it leaves
+  eager, and Worker services keep torch inductor's compile cache under
+  `~/.cache/dgx-monarch/inductor`
+  ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
+- The Init node says `sync_ulysses` has no effect on xfuser 0.7.0 or 0.8.0.
+  The Ideogram 4 template now leaves `sync_ulysses` on, as every other shipped
+  template does, so the first Ideogram 4 render after the update runs its
+  identity gate once more. A workflow saved from the older template keeps the
+  setting off until you turn it on in its Init node
+  ([MODELS](docs/MODELS.md#model-ideogram4)).
+- The Worker loop and `scripts/comfy-driver.sh` now set
+  `MIMALLOC_PURGE_DELAY=0`, so a process on torch 2.15 gives freed host memory
+  back at once. A driver you start by hand or from your own unit needs the
+  variable too
+  ([TROUBLESHOOTING #146](docs/TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short)).
+- On a DGX Spark the driver's ComfyUI now reads free memory as MemAvailable
+  less a floor, 7.6 GiB there, where it read the device figure that follows
+  MemFree; `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` on the driver turns that off
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- On a DGX Spark the driver also encodes a batch of images one image a VAE
+  call, so every conditioning of several images changes once against 1.4.0;
+  `DGXM_DISABLE_VAE_ENCODE_ITEM=1` on the driver turns that off
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- Before a VAE decode that ComfyUI prices above its free memory, the driver on
+  a DGX Spark frees the decode's price from the text encoders it holds and
+  asks the Workers for the device memory they hold idle, and its line says
+  whether they released it. An encoder that gave up memory loads it again
+  when a prompt's text next changes; `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the
+  driver turns that off
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- `dgxm doctor` has a new `driver memory reading` row for the three driver
+  rules above.
+- A Worker on a Spark that finds less than 16 GiB free while 21 GiB or more is
+  available now makes room for its CUDA context before it creates one;
+  `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's `worker.env` (below) turns
+  that off
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- With `lora_low_rss` off, a LoRA stack's load is now priced with its classic
+  bake, by the checkpoint's format, so a load the earlier price admitted can
+  refuse with the new figure. Where the classic bake does not fit and a bake
+  in place would, the Worker bakes in place, but only when the identity gate
+  holds a PASS for that combination's in-place bake, which a render of it with
+  `lora_low_rss` on records. The default on a DGX Spark, `lora_low_rss` at
+  `auto`, which turns it on there, is priced as before
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- With `lora_low_rss` off, as three Wan-Animate 2 templates ship it, a Worker
+  that loads a model whole under a classic LoRA bake now frees ComfyUI's
+  weight backup before the first step where the load leaves less room than
+  the sampler is estimated to need, the room counting the device memory the
+  Worker already holds idle from its last render. It logs a line that starts
+  `LoRA bake: ComfyUI loaded this model whole`, and the next LoRA change on
+  that model reloads it from disk. On a pair the ranks decide together: one
+  rank short and every rank frees, and a rank that cannot free keeps the fleet
+  as it is. Comfy-managed residency carries no LoRA, and neither one GPU nor
+  a pair weighs its model's backup. On a Spark short enough to free, the
+  first step can take up to about a minute longer while the kernel compacts
+  the freed memory, and the latent is the same. `DGXM_DISABLE_BACKUP_FREE=1`
+  in the Worker's `worker.env` turns the step off
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- On a pair, the room a rank needs to sample now also counts the shared
+  memory a fresh Worker maps in its first forward, about 2.7 GiB on a fresh
+  Worker and 0.1 on a warm one, and a refusal's figures name that term; one
+  GPU is unchanged
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- A load that replaces a stock model in its own slot now counts the copy the
+  Worker drops first, at the loader and at the render-site checks, and on
+  unified memory that drop copies nothing to the host.
+  `DGXM_DISABLE_SWAP_CREDIT=1` on the driver turns the count off, and
+  `DGXM_DISABLE_COPY_FREE_DROP=1` in the Worker's `worker.env` turns the
+  copy-free drop off
+  ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+- A MiniMax H3 graph whose guide file proves it a still, and whose guide
+  encodes before every sampler, is now charged at the loader for the larger
+  of the guide encode and the render activations, not both, since ComfyUI
+  with DynamicVRAM returns the encode's memory before the Workers sample. A
+  clip still pays both, as do the other cases its entry below lists
+  ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
+- The loader now charges a reference video's 40 GiB encode on a first queue
+  where ComfyUI already holds models, which its held-model credit took
+  before. It charges Load LTXV Audio Text Encoder (`LTXAVTextEncoderLoader`)
+  for its text encoder file and the checkpoint's text projection, 28.3 GiB
+  with Gemma 3 12B bf16 and 12.3 with its fp4 file for LTX 2.3, where it
+  charged the whole checkpoint, 27.1 to 43.0 GiB; without DynamicVRAM it
+  still charges the whole checkpoint. The shipped LTX templates load their
+  encoder through Dual CLIP Loader and are unchanged
+  ([DESIGN](docs/DESIGN.md#the-residency-ladder)).
+- MiniMax H3 under `auto` at four Sparks now folds to `uly4`, where it took
+  uly2+ring2 and refused about three prompts in four at the first sampler
+  call, after setup and the load. The fold rests on reports from community
+  four-Spark users; every other row, and every row at world 2, decides as
+  before
+  ([TROUBLESHOOTING #49](docs/TROUBLESHOOTING.md#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence),
+  [BENCHMARKS](docs/BENCHMARKS.md#a-second-report-minimax-h3-on-uly4-issue-188)).
+- Where the driver reads one model, no LoRA stack and no slab residency, with
+  the other conditions its entry below lists, the first-use gate no longer
+  renders twice before the first render: it unloads every rank, loads the
+  file and lets the Workers' swap cycle decide, under the same all-rank
+  attestation. On a pair those two
+  proof renders took 585.8 s for a MiniMax H3 still guide at 896x1152 and 362
+  frames. Slab residency engages under `auto` only on Krea 2 and Flux 2, so
+  59 of the 75 shipped templates paid them on first use. The Identity Gate
+  node always renders
+  ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+- A first-use check that compared nothing no longer blocks a later capacity
+  rescue. The consent read now takes its INCONCLUSIVE row as clear for that
+  model, so the loader's rescue card, the panel, the auto-rescue toggle and
+  the rescue variables work again where they did nothing. An unproven
+  INCONCLUSIVE that is the newest row of its context, and every FAIL, still
+  deny
+  ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+- In a world of one GPU a checkpoint's own attention pins now run as stock
+  ComfyUI runs them, with no Sol-Attn waiver card
+  ([TROUBLESHOOTING #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+- The Workers now prepare Anima's text as stock ComfyUI does, and Anima under
+  `auto` renders on uly2 at every size, where it took cfg2 below 1.2 MP on
+  BF16
+  ([TROUBLESHOOTING #151](docs/TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+- `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP only
+  when the prompt and the negative encode to different text rows, and Ulysses
+  for an equal pair
+  ([VALIDATION](docs/VALIDATION.md#campaign-k-equal-pairs)).
+- uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1, and LTX
+  renders under sequence parallelism, now run comfy-kitchen's fused AdaLN, and
+  LTX's gate projection, at the row count one GPU uses, because those calls
+  pick their kernel by row count. A render below about 1024 square, or of LTX,
+  can differ from the same render on 1.4.0
+  ([VALIDATION](docs/VALIDATION.md#fused-adaln-switch-other-families)).
+- Sampler Custom renders and dual-model renders now run the first-use identity
+  gate, so the first render of a new combination on the six LTX graphs, on
+  p-h3-image and on Ideogram 4 runs its check first
+  ([TROUBLESHOOTING #61](docs/TROUBLESHOOTING.md#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
+- The pack now ships the demo images, clips and music its templates name and,
+  at start, copies each one ComfyUI's input folder lacks, never replacing a
+  file; `DGXM_DEMO_INPUTS=off` skips the copy
+  ([INSTALL](docs/INSTALL.md#install-the-node-pack)).
+- `dgxm doctor`'s Worker service row now reads unobserved, not FAIL, when a
+  host answered but could not tell whether the loop runs or listens, so doctor
+  exits 75 and `dgxm update --verify` keeps the new release instead of
+  restoring the old one
+  ([TROUBLESHOOTING #1](docs/TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout)).
+- Studio is a supported interface from this release. Generate now checks the
+  draft and starts the job in one action, Grids, Fleet and Operations sit
+  under Utilities, and the tester's fourth round renamed Operation to Job
+  category and changed Send to edit, the viewer and the telemetry panel. The
+  `studio` extra does not change ([Studio](docs/STUDIO.md)).
+
+**New, and what ships off.**
+
+- A 1.4.0 checkout refuses a cluster.toml whose `[worker_args]` holds
+  `int8_gemm`, `fp8_matrix_mult` or `worker_vae_decode`, so add those keys
+  only after the driver and every checkout that reads the file run this
+  release.
+- Worker-assisted VAE decode is new and off by default, behind
+  `[worker_args] worker_vae_decode`
+  ([TROUBLESHOOTING #140](docs/TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+- `[worker_args] fp8_matrix_mult` is new, and every model build logs one
+  `FP8 compute:` line. Never set it to `"on"` on GB10, where ComfyUI's FP8
+  matmul renders plain FP8 files as noise
+  ([TROUBLESHOOTING #141](docs/TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).
+- MiniMax-H3-Image, which ComfyUI 0.45.0 added, is a new family on its own
+  sharded adapter, with a text to image template and an edit template. `auto`
+  takes uly2 for it, and cfg2, dp2, a padded ring and a batch above one
+  refuse. Both templates wire ComfyUI's prompt expander behind a switch that
+  ships off, with this project's own prompt texts in its boxes
+  ([MODELS](docs/MODELS.md#model-minimax-h3-image)).
+- UltraTex, the FLUX.2 Klein 9B LoRAs that ComfyUI 0.45.0 paints a mesh
+  texture with, runs on one GPU, uly2 and uly2+fsdp, and refuses on cfg2, dp2,
+  ring and any wider mesh before dispatch
+  ([TROUBLESHOOTING #148](docs/TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
+- `~/.config/dgx-monarch/worker.env` on a Worker's box sets that Worker's six
+  diagnostic switches, as `NAME=value` lines and then a recycle, on any unit.
+  The unit a verified update writes clears every variable a drop-in sets, so
+  a drop-in never reached such a Worker. The file must belong to the Worker's
+  user and be writable by no one else, and the Worker logs
+  `Worker switches set on this box: ...` at each start
+  ([CLUSTER](docs/CLUSTER.md#setting-a-worker-side-variable)).
+- CONTRIBUTING says what a report from a cluster larger than two Sparks must
+  carry and what the project does with it, and a second issue form asks for
+  exactly that
+  ([CONTRIBUTING](CONTRIBUTING.md#reports-from-clusters-larger-than-ours)).
+
+**New refusals and what they ask for.**
+
+- The driver refuses to attach, before it dials, when a Worker loop runs a
+  torchmonarch other than the one the driver loaded, or comes from a release
+  that does not report one. It names the host, both versions and what brings
+  them to one release: `dgxm restart`, after installing the driver's
+  torchmonarch, for Workers on plain source directories, or the forward repair
+  in TROUBLESHOOTING #118 for release slots, when the driver is the newer side;
+  the driver's release and a ComfyUI restart when the Workers are. In a
+  loopback check on 2026-11-17 a 0.7.0 loop and a 0.8.0 client did not attach
+  to each other, either way round: the attach waited out the config push
+  budget twice and nothing named the cause. Until now a driver then also
+  restarted the Worker services when `auto_heal` was on. When the reading
+  after a failed first attempt finds such a loop, the attach refuses the same
+  way, with no second attempt and no restart. The driver reads the version
+  once, at its first mesh build after torchmonarch is loaded, and keeps it, so
+  a pin installed under a running ComfyUI no longer admits it: the render
+  refuses with "this process loaded torchmonarch" and asks for a ComfyUI
+  restart. On Linux that first reading also checks that the native binding
+  the process mapped is still the file on disk, so a reinstall before it
+  refuses the same way; where `/proc` cannot tell, as while an install is
+  under way, the reading is the installed version. `dgxm doctor`'s
+  `listener generation` row now shows the
+  torchmonarch each running loop imported and fails when it is not the pin
+  ([TROUBLESHOOTING #8](docs/TROUBLESHOOTING.md#8-version-skew-between-hosts)).
+- An `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`
+  or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` in ComfyUI's environment, harmless
+  on 1.4.0, now stops every mesh build, because torchmonarch 0.8.0 exports
+  that signal from the variable alone. It asks you to unset it and restart
+  ComfyUI; `[monarch.diagnostics] otlp_endpoint` stays the only destination
+  ([TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+- A `HYPERACTOR_MESH_GET_PROC_STATE_MAX_IDLE` or
+  `HYPERACTOR_MESH_PROC_STOP_MAX_IDLE` in ComfyUI's environment that makes
+  Monarch's two stop limits add up to more than 90 s, or that Monarch reads
+  back as something dgx-monarch cannot read, now stops every mesh build,
+  because the teardown budgets cannot hold a longer stop. It names the
+  variables that are set and asks you to unset them, or lower them to add up
+  to 90 s or less, and restart ComfyUI
+  ([TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+- `HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT` set where ComfyUI starts to any value
+  but the policy's own `1day` refuses the mesh build and asks for it to be
+  unset
+  ([TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+- On an older ComfyUI a MiniMax H3 file with a stacked output head refuses
+  under sequence parallelism, and asks for ComfyUI 0.45.0
+  ([TROUBLESHOOTING #147](docs/TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+- A Gate PASS now names the torch, CUDA and xFuser build it was proven under,
+  so a pair whose boxes run two builds refuses a risky render until the builds
+  match
+  ([TROUBLESHOOTING #8](docs/TROUBLESHOOTING.md#8-version-skew-between-hosts)).
+- Worker setup refuses an xFuser other than stock 0.8.0 or the patched
+  `0.7.0+dgxm.npuimport1` 1.4.0 built, before it imports xFuser, and names the
+  line that installs 0.8.0. Stock 0.7.0 used to fail later, deep in attention
+  setup
+  ([TROUBLESHOOTING #104](docs/TROUBLESHOOTING.md#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
+- A MiniMax-H3-Image graph that turns the prompt expander on with an empty
+  task prompt, or with one that lacks the `{input text}` marker, refuses
+  before the model loads
+  ([MODELS](docs/MODELS.md#model-minimax-h3-image)).
+- A forced `family_adapter` now binds a model only where its adapter would
+  take it under `auto`, so `wan`, `hunyuan` and `zimage` refuse the variants
+  they used to bind
+  ([TROUBLESHOOTING #154](docs/TROUBLESHOOTING.md#154-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
+- A Worker that still cannot make its CUDA context refuses in plain words,
+  `this Worker could not start on its GPU`, with its box's free and available
+  memory, where it showed a traceback. On a pair the words show after about
+  ten minutes, naming the box whose Worker failed
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- A checkpoint whose safetensors header the gate reads with no verdict refuses
+  before it loads, where it loaded as if the gate were not there, and a
+  damaged header gets the refusal its intact header gets
+  ([TROUBLESHOOTING #152](docs/TROUBLESHOOTING.md#152-a-render-refuses-because-the-header-gate-could-not-read-the-checkpoints-header)).
+- With `lora_low_rss` off, a one-GPU Worker that ComfyUI loads only partly
+  bakes a LoRA under a full load where it has room; an FP8, NVFP4 or MXFP8
+  file that has no room stops before sampling and says what it tried.
+- `dgxm setup`'s cleanup of a reserved release slot now refuses, and keeps the
+  slot, when its site holds anything beside the package.
+- A fleet whose Workers run two builds of dgx-monarch, such as one Worker
+  still on 1.4.0 beside one on this release, refuses before its first load or
+  render, class P, naming each Worker's build. It asks you to update each box,
+  restart its Worker and reset the attached mesh
+  ([DESIGN](docs/DESIGN.md#55-model-store-reuse--lora-hot-swap)).
+- The driver now prices what a node spends on its box before the sampler
+  where the loader did not price it: Add Guide (MiniMax H3), Reference to
+  Video (MiniMax H3) with a reference video, and the stock loader nodes of a
+  text encoder, a CLIP Vision file, a checkpoint or model. That covers a
+  re-queue that changes only a guide's file, canvas or length, a reference
+  video, or a text encoder or
+  upsampler, and a first queue where ComfyUI runs those nodes before the
+  loader. Where the spend would
+  take the box under the loader's floor (5 GiB, or the Init node's
+  `uma_reserve_gb` where larger) after the driver's unload and the Workers'
+  release where they can run, it refuses before anything is spent, class C.
+  That is a new
+  refusal for a queue that renders today only by dipping under the floor. It
+  asks for a shorter clip, a smaller canvas or file, or memory freed on the
+  box; `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for
+  diagnosis
+  ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode),
+  [#56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Where MiniMax H3 or MiniMax-H3-Image lands on ring (an explicit ring
+  preset, `auto` at an odd world, or at six or eight Sparks), a padded packed
+  total now refuses on the driver at the sampler node or the Identity Gate
+  node, before any proof render, setup and the `auto` load, naming the total,
+  the pad rows and the Ulysses preset that fits. On a pair an explicit `ring2` on a padded sequence
+  refuses there too, where it refused inside the first model call. Wan SCAIL's
+  ring layouts above world 2 refuse at the same point and name `uly4` at four
+  Sparks
+  ([TROUBLESHOOTING #49](docs/TROUBLESHOOTING.md#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence)).
+- On a pair, where a rank would still be short of what the sampler needs
+  after the ranks freed their weight backups, the render refuses before its
+  first step with `pair_backup_room`, in the words of the short rank and
+  naming its box and figures. The same queue refuses again until memory is
+  back: clear the Sparks and queue again, shorten the clip, or free memory on
+  the box it names. Turning `lora_low_rss` on does not help a model whose
+  stack is already baked in
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- `dpm_adaptive`, by name or as Sampler Custom's SAMPLER, refuses under an
+  explicit `+fsdp` preset that leaves data parallelism: `dp2+fsdp` from two
+  Sparks up, and `uly2+fsdp` or `cfg2+fsdp` from four Sparks up; `auto` never
+  resolves FSDP and does not refuse. Every rank there shares each model call
+  while each data-parallel group samples its own slice, so the groups must
+  make the same number of calls, and `dpm_adaptive`'s count follows its
+  slice. It refuses class P at the preset's UNET loader, before the loader's
+  own setup step and before its model loads, where the graph names the
+  sampler, and at the sampler otherwise. It asks for another sampler, a
+  preset without data parallelism, or one without `+fsdp`; on more than two
+  Sparks no preset keeps FSDP without data parallelism, so the presets
+  without it serve only where the model fits resident, and a model that needs
+  FSDP there needs another sampler
+  ([TROUBLESHOOTING #156](docs/TROUBLESHOOTING.md#156-dpm_adaptive-refuses-under-a-data-parallel-layout-with-fsdp)).
+  In the added cell of release test v5 on dev `07cc636`, on two Sparks under
+  `dp2+fsdp`, a literal `dpm_adaptive` refused at the loader with no model
+  loaded on either Worker; the other forms, and `dp2+fsdp`, `uly2+fsdp` and
+  `cfg2+fsdp` on four Sparks or more, have not run on hardware
+  ([VALIDATION](docs/VALIDATION.md#release-test-v5-07cc636)).
+
 ### Everyday use
 
+- A ComfyUI that stays up reaches a Worker again after it was down for up to
+  a day, a reboot included. torchmonarch stops reconnecting a quiet channel
+  after 60 s and then never dials that address again, so a Worker down longer
+  than a minute needed a ComfyUI restart; dgx-monarch now sets
+  `channel_reconnect_timeout` to one day in the driver, each Worker and each
+  actor, and reads it back. The cost falls on every one of those processes,
+  once for each peer address that went away: that channel tries a TCP connect
+  about once a second until the peer returns or the day runs out, so a Worker
+  keeps retrying the address of every ComfyUI that ended without a clean stop;
+  and a message sent to such an address in that time is neither delivered nor
+  returned undeliverable until then, so only the caller's own timeout or
+  Monarch's supervision ends that call
+  ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
+- After the Worker loops restart under a live mesh, the render's price wait
+  ends at its first poll, about half a second in, and no longer asks each rank
+  a second time: torchmonarch 0.8.0 returns that first price to the old actors
+  at once.
+- When Monarch reports the old actors dead to the price before any delivery
+  failure comes back, the render reads every loop's id before the fleet is
+  evicted, with 3 s per host. When every loop serves a new id, a sampler
+  render, or the UNET Loader's eager load, leaves the fleet unevicted for the
+  heal, as after a delivery failure, attaches again at once and carries on,
+  where it refused with "click Reset attached mesh"; a Pipeline or Identity
+  Gate render retires it instead (next item). Anything else is evicted as
+  before. These were checked on CPU; the pair checks have not run.
+- A KSampler Pipeline or Identity Gate render, which cannot leave the mesh its
+  session started on, now retires the stale mesh when every Worker loop
+  restarted, with the same short stop and liveness proof, and refuses with
+  "The Worker loops restarted; queue again"; queuing the workflow again
+  attaches a fresh mesh. After a delivery failure every re-queue used to
+  refuse until a KSampler render attached again, and after a SupervisionError
+  the fleet was evicted first and the refusal waited for its stop. Loops
+  that did not all restart, a teardown in progress, a prior stop with no
+  known outcome, and an earlier pipelined render's result still in flight
+  keep the old behaviour, except that while the driver's own cleanup is
+  still stopping that fleet the refusal says so and to try again when it
+  ends; the gate's quarantine on an aborted run is unchanged. Checked on CPU;
+  the pair checks have not run.
+- A normal ComfyUI exit while a render attaches again after a Worker restart,
+  or while a Pipeline or Gate render retires the stale mesh, ends that detour
+  with no warning and no error after the exit's notice: the render's own stop
+  of the stale mesh logs nothing, an id reading, probe or attach under way runs
+  to its end (a reading of the Workers' ids over ssh that had started still
+  asks each host it had yet to ask, up to 3 s per host or 10 s in a
+  re-attach, and then the render stops), and the render ends with "the driver
+  is exiting". Any attach the exit reaches, a first one included, now ends
+  once its attempt fails, with no id reading, no second attempt, no transport
+  poison and no restart of the Worker
+  services, where with `auto_heal` on it used to restart them while ComfyUI
+  was closing; only `auto_heal`'s check already under way before an attach
+  runs to its end, and may still restart a Worker service it found dead
+  ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 - A graph with no LoRA stack whose model takes no slab residency no longer
   pays two proof renders before its first render. The first-use gate could
   only record that there was nothing to compare there, and that verdict
@@ -21,9 +467,17 @@
   the full check. A no-material answer writes one ledger row, for the context
   the render uses, marked as rendered nothing; any other answer runs the full
   check. The Identity Gate node always renders. The 54 of those templates
-  whose notes promised the proof renders now say none run. Not yet run on
-  hardware
-  ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+  whose notes promised the proof renders now say none run. On 2026-11-13
+  (dev `40af2d7`, the first Spark under its stability clock cap, max 2100
+  MHz, highest reading 2093 MHz) four such graphs ran no proof render, wrote
+  one ledger row each and gave their reference latents; the time from Queue
+  to the render's start fell by 0.44 to 9.17 s, little where the fresh load
+  dominates, and at that MiniMax H3 shape at one step the check took 9.6 s
+  where it had taken 585.8. A fall-through after the path's load, where a
+  Worker answers otherwise, was not staged: it needs a fault no switch
+  offers, and CPU tests hold it
+  ([VALIDATION](docs/VALIDATION.md#proof-block-40af2d7),
+  [TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
 
 - Fix: a first-use check that compared nothing no longer blocks a later
   capacity rescue. Its INCONCLUSIVE row, and the Fleet and explicit-on rows a
@@ -38,9 +492,23 @@
   marker for that read and still grant no skip; an unproven INCONCLUSIVE that
   is the newest row of its context, and every FAIL, deny as before, in the
   same words. In one context a newer verdict that compared nothing supersedes
-  an older unproven one; a FAIL is lifted only by a later bound PASS. CPU
-  tests on the real ledger; not yet run on hardware
-  ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+  an older unproven one; a FAIL is lifted only by a later bound PASS. An
+  explicit-on row of such a check, of any build, speaks for a residency it
+  never ran: it never decides there, and beneath it only a denial another
+  check copied there goes, with a guard that a later terminal row of its own
+  version closed there. An
+  older unproven or cut-off verdict that a check run with `slab_weights` on
+  left there still denies, also under another build's such row, which used
+  to hide it; a PASS a check on the auto graph stamped there still clears;
+  and a copy that reads clear on its own, or any other row of another build,
+  stays as it read. CPU
+  tests on the real ledger. On 2026-11-13 the rows such checks wrote on dev
+  `40af2d7` read clear three ways, contextless, under their own context and
+  as the loader reads them for a load, where the old reader denied the same
+  kind of row; rows an older build wrote read unknown until the load's own
+  scope clears them
+  ([VALIDATION](docs/VALIDATION.md#proof-block-40af2d7),
+  [TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
 
 - Fix: a first use whose text models were staged before the model's load no
   longer fails for room the driver itself held. On a pair with the Init
@@ -83,9 +551,17 @@
   load reads short, costs one quote or status read and frees nothing unless
   the Workers would stop the load; a read that
   fails or times out frees nothing. A short sibling gets no driver unload,
-  and nothing is freed while another render runs. CPU tests; not yet run on
-  hardware
-  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+  and nothing is freed while another render runs. On 2026-11-14 (dev
+  `f297c70`, the first Spark under its stability clock cap, max 2100 MHz,
+  highest reading 2093 MHz) p-h3-image under `uly2` on the pair had its 2
+  text models unloaded before the first-use check, MemAvailable 80.9 to
+  106.3 GiB, and rendered with no card, as it did on one Spark under
+  `single` from 76.2 to 101.6 GiB; under `auto` it still refuses with its
+  slab card, as before. The refusals to free with no quote to ask are held
+  by tests alone. A re-queue after a cancel was not read: the cancel took
+  the abandoned-lease heal of TROUBLESHOOTING #87, and the step did not act
+  ([VALIDATION](docs/VALIDATION.md#proof-block-f297c70),
+  [TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
 
 - A re-queue in the same driver can no longer encode or load on the driver
   with nothing priced before it. ComfyUI keeps the UNET Loader's output while
@@ -95,16 +571,48 @@
   a still swapped for a clip at 1344x768 encodes for 94 GiB or more, which takes
   the host down. The driver now prices such a spend where it happens, at Add
   Guide (MiniMax H3), at Reference to Video (MiniMax H3) for a reference video,
-  and at the stock loader nodes of a text encoder, checkpoint or model, at what
-  the loader charges for it, and refuses before anything is spent where the
-  spend would take the box under the loader's floor (5 GiB, or the Init node's
-  `uma_reserve_gb` where larger) after ComfyUI's models are unloaded and the
-  Workers' idle caches released. That is a new refusal for a queue that today
-  renders only by dipping under the floor. Nothing the loader charged at its
-  size in the same prompt is priced again, and nothing in a graph of a family
+  and at the stock loader nodes of a text encoder, a CLIP Vision file, a
+  checkpoint or model, at what the loader charges for it, and refuses before
+  anything is spent where the spend would take the box under the loader's
+  floor (5 GiB, or the Init node's `uma_reserve_gb` where larger) after
+  ComfyUI's models are unloaded and the Workers' idle caches released, where
+  the driver may do either; the refusal says which of them ran, and rounds the
+  room down so it never prints as the need. That is a new refusal for a queue
+  that today renders only by dipping under the floor. Nothing the loader
+  charged at its size in the same prompt is priced again, and nothing in a
+  graph of a family
   the loader does not price, a family forced on the Init node counting as at
   the loader. The same holds where ComfyUI runs such a
-  node before the loader on a first queue. Not yet run on hardware
+  node before the loader on a first queue. On 2026-11-13 (dev `0f133d8`,
+  the first Spark under its stability clock cap, max 2100 MHz, highest
+  reading 2093 MHz), on a re-queue with the loader cached, a 39-frame clip
+  at 448x256 was refused at Add Guide under a hold after the rescues, with
+  nothing encoded; stills and clips were admitted where they ran, each with
+  its line, the 39-frame clip's encode taking 0.68 GiB of the box against
+  the 49.0 charged; and the Init node's 24 GiB floor was used. The refusal of a
+  short clip and of a text encoder's load is held by CPU tests and canary
+  seam 64 alone: no hold on these boxes could both draw the refusal and stay
+  above 8 GiB if it were wrongly admitted. The step aside for a spend the
+  loader already charged did not come on hardware: on each first queue the
+  loader ran last, and on each re-queue it was cached
+  ([VALIDATION](docs/VALIDATION.md#proof-block-0f133d8),
+  [TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
+
+- Fix: the driver's price of what a node spends before the sampler reads the
+  floor and the forced family as the loader will. It took the configured
+  policy from the one attached mesh, which keeps the configuration it was built
+  from until the Init node runs again, so a `uma_reserve_gb` changed in the
+  config file was not read by a spend ComfyUI ran first: a lowered reserve
+  still refused at the old figure, a raised one let the spend go below it. It
+  now reads the file the Init node names, as `get_mesh` does; where the Init
+  node's `config_path` is a link, it reads the mesh the Init node's last run
+  attached, or, with none or several, the Init node's own reserve. And it took
+  the first DGX Monarch loader in the graph, even one behind a lazy switch's
+  unselected branch or feeding nothing that runs, and missed an Init node
+  whose mesh reached the loader through a switch, pricing at 5 GiB there; it
+  now reads only the loaders ComfyUI will run, follows a mesh through the
+  switches ComfyUI may run, and where two readings remain with different
+  reserves, keeps the larger. CPU tests; not run on hardware
   ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
 
 - The loader now charges a reference video's 40 GiB encode on a first queue
@@ -124,7 +632,14 @@
   28.3 GiB with Gemma 3 12B bf16 (22.7 on disk) and 12.3 with its fp4 file
   (8.8 on disk). Without DynamicVRAM, or where the header cannot be read, the
   whole checkpoint is still charged. The shipped LTX templates load their
-  encoder through Dual CLIP Loader and are unchanged. Not yet run on hardware.
+  encoder through Dual CLIP Loader and are unchanged. On 2026-11-13 (dev
+  `0f133d8`, one roomy load each, the first Spark under its stability clock
+  cap, max 2100 MHz, highest reading 2093 MHz) ComfyUI staged the bf16 file
+  at 25,440 MB and the box fell 26.1 GiB by the load's end against the 28.3
+  charged, and the fp4 file at 11,200 MB and 12.5 against 12.3; a long
+  prompt's encode then took about 3 GiB more (29.15 and 15.37 at the
+  lowest), which no text encoder's charge covers and the 5 GiB floor absorbs
+  ([VALIDATION](docs/VALIDATION.md#proof-block-0f133d8)).
 
 - The decode relief now asks the Workers for the device memory they hold idle
   whenever it acts. It asked them only where freeing the driver's text
@@ -135,7 +650,11 @@
   line now always says whether the Workers released, were not asked and why,
   or had no fleet attached. The guards are as before: nothing while a
   sampler runs, never a reset fleet, and a claim that fails in seconds under
-  a pipelined render. Not yet run on hardware.
+  a pipelined render. On dev `fd03947` (2026-11-13, the first Spark under its
+  clock cap, max 2100 MHz, highest reading 2093 MHz), in Q1's held state, two
+  Worker actors released their idle pools (MemAvailable 14.8 to 21.0 GiB),
+  and the first Spark's decode low read 16.08 GiB where it had read 10.34
+  ([VALIDATION](docs/VALIDATION.md#proof-block-fd03947)).
 
 - On a pair, the room a rank needs to sample now counts the shared memory a
   fresh Worker maps in its first forward. Each rank of the proof block took
@@ -148,8 +667,11 @@
   room under which a rank counts as short, now add 5.6 GiB less what the
   Worker maps at the vote: about 2.7 GiB on a fresh Worker, about 0.1 on a warm
   one, nothing on one GPU, which maps 0.05 GiB of it. A refusal's figures name
-  the term. Not yet run on hardware
-  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+  the term. On dev `fd03947` (2026-11-13) a fresh rank's line gave 2.8 GiB
+  still to map within a need of 10.9, and its Worker's shared memory rose
+  from 2.76 to 5.48 GiB seconds after; a warm rank's gave 0.1, with no rise
+  ([VALIDATION](docs/VALIDATION.md#proof-block-fd03947),
+  [TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 
 - On a pair, a render that the ranks' weight-backup agreement refuses now says
   why in the words of the rank that caused it. The driver receives one rank's
@@ -161,8 +683,12 @@
   ranks' figures after; that rank also logs the refusal at WARNING. The
   healthy rank's text then closes with that rank's remedy. A cause too long to
   cross whole is cut at a character and says so; its own journal has it whole.
-  A render that samples makes no new collective. Not yet run on hardware
-  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+  A render that samples makes no new collective. On dev `fd03947`
+  (2026-11-13), with the acceptance fault on the second Spark, the refusal
+  led with that box's own words and that box logged it at WARNING; nothing
+  sampled and nothing stalled
+  ([VALIDATION](docs/VALIDATION.md#proof-block-fd03947),
+  [TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 
 - A MiniMax H3 graph with a still guide no longer pays at the loader for its
   guide encode and its render activations at once, where the guide's file
@@ -180,8 +706,15 @@
   why. The graph of issue #187 (896x1152, 362
   frames, one reference image and a still guide on a pair) fits on this
   release either way: its activations are priced at 25.0 GiB here, where 1.3.0
-  charged 59.9. Not yet run on hardware
-  ([TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
+  charged 59.9. On dev `fd03947` (2026-11-13, the first Spark under its
+  clock cap, max 2100 MHz, highest reading 2093 MHz) the shipped guide graph
+  with a still was admitted with the two as alternatives (14.0 and 15.9
+  GiB), and the box fell 0.21 GiB across Add Guide. A clip was charged with
+  both. Without DynamicVRAM both were charged, and the driver held the
+  encode's 4.26 GiB to the decode. Issue #187's own shape was admitted as
+  alternatives (14.0 and 25.0 GiB against 90.4) and rendered, low 38.63 GiB
+  ([VALIDATION](docs/VALIDATION.md#proof-block-fd03947),
+  [TROUBLESHOOTING #82](docs/TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
 - Changing model in one session no longer meets the Old model in the way card
   when the box has room. A Worker drops the model in a slot before it loads
   another into it, and the driver's own checks did not count that: flux1-dev
@@ -209,9 +742,12 @@
   did; never while a render is running. A load that
   still does not fit refuses as before and says what it counted and unloaded,
   and the card is offered only where a clear returns more than the drop.
-  `DGXM_DISABLE_SWAP_CREDIT=1` on the driver turns the count off. Not yet run
-  on hardware
-  ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+  `DGXM_DISABLE_SWAP_CREDIT=1` on the driver turns the count off. On dev `dcdbc26` (2026-11-11 and 12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) both pairings rendered with no card, and a load that
+  did not fit after the drop still refused and offered none. A model in the
+  other slot stayed loaded and gave the same latent on dev `e77694c`,
+  once the Ideogram 4 template kept one setup
+  ([VALIDATION](docs/VALIDATION.md#release-build-passes),
+  [TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
 - MiniMax-H3-Image (ComfyUI 0.45.0) runs on its own sharded adapter: stock's
   own packing on every rank, sequence shards with exact pad exclusion on
   Ulysses, and the stacked output head on the checkpoint's grid at stock's
@@ -221,7 +757,15 @@
   set stock's `block_index` on each block's options. The header names the
   family, so auto takes uly2 for it and the driver prices its packed rows and
   its text encoder before dispatch. A row-check tool records the three
-  row-keyed calls at a rank's rows for the hardware run.
+  row-keyed calls at a rank's rows for the hardware run. On a pair of DGX
+  Sparks (2026-11-11, the first under its clock cap, max 2100 MHz, reading
+  2067 to 2099 MHz under load) uly2
+  matched stock ComfyUI on a pin-stripped copy bit
+  for bit for the INT8 ConvRot and W4A8 files at 1024, 2048 and 4096 square
+  and for edits with one and three pictures; a world of one GPU with the pins
+  matched stock with the pins; and `uly2+fsdp` matched uly2. The BF16 file
+  has no identity record against stock, which cannot load it on one Spark
+  ([VALIDATION](docs/VALIDATION.md#minimax-h3-image)).
 - MiniMax-H3-Image ships two templates, text to image and edit, on the files
   ComfyUI's own templates load: the INT8 ConvRot DiT and text encoder, the
   FP16 VAE and the W4A8 prompt expander, with KSampler at 6 steps, CFG 1,
@@ -239,7 +783,8 @@
   labels the family's cfg2 and dp2 cells from the driver's own preflight.
   [MODELS](docs/MODELS.md#model-minimax-h3-image) lists the eight published
   files with their sizes and names the licence MiniMax publishes them under.
-  No render of this family has run on hardware yet
+  The two templates as shipped, under `auto`, have no hardware render yet;
+  the family's identity record is in the bullet above
   ([VALIDATION](docs/VALIDATION.md#minimax-h3-image)).
 - A graph whose prompt expander is on with an empty task prompt, or with one
   that lacks the marker Replace Text fills, refuses class P at the UNET
@@ -258,9 +803,16 @@
   it, cuts it short or is taken for the answer. A caption that still cannot
   be read falls back to the request as written. An empty
   request skips the expander: no language model runs for it. The switch still
-  ships false in both templates. Two hardware probes ran its text stage; a
-  render with the expander on is not yet run on hardware
-  ([MODELS](docs/MODELS.md#model-minimax-h3-image)).
+  ships false in both templates. Three hardware probes ran its text stage
+  while the texts and the read were settled, on a DGX Spark under its clock
+  cap (max 2100 MHz): the last gave the image stage a
+  caption on 125 of 125 counted runs at a median of 6.9 s, and a request long
+  enough to press against the token cap took about 32 s. On dev `dcdbc26` (2026-11-11 and 12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) the text chains of the two shipped graphs ran 44 requests at
+  five expander seeds: 220 of 220 counted runs gave the image stage a
+  caption, at a median of 7.1 s for text to image and 12.9 s for the edit. A
+  render with the expander on has no hardware record with the shipped texts
+  ([MODELS](docs/MODELS.md#model-minimax-h3-image),
+  [VALIDATION](docs/VALIDATION.md#expander-shipped-graphs)).
 - The sweep converter, which the template release test shares, reads the
   child widgets a ComfyUI dynamic combo reveals, under their dotted names,
   from a driver's schema or from the template generator's table. Every
@@ -277,7 +829,11 @@
   graph runs; load your own for real work. A demo file you delete comes back
   at the next start unless `DGXM_DEMO_INPUTS=off` is set, which skips the
   copy ([INSTALL.md](docs/INSTALL.md#install-from-source)), and
-  `tools/gen_demo_inputs.py` draws the files again.
+  `tools/gen_demo_inputs.py` draws the files again. At a first start on
+  hardware (2026-11-11, a Spark under its clock cap, max 2100 MHz, reading 2067 to 2099 MHz under load) the pack
+  placed the 10 files the input folder lacked, removed none, and left the 12
+  files already there under demo names as they were
+  ([VALIDATION](docs/VALIDATION.md#demo-inputs-first-start)).
 - Studio is a supported interface from this release, beside the CLI, the TUI
   and the ComfyUI panel. Its docs and the capability contract in Settings no
   longer call it a draft. The
@@ -307,10 +863,29 @@
   Edit, loads the one editing workflow the driver runs, lists them when there
   are several, and says why and changes nothing when there is none. The
   companion copies the output into the driver's input store, so the 2 MiB
-  upload limit does not apply, and the Operation becomes Edit. Under Edit,
+  upload limit does not apply, and the Operation becomes Edit. Each output gets
+  one copy, so pressing Send to edit again, after the browser stopped waiting
+  for a slow copy or while it runs, binds that copy and makes no other, once
+  the driver answers that it still serves the file; when the driver answers
+  that the file is gone, the copy is made again in the same record. Under Edit,
   Generate stays off until the image input holds an image. Before, Send to
   edit reloaded the text to image graph as "Edit (not supported)" with only
   lineage attached and Generate on ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Loading another workflow in Studio, from the Workflow list, Send to edit or
+  an edited workflow JSON, no longer keeps the previous workflow's prompt
+  inputs for styles or its LoRA insertion targets. Before, an enabled style or
+  an inserted LoRA stack could have Generate refused, because the old input or
+  node did not exist in the new workflow. The notice line now names the
+  control the load dropped; choose the new workflow's prompt input under
+  Ordered prompt styles, and its insertion boundary on the LoRAs tab when it
+  has no LoRA chain. Styles and the LoRA stack stay with the draft. When the
+  loaded workflow has LoRA loaders of its own, the notice says a held boundary
+  is cleared rather than asking for it again, and that a LoRA stack replaces
+  those loaders by position at Generate, with those it does not reach running
+  at strength 0. A LoRA stack on a workflow without a LoRA chain or
+  boundary is now refused with "Choose an explicit LoRA loader type." and Open
+  LoRAs, in place of "lora_insertion must be a JSON object."
+  ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Over an image in Studio's output viewer, the mouse wheel zooms around the
   point under the pointer. Anywhere else the wheel still scrolls the page, and
   Fit, 1:1, the zoom buttons and drag to pan work as before, except that a
@@ -348,12 +923,10 @@
 - Studio's Grids page explains what a grid compares with a worked example and
   walks a first comparison, 20 steps against 40. The Fleet page says what Fleet
   does, when to use it and how to start. Its button, now Set up Fleet in
-  Create, loads the packaged Fleet workflow and names the next step; before,
+  Create, loads the packaged Fleet workflow with the Fleet label as one draft
+  change, which one Undo takes back, and names the next step; before,
   Configure Fleet workflow only set the draft's Operation label and opened
   Create with nothing to act on ([Studio](docs/STUDIO.md#run-many-prompts-with-fleet)).
-- Studio's artifacts route lists outputs with equal creation times most
-  recently stored first, as the snapshot does, so the viewer shows a finished
-  job's last output even when the snapshot leaves it out ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 - Studio's viewer shows an image chosen after a video at once. Before, it could
   report "Selected media cannot be decoded by this browser" until another
   output was chosen ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
@@ -364,7 +937,7 @@
 - Left and Right on a Studio Recent Outputs tile select the previous or next
   output and show it in the viewer ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 - The Init node's tooltip and description say `sync_ulysses` has no effect on
-  the pinned xfuser 0.7.0; changing it still reruns setup and the identity gate
+  xfuser 0.7.0 or 0.8.0; changing it still reruns setup and the identity gate
   ([Adapters](docs/ADAPTERS.md#what-an-adapter-provides)).
 - The Ideogram 4 template now leaves `sync_ulysses` on, as every other shipped
   template does. It was the one template with the setting off, and the setting
@@ -375,9 +948,13 @@
   stamps. The first Ideogram 4
   render after this update runs its identity gate once more, because a gate
   verdict covers one setting. A workflow saved from the older template keeps
-  the old setting; turn `sync_ulysses` on in its Init node to match. Not yet
-  run on hardware with the setting on
-  ([MODELS](docs/MODELS.md#model-ideogram4)).
+  the old setting; turn `sync_ulysses` on in its Init node to match. With the
+  setting on, the same day on the same pair (the first Spark under its clock
+  cap, max 2100 MHz, highest reading 2093 MHz), the graph gave the latent it gave with it off, no setup
+  was rebuilt, the unconditional model stayed loaded, and the render on the
+  way back took 7 s
+  ([MODELS](docs/MODELS.md#model-ideogram4),
+  [VALIDATION](docs/VALIDATION.md#found-on-the-release-build)).
 - Studio's Operation select lists only the operations the loaded workflow
   supports, read from its input, upscale and save nodes, so a text to image
   workflow no longer offers Edit. A draft that holds an unsupported operation
@@ -400,10 +977,14 @@
   field list keeps a usable height and the pane scrolls instead, with Generate
   pinned at its foot ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Studio names the prompt boxes Prompt and Negative prompt, from the inputs
-  chosen for prompt styles or else the sampler inputs their text reaches, and
-  names other text boxes by their node. The prompt box starts taller and grows
-  with its text, an empty negative prompt waits behind Add negative prompt on
-  Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
+  chosen for prompt styles or else the sampler inputs their text reaches
+  through encoders, switches and text nodes. A text node passes on the text
+  it works on, not a pattern, a find or replacement string, a separator, a
+  template or a key, and ComfyUI's text generators pass on nothing, so those
+  boxes and what you ask a generator read as other text boxes do. The prompt
+  box starts taller and grows with its text, an empty negative prompt waits
+  behind Add negative prompt on Inputs, and raw types such as STRING show
+  only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
 - The UNET loader now prices every model the graph loads on the driver. Under
   `auto` the DiT loads at the first render, after the driver has loaded the
   text encoders, VAEs and any prompt upsampler, and the loader's load window
@@ -421,7 +1002,8 @@
   file that pins an attention kernel off Ulysses and ring, and no DiT file no
   graph here names. It also offers the Load with slab residency card, whose
   render of this graph has no hardware record yet. Models ComfyUI already
-  holds are credited up to their size, where any one held model used to credit
+  holds are credited up to what they take, a text encoder at its measured
+  resident size, where any one held model used to credit
   the whole stack, so a second graph's upsampler is priced too. On a fresh
   driver the price errs high: LTX 2.3 text to video now needs 80.9 GiB where
   it needed 65.8. A model only a fixed switch's other branch reaches, or no
@@ -521,7 +1103,8 @@
   and a fresh load of base and LoRA 17 s. And a change refused because the host copy the held LoRA keeps holds the
   memory now offers the Old model in the way card, "The model loaded earlier
   (wan_animate_2_bf16) holds about 29.6 GiB on the head that this change needs.
-  Clear the Sparks and run again?", when a cleared box would hold a fresh load.
+  Clear the Sparks and run again?", when a cleared box would hold a fresh load,
+  with `lora_low_rss` off the stack's bake included.
   This is the LoRA case of the credit for a load that replaces the stock model
   in its own slot
   ([TROUBLESHOOTING #18](docs/TROUBLESHOOTING.md#18-first-lora-change-on-a-quant-model-is-one-time-slow-historical),
@@ -537,7 +1120,8 @@
   latent. A LoRA the held stack lacks keeps the old price and the card. And a
   re-queue whose UNET loader ComfyUI kept from an earlier queue is now priced
   at the sampler or at Identity Gate (DGX Monarch), by the loader's own price
-  for what is not yet held, so a short box gets the loader's refusal and what
+  for what is not yet held, with the encoders whose encodes have run out of
+  the load window, so a short box gets the loader's refusal and what
   would fit, where only the Worker's wall answered before ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
 - The Ideogram 4 template keeps its JSON caption in a Text (Multiline) node
@@ -594,6 +1178,87 @@
 
 ### Compatibility and verification
 
+- torchmonarch moves from 0.7.0 to 0.8.0, and keeps its default of spawning
+  actors directly. A GPUWorker that fails as it starts now fails the start-up
+  wait itself, and the bring-up error opens with the Worker's own exception
+  line ahead of Monarch's supervision text. Reset, Recycle, detach and a
+  failed setup's rollback stop the Worker actors with their reason before the
+  processes, so a call still in flight reads "stopped: dgx-monarch recycle"
+  and the like, where 0.8.0's process stop alone gives "stopped: parent
+  draining". The proc stop that can follow a lost Worker host now waits
+  Monarch's two stop limits plus 10 s, 100 s at their defaults and never
+  more: 0.8.0 holds it behind a status query of the dead host for up to 1
+  minute, so the old 30 s wait timed out and, with the host unreachable, the
+  next mesh refused until ComfyUI restarted. The group teardown before it
+  keeps its old wait. The stop of a failed mesh creation's cleanup, and of a
+  failed bring-up's rollback, waits Monarch's state limit plus 5 s, 65 s at
+  its defaults. Over loopback, with a Worker loop killed on a single-host
+  fleet, a stop sent more than about 8 s after the loss confirmed once
+  Monarch's state query of the dead host ended, so that cleanup left no
+  ComfyUI restart to do; one sent sooner still ends unknown. A powered-off
+  box or a cut link was not measured, and the leg on a pair of Sparks is
+  still to run. Where the lost host sits beside a live one the stop does not
+  confirm, and these two cleanups then wait up to 65 s for the same unknown
+  outcome, where 0.7.0 waited 30 s and 60 s. When the lost host's procs sit beside a live host's,
+  0.8.0 ends the stop about 30 s after the stop starts (up to 90 s when the
+  stop follows the loss within a minute) without confirming them, and never
+  completes it. The pack spawns every proc mesh under a name of its own and
+  registers every proc stop it issues, so Monarch's report on that stop, and
+  no other, ends its wait at once, with the outcome a timed-out stop gives.
+  On one machine over loopback, a render 40 s after a Worker loop died
+  refuses in 57.5 s (0.7.0: 57.0 s; without that change, 124 s), and a call
+  in flight when a Worker loop dies refuses in 97.5 s (0.7.0: 97.1 s), the
+  stop then following within a minute of the loss. Late failures from a
+  mesh the driver is stopping or has stopped, from Monarch's internal
+  `log_level` and `setup` meshes, and Monarch's report on a proc stop of the
+  pack, including one that arrives after that stop's wait gave up, as after a
+  heal's 2 s stop, now log at INFO with no toast; a live Worker mesh's
+  failure is still an error with a toast. Creating the Monarch
+  client no longer changes ComfyUI's root log level, which 0.8.0 sets to
+  INFO. 0.8.0 builds every rank's launch command before it starts any
+  process, so a command that refuses now ends the bring-up with its rollback
+  confirmed and nothing to stop. 0.8.0 starts OTLP export from
+  `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `..._METRICS_ENDPOINT` or
+  `..._TRACES_ENDPOINT` alone and adds spans to every export, so the driver
+  refuses those three variables, actors start without them and the Worker
+  loop drops them; `otlp_logs = true` now acknowledges the spans too
+  ([TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+  The weekly torchmonarch canary watches `Handle`, which replaced
+  `PythonTask` under every returned Future, and the Monarch names production
+  code uses that it did not list before, among them those the teardown, the
+  fault hook and the root log level guard rest on. Its CPU smoke now also
+  checks a spawn with a bootstrap, the faults a dead proc of it raises, the
+  two bring-up failures the factory reads and where the root log level
+  changes, and Monarch's stop report for a lost rank beside a live one on two
+  loopback Worker loops, and it records direct spawn and the two stop
+  limits. It installs Torch 2.15.0, and its
+  checked baseline comes from its own run. Local CPU checks and native loading pass on 0.8.0;
+  hardware checks have not run.
+- Stock xFuser 0.8.0 from the package index replaces the local
+  `0.7.0+dgxm.npuimport1` build: 0.8.0 guards the NPU ring import that stock
+  0.7.0 made while it built CUDA attention, which closes issue 3.
+  `tools/build_xfuser_compat_wheel.py`, its test, its CI steps and its INSTALL
+  blocks are gone; `scripts/setup_env.sh`, INSTALL and CI install 0.8.0 under
+  the torch constraint. The requirement reads `xfuser>=0.7.0,<=0.8.0`, since a
+  local label never takes part in matching and no range names the patched
+  build alone, and `src/dgx_monarch/xfuser_build.py` holds the exact list.
+  `dgxm doctor` gains an `xfuser` row on the driver and on each Worker host,
+  which fails on any other build and warns on the patched build with the line
+  that moves it, and an `xfuser build match` row. The Gate's runtime identity
+  now names the xFuser build beside torch and CUDA, read from package metadata.
+  Gate protocol 14 does not change: the added field already makes every older
+  row read stale through the existing context rule, as the torch build did, so
+  a saved row never vouches across builds and nothing else is burned. Stock
+  0.8.0 will not build the FA or FA3 attention without flash-attn 2.7.0 or
+  FlashAttention-3, where 0.7.0 built it and failed only where it ran: the
+  Worker holds that failure, so a cfg, dp or single render with FA chosen sets
+  up and renders as before, and a sequence parallel one refuses class P at
+  load in the pack's words, never with xFuser's ImportError at setup. A
+  reading of the modules the render path reaches finds no change to attention
+  math, and `sync_ulysses` stays inert. The pair's fidelity controls that
+  compare 0.8.0 with the patched build (a Ulysses, a cfg2, a ring and a
+  compiled render, and FA on cfg2 and uly2) have not run yet
+  ([TROUBLESHOOTING #104](docs/TROUBLESHOOTING.md#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
 - This release needs ComfyUI 0.45.0 or newer. ComfyUI 0.45.0 changed the
   MiniMax H3 output head to take one sigma grid per stream, and the sharded
   H3 forward now passes those grids, built as stock builds them. It reads the
@@ -634,9 +1299,13 @@
   torch 2.15.0+cu132. Ideogram4's MODELS row now says its fp8_scaled pair
   reads 0.161 against the BF16 pair, from the file's quantization, and the
   p-h3-image template's note says what its edit's hardware record shows.
-  Still NOT RUN: the release test on torch 2.15, LTX 2.3's decode split, a
-  Worker on ComfyUI 0.43 with context windows, every layout at world 4 and the
-  full sweep runbook
+  The template release test on torch 2.15, the release's own test, ran whole
+  on dev `07cc636` on 2026-11-15 and passed, as it had on dev `f297c70` on
+  2026-11-14: of 75 templates 73 rendered and 2 were skipped and rendered in
+  a second leg with a public LoRA, with no reading under 8 GiB
+  ([VALIDATION](docs/VALIDATION.md#release-test-v5-07cc636)). Still NOT RUN:
+  LTX 2.3's decode split, a Worker on ComfyUI 0.43 with context windows,
+  every layout at world 4 and the full sweep runbook
   ([VALIDATION](docs/VALIDATION.md#release-test-2026-11-04),
   [VALIDATION](docs/VALIDATION.md#torch-2-15),
   [MODELS](docs/MODELS.md#model-p-h3-image),
@@ -697,6 +1366,22 @@
   counts, 73 workflows, 21 nodes and 143 declared inputs, and a test ties them
   to the generated inventory. The acceptance record adds the browser round of
   2026-11-03 and keeps the gaps it did not repeat.
+- The upstream gate now replays the checkpoint prefix rule of the ComfyUI it
+  answers for. ComfyUI master stopped keeping whole a file with SenseNova's two
+  top-level backbone keys on 2026-11-17 (ComfyUI #17790), while the newest
+  release still keeps it whole, and the gate kept the release rule on master.
+  The two rules hand the model different keys only when such a file also holds
+  keys under the prefix master picks; the two public SenseNova checkpoints
+  whose headers were read for this change hold every key at the top level.
+  On master, a file of that mixed shape could meet a #120 refusal
+  that master's own load does not warrant, or, with one extra tensor, pass
+  where it should meet the #91 or #149 refusal. The driver takes the rule from
+  ComfyUI's own loaded function, a Worker before its first load from the source
+  it is about to import, and the sweep matrix and `tools/fp8_paths.py
+  --comfy-dir` from the checkout they name. Where the rule cannot be read, the
+  gate refuses a file that either rule refuses. The comfy canary's
+  dropped-scale gate step, red against master, passes again
+  ([TROUBLESHOOTING #120](docs/TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
 
 ### Rendering
 
@@ -731,8 +1416,14 @@
   the same point, naming `uly4` at four Sparks, where `auto`'s fold used to
   reach the refusal after setup and the load. DESIGN section 5.9 now says
   which refusal classes a script or API client should retry, and after what.
-  Not yet run on hardware
-  ([TROUBLESHOOTING #49](docs/TROUBLESHOOTING.md#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence),
+  On a pair (dev `fd03947`, 2026-11-13), an explicit `ring2` on a padded H3
+  sequence refused at the sampler 23.9 s after Queue, class K, 4959 rows
+  with 1 pad row, naming uly2, before any load, and the Identity Gate node
+  refused the same before its proof render. The uly4 fold, the head-count
+  refusal and Wan SCAIL's early refusal are not run here, because a pair
+  cannot make those layouts
+  ([VALIDATION](docs/VALIDATION.md#proof-block-fd03947),
+  [TROUBLESHOOTING #49](docs/TROUBLESHOOTING.md#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence),
   [BENCHMARKS](docs/BENCHMARKS.md#a-second-report-minimax-h3-on-uly4-issue-188)).
 - An UltraTex render is priced at the rows its forward holds. ComfyUI's
   sample-time estimate counts every token of every view, of the normal atlas
@@ -749,9 +1440,12 @@
   latent, so that render is priced at 37.4 GiB, and at 34.5 GiB where the
   negative carries the masks too. Nothing to set. The factor, the
   reserve and the load decision stay ComfyUI's, the price is never above
-  stock's, and a pair whose rank cannot hold the model still refuses. Not yet
-  run on hardware
-  ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency),
+  stock's, and a pair whose rank cannot hold the model still refuses. On dev `dcdbc26` (2026-11-11 and 12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) a pair rendered six views at 2048 at that price, in
+  169.5 s of sampling a rank against 306.2 s on one GPU, with the same
+  latent; one GPU matched stock ComfyUI exactly; and a true shortage
+  still refused
+  ([VALIDATION](docs/VALIDATION.md#release-build-passes),
+  [TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency),
   [MODELS](docs/MODELS.md#model-ultratex)).
 - A LoRA that patches a weight ComfyUI renames at load now bakes under FSDP.
   A FLUX checkpoint stores a q/k norm weight as `<...>_norm.scale` and the
@@ -767,7 +1461,9 @@
   written. With `lora_low_rss` on and no FSDP the same keys used to stay as
   host copies behind a warning that they "did not verify against the
   checkpoint"; they are now restored from the file like every other key, and
-  the warning is gone.
+  the warning is gone. On dev `dcdbc26` (2026-11-11 and 12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) `uly2+fsdp` rendered the
+  UltraTex stack at 1024 and at 2048 a view and matched uly2 exactly
+  ([VALIDATION](docs/VALIDATION.md#release-build-passes)).
 - A Worker that ComfyUI loads only partly now computes a LoRA's patched weights
   as its full load does. ComfyUI's classic patcher gives every patched module
   it leaves off the device a cast-time patch, and that patch is the full
@@ -785,12 +1481,24 @@
   load whole before sampling where it can: it bakes the stack under a full
   load and frees ComfyUI's backup, the route `lora_low_rss` takes, and logs
   one line. It needs room for the backup of the patched layers still off the
-  device while it bakes, and a later stack change on that model reloads it
-  from disk. Where there is no room, BF16 and INT8 files render from the
+  device while it bakes, and for the bake itself, asked by each layer's own
+  format (on dev `48e0509`, the first Spark under its stability clock cap,
+  max 2100 MHz, highest reading 2093 MHz, every layer was asked the scaled
+  FP8 share, and 371 INT8 ConvRot layers were declined 0.3 GiB short), and a later stack
+  change on that model reloads it from disk. Where there is no room, BF16 and INT8 files render from the
   cast-time weights, and an FP8-family file with a LoRA stops before sampling
   with a class C message that says what was tried. `lora_low_rss` on, the
   Spark default, was never affected. Found by reading and held by CPU tests
-  against ComfyUI's own patcher; no hardware render isolates any of it yet.
+  against ComfyUI's own patcher. On hardware the route ran on a BF16 file
+  (FLUX.2 Klein Base 9B with a LoRA stack; dev `dcdbc26`, 2026-11-11 and 12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) and on an INT8 ConvRot file
+  (Wan-Animate 2; dev `e77694c`, 2026-11-12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz), and each render gave the latent of the same render
+  loaded whole. A plain FP8 file took the route twice with two stacks (Qwen
+  Image; dev `2864a7b`, 2026-11-12, the first Spark under its stability
+  clock cap, max 2100 MHz, highest reading 2099 MHz), with the whole load's
+  latent each time. A scaled FP8 file and a second INT8 ConvRot
+  file never loaded partly under the test's memory holds, so those formats
+  and the class C stop have no hardware row
+  ([VALIDATION](docs/VALIDATION.md#release-build-not-run)).
 - On a DGX Spark the driver's ComfyUI now reads free memory as MemAvailable
   less a 7.6 GiB floor, not the device figure that follows MemFree. ComfyUI
   sizes VAE batches and batches cond with uncond from that reading, so a few
@@ -809,15 +1517,22 @@
   integrated CUDA device only; `DGXM_DISABLE_DRIVER_UMA_MEMORY=1` turns it
   off, and `dgxm doctor` has a `driver memory reading` row that says which
   reading the running driver has. A stock render recorded with little MemFree
-  can change once, since its batches no longer split
-  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+  can change once, since its batches no longer split. On dev `dcdbc26` (2026-11-11 and 12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) every identity control kept its latent; with the reading
+  switched off the UltraTex and Anima latents and their stock twins were the
+  same bits; and a one-GPU video render took the box as low either way (11.6
+  and 11.4 GiB available)
+  ([VALIDATION](docs/VALIDATION.md#release-build-passes),
+  [TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On the same GPUs the driver's ComfyUI now encodes a batch of images one
   image a call, so a graph's conditioning is the same bits at every size and
   in every memory state. The reading alone left a batch priced at most of the
   box (six 2048 UltraTex views, 82.8 GiB) to split by what the session had.
   Each image's latent is ComfyUI's own encode of that image alone. Measured
   on a Spark with FLUX.2's VAE, it took 0.86 to 1.0 of the whole batch's time
-  and peaked at 2.28 GiB where six 2048 views in one batch took 12.41 GiB.
+  at 1024 and 2048 a view and peaked at 2.28 GiB where six 2048 views in one
+  batch took 12.41 GiB. A batch of many small images can take about twice as
+  long: 32 images at 256 square encoded in 0.8 s, against 0.4 s as one batch
+  (one run each).
   Decode, video VAEs and tiled encodes are not changed. What changes for you:
   every conditioning of several images changes once against an earlier build,
   and it does not match the same batch encoded at once by a stock ComfyUI on
@@ -827,19 +1542,26 @@
   it off, it steps aside with one WARNING if ComfyUI's encode call changes,
   and `dgxm doctor`'s `driver memory reading` row says whether it is on. The
   trial switch `DGXM_VAE_ITEM_BATCHES` of an earlier build of this release,
-  which also wrapped decode, is gone
-  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+  which also wrapped decode, is gone. On dev `dcdbc26` (2026-11-11 and 12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) each
+  UltraTex graph gave one latent at 1024 and at 2048 a view on uly2,
+  `uly2+fsdp` and one GPU, against stock in the same driver and under memory
+  holds, and with the rule switched off the earlier latents came back
+  ([VALIDATION](docs/VALIDATION.md#release-build-passes),
+  [TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On a DGX Spark, before a VAE decode that ComfyUI prices above its free
   memory, the driver frees what the decode needs and then runs ComfyUI's
   decode unchanged. With DynamicVRAM on, ComfyUI unloads no model for a VAE,
   logs `0 models unloaded.` and decodes whole whatever its free memory reads,
   and on unified memory no out-of-memory error stops it: on 2026-11-12, with
-  the Spark under its clock cap (max 2100 MHz), a one-GPU video render's
+  the Spark under its clock cap (max 2100 MHz, highest reading 2093 MHz), a one-GPU video render's
   decode took the box to 6.7 GiB available while the driver held 32 GiB of
   text encoders no later node needed. The driver now has ComfyUI free the
   decode's price from the text encoders it holds, through ComfyUI's own call.
-  Every other model stays loaded, and a decode made while a sampler runs (a
-  preview at every step) frees nothing. Nothing to set.
+  Whenever it acts it also asks the Workers to release the device memory
+  their last sampler left reserved and idle, and the line says what that
+  gave back. Every other model stays loaded, on the driver and on the Workers,
+  and a decode made while a sampler runs (a preview at every step) frees
+  nothing. Nothing to set.
   The decode is ComfyUI's own call with the same arguments, and a video or a
   single image decodes to the same bits as before; a decode of several images
   takes as many a batch as ComfyUI's free memory allows, as it always did.
@@ -850,8 +1572,22 @@
   `DGXM_DISABLE_VAE_DECODE_RELIEF=1` on the driver turns it off for
   diagnosis, it steps aside with one WARNING if a call it makes fails, and
   `dgxm doctor`'s `driver memory reading` row says so when it is not working.
-  Not yet run on hardware
-  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+  On hardware with the relief (dev `e77694c`, 2026-11-12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) the render above kept 13.0 GiB
+  available, and 6.2 GiB with the relief switched off; a second video render
+  under a test hold kept 10.6 GiB where it had read 7.8. Both gave the
+  latents they gave before. The Workers' part came later. On dev `45e07cc`
+  it asked them only where the decode was still short, and in its proof
+  block the two decodes read on a pair each fitted once the driver's text
+  encoder had given up memory, so the Workers were not asked and the first
+  Spark (under its stability clock cap, max 2100 MHz, highest reading 2093
+  MHz) read 10.34 and 9.99 GiB through them. Dev `fd03947` asks them
+  whenever the relief acts: in the same state on 2026-11-13 two Worker
+  actors released their idle pools and the first Spark (the same cap and
+  reading) read 16.08 GiB through the decode
+  ([VALIDATION](docs/VALIDATION.md#proof-block-fd03947),
+  [VALIDATION](docs/VALIDATION.md#found-on-dev-45e07cc),
+  [VALIDATION](docs/VALIDATION.md#release-build-passes),
+  [TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On a DGX Spark a Worker now makes room for its GPU context before it
   creates one. A Worker makes its CUDA context at its setup (the first
   render, or the UNET loader under an explicit topology), and the NVIDIA
@@ -859,8 +1595,8 @@
   on 2026-11-12 three Worker starts with 1.52, 4.61 and 8.85 GiB free and
   44.7, 47.4 and 50.8 GiB available ended in a raw `CUDA error: out of
   memory` from `cuDevicePrimaryCtxRetain`, each while a test held tens of
-  GiB; one start worked with 8.87 GiB free and every other on record with
-  10.6 or more. Before its first CUDA call a Worker now reads the box's
+  GiB; other starts worked with as little, so it did not happen every time.
+  Before its first CUDA call a Worker now reads the box's
   memory. If less than 16 GiB is free while 21 GiB or more is available, it
   writes to up to 16 GiB of memory in steps of 1 GiB and
   releases it at once, so that the system gives that much page cache back,
@@ -869,16 +1605,33 @@
   still cannot be made, the render refuses in plain words (class C) with
   the box it came from, that box's free and available memory, what the
   Worker did first and what to do, where it used to show a traceback. On a
-  pair it shows only after about ten minutes, and only where the head's
-  Worker failed; where the sibling's failed, the start still ends in a
-  timeout after about ten minutes, without the refusal. Any other error a
+  pair it shows only after about ten minutes, while the other Worker gives
+  up waiting for the one that failed; where the sibling's failed, the
+  driver's log says so at once. Any other error a
   Worker raises at its setup and the driver reads now opens with its box as
   well ("On the head, ..."), as a load error does. Nothing to set.
-  `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's environment turns the
-  make-room step off for diagnosis, a fault in the step leaves
+  `DGXM_DISABLE_CONTEXT_ROOM=1` on the Worker (in its `worker.env`, then a
+  recycle) turns the make-room step off for diagnosis, a fault in the step leaves
   the start as it was, and the Worker's status says what the step did.
   Under comfy-managed residency the Worker leaves the context to ComfyUI's
-  own start, a moment after the room is made. Not yet run on hardware
+  own start, a moment after the room is made. On hardware (dev `48e0509`, 2026-11-12 and 13, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) every Worker start with under 16 GiB free, eighteen in all on one GPU
+  and on the pair, made room in about 4 s and made its context. Each load that
+  followed went on or was refused at its price, except under comfy-managed
+  residency, where one render was refused for a LoRA the test graph carried
+  and two stalled for a separate cause, which dev `45e07cc` answers
+  ([VALIDATION](docs/VALIDATION.md#found-on-dev-48e0509),
+  [TROUBLESHOOTING #62](docs/TROUBLESHOOTING.md#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)). With the step
+  switched off the failure did not come back in four tries, so the refusal's
+  text was not seen on hardware
+  ([VALIDATION](docs/VALIDATION.md#worker-context-starts),
+  [TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+- Fix: on a pair, a setup error the sibling's Worker raises while the head's
+  Worker still waits for it now reaches the prompt in its own words, named
+  "On the sibling, ...", where the driver, awaiting the head first, ended in
+  a bare timeout and never read it. The driver reads the later rank between
+  slices of its wait and logs at once that the rollback waits; the rollback
+  keeps the setup's unspent wait, so it ends when it did before. Not run on
+  a pair
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - On a DGX Spark, a LoRA stack loaded with `lora_low_rss` off is now priced
   at what its bake takes, and where that does not fit the Worker bakes the
@@ -897,7 +1650,7 @@
   2 GiB alone while the Worker's reserve (the Init node's
   `reserve_vram_gb`) is the default 8 GiB or more, because on that model at
   that reserve ComfyUI's own rule for placing a model whole was measured to
-  keep the floor under the load; under 8, and for every other INT8 ConvRot
+  keep the floor under the load on one GPU at the shipped 81 frames; under 8, and for every other INT8 ConvRot
   model, the price covers the whole load itself; for plain FP8, 2 GiB. The
   stack's own LoRA files
   are added, each as often as the stack lists it, when the price is read
@@ -906,8 +1659,16 @@
   held model). A test holds the price against every recorded load, on the
   reading it was priced at: it must admit each one and cover what the load
   took plus the 5 GiB floor (for the Wan-Animate 2 INT8 stack's whole load
-  at the default reserve it shows instead that ComfyUI's rule leaves the
-  floor, and that the price covers it at a lowered reserve).
+  at the default reserve, one GPU and 81 frames as on record, it shows
+  instead that ComfyUI's rule leaves the floor, and that the price covers it
+  at a lowered reserve). On a pair that rule did not leave the floor with
+  ComfyUI's backup held: the first Spark read 4.29 GiB on dev `48e0509`
+  (under its stability clock cap, max 2100 MHz, highest reading 2093 MHz).
+  On one GPU at 241 frames the same edge projects under it, a projection and
+  not a reading. The price is unchanged for both; the
+  Worker now gives the backup up before the first step where the room left
+  is short of what the sampler may ask, on a pair every rank together
+  ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
   A load that fitted the old price and does not fit the
   new one is refused with the new figure, where before it was admitted and
   took the box under its floor. Where the classic bake does not fit and
@@ -916,9 +1677,21 @@
   `LoRA bake: the classic bake of this stack needs`. It does that only when
   the identity gate holds a PASS for the combination's in-place bake, which a
   render of it with `lora_low_rss` on records; with no PASS the refusal says
-  so and names both prices. The default (`lora_low_rss` on) is priced as
+  so and names both prices. Where dropping the slot's model copies weights
+  to the host first (a model held only partly, or a model held in the other
+  slot, wherever the Worker's own drop cannot avoid the copy), neither bake
+  is chosen or priced with what that drop returns, as the swap credit counts
+  nothing for it. The
+  default (`lora_low_rss` on) is priced as
   before. Nothing to set. Run on hardware on 2026-11-12 with every format on
-  the one line and its files; the charge by format rests on that day's loads
+  the one line and its files; the charge by format rests on that day's loads.
+  On that build (dev `45ffb36`, the first Spark under its stability clock
+  cap, max 2100 MHz, highest reading 2093 MHz) a load with no PASS refused
+  and said so; after one render with the switch on had recorded the PASS,
+  the Worker baked the same stack in place in about 6 s on one GPU and gave
+  the classic bake's latent, there and on the pair; and with room it took
+  the classic bake. The measurements behind the price are in
+  [VALIDATION](docs/VALIDATION.md#classic-bake-memory)
   ([TROUBLESHOOTING #12](docs/TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
 - A forced `family_adapter` no longer binds a model its adapter refuses under
   `auto`. This changes what a forced family does. Before, forcing bound by
@@ -968,8 +1741,9 @@
   with nothing to gather. cfg2, dp2, ring
   and any degree above uly2 split a sample's views or are not stock's math, so
   a Flux, Flux 2 or LongCat render with UltraTex conditioning refuses there
-  before dispatch, and auto skips the cfg rows for it. No hardware render has
-  run yet ([MODELS](docs/MODELS.md#model-ultratex),
+  before dispatch, and auto skips the cfg rows for it. On dev `dcdbc26` (2026-11-11 and 12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) uly2 matched one GPU, one GPU matched stock ComfyUI in the same
+  driver, and `uly2+fsdp` matched uly2, all exactly, at 1024 and at 2048 a
+  view ([VALIDATION](docs/VALIDATION.md#release-build-passes), [MODELS](docs/MODELS.md#model-ultratex),
   [TROUBLESHOOTING #148](docs/TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
 - MiniMax-H3-Image, which ComfyUI 0.45.0 added, is detected from its header
   as `minimax_h3_image` and runs on its own sharded adapter. A file
@@ -1001,40 +1775,54 @@
   checkpoint's. A `single` preset on a two-rank mesh resolves to dp2 on the
   Worker and keeps the card. cfg2, dp2 and their `+fsdp` forms still ask for
   the waiver wherever the pins run; a bf16 or fp16 file under `+fsdp` renders
-  with its pins dropped and recorded, with no card ([TROUBLESHOOTING
-  #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+  with its pins dropped and recorded, with no card. On hardware (2026-11-11,
+  the first Spark under its clock cap, max 2100 MHz, reading 2067 to 2099 MHz under load)
+  the pinned FLUX.3 Klein and MOSS-Image SFT INT8 ConvRot test graphs matched
+  stock ComfyUI exactly in a world of one GPU, under the first-use gate
+  and with slab residency, with no card; on the pair a `single` preset
+  raised the class K card for both, and explicit cfg2 for MOSS-Image, the
+  one file it ran on without a waiver ([TROUBLESHOOTING
+  #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel),
+  [VALIDATION](docs/VALIDATION.md#own-pins-one-gpu)).
 - The render record's pin line says "kept" where it said "ran": the record
   reads the pins from the load and the topology and does not count attention
   calls. The field names are unchanged.
 - Fix: the Workers prepare Anima's text as stock ComfyUI does, so a Worker's
-  one-GPU Anima render is expected to equal stock's. Stock runs a prompt in
+  one-GPU Anima render equals stock's. Stock runs a prompt in
   inference mode, where Anima's `extra_conds` runs the text adapter and pads
   the text to 512 rows once per conditioning. A Worker samples outside it, so
   it took the branch ComfyUI keeps for training: it ran the adapter on every
   model call and split a prompt pair whose rows differ into two batch-1 calls
   where stock makes one batch-2 call. On 2026-11-10 the shipped graph's
   one-GPU Worker render read one-step NRMS 0.028 against stock, which this
-  difference is expected to explain. The adapter now runs stock's method in
+  difference explains. The adapter now runs stock's method in
   inference mode on every load, as FLUX.3's and MOSS-Image's do, and on the
   CPU the Worker's model calls now equal stock's; a canary seam lists every
-  inference-mode branch in ComfyUI's source. The hardware comparison against
-  stock has not run yet
-  ([TROUBLESHOOTING #151](docs/TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+  inference-mode branch in ComfyUI's source. On hardware (2026-11-11, the
+  first Spark under its clock cap, max 2100 MHz, reading 2067 to 2099 MHz under load) the
+  Worker's one GPU, row 0 of a dp2 render, `auto` and explicit uly2 each
+  matched stock ComfyUI exactly, at one step and over the full 30 steps
+  ([TROUBLESHOOTING #151](docs/TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui),
+  [VALIDATION](docs/VALIDATION.md#evidence-anima)).
 - Change: Anima under `auto` renders on uly2 at every size, where it took cfg2
   below 1.2 MP on BF16. With the fix one GPU folds the prompt and the negative
   into one batch-2 call, as stock does, and cfg2's two batch-1 calls are not
   that call, so `auto` table row 47 is withdrawn; explicit cfg2 still renders
   and is not the same math. The shipped Anima template sets `auto`, so it
-  now renders on uly2. The speed cost against cfg2 is NOT RUN on hardware.
+  now renders on uly2. At 1024 square on a pair with the first Spark under
+  its clock cap (max 2100 MHz, reading 2067 to 2099 MHz under load), the 30 steps sampled in 12.6 s on uly2
+  against 9.6 s on cfg2 and 19.1 s on one GPU (2026-11-11).
 - uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1 fill each
   fused-norm call of their sharded blocks to the rows one GPU normalizes, as
   FLUX.3 and MOSS-Image already did. comfy-kitchen's fused AdaLN picks its
   kernel by a call's rows, and at 512 square a rank's call fell on the other
   side of that switch: on 2026-11-07 uly2 there read one-step NRMS 0.006 to
   0.062 against one GPU, while the shipped 1024 square stayed bit-identical.
-  Sizes below about 1024 square are expected to match one GPU exactly now; a
-  hardware re-read is pending
-  ([fused AdaLN switch](docs/VALIDATION.md#fused-adaln-switch-other-families)).
+  On 2026-11-11, with the fill and the first Spark under its clock cap (max
+  2100 MHz, reading 2067 to 2099 MHz under load), the four 512-square cells matched one GPU bit
+  for bit, as did LongCat and Radiance at 512 and 1024 square and the Qwen
+  Image 2.1 edit template at 1024
+  ([fused AdaLN switch](docs/VALIDATION.md#fused-norm-fill-reread)).
 - LTX under sequence parallelism runs the two row-count-keyed calls in each
   block, comfy-kitchen's fused AdaLN and the per-head gate projection, at one
   GPU's row count, and the sharded self-attention applies RoPE through the call
@@ -1047,7 +1835,10 @@
   of a stream, and a padded attention's output, now reach the next linear
   contiguous, as stock's do, so its bias is added in the same fused call. A ComfyUI whose LTX blocks no
   longer read the globals this binds refuses a sharded render at load, class P,
-  and canary seam 51 names the change ([VALIDATION](docs/VALIDATION.md#evidence-ltx-2-3-t2v)).
+  and canary seam 51 names the change. On 2026-11-11, with the first Spark
+  under its clock cap (max 2100 MHz, reading 2067 to 2099 MHz under load), uly2 matched one GPU bit
+  for bit at the three geometries, and at batch 2 and on a padded stream
+  ([VALIDATION](docs/VALIDATION.md#ltx-2-3-latent-reread)).
 - `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP
   only when the prompt and the negative encode to different text rows, as on
   the shipped graphs, and Ulysses for an equal pair; Anima's row had the same
@@ -1061,7 +1852,11 @@
   still renders. At world 4 an equal pair on these rows no longer refuses at
   batch 1: it takes the family's Ulysses row, folded into `uly2+ring2`, and
   at batch 2 `uly2+dp2`
-  ([cfg2 rows](docs/VALIDATION.md#campaign-k-equal-pairs)).
+  ([cfg2 rows](docs/VALIDATION.md#campaign-k-equal-pairs)). On 2026-11-11,
+  with the first Spark under its clock cap (max 2100 MHz, reading 2067 to 2099 MHz under load), the rule read as
+  drawn on Boogu FP8: the shipped pair under `auto` took cfg2 and matched one
+  GPU exactly, and an equal pair took uly2 and matched it too
+  ([Boogu](docs/VALIDATION.md#evidence-boogu)).
 - Sampler Custom renders run the first-use identity gate, as KSampler renders
   do. The six LTX graphs and p-h3-image used to render on stock residency until
   someone ran the Identity Gate node, and refused on a `*+fsdp` preset. Now the
@@ -1176,6 +1971,17 @@
 - `compile_dit` no longer forces stock residency on the families it leaves
   eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4; the Init
   tooltip names the families it compiles ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
+- Before a render-site capacity check refuses, the driver unloads the models
+  ComfyUI holds on its host, such as the last render's text encoder and VAE,
+  and checks again; set `DGXM_DISABLE_DRIVER_UNLOAD=1` to turn this off. It
+  stands down only for work on the Workers attached now, so a Reset attached
+  mesh or a Clear and retry earlier in the session does not stop it. On
+  hardware (dev `e77694c`, 2026-11-12, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) the session that had shown the fault ran again with its
+  reset: the render-time check unloaded two models, gained 39.2 GiB, and the
+  render ran. The loader's own unload after a reset is not yet run on
+  hardware, since that load fitted with the swap credit alone
+  ([VALIDATION](docs/VALIDATION.md#found-on-the-release-build),
+  [TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
 - Before a render-site capacity check refuses, the driver now also asks the
   actors to release their allocator caches once ComfyUI's own models are
   unloaded, so a session's second render no longer counts the first render's
@@ -1183,10 +1989,54 @@
   the whole request before its proof render: a request that cannot fit the
   slab path gets one INCONCLUSIVE capacity row and no proof render, renders on
   stock residency, and the next request checks again ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Fix: after the Workers' models go, the render-site capacity checks charge
+  the DiT again. The memos that credit a model a finished render or a
+  pipelined submission placed outlived a Clear VRAM node at `hard`, an
+  identity ceremony's clean reload and the driver's other drops of every
+  rank's models, so under `auto` a re-queue after a hard Clear VRAM was priced
+  with its DiT credited although the Workers had dropped it, and could admit a
+  render whose DiT and activations do not fit together. These doors now
+  drain them, the mesh's own included (a fleet marked defunct and a new
+  fleet in place of a retired one, a configuration change, a topology change or a failed setup's rollback, a
+  worker-policy change on which a Worker drops a model, which its
+  `apply_worker_args` reply now names), and every check, the
+  gate's capacity check included, reads one rule. Under an explicit preset the
+  driver footprint and MiniMax H3 checks credited the DiT after a hard clear
+  too, since ComfyUI's cached loader node does not place it again; an
+  operator's drop (a hard clear, a configuration change, the capacity rescue's
+  slot drop) now ends that credit until the loader node runs again or a load
+  of the checkpoint completes. A recycle leaves it, as before. CPU tests; not run on hardware
+  ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Fix: the Wan SCAIL, SCAIL-2 and Animate 2 activation check credits an
+  explicit preset's eager load, as the driver footprint and MiniMax H3 checks
+  do. It charged the file a second time against a reading that already held
+  it, so a long clip or a busy box whose activations fit was refused. CPU
+  tests; not run on hardware
+  ([TROUBLESHOOTING #47](docs/TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight)).
+- Fix: the MiniMax H3 activation check, the reference and pose check and the
+  driver footprint's reference report read a Sampler Custom render's
+  conditioning from its guider. They read only a KSampler request's own, so a
+  Sampler Custom render, p-h3-image's among them, was priced on its latent
+  alone: a p-h3-image edit with nine large pictures counted 8,285 rows where
+  the same conditioning on KSampler counts 83,714. The sample deadline reads
+  the guider's rows too. CPU tests; not run on hardware
+  ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Fix: the reference and pose check counts only the positive entries that can
+  run in one step. It summed every entry's references, so two entries whose
+  timestep windows never overlap, sharing one reference, were priced as one
+  call holding both (7.19 GiB where either needs 6.88). Overlapping windows,
+  and entries with no window, keep the sum. It prices the largest pose of the
+  entries that can share a step; it took the first, which could be smaller
+  than a later entry's own. CPU tests; not run on hardware
+  ([TROUBLESHOOTING #47](docs/TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight)).
 - The driver's deadline for a render's sample call grows with the work. For
   MiniMax H3 and Wan SCAIL, SCAIL-2 and Animate 2 it allows 600 s per step at
   109,466 packed rows per rank, scaled linearly with the rows on each rank, at
-  least 120 s per step and at most six hours in all. `DGXM_SAMPLE_TIMEOUT`
+  least 120 s per step and at most six hours in all. A MiniMax H3 step gets
+  that once for each model call the request states: each positive entry, and
+  each negative where the sampler runs the negative (CFG other than 1, or a
+  sampler that keeps it at 1), on a two-checkpoint guider's second model too.
+  `DGXM_SAMPLE_TIMEOUT`
   stays the floor, 3600 s unless set, and wins over the cap. A 15 second H3
   clip on one Spark, which sampled for 80 minutes and was cut off at the hour,
   now gets 200 minutes; other families keep the larger of the floor and 120 s
@@ -1225,8 +2075,10 @@
   decode loop runs once on the driver with only its per-unit decode swapped,
   so the output is byte-identical to the one-host tiled decode: MiniMax H3
   through both nodes, and the Wan 2.1 and 2.2, HunyuanVideo 1.0 and 1.5 and LTX
-  video VAEs through VAE Decode (Tiled). A Worker loads the driver's VAE file
-  in the driver's dtype, decodes under the driver's attention and torch
+  video VAEs through VAE Decode (Tiled). A VAE with quantized layers, and any
+  decode on a driver whose ComfyUI decodes on the CPU, stay on the driver. A
+  Worker loads the driver's VAE file, by the name Load VAE lists, in the
+  driver's dtype, decodes under the driver's attention and torch
   backend flags, holds one decode VAE that `status()` reports and `clear_vram`
   drops, and declines any unit it cannot decode exactly, which the driver then
   decodes with one WARNING; a reply of any other shape or dtype than the stock
@@ -1275,9 +2127,115 @@
   decoder and MiniMax H3 context windows, and
   [VALIDATION](docs/VALIDATION.md#comfyui-0440-additions) lists the
   behaviours no hardware has run.
+- Three fixes from the 2026-11-04 release test. The identity gate's stock
+  comparison frees what the driver host can reload before it gives up, so the
+  Flux 2 template renders on a fresh pair instead of refusing with its 33 GiB
+  text encoder on the head ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+  A LoRA change on a base a Worker already holds is priced as the in-place
+  swap the store makes, without a second copy of the file, so the Wan-Animate 2
+  memory-saver template no longer refuses under an explicit topology. And
+  where a model call is sharded, every rank batches cond and uncond the way
+  the leanest rank does, so two boxes with different free memory no longer
+  stall on mismatched collectives
+  ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
+- On four or more Sparks, a layout that shards each model call without FSDP
+  and splits the batch over data-parallel groups (`uly2`, `ring2` or `cfg2`
+  with dp2, which `auto` picks at world 4 for an even batch) no longer stalls
+  under `dpm_adaptive`. Each group sizes its steps from its own slice and can
+  make more model calls than the other, and the cond batch exchange on every
+  call spanned all ranks, so the longer group waited for ranks that had
+  finished until the timeout. The exchange now runs only among the ranks of
+  one data-parallel group. A pair of Sparks is unchanged.
+- A data-parallel render keeps its progress bar and stall guard alive until
+  the last group finishes. Each group's result leader sends its own done, and
+  the driver stopped reading at the first one, so a slower group's steps were
+  dropped and a gap longer than `DGXM_SAMPLE_STALL_TIMEOUT_S` marked a healthy
+  mesh stalled ([TROUBLESHOOTING #86](docs/TROUBLESHOOTING.md#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)).
+- The loader's early batch check reads only the samplers that take its model.
+  A dp2 mesh feeding the Fleet KSampler with a batch of one, or a batch-one
+  branch on another loader, no longer refuses a valid load; a sampler the
+  check cannot tie to the loader gets its answer at render submit
+  ([TROUBLESHOOTING #16](docs/TROUBLESHOOTING.md#16-single-preset-refuses-because-the-latent-batch-does-not-divide-dp)).
+- Chroma's cfg2 trim removes only the equalizer's hard padding. A custom
+  conditioning whose attention mask carries a finite bias on some text tokens
+  keeps those tokens and its mask, as a one-GPU render does; before, the trim
+  dropped them and the mask.
+- Gate authority holds every box to the driver's torch and CUDA build. Each
+  Worker reports its build at setup and in the Gate ceremony's provenance, and
+  checks a grant's build against its own. A pair on two builds refuses a risky
+  render and names each box's build, where before a Worker recreated with only
+  a new torch reused a PASS proven under the old one. A matched pair keeps its
+  PASS rows ([TROUBLESHOOTING #8](docs/TROUBLESHOOTING.md#8-version-skew-between-hosts)).
+- A sharded FLUX.3 render refuses at load, class P, when the installed
+  ComfyUI's block no longer reads the norm global the parity route binds; it
+  used to warn and render with a possible bf16 difference. A topology
+  without sequence parallelism, such as `single`, still renders ([TROUBLESHOOTING #121](docs/TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)).
 
 ### Operations
 
+- A normal ComfyUI exit (Ctrl+C, or the server closing by itself) now stops
+  the Workers' actors through Monarch's own exit step, and the driver logs no
+  error, whether or not a call is in flight: it logs one INFO line as the exit
+  begins ("The driver is exiting: Monarch's exit step stops the Worker actors,
+  and the driver reports no Worker faults from here on"), a call that the exit
+  stops neither evicts nor stops that fleet again nor reads as a lost Worker,
+  and a cleanup already stopping a dead fleet logs none of its own lines. In
+  CPU tests over loopback a local fleet's actors went with the driver, and a
+  Worker service's within a few seconds (Monarch allows each up to 10 s when
+  a call holds it). 1.4.0's own exit stop ran after Monarch's, against a
+  closed client: in CPU tests it
+  logged `ERROR proc stop on detach timed out` at an exit with no call running
+  or with a call holding its actor, though not with short calls in flight. A
+  cluster's Worker actors outlived a normal 1.4.0 exit (in a CPU test they were
+  still running 100 s later), and only the actor lease ended them. That exit
+  stop is gone. A ComfyUI stopped by SIGTERM, killed, or restarted by
+  replacing its process without running its exit steps still leaves its
+  actors to the lease
+  ([TROUBLESHOOTING #51](docs/TROUBLESHOOTING.md#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
+- A lost Worker's fault toast and render error now open with the cause in
+  plain words, ahead of Monarch's own text: "The Worker on the sibling was
+  stopped by signal 9 (SIGKILL)", "... exited with code 3" or "The driver
+  lost contact with the sibling". Signal 9 adds where to look for an
+  out-of-memory kill and never says there was one. A late fault from a mesh
+  the driver no longer holds reads "a Worker of an earlier fleet", never
+  today's boxes. The render's error has a new type,
+  `dgx_monarch.worker_loss.WorkerLostError`, which ComfyUI names and Studio
+  shows as the error code; 1.4.0 showed Monarch's
+  `monarch._rust_bindings.monarch_hyperactor.supervision.SupervisionError`,
+  which stays chained under it. A refusal the driver raises while it handles
+  the loss keeps its own type and words. TROUBLESHOOTING #4 says how soon each
+  shows up on 0.8.0, measured with Worker services killed or frozen over
+  loopback: a call in flight usually fails within about a second of its process
+  dying, an idle Worker's death is reported after about 30 s, and a render on
+  a lost box fails when the driver's stop of that fleet ends: with a call in
+  flight, about 98 s after the loss of a box beside a live one and about 56
+  to 68 s when the fleet's only box is lost, on loopback. At the failure
+  itself the driver now logs one WARNING, once per fleet, with the cause in
+  plain words, that it stops that fleet once no render holds it, and that a
+  render still waiting on it gets its error when that stop ends, within the
+  actor stop's cap plus the proc stop's own limit (about 105 s at Monarch's
+  defaults); it says nothing once the driver is exiting. A
+  render queued or a Reset pressed while that stop runs is refused, as
+  before, but now says the driver is still stopping the old fleet and to try
+  again when it ends, where it used to advise a Reset or a ComfyUI restart
+  that could not help then; the Reset's line is a WARNING, not an ERROR
+  ([TROUBLESHOOTING #4](docs/TROUBLESHOOTING.md#4-supervisionerror--process-exited-with-non-zero-code)).
+- The ownership occupancy metrics (`[monarch.diagnostics] metrics = true`) are
+  now gauges, which torchmonarch 0.8.0's meter makes, in place of up-down
+  counters that carried each level as a change since the last export. A
+  collector reads them as gauges, not sums. Turning metrics off and on again
+  no longer depends on Monarch merging two instruments of one name; a loopback
+  collector read the right level after the restart
+  ([CLUSTER.md](docs/CLUSTER.md#monarchdiagnostics)).
+- A rank's reply that the driver cannot read, for example one whose class
+  the driver cannot import, now fails like any other rank's failure: the
+  error names the endpoint and opens with the box it came from, where it used
+  to reach the user as a bare unpickling error after the call's own handling.
+  A render's own reply reads the same way, and such a reply never evicts the
+  fleet: its call completed.
+- A failure text that says only "connection lost" no longer marks a fleet
+  dead: in both Monarch builds that text comes only from QUIC, which the pack
+  never runs.
 - A Worker's diagnostic switches can now be set on any Worker unit, from one
   file: `~/.config/dgx-monarch/worker.env` on that box, `NAME=value` lines,
   then a recycle. The unit a verified update writes starts its loop through
@@ -1354,49 +2312,51 @@
   launch for a local actor, and `scripts/comfy-driver.sh` exports it, because torch 2.15.0's bundled mimalloc 2.5.2 purges so late
   that an actor kept 15 to 18 GiB of host memory after a stock load and the
   next load was priced short ([TROUBLESHOOTING #146](docs/TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short)).
-
-### Rendering
-
-- Before a render-site capacity check refuses, the driver unloads the models
-  ComfyUI holds on its host, such as the last render's text encoder and VAE,
-  and checks again; set `DGXM_DISABLE_DRIVER_UNLOAD=1` to turn this off. It
-  stands down only for work on the Workers attached now, so a Reset attached
-  mesh or a Clear and retry earlier in the session does not stop it ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
-- Three fixes from the 2026-11-04 release test. The identity gate's stock
-  comparison frees what the driver host can reload before it gives up, so the
-  Flux 2 template renders on a fresh pair instead of refusing with its 33 GiB
-  text encoder on the head ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
-  A LoRA change on a base a Worker already holds is priced as the in-place
-  swap the store makes, without a second copy of the file, so the Wan-Animate 2
-  memory-saver template no longer refuses under an explicit topology. And
-  where a model call is sharded, every rank batches cond and uncond the way
-  the leanest rank does, so two boxes with different free memory no longer
-  stall on mismatched collectives
-  ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
-- A data-parallel render keeps its progress bar and stall guard alive until
-  the last group finishes. Each group's result leader sends its own done, and
-  the driver stopped reading at the first one, so a slower group's steps were
-  dropped and a gap longer than `DGXM_SAMPLE_STALL_TIMEOUT_S` marked a healthy
-  mesh stalled ([TROUBLESHOOTING #86](docs/TROUBLESHOOTING.md#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)).
-- The loader's early batch check reads only the samplers that take its model.
-  A dp2 mesh feeding the Fleet KSampler with a batch of one, or a batch-one
-  branch on another loader, no longer refuses a valid load; a sampler the
-  check cannot tie to the loader gets its answer at render submit
-  ([TROUBLESHOOTING #16](docs/TROUBLESHOOTING.md#16-single-preset-refuses-because-the-latent-batch-does-not-divide-dp)).
-- Chroma's cfg2 trim removes only the equalizer's hard padding. A custom
-  conditioning whose attention mask carries a finite bias on some text tokens
-  keeps those tokens and its mask, as a one-GPU render does; before, the trim
-  dropped them and the mask.
-- Gate authority holds every box to the driver's torch and CUDA build. Each
-  Worker reports its build at setup and in the Gate ceremony's provenance, and
-  checks a grant's build against its own. A pair on two builds refuses a risky
-  render and names each box's build, where before a Worker recreated with only
-  a new torch reused a PASS proven under the old one. A matched pair keeps its
-  PASS rows ([TROUBLESHOOTING #8](docs/TROUBLESHOOTING.md#8-version-skew-between-hosts)).
-- A sharded FLUX.3 render refuses at load, class P, when the installed
-  ComfyUI's block no longer reads the norm global the parity route binds; it
-  used to warn and render with a possible bf16 difference. A topology
-  without sequence parallelism, such as `single`, still renders ([TROUBLESHOOTING #121](docs/TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)).
+  On 2026-11-06, on dev `79bb47e`, the head actor held 1.8 to 1.95 GiB after
+  the kandinsky5-video-pro, flux1-dev and wan-scail loads, against 15 to 16
+  GiB before, the kandinsky re-price admitted with 11.0 GiB to spare, and the
+  release test of that build rendered 66 templates with no error, the seven
+  that need user inputs skipped
+  ([VALIDATION](docs/VALIDATION.md#host-memory-2026-11-06)).
+- A verified update no longer refuses a package whose pip RECORD lists,
+  outside site-packages, only the bytecode pip compiled for that package's own
+  sources under `PYTHONPYCACHEPREFIX`. Every other entry outside site-packages
+  still refuses. The refusal now names its cause, and for four causes what
+  clears it: an entry outside site-packages, a malformed RECORD, a package
+  installed twice and a missing shared file. A Worker whose torchmonarch lives
+  in its own Python prints its cause and remedy under its host name, and any
+  Worker whose release differs is named on a line of its own, beside "worker
+  hosts do not exactly match the current driver release". The official xfuser
+  0.8.0 wheel may share `tests/conftest.py` with torchmonarch, in either
+  install order, and the check counts it at torchmonarch's hash; a deleted copy
+  refuses and asks for a torchmonarch reinstall
+  ([TROUBLESHOOTING #155](docs/TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+- A verified update whose target needs a package an interpreter lacks, or
+  holds at another version, now names each requirement and the interpreter
+  that failed it (`driver`, or `host_<n>` in cluster.toml order) and refuses
+  with `target_dependencies_unsatisfied`, where it read "release staging
+  failed before any live change" and named nothing. The check of the
+  torchmonarch pin's own dependencies now names every interpreter that fails
+  it, where it stopped at the first. The first update from 1.4.0 still runs the
+  1.4.0 checks
+  ([INSTALL](docs/INSTALL.md#update-commands)).
+- Fix: a Clear VRAM node set to `hard` now unloads through the driver's own
+  unload, so where a model left ComfyUI it forgets the driver models a loader
+  charged, and the next loader with nothing held charges them again rather
+  than none. ComfyUI's own unloads, its `/free` route and the models it evicts
+  during execution, still leave that memo, as in 1.4.0: a loader that runs
+  again after one of them with nothing held does not charge what of that stack
+  loads again in that queue, on a shipped template the VAE at the decode. After
+  Unload Models (`/free` without `free_memory`) or an eviction the encodes come
+  from ComfyUI's node cache; after Free Model and Node Cache (`/free` with
+  `free_memory`) each encoder is held when the loader prices or priced at its
+  loader node by the driver spend price
+  ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)).
+- Fix: `dgxm doctor`'s `unexpected shutdowns` row no longer leaves out one
+  reboot always: it leaves out the oldest record only when that is a reboot
+  whose pair it cannot see, so after a wtmp rotation, or in a full window with
+  an even count, a hard power-off is counted
+  ([TROUBLESHOOTING](docs/TROUBLESHOOTING.md#pd-stuck-state)).
 
 ### Development
 
@@ -1456,6 +2416,21 @@
   error, not the broken barrier its peer was left with. The dual-model cfg
   test now hands its gather a non-contiguous view, so it fails if the
   production conversion goes.
+- Fix: the sweep runner reads a driver answer that urllib cannot parse, such
+  as a body cut short or a malformed status line, as a transport error at
+  every call, so it ends the session with its summary instead of a traceback
+  ([SWEEP](docs/SWEEP.md)).
+- Fix: the sweep's audio note says when the samples differ, and the
+  bit-identical bar says it holds the frames only
+  ([SWEEP](docs/SWEEP.md#5-reading-results)).
+- Fix: the protected-test digest now covers module-level xunit hooks,
+  `__test__`, `pytest_generate_tests`, a skip or importorskip that runs at
+  import under any name, through a helper of the module, in a class body or
+  in a definition's decorators, defaults or bases, and a raise at import such
+  as `unittest.SkipTest`, any of which could turn off every protected test of
+  a module with the check still green. A skip mark does not count
+  ([CONTRIBUTING](CONTRIBUTING.md) names the import-time skips the digest does
+  not see).
 
 ## [1.4.0] - 2026-10-28
 
@@ -1567,6 +2542,9 @@ and `[studio]` tables and your `[worker_args]` keys, so stop adding them back
   identity, once per snapshot while it may still change and once after it has
   ended, so its status line, failure text and Open Queue link stay, and the
   link makes Queue read the job by its identity and pin its row.
+- Studio's artifacts route lists outputs with equal creation times most
+  recently stored first, as the snapshot does, so the viewer shows a finished
+  job's last output even when the snapshot leaves it out ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 
 ### Installation and updates
 

@@ -21,6 +21,15 @@ here (``consent_projection.capacity_consent_authorization``). A Worker that then
 refuses the stock load saw only the setting arrive off, so its sentence says
 slab_weights is off and asks for ``slab_weights=on``. The same seam puts the
 cause and the remedy in place of those two clauses.
+
+A lost Worker's error is Monarch's, not a refusal. The receive point recorded
+its cause in plain words (worker_box), and the prompt error opens with them as
+a ``worker_loss.WorkerLostError``, chained from Monarch's error as a refusal is.
+Only an error of Monarch's or Python's own type, with no refusal tag, is
+reworded, and only from the words on it or on the errors it was raised
+``from``: a refusal the driver raised while it handled the loss (the trim after
+a memory refusal, ``driver_unload``) is raised ``from None`` or carries its tag
+and its own type, and stays exactly as it was.
 """
 from __future__ import annotations
 
@@ -171,6 +180,25 @@ def _shortened(original: BaseException, worded: str, refusal_class: RefusalClass
     return fresh
 
 
+def _lost_worker(exc: BaseException) -> BaseException | None:
+    """A prompt error that opens with a lost Worker's cause, or None (worker_box.lost_worker_words).
+
+    The eviction and the lease below the node method have already read
+    Monarch's error; its own text follows the words, and the chain keeps it.
+    A type the pack declares means its own words (a refusal, a consent card's
+    error, a lifecycle fault), and a tagged text is a refusal, so neither is
+    reworded, whatever it was raised from.
+    """
+    from ..worker_box import lost_worker_words
+    from ..worker_loss import WorkerLostError
+
+    origin = type(exc).__module__.split(".", 1)[0]
+    if origin not in ("builtins", "monarch") or parse_leading_refusal_tag(read_rank(str(exc))[0]):
+        return None
+    words = lost_worker_words(exc)
+    return WorkerLostError(f"{words}\n{exc}") if words else None
+
+
 def lead_with_refusal(method: _Method) -> _Method:
     """Run a node method so a Worker refusal reaches the prompt error sentence first."""
     @functools.wraps(method)
@@ -180,6 +208,8 @@ def lead_with_refusal(method: _Method) -> _Method:
             return method(*args, **kwargs)
         except Exception as exc:
             refusal = surfaced(exc, forced_stock_state())
+            if refusal is None:
+                refusal = _lost_worker(exc)
             if refusal is None or refusal is exc:
                 raise
             raise refusal from exc

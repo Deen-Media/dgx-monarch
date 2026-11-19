@@ -11,10 +11,10 @@ is priced at the node that makes it (docs/DESIGN.md section 5.9):
   family forced on the Init node included (``driver_spend_settings``).
 - A marked spend is never refused. An unmarked spend is refused only where it
   would take the box under its floor (``driver_footprint.reserve_bytes`` of the
-  loader's worker arguments, ``uma_reserve_gb`` included) after every rescue:
-  MemAvailable plus this process's unallocated torch pool, after
+  loader's worker arguments, ``uma_reserve_gb`` included) after every rescue
+  that can run: MemAvailable plus this process's unallocated torch pool, after
   ``driver_unload.check_with_unload`` unloads what ComfyUI holds and trims the
-  Workers' idle caches.
+  Workers' idle caches. The refusal that stands says which of them ran.
 - Priced: Add Guide (MiniMax H3) on its exact canvas and frame count; Reference
   to Video (MiniMax H3)'s reference video; and the stock loader nodes in
   ``LOADER_CLASSES``, at the loader's charge for their inputs. Only these
@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import math
 import os
 import sys
 import threading
@@ -65,12 +66,13 @@ GUARD = "driver_footprint_preflight"
 GUIDE_CLASS = "MiniMaxH3AddGuide"
 REFERENCE_CLASS = "MiniMaxH3ReferenceToVideo"
 # The stock loader nodes whose inputs the loader charges as a text encoder or a
-# driver model. Left out: DiffusersLoader (a folder, which the loader charges
-# nothing for), CreateHookModelAsLora (its checkpoint becomes hook patches on
-# the model the graph renders with), CLIPVisionLoader and the ControlNet,
-# upscale and geometry loaders (inputs the loader does not charge).
+# driver model; a CLIP Vision file is charged as an encoder, from its own folder
+# (``loader_graph._TE_FOLDERS``). Left out: DiffusersLoader (a folder, which the
+# loader charges nothing for), CreateHookModelAsLora (its checkpoint becomes hook
+# patches on the model the graph renders with), and the ControlNet, upscale and
+# geometry loaders (inputs the loader does not charge).
 LOADER_CLASSES = ("CLIPLoader", "DualCLIPLoader", "TripleCLIPLoader", "QuadrupleCLIPLoader",
-                  "LTXAVTextEncoderLoader", "CheckpointLoaderSimple", "CheckpointLoader",
+                  "LTXAVTextEncoderLoader", "CLIPVisionLoader", "CheckpointLoaderSimple", "CheckpointLoader",
                   "unCLIPCheckpointLoader", "ImageOnlyCheckpointLoader", "UNETLoader")
 TROUBLESHOOTING_ENCODE = 82
 TROUBLESHOOTING_LOAD = 56
@@ -131,6 +133,14 @@ def _gib(value: float) -> str:
     return f"{value / _GIB:.1f}"
 
 
+def _gib_up(value: float) -> str:
+    return f"{math.ceil(value * 10 / _GIB) / 10:.1f}"
+
+
+def _gib_down(value: float) -> str:
+    return f"{math.floor(value * 10 / _GIB) / 10:.1f}"
+
+
 def guide_frames(image_frames: int) -> int:
     """The frames Add Guide encodes from an image batch of this length: one below five, else 17k+5."""
     if image_frames < 5:
@@ -187,15 +197,18 @@ def _context() -> tuple[str | None, str]:
 
 
 def _refusal_text(spend: Spend, needed: int, room: int, floor: int, reached: bool) -> str:
+    """The refusal at one reading. It is built before any rescue runs, so it claims none:
+    ``driver_unload.check_with_unload`` adds what ran to the one that stands. The need is
+    rounded up and the room down, so a room short of the need never prints as the need."""
     why = ("The UNET Loader priced this prompt but did not charge this at its size."
            if reached else
            "The UNET Loader has not priced this prompt: ComfyUI kept its output from an earlier queue, "
            "or runs this node before it.")
-    return (f"{spend.what} needs {_gib(needed)} GiB on the driver's box, and the box has "
-            f"{_gib(max(0, room - floor))} GiB above its {_gib(floor)} GiB floor after ComfyUI's models were "
-            f"unloaded and the Workers' idle caches released. {why} Nothing was {spend.verb}. {spend.remedy} "
-            "Clearing the Sparks (Reset attached mesh in the sidebar) also frees what the Workers hold on this "
-            "box, and the next queue then runs the loader, which itemises the whole graph's figures.")
+    return (f"{spend.what} needs {_gib_up(needed)} GiB on the driver's box, and the box has "
+            f"{_gib_down(max(0, room - floor))} GiB above its {_gib(floor)} GiB floor. {why} Nothing was "
+            f"{spend.verb}. {spend.remedy} Clearing the Sparks (Reset attached mesh in the sidebar) also frees what "
+            "the Workers hold on this box, and the next queue then runs the loader, which itemises the whole "
+            "graph's figures.")
 
 
 def check(spend: Spend, prompt_id: str | None = None, worker_args: Mapping[str, Any] | None = None) -> None:

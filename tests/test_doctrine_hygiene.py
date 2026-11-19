@@ -293,6 +293,21 @@ def test_no_pin_anchored_prose_outside_dated_records():
     )
 
 
+def _user_prose() -> list[Path]:
+    """The pages a user reads: the CHANGELOG, the README, docs/ and skills/."""
+    return [REPO / "CHANGELOG.md", REPO / "README.md",
+            *sorted((REPO / "docs").rglob("*.md")), *sorted((REPO / "skills").rglob("*.md"))]
+
+
+def test_no_unwritten_placeholder_reaches_a_user_page():
+    """A sentence marked to be written later must be written before it ships."""
+    found = [f"{path.relative_to(REPO)}:{number}: {line.strip()[:110]}"
+             for path in _user_prose()
+             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+             if "PLACEHOLDER" in line]
+    assert not found, "write these sentences:\n" + "\n".join(found)
+
+
 @pytest.mark.parametrize(("text", "anchored"), [
     # The version after the noun: every other shape puts it before "pin".
     ("The development pin is now 0.7.0, with a regenerated baseline.", True),

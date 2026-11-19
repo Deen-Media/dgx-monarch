@@ -79,10 +79,11 @@ def snapshot_blockers(snapshot: Mapping[str, Any]) -> list[str]:
         blockers.append("snapshot has no semantic observations")
     else:
         for name in (
-            "raw_python_task_await_in_asyncio",
+            "raw_handle_await_in_asyncio",
             "public_future_get_in_asyncio",
             "unhandled_fault_hook_assignment",
             "actor_queue_dispatch_default",
+            "lifecycle_config_defaults",
             OWNERSHIP_PROBE,
         ):
             observation = semantics.get(name)

@@ -4,10 +4,12 @@ A LISTEN row alone does not show whether a worker restarted. Hash the boot ID,
 owner PID and process start time into a short generation token that changes
 with listener ownership without disclosing host identity.
 
-The same line carries the id that process serves (``proc_id``), read from its
-actor ledger loop record. The driver runs this probe on every host before
-every attach and dials only that id, so the reading gates the attach
-(``worker_proc_id.py``); doctor fails a listening loop without one.
+The same line carries the id that process serves (``proc_id``) and the
+torchmonarch version it imported (``monarch``), read from its actor ledger
+loop record. The driver runs this probe on every host before every attach,
+dials only that id, and refuses a loop on another torchmonarch, so the
+reading gates the attach (``worker_proc_id.py``); doctor fails a listening
+loop without an id, and one whose running version differs from the pin.
 
 Read procfs, the generation marker, the actor ledger and ``systemctl --user
 show`` fields passively; never open the worker's protocol socket.
@@ -95,20 +97,24 @@ def _gen_proc_id(pid, born, boot):
     try:
         _raw = _gj.loads((_gp.Path.home() / _gen_ledger_rel).read_text())
     except FileNotFoundError:
-        return "unpublished"
+        return "unpublished", "unpublished"
     except (OSError, ValueError):
-        return "unreadable"
+        return "unreadable", "unreadable"
     _loop = _raw.get("loop") if isinstance(_raw, dict) else None
     if (not isinstance(_loop, dict) or _raw.get("version") != _gen_ledger_version
             or str(_raw.get("boot_id", "")) != boot or str(_loop.get("pid")) != pid
             or str(_loop.get("starttime")) != born):
-        return "unpublished"
-    _value = _loop.get("proc_id")
+        return "unpublished", "unpublished"
+    _value, _monarch = _loop.get("proc_id"), _loop.get("monarch")
+    if _monarch is None:
+        _monarch = "absent"
+    elif not (isinstance(_monarch, str) and _gr.fullmatch("[0-9][0-9A-Za-z.+!_-]{0,63}", _monarch)):
+        _monarch = "malformed"
     if _value is None:
-        return "bare"
+        return "bare", _monarch
     if isinstance(_value, str) and _gr.fullmatch("[0-9a-f]{16}", _value):
-        return _value
-    return "malformed"
+        return _value, _monarch
+    return "malformed", _monarch
 
 def _gen_report():
     _pid = _gen_owner(_gen_proc, _gen_endpoint)
@@ -116,18 +122,19 @@ def _gen_report():
     _tail = f"unit_state={_state} unit_restarts={_restarts} unit_started={_started}"
     if _pid == "":
         return (f"{_gen_prefix}none loop_pid=none age_s=none listening=false {_tail} "
-                "marker=none proc_id=none")
+                "marker=none proc_id=none monarch=none")
     if _pid is None:
         return (f"{_gen_prefix}unknown loop_pid=unknown age_s=unknown listening=true {_tail} "
-                "marker=unknown proc_id=unknown")
+                "marker=unknown proc_id=unknown monarch=unknown")
     _born = (_gp.Path("/proc") / _pid / "stat").read_text().rsplit(") ", 1)[1].split()[19]
     _boot = _gp.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     _up = float(_gp.Path("/proc/uptime").read_text().split()[0])
     _age = _up - int(_born) / _go.sysconf("SC_CLK_TCK")
     _gen = _gh.sha256(f"{_boot}|{_pid}|{_born}".encode()).hexdigest()[:12]
+    _proc_id, _monarch = _gen_proc_id(_pid, _born, _boot)
     return (f"{_gen_prefix}{_gen} loop_pid={_pid} age_s={_age:.0f} listening=true "
             f"{_tail} marker={_gen_marker(_pid + ':' + _born)} "
-            f"proc_id={_gen_proc_id(_pid, _born, _boot)}")
+            f"proc_id={_proc_id} monarch={_monarch}")
 
 try:
     print(_gen_report())
@@ -224,10 +231,13 @@ def doctor_row(host_name: str,
                fields: Mapping[str, str]) -> tuple[str, str, str, str, bool]:
     """Return (status, name, detail, reason, critical) for listener generation.
 
-    The row identifies the listener, its age and the id it serves. It fails a
-    listening loop whose record definitely publishes no id, because the
-    driver refuses to attach to it; an unread id stays an unobserved warning.
-    The Worker service row already fails when the loop is not listening.
+    The row identifies the listener, its age, the id it serves and the
+    torchmonarch version the running loop imported, as against the version
+    on disk that the env row reads. It fails a listening loop whose record
+    definitely publishes no id, or a version other than this checkout's pin,
+    because the driver refuses to attach to it; an unread id or version stays
+    an unobserved warning. The Worker service row already fails when the loop
+    is not listening.
     """
     name = f"{host_name} {NAME_SUFFIX}"
     generation = str(fields.get("gen", ""))
@@ -240,15 +250,27 @@ def doctor_row(host_name: str,
         return (WARN, name,
                 f"no process holds the worker LISTEN socket ({ENTRY})", "", False)
     proc_id = str(fields.get(worker_proc_id.FIELD, worker_proc_id.UNKNOWN))
+    monarch = str(fields.get(worker_proc_id.MONARCH_FIELD, worker_proc_id.UNKNOWN))
     detail = (
         f"gen={generation} pid={fields.get('loop_pid', 'unknown')} "
         f"age_s={fields.get('age_s', 'unknown')} "
         f"restarts={fields.get('unit_restarts', 'unknown')} "
         f"started={fields.get('unit_started', 'unknown')} "
-        f"marker={fields.get('marker', 'unknown')} proc_id={proc_id}"
+        f"marker={fields.get('marker', 'unknown')} proc_id={proc_id} "
+        f"running torchmonarch={monarch}"
     )
     if worker_proc_id.is_value(proc_id):
-        return OK, name, detail, "", False
+        from .. import TORCHMONARCH_PIN  # read now: the pin this checkout's driver admits
+
+        skew = worker_proc_id.version_problem(monarch, TORCHMONARCH_PIN)
+        if skew is None:
+            return OK, name, detail, "", False
+        reason, remedy = skew
+        detail = (f"{detail}; {reason}, so the driver refuses to attach: {remedy} "
+                  f"({worker_proc_id.VERSION_ENTRY})")
+        if worker_proc_id.version_definite(monarch):
+            return FAIL, name, detail, "", False
+        return WARN, name, detail, UNOBSERVED, False
     reason, remedy = worker_proc_id.problem(fields)
     detail = (f"{detail}; {reason}, so the driver refuses to attach: {remedy} "
               f"({worker_proc_id.ENTRY})")

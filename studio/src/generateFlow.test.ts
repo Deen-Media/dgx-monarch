@@ -117,6 +117,17 @@ test('a refusal names the Create tab that holds its cause', () => {
     tab: 'advanced',
     label: 'Open All inputs',
   });
+  // The companion's own subgraph execution ids and dotted dynamic inputs name a value too.
+  for (const message of [
+    '__studio_subgraph__12/5.vae_name: Value is not an available choice',
+    '13.format.codec: Value is not an available choice',
+    '7.format.codec.encoding.crf: Value violates max=51.0',
+  ])
+    assert.deepEqual(
+      target('workflow', message),
+      { tab: 'advanced', label: 'Open All inputs' },
+      message,
+    );
   assert.deepEqual(target('workflow', 'Node type unavailable: Foo'), {
     tab: 'workflow',
     label: 'Open Layout',

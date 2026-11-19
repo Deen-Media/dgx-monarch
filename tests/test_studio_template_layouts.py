@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -51,6 +52,99 @@ LEFT_OUT_NODES = {"DGXMonarchInit", "DGXMonarchSkipLayerGuidance", "VAELoader", 
 VIDEO_OR_SOUND = {"LoadVideo", "LoadAudio", "SaveVideo", "SaveAudioAdvanced"}
 # A sampler that takes an image from one of these edits or refines that image.
 IMAGE_SOURCES = {"LoadImage", "LoadImageMask", "VAEEncode"}
+# Studio's own rule for text that passes through a node (studio/src/textThrough.ts; the shared
+# cases in tests/fixtures/studio/text_through_cases.json run through both). Each stock class with
+# a text input and a text or conditioning output has a row naming the inputs that hold content
+# (tests/fixtures/studio/stock_text_classes.json lists those classes); a text generator's row is
+# empty. A class with no row never passes on an input whose name holds a denied word, and passes
+# on linked text and multi-line typed text; a node that makes conditioning passes typed one-line
+# text too. An entry that ends in "." names a group of inputs that grows.
+TEXT_THROUGH = {
+    "AddTextPrefix": ("texts", "prefix"), "AddTextSuffix": ("texts", "suffix"), "BranchNode": ("autogrow.",),
+    "BriaAddObject": (), "BriaEraseByText": (), "BriaExpandImage": ("prompt", "negative_prompt"),
+    "BriaImageEditNode": ("prompt", "negative_prompt", "structured_prompt"),
+    "BriaImageGenerate": ("prompt", "structured_prompt"), "BriaReplaceImageBackground": ("background.prompt",),
+    "BriaReplaceObject": (), "ByteDance2FirstLastFrameNode": ("model.prompt",),
+    "ByteDance2ReferenceNodeV2": ("model.prompt",), "ByteDance2TextToVideoNode": ("model.prompt",),
+    "ByteDanceCreateImageAsset": (), "ByteDanceCreateVideoAsset": (), "ByteDanceSeedNode": (),
+    "CLIPTextEncode": ("text",), "CLIPTextEncodeControlnet": ("conditioning", "text"),
+    "CLIPTextEncodeFlux": ("clip_l", "t5xxl"), "CLIPTextEncodeHiDream": ("clip_l", "clip_g", "t5xxl", "llama"),
+    "CLIPTextEncodeHunyuanDiT": ("bert", "mt5xl"), "CLIPTextEncodeKandinsky5": ("clip_l", "qwen25_7b"),
+    "CLIPTextEncodeLumina2": ("user_prompt",), "CLIPTextEncodePixArtAlpha": ("text",),
+    "CLIPTextEncodeSD3": ("clip_l", "clip_g", "t5xxl"), "CLIPTextEncodeSDXL": ("text_g", "text_l"),
+    "CLIPTextEncodeSDXLRefiner": ("text",), "CameraAngle": (), "CaseConverter": ("string",), "ClaudeNode": (),
+    "ComfySoftSwitchNode": ("on_true", "on_false"), "ComfySwitchNode": ("on_true", "on_false"),
+    "ElevenLabsSpeechToText": (), "FishAudioSpeechToText": (), "Flux3LayoutPrompt": ("prompt",),
+    "GLIGENTextBoxApply": ("conditioning_to", "text"), "GeminiImage2Node": ("prompt",),
+    "GeminiImageNode": ("prompt",), "GeminiNanoBanana2": ("prompt",), "GeminiNanoBanana2V2": ("prompt",),
+    "GeminiNode": (), "GeminiNodeV2": (), "GeminiNodeV3": (), "GeminiVideoOmni": ("model.prompt",),
+    "GeminiVideoOmniV2": ("model.prompt",), "HeyGenCreateAvatarNode": ("source.prompt",),
+    "IdeogramPImage": ("prompt",), "IdeogramTextToImageApi": ("model.prompt",), "JsonExtractString": ("json_string",),
+    "KlingImage2VideoNode": ("prompt", "negative_prompt"), "KlingLipSyncTextToVideoNode": ("text",),
+    "KlingStartEndFrameNode": ("prompt", "negative_prompt"), "KlingTextToVideoNode": ("prompt", "negative_prompt"),
+    "LTXVAddGeneratedKeyframes": (), "LTXVGeneratedKeyframesToGuides": (), "LumaRay32ExtendVideoNode": ("prompt",),
+    "LumaRay32ImageToVideoNode": ("prompt",), "LumaRay32KeyframesToVideoNode": ("prompt",),
+    "LumaRay32TextToVideoNode": ("prompt",), "LumaRay32VideoEditNode": ("prompt",),
+    "LumaRay32VideoReframeNode": ("prompt",), "MOSSImageLayoutPrompt": ("prompt",), "MakeTrainingDataset": ("texts",),
+    "MergeTextLists": ("texts",), "MeshyImageToModelNode": ("should_texture.texture_prompt",),
+    "MeshyMultiImageToModelNode": ("should_texture.texture_prompt",), "MeshyRefineNode": ("texture_prompt",),
+    "MeshyTextToModelNode": ("prompt",), "MeshyTextureNode": ("text_style_prompt",),
+    "MiniMaxH3ImageConditioning": ("prompt",), "MiniMaxH3ImageToVideo": ("prompt",),
+    "MiniMaxH3ReferenceToVideo": ("prompt",), "MiniMaxMusic3TextEncode": ("caption", "lyrics"),
+    "MinimaxH3ImageNode": ("prompt",), "MinimaxHailuo03ContextIRNode": (), "OpenAIChatNode": (),
+    "OpenRouterLLMNode": (), "PH3ImageConditioning": ("prompt",), "PatinaMaterialExtractNode": ("prompt",),
+    "PatinaMaterialNode": ("prompt",), "PhotoMakerEncode": ("text",), "PrimitiveString": ("value",),
+    "PrimitiveStringMultiline": ("value",), "RecraftV4TextToImageNode": ("prompt", "negative_prompt"),
+    "RecraftV4TextToVectorNode": ("prompt", "negative_prompt"), "RegexExtract": ("string",),
+    "RegexReplace": ("string",), "ReplaceText": ("texts",), "SaveConditioning": ("conditioning",),
+    "SaveText": ("text",), "ShuffleImageTextDataset": ("texts",), "ShuffleVideoTextDataset": ("texts",),
+    "StringConcatenate": ("string_a", "string_b"), "StringFormat": ("values.",), "StringReplace": ("string",),
+    "StringSubstring": ("string",), "StringTrim": ("string",), "StripWhitespace": ("texts",), "TencentHyNode": (),
+    "TencentTextToModelNode": ("prompt",), "TextEncodeAceStepAudio": ("tags", "lyrics"),
+    "TextEncodeAceStepAudio1.5": ("tags", "lyrics"), "TextEncodeBooguEdit": ("prompt", "negative_prompt"),
+    "TextEncodeFibo2": ("prompt", "negative_prompt"), "TextEncodeHunyuanVideo_ImageToVideo": ("prompt",),
+    "TextEncodeJoyImageEdit": ("prompt",), "TextEncodeMOSSImageEdit": ("prompt",),
+    "TextEncodeMageFlowEdit": ("prompt", "negative_prompt"), "TextEncodeMingImageEdit": ("prompt",),
+    "TextEncodeQwenImage21": ("prompt", "negative_prompt"), "TextEncodeQwenImageEdit": ("prompt",),
+    "TextEncodeQwenImageEditPlus": ("prompt",), "TextEncodeZImageOmni": ("prompt",), "TextGenerate": (),
+    "TextGenerateLTX2Prompt": (), "TextGenerateV2": (), "TextToLowercase": ("texts",), "TextToUppercase": ("texts",),
+    "TripoMeshCompleteNode": (), "TripoP1TextToModelNode": ("prompt", "negative_prompt"), "TripoRetopologyNode": (),
+    "TripoSmartSegmentNode": (), "TripoTextToModelNode": ("prompt", "negative_prompt"),
+    "TripoTextureNode": ("texture_prompt",), "TruncateText": ("texts",), "WanTrackToVideo": (), "WeVisOneDetect": (),
+    "YuE2GenerateABC": (), "YuE2GenerateMusic": ("style", "lyrics", "abc"),
+}
+# Words in an input's name that say it shapes or locates the text; a name splits into words at
+# "_", dots, digits and capitals, and the words match whatever their case.
+DENIED_WORDS = {"system", "pattern", "regex", "find", "replace", "delimiter", "separator", "instruction",
+                "instructions", "path", "file", "filename", "url", "folder", "directory", "dir", "key",
+                "format", "template"}
+WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")
+# Guiders that sample one conditioning, on an input named `conditioning`: that is the prompt.
+ONE_CONDITIONING_GUIDERS = {"BasicGuider", "DGXMonarchBasicGuider"}
+# The types of an input that takes whatever its source gives, as an API prompt declares them.
+MATCH_TYPES = {"COMFY_MATCHTYPE_V3", "*"}
+
+
+def carries(node: dict, name: str, multiline: bool | None = None) -> bool:
+    """Whether a node passes the text on one of its inputs on into its own output.
+
+    `multiline` is None for text that arrives by link, and for text typed on the node says
+    whether the widget's box is multi-line.
+    """
+    if node["type"] in TEXT_THROUGH:
+        return any(name == entry or (entry.endswith(".") and name.startswith(entry))
+                   for entry in TEXT_THROUGH[node["type"]])
+    if any(word.lower() in DENIED_WORDS for word in WORDS.findall(name)):
+        return False
+    return (multiline is None or multiline
+            or any(output.get("type") == "CONDITIONING" for output in node.get("outputs") or []))
+
+
+def multiline(kind: str, name: str) -> bool:
+    """Whether the recorded schema gives a class's text input a multi-line box."""
+    spec = OBJECT_INFO.get(kind, {}).get("input", {})
+    found = {**spec.get("required", {}), **spec.get("optional", {})}.get(name) or [None]
+    return bool(len(found) > 1 and isinstance(found[1], dict) and found[1].get("multiline"))
 # The length of a node that also sets a width and a height: the clip's frame count.
 FRAME_COUNT = "frame count"
 
@@ -79,6 +173,9 @@ OMITTED = {
     ("dgx-monarch-mage-flow-edit-turbo", 8, "denoise"): EMPTY_LATENT,
     ("dgx-monarch-qwen-image21-edit-rgba", 27, "denoise"): EMPTY_LATENT,
     ("dgx-monarch-qwen-image21-edit-mask-rgba", 10, "denoise"): EMPTY_LATENT,
+    # MiniMaxH3ImageConditioning hands the sampler a zeroed latent and the reference through
+    # the conditioning (comfy_extras/nodes_minimax_h3.py at 0.45.0).
+    ("dgx-monarch-minimax-h3-image-edit", 28, "denoise"): EMPTY_LATENT,
     ("dgx-monarch-pid-4k", 13, "denoise"): EMPTY_CANVAS,
 }
 # The layouts list these inputs although the rule does not ask for them.
@@ -93,26 +190,37 @@ def side(workflow: dict, node_id: int) -> str | None:
     """Whether a text node feeds a positive or a negative socket.
 
     Walk the CONDITIONING and STRING wires outward from the node, one hop at a
-    time. The nearest socket whose name says positive or negative decides; a
-    tie, or no such socket, gives None. Conditioning Zero Out keeps no text, so
-    the walk ends there: a prompt that reaches the sampler only through it, as
-    on the Fleet graph, is no prompt.
+    time, through the inputs that pass the text on (`carries`). The nearest
+    socket whose name says positive or negative, or a one-conditioning guider's
+    `conditioning`, decides; a tie, or no such socket, gives None. Conditioning
+    Zero Out keeps no text, so the walk ends there: a prompt that reaches the
+    sampler only through it, as on the Fleet graph, is no prompt.
     """
     nodes = {node["id"]: node for node in workflow["nodes"]}
     frontier, seen = [node_id], {node_id}
     while frontier:
         sides, following = set(), []
         for _link, origin, _slot, target, target_slot, kind in workflow["links"]:
-            if origin not in frontier or kind not in {"CONDITIONING", "STRING"}:
+            if origin not in frontier:
+                continue
+            # Studio's MATCH_TYPES rule, mirrored: an input of a match type, as a switch's branch in
+            # an API prompt, takes only a text wire, and a wire typed as a match type counts when
+            # the input it feeds takes text or conditioning.
+            declared = nodes[target]["inputs"][target_slot].get("type")
+            if declared in MATCH_TYPES and kind != "STRING":
+                continue
+            if kind not in {"CONDITIONING", "STRING"} and not (
+                    kind in MATCH_TYPES and declared in {"CONDITIONING", "STRING"}):
                 continue
             if nodes[target]["type"] == "ConditioningZeroOut":
                 continue
             name = nodes[target]["inputs"][target_slot]["name"]
             if "negative" in name:
                 sides.add("negative")
-            elif "positive" in name:
+            elif "positive" in name or (name == "conditioning"
+                                        and nodes[target]["type"] in ONE_CONDITIONING_GUIDERS):
                 sides.add("prompt")
-            elif target not in seen:
+            elif target not in seen and carries(nodes[target], name):
                 seen.add(target)
                 following.append(target)
         if sides:
@@ -142,7 +250,7 @@ def role(workflow: dict, node: dict, name: str, inputs: set[str]) -> str | None:
     if node["type"] in LEFT_OUT_NODES:
         return None
     if name in TEXT:
-        return side(workflow, node["id"])
+        return side(workflow, node["id"]) if carries(node, name, multiline(node["type"], name)) else None
     if (node["type"], name) in MEDIA:
         return "media"
     if name == "length" and {"width", "height"} <= inputs:
@@ -391,3 +499,113 @@ def test_build_refuses_a_wired_widget_and_an_unknown_role(generator):
         generator.build(spec)
     with pytest.raises(KeyError, match="colour"):
         generator._layout({"colour": ("pos.text",)})
+
+
+SHARED_CASES = json.loads((ROOT / "tests/fixtures/studio/text_through_cases.json").read_text())
+
+
+def test_the_text_through_rule_is_studios_own():
+    """The walk above follows text as Studio names fields, so the two rules must not drift.
+
+    The rows, quoted class names included, the denied words, the pattern that splits a name into
+    words, the guiders and the match types are compared, and the shared cases, which
+    studio/src/textThrough.test.ts runs through Studio's `carries`, run through this one.
+    """
+    source = (ROOT / "studio/src/textThrough.ts").read_text()
+    presentation = (ROOT / "studio/src/fieldPresentation.ts").read_text()
+    table = re.search(r"const TEXT_THROUGH: Record<string, readonly string\[\]> = \{(.*?)\n\};", source, re.S)
+    denied = re.search(r"const DENIED_WORDS = new Set\(\[(.*?)\]\);", source, re.S)
+    words = re.search(r"const WORDS = /(.*?)/g;", source)
+    guiders = re.search(r"const ONE_CONDITIONING_GUIDERS = new Set\(\[(.*?)\]\);", presentation, re.S)
+    matches = re.search(r"const MATCH_TYPES = new Set\(\[(.*?)\]\);", presentation, re.S)
+    assert table and denied and words and guiders and matches, \
+        "a rule table moved in textThrough.ts or fieldPresentation.ts"
+    assert set(re.findall(r"'([^']+)'", matches.group(1))) == MATCH_TYPES
+    rows = {key.strip(): tuple(re.findall(r"'([^']+)'", values))
+            for key, values in re.findall(r"""['"]?([\w .-]+?)['"]?: \[([^\]]*)\]""", table.group(1))}
+    assert len(rows) == table.group(1).count(": ["), "a row the pattern cannot read"
+    assert rows == TEXT_THROUGH
+    assert set(re.findall(r"'([^']+)'", denied.group(1))) == DENIED_WORDS
+    assert len(re.findall(r"'([^']+)'", denied.group(1))) == len(DENIED_WORDS)
+    assert words.group(1) == WORDS.pattern
+    assert set(re.findall(r"'([^']+)'", guiders.group(1))) == ONE_CONDITIONING_GUIDERS
+    cases = SHARED_CASES["cases"]
+    assert len(cases) == 71
+    for case in cases:
+        node = {"type": case["class"], "outputs": [{"type": kind} for kind in case["outputs"]]}
+        # A typed box the schema gives no multiline flag is a one-line box here.
+        typed = None if "typed" not in case else case["typed"] == "multiline"
+        assert carries(node, case["input"], typed) is case["carries"], case
+
+
+def _reading_graph(nodes: dict) -> dict:
+    """One shared reading's graph as a workflow: nodes with named, declared sockets, and links typed
+    by the output they leave."""
+    graph, links = [], []
+    for node_id, (kind, outputs, inputs) in nodes.items():
+        sockets = []
+        for name, value in inputs.items():
+            link, declared = None, "STRING"
+            if isinstance(value, list):
+                source, slot, declared = value
+                link = len(links) + 1
+                links.append([link, int(source), slot, int(node_id), len(sockets), nodes[source][1][slot]])
+            sockets.append({"name": name, "link": link, "type": declared})
+        graph.append({"id": int(node_id), "type": kind, "inputs": sockets,
+                      "outputs": [{"type": output} for output in outputs]})
+    return {"nodes": graph, "links": links}
+
+
+def test_the_ruled_readings_hold_in_the_layout_checks_walk():
+    """Each ruled reading in the shared file, through `side` and the typed input's `carries`.
+
+    studio/src/textThrough.test.ts runs the same graphs through Studio's graphRoles. The walk
+    here has no role named by input, which no reading needs.
+    """
+    readings = SHARED_CASES["readings"]
+    assert [reading["rule"] for reading in readings] == [
+        "Soft Switch", "Pack Join Text", "wildcard_text", "positive", "row 5", "P1", "P1b", "P2", "P2b",
+        "P3", "P3b", "P4", "P5r", "P6", "P7", "P8", "P10", "P11", "P12", "P13", "encoder system_prompt",
+        "X2", "S3", "R1"]
+    for reading in readings:
+        workflow = _reading_graph(reading["nodes"])
+        nodes = {node["id"]: node for node in workflow["nodes"]}
+        found = {}
+        for node_id, (_kind, _outputs, inputs) in reading["nodes"].items():
+            node = nodes[int(node_id)]
+            for name, value in inputs.items():
+                if isinstance(value, str):
+                    passes = carries(node, name, value == "multiline")
+                    found[f"{node_id}.{name}"] = side(workflow, node["id"]) if passes else None
+        assert found == reading["roles"], reading["rule"]
+
+
+# Row entries that name no text input: the conditioning a node adds to or passes on, a group of
+# inputs that grows, and a switch's branches, whose sockets take any type.
+NOT_TEXT = {("CLIPTextEncodeControlnet", "conditioning"), ("GLIGENTextBoxApply", "conditioning_to"),
+            ("SaveConditioning", "conditioning"), ("StringFormat", "values."), ("BranchNode", "autogrow."),
+            ("ComfySwitchNode", "on_true"), ("ComfySwitchNode", "on_false"),
+            ("ComfySoftSwitchNode", "on_true"), ("ComfySoftSwitchNode", "on_false")}
+
+
+def test_every_stock_text_class_has_a_row():
+    """A stock class the recording lists with a text input and a text or conditioning output
+    needs a row, read from its source, and a row names only inputs the class has."""
+    classes = json.loads((ROOT / "tests/fixtures/studio/stock_text_classes.json").read_text())["classes"]
+    assert sorted(set(classes) - set(TEXT_THROUGH)) == []
+    for kind, row in TEXT_THROUGH.items():
+        for entry in row:
+            assert entry in classes.get(kind, {}) or (kind, entry) in NOT_TEXT, (kind, entry)
+    # Only the switches and Branch, whose outputs take any type, have a row outside the list.
+    assert sorted(set(TEXT_THROUGH) - set(classes)) == ["BranchNode", "ComfySoftSwitchNode", "ComfySwitchNode"]
+
+
+def test_the_soft_switch_graph_live_lists_passes_its_branches():
+    # ComfyUI 0.45.0 does not register ComfySoftSwitchNode; nodes/graph_live.py lists it with the
+    # If/Else switch, and both pass on exactly the branches it names.
+    from dgx_monarch.nodes.graph_live import BRANCH_INPUTS, SWITCH_CLASSES
+
+    for kind in SWITCH_CLASSES:
+        node = {"type": kind, "outputs": [{"type": "STRING"}]}
+        assert set(TEXT_THROUGH[kind]) == BRANCH_INPUTS
+        assert not carries(node, "switch")

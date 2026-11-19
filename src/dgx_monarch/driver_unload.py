@@ -273,8 +273,7 @@ def busy_reason(handle: Any) -> str:
 def unload(mm: Any, held: Sequence[tuple[Any, str]]) -> Unloaded:
     """Unload every model ComfyUI holds here, then read MemAvailable once more.
 
-    The calls are ComfyUI's own ``/free`` sequence: unload, collect, return
-    the allocator's cached blocks.
+    ComfyUI's own ``/free`` sequence: unload, collect, return the cached blocks.
     """
     before = mesh_safety.mem_available_bytes() or 0
     mm.unload_all_models()
@@ -283,8 +282,11 @@ def unload(mm: Any, held: Sequence[tuple[Any, str]]) -> Unloaded:
     time.sleep(_SETTLE_S)
     after = mesh_safety.mem_available_bytes() or 0
     kept = {id(entry) for entry in list(getattr(mm, "current_loaded_models", None) or ())}
-    return Unloaded(tuple(name for entry, name in held if id(entry) not in kept),
-                    before, after)
+    names = tuple(name for entry, name in held if id(entry) not in kept)
+    if names:  # the driver's own unloads come here; ComfyUI's /free and its evictions do not
+        from .nodes.loader_graph import reset_charged_artifacts
+        reset_charged_artifacts()
+    return Unloaded(names, before, after)
 
 
 def trimmable(handle: Any) -> bool:
@@ -397,8 +399,8 @@ def check_with_unload(steps: Sequence[Callable[[], object]], *, handle: Any = No
     in its own slot, the Worker drops that model first, so its copy is counted
     as available (``swap_credit.py``) and the steps run again from the one that
     refused, and so does every later run. If one still refuses and nothing is
-    running, the driver
-    unloads the models ComfyUI holds in this process and runs the steps again
+    running, the driver unloads the models ComfyUI holds in this process and
+    runs the steps again
     from the one that refused: the steps before it passed on a lower reading.
     If one still refuses and ``handle`` is a live mesh that completed setup,
     the actors release their allocator caches and the steps run once more

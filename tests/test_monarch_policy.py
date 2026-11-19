@@ -277,6 +277,68 @@ def test_late_native_activation_uses_runtime_and_reads_back(isolated_policy, mon
     assert result["native_readback"] == "verified"
 
 
+def test_every_role_fixes_the_channel_reconnect_bound_at_one_day(isolated_policy, monkeypatch):
+    """docs/TROUBLESHOOTING.md #2: with torchmonarch's 60 s default a Worker
+    down longer than a minute stays unreachable from this driver until it
+    restarts. The bound goes into the environment a Worker loop or an actor
+    starts with, and into the Runtime layer the readback checks."""
+    values = {}
+    monkeypatch.setitem(sys.modules, "monarch.config", SimpleNamespace(
+        configure=lambda **kwargs: values.update(kwargs), get_global_config=lambda: values))
+    monkeypatch.setitem(sys.modules, "monarch._src.rdma.rdma", SimpleNamespace(_rdma_manager_init_cache={}))
+    environment = policy.policy_environment(policy.MonarchPolicy(), "worker")
+    assert environment["HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT"] == "1day"
+    policy.apply_policy(policy.MonarchPolicy(), role="worker")
+    assert os.environ["HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT"] == "1day"
+    policy.activate_native_policy()
+    assert values["channel_reconnect_timeout"] == "1day"
+    # Monarch reads a day back in this spelling (checked on the 0.8.0 wheel), so
+    # any other value fails the readback.
+    values["channel_reconnect_timeout"] = "1m"
+    with pytest.raises(RuntimeError, match="channel_reconnect_timeout differs"):
+        policy.verify_native_policy()
+
+
+def test_the_pinned_runtime_reads_the_reconnect_bound_back(tmp_path):
+    """The real wheel, in a fresh interpreter: the driver's admission leaves a
+    one-day bound in Monarch's effective configuration, where the default is
+    one minute."""
+    import subprocess
+
+    pytest.importorskip("monarch.actor")
+    home = tmp_path / "home"
+    home.mkdir()
+    script = (
+        "import os\n"
+        "from dgx_monarch import monarch_policy as policy\n"
+        "policy.apply_policy(policy.MonarchPolicy(), role='driver')\n"
+        "import monarch.actor\n"
+        "policy.activate_native_policy()\n"
+        "from monarch.config import get_global_config\n"
+        "print(get_global_config()['channel_reconnect_timeout'])\n")
+    from pathlib import Path
+
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("MONARCH_", "HYPERACTOR_", "DGXM_", "OTEL_"))}
+    # The child imports the dgx_monarch this test imported, ahead of any other.
+    source = str(Path(policy.__file__).resolve().parents[1])
+    environment.update(HOME=str(home), CUDA_VISIBLE_DEVICES="",
+                       MONARCH_LOG_SUFFIX=f"dgxm_reconnect_test_{os.getpid()}",
+                       PYTHONPATH=os.pathsep.join([source, *sys.path]))
+    try:
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                                timeout=120, env=environment)
+    finally:
+        import pwd
+
+        user = pwd.getpwuid(os.getuid()).pw_name
+        for path in Path("/tmp", user).glob(  # noqa: S108 - Monarch's fixed log folder
+                f"monarch_log_*{environment['MONARCH_LOG_SUFFIX']}*.log"):
+            path.unlink(missing_ok=True)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip().splitlines()[-1] == "1day"
+
+
 def test_prior_rdma_manager_refuses_late_admission(isolated_policy, monkeypatch):
     configured = []
     monkeypatch.setitem(sys.modules, "monarch.config", SimpleNamespace(configure=lambda **kwargs: configured.append(kwargs)))
@@ -470,6 +532,11 @@ _AMBIENT_REFUSALS = {
                  "DGXM_RDMA_QP_SPLIT conflicts with the validated Monarch policy; unset it in the "
                  "environment that starts this process, since the validated policy, from "
                  "cluster.toml's [monarch] table or this release's defaults, sets it"),
+    "reconnect": ("HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT", "60s",
+                  "HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT conflicts with the validated Monarch "
+                  "policy; unset it in the environment that starts this process, since the "
+                  "validated policy, from cluster.toml's [monarch] table or this release's "
+                  "defaults, sets it"),
 }
 
 
@@ -482,7 +549,7 @@ def test_each_ambient_refusal_names_its_remedy_and_troubleshooting_119(isolated_
     message = str(caught.value)
     assert message.startswith(text)
     assert message.endswith("(docs/TROUBLESHOOTING.md #119)")
-    if case != "qp_split":
+    if case not in ("qp_split", "reconnect"):
         assert value not in message  # names the variable, never its value
     assert policy.POLICY_ENV not in os.environ
 

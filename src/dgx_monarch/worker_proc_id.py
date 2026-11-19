@@ -19,6 +19,12 @@ that attempt, and refuses before dialing when a host has no usable id: a stale
 or bare dial bounces at the host at once, yet the attach still waits out the
 whole config-push budget.
 
+The same record names the torchmonarch version the loop imported, and the
+driver refuses before dialing when it is not the version the driver loaded
+(``read_values``). The two Monarch releases checked against each other did not
+attach: the config push waited out its whole budget, and nothing in Monarch
+named the cause (docs/TROUBLESHOOTING.md #8).
+
 The first message after a restart: this driver's link to the address still
 holds the channel session the old process accepted. The first message it
 sends there rides that session, the new process refuses the session, and the
@@ -47,6 +53,14 @@ LABEL = "service"
 FIELD = "proc_id"
 ENTRY = "docs/TROUBLESHOOTING.md #2"
 _VALUE = re.compile(r"[0-9a-f]{16}")
+# The probe line field and loop record key for the torchmonarch version the
+# loop imported, and the reading for a record that has an id but no version.
+MONARCH_FIELD = "monarch"
+ABSENT = "absent"
+VERSION_ENTRY = "docs/TROUBLESHOOTING.md #8"
+UPDATE_ENTRY = "docs/TROUBLESHOOTING.md #118"
+# A version reading starts with a digit, so no probe sentinel below reads as one.
+_VERSION = re.compile(r"[0-9][0-9A-Za-z.+!_-]{0,63}")
 
 # Probe readings that are not an id. ``none`` and ``unknown`` keep the
 # meaning they have for the listener generation.
@@ -73,9 +87,12 @@ class WorkerProcIdError(RuntimeError):
 
     ``unknown`` names each such host and the reason, without the remedy or
     the claim that nothing dialed, for a reading taken after a dial failed.
+    ``skew`` is set instead when every id read but a loop runs another
+    torchmonarch: each such host, the reason and the remedy, without that claim.
     """
 
     unknown: str = ""
+    skew: str = ""
 
 
 def derive(boot_id: str, pid: int, starttime: int) -> str:
@@ -147,12 +164,90 @@ def problem(fields: Mapping[str, Any]) -> tuple[str, str]:
             "fix the host or ssh fault, then render again")
 
 
-def read_values(hosts: Sequence[Any],
-                readings: Mapping[str, Mapping[str, Any]]) -> list[str]:
+def version_problem(reading: str, driver: str) -> tuple[str, str] | None:
+    """``(reason, remedy)`` when a loop's torchmonarch reading is not ``driver``'s version.
+
+    The two Monarch releases checked against each other attached to nothing:
+    the receiver could not decode the sender's messages, the config push
+    waited out its whole budget, and no Monarch message named the cause
+    (docs/TROUBLESHOOTING.md #8). The loop's record names the version it
+    imported, so the driver refuses first.
+    """
+    if reading == driver:
+        return None
+    if reading == ABSENT:
+        # Releases that publish no version are older than every driver that reads one.
+        return ("its Worker loop runs an earlier release, which does not report its "
+                "torchmonarch version",
+                f"this driver runs the newer release, so {_workers_to_driver(driver)}; "
+                "then render again")
+    if _VERSION.fullmatch(reading) is not None:
+        reason = f"its Worker loop runs torchmonarch {reading} and this driver runs {driver}"
+        newer = _newer(driver, reading)
+        if newer == "driver":
+            return reason, (f"this driver runs the newer release, so "
+                            f"{_workers_to_driver(driver)}; then render again")
+        if newer == "loop":
+            return reason, f"the Workers run the newer release, so {_DRIVER_TO_WORKERS}; then render again"
+        return reason, (f"the driver and every Worker must run the same release: if this driver "
+                        f"is the newer side, {_workers_to_driver(driver)}; if the Workers are, "
+                        f"{_DRIVER_TO_WORKERS}; then render again")
+    return (f"the probe could not read the torchmonarch version its Worker loop runs ({reading})",
+            "render again; if it repeats, restart the Worker services (`dgxm restart`)")
+
+
+# What brings a driver that runs the older release to its Workers' release.
+_DRIVER_TO_WORKERS = (f"put the driver's checkout and Python on their release and restart "
+                      f"ComfyUI ({UPDATE_ENTRY})")
+
+
+def _workers_to_driver(driver: str) -> str:
+    """What brings Workers that run an older release to this driver's.
+
+    A verified update refuses while the Workers differ from the driver's
+    checkout, so it is not the way back from a driver that moved alone.
+    """
+    return (f"bring the Workers to it: on plain source directories install torchmonarch "
+            f"{driver} into the Python cluster.toml names (`<python> -m pip install --no-deps "
+            f"torchmonarch=={driver}`) and run `dgxm restart`, which syncs this driver's source "
+            f"to them; in release slots use the forward repair in {UPDATE_ENTRY}, because "
+            "`dgxm update --verify` refuses while they differ")
+
+
+def _newer(driver: str, loop: str) -> str | None:
+    """``driver`` or ``loop`` for the newer of two plain dotted releases; None when either
+    is not one (a local label, a pre-release) or both name the same release.
+
+    This reads the torchmonarch order as the dgx-monarch release order. A
+    release that lowers the torchmonarch pin breaks that, and these remedies
+    would then send each side the other's repair: change this with that pin.
+    """
+    releases = []
+    for version in (driver, loop):
+        if re.fullmatch(r"[0-9]{1,6}(?:\.[0-9]{1,6}){0,5}", version) is None:
+            return None
+        parts = [int(part) for part in version.split(".")]
+        while parts and parts[-1] == 0:
+            parts.pop()
+        releases.append(parts)
+    if releases[0] == releases[1]:
+        return None
+    return "driver" if releases[0] > releases[1] else "loop"
+
+
+def version_definite(reading: str) -> bool:
+    """Whether a version reading is a fact about the loop, as against a probe that saw nothing."""
+    return reading in (ABSENT, MALFORMED) or _VERSION.fullmatch(reading) is not None
+
+
+def read_values(hosts: Sequence[Any], readings: Mapping[str, Mapping[str, Any]], *,
+                monarch: str) -> list[str]:
     """Each host's id value from this attempt's readings, in host order.
 
-    Raises ``WorkerProcIdError`` naming every host without a usable id, before
-    anything dials.
+    Raises ``WorkerProcIdError`` naming every host without a usable id, or
+    whose loop runs a torchmonarch other than ``monarch``, the version this
+    driver loaded (``monarch_capabilities.loaded_version``), before this
+    attempt dials.
     """
     values: list[str] = []
     missing: list[str] = []
@@ -172,14 +267,27 @@ def read_values(hosts: Sequence[Any],
             f"for {'; '.join(missing)}. This ComfyUI session stays usable ({ENTRY}).")
         error.unknown = "; ".join(unknown)
         raise error
+    for host in hosts:
+        skew = version_problem(str((readings.get(host.address) or {}).get(MONARCH_FIELD, UNKNOWN)),
+                               monarch)
+        if skew is not None:
+            missing.append(f"{host.name} ({host.address}): {skew[0]}; {skew[1]}")
+            unknown.append(f"{host.name} ({host.address}: {skew[0]})")
+    if missing:
+        error = WorkerProcIdError(
+            f"no attach ran: {'; '.join(missing)}. This ComfyUI session stays usable "
+            f"({VERSION_ENTRY}).")
+        error.unknown = "; ".join(unknown)
+        error.skew = "; ".join(missing)
+        raise error
     return values
 
 
-def dial_addresses(hosts: Sequence[Any],
-                   readings: Mapping[str, Mapping[str, Any]]) -> list[str]:
+def dial_addresses(hosts: Sequence[Any], readings: Mapping[str, Mapping[str, Any]], *,
+                   monarch: str) -> list[str]:
     """Each host's ``<proc-id>@<address>`` from this attempt's readings."""
     return [proc_addr(host.address, value)
-            for host, value in zip(hosts, read_values(hosts, readings), strict=True)]
+            for host, value in zip(hosts, read_values(hosts, readings, monarch=monarch), strict=True)]
 
 
 def channel_addr(address: str) -> str:
@@ -228,7 +336,7 @@ def prime(addresses: Sequence[str], *, settle_s: float = PRIME_SETTLE_S,
     return unsent
 
 
-def read_dial(config: Any, *, runner: Any = None, timeout: float = 10.0) -> list[str]:
+def read_dial(config: Any, *, monarch: str, runner: Any = None, timeout: float = 10.0) -> list[str]:
     """Probe every configured loop and return the dial strings, or refuse."""
     from .cli import listener_generation
 
@@ -237,4 +345,4 @@ def read_dial(config: Any, *, runner: Any = None, timeout: float = 10.0) -> list
 
         runner = lifecycle.run_on_host
     readings = listener_generation.fleet(config, runner=runner, timeout=timeout)
-    return dial_addresses(config.hosts, readings)
+    return dial_addresses(config.hosts, readings, monarch=monarch)

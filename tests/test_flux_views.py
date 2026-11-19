@@ -179,7 +179,7 @@ def test_render_submit_runs_the_preflight_after_the_topology_resolves():
     source = (SRC / "dgx_monarch/nodes/render_submit.py").read_text()
     resolved = source.index("resolved = _resolve_topology_for_latent(")
     call = source.index("model_patch_preflight.preflight_flux_views(model, request, topo)")
-    dispatch = source.index("validate_render_topology(model, topo, latent[\"samples\"])")
+    dispatch = source.index("validate_render_topology(model, topo, latent[\"samples\"], request)")
     assert resolved < call < dispatch
 
 

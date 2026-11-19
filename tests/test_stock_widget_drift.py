@@ -8,7 +8,9 @@ leave a graph saved on the older ComfyUI as it was:
 
 * the sweep converter (benchmark/sweep/convert.py),
 * Studio's widget layout (studio/widget_values.py), checked against the
-  recorded driver schema, which predates the widget,
+  Create Video schema of the 2026-10-20 driver recording (ComfyUI 0.42),
+  which predates the widget and is pinned below, and against the recorded
+  driver schema of 2026-11-15 (ComfyUI 0.45.0), which declares it,
 * the frontend heal (web/js/dgx_monarch_widgets.js), driven under node.
 
 The real-ComfyUI half is the comfy canary (tests/canary/template_widget_canary.py,
@@ -33,7 +35,28 @@ from dgx_monarch.studio.widget_values import layout_values
 from dgx_monarch.studio.workflows import WorkflowError
 
 REPO = Path(__file__).resolve().parents[1]
-OLDER_INFO = json.loads((REPO / "tests/fixtures/studio/object_info_bundled.json").read_text())["CreateVideo"]
+# Create Video as the 2026-10-20 driver recording declared it (ComfyUI v0.42.0-14), before
+# chroma_subsampling: the older side, pinned here since the recorded schema now comes from 0.45.0.
+OLDER_INFO = {
+    "input": {
+        "required": {
+            "images": ["IMAGE", {}],
+            "fps": ["FLOAT", {"default": 30.0, "min": 1.0, "max": 120.0, "step": 1.0}],
+        },
+        "optional": {
+            "audio": ["AUDIO", {}],
+            "bit_depth": ["COMBO", {"default": "auto", "multiselect": False, "options": ["auto", 8, 10]}],
+            "color_space": ["COMBO", {"default": "sRGB", "multiselect": False,
+                                      "options": ["sRGB", "HDR", "HDR PQ"]}],
+            "codec": ["COMBO", {"advanced": True, "default": "none", "multiselect": False,
+                                "options": ["none", "auto", "h264", "av1"]}],
+        },
+    },
+    "input_order": {"required": ["images", "fps"], "optional": ["audio", "bit_depth", "color_space", "codec"]},
+    "output": ["VIDEO"], "output_is_list": [False], "output_name": ["VIDEO"], "output_node": False,
+    "name": "CreateVideo", "python_module": "comfy_extras.nodes_video",
+}
+RECORDED_INFO = json.loads((REPO / "tests/fixtures/studio/object_info_bundled.json").read_text())["CreateVideo"]
 TEMPLATE = REPO / "example_workflows/dgx-monarch-minimax-h3-mp4.json"
 OLDER = ["fps", "bit_depth", "color_space", "codec"]
 MASTER = ["fps", "bit_depth", "color_space", "chroma_subsampling", "codec"]
@@ -61,6 +84,8 @@ def _names(order: list[str]):
 def test_the_table_puts_a_missing_widget_back_after_its_anchor():
     assert object_info_widget_names(OLDER_INFO["input"]) == OLDER
     assert object_info_widget_names(_master_info()["input"]) == MASTER
+    # The recorded driver schema (ComfyUI 0.45.0) declares the widget where master does.
+    assert object_info_widget_names(RECORDED_INFO["input"]) == MASTER
     assert stock_widget_drift.missing("CreateVideo", OLDER) == {"chroma_subsampling": "auto"}
     assert stock_widget_drift.with_newer("CreateVideo", OLDER) == MASTER
     assert stock_widget_drift.missing("CreateVideo", MASTER) == {}
@@ -113,6 +138,7 @@ def test_studio_lays_out_master_shaped_values_against_the_recorded_older_schema(
                                                  "codec": "none"}
     assert layout_values(node, _master_info()) == {"fps": 24.0, "bit_depth": 8, "color_space": "sRGB",
                                                    "chroma_subsampling": "auto", "codec": "none"}
+    assert layout_values(node, RECORDED_INFO) == layout_values(node, _master_info())
     saved = {**node, "widgets_values": [24.0, 8, "sRGB", "av1"]}
     assert layout_values(saved, OLDER_INFO)["codec"] == "av1"
     with pytest.raises(WorkflowError, match="chroma_subsampling holds '420'"):

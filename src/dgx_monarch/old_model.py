@@ -227,9 +227,8 @@ def rank_gain(quote: RankPrice, kept: frozenset[str] = frozenset()) -> int:
 def _numbers(quote: RankPrice, kept: frozenset[str] = frozenset()) -> tuple[int, int] | None:
     """The row's price and availability, uncredited where the gain counts the credit.
 
-    A swap credit is the slot's own stock resident, and ``rank_gain`` counts that
-    resident too unless the slot is kept, so a clear is weighed against the price
-    a cleared box pays: the row's figure plus its credit.
+    A swap credit is the slot's own stock resident, which ``rank_gain`` counts unless the slot is kept, so a clear is
+    weighed against what a cleared box pays: the figure plus its credit, or the Worker's (``cleared_required_bytes``).
     """
     block = (quote.slab_measured if quote.use_slab else quote.measured) or {}
     try:
@@ -237,7 +236,8 @@ def _numbers(quote: RankPrice, kept: frozenset[str] = frozenset()) -> tuple[int,
     except (KeyError, TypeError, ValueError):
         return None
     if _counts_credit(quote, kept):
-        required += max(int(block.get("credit_bytes") or 0), 0)
+        stated = block.get("cleared_required_bytes")  # a cleared box's classic LoRA bake
+        required = stated if type(stated) is int and stated > 0 else required + max(int(block.get("credit_bytes") or 0), 0)
     return required, available
 
 

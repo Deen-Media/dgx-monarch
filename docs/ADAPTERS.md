@@ -344,8 +344,8 @@ than stacks on a repeat call.
    `make_usp_attention(kernel, sync_ulysses)`. The kernel name picks the
    inner attention (TORCH_FLASH validated on GB10, re-selectable per render
    for the fp8 sage gate). The Init `sync_ulysses` widget (default True)
-   reaches `xFuserLongContextAttention.__init__` as `use_sync`, but the
-   pinned xfuser 0.7.0 overrides `forward` and never passes `use_sync` to
+   reaches `xFuserLongContextAttention.__init__` as `use_sync`, but
+   xfuser 0.7.0 and 0.8.0 override `forward` and never pass `use_sync` to
    `SeqAllToAll4D.apply`, so the widget has no effect on the Ulysses
    all-to-all. It is still part of a setup's identity, so a graph that
    differs in it from the live setup rebuilds the setup, which unloads every
@@ -814,7 +814,7 @@ than stacks on a repeat call.
    count is unchanged. Over the template's 34 blocks that is about 3.4 GB per
    conditional call, and a render makes 20 conditional calls; its
    unconditional calls are even at 1024 and pay nothing. Neither this path
-   nor xfuser 0.7's own forward passes `use_sync`
+   nor the forward of xfuser 0.7.0 or 0.8.0 itself passes `use_sync`
    to the all-to-all. Time a warm template render before and after on
    hardware.
 
@@ -1403,9 +1403,10 @@ than stacks on a repeat call.
    the negative into one model call only at equal shapes, so a Worker ran a
    pair whose raw rows differ as two batch-1 calls a step, where stock, at
    512 rows on both sides, folds it into one batch-2 call. That is the
-   expected cause of the one-step NRMS 0.028 the shipped graph's one-GPU
-   Worker render read against stock on 2026-11-10, which no hardware run on
-   the fixed Workers has confirmed yet ([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+   cause of the one-step NRMS 0.028 the shipped graph's one-GPU
+   Worker render read against stock on 2026-11-10: on 2026-11-11 the fixed
+   Workers' one GPU matched stock exactly, with the first Spark capped
+   at max 2100 MHz (reading 2067 to 2099 MHz under load) ([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
    With the bind every topology folds as stock does: a pair of at most 512
    T5 ids makes one call on one GPU and takes the slice path on cfg2, whose
    two batch-1 calls are not that call, so `auto` never picks cfg2 for
@@ -1464,8 +1465,12 @@ than stacks on a repeat call.
    fused AdaLN at 1024 rows only; filled to stock's rows, either at the front
    or at the stock offset, both gave stock's bits, and the wide GEMMs, the q
    and k norm and RoPE kept a row's bits unfilled
-   ([VALIDATION](VALIDATION.md#evidence-ltx-2-3-t2v)). No hardware run has
-   read the latents with the route yet.
+   ([VALIDATION](VALIDATION.md#evidence-ltx-2-3-t2v)). On 2026-11-11, with
+   the route, the one-step uly2 latents matched one GPU exactly at the
+   three geometries, at batch 2 and on a padded stream, with the first Spark
+   capped at max 2100 MHz (reading 2067 to 2099 MHz under load); the packed I2V/AV template did not, and identity
+   is not claimed for it
+   ([VALIDATION](VALIDATION.md#ltx-2-3-latent-reread)).
 
    Performance cost, sequence parallelism only. Per model call each rank runs
    every `rms_adaln` call and every gate projection over its stream's stock

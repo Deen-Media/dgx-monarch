@@ -394,6 +394,7 @@ def _h3_rig(monkeypatch, tmp_path, *, preset, avail):
         h3_activation,
         render_memory_price,
     )
+    from dgx_monarch.nodes import recycle_drain
 
     checkpoint = tmp_path / H3_UNET
     checkpoint.write_bytes(b"x")
@@ -419,6 +420,8 @@ def _h3_rig(monkeypatch, tmp_path, *, preset, avail):
         effective_worker_args=lambda requested=None: dict(requested or {}))
     mesh = SimpleNamespace(topology_preset=preset, worker_args=dict(SLAB),
                            world=2, handle=handle)
+    if preset != "auto":
+        recycle_drain.note_loader_ran(H3_UNET)  # an explicit preset's loader node ran for it
     estimates: list = []
     real = h3_activation.estimate_h3_activation
 

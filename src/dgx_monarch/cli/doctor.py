@@ -6,7 +6,7 @@ import os
 import shutil
 import socket
 
-from .. import TORCHMONARCH_PIN
+from .. import TORCHMONARCH_PIN, xfuser_build
 from ..config import ClusterConfig, format_tcp_address, tcp_endpoint
 from . import (
     actor_nccl_row,
@@ -22,6 +22,7 @@ from . import (
     probe_certainty,
     sol_attn_row,
     vae_decode_row,
+    xfuser_row,
 )
 from .advertised_address import hostname_row, unresolved_row
 from .comfy_ports import find_comfy_ports as _find_comfy_ports
@@ -297,6 +298,7 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
                             "checkout's pin. Change the pin only with a CHANGELOG entry and a test battery run")))
     except Exception as exc:
         rows.append(_row(_FAIL, "torchmonarch", f"not importable: {exc!r}"))
+    rows.append(_row(*xfuser_row.driver_row()))
 
     # A `pip install` in a venv other than ComfyUI's pulls PyPI's CPU-only torch
     # (aarch64 has no CUDA wheels there), and the first render fails far from
@@ -430,6 +432,7 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
         pass
 
     remote_torch: dict[str, str] = {}
+    remote_xfuser: dict[str, str] = {}
     sol_install: dict[str, dict[str, str]] = {}
     int8_gemm: dict[str, dict[str, str]] = {}  # empty, so unobserved, until a host's probe answers
     nccl_libs: dict[str, dict[str, str]] = {}
@@ -478,6 +481,7 @@ print(f"fabric_iface={{iface}} rdma_active={{active}}")
 {sol_attn_row.PROBE_SOURCE}
 {int8_gemm_row.PROBE_SOURCE}
 {doctor_nccl.PROBE_SOURCE}
+{xfuser_row.PROBE_SOURCE}
 {doctor_probes.SWAP_PROBE_SOURCE}
 {listener_generation.probe_source(host.address)}
 EOF
@@ -532,6 +536,9 @@ EOF
                                  f"interface {iface_state}; {active_rails} ACTIVE RDMA rail(s)"))
             if env_fields.get("torch") not in (None, "MISSING"):
                 remote_torch[host.name] = env_fields["torch"]
+            remote_xfuser[host.name] = xfuser_row.select(lines)
+            rows.append(_row(*xfuser_row.host_row(host.name, remote_xfuser[host.name],
+                                                   config.python_bin)))
             sol_line = next((ln for ln in lines if ln.startswith(sol_attn_row.LINE_PREFIX)), "")
             sol_install[host.name] = _env_tokens(sol_line) if sol_line else {}
             int8_gemm[host.name] = int8_gemm_row.select(lines)
@@ -565,6 +572,9 @@ EOF
         rows.append(_row(_FAIL, "torch version match", f"skew across hosts: {detail}"))
     elif remote_torch:
         rows.append(_row(_OK, "torch version match", next(iter(versions), "unknown")))
+    xfuser_match = xfuser_row.match_row(xfuser_build.installed_version(), remote_xfuser)
+    if xfuser_match is not None:
+        rows.append(_row(*xfuser_match))
 
     rows.append(_row(*doctor_nccl.doctor_row(nccl_libs, [host.name for host in config.hosts])))
 

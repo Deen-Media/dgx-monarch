@@ -330,8 +330,11 @@ def ledger_detail(detail: dict, ceremony: Mapping[str, Any]) -> dict:
 
 
 # On the Fleet and explicit-on slab rows a no-material ceremony writes. The
-# consent reader reads it as it reads the kind (consent_quarantine.compared_nothing);
-# row_grants_skip reads only the kind, so those contexts still re-gate on first use.
+# consent reader reads the Fleet row as it reads the kind (consent_quarantine.compared_nothing);
+# an explicit-on row never decides, and beneath it only the denials other checks copied
+# there go, with a guard a later row of its own version closed there
+# (consent_quarantine._liftable); row_grants_skip reads only the kind, so those
+# contexts still re-gate on first use.
 REVOKED_BY_NO_MATERIAL = "no_material_revocation"
 
 

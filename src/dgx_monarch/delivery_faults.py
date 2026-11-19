@@ -3,9 +3,10 @@
 After the Worker loops restart under an attached mesh, a message to one of the
 old actors does not come back to the call that sent it. Monarch reports the
 lost message to the driver's fault hook as a supervision event (`undeliverable
-message ... delivery failure: ttl expired for dgxm_worker<...>@...tcp://<ip>:<port>`),
-and the call's own future never resolves. The capacity agreement used to wait
-its whole 30 s deadline for such a future (docs/TROUBLESHOOTING.md #2, #93).
+message ... delivery failure: ...dgxm_worker<...>@...tcp://<ip>:<port>`), and
+the call's own future does not resolve until Monarch's supervision gives up on
+the old actors. The capacity agreement used to wait its whole 30 s deadline for
+such a future (docs/TROUBLESHOOTING.md #2, #93).
 
 The fault-marker site in ``mesh_safety`` records here every fault that hits a
 delivery marker, absorbed or not, and ``await_rank`` reads the record between
@@ -15,12 +16,12 @@ as ``dgxm_worker<uid>``, and ``ActorMesh._name`` reads ``dgxm_worker-<uid>``.
 A late failure from a mesh that Recycle, Reset, the supervision reconcile or a
 re-attach retired names the same address and another uid, so it never counts.
 
-The first message a driver sends to a restarted loop rides the session the old
-process accepted and is lost with no report at all (worker_proc_id.py). When
-the price request is that first message, nothing comes back, so ``await_rank``
-asks the rank once more after ``REASK_S``: the second request reaches the new
-process, which reports it undeliverable at once. The quote mutates nothing, so
-a second request to a rank that is only slow costs one more read.
+When the price request is the first message this driver sends to a restarted
+loop, it rides the channel session the old process accepted. The pinned
+torchmonarch sends it again on a fresh session (upstream #5099), the new
+process has no such actor and returns it at once, and the wait ends at its
+first poll. The pin before it lost that message with no report, so the wait
+asked each silent rank a second time; that second request is gone.
 
 Leaf module: the standard library only.
 """
@@ -45,8 +46,6 @@ MARKERS = ("undeliverable", "delivery failure:", "ttl expired for", "channel clo
 # One poll of a rank's reply. A failure recorded during the wait ends it
 # within one step.
 POLL_S = 0.5
-# When a rank has not answered after this long, its request goes out once more.
-REASK_S = 2.0
 _KEEP = 64
 
 
@@ -57,7 +56,14 @@ class WorkerDeliveryError(RuntimeError):
     silent rank it is a liveness fault, never a capacity verdict, so it stays
     outside the stock-load capacity family. It lives in this leaf so the render
     path can catch it without importing the actor package at node registration.
+
+    ``moves`` holds the loop-id reading when the raiser already took one
+    (``restart_reattach.refuse_if_restarted``), so the detour need not read again.
     """
+
+    def __init__(self, message: str = "", *, moves: Any = None) -> None:
+        super().__init__(message)
+        self.moves = moves
 
 
 # One actor mesh as Monarch names it in a fault: ``dgxm_worker<uid>``.
@@ -120,16 +126,14 @@ def clear() -> None:
 
 def await_rank(await_step: Callable[[Any, float], Any], future: Any, left: float, *,
                watched: Iterable[str], mesh: str | None, since: float,
-               on_failure: Callable[[list[str]], Any],
-               reask: Callable[[], Any] | None = None) -> Any:
+               on_failure: Callable[[list[str]], Any]) -> Any:
     """Await one rank's reply for at most ``left`` seconds, watching for delivery failures.
 
     With no address to watch (a local fleet) or no mesh uid to match (its name
     could not be read), this is the one wait it always was. Otherwise the wait
     runs in ``POLL_S`` steps; after a step that times out, a failure recorded
     since ``since`` that names ``mesh`` and a watched address goes to
-    ``on_failure``, which raises. ``reask`` runs once, after ``REASK_S``.
-    Raises ``TimeoutError`` when ``left`` is spent.
+    ``on_failure``, which raises. Raises ``TimeoutError`` when ``left`` is spent.
     """
     watched = [address for address in watched if address]
     if not watched or not mesh:
@@ -146,6 +150,3 @@ def await_rank(await_step: Callable[[Any, float], Any], future: Any, left: float
                 on_failure(failed)
             if waited >= left:
                 raise
-            if reask is not None and waited >= REASK_S:
-                reask()
-                reask = None

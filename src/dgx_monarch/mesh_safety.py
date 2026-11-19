@@ -42,11 +42,13 @@ _TEARDOWN_FAULT_MARKERS = ("undeliverable", "delivery failure:",
 _TEARDOWN_GRACE_S = 30.0
 # Token absorption authority is time-bounded. An interrupt after
 # procs.stop().get() returns but before outcome publication can strand a token.
-# The 240 s bound is the 180 s recycle deadline in
-# `mesh_recycle.recycle_detailed`, which contains its 60 s group teardown and
-# 60 s proc stop, plus scheduling margin. A plain `MeshHandle.shutdown` waits
-# at most 2 x 60 + 30 s. An outcome-less token never authorizes reuse or
-# another stop at any age.
+# The 240 s bound holds the longest `MeshHandle.shutdown`: its group teardown
+# (at most 60 s), the 5 s actor stop, the proc stop at its bound
+# (mesh_stop.PROC_STOP_DEFAULT_S, 100 s, never more) and 30 s, 195 s. The 180 s
+# recycle deadline in `mesh_recycle.recycle_detailed` holds its 10 s lock wait,
+# 60 s group teardown, the actor stop and that proc stop, 175 s.
+# tests/test_stop_bounds.py checks every sum. An outcome-less token never
+# authorizes reuse or another stop at any age.
 TOKEN_AUTHORITY_S = 240.0
 _TEARDOWN_STATE_LOCK = threading.Lock()
 # One atomic snapshot: (token-to-issued-at mapping, grace-opened, version).

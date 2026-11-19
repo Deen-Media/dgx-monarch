@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 
 from dgx_monarch.safetensors_header import DTYPE_BITS
+from dgx_monarch.stock_prefix_drift import SENSENOVA_KEYS
+from stock_prefix_checkouts import MASTER, RELEASE, write_checkout
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("fp8_paths", ROOT / "tools" / "fp8_paths.py")
@@ -251,6 +253,25 @@ def test_the_rule_check_names_a_clause_a_checkout_dropped(tmp_path, capsys):
     model = _write(tmp_path / "m.safetensors", {"w.weight": ("F8_E4M3", [8, 8])})
     assert fp8_paths.main(["--comfy-dir", str(gone), str(model)]) == 1
     assert "these clauses are gone" in capsys.readouterr().out
+
+
+def test_the_kept_keys_follow_the_named_checkouts_prefix_rule(tmp_path, capsys):
+    """SenseNova's two top-level keys, six layers under net. and one recorded fp8
+    layer at the top level: a checkout with the release rule keeps the whole file and
+    the record, one with master's strips net. and drops it, and with no checkout
+    named the tool reads as master does."""
+    tensors: dict[str, tuple[str, list[int]] | bytes] = {
+        **{key: ("BF16", [8]) for key in SENSENOVA_KEYS},
+        **{f"net.blocks.{i}.weight": ("BF16", [8]) for i in range(6)},
+        "fm_modules.extra.weight": ("F8_E4M3", [8, 8]),
+        "fm_modules.extra.comfy_quant": json.dumps({"format": "float8_e4m3fn"}).encode()}
+    models = tmp_path / "models"
+    models.mkdir()
+    _write(models / "mixed.safetensors", tensors)
+    for checkout, kitchen in ((write_checkout(tmp_path / "release", RELEASE), True),
+                              (write_checkout(tmp_path / "master", MASTER), False), (None, False)):
+        fp8_paths.main(["--json", *(["--comfy-dir", str(checkout)] if checkout else []), str(models)])
+        assert json.loads(capsys.readouterr().out)["files"][0]["kitchen"] is kitchen, checkout
 
 
 @pytest.mark.skipif(not os.environ.get("COMFYUI_DIR"), reason="needs a ComfyUI checkout (COMFYUI_DIR)")

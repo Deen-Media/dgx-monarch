@@ -143,10 +143,26 @@ from a mesh that Recycle, Reset or an earlier re-attach retired names the same
 address under another mesh id, so it never ends a later wait.
 
 When nothing has reached a restarted loop since its restart, the render's own
-price request is the message the old channel session loses (below), and no
-failure comes back for it. So the wait asks a rank that has not answered once
-more after 2 s; that second request comes back undeliverable at once, and the
-wait ends about 2.5 s in.
+price request is the first message on the old channel session. The pinned
+torchmonarch sends it again on a fresh session, the new loop returns it
+undeliverable at once, and the wait ends at its first poll, about half a second
+in. The pinned release before it lost that message, and the wait asked each
+silent rank a second time and ended about 2.5 s in.
+
+Monarch's supervision can also report the old actors dead before any
+delivery failure comes back: in the restart runs traced on CPU its `monitor
+for actor ... stopped before report` reached the price about 2 s in, and the
+price then fails with a SupervisionError. Before the driver evicts the fleet
+for that failure, which would stop it and wait for the stop, the render reads
+every loop's id once, with 3 s per host. When every loop serves a new id, it
+ends the price with the same undeliverable refusal. A sampler render that
+owns its session then leaves the fleet unevicted, as for a delivery failure,
+and takes the step below at once. A KSampler Pipeline or Identity Gate
+render, which cannot leave its session's mesh, retires the stale fleet with
+the same short stop instead and refuses with "The Worker loops restarted;
+queue again" (the paths below). When not every loop serves a new id, the
+failure evicts the fleet, and the price refuses as a fleet that did not
+answer.
 
 **A sampler render attaches again by itself.** A render through KSampler,
 KSampler Advanced or Sampler Custom (DGX Monarch) that owns its render
@@ -181,8 +197,28 @@ and `reattach_s`, the seconds the detour took, and the `dgxm top` ticker shows
 a `restart_reattach` event with its `outcome`, `verdict`, `moved`, `teardown`
 and `wall_s`. The undeliverable messages and late faults from the stale mesh
 (`cluster fault`), and a stale-mesh stop that times out (`proc stop on detach
-timed out`), still log at ERROR and can raise browser toasts; next to
-`outcome=attached` they are expected.
+timed out`), still log at ERROR and can raise browser toasts; after an outage
+the fault lines open with `The driver lost contact with` and the box, since
+the loops were down. Next to `outcome=attached` they are expected, and no
+lost-Worker warning follows them: that warning comes only from a render's
+call that fails ([#4](#4-supervisionerror--process-exited-with-non-zero-code)).
+
+A ComfyUI that exits normally (Ctrl+C, or the server closing) while a render
+is attaching again, or a Pipeline or Gate render is retiring the stale mesh,
+ends that detour with no warning and no error after the exit's notice
+([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)). The
+render's own stop of the stale mesh logs nothing. An id reading, a liveness
+probe or an attach already under way runs to its end, an attach's trace lines
+at INFO. A reading of the Workers' ids over ssh that had started still asks
+each host it had yet to ask, up to 3 s per host (10 s in a re-attach), and
+then the render stops. Nothing starts after the notice: no id reading, no
+probe, no attach, no second attempt, no dispatch on the new mesh and no Worker
+restart. The render ends
+with "the driver is exiting, so this render stops here", which ComfyUI may log
+as the interrupted render's own error. On loopback
+on 2026-11-18, exits 0.5 to 8.0 s into the detour, by a normal return or by
+Ctrl+C, logged no warning and no error after the notice, and every process
+exited with code 0.
 
 The render refuses at once instead, with a class C `cross_rank_capacity`
 refusal that names the remedy, when the reading finds:
@@ -197,28 +233,47 @@ refusal that names the remedy, when the reading finds:
 **Paths that do not attach again by themselves.**
 
 - KSampler Pipeline (DGX Monarch) renders and the Identity Gate (DGX Monarch)
-  node run in a session pinned to the mesh they started on. They stop at the
-  fast refusal, and queuing them again, or running `dgxm restart` again, does
-  not clear the stale mesh. Run one render through KSampler (DGX Monarch)
-  with the loader and Init inputs unchanged, which attaches again by the new
-  ids, then queue the workflow again.
-- An automatic first-use identity gate stops at the fast refusal too. Its
+  node run in a session pinned to the mesh they started on, so they cannot
+  attach again inside their run. When every loop serves a new id (the price's
+  own reading, or one taken with 3 s per host after a delivery failure), they
+  retire the stale mesh with the same short stop and liveness proof and refuse
+  with "The Worker loops restarted; queue again": queuing the workflow again
+  attaches a fresh fleet. On loopback that refusal came about 4.6 s in after a
+  delivery failure and about 6.1 s in after a SupervisionError. They leave the
+  fleet as before when not every loop restarted, while a teardown is in
+  progress, when a prior stop has no known outcome, and in a Pipeline whose
+  earlier render's result is still in flight. While that teardown is the
+  driver's own cleanup still inside its wait, the refusal says `the driver is
+  still stopping the previous Worker fleet; that stop ends within about <n>
+  s; try again when it ends`. In the Pipeline case, after a
+  SupervisionError the eviction waits for the Pipeline's abort to abandon that
+  result, about 24 s on loopback, and the re-queue attaches; after a delivery
+  failure the stale mesh stays, and a plain re-queue's first render, which has
+  no earlier result, retires it and refuses once more. Otherwise after a
+  delivery failure, queuing them again, or running `dgxm restart` again, does
+  not clear the stale mesh: run one render through KSampler (DGX Monarch) with
+  the loader and Init inputs unchanged, which attaches again by the new ids,
+  then queue the workflow again.
+- An automatic first-use identity gate stops at the same refusal too. Its
   abort turns that combination's residency levers off, as for any abort, but
   sends no stock policy to the gone actors, and the combination's next Gate
   run can restore the levers. The render it was proving then runs under stock
-  residency, and attaches again by itself only when that leaves its worker
-  settings as the last render's were (the next item). Under FSDP the gate's
-  refusal ends the render instead.
+  residency. After a retire it attaches a fresh fleet; otherwise it attaches
+  again by itself only when that leaves its worker settings as the last
+  render's were (the next item). Under FSDP the gate's refusal ends the render
+  instead.
 - Fleet KSampler (DGX Monarch) dispatches without a cross-rank price, a
   one-host fleet prices nothing, and a render whose topology, attention or
   worker settings differ from the last render's sends that setup to the old
   actors before it prices. A gate's own policy changes can do the same.
   These meet the old actors directly.
-- A render that reaches the stale mesh after Monarch's supervision already
-  reported the old actors dead takes the supervision path. On the pair the
+- A render that reaches the stale mesh after another path already evicted it
+  for a supervision failure takes the supervision path; on the pair the
   panel's status poll drew that report about a minute after the restart. A
-  render that arrives while the supervision stop is still running refuses
+  render that arrives while that eviction's stop is still running refuses
   with `the cached mesh cannot be used or replaced`; queue again once it ends.
+  A render whose own price meets the supervision failure reads the loops' ids
+  first, as above.
 
 On those paths the fallback is the one from before 1.2.0. The call fails on
 the old actors (a `SupervisionError`,
@@ -236,21 +291,28 @@ The Worker log prints the id in Monarch's own spelling and then in hex:
 digits>)`. The probe, the attach trace and doctor print the same value as the
 16 hex digits.
 
-The first message this driver sends to a restarted loop's address is lost:
-it rides the channel session the old process accepted, the new process
-refuses that session, and only the next message opens a fresh one. A lost
-config push would leave the new host agent waiting for it forever. So before
+The first message this driver sends to a restarted loop's address can be
+lost. After a short restart the pinned torchmonarch sends it again on a fresh
+session. After an outage of 30 s or more, messages this driver sent to the
+old process and never had acknowledged close the channel the moment it
+reconnects (`HYPERACTOR_MESSAGE_DELIVERY_TIMEOUT`), and whatever was queued
+with them is dropped, not sent again. A lost config push would leave the new
+host agent waiting for it forever. So before
 the first dial to a loop whose id changed since this driver last dialed it,
 the driver sends that address one throwaway message and waits 2 s; the trace
 writes a `proc_id_prime` line naming those loops. That first attach after a
 restart therefore takes about 2 s.
 
-That holds when the loop came back within Monarch's message delivery timeout
-(`HYPERACTOR_MESSAGE_DELIVERY_TIMEOUT`, 30 s by default in the pinned release).
-After a longer outage, such as a stop, a crash loop or a reboot, the driver's
-channel to that address stays closed and its attach fails at the config-push
-budget, the attach within a render included: restart ComfyUI. dgx-monarch
-leaves the delivery timeout at its default.
+That holds for an outage of up to a day: a restart, a stop, a crash loop or
+a reboot. A channel with nothing to send keeps reconnecting for that long
+(`channel_reconnect_timeout`, which dgx-monarch sets to one day in every
+process and reads back; the attach config push carries the driver's value to
+the Workers). Past that bound torchmonarch closes the channel for the life of
+the process and never dials the address again; with its 60 s default, a
+Worker down longer than a minute could not be reached from a ComfyUI that
+stayed up. After an outage longer than a day the attach fails at the
+config-push budget, the attach within a render included: restart ComfyUI.
+dgx-monarch leaves the delivery timeout at its default of 30 s.
 
 **The id gate.** When the first reading of an attach carries no id for a
 loop, the attach refuses before anything dials, and the ComfyUI session stays
@@ -271,6 +333,13 @@ no attach ran: the id each Worker loop serves on this start is unknown for <host
 `dgxm doctor` fails the `<host> listener generation` row for the second and
 third reasons and warns for the last two
 ([#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)).
+
+The same reading names the torchmonarch each loop imported. When every id is
+known but a loop runs a torchmonarch other than the driver's, or comes from a
+release that does not report one, the attach refuses the same way, before it
+dials, with `no attach ran: <host> (<address>): its Worker loop runs
+torchmonarch <X> and this driver runs <Y>; ...`; see
+[#8](#8-version-skew-between-hosts).
 
 A loop that cannot write its record says so in its log:
 
@@ -293,15 +362,31 @@ it found none for <host> (...)`; a released fleet's error says `the id reading
 after it found none for`), and the trace closes `attach_1_reread_refused` (a
 released fleet closes `attach_1_released`;
 [#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)).
+When that reading finds every id but a loop on another torchmonarch, the
+attach refuses instead: no second attempt runs, no Worker restarts, since a
+restart cannot change a loop's version, the session stays usable, and the
+trace closes `outcome=refused stage=proc_id_reread`
+([#8](#8-version-skew-between-hosts)).
 
-**Upgrading.** A ComfyUI started before the update that brought per-start ids
-dials the bare address. `dgxm update` refuses in either mode while ComfyUI
-runs, so this case arises only when the Workers restart on the new code under
-a running ComfyUI: `dgxm restart` after a pull, or a hand restart of the
-service. Its next attach then fails at the config-push budget, retries once,
-and names `dgxm doctor` and a ComfyUI restart (older builds end that message
-`the in-process retry already ran`): restart ComfyUI. A new driver against
-Worker services still on an older release refuses before dialing, as the
+**Upgrading.** A ComfyUI keeps the torchmonarch it started with. `dgxm update`
+refuses in either mode while ComfyUI runs, so a driver and Workers on
+different releases meet only when the Workers restart on the new code under a
+running ComfyUI: `dgxm restart` after a pull, or a hand restart of the
+service. When that restart also moves torchmonarch to another version, the two
+sides cannot read each other's messages. The render still retires the stale
+mesh as above, since every loop serves a new id, but its attach then refuses
+before it dials, with `no attach ran: <host> (<address>): its Worker loop runs
+torchmonarch <X> and this driver runs <Y>` and what brings both to one release
+([#8](#8-version-skew-between-hosts)); a Pipeline's or Gate's re-queue meets
+the same refusal. A
+driver from a release before 1.5.0 instead waits out the config-push budget on
+each attempt and ends with `dgxm doctor` and a ComfyUI restart (older builds
+end that message `the in-process retry already ran`): restart ComfyUI. On one
+torchmonarch version, a driver that dials a
+loop's bare address is told the id that loop serves and attaches with it, so
+a Worker serving per-start ids never turns a driver away for dialing bare
+(CPU-tested). A new driver against Worker
+services on a release before per-start ids refuses before dialing, as the
 table above says; Workers left in release slots by a plain update from 1.1.0
 need [#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update).
 
@@ -338,6 +423,42 @@ price had waited 30 s. On hardware the liveness release reads every host
 under its 20 s budget; that cost is not measured yet. In mutation runs,
 removing the wait's short circuit made the price wait 30.1 s, and removing
 the re-attach left it refused.
+
+**What CPU runs on torchmonarch 0.8.0 showed (2026-11-17).** Real Worker
+loops and a driver on one machine, through the same attach and re-attach
+code. After both loops restarted, the render's price wait ended at its first
+poll, 0.5 s in, with no second request, and the render carried on in 5 to 7 s.
+With one loop held down 40 s under a live mesh, the replacement attach passed
+in 2.1 to 2.2 s in 5 of 5 runs with the throwaway message and timed out in 5 of
+5 without it; after such a timeout that driver could not attach to the loop
+again, while a second driver process attached at once. Held down 90 s, the
+attach timed out in 3 of 3 runs with torchmonarch's 60 s reconnect default and
+passed in 4 of 4 with the one-day bound. With both loops down 40 s and a
+render queued after through the sampler's own submission path, 5 of 5
+renders rendered: 3 ended the price on a SupervisionError 2.0 s in, whose id
+reading took 0.10 s, and reached the re-attach about 2.1 s in with the fleet
+unevicted; 2 ended on a delivery failure 0.5 s in. Each render took 7.0 to
+8.6 s, and after both loops restarted at once 5 of 5 rendered in 7.1 s. With
+one loop restarted the render refused 0.6 s in, and rendered in 7.1 s once the
+other loop restarted too. In a real render session the render did not open,
+as a Pipeline or Gate render runs, every full restart retired the stale mesh
+and refused with "queue again", and the next render attached a fresh fleet in
+2.4 to 2.5 s: after both loops restarted at once, 5 of 5 on a delivery
+failure, refusing 4.6 s in; after both were down 40 s, 4 of 5 on a delivery
+failure, refusing 4.6 s in, and 1 on a SupervisionError, refusing 6.1 s in.
+With one loop restarted the render refused 0.6 s in with the delivery refusal,
+as before, and retired the mesh once the other loop restarted too. With an
+earlier result's lease held, as a Pipeline at depth 2 holds it, nothing was
+retired: on a delivery failure (1 run) the render refused 0.6 s in as before,
+and the re-queue retired the mesh and refused once more; on a
+SupervisionError (3 runs) it refused 2.1 s in and the abort's release of the
+lease then waited 24.2 to 24.3 s for the deferred stop. With one loop down and
+staying down (4 runs), the reading answered unknown in 0.06 to 0.08 s, the
+fleet was evicted as before, and the render refused 57.5 s in. In none of
+these runs did the driver log the lost-Worker warning that a render's failed
+call raises; after the 40 s outage two fault lines opened with `The driver
+lost contact with` and the box, since the loops were down. The pair checks of
+these cases have not run.
 
 **What the two-Spark recheck showed (2026-10-15).** With per-start ids and
 both loops restarted together under a live driver, the first render waited
@@ -403,13 +524,86 @@ dgxm-worker` for systemd-managed Worker services. On UMA boxes the usual cause
 is OOM; see [#5](#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc). The driver
 evicts the poisoned mesh automatically, and the next Init or render respawns
 the actors. That needs no ComfyUI restart. A Worker service that died and came
-back within the delivery timeout serves a new id. When every service
-restarted, the first sampler render attaches again by itself (CPU-tested; the
-pair recheck is pending). When only one did, that render refuses and names
-`dgxm restart` ([#2](#2-every-attach-times-out-after-one-failed-attach)). When
-the attach to the replacement fleet fails anyway, after a longer outage, run
+back serves a new id, and a ComfyUI that stayed up reaches it again when it
+came back within a day. When every service restarted, the first sampler render
+attaches again by itself (CPU-tested; the pair recheck is pending). When only one
+did, that render refuses and names `dgxm restart`
+([#2](#2-every-attach-times-out-after-one-failed-attach)). When the attach to
+the replacement fleet fails anyway, after an outage longer than a day, run
 `dgxm restart` so both Worker services restart together, unless the error
 says they already did, then restart ComfyUI.
+
+**How soon the driver hears of it** (measured on CPU on 2026-11-17, with
+torchmonarch 0.8.0):
+
+- A call in flight when its Worker process dies usually fails at the next
+  status check, within about a second. Now and then it fails about 10 s
+  later instead, with the status-request timeout below, and the words then
+  say the driver lost contact with the box, even for this box.
+- A Worker that dies while nothing is running is reported in the log, and in
+  the browser, after about 30 s (`data_supervision_timeout`). The next render
+  fails within about 2 s when the Worker's box is still reachable.
+- When a box's Worker service is killed or frozen, Monarch fails a call in
+  flight after about 10 s, and one sent after the loss after about 12 s. The
+  driver stops that fleet once no render holds it, and the render waiting on
+  it gets its error when that stop ends: with a call in flight, about 98 s
+  after the loss of a box beside a live one (the pair's case) and about 56 to
+  68 s when the fleet's only box is lost, killed or frozen alike, since the stop
+  waits for Monarch's report on it. In a two-deep KSampler Pipeline the first
+  render's error comes at once and the second's after the stop. At the failure
+  itself the driver logs one WARNING, once per fleet, with the cause in plain
+  words ("... The driver stops that fleet once no render holds it; a render
+  still waiting on it gets its error when that stop ends, within about
+  105 s."). That figure is the actor stop's cap plus the proc stop's own
+  limit at Monarch's defaults: the group teardown fails at once on a lost
+  Worker. A render queued, or a Reset pressed, while that stop runs is refused
+  with "the driver is still stopping the previous Worker fleet; that stop ends
+  within about 135 s; try again when it ends": a Reset or a ComfyUI restart
+  cannot help before then. This figure adds the group teardown's 30 s, since
+  the same stop follows a stall
+  ([#86](#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)),
+  whose Worker can still be alive and hold its GPU lock, which the group
+  teardown waits for.
+
+These figures come from Worker services killed or frozen on one machine, over
+loopback, on 2026-11-17 and 2026-11-18. A powered-off box or a cut link sends
+no reset, so the driver may learn of it later; that case is not measured yet,
+and a test on the pair that pulls the direct cable is what will measure it.
+
+The fault toast and the render error open with the cause in plain words, then
+Monarch's own text. Since 1.5.0 the render's error has its own type,
+`dgx_monarch.worker_loss.WorkerLostError`, which is the type ComfyUI names and
+the error code Studio shows. Before, both named Monarch's
+`monarch._rust_bindings.monarch_hyperactor.supervision.SupervisionError`, and
+that error stays chained under the new one in ComfyUI's log. A refusal the
+driver raises while it handles the loss keeps its own type and words.
+
+"The Worker on the sibling was stopped by signal 9 (SIGKILL)" comes from `the
+process this actor was running on failed: Killed(sig=9)`. The kernel's
+out-of-memory killer sends signal 9, but so does `kill -9`: look for an
+out-of-memory line in that host's `dmesg` or `journalctl -k` before you blame
+memory. When the words name no single box, they say to look on each box of
+the fleet, or on those boxes. "... exited with code N" comes from `exited with
+non-zero code N`: the Worker exited by itself, and its log says why. "The
+driver lost contact with the sibling" comes from any of these:
+
+- `supervision liveness failed`: the box stopped answering Monarch's liveness
+  checks (its Worker service killed, frozen or out of reach).
+- `status request to monitored actor ... timed out`: the Worker process went
+  10 s without an answer, because its box's service was killed or frozen,
+  because the process itself stalled (a whole-process stall of over about 11 s
+  with a call pending ends the Worker this way), or because the Worker process
+  was killed between two status checks.
+- `host unreachable: no status received from process within 60s`: no status
+  came from the box's service for a minute.
+- `timeout waiting for message from proc mesh agent`: the box's service did
+  not answer a query about the Worker.
+- `no status received from process`: the Worker process sent no status.
+- a monitor that `stopped before reporting a failure`: the Worker service
+  restarted, and the process it watched went with it.
+
+A fault that names a fleet the driver has since replaced says "a Worker of an
+earlier fleet".
 
 ## 5. Loads fail / OOM on UMA boxes (DGX Spark etc.)
 
@@ -534,17 +728,60 @@ family-specific remediation.
 ## 8. Version skew between hosts
 
 **Symptom:** doctor row `torchmonarch=…; version skew vs driver pin`, a
-failing `torch version match: skew across hosts` row, pickling errors
-mid-attach, or a render refused with `Gate authority needs every box on the
-driver's torch build`, which names each box's torch and CUDA. A Worker can
-refuse the same way in its own words: `this Worker runs torch ...`.
+failing `torch version match: skew across hosts` row, a warning
+`xfuser build match: two builds` row, pickling errors mid-attach, or a render
+refused with `Gate authority needs every box on the driver's build`, which
+names each box's torch, CUDA and xFuser. A Worker can refuse the same way in
+its own words: `this Worker runs torch ...`.
+
+For torchmonarch, a render refuses before it dials with `no attach ran:
+<host> (<address>): its Worker loop runs torchmonarch <X> and this driver runs
+<Y>`, or with `... runs an earlier release, which does not report its
+torchmonarch version`, and doctor's `listener generation` row fails with
+`running torchmonarch=<X>`. When the first attempt failed and the reading
+after it finds such a loop, the refusal starts `the first attach failed
+(...), and the id reading after it found <host> (<address>): ...`. A render
+can also refuse before any attach with `Monarch version does not match the
+supported pin: this process loaded torchmonarch <X> and this dgx-monarch pins
+<Y>`, or with `Monarch's native binding in this process is no longer the file
+on disk: torchmonarch was reinstalled after this process loaded it`. A driver from a release before 1.5.0 has none of these checks: its
+attach waits out the config push budget twice (`reply timed out after
+MESH_ATTACH_CONFIG_TIMEOUT`), restarts the Worker services when `auto_heal`
+is on, and ends with "Rule out version skew first".
+
+**Cause, torchmonarch:** in a CPU loopback check on 2026-11-17, a 0.7.0 loop
+and a 0.8.0 client, either way round, did not attach: they could not decode
+each other's messages, so the config push waited out its whole budget.
+Monarch's own file log held an INFO line, `deserialize message with M =
+hyperactor::mailbox::MessageEnvelope`, an ERROR, `failed to receive ack within
+timeout`, and a WARN, `connection to <address> lost: delivery timeout`, and
+none of them named the versions. Each Worker loop records the torchmonarch it
+imported in its actor ledger loop record, the probe the driver runs before
+every attach reads it, and the driver refuses before it dials when it is not
+the version the driver loaded. The driver reads that version once, at its
+first mesh build after torchmonarch is loaded, and keeps it: an install
+under a running ComfyUI changes the files on disk, not the code the process
+runs, so the driver refuses until ComfyUI restarts. Something else in
+ComfyUI may load torchmonarch before that first reading, so on Linux the
+reading also checks that the native binding the process mapped is still the
+file on disk (`/proc/self/maps`), and refuses with `torchmonarch was
+reinstalled after this process loaded it` when it is not. Where that list
+cannot be read, or the reading is taken while an install is under way, with
+the old file still mapped under pip's stash path, nothing is settled and the
+reading is the version installed at that moment. A refusal on the reading after a failed first
+attempt restarts nothing, since a restart cannot change a loop's version, and
+leaves the session usable. Doctor's `env` row reads the version installed on
+disk; its `listener generation` row reads the one the running loop imported,
+which a stopped or restarted process can make differ.
 
 **Fix:** For a torch-version mismatch, install the same torch/CUDA build in
 the driver and every worker environment; doctor treats the skew as a failure
-because serialized objects and distributed kernels cross that boundary. A Gate
-PASS names the build it was proven under, so a risky render on a mixed pair
-refuses rather than reuse a proof no box ran; once the builds match, the PASS
-rows recorded on a matched pair apply again.
+because serialized objects and distributed kernels cross that boundary. For
+two xFuser builds, install stock xFuser 0.8.0 on every box
+([#104](#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
+A Gate PASS names the torch, CUDA and xFuser build it was proven under, so a
+risky render on a mixed pair refuses rather than reuse a proof no box ran;
+once the builds match, the PASS rows recorded on a matched pair apply again.
 `dgxm update` uses `--no-deps`, so it does not replace torch.
 For torchmonarch skew on plain source directories, run `dgxm update`
 (synchronize the repo's exact pin with `--no-deps`, install/sync dgx-monarch
@@ -555,7 +792,31 @@ never changes a release slot. If the driver has already moved without those
 Workers, repair that first
 ([#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
 Neither path resolves or replaces torch, NCCL, xfuser, or optional extras.
-torchmonarch is pinned; bump it on all hosts at once.
+torchmonarch is pinned; bump it on all hosts at once. When the attach refuses
+on a Worker loop's version, the driver and every Worker must run the same
+release, and the refusal says which side is newer when the two versions
+order. A loop that reports no version runs a release older than any driver
+that reads one. When the driver is the newer side, it moved without its
+Workers, by a hand pull or a rollback, and `dgxm update --verify` refuses
+then with `prior_worker_drift`: on plain source directories, install the
+driver's torchmonarch into the Python cluster.toml names and run `dgxm
+restart`, which syncs the driver's source to the Workers; in release slots,
+use the forward repair in
+[#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update).
+This torchmonarch also requires `nvidia-ml-py`, which an install with
+`--no-deps` does not bring: install it into that Python as well, or the next
+update stops before any change and names it as missing for that host.
+When the Workers are the newer side, as after a verified update that ended
+`partial`, put the driver's checkout and Python on their release and restart
+ComfyUI (#118 says how for each partial code). When the refusal says `this process loaded
+torchmonarch` or `torchmonarch was reinstalled after this process loaded it`,
+restart ComfyUI before anything else if dgx-monarch was updated since it
+started, since the process still holds the old pin; otherwise install the pin
+into ComfyUI's Python if it is missing, then restart ComfyUI: no install
+reaches a process that already loaded torchmonarch. The same
+restart clears `Monarch runtime identity is unavailable` and `... not owned by
+the ... distribution` once the install is right, since the process keeps
+its first reading.
 
 ## 9. Worker host death mid-render
 
@@ -567,7 +828,7 @@ timeout and a poisoned driver transport; see [the dated lifecycle results](VALID
 A poisoned transport requires a fresh driver after confirmed owned cleanup;
 resetting its attached mesh does not clear that transport state. That check
 came before per-start Worker ids; see [#2](#2-every-attach-times-out-after-one-failed-attach) for
-re-attach after a Worker restart within the delivery timeout.
+re-attach after a Worker restart.
 
 ## 10. First RDMA latent return is slow
 
@@ -682,26 +943,47 @@ render's decode took the box to 6.7 GiB available while the driver still held
 nothing failed, but nothing was holding the box there either. So on the same
 GPUs, when the driver's ComfyUI is about to run a decode it prices above its
 free memory, the pack first has ComfyUI free that much from the text encoders
-it holds, through ComfyUI's own call. Then
-ComfyUI's decode runs unchanged. Confirm the driver log line `unified memory:
+it holds, through ComfyUI's own call, and asks the Workers to release the
+device memory their last sampler left reserved and idle, which drops no
+model. Then
+ComfyUI's decode runs unchanged. On the build with it (dev `e77694c`, the
+same day, the cap unchanged at max 2100 MHz and the highest reading 2093
+MHz) that render kept 13.0 GiB available, and 6.2 GiB with the relief
+switched off
+([VALIDATION](VALIDATION.md#release-build-low-memory)). The Workers' part
+came later. On dev `45e07cc` it asked them only where the decode was still
+short, and in its proof block the two decodes read on a pair each fitted
+once the driver's text encoder had given up memory, so the Workers were not
+asked, and the first Spark (under its clock cap, max 2100 MHz, highest
+reading 2093 MHz) read 10.34 and 9.99 GiB through them
+([VALIDATION](VALIDATION.md#found-on-dev-45e07cc)); dev `fd03947` asks
+them whenever the relief acts, and in the same state two Worker actors
+released their idle pools and the first Spark (the same cap and reading)
+read 16.08 GiB through the decode ([VALIDATION](VALIDATION.md#proof-block-fd03947)). Confirm the driver log line `unified memory:
 before a VAE decode that ComfyUI prices above its free memory`. When it acts
 it logs one line that starts `decode relief:` with ComfyUI's price, the idle
-models it freed from, and what MemAvailable read on each side. What to know:
+models it freed from, and what MemAvailable read on each side; when it asked
+the Workers, the line adds `Worker actor(s) then released their idle device
+pools` with MemAvailable before and after, or says the Workers were not
+asked and why. What to know:
 
 - The decode is ComfyUI's own call with the same arguments, and freeing
   changes no weight. A video or a single image decodes to the same bits as
   before. A decode of several images takes as many a batch as ComfyUI's free
   memory allows, as it always did.
-- Only text encoders give up memory. Every other model stays loaded: the
-  diffusion model, the VAE, CLIP vision, a ControlNet. A decode made while a
-  sampler runs (a preview node that decodes at every step) frees nothing.
+- In the driver only text encoders give up memory, and on the Workers only
+  the idle device memory their sampler left. Every other model stays loaded: the
+  diffusion model, the VAE, CLIP vision, a ControlNet, and each Worker's
+  models and decode VAE. A decode made while a sampler runs (a preview node
+  that decodes at every step) frees nothing.
 - What it costs when it acts: a text encoder that gave up memory loads it
   again when you next change the prompt's text. An unchanged prompt pays
   nothing.
 - It adds room and does not bound a decode. If the line ends `is still priced
   above the ... free and runs as ComfyUI runs it`, or says `ComfyUI held no
-  text encoder here to free from`, nothing was left to give: use VAE Decode
-  (Tiled), a shorter clip or a smaller frame.
+  text encoder here to free from` with no Workers' release after it, nothing
+  was left to give: use VAE Decode (Tiled), a shorter clip or a smaller
+  frame.
 - Whenever it acts it also asks the Workers of the fleet that served the
   render for the device memory they hold idle after sampling (6.4 GiB on
   record on a pair). The line says one of three things about that: `Worker
@@ -727,8 +1009,8 @@ the page cache holds does not count, although the system would give it back.
 On 2026-11-12 three Worker starts with 1.52, 4.61 and 8.85 GiB free and
 44.7, 47.4 and 50.8 GiB available ended in `Actor call dgxm_worker.setup
 failed` and `CUDA error: out of memory ... from cuDevicePrimaryCtxRetain`;
-one start worked with 8.87 GiB free and every other on record with 10.6 or
-more. Each failure came while another program held tens of GiB. Reading
+other starts worked with 8.87 GiB free and with less, so it does not
+happen every time. Each failure came while another program held tens of GiB. Reading
 large files is not enough to cause it: 260 GiB of model files read with
 nothing held left 26 to 28 GiB free. So before its first CUDA
 call a Worker now reads the box's memory, and if less than 16 GiB is free
@@ -750,19 +1032,19 @@ and then makes its context straight away. What you may see:
   memory, or wait for a large download or file copy to end, then click Reset
   attached mesh and queue again. If nothing can be closed, a root shell can
   drop the page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`). On a pair
-  it takes about ten minutes to show, and it shows only when the head's
-  Worker is the one that failed: it then opens "On the head, ...". The
-  Worker that failed answers at once, but the sibling goes on waiting for
-  the head to open the group, the driver's clean-up of the failed setup
-  waits behind that, and the driver reports only when the clean-up reaches
-  its own limit. When the sibling's Worker is the one that failed, the head
-  waits for it to join until the setup's limit, and what shows after about
-  ten minutes is a timeout with no word of memory, not this refusal. If a
-  pair's start ends that way, read the free memory on the sibling (`grep
-  MemFree /proc/meminfo`) and the make-room line in the sibling Worker's
-  journal. A render that sits
+  it takes about ten minutes to show, and it opens with the box that
+  failed: "On the head, ..." or "On the sibling, ...". The Worker that
+  failed answers at once, but the other one goes on waiting at the group's
+  rendezvous for it, and the driver's clean-up of the failed setup waits
+  behind that until the wait gives up. When the sibling's Worker is the one
+  that failed, the driver's log says at once, at WARNING, `rank 1's setup
+  failed while rank 0 had not answered` and how long the clean-up may wait;
+  the refusal follows when the clean-up ends. A render that sits
   with no progress right after a reset or a restart, on a box that is short
-  of free memory, is this wait.
+  of free memory, is this wait. A render with `comfy_managed` on that stops
+  inside its first step on a roomy box is another matter
+  ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses),
+  "A render that stopped inside its first step").
 
 `DGXM_DISABLE_CONTEXT_ROOM=1` on the Worker (in its `worker.env`, then a
 recycle: [CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)) turns the
@@ -772,8 +1054,11 @@ and at the context. Under comfy-managed residency the Worker makes the room
 and leaves the context to ComfyUI's own start a moment later, so memory
 freed can be taken again in between; its status then reads "left to the
 bootstrap", and a second journal line gives what was free when the context
-was asked for. Not yet run on hardware
-([DESIGN](DESIGN.md), "A Worker makes room for its CUDA context before it
+was asked for. On hardware (dev `48e0509`, 2026-11-12 and 13, the first Spark under its stability clock cap, max 2100 MHz, highest reading 2093 MHz) every start with under 16 GiB free made room in about 4 s and made
+its context, on one GPU and on the pair; the refusal itself was not seen,
+because the failure did not come back with the step switched off
+([VALIDATION](VALIDATION.md#worker-context-starts);
+[DESIGN](DESIGN.md), "A Worker makes room for its CUDA context before it
 creates one").
 
 **A LoRA stack with `lora_low_rss` off is refused, or baked in place.** With
@@ -818,7 +1103,10 @@ you may see:
 
   **The Wan-Animate 2 INT8 file and the Init node's `reserve_vram_gb`.** A
   whole classic load of that model with its LoRA takes about 4 GiB more
-  than the 2 GiB charge promises and still leaves the 5 GiB floor, because
+  than the 2 GiB charge promises and, on one GPU at the shipped 81 frames,
+  still left the 5 GiB floor in every load on record (lows of 7.01 to 7.68
+  GiB on dev `48e0509`, the Spark under its clock cap, max 2100 MHz, highest
+  reading 2093 MHz), because
   ComfyUI places a model whole only when its free reading covers the model,
   the Worker's reserve and its own estimate for the latent; under that it
   places the model partly, and the low-RSS route bakes it for less. That was
@@ -834,7 +1122,12 @@ you may see:
   renders. Every other INT8 ConvRot model pays the share at any reserve
   until a whole load of its own has been measured. (On a pair, a rank that
   ComfyUI loads only partly is refused with the `partial_load_divergence`
-  text whatever the reserve; that is #79, not this rule.)
+  text whatever the reserve; that is #79, not this rule. A rank that loads
+  it whole takes more than one GPU does, and with the backup kept the first
+  Spark read 4.29 GiB at readings near 53 GiB on dev `48e0509` (under its
+  clock cap, max 2100 MHz, highest reading 2093 MHz); the ranks
+  now give their backups up together where one is short, as the next
+  paragraph says.)
 
   **A clip much longer than the shipped ones, with `lora_low_rss` off.** Three
   shipped templates run with the switch off and a LoRA: `dgx-monarch-wan-animate2`,
@@ -846,11 +1139,14 @@ you may see:
   that still loads the model whole leaves about 6 to 7 GiB. At 241 frames it
   would leave about 4.4 GiB, under the 5 GiB floor (projected from a roomy
   241-frame render that took 52.4 GiB where 81 frames takes 39, one GPU,
-  2026-11-12, the Spark under its clock cap, max 2100 MHz). If you lengthen a
+  2026-11-12, the Spark under its clock cap, max 2100 MHz, highest reading
+  2093 MHz). If you lengthen a
   clip well past the shipped length on a box with little memory to spare, turn
   `lora_low_rss` on, which keeps no such copy, or free memory first. On one GPU
   the Worker now frees that copy by itself before the first step when a whole
-  load leaves less room than the sampler is estimated to need; it logs a line
+  load leaves less room than the sampler is estimated to need, the room
+  counting the device memory the Worker already holds idle from its last
+  render (its sampler takes that first); it logs a line
   that starts `LoRA bake: ComfyUI loaded this model whole`, and the next LoRA
   change on that model reloads it from disk. On a pair the ranks do the same together: any rank short, and
   every rank frees; a rank that cannot free keeps the whole fleet as it is; and where a rank would still be
@@ -858,7 +1154,9 @@ you may see:
   figures. The refusal leads with the words of the rank that was short, or whose model was wrong after
   the free, and names its box, whichever box's error reaches the driver; that box's Worker journal logs
   the same refusal at WARNING, and has its cause whole where the refusal's copy ends "cut to fit the
-  ranks' exchange". What a rank needs counts, beside ComfyUI's estimate, the shared memory a
+  ranks' exchange". Comfy-managed residency carries no LoRA, and neither one GPU nor a pair
+  weighs its model's backup, which holds only the small weights ComfyUI's own loader keeps
+  loaded. What a rank needs counts, beside ComfyUI's estimate, the shared memory a
   fresh Worker still maps in its first forward, about 2.7 GiB (about 0.1 on a warm Worker); the figures say
   how much of the need it is. Where a Spark is short enough that the Workers free the backup, the
   kernel can spend up to about a minute compacting that box's freed memory during the first forward,
@@ -866,7 +1164,16 @@ you may see:
   render and its latent are the same. On 2026-11-13 one held pair render sampled one step in 89.5 s on
   each rank and its repeat in 55.2 s, against about 38 s with the backup kept; a later held, freed
   render took 36.8 s, and one GPU showed no such cost. More free memory on that box before the render
-  avoids it. A load ComfyUI placed only partly
+  avoids it. On hardware (dev `45e07cc`, 2026-11-13, the first Spark under its
+  clock cap, max 2100 MHz, highest reading 2093 MHz) the INT8 template's
+  low at a tight reading went from 7.0 to 7.7 GiB with the copy kept to
+  15.82 with it freed on one GPU, 241 frames read 25.07 GiB, and on a pair
+  both ranks freed and the first Spark read 22.28 GiB where it had read 9.68
+  near 60 with the copy kept
+  ([VALIDATION](VALIDATION.md#proof-block-45e07cc)). In a fleet that pairs a Spark with a GPU that has memory of its
+  own, that GPU's rank takes no part and keeps its backup, so where the
+  lines and the refusal say every rank freed, they mean every rank on
+  unified memory. A load ComfyUI placed only partly
   whose bake could not be finished for room is still as above. If a pair's
   render is refused with `pair_backup_room` after the ranks freed their
   backups, the same queue is refused again until memory is back: clear the
@@ -1379,7 +1686,7 @@ names a missing/incompatible dotted Monarch surface, an event-loop semantic
 change, or `semantic probe mesh_factory_private_ownership`.
 
 **Cause:** either the installed exact pin no longer matches the checked pin
-snapshot, latest stable changed a production call shape, or raw `PythonTask` /
+snapshot, latest stable changed a production call shape, or raw `Handle` /
 public `Future.get()` active-asyncio behavior changed. The workflow treats
 semantic drift as review-required even when it might be an improvement,
 because dgx-monarch's off-loop and bounded-wait paths are built on the old
@@ -1974,7 +2281,15 @@ its own row algebra and its own calibrated constants: see [#56](#56-minimax-h3-r
 **Reading the error:** the message splits the estimate into weights and
 activations, gives the token count of each stream (video+ref and pose), and
 names a `tokens/rank <= N` bound. The driver prices the render as one rank, so
-the bound applies to the render's whole token count.
+the bound applies to the render's whole token count. Where the positive
+conditioning holds more than one entry, it counts the references and pose of
+the entries that can run in one step: entries whose timestep windows
+(ConditioningSetTimestepRange) never overlap never share a model call, so the
+largest set whose windows share a point is priced, with its references summed
+and the largest pose of its entries (which can raise the price of a graph whose
+entries carry poses of different sizes); windows closer than the sampler can
+tell apart are priced together, and entries with no window, or a window bound
+that is not a finite number, count throughout.
 
 **Fix:** shrink resolution, frame count or reference-image count until the
 token count is under that bound, or free memory (`sync && echo 3 | sudo tee
@@ -2001,16 +2316,30 @@ A refusal that stands quotes the last reading and names what was unloaded and
 released. `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both steps off.
 
 **Warm re-renders:** a checkpoint that already rendered in this driver
-session, or that a pipeline sampler has submitted, is credited: its weight
-bytes already sit inside the lower `MemAvailable` reading, the message says
-"weights resident, credited", and only the activation term is estimated.
-Every successful Recycle drops that credit, and so does a render that fails
-while its result is collected and evicts the fleet. Other evictions do not,
-for example a fleet that dies during submit or in a Fleet wave. If the
-workers lose the model another way, for example when a different slot
-replaced it, the credit is stale and the estimate omits the weight term. That
-case can still end in an allocator OOM, as it would with no preflight, but it
-never blocks a render that fits.
+session, that a pipeline sampler has submitted, or that a load placed (an
+explicit preset's loader at its node, or the identity gate's no-render path)
+is credited: its weight bytes already sit inside the lower `MemAvailable`
+reading, the message says "weights resident, credited", and only the
+activation term is estimated. A load the loader deferred to the first render
+is not credited. These doors, through which every rank's models go, drop that
+credit: a successful Recycle, a Clear VRAM node at `hard`, an identity
+ceremony's clean reload and the gate's other unloads, a configuration change,
+a topology change or a failed setup's rollback, a worker-policy change on
+which a Worker reports a dropped model (`compile_dit`, the forced family, the
+shared activation scale and the FP8 matmul setting drop every resident; a
+`slab_weights` or `lora_low_rss` change drops one whose storage class or
+LoRA patches no longer fit), the capacity rescue's slot drop, a render that fails
+while its result is collected and evicts the fleet, a fleet the driver marks
+defunct (a dead Worker, a stall), whose replacement holds no model, and a new
+fleet started in place of a retired one. A Worker that keeps its model across
+a policy change, as it keeps a stock model across the gate's stock policy over
+the Init node's `auto` residency widgets, reports no drop, and the credit
+stands. If the workers lose the model
+another way, for example when a different slot replaced it, the credit is
+stale and the estimate omits the weight term. That case can still end in an
+allocator OOM, as it would with no preflight, but it never blocks a render
+that fits. Until 1.5 an explicit preset's eager load was charged here a
+second time, and the credit outlived a hard Clear VRAM.
 
 **Minimal-footprint gate runbook (first SCAIL attempt on new hardware):**
 build a `WanSCAILToVideo` graph with a small, 32-divisible `width`/`height`
@@ -2207,6 +2536,44 @@ proof of cleanup unless the sweep settled; repair the host/transport and retry.
 **Automatic cleanup:** the driver renews actor leases. After 300 seconds
 without renewal by default, the actor logs `dgxm-reap:` and exits. Inspect
 `journalctl --user -u dgxm-worker` for that line.
+
+A normal ComfyUI exit (Ctrl+C, or the server closing by itself) frees the
+Workers: Monarch's own exit step stops every mesh the driver owns. Once a fleet
+has been built, every such exit, whether or not a call is in flight, begins
+with one INFO line: "The driver is exiting: Monarch's exit step stops the
+Worker actors, and the driver reports no Worker faults from here on". A call
+still in flight then fails without a fault report: the driver neither evicts
+the fleet nor stops it a second time, and a cleanup that was already stopping a
+dead fleet when the exit began logs none of its own lines. So does a render
+that was attaching again after a Worker restart, or a Pipeline or Gate render
+retiring the stale mesh ([#2](#2-every-attach-times-out-after-one-failed-attach)):
+an id reading, a liveness probe or an attach it already has under way runs to
+its end, and nothing starts after it. A reading of the Workers' ids over ssh
+that had started still asks each host it had yet to ask, up to 3 s per host
+(10 s in a re-attach), and then the render stops. Any attach the exit
+reaches, a first one included, ends with "the driver is exiting, so this
+attach stops here" once its attempt
+fails: no id reading, no second attempt, no transport poison and no restart of
+the Worker services, which `auto_heal` used to start while ComfyUI was
+closing. The one exception is `auto_heal`'s check before an attach: one already
+under way when the exit begins runs to its end, so it may still restart a
+Worker service it found dead, and the attach stops right after it. A render's
+call that
+the exit stops can read like a lost contact; the driver then words no lost
+Worker and logs no lost-Worker warning, since none was lost. In CPU tests over
+loopback on 2026-11-17 and 2026-11-18, with or without a call in flight, the
+driver logged no error and no warning. A local fleet's actor processes, which
+are the driver's own children, were gone when the driver was. A Worker
+service's actors were gone when the driver was, or 3 s after it when a call
+held the actor's process, as a render's step does; Monarch gives each one up
+to 10 s to stop, so allow about 10 s. ComfyUI itself may still log the
+interrupted render's own error.
+
+A ComfyUI stopped by SIGTERM (`systemctl stop`, `kill`), killed outright, or
+restarted by replacing its process without running its exit steps (as some
+extensions' restart buttons do) runs no exit step, and its actor processes stay
+until the lease above ends them.
+
 `dgxm down` sweeps after stopping the service, including its children;
 `dgxm up` sweeps only orphans. `dgxm restart` uses both. A host is not reported
 successful before its sweep finishes. The Worker service records its actors in
@@ -2334,17 +2701,25 @@ unselected branch of an If/Else or Soft Switch with a fixed value reaches, or
 that no output node reaches, never loads and is not charged. When ComfyUI
 already holds models, the price credits only the bytes ComfyUI holds against
 the graph's models, never more, since it cannot tell which files they came
-from; until 2026-11-05 any one held model credited the whole stack. ComfyUI
+from; until 2026-11-05 any one held model credited the whole stack. A held
+text encoder counts at its measured resident size, any other held model at
+its own. ComfyUI
 does not run a node again while nothing upstream of it changed, so a re-queue in
 the same driver can skip the UNET loader; under `auto` the sampler, or
 Identity Gate (DGX Monarch), then runs this price, for what is not yet held: the
 DiT while its load is pending, and the models beyond what ComfyUI holds, which
-by then include the encoders and any upsampler, counted at their measured
-resident size. A VAE ComfyUI does not hold yet loads for the decode, after the
-DiT, so it is charged in the resident window only. The DiT counts as pending
-after Reset attached mesh, Clear and retry or a Clear VRAM node set to
+by then include the encoders and any upsampler. Their encodes have run, so a
+model still charged there, a VAE that loads for the decode after the DiT or an
+encoder ComfyUI no longer holds, is charged in the resident window only. The
+DiT counts as pending after Reset attached mesh, Clear and retry or a Clear
+VRAM node set to
 `recycle`; after a Worker restart, or a Clear VRAM node at `soft` or `hard`, it
-reads as held, and the render-time estimate below prices it. Encodes have run
+reads as held. After a hard clear the render-site checks that charge a DiT
+price it under `auto`: this render-time estimate for LTX and MOSS-Image, the
+MiniMax H3 check ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight))
+and the Wan SCAIL and Animate 2 check
+([#47](#47-wan-scailscail-2-render-refused-activation-footprint-preflight)); every
+other family has no render-site check that charges it. Encodes have run
 by then, and that estimate prices the activations too. A re-queue whose box is
 short for the upsampler's own load beside a held DiT is not caught: that load
 runs before any DGX Monarch node. On a fresh
@@ -2371,8 +2746,17 @@ Direct headless calls need their own budget
 
 **Render-time estimate:** both `run_render` and pipelined depth>1 submissions
 check before dispatch or mesh effects. Only pending rank-0 weights on the
-driver host are charged. `auto` defers loading to this point; explicit presets
-load eagerly, so their weights are already in `MemAvailable`. The reserve is
+driver host are charged. `auto` defers loading to this point. Explicit presets
+load eagerly, so their weights are already in `MemAvailable`; where the loader
+leaves the load to the identity gate's ceremony they are not, and the check
+credits them all the same, a decision DESIGN.md records ("A placement the
+ceremony would drop is not made"). That credit ends at an operator's drop (a Clear VRAM node at `hard`, a configuration
+change, the capacity rescue's slot drop) until the loader node runs again for
+the checkpoint or a load of it completes, and a recycle leaves it. Under `auto` a checkpoint that a
+finished render, a pipelined submission, a load or this check's own cleared
+charge placed is credited as well, until the next door drops the credit
+([#56](#56-minimax-h3-render-refused-activation-footprint-preflight) lists them).
+The reserve is
 5 GiB or a larger configured `uma_reserve_gb`.
 
 * Pending weights cost the checkpoint's file size, a conservative upper bound.
@@ -2391,8 +2775,11 @@ allocator caches
 both steps), so the text encoder and VAEs the message lists as spent are freed
 first, and a refusal that stands quotes the last reading. Encoded
 references are outputs this render still needs, so they stay. The loader
-windows never unload: the graph still needs its text encoder and VAEs before
-sampling, so freeing them there would only move the charge.
+windows unload too, once a load, and price the whole load again from the new
+reading: at the loader with the graph's driver models charged whole, since it
+still needs them before sampling, and at a sampler or Identity Gate (DGX
+Monarch) that prices a re-queue whose loader ComfyUI kept, with the encoders
+out of the load window, since their encodes have run.
 `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both steps off.
 
 Explicit eager loading can therefore pass before reference work exhausts the
@@ -2428,11 +2815,37 @@ cluster host resolution uses `getfqdn`, plus `getaddrinfo` for a hostname.
 Those calls have no timeout and cache once per configured name per driver.
 
 Only a complete over-budget estimate refuses. Unresolved files, unreadable
-headers, non-Linux/discrete hardware, unsupported families, loader dtype casts,
-previously cleared loads, or estimator exceptions proceed without this check.
-A cast changes resident size, so charging file size could falsely refuse it.
+headers, non-Linux/discrete hardware, unsupported families, a loader dtype cast
+under slab, comfy-managed residency or a declared FSDP preset, previously
+cleared loads, or estimator exceptions proceed without this check. A cast
+stages in those ways as no leg has measured, so no price claims it there.
 Cleared-load caches avoid charging weights again after a sampling failure;
-stale entries can undercount, but cannot create a false refusal.
+stale entries can undercount, but cannot create a false refusal. Every unload
+the driver makes, a Clear VRAM node at `hard` included, forgets the driver
+models a loader charged where a model left ComfyUI. ComfyUI's own unloads do
+not: its `/free` route and the models it evicts itself during execution. A
+loader that runs again after one of them with nothing held still credits those
+models, so whatever of them loads again in that queue goes uncharged there: on
+a shipped template the VAE, at the decode. Unload Models (`/free` without
+`free_memory`) and an eviction keep ComfyUI's node cache, so the encodes come
+from it and the encoders do not load; Free Model and Node Cache (`/free` with
+`free_memory`) empties it, so the CLIP loaders run again and each encoder is
+either held when the loader prices or priced at its loader node by the driver
+spend price. The encoders go uncharged too only after Unload Models or an
+eviction, in a graph whose loader runs before an encode that has to run again.
+Two more
+limits: one refuses where the box has room, and one, not measured, can credit
+too much. A loader that runs again while ComfyUI serves a Reference to Video
+(MiniMax H3) output from its cache charges that 40 GiB encode though nothing
+encodes: ComfyUI lists the outputs it serves from cache only in its executor's
+own messages, sent to the client and written to the history when the queue
+ends, and no code in the driver reads them; leave the loader's inputs as they
+were and the sampler prices the re-queue without it. And a held model is
+credited at its whole size: after a decode relief (#12) took pages from a
+DynamicVRAM text
+encoder that ComfyUI still lists, a loader that prices before that encoder
+runs again credits those pages too, though MemAvailable counts them as free
+again; no shipped template orders its loader that way.
 
 The error lists projected/usable totals, reserve, artifact, charges and their
 provenance, omitted terms, fitting artifact size, and shortfall. If nothing
@@ -2581,8 +2994,14 @@ the driver turns the count off at the loader and at the render-site checks,
 which gives the earlier price and its card. Before 2026-11-11 this check priced the new model
 beside the old one: flux1-dev and then LTX 2.3 was 13.3 GiB short with 22.2
 GiB about to be dropped, and MiniMax-H3-Image INT8 after BF16 was 11.9 GiB
-short with 37.5 GiB about to be dropped. No hardware render has run with the
-credit yet.
+short with 37.5 GiB about to be dropped. With the credit, on dev `dcdbc26`
+on 2026-11-11 and 12 (the first Spark under its stability clock cap, max
+2100 MHz, highest reading 2093 MHz), both pairings rendered with no card: the
+driver log read "fits on the head once the Worker there drops flux1-dev,
+which frees at least 22.2 GiB; MemAvailable read 51.6 GiB". A load that did
+not fit after the drop refused, named the drop, said a clear would not make
+room, and raised no card
+([VALIDATION](VALIDATION.md#release-build-passes)).
 
 **Then ComfyUI's own models.** If the drop does not make room, the loader
 unloads the models ComfyUI holds on the driver host, which ComfyUI reloads on
@@ -2684,6 +3103,13 @@ it ran no slab residency, so it holds nothing against loading the checkpoint
 slab-resident. The newest row of each context decides: in one context a newer
 verdict that compared nothing supersedes an older unproven one, as a newer
 stock-reference row or PASS does; a FAIL is lifted only by a later bound PASS.
+The rows such a check writes for `slab_weights` on, a residency it never ran,
+of any build, never decide there, and beneath them only a denial another
+check copied there goes, with a guard that a later terminal row of its own
+version closed there: an unproven or cut-off check run with the switch on
+still denies, under another build's such row too; a PASS or a stock-reference
+row a check on the auto graph stamped there still clears; and another build's
+other rows read unknown, as they did.
 List and
 accept read a card's evidence as the refusal that raised it did, so an unknown
 read is asked again under the load's own capability and a card the refusal
@@ -2947,7 +3373,13 @@ and the loader's own capacity question never count either. On 2026-11-12,
 before this rule, a loader 50 s after a finished render kept 16.0 GiB of
 ComfyUI's models "because a call to the Workers is still in flight" and
 refused 0.1 GiB short: the reset between two renders had left its teardown
-mark on the stopped mesh. It never touches the Workers' residents or
+mark on the stopped mesh. With the rule, on dev `e77694c` the same day (the
+first Spark under its stability clock cap, max 2100 MHz, highest reading 2093
+MHz), the same session with its reset admitted that load at the loader with
+the swap credit, and this guard's check then unloaded the two models, gained
+39.2 GiB and let the render run. The loader's own unload after a reset has
+no hardware row yet
+([VALIDATION](VALIDATION.md#found-on-the-release-build)). It never touches the Workers' residents or
 ComfyUI's cached node outputs. The cross-rank agreement
 ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box))
 prices a load that replaces a Worker's stock resident after the drop that
@@ -2971,13 +3403,15 @@ Like the unload, the release runs only after a refusal, never while a render is
 live, and `DGXM_DISABLE_DRIVER_UNLOAD=1` turns it off too.
 
 **A load on the driver that the loader did not charge.** On a re-queue whose
-UNET Loader ComfyUI kept, a text encoder, upsampler, checkpoint or diffusion
-model the queue newly loads through a stock loader node (a changed file, or a
-branch a switch newly selects) loads before the sampler, where nothing priced
-it until 1.5.0. Since then the driver prices it at the loader node: what the
-loader charges for its inputs, a text encoder's file at 1.15, a model's whole,
-several files summed, against MemAvailable above the loader's floor, after the
-same unload and release as above. The refusal starts `CLIPLoader loading <file> needs ... GiB on the
+UNET Loader ComfyUI kept, a text encoder, upsampler, CLIP Vision file,
+checkpoint or diffusion model the queue newly loads through a stock loader node
+(a changed file, or a branch a switch newly selects) loads before the sampler,
+where nothing priced it until 1.5.0. Since then the driver prices it at the
+loader node: what the loader charges for its inputs, a text encoder's or CLIP
+Vision file at 1.15, a model's whole, several files summed, against
+MemAvailable above the loader's floor, after the same unload and release as
+above where they can run, and the refusal says which ran. The refusal starts
+`CLIPLoader loading <file> needs ... GiB on the
 driver's box` (or the node it is), under this guard's driver-host twin
 `driver_footprint_preflight`, and nothing was loaded; pick a smaller file, or
 free memory on the box. It prices only a graph whose DGX Monarch UNET Loader is
@@ -2992,9 +3426,13 @@ off, for diagnosis.
 **The identity gate checks before its proof render.** A first-use ceremony
 runs this guard, with the render site's other capacity checks, for the whole
 request before it writes its `RETESTING` row, priced for the slab path it would
-prove: the DiT counts as resident only if a finished render or a pipelined
-submission loaded it, or an explicit preset loaded it at the loader node. A
-request that cannot fit gets no proof render. The ceremony records one
+prove: the DiT counts as resident only if a finished render, a pipelined
+submission or a load that succeeded placed it and nothing dropped every rank's
+models since, or, for this guard and the driver footprint, an explicit
+preset's loader node placed it or left it to the ceremony and no operator's
+drop (a Clear VRAM node at `hard`, a configuration change, the capacity
+rescue's slot drop) came since the loader node last ran for it or a load of
+it last completed. A request that cannot fit gets no proof render. The ceremony records one
 INCONCLUSIVE capacity row and takes no lever, the driver log carries one
 `identity gate skipped` line with this refusal, the render runs on stock
 residency, and the next request of the combination checks again. Each proof
@@ -3036,22 +3474,48 @@ staging is charged for the full packed total on every rank at any degree.
 
 **Warm re-renders and residency.** The weight term is credited, not charged,
 when an explicit topology preset means the loader node already performed the
-load, or when one of three session memos names this checkpoint: the last
-completed render, the last pipelined submission, and the last pending load the
-driver footprint check cleared. The memos are sampled before that check runs,
-or a render would credit itself for its own charge. A `weight_dtype` cast also
-stands the weight term down, because after a cast the file size does not price
-the resident weights; the activations are still charged. A successful recycle,
-and an eviction that retires the fleet, clear all three memos. A memo that
-still goes stale can only drop the weight term: it can admit a render that
-should refuse, never refuse one that fits.
+load or left it to the identity gate's ceremony, or when one of four session
+memos names this checkpoint: the last completed render, the last pipelined
+submission, the last load that succeeded in each model slot (the loader's
+eager placement or the identity gate's no-render path), and the last pending
+load the driver footprint check cleared. The memos are sampled before that
+check runs, or a render would credit itself for its own charge. A
+`weight_dtype` cast also stands the weight term down, because after a cast the
+file size does not price the resident weights; the activations are still
+charged. These doors, through which every rank's models go, clear all four
+memos: a successful recycle, an eviction that retires the fleet, a fleet the
+driver marks defunct and a new fleet in place of a retired one, a
+configuration change, a topology change or the
+rollback of a failed setup, a worker-policy change that unloads every resident
+(`compile_dit`, `family_adapter` (`family_override`), `shared_act_scale`,
+`fp8_matrix_mult`), a residency change (`slab_weights`, `lora_low_rss`) on
+which a Worker reports a dropped model (its reply names the slot), a
+Clear VRAM node at `hard`, the capacity rescue's slot drop, an identity
+ceremony's clean reload and the gate's other unloads. Until 1.5 only the first
+two did, so a re-queue after a hard Clear VRAM under `auto` was priced with its
+DiT credited although the Workers had dropped it. The explicit preset's credit
+ends only at an operator's drop (a Clear VRAM node at `hard`, a configuration
+change, the capacity rescue's slot drop), until the loader node runs again for
+that checkpoint or a load of it completes: ComfyUI's cached loader node does not run after a hard clear,
+so the re-queue is charged. A recycle, a Worker restart, a new fleet and the
+gate's own unloads leave it, as before 1.5: after a recycle a cached loader
+node does not place the model again, and its DiT is still credited. The gate's
+capacity check before a ceremony reads the same memos, without the cleared
+charge. A memo or a preset credit that still goes stale can only drop the
+weight term: it can admit a render that should refuse, never refuse one that
+fits.
 
 **The loader-node half.** The loader node's settled window also charges the
 render the graph declares ([#52](#52-driver-side-footprint-preflight-refused-a-render)), so a 61.7 GiB eager load is refused before it
 happens when the render behind it cannot then run. The graph shows only video
 and audio rows: text, keyframe and reference rows do not exist until their
 nodes run. That under-count errs toward admitting, and the render site catches
-what the loader site misses one node later.
+what the loader site misses one node later: it reads the text, keyframe and
+reference rows of every positive entry, a Sampler Custom guider's included.
+p-h3-image's conditioning node (`PH3ImageConditioning`) is one of the graph's
+canvases: one frame and the two audio latents it spans, 8,285 rows at the
+template's 2912x2912, read at 2912 on a side the node leaves at 0 or takes
+from a link, as the MiniMax-H3-Image read takes 2048.
 
 **Escape hatch.** `DGXM_DISABLE_ACTIVATION_PREFLIGHT=1` on the driver. It is the
 same variable [#47](#47-wan-scailscail-2-render-refused-activation-footprint-preflight) documents, because a kill switch belongs to its guard and this
@@ -3306,6 +3770,8 @@ cost and the number of test renders it took:
     starts now and is the only cost left; the next render of this combination
     skips the gate and the cold load
 
+On a family that takes slab residency under `slab_weights` auto (Krea 2, Flux 2), the render right after a PASS runs on the stock copy the gate's last test render loaded, and each Worker logs `adopt resident ... (stock residency held across slab policy False -> auto)` then `reuse`. Slab residency engages at the next fresh load of that file. Both residencies render the same latent; the PASS proved it.
+
 On a graph with nothing to compare the gate's toast closes after the load with:
 
     auto-gate: the identity gate ran no proof render: this graph has no LoRA
@@ -3534,7 +4000,12 @@ seconds, so a first step of 45 s met one often.
 
 A stale mark means a busy Worker, never a dead one. The panel and `dgxm top`
 keep showing the Worker with its last figures, and the FSDP reload price
-credits nothing from a stale figure.
+credits nothing from a stale figure. On hardware (dev `45e07cc`,
+2026-11-13), twelve of twelve such renders ran on fresh Workers with status
+asked once a second, where the same polling stopped three of six before
+1.5's change, and one ran on a pair; every Worker read the level back as
+INFO, no status ask timed out, and 88 of 1672 answers came back stale with
+their age ([VALIDATION](VALIDATION.md#proof-block-45e07cc)).
 
 **What is still the loader's to change.** The root is a Python callback run
 under torch's allocator lock. With the level at INFO the loader can still do
@@ -3942,7 +4413,15 @@ fit, the loader offers the card and the panel accepts it as if the model had
 never been checked; the standing auto-rescue toggle and the rescue variables
 apply too. Since 1.5 the consent read treats a verdict that compared nothing,
 and the Fleet and explicit-on rows written with it (they carry
-`"no_material_revocation": true`), as clear. Through 1.4 such a row refused the
+`"no_material_revocation": true`), as clear. An explicit-on row of that kind
+says nothing about `slab_weights` on, whichever build wrote it, and the
+read looks past it; beneath it only a refusal another check copied there is
+lifted, with a guard that a later terminal row of its own version closed
+there. Where a check you ran with the switch on ended unproven or was cut off,
+that older verdict still refuses the rescue until a later explicit PASS,
+even where another build's check had since compared nothing; where a check on
+the auto graph had passed and proved the switch's residency equivalent, or had
+a stock reference that could not load, that row still clears it. Through 1.4 such a row refused the
 rescue with "the identity gate was INCONCLUSIVE for these exact artifacts ...
 until a later explicit PASS", and running the Identity Gate node did not lift
 it.
@@ -3984,7 +4463,7 @@ gets under `first_use`. So, with `auto_gate=off` on a single-model render:
 |---|---|
 | a LoRA stack | renders, on whichever residency the settings below resolve to |
 | `lora_low_rss` | stays as configured (`auto` by default, which is on for unified memory): the lazy un-bake, not baked mode |
-| `slab_weights=auto` | still resolves per family on the worker, and a family verified for slab residency still slab-loads |
+| `slab_weights=auto` | still resolves per family on the worker at each load: a load of a family verified for slab residency is a slab load, except the first load of a new file, which is stock until the load names the family and then reloads once into slab |
 | `slab_weights=on` | still honored |
 | the capacity rescue ([#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)) | still offered, still consented, still certified |
 | render accuracy | unproven; checking it is up to you |
@@ -4529,8 +5008,12 @@ cells, 37.4 GiB at six views, and 65,536 cells, 25.0 GiB at four. A negative
 that carries the UltraTex conditioning drops the same tokens, and the price
 is the 34.5 and 21.9 GiB above. The factor, the reserve and the load decision
 stay ComfyUI's, so a box that cannot hold the model at that price still loads
-partially, and a pair still refuses here. No hardware render has run with it
-yet.
+partially, and a pair still refuses here. On dev `dcdbc26` on 2026-11-11 (the
+first Spark under its stability clock cap, max 2100 MHz, highest reading 2093
+MHz) a pair rendered six views at 2048 with both ranks logging the 37.4 GiB
+line and loading whole, and with 60 GiB left on the first Spark the same
+render refused here, as it should
+([VALIDATION](VALIDATION.md#release-build-passes)).
 
 **ComfyUI also picks each model call's batch per box.** It runs cond and
 uncond as one call only when its estimate of that call, times 1.5, is under the
@@ -4589,7 +5072,7 @@ stop:
 * a bounded `dgxm diagnostics` capture
   ([CLUSTER.md](CLUSTER.md#monarchdiagnostics));
 * with `[monarch.diagnostics] metrics = true` and an `otlp_endpoint`, the phase
-  metrics and the ownership occupancy counters in your own collector
+  metrics and the ownership occupancy gauges in your own collector
   ([CLUSTER.md](CLUSTER.md#monarchdiagnostics));
 * for each completed native return in a normal render, the `native return:`
   log line, which splits the Worker's pack and the driver's read into phases.
@@ -4813,13 +5296,15 @@ Since 1.5.0 the driver prices that encode at Add Guide (MiniMax H3) itself,
 where the loader did not charge it: on the canvas and frame count the node
 holds, at the charge above, a clip with 1 GiB more, against MemAvailable above
 the loader's floor (5 GiB, or the Init node's `uma_reserve_gb` where larger)
-after ComfyUI's models are unloaded and the Workers' idle caches released.
-Where ComfyUI runs without DynamicVRAM a clip carries 6 GiB more, and a VAE
-ComfyUI does not hold is charged too. The refusal is
-`[dgxm:C guard=driver_footprint_preflight waivable=0]`, starts
+after ComfyUI's models are unloaded and the Workers' idle caches released,
+where the driver may do either. Where ComfyUI runs without DynamicVRAM a clip
+carries 6 GiB more, and a VAE ComfyUI does not hold is charged too. The
+refusal is `[dgxm:C guard=driver_footprint_preflight waivable=0]`, starts
 `Add Guide (MiniMax H3) for this 5-frame clip at 448x256 needs ... GiB on the
-driver's box`, says whether this prompt reached the loader, and nothing was
-encoded. Use a shorter clip or a smaller canvas, or free memory on the box.
+driver's box`, gives the room above the floor rounded down, says whether this
+prompt reached the loader, and nothing was encoded, and then says what the
+driver unloaded or released before it, only where it did. Use a shorter clip
+or a smaller canvas, or free memory on the box.
 Clearing the Sparks (Reset attached mesh) frees what the Workers hold there,
 and the next queue then runs the loader, whose refusal itemises the whole
 graph. The same check prices Reference to Video (MiniMax H3)'s reference video
@@ -4873,10 +5358,16 @@ load, renders suddenly ~3x slower after an OTA update, and "GPU reads 11 W at
 44 C while a workload is running." A hard power-off leaves nothing in any log:
 the absence of a kernel panic, Xid or OOM record across an unclean boot is the
 signature. After a crash the GPU can stay pinned at ~650 MHz and 5-9 W across
-normal reboots. `dgxm doctor` warns when the last 30 boot records hold more
-than one reboot with no clean shutdown before it (row `unexpected shutdowns`).
-It discounts one, because the oldest reboot in the window often lacks its
-pair. Doctor reports its `GPU clock under load` row as **NOT RUN** and gives no
+normal reboots. `dgxm doctor` warns when the last 30 boot records hold a
+reboot with no clean shutdown before it (row `unexpected shutdowns`). It leaves
+out the oldest record shown when that is a reboot whose pair it cannot see: in
+a full window of 30 the shutdown may lie past the window, and a wtmp with no
+rotated predecessor starts at the install's first boot. When logrotate started
+the current wtmp, which happens while the box is up, and `last` shows all of
+it, a reboot as its first record does count: the boot before it ended without
+a shutdown. A `/var/log/wtmp.1` left from before the current wtmp began, as a
+reinstall that keeps the old one leaves it, makes doctor count the current
+wtmp's first boot as unexpected until 30 boot records fill the window. Doctor reports its `GPU clock under load` row as **NOT RUN** and gives no
 PD-state verdict. During a workload you already authorized, compare
 its clock and power readings with a healthy host; do not start a diagnostic
 load beside a render. The community-confirmed remedy is a full cold
@@ -5250,7 +5741,7 @@ A fleet-wide gone result retires the cached handle and permits one fresh fleet;
 it never issues a second stop. If replacement setup fails, the new handle is
 blocked and the error identifies its liveness-proven predecessor. The
 replacement attach dials each loop's current id, so a loop that restarted
-within the delivery timeout attaches at once
+within the last day attaches at once
 ([#2](#2-every-attach-times-out-after-one-failed-attach)). It tries once, plus
 once more if a loop moved to a new id during that try, and otherwise names the
 restart recovery in [#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out).
@@ -5575,9 +6066,10 @@ Six shapes reach the operator:
 * **A rank's actor is gone.** When Monarch reports a message to a rank's
   Worker actor undeliverable while the price waits, which is what a Worker
   loop restart under the attached mesh produces, the wait ends within half a
-  second of the report rather than at 30 s (about 2.5 s in when the first
-  request is lost; see #2), and the refusal says the message was
-  undeliverable. A sampler render whose setup is unchanged then reads the
+  second of the report rather than at 30 s, and the refusal says the message
+  was undeliverable. When Monarch reports the old actors dead before any such
+  report, the price reads the loops' ids before the fleet is evicted and,
+  when every loop restarted, ends the same way (see #2). A sampler render whose setup is unchanged then reads the
   loops' ids and, when every loop restarted, attaches again by itself and
   renders; otherwise the refusal names the remedy
   ([#2](#2-every-attach-times-out-after-one-failed-attach)).
@@ -5608,7 +6100,9 @@ Six shapes reach the operator:
   BF16 Wan-Animate 2 warm template was refused 13.3 GiB short on the head with
   the card ("holds about 33.0 GiB on the head"); Clear and retry cleared both
   Sparks in 4.45 s and the next queue rendered, and with Always clear and
-  retry on, a queue cleared once and rendered.
+  retry on, a queue cleared once and rendered. A loader `weight_dtype` change
+  on the file a Worker holds stock is the same change in place: the agreement
+  and the loader both offer this card where a clear would make room.
 * **World 1 is a no op.** The one box prices its own load.
 
 **When the short box is the head, the driver frees its own models first.**
@@ -5968,11 +6462,20 @@ agreement before any checkpoint opens. Timing a permission change against the
 load races a roughly one-second window and is not repeatable. This switch
 injects the failure inside that window.
 
-**Fix:** clear both variables from that worker's environment, wherever they were
-set, and restart that worker. Nothing else on the box is wrong. The refusal
+**Fix:** take both out of that box's `worker.env`
+(`~/.config/dgx-monarch/worker.env`, where a Worker reads them from), or out of
+the Worker's environment if they were set there, then recycle (Reset
+attached mesh); each actor reads the file as it starts, so no service
+restart is needed for the file
+([CLUSTER.md](CLUSTER.md#setting-a-worker-side-variable)). The refusal's own
+text and the arming line say to unset them and restart the worker; for the
+file, the recycle does that. The driver's `Worker switches set on <host>`
+line at the next setup, and the Worker's status (`worker_switches`), show
+whether any is still set. Nothing else on the box is wrong. The refusal
 prices nothing, writes no gate verdict and quarantines no residency setting, and the box
 renders as it did before once the variables are gone. If you did not set them,
-read it as an acceptance run that leaked into a unit and check that unit.
+read it as an acceptance run that leaked into that box's `worker.env` or the
+Worker's unit, and check both.
 
 **Related:** entry 94 (what the healthy box refuses with, and the exchange this
 knob exercises), entry 93 (the agreement that catches every other injectable
@@ -6025,14 +6528,18 @@ in-process retry already ran`), and every later render in
 that ComfyUI process refuses at once with `this ComfyUI session's Monarch
 transport is not reusable after a partial bring-up failure`. Both worker loops
 are up, `dgxm doctor` reads clean, and a fresh driver attaches on its first
-try. Known triggers include a Worker outage longer than the delivery timeout,
+try. Known triggers include a Worker outage longer than a day,
 `dgxm restart` followed immediately by a render, and dead-rank recovery
 releasing its latch. In the third case the attach stops after its first
 attempt, and its refusal says that no in-process retry ran; its trace reads
 differently (below). A refusal that starts `no attach ran` is the id gate in
 [#2](#2-every-attach-times-out-after-one-failed-attach): nothing dialed, the
 session stays usable, and its trace ends at `close outcome=refused
-stage=proc_id`.
+stage=proc_id`. One that starts `the first attach failed (...), and the id
+reading after it found` is the same gate's version check after a failed
+first attempt ([#8](#8-version-skew-between-hosts)): nothing restarted, the
+session stays usable, and its trace ends at `close outcome=refused
+stage=proc_id_reread`.
 
 **What the driver writes.** Every cluster attach writes one line per phase
 into the driver log, all sharing a sequence number. Grep the ComfyUI log:
@@ -6063,14 +6570,14 @@ after a Worker restart writes `restart_reattach` after it. A sequence with no
 | `heal_probe` | which loops the pre-attach probe read as down, and which ones it never observed |
 | `heal_restart` | the loops read as down, and the loops the restart touched (every configured loop) |
 | `heal_settled` | whether worker health settled after that restart, and how long it took |
-| `loop_generation` | one line per loop before every attach attempt: the generation `gen`, the process that holds the loop's LISTEN socket and how long that process has been up, the unit restart count, `proc_id`, the id that process serves and the attempt dials (or why there is none: `bare`, `unpublished`, `malformed`, `unreadable`, `none`, `unknown`), and `changed=true` when that process is not the one this driver read last time. A failed first attempt is followed by one more reading, `phase=before_attach_2`, even when no second attempt runs |
+| `loop_generation` | one line per loop before every attach attempt: the generation `gen`, the process that holds the loop's LISTEN socket and how long that process has been up, the unit restart count, `proc_id`, the id that process serves and the attempt dials (or why there is none: `bare`, `unpublished`, `malformed`, `unreadable`, `none`, `unknown`), `monarch`, the torchmonarch that process imported (`absent` from a release that does not record it), and `changed=true` when that process is not the one this driver read last time. A failed first attempt is followed by one more reading, `phase=before_attach_2`, even when no second attempt runs |
 | `proc_id_moved` | the loops whose id changed between the dial of the first attempt and the reading after it failed: they restarted during that attempt, so the second attempt dials their new ids |
 | `proc_id_prime` | the loops whose id changed since this driver last dialed them, sent one throwaway message before this `attempt` dials ([#2](#2-every-attach-times-out-after-one-failed-attach)), and any of them the message could not reach (`unprimed`) |
 | `phase` | one timed step. `phase=transport_enable`, `phase=auto_heal`, or `phase=attach attempt=1..2`, each with `wall_s` and an `outcome` of `ok` or the exception class |
 | `attach_call` | the two halves of one monarch attach: `half=attach_to_workers` is the worker config push, `half=initialized_get` is the wait on the mesh, bounded by its `bound_s` (70 s under the shipped 60 s config-push budget) |
-| `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_1_reread_refused`, an ordinary attach whose first attempt failed and whose reading after it found no id, so no second attempt ran (a released fleet in that case closes as `attach_1_released`); `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to, and `stage=proc_id` for a loop whose id the first reading did not carry, which leaves the session usable. `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
+| `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_1_reread_refused`, an ordinary attach whose first attempt failed and whose reading after it found no id, so no second attempt ran (a released fleet in that case closes as `attach_1_released`); `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to, and `stage=proc_id` for a loop whose id the first reading did not carry, or whose torchmonarch is not the driver's, which leaves the session usable. One refusal follows an attach that ran: `stage=proc_id_reread`, a first attempt that failed and a reading after it that found a loop on another torchmonarch, so no second attempt and no restart ran, and the session stays usable ([#8](#8-version-skew-between-hosts)). `stage=exiting` is an attach the driver's own exit reached: no dial after it, or none after the attempt it cut short, and no id reading, second attempt, poison or restart ([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)). `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
 | `post_fail_restart` | the loops the post-failure Worker restart touched and the failure class that prompted it. It lands after the `close`, as `restart_reattach` does |
-| `restart_reattach` | a render, or an explicit loader's eager load, that met Worker loops restarted under its mesh ([#2](#2-every-attach-times-out-after-one-failed-attach)). `outcome=attached` carries the replacement attach's `seq` and lands after its `close`, with `verdict=all`, the loops that `moved`, the `teardown` that retired the stale mesh (`stop_confirmed` or `liveness_release`) and the detour's `wall_s`. `outcome=refused` carries `seq=0`, since no attach ran, and a `reason`: `partial`, `none` or `unknown` for what the id reading found, or `not_retired` for a stale mesh the liveness proof did not release. `outcome=failed` carries the exception class as its `reason`: a replacement attach that raised, whose own `close` names the stage, or an explicit loader's capacity price that refused before that attach ran, which writes no new `close` |
+| `restart_reattach` | a render, or an explicit loader's eager load, that met Worker loops restarted under its mesh ([#2](#2-every-attach-times-out-after-one-failed-attach)). `outcome=attached` carries the replacement attach's `seq` and lands after its `close`, with `verdict=all`, the loops that `moved`, the `teardown` that retired the stale mesh (`stop_confirmed` or `liveness_release`) and the detour's `wall_s`. `outcome=refused` carries `seq=0`, since no attach ran, and a `reason`: `partial`, `none` or `unknown` for what the id reading found, or `not_retired` for a stale mesh the liveness proof did not release. `outcome=failed` carries the exception class as its `reason`: a replacement attach that raised, whose own `close` names the stage, or an explicit loader's capacity price that refused before that attach ran, which writes no new `close`. `outcome=retired` is a KSampler Pipeline or Identity Gate render that retired the stale mesh and refused, with `seq=0`, `verdict=all`, its `teardown` and `reason=pinned_session`; such a render's `outcome=refused` reasons start with `pinned_`: `pinned_partial`, `pinned_none` or `pinned_unknown` for the reading, `pinned_leases_held`, `pinned_teardown_in_progress` or `pinned_prior_stop_unknown` for what kept the fleet as before, and `pinned_not_retired` |
 
 **Read the attach timings first.** Each `phase=attach` line follows the `attach_call`
 lines of its attempt, which split its duration between the config push and the
@@ -6096,11 +6603,13 @@ that comes back is still compared against something.
 
 **What each of the three cases should look like.**
 
-*After a Worker outage longer than the delivery timeout.* The restarted loop's
+*After a Worker outage longer than a day.* The restarted loop's
 first `loop_generation` line reads `changed=true` with a new `proc_id`, and a
 `proc_id_prime` line names it. Attempt 1 spends its whole window in
 `half=attach_to_workers`: the config push never lands, because the driver's
-channel to that address closed during the outage. The `before_attach_2`
+channel to that address gave up reconnecting during the outage and stays
+closed. The same lines follow a shorter outage when the throwaway message did
+not take the loss and the config push itself was dropped. The `before_attach_2`
 reading shows the same `proc_id`. On a released fleet the `close` line names
 `stage=attach_1_released`; on an ordinary attach, attempt 2 fails the same way
 and the `close` names `stage=attach_2_failed`. Restart ComfyUI
@@ -6120,8 +6629,8 @@ driver's attach window is absorbing a wait the start path should make.
 attaches. When it fails, there is only one `phase=attach attempt=1` line, the
 `before_attach_2` readings show the same `proc_id` per loop, and the `close`
 line names `stage=attach_1_released`: no loop moved, so a second attempt with
-the same ids cannot win, and the likely cause is an outage longer than the
-delivery timeout. A `proc_id_moved` line instead means a loop restarted during
+the same ids cannot win, and the likely cause is an outage longer than a day
+or a dropped config push. A `proc_id_moved` line instead means a loop restarted during
 the attempt, and a second attempt runs with its new id.
 The recovery is the restart path: both worker loops restarting together, then
 a fresh driver process, which attached in 0.75 s in the recovery test
@@ -6131,7 +6640,7 @@ a fresh driver process, which attached in 0.75 s in the recovery test
 loop, among that host's rows after its Worker service row:
 
 ```
-  [ ok ] <host> listener generation: gen=<generation> pid=4242 age_s=612 restarts=0 started=<timestamp> marker=match proc_id=<16 hex digits>
+  [ ok ] <host> listener generation: gen=<generation> pid=4242 age_s=612 restarts=0 started=<timestamp> marker=match proc_id=<16 hex digits> running torchmonarch=<version>
 ```
 
 `gen` is a short digest of the boot id, the process holding the LISTEN socket,
@@ -6147,7 +6656,11 @@ it normally starts with the 12 digits of `gen`. The row fails when a listening
 loop definitely publishes no id (`bare`, `unpublished` or `malformed`),
 because the driver refuses to attach to it, and names the remedy from
 [#2](#2-every-attach-times-out-after-one-failed-attach). An id the probe could
-not read (`unreadable`, `unknown`) warns as unobserved. Nothing else in the row moves doctor's exit code.
+not read (`unreadable`, `unknown`) warns as unobserved. `running torchmonarch`
+is the version that process imported, which the env row cannot show because
+it reads the disk; the row fails when it is not this checkout's pin, or when a
+record with an id carries none (`absent`), because the driver refuses to
+attach ([#8](#8-version-skew-between-hosts)). Nothing else in the row moves doctor's exit code.
 
 A host doctor could not read still gets its row:
 
@@ -6262,27 +6775,64 @@ is a second, exact check, not the primary capacity check.
 53's rescue offers, this refusal is not waivable and has no panel action: slab
 is already the residency, and no consent adds memory.
 
-## 104. xFuser 0.7 CUDA setup imports a missing NPU helper
+## 104. Worker setup refuses the installed xFuser, or doctor warns about it
 
-**Symptoms:** worker setup fails before model loading with an import error for
-`yunchang.ring.utils.update_npu_out`. A plain `import xfuser` can still succeed.
+**Symptoms:** a render fails at Worker setup with `this Worker's Python (...)
+has xFuser 0.7.0, and Worker setup refuses it` (or another version, or `has no
+xFuser installed`), and `dgxm doctor` shows a failing `xfuser` or
+`<host> xfuser` row. Or doctor shows a warning on those rows that names
+`0.7.0+dgxm.npuimport1, the patched build 1.4.0 installed`. Before 1.5.0 the
+same build failed later, with an import error for
+`yunchang.ring.utils.update_npu_out`.
 
-**Cause:** the official xFuser 0.7.0 wheel imports an optional NPU ring
-backend while it constructs CUDA attention, and released yunchang 0.6.4 lacks
-the helper that backend imports.
+**Cause:** dgx-monarch runs on two xFuser builds: stock 0.8.0 from the package
+index, and the patched `0.7.0+dgxm.npuimport1` that an install of 1.4.0 built.
+Stock 0.7.0 imports an optional NPU ring helper while it builds CUDA
+attention, and released yunchang 0.6.4 lacks that helper, so its attention
+cannot start. Stock 0.8.0 guards that import, so the patched build is no
+longer needed. No render has been checked on any other version. The package
+requirement admits every 0.7 and 0.8.0 release, because no version range can
+name the patched build alone, so doctor and Worker setup enforce the exact
+list (`src/dgx_monarch/xfuser_build.py`).
 
-**Action:** follow [INSTALL.md](INSTALL.md) in the existing ComfyUI environment
-on every host. Its builder verifies the official wheel and produces the
-temporary `0.7.0+dgxm.npuimport1` compatibility wheel, which makes the NPU
-import lazy and leaves the NVIDIA attention math unchanged. A bare pip install
-of this local version cannot resolve it from PyPI; pass the builder's output
-with `--find-links` as INSTALL.md shows. Keep the selected CUDA Torch build,
-and compare dependency versions across hosts before restarting while no render
-runs. The temporary wheel stays until an official xFuser
-and yunchang pair constructs CUDA attention without the local fix. It adds no
-NPU support. The GPU import canary exercises the ring import that exposed this
-failure; the two-host constructor and fidelity controls are recorded in
-[VALIDATION.md](VALIDATION.md#dependency-and-setup-checks).
+**Action:** coming from 1.4.0, move only once the first update from 1.4.0
+has finished: the 1.4.0 updater's verified mode refuses the
+`tests/conftest.py` that xFuser 0.8.0 shares with torchmonarch (its plain
+mode runs no ownership check) ([#155](#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+Then, while no render runs, install stock 0.8.0 with the Python the row
+or the refusal names, on the driver and on each Worker host:
+`<python> -m pip install --upgrade-strategy only-if-needed xfuser==0.8.0`. It
+keeps the installed torch, since xFuser asks only for torch 2.4.1 or newer.
+For a local build of 0.8.0 (`0.8.0+<label>`), which pip counts as already
+satisfying `==0.8.0`, the row and the refusal give
+`<python> -m pip install --force-reinstall --no-deps xfuser==0.8.0` instead.
+After a verified update from 1.4.0, an interpreter whose dgx-monarch install
+metadata still reads 1.4.0, as the driver's does, gives pip the requirement of
+release 1.4.0, `xfuser==0.7.0+dgxm.npuimport1`, and pip then reports a conflict: run
+`<python> -m pip install -e <checkout> --no-deps` with that Python first, as
+[INSTALL](INSTALL.md#upgrading-from-140) item 30 says.
+Then restart that box's Worker (`dgxm restart`; in local mode, where the
+actors run inside ComfyUI's own mesh, reset the attached mesh or restart
+ComfyUI) and run doctor again. The
+patched build still renders and doctor only warns about it, but every box
+should run the same build: a Gate PASS names the xFuser build it was proven
+under, so a pair on two builds refuses a risky render until they match
+([#8](#8-version-skew-between-hosts)), and moving a box from the patched
+build to 0.8.0 runs each gated combination's first-use Gate again, once.
+
+Stock 0.8.0 also checks, as it builds the attention, for the package an
+attention kernel needs: FA needs flash-attn 2.7.0 or newer and FA3 needs
+FlashAttention-3. The patched build did not check. With FA or FA3 chosen in
+the Init node and the package missing on a Worker, a cfg, dp or single render
+still sets up and renders, since it never runs that kernel, but a sequence
+parallel render refuses at load with `FA cannot run the sharded attention on
+this Worker`, naming what xFuser reported. Choose TORCH_FLASH, install the
+package on every Worker, or run that workflow on a cfg or single topology.
+
+The GPU import canary exercises the ring import.
+[VALIDATION.md](VALIDATION.md#dependency-and-setup-checks) holds the two-host
+constructor and fidelity controls of the patched build only; the controls that
+compare stock 0.8.0 with it on the pair have not run yet.
 
 ## 105. Nodes 2.0 shows nodes and links but no input widgets
 
@@ -6546,14 +7096,38 @@ production Future failure. The probe now obtains a Future from the public
 channel API before testing `.get()` inside an asyncio loop. Queue dispatch is
 now unconditional upstream, but the removed setting still requires review.
 
-On 2026-10-12 the development pin moved to 0.7.0, with a regenerated ARM64 schema-2 baseline.
-The canary uses Torch 2.12.0+cu132 and additionally requires a native RDMA import,
+On 2026-10-12 the development pin moved to 0.7.0, with a regenerated ARM64 schema-2 baseline,
+and the canary then installed Torch 2.12.0+cu132. It additionally requires a native RDMA import,
 an empty native action and a separate `cpu-smoke` run. The smoke checks local
 actors, concurrent dispatch, terminal timeout cancellation for decorated
 Futures, re-observable endpoint timeouts and lazy ProcMesh shutdown. Since
 2026-10-13 it also times out a ProcMesh stop at once and requires that stop to
 stay cancelled and its procs to answer until a fresh stop. Neither
 stage contacts configured Worker services or exercises a GPU/fabric.
+
+On 2026-11-17 the development pin moved to 0.8.0, which removed
+`pytokio.PythonTask`; the canary now watches `handle.Handle`, the object
+under every returned Future, and awaits a resolved one inside an asyncio
+loop. The canary installs Torch 2.15.0 from the cu132 index, the build this
+release ships on, and the checked baseline is the canary workflow's own
+`pin.json` from that environment, so the exact-pin comparison sees the same
+Torch on both sides. The manifest also lists the names the teardown, the
+fault hook and the root log level guard rest on, and the
+`lifecycle_config_defaults` probe records direct spawn and the two stop
+limits as the runtime reads them back. The CPU smoke checks that the first
+`this_host()` sets the root logger to INFO; that a refusing per-rank launch
+command raises its own exception on the calling thread before anything
+spawns; that a refusing constructor fails `initialized` with Monarch's abort
+words ahead of the traceback; that a spawn with a bootstrap runs it in a
+`SetupActor` inside a `bootstrap_main` process that carries the bootstrap
+marker; and that a dead proc of that spawn raises faults whose `mesh_name`
+names its `setup-` and `log_level-` meshes beside the actor's own. A second
+smoke script starts two Worker loops on loopback, kills one under a named
+proc mesh and stops the mesh: it checks that the controller's report says
+"error stopping proc mesh" with a `Timeout(` rank, that the pack's own
+matcher takes it for a stop registered under the mesh's name, as it must
+for the pack to tie that report to its stop, and that the stop's own Future
+is still pending.
 
 Complete the
 [pin-bump procedure](../skills/dgx-monarch-dev/SKILL.md#torchmonarch-bump-procedure-63)
@@ -7068,16 +7642,106 @@ If that update still refuses with `prior_worker_drift`, the Workers run a
 different commit from the one you reset to, as after a guided setup followed
 by plain updates. Use the forward repair instead.
 
+**After a verified update that ended `partial`:** the receipt's status is
+`partial`, and its code says where the update stopped. Keep ComfyUI stopped,
+keep the receipt, the retained controller and the installation journals, and
+before you change anything read each host's link (`readlink -f
+~/.local/share/dgx-monarch/src`), the driver's commit (`git -C "$REPO_DIR"
+rev-parse HEAD`) and the driver's torchmonarch (`"$COMFY_PYTHON" -m pip show
+torchmonarch`) beside the pin in that checkout's `pyproject.toml`. A rerun of
+the same update refuses with `prior_worker_drift` while the Workers do not
+match the driver.
+
+- Any code whose receipt lists neither a `worker_stop` nor a
+  `pre_stop_recheck` step: the update stopped before any live change, while
+  staging, at the confirmation or at the recheck before the stop, and only
+  the removal of its staging area (the `stage_cleanup` step) was not
+  confirmed. The driver and the Workers are as they were; clear the cause
+  the code names and rerun.
+- An `activation_failed`, `start_failed`, `doctor_failed`,
+  `cluster_smoke_failed`, `readback_mismatch` or `driver_commit_failed`
+  whose `prior_release_start` step succeeded: the old release was restored
+  and its Workers run again, and only the `stage_cleanup` step was not
+  confirmed. The driver and the Workers match on the old release; clear the
+  cause and rerun.
+- `stop_unknown`, and a `stop_failed` whose `stage_cleanup` step was not
+  confirmed: nothing was activated. Every link names the old release, some
+  Workers may be stopped, and the driver is unchanged. `dgxm up` starts them
+  again; then rerun the update.
+- `activation_unknown`, and an `activation_failed`, `start_failed`,
+  `doctor_failed`, `cluster_smoke_failed`, `readback_mismatch` or
+  `driver_commit_failed` whose `prior_release_start` step is missing or did
+  not succeed, so the restore of the old release was not confirmed: each
+  host's link and unit can name either release, Workers of either
+  release may be running or stopped, and the driver is on the old release
+  (a driver commit reports `failed` only after it put the driver back).
+  Hosts whose link names the old release match the driver. When every link
+  names the old release, `dgxm up` starts the stopped ones; if any names the
+  new one, use the forward repair above.
+- `start_unknown`: every link and unit names the new release, and the new
+  Workers may be running, because the update stopped nothing after it. The
+  driver's checkout and torchmonarch are unchanged. Use the forward repair.
+- `doctor_unknown`, `cluster_smoke_unknown` and `readback_unknown`: every link
+  names the new release, the update tried once to stop the new Workers (a
+  `fail_closed_stop` step that succeeded confirms it; with none, or another
+  status, it is unconfirmed), and the
+  driver is unchanged. The next `dgxm up`, `dgxm restart` or reboot starts the
+  new Workers under the old driver: from 1.5.0 its attach refuses when their
+  torchmonarch versions differ ([#8](#8-version-skew-between-hosts)); an
+  earlier driver times out instead. Use the forward repair.
+- `driver_commit_unknown`: the links name the new release and the update
+  tried once to stop the new Workers. The driver commit installs the target's
+  torchmonarch into the driver's Python before it moves the checkout, so that
+  Python can hold the target pin under the old checkout. If the checkout is
+  at the target and the driver's torchmonarch is its pin, the driver is on
+  the new release: run `dgxm up`, then `dgxm doctor`. If the checkout is
+  still on the old commit, install that commit's pin into the driver's
+  Python as step 4 of the forward repair reads it (`"$COMFY_PYTHON" -m pip
+  install --no-deps "$PIN"`), then use the forward repair.
+- `finalize_unknown`, `finalize_failed` and `stage_cleanup_unconfirmed`: the
+  driver and every Worker run the new release, and only the cleanup of the
+  previous release or of the staging area was not confirmed, so renders
+  attach. The previous release's slot can stay on disk.
+- `operation_exception` and `operation_interrupted` with a `pre_stop_recheck`
+  step (without one, the first case above applies): set aside the
+  `fail_closed_stop`, `stage_cleanup` and `stage_retention` steps the update
+  adds as it settles, and read the steps before them.
+  - If one of them failed or is unknown, use the case for the code of the
+    first such step: its name with `_failed` or `_unknown`, where
+    `worker_start` reads `start_`, `worker_stop` reads `stop_`, and
+    `exact_readback` reads `readback_` (a failed one is `readback_mismatch`).
+    A failed step with no `prior_release_start` step
+    that succeeded is the case of a restore that was not confirmed, whatever
+    restore steps follow it.
+  - If every one succeeded, use the case for the step that comes after the
+    last of them. After `pre_stop_recheck` that is the Worker stop itself,
+    cut short: nothing was activated, some Workers may be stopped, and the
+    driver is unchanged, so run `dgxm up`, then rerun the update, as for
+    `stop_unknown`. After
+    `worker_stop` it is the activation (`activation_unknown`); after
+    `activation`, the Worker start (`start_unknown`); after `worker_start`,
+    `doctor` or `cluster_smoke`, the next check (`doctor_unknown`,
+    `cluster_smoke_unknown` or `readback_unknown`); after `exact_readback`,
+    the driver commit (`driver_commit_unknown`); after `driver_commit`, the
+    finalize (`finalize_unknown`).
+
 ## 119. A mesh build or Worker start refuses on an ambient environment variable
 
 **Symptom:** a render's mesh build, or a Worker service start, refuses with
 one of these messages, each ending in a pointer to this entry:
 
 - "ambient OTLP endpoint conflicts with disabled diagnostic export";
+- "metrics or OTLP export cannot start on the driver
+  (ambient_otlp_signal_endpoint)", for an `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`,
+  `..._METRICS_ENDPOINT` or `..._TRACES_ENDPOINT` in the ComfyUI environment;
+- "Monarch's get_proc_state_max_idle (...) and proc_stop_max_idle (...) add
+  up to ... s", or "Monarch's get_proc_state_max_idle reads ..." or
+  "Monarch's proc_stop_max_idle reads ...", where a value Monarch does not
+  report reads "nothing", on the driver;
 - "unmanaged MONARCH_RDMA_ environment setting", followed by the names it
   found;
 - "`NAME` conflicts with the validated Monarch policy", for example
-  `DGXM_RDMA_QP_SPLIT`.
+  `DGXM_RDMA_QP_SPLIT` or `HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT`.
 
 A Worker that refuses exits at start, and its systemd unit keeps restarting
 it; on that host, `journalctl --user -u dgxm-worker.service` shows the
@@ -7091,7 +7755,7 @@ instead. The driver checks on every mesh build, in local mode too; with no
 cluster.toml the default policy applies, so a single box with no cluster
 config can see this. The Worker loop drops
 every variable outside a short allowlist before it checks, so of these only
-`DGXM_RDMA_QP_SPLIT` can stop a Worker start; the other two come from the
+`DGXM_RDMA_QP_SPLIT` can stop a Worker start; the others come from the
 environment that starts ComfyUI.
 
 **Remedy**, per variable:
@@ -7100,8 +7764,21 @@ environment that starts ComfyUI.
   that starts ComfyUI (the shell, its profile, or the launcher), then restart
   ComfyUI. Setting `[monarch.diagnostics] otlp_endpoint` to the same URL with
   `otlp_logs = true` also clears it, but that turns on export of Monarch's
-  upstream logs as well as metrics; choose it only on purpose
+  upstream logs and spans as well as metrics; choose it only on purpose
   ([CLUSTER.md](CLUSTER.md#monarchdiagnostics)).
+- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` or
+  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, whatever the policy says: unset it
+  where ComfyUI starts, then restart ComfyUI. Monarch starts that signal's
+  export from the variable alone, so no policy setting clears it;
+  `otlp_endpoint` is the only destination dgx-monarch admits.
+- `HYPERACTOR_MESH_GET_PROC_STATE_MAX_IDLE` or
+  `HYPERACTOR_MESH_PROC_STOP_MAX_IDLE`: unset whichever the message names
+  where ComfyUI starts, or lower them so the two add up to 90 s or less, then
+  restart ComfyUI. The stop after a lost Worker host waits for these two
+  limits plus 10 s, and the teardown budgets around it hold at most 90 s of
+  limits; Monarch's defaults, 1 minute and 30 s, fit. A lower setting is
+  accepted and shortens that wait. When the message says neither variable is
+  set, no setting can fix it: reinstall the pinned torchmonarch.
 - A `MONARCH_RDMA_*` name the policy does not set: unset it. `[monarch.rdma]`
   sets every RDMA option this release supports
   ([CLUSTER.md](CLUSTER.md#monarchrdma)). A managed `MONARCH_RDMA_*` name set
@@ -7113,6 +7790,11 @@ environment that starts ComfyUI.
   Worker, look in the systemd user manager's environment
   (`systemctl --user show-environment`), in any hand edit to its unit, and in
   the shell environment `dgxm up` starts a `nohup` Worker from.
+- `HYPERACTOR_CHANNEL_RECONNECT_TIMEOUT`: unset it where ComfyUI starts. The
+  policy sets it to one day in every process, so a Worker that was down for a
+  reboot can be reached again
+  ([#2](#2-every-attach-times-out-after-one-failed-attach)); the Worker loop
+  drops it from its own environment.
 
 ## 120. A render refuses because ComfyUI would drop the checkpoint's weight scales
 
@@ -8251,7 +8933,19 @@ token count their activation preflight prices
 For those families the deadline is the step count times an allowance per
 step. The allowance is 600 s per step at 109,466 packed rows per rank, the
 15 second clip's rows on one Spark, and scales linearly with rows per rank,
-but is never less than 120 s per step. Rows per rank are the packed total
+but is never less than 120 s per step. That clip made one model call a step
+(CFG 1, one prompt), so the allowance is one call's. A MiniMax H3 step makes
+one call for each positive conditioning entry, and one more for each negative
+entry where the sampler runs the negative (CFG other than 1, or a sampler that
+keeps it at 1), since H3 runs each as its own batch of one. A two-checkpoint
+guider (Dual Model Guider (DGX Monarch) with its second model) runs its
+negative on the second model, and that call counts too, one where no negative
+is wired. The driver reads that count from the request and gives the step one
+allowance per call. An entry that ComfyUI may skip at
+some steps or call on part of the latent (a step window short of the whole
+schedule, an area) is not counted. Wan SCAIL, SCAIL-2 and Animate 2 run the
+positive and the negative as one batch and keep one allowance per step.
+Rows per rank are the packed total
 divided by the sequence-parallel degree, ulysses times ring; cfg and dp give
 each rank whole sequences. The product is capped at 21600 s (six hours), so a
 hung actor that keeps reporting progress is still caught. Above 180 steps the
@@ -8287,7 +8981,8 @@ suite ([BENCHMARKS](BENCHMARKS.md)).
 
 - Read the failed render's `sample deadline:` line against the time it ran.
   The line names the term that set the deadline: the floor, the steps or the
-  ceiling.
+  ceiling. A MiniMax H3 step that makes more than one model call says how
+  many, for example `and 2 model calls a step`.
 - To give a render longer, start ComfyUI with a higher floor, in seconds,
   for example `DGXM_SAMPLE_TIMEOUT=14400`. The floor applies to every render
   and wins over the cap, so a hung render then holds the queue that long;
@@ -8295,7 +8990,8 @@ suite ([BENCHMARKS](BENCHMARKS.md)).
 - Past the table the margin shrinks. A step's time grows faster than its rows,
   because attention grows with the square of the sequence: on one Spark, 1.48
   times the rows took 2.06 times as long per step, while the allowance grew
-  1.48 times. At 20 steps the cap binds from about 197,000 rows per rank.
+  1.48 times. At 20 steps the cap binds from about 197,000 rows per rank,
+  at one model call a step; at two calls a step it binds from about 98,500.
   Raise the floor for a clip longer than the table's longest.
 - A render whose single step outlasts the stall budget ends as a stall, not
   at this deadline: the stall guard stops the wait when the fleet sends no
@@ -8337,7 +9033,9 @@ decode, or one unit of it, on the driver. The line names the reason:
 | `stills at or under 1.2 MP` | a small still decodes in about a second | none |
 | `no live DGX Monarch mesh`, `has not finished setup` | no Init node ran in this ComfyUI process, or no render has set the mesh up | queue the graph with its Init node and sampler |
 | `no Worker rank sits on a GPU other than this driver's` | every rank shares the driver's GPU | none |
-| `did not come from a VAE loader file`, `outside ComfyUI's vae folders` | no Worker can name the VAE's bytes | load the VAE with Load VAE from `models/vae` |
+| `did not come from a VAE loader file`, `outside ComfyUI's vae folders` | no Worker can name the VAE's bytes | load the VAE with Load VAE from `models/vae`; a file or folder there that is a symlink to other storage counts, under the name Load VAE lists |
+| `decodes this VAE on the CPU` | the driver's ComfyUI runs with `--cpu-vae` or `--cpu`, and a Worker decodes on its GPU, a different result | none while the driver decodes on the CPU; drop the flag to split |
+| `holds quantized layers` | Load VAE builds a quantized VAE's layers to compute in a dtype of its own, and a Worker builds them in the VAE dtype, so a Worker's decode could differ | none: it decodes on the driver |
 | `the mesh is busy or not ready` | another render session held the mesh | queue again once it ends |
 | `one tile`, `one temporal chunk` | the decode has a single unit | none |
 | `the Sol-H3-VAE decoder decodes the whole clip in one pass`, `the p-h3-image VAE decodes single frames` | two MiniMax H3 VAEs in ComfyUI 0.44.0 or newer that this project does not split: one has no temporal chunks, the other decodes one frame ([MODELS](MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av)) | none: it decodes on the driver |
@@ -8358,6 +9056,12 @@ The WARNING names the rank and its first cause:
 - `no answer for unit`, `TimeoutError` or a supervision error: the Worker was
   slow, stuck or gone; a dead actor evicts the fleet, and the next render
   respawns it.
+
+A WARNING with no decode line before it, `VAE decode not split: planning the
+split failed (<error>), so the whole decode runs here`, means the driver could
+not read what a Worker must match, for example torch's matmul precision after
+code in the driver process mixed torch's legacy and new TF32 settings. The
+decode runs as ComfyUI's own; restart ComfyUI without that code to split.
 
 **Fix:** act on the reason, then queue again. A fallback never changes the
 image: every unit a rank did not decode was decoded on the driver by
@@ -8645,9 +9349,12 @@ its layer casts. The log names the first key of each kind once (`is off the
 device after a partial load`). With `lora_low_rss` off, the Worker does not
 leave a one-GPU load partial where it can help it: before sampling it bakes
 the whole stack under a full load and frees ComfyUI's backup, as `lora_low_rss`
-does, and logs `took the low-RSS route for this load`. That needs room for
-ComfyUI's backup of the patched layers still off the device while it bakes; a
-stack change on that model then reloads it from disk. If that full load itself
+does, and logs `took the low-RSS route for this load`. That needs room, while
+it bakes, for ComfyUI's backup of the patched layers still off the device and
+for the bake itself, asked by each layer's own format: 2 GiB, and for each
+layer 7.5 MiB where it is scaled FP8 or full precision, 4 MiB where it is
+INT8 ConvRot and nothing where it is plain FP8. A stack change on that model
+then reloads it from disk. If that full load itself
 fails, the render stops with the same class C tag and says so, because ComfyUI
 unloads a model whose load fails and sampling it would run without the LoRA.
 Where there is no room
@@ -8701,8 +9408,14 @@ unit example carries it.
 
 **Check:** each actor's `UMA posture` journal line ends with
 `host_purge_delay=0`. With a model placed, the actor's anonymous memory then
-sits near a fresh actor's floor, a few GiB, and the identity gate's re-price
-after a drop finds the room the loader found.
+sits a few GiB above a fresh actor's floor, and the identity gate's re-price
+after a drop finds the room the loader found. On 2026-11-06 on dev `79bb47e`
+the head actor held 1.82 to 1.95 GiB after the kandinsky5-video-pro, flux1-dev
+and wan-scail loads (a fresh actor's floor is 0.5 GiB), the kandinsky re-price
+that had been 6.9 GiB short admitted the load with 11.0 GiB to spare, and the
+release test then rendered 66 templates with no error, the seven that need
+user inputs skipped
+([VALIDATION](VALIDATION.md#host-memory-2026-11-06)).
 
 ## 147. A MiniMax H3 render refuses, or fails in its output head, after a ComfyUI update
 
@@ -8846,8 +9559,11 @@ joins the prompt and the negative into one model call only when their text
 tensors have the same shape. In stock both have 512 rows, so each step makes
 one batch-2 call; on a Worker the raw rows of the shipped pair differ in
 length, so each step made two batch-1 calls, and GB10's matrix kernels change
-with the row count. That is the expected cause of the 0.028; as of 2026-11-10
-no hardware run on the fixed Workers has confirmed it. A CPU test against
+with the row count. That is the cause of the 0.028: on 2026-11-11 a fixed
+Worker on one GPU matched stock exactly (one DGX Spark under its clock cap,
+max 2100 MHz, reading 2067 to 2099 MHz), and
+explicit cfg2, which still makes the two batch-1 calls, read the same 0.028
+against stock. A CPU test against
 ComfyUI v0.45.0 and 8a98ecf58 shows the two call patterns, and that inference
 mode alone picks between them; on the CPU the latents still match, because its
 kernels do not change with the batch.
@@ -8863,8 +9579,9 @@ every Anima render under `auto` takes uly2 (row 48). Explicit cfg2 still
 renders. The comfy canary's `inference mode branches` seam lists every place
 ComfyUI's source reads or sets inference mode, reads a tensor's inference
 flag, or reads grad mode, so a new branch of this kind fails the canary before
-it reaches a render. As of 2026-11-10 no hardware run has
-compared the fixed Workers with stock
+it reaches a render. On 2026-11-11, with the first Spark capped at max 2100
+MHz, the fixed Workers' one GPU, row 0 of a dp2 render, `auto` and explicit
+uly2 each matched stock at one step and over the full 30 steps
 ([VALIDATION](VALIDATION.md#anima-text-branch-fix)).
 
 ## 152. A render refuses because the header gate could not read the checkpoint's header
@@ -8923,9 +9640,9 @@ means someone replaced the text and left the marker out. The testing graph
 `dgx-monarch-test-minimax-h3-image-grid` ships both boxes empty on purpose,
 and refuses this way if its switch is set to true.
 
-With the switch true and the task prompt box empty, Replace Text hands on an
-empty text whatever the request says, and Generate Text answers an empty
-prompt. If a caption can be read from that answer the model renders from it,
+With the switch true and the task prompt box empty, Replace Text, whose `find`
+holds `{input text}`, hands on an empty text whatever the request says, and
+Generate Text answers an empty prompt. If a caption can be read from that answer the model renders from it,
 and if none can the graph falls back to the request, after the expander has
 spent its time on nothing. A task prompt that lacks `{input text}` is worse: the
 expander writes a caption for the task prompt alone, and the render ignores
@@ -8941,7 +9658,10 @@ Only what the graph states is read. Generate Text must be a node ComfyUI is
 sure to run for a DGX Monarch sampler, Fleet sampler or Identity Gate, so an
 expander that runs only for an extra Preview as Text, with the switch false,
 refuses nothing. It must be fed by a Replace Text node whose text is typed or
-comes from a Text box. A switch counts by what it states, typed on the node
+comes from a Text box, and whose `find`, typed or from a Text box, does not
+occur in that text. An empty `find` occurs in any text, even an empty one, so
+Replace Text then hands on the request and nothing refuses. A switch counts by
+what it states, typed on the node
 or through a Boolean box wired to it. An expander behind an If/Else Switch or
 Soft Switch that states no choice, or behind a Branch node, is not sure to
 run, and refuses nothing. The templates' own skip of an empty request is an
@@ -8990,3 +9710,140 @@ Monarch nodes. Setting `family_adapter` back to `auto` does not help: `auto`
 refuses the same model at the same point. There is no waiver. A variant runs
 on the Workers once an adapter for it lands
 ([ADAPTERS](ADAPTERS.md#registration)).
+
+## 155. A verified update refuses: foreign distribution inventory is ambiguous
+
+**Symptom:** `dgxm update --verify` stops with "the driver's torchmonarch does
+not match the current checkout's exact pin: foreign distribution inventory is
+ambiguous (distribution=<name>; relative path=<name>-<version>.dist-info/RECORD)
+... no package repair was attempted", on every try, when nothing about
+torchmonarch has changed. That is the 1.4.0 updater's text, which runs the
+first update from 1.4.0. From 1.5.0 the same check reads "foreign distribution
+RECORD lists files outside site-packages that are not bytecode compiled for its
+own sources (distribution=<name>; relative path=...). That RECORD lists a file
+outside site-packages the check cannot vouch for ... See them with `grep
+'^\.\./' <site-packages>/<relative path>` ...", or "RECORD is malformed", or
+"is installed more than once", each with what clears it. A Worker whose
+torchmonarch lives in its own Python, outside a `u-` release slot, prints the
+same cause under its host name, above "worker hosts do not exactly match the
+current driver release".
+
+**Cause:** the update's ownership check reads the pip RECORD of every foreign
+distribution that ships files inside torchmonarch's directories (`tests/` and
+`examples/`; xfuser does), on the driver's Python and on each Worker's Python
+that holds torchmonarch itself; a `u-` slot carries its own torchmonarch, so
+its Worker's Python is never read. pip records each `.pyc` it compiles with no
+hash; with `PYTHONPYCACHEPREFIX` set to a writable directory that file lands
+under the prefix, outside site-packages (`../../../../<prefix>/...`). The 1.4.0
+check treats any such entry, other than a `../bin/` console script, as an
+inventory it cannot vouch for. From 1.5.0 it ignores an entry that is exactly
+pip's bytecode for one of that RECORD's own sources (no hash or size, a
+`<stem>.<cache tag>.pyc` name, which no import can load by name, at the end
+of a path that repeats the source's own path in site-packages), and every
+other entry outside site-packages, other than a console script, still
+refuses; it never opens those files and still checks each file inside
+site-packages against its hash. The prefix the pack sets for its own
+processes, `/proc/self/fd/2147483647`, is not writable, so pip compiles nothing
+there and records no such entry. On 2026-11-06 the torch 2.15 environment on
+both Sparks had been built with a writable prefix by its build script, 183 of
+its 204 distributions carried such entries, and xfuser's RECORD, with 301 of
+them, refused the first deploy of dev `79bb47e` ten times.
+
+**Fix, on the first update from 1.4.0:** reinstall the named distribution from
+the same wheel in a shell where `PYTHONPYCACHEPREFIX` is unset, in the
+driver's Python, and in the Python cluster.toml names on each Worker host
+whose Worker runs outside a `u-` slot:
+`<python> -m pip install --no-index --no-deps --force-reinstall <wheel>`, then
+run the update again. Its RECORD then lists its bytecode under
+`<package>/__pycache__/` inside site-packages. Other distributions with such
+entries do not matter to the check unless they also ship files in
+torchmonarch's directories. You can instead run this release's updater, which
+accepts pip's bytecode entries, from a checkout of this release with
+[the recovery procedure in #110](#recover-an-installation-with-an-older-verifier).
+
+**Fix, from 1.5.0:** pip's bytecode no longer reaches this refusal, so what
+remains is an entry a reinstall writes again: a file with a hash outside
+site-packages, such as a data file, a header or a script, a script's compiled
+cache with no source beside it, or bytecode for another Python. List the
+entries with `grep '^\.\./' <site-packages>/<name>-<version>.dist-info/RECORD`.
+Uninstall that distribution from this environment, or install it in another
+one, then run the update again. "RECORD is malformed" asks for a reinstall of
+that distribution; "is installed more than once" means more than one metadata
+directory names it, so remove every copy and install the version you use once.
+
+**A shared test file.** The official xfuser 0.8.0 wheel ships
+`tests/conftest.py`, which torchmonarch ships too, so whichever installs last
+writes the file. From 1.5.0 the check accepts either copy when xfuser's record
+of it is the official one, and counts it at torchmonarch's own hash, so every
+host attests the same release. The 1.4.0 updater refuses it with "foreign
+distribution claims pinned payload (distribution=xfuser; relative
+path=tests/conftest.py)". Removing or upgrading xfuser deletes the file, and
+the check then refuses with "a file torchmonarch shares with another
+distribution is missing"; reinstall torchmonarch at its installed version
+(`<python> -m pip install --no-deps --force-reinstall torchmonarch==<version>`)
+and run the update again. Any other distribution, version or file that claims
+a torchmonarch file is still refused.
+
+**Check:** the next `dgxm update --verify` passes. After the reinstall without
+the prefix, `grep '^\.\./' <site-packages>/<name>-<version>.dist-info/RECORD`
+lists only the distribution's console scripts, as `../../../bin/<name>` rows.
+On 2026-11-06 the deploy of `79bb47e` succeeded on its first try after the
+reinstall on both hosts, with doctor at 50 checks and 0 failures
+([VALIDATION](VALIDATION.md#host-memory-2026-11-06)).
+
+## 156. `dpm_adaptive` refuses under a data-parallel layout with FSDP
+
+**Symptom:** the driver refuses class P with "sampler dpm_adaptive cannot run
+under dp2+fsdp on 2 ranks" (or "Sampler Custom's SAMPLER, ComfyUI's
+dpm_adaptive solver, cannot run under uly2+dp2+fsdp on 4 ranks"), naming no
+guard, card or waiver. It comes at the UNET loader, before the loader's own
+setup step and before its model loads, when the graph names the sampler
+there: a literal `sampler_name` on a DGX Monarch sampler, or a KSamplerSelect
+or SamplerDPMAdaptative node feeding Sampler Custom, on a sampler that takes
+that loader's model. Otherwise it comes at the sampler or Identity Gate node,
+before the first-use check, after the loader's setup and load. The Init node
+of an explicit preset sets the actors up when it runs, so at the loader they
+may already be set up.
+
+**Cause:** under data parallelism each group of ranks samples its own slice
+of the batch. `dpm_adaptive` picks its step sizes from the error of that
+slice, so two groups can make different numbers of model calls. With FSDP,
+every model call gathers the weights of each block from every rank, so every
+rank must make the same number of calls; a group with more calls would wait
+for ranks that have finished until the sample deadline. Only the explicit
+`+fsdp` presets reach it: `dp2+fsdp` from two Sparks up, and `uly2+fsdp` and
+`cfg2+fsdp` from four Sparks up. `auto` never resolves FSDP, so it never
+refuses this way. Pure data parallelism (`dp2`) and the sharded layouts
+without FSDP, from four Sparks up (`uly2`, `uly4`, `ring2`, `ring4` or `cfg2`
+with data parallelism), render `dpm_adaptive`: their groups share no
+collective, and each group agrees only within itself on how to batch its
+calls.
+
+`dpm_adaptive` is the only sampler in ComfyUI whose number of model calls
+follows the latent; the comfy seam canary checks that on every sampler
+ComfyUI registers. The driver recognises it by its KSampler name and as the
+SAMPLER object of Sampler Custom (from SamplerDPMAdaptative or
+KSamplerSelect). A third-party
+sampler whose number of calls follows its data cannot be recognised, and
+under these layouts it stalls the same way, until the sample deadline.
+
+**Fix:** use a sampler with a fixed step count, any but `dpm_adaptive`, such
+as `euler` or `dpmpp_2m`; or a topology preset without data parallelism (the
+refusal lists the ones that fill this many Sparks); or a preset without
+`+fsdp` where the model fits resident. On a pair, `uly2+fsdp` and `cfg2+fsdp`
+keep FSDP without data parallelism. On more than two Sparks no preset does:
+the presets without data parallelism hold the whole model on every rank, so they
+serve only where it fits resident, and a model that needs FSDP there needs
+another sampler.
+
+**Check:** the next queue with one of the fixes above renders. On
+2026-11-15, on dev `07cc636` on two Sparks, the shipped
+`dgx-monarch-flux3-klein-base-t2i` with `dp2+fsdp`, a literal `dpm_adaptive`
+and a batch of 2 refused at the UNET loader in these words, after the Init
+node had set the actors up, with no model load, sampling line or traceback in
+either Worker's journal; the same graph with the template's own `euler`
+rendered and its first-use check passed
+([VALIDATION](VALIDATION.md#release-test-v5-07cc636)). Of the fixes, only
+the sampler change has run on hardware. The Sampler Custom form, the refusal
+at the sampler and the Identity Gate node, and `dp2+fsdp`, `uly2+fsdp` and
+`cfg2+fsdp` on four Sparks or more have not.

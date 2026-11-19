@@ -6,7 +6,8 @@ answer. The DGX Monarch templates keep that chain and read the caption by patter
 with the switch that selects the expander off. The two shipped templates carry
 this project's own task prompt in the box Replace Text reads; the testing graph
 ships that box empty, and a user may empty or replace it. Replace Text over an
-empty text is an empty text whatever the request holds, so with the switch on
+empty text, looking for the marker, is an empty text whatever the request
+holds (an empty ``find`` would hand on the request itself), so with the switch on
 Generate Text answers an empty prompt and the render follows what comes of
 that, with no error anywhere. A task prompt that lacks the marker Replace Text
 looks for fails the same way more quietly: the expander runs, and the request
@@ -212,11 +213,16 @@ def _finding(prompt: Any) -> tuple[str, dict[str, str]] | None:
         if template is None:
             continue
         fields = {"replace": str(source), "generate": key}
+        find = inputs.get("find")
+        # Replace Text hands on its text with each `find` replaced by the request, so the request
+        # reaches Generate Text wherever the find occurs: an empty find occurs everywhere, even in
+        # an empty task prompt. A find the graph does not state is not read.
+        stated = _text(nodes, find)
+        if stated is None or stated in template:
+            continue
         if not template.strip():
             return EMPTY_TASK_PROMPT, fields
-        find = inputs.get("find")
-        if (isinstance(find, str) and find and find not in template
-                and graph_live.is_link(inputs.get("replace"))):
+        if isinstance(find, str) and graph_live.is_link(inputs.get("replace")):
             return MISSING_MARKER, {**fields, "find": find}
     return None
 

@@ -142,6 +142,30 @@ def test_arm_never_raises_into_init(monkeypatch, caplog):
     assert "could not arm" in caplog.text
 
 
+@pytest.mark.parametrize("broken", ["missing", "directory", "malformed", "unknown key"])
+def test_an_init_whose_file_cannot_be_read_leaves_the_route_off_as_its_warning_says(
+        monkeypatch, caplog, tmp_path, broken):
+    """The Init node arms from the file its config_path names. A file it cannot read logs
+    that decodes stay on the driver, and they do, even after an earlier Init armed "auto"."""
+    monkeypatch.setattr(vae_decode_route, "install", lambda: None)
+    monkeypatch.setattr(vae_decode_route, "_ARMED", None)
+    good = tmp_path / "cluster.toml"
+    good.write_text('[worker_args]\nworker_vae_decode = "auto"\n', encoding="utf-8")
+    handle = _handle(config=SimpleNamespace(worker_args={}, source="", hosts=()))
+    vae_decode_route.arm(handle, str(good))
+    assert vae_decode_route.armed_handle() is handle
+    path = tmp_path / "broken.toml"
+    if broken == "directory":
+        path.mkdir()
+    elif broken == "malformed":
+        path.write_text("[worker_args\nworker_vae_decode = \n", encoding="utf-8")
+    elif broken == "unknown key":
+        path.write_text('[worker_args]\nworker_vae_decode = "auto"\nno_such_key = 1\n', encoding="utf-8")
+    vae_decode_route.arm(handle, str(path))
+    assert "could not arm, so decodes stay on the driver" in caplog.text
+    assert vae_decode_route.armed_handle() is None
+
+
 def _open(monkeypatch, vae, samples, entry, *, handle="armed", ranks=(1,), source=None):
     armed = _handle() if handle == "armed" else handle
     monkeypatch.setattr(vae_decode_route, "armed_handle", lambda: armed)

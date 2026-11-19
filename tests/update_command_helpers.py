@@ -40,12 +40,12 @@ def _checkout(tmp_path: Path) -> tuple[Path, str]:
     package.mkdir(parents=True)
     (repo / "pyproject.toml").write_text(
         """[project]
-dependencies = ["torchmonarch==0.6.0", "xfuser==0.7.0+dgxm.npuimport1", "yunchang>=0.6.4"]
+dependencies = ["torchmonarch==0.6.0", "xfuser>=0.7.0,<=0.8.0", "yunchang>=0.6.4"]
 """,
         encoding="utf-8",
     )
     (repo / "requirements.txt").write_text(
-        "torchmonarch==0.6.0\nxfuser==0.7.0+dgxm.npuimport1\nyunchang>=0.6.4\n",
+        "torchmonarch==0.6.0\nxfuser>=0.7.0,<=0.8.0\nyunchang>=0.6.4\n",
         encoding="utf-8",
     )
     (package / "__init__.py").write_text(

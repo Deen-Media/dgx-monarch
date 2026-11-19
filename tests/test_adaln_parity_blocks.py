@@ -26,6 +26,7 @@ import torch
 from dgx_monarch.adapters import adaln_parity_blocks as parity
 from dgx_monarch.adapters.base import InjectionContext
 from dgx_monarch.adapters.flux_family import ChromaAdapter, Flux2Adapter, FluxAdapter, LongCatAdapter
+from rank_exit_helpers import leave
 
 LAUNCHES: list[int] = []
 
@@ -374,6 +375,7 @@ def _gloo_qwen21_launch_worker(rank, comfy_dir, init_file, result_dir):
     same = bool(torch.equal(candidate, stock) or torch.allclose(candidate, stock, rtol=0, atol=2e-6))
     Path(result_dir, f"rank{rank}").write_text(repr((stock_launches, list(launches), same)))
     dist.destroy_process_group()
+    leave()
 
 
 def test_qwen21_every_rank_launches_each_fused_norm_at_stocks_rows_real_comfy():

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from dgx_monarch import consent_pending, driver_footprint, mesh_safety, old_model
+from dgx_monarch import consent_pending, driver_footprint, driver_unload, mesh_safety, old_model
 from dgx_monarch.nodes import (
     graph_load_price,
     loader_preflight,
@@ -48,7 +48,10 @@ ENCODERS_HELD = SIZES[("text_encoders", TE)] + SIZES[("text_encoders", UPSAMPLER
 # D2's replay, at its lowest: the head with the DiT resident and both encoders loaded.
 REPLAY_AVAILABLE = int(34.8 * _GIB)
 # The cell 9 box (110.8 GiB) after the encoders loaded, at their 1.15 ratio.
-SHORT_AVAILABLE = int(80.3 * _GIB)
+CELL9_AVAILABLE = int(80.3 * _GIB)
+# The same box with 25.3 GiB more taken by something the driver cannot unload (a
+# co-resident server): short of the DiT's load even after ComfyUI's encoders go.
+SHORT_AVAILABLE = int(55.0 * _GIB)
 SAMPLER_SENTENCE = ("The UNET Loader's output came from an earlier queue, so the sampler priced "
                     "this graph, and the Workers loaded nothing.")
 
@@ -69,14 +72,53 @@ def _prompt(monkeypatch):
     graph_load_price._PRICED_PROMPTS.clear()
 
 
-def _comfy_holds(monkeypatch, held: int) -> None:
-    loaded = types.SimpleNamespace(model=object(), model_memory=lambda: held)
+class TextEncoder:
+    """Stands in for the class ComfyUI logs for the loaded text encoder."""
+
+
+class PromptUpsampler:
+    """Stands in for the class ComfyUI logs for the loaded prompt upsampler."""
+
+
+class ImageVAE:
+    """Stands in for the class ComfyUI logs for the loaded VAE."""
+
+
+# Each file this graph loads on the driver: the class ComfyUI logs, its folder, and
+# whether ComfyUI marks its patcher ``is_clip`` (a CLIP's is; a VAE's is not).
+_LOADED = {TE: (TextEncoder, "text_encoders", True), UPSAMPLER: (PromptUpsampler, "text_encoders", True),
+           VAE: (ImageVAE, "vae", False)}
+
+
+def _comfy_holds(monkeypatch, *files: str) -> types.SimpleNamespace:
+    """ComfyUI's model list holding these files, as ComfyUI's own entries hold them.
+
+    Each entry's patcher carries the ``is_clip`` mark ComfyUI sets on a CLIP's
+    patcher, and ``model_memory`` is the file's size. ``unload_all_models``
+    empties the list and the box reads what the entries held more, as the
+    driver's own unload (``driver_unload.unload``) then finds it.
+    """
     management = types.ModuleType("comfy.model_management")
-    management.current_loaded_models = [loaded] if held else []  # type: ignore[attr-defined]
+    management.current_loaded_models = [  # type: ignore[attr-defined]
+        types.SimpleNamespace(model=types.SimpleNamespace(model=_LOADED[name][0](), is_clip=_LOADED[name][2]),
+                              model_memory=lambda size=SIZES[(_LOADED[name][1], name)]: size)
+        for name in files]
+    calls = types.SimpleNamespace(unload=0)
+
+    def unload_all_models():
+        calls.unload += 1
+        freed = sum(entry.model_memory() for entry in management.current_loaded_models)
+        management.current_loaded_models[:] = []
+        reading = mesh_safety.mem_available_bytes
+        monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: reading() + freed)
+
+    management.unload_all_models = unload_all_models  # type: ignore[attr-defined]
+    management.soft_empty_cache = lambda: None  # type: ignore[attr-defined]
     comfy = types.ModuleType("comfy")
     comfy.model_management = management  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "comfy", comfy)
     monkeypatch.setitem(sys.modules, "comfy.model_management", management)
+    return calls
 
 
 def _graph(switch: bool) -> dict:
@@ -98,6 +140,17 @@ def _first_prompt_renders(prompt, monkeypatch) -> _Mesh:
     return mesh
 
 
+def _switch_on_renders(prompt, monkeypatch) -> _Mesh:
+    """Prompt 1 with the switch on, on a box roomier than cell 9's (the loader needs 119.8 GiB
+    there): both encoders and the upsampler run, so a re-queue of the same prompt finds their
+    outputs in ComfyUI's cache."""
+    mesh = _Mesh()
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 125 * _GIB)
+    assert loader_preflight.preflight_loader_footprint(mesh, DIT, {}, _graph(True)) is None
+    prompt.prompt_id = "prompt-2"
+    return mesh
+
+
 def _spy(monkeypatch) -> list:
     calls: list = []
     real = loader_preflight.preflight_loader_footprint
@@ -115,7 +168,7 @@ def _spy(monkeypatch) -> list:
 def test_the_replay_with_the_dit_held_is_priced_at_the_sampler_and_renders(_prompt, monkeypatch):
     mesh = _first_prompt_renders(_prompt, monkeypatch)
     calls = _spy(monkeypatch)
-    _comfy_holds(monkeypatch, ENCODERS_HELD)
+    _comfy_holds(monkeypatch, TE, UPSAMPLER)
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: REPLAY_AVAILABLE)
     requeue_price.price_cached_loader(_model(mesh), _graph(True))
     assert calls == [graph_load_price.SITE_SAMPLER], "the sampler ran the loader's price once"
@@ -140,26 +193,28 @@ def test_a_first_run_whose_loader_priced_the_prompt_gets_no_second_price(_prompt
 def _short_requeue(prompt, monkeypatch) -> _Mesh:
     mesh = _first_prompt_renders(prompt, monkeypatch)
     recycle_drain.drop_residency_memos()        # a Clear VRAM node, Reset attached mesh or a clear
-    _comfy_holds(monkeypatch, ENCODERS_HELD)
+    _comfy_holds(monkeypatch, TE, UPSAMPLER)
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: SHORT_AVAILABLE)
     return mesh
 
 
 def test_a_short_box_refuses_at_the_sampler_with_the_loaders_sentence(_prompt, monkeypatch):
+    """Short with both encoders held, and still short after the driver unloads them: the
+    refusal is the price after the unload, and it says so."""
     mesh = _short_requeue(_prompt, monkeypatch)
     with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
         requeue_price.price_cached_loader(_model(mesh), _graph(True))
     text = str(raised.value)
     assert text.startswith(
         "[dgxm:C guard=loader_footprint_preflight waivable=1] p-h3-image_bf16.safetensors "
-        "needs 84.3 GiB on this box and 80.3 GiB is available, 4.0 GiB short. It loads "
-        f"at the first render, beside {TE} and {UPSAMPLER}, which this graph loads "
-        f"on the driver first. {SAMPLER_SENTENCE}")
+        "needs 84.1 GiB on this box and 81.5 GiB is available, 2.7 GiB short. That is the "
+        "peak of its load, the weights beside the host copy they are placed from. "
+        f"{SAMPLER_SENTENCE} Before refusing, the driver unloaded the 2 models (TextEncoder, "
+        "PromptUpsampler) ComfyUI held on this host: MemAvailable read 55.0 GiB before the "
+        "unload and 81.5 GiB after it, and the figures above are the reading after it.")
     assert "Nothing was loaded." not in text
     assert ("driver-side footprint preflight at the sampler (the UNET Loader's output came "
             "from an earlier queue)") in text
-    # Only what is not yet held: ComfyUI's encoders are credited, and no more.
-    assert "comfy already holds 26.5 GiB of loaded models" in text
     assert f"{DIT_INT8} (19.8 GiB) or {DIT_W4A8} (12.4 GiB) in place of {DIT}" in text
     assert "topology set to uly2+fsdp (auto never picks it)" in text
     assert "Load with slab residency" in text
@@ -169,27 +224,138 @@ def test_a_short_box_refuses_at_the_sampler_with_the_loaders_sentence(_prompt, m
     assert len(text) < 4000
 
 
+# Review of the 1.5.0 promotion: after the unload, the encodes have still run.
+
+def test_the_cell_9_requeue_the_unload_makes_room_for_renders(_prompt, monkeypatch):
+    """The switch-off graph rendered, a reset left the DiT pending, and the switch-on re-queue
+    meets both encoders held on the cell 9 box. The first price is short, so the driver
+    unloads them (26.5 GiB). The price after it charged both encoders again in the load
+    window, as models "this graph loads on the driver first", though their encodes had run
+    and nothing loads them again before the DiT: 114.6 GiB against 106.8, refused. The DiT
+    alone needs 84.1 GiB there, so the load renders."""
+    mesh = _first_prompt_renders(_prompt, monkeypatch)
+    recycle_drain.drop_residency_memos()
+    calls = _comfy_holds(monkeypatch, TE, UPSAMPLER)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: CELL9_AVAILABLE)
+    requeue_price.price_cached_loader(_model(mesh), _graph(True))
+    assert calls.unload == 1 and consent_pending.pending_cards() == []
+
+
+def test_a_requeue_whose_encodes_an_earlier_queue_ran_is_not_charged_them_in_the_load_window(
+        _prompt, monkeypatch):
+    """ComfyUI holds no model (a Clear VRAM node at hard took them) and the prompt is the one
+    an earlier queue encoded, so its outputs stand in for both encoders: none loads before the
+    DiT. 90 GiB covers the DiT's load and the settled window that still charges them."""
+    mesh = _switch_on_renders(_prompt, monkeypatch)
+    recycle_drain.drop_residency_memos()
+    calls = _comfy_holds(monkeypatch)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(90.0 * _GIB))
+    requeue_price.price_cached_loader(_model(mesh), _graph(True))
+    assert calls.unload == 0 and consent_pending.pending_cards() == []
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(75.0 * _GIB))
+    _prompt.prompt_id = "prompt-3"
+    recycle_drain.drop_residency_memos()
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        requeue_price.price_cached_loader(_model(mesh), _graph(True))
+    text = str(raised.value)
+    assert "needs 84.1 GiB on this box and 75.0 GiB is available" in text
+    assert ("That is the peak of its load, the weights beside the host copy they are placed "
+            f"from. {SAMPLER_SENTENCE}") in text
+    assert ("75.0 GiB MemAvailable minus a 5.0 GiB reserve and no driver model, since this "
+            "graph's encodes ran before the sampler and a model it loads again loads after the "
+            "DiT places)") in text
+
+
+def test_a_swap_credit_at_the_sampler_does_not_wait_for_encoders_that_ran(_prompt, monkeypatch):
+    """The Worker on this box holds the INT8 twin in the slot this load takes, and drops it
+    first, which the swap credit counts. The encodes ran in an earlier queue and ComfyUI
+    holds neither encoder. The credit made room for the DiT, but the price still waited
+    for both encoders beside the old model, in the load window, and refused. The price runs
+    in the real sampler node over the loader's own ModelSpec, whose slot asks the Worker."""
+    from dgx_monarch import capacity_agreement
+    from dgx_monarch.nodes.common import ModelSpec
+    from test_capacity_old_model import _answer, _LiveHandle
+    from test_loader_swap_credit import _held
+
+    class Rendered(Exception):
+        pass
+
+    def rendered(*_args, **_kwargs):
+        raise Rendered
+
+    mesh = _switch_on_renders(_prompt, monkeypatch)
+    mesh.handle = _LiveHandle()
+    recycle_drain.drop_residency_memos()
+    calls = _comfy_holds(monkeypatch)
+    asked: list = []
+    monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k: asked.append(1) or [
+        _answer(0, _held(DIT_INT8, SIZES[("diffusion_models", DIT_INT8)] / _GIB), box="this box")])
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(70.0 * _GIB))
+    monkeypatch.setattr(samplers, "run_render", rendered)
+    with pytest.raises(Rendered):
+        samplers.DGXMonarchKSampler().sample(
+            ModelSpec(mesh=mesh, unet_name=DIT), 42, 8, 4.0, "euler", "simple", [], [],
+            {"samples": None}, prompt=_graph(True))
+    assert asked and calls.unload == 0 and consent_pending.pending_cards() == []
+
+
 def test_held_encoders_count_at_their_resident_size_and_the_decode_vae_waits(_prompt, monkeypatch):
     """Review finding 3, its rig probe: the switch-off graph rendered, a reset left the DiT
     pending, and the re-queue meets the text encoder held at its raw size. The sampler
     charged it again at the 1.15 ratio and put the decode VAE in the load window, so it
     needed 90.6 GiB where the Worker's wall needs 84.1. A held encoder is credited at
     its measured 1.144 and the VAE, which loads after the DiT places, waits for the
-    settled window, so 88 GiB admits and the price sits beside the wall."""
+    settled window, so 88 GiB admits. The review of the 1.5.0 promotion: the
+    held encoder's last 0.006 of its size, charged at 1.15 and credited at 1.144, still
+    sat in the load window, though nothing loads it there; the load window now holds the
+    DiT alone, at the Worker's wall, and 84.17 GiB admits with nothing unloaded."""
     mesh = _first_prompt_renders(_prompt, monkeypatch)
     recycle_drain.drop_residency_memos()
-    _comfy_holds(monkeypatch, SIZES[("text_encoders", TE)])
+    calls = _comfy_holds(monkeypatch, TE)
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(88.0 * _GIB))
     requeue_price.price_cached_loader(_model(mesh), _graph(False))          # admitted
     recycle_drain.drop_residency_memos()        # reset again: the DiT is pending once more
     _prompt.prompt_id = "prompt-3"
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(84.17 * _GIB))
+    requeue_price.price_cached_loader(_model(mesh), _graph(False))          # admitted
+    assert calls.unload == 0, "the first price fits: ComfyUI keeps its encoder"
+    recycle_drain.drop_residency_memos()
+    _prompt.prompt_id = "prompt-4"
+    monkeypatch.setenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, "1")   # the first price's own words
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(84.0 * _GIB))
     with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
         requeue_price.price_cached_loader(_model(mesh), _graph(False))
     text = str(raised.value)
-    assert "needs 84.2 GiB on this box and 84.0 GiB is available" in text
-    assert f"beside {TE}, which this graph loads on the driver first" in text
-    assert VAE not in text.split(". ")[1], "the decode VAE is not in the load window"
+    assert "needs 84.1 GiB on this box and 84.0 GiB is available" in text
+    assert TE not in text.split(". ")[1] and VAE not in text.split(". ")[1], (
+        "neither the held encoder nor the decode VAE is in the load window")
+
+
+def test_a_client_that_sends_its_prompt_id_again_is_priced_at_the_sampler(_prompt, monkeypatch):
+    """Review of the 1.5.0 promotion: ComfyUI takes a client's own prompt id, checking only
+    its form, so an outside client can send one id twice. The record of the loader's price was keyed
+    by the id alone, so the second queue, whose loader ComfyUI kept, read as priced and the sampler
+    priced nothing. Each record now names the running queue item's number, as the spend marks do;
+    ComfyUI's queue is the server's, read as ``driver_spend_marks.running_item`` reads it."""
+    reused = "3f2a6c1e-8b7d-4e2a-9c1f-0a1b2c3d4e5f"
+    running: list = []
+    queue = types.SimpleNamespace(get_current_queue_volatile=lambda: (list(running), []))
+    server = types.ModuleType("server")
+    server.PromptServer = types.SimpleNamespace(  # type: ignore[attr-defined]
+        instance=types.SimpleNamespace(prompt_queue=queue))
+    monkeypatch.setitem(sys.modules, "server", server)
+    _prompt.prompt_id = reused
+    running[:] = [(1, reused, _graph(False), {}, [])]
+    mesh = _Mesh()
+    assert loader_preflight.preflight_loader_footprint(mesh, DIT, {}, _graph(False)) is None
+    running[:] = [(2, reused, _graph(True), {}, [])]   # the same id, the switch on, the loader kept
+    recycle_drain.drop_residency_memos()
+    _comfy_holds(monkeypatch, TE, UPSAMPLER)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: SHORT_AVAILABLE)
+    calls = _spy(monkeypatch)
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        requeue_price.price_cached_loader(_model(mesh), _graph(True))
+    assert calls[0] == graph_load_price.SITE_SAMPLER and SAMPLER_SENTENCE in str(raised.value)
 
 
 def test_the_same_short_box_with_room_renders(_prompt, monkeypatch):
@@ -261,7 +427,7 @@ def test_encodes_and_activations_stay_with_the_render_site_checks(_prompt, monke
     mesh = _Mesh()
     assert loader_preflight.preflight_loader_footprint(mesh, DIT, {}, _graph(False)) is None
     _prompt.prompt_id = "prompt-2"                  # the re-queue, the DiT held
-    _comfy_holds(monkeypatch, ENCODERS_HELD)
+    _comfy_holds(monkeypatch, TE, UPSAMPLER)
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(40.0 * _GIB))
     requeue_price.price_cached_loader(_model(mesh), _graph(True))          # admitted
     _prompt.prompt_id = "prompt-3"
@@ -293,6 +459,32 @@ def test_identity_gate_prices_a_cached_loader_requeue_before_its_ceremony(_promp
     assert ("The UNET Loader's output came from an earlier queue, so Identity Gate (DGX "
             "Monarch) priced this graph, and the Workers loaded nothing.") in text
     assert "driver-side footprint preflight at Identity Gate (DGX Monarch) (the UNET" in text
+
+
+def test_identity_gate_admits_the_cell_9_requeue_the_unload_makes_room_for(_prompt, monkeypatch):
+    """Review of the 1.5.0 promotion, at the gate: its ceremony's conditioning is encoded
+    and the proof renders load the DiT inside the node, before any other node runs, so after
+    the unload the price keeps the encoders out of the load window there too and the ceremony
+    runs. It was refused 114.6 GiB against 106.8."""
+    from dgx_monarch.nodes import gate, gate_node
+
+    class Reached(Exception):
+        pass
+
+    def reached(*_args, **_kwargs):
+        raise Reached
+
+    mesh = _first_prompt_renders(_prompt, monkeypatch)
+    recycle_drain.drop_residency_memos()
+    calls = _comfy_holds(monkeypatch, TE, UPSAMPLER)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: CELL9_AVAILABLE)
+    monkeypatch.setattr(gate, "run_identity_ceremony", reached)
+    monkeypatch.setattr(gate, "conditioning_for_wire", lambda conds: conds)
+    with pytest.raises(Reached):
+        gate_node.DGXMonarchIdentityGate().gate(
+            _model(mesh), [], [], {"samples": None}, 42, 8, 4.0, "euler", "simple",
+            prompt=_graph(True))
+    assert calls.unload == 1 and consent_pending.pending_cards() == []
 
 
 @pytest.mark.parametrize(("case", "why"), [

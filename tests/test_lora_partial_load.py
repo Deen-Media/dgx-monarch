@@ -436,6 +436,101 @@ def test_a_whole_load_keeps_its_backup_wherever_the_step_does_not_apply(installe
     assert "freed ComfyUI's weight backup" not in caplog.text
 
 
+def test_a_whole_load_keeps_its_backup_where_its_idle_device_pool_covers_the_ask(installed, monkeypatch, caplog):
+    """A warm Worker keeps the pool its last sampler grew, which its next sampler takes first and
+    MemAvailable does not show. Room and pool together cover the ask here, so nothing is freed."""
+    build, _outputs, cpu = _rig()
+    _root, patcher, active, slot = _whole(build, cpu)
+    held, stack = dict(patcher.backup), dict(patcher.patches)
+    _asks(monkeypatch, ask_gib=34.8, room_gib=20.4)
+    monkeypatch.setattr(lora_partial_load, "_idle_pool", lambda _patcher: int(16.0 * GIB), raising=False)
+    with caplog.at_level("INFO"):
+        lora_partial_load.check(patcher, SAMPLING)
+    assert dict(patcher.backup) == held and dict(patcher.patches) == stack and active.patches
+    assert slot.base_baked is False
+    assert "freed ComfyUI's weight backup" not in caplog.text
+    # Without the pool the same room is short, and the backup is freed with the pool named as nothing.
+    monkeypatch.setattr(lora_partial_load, "_idle_pool", lambda _patcher: 0)
+    lora_partial_load.check(patcher, SAMPLING)
+    assert patcher.backup == {} and slot.base_baked is True
+
+
+def _lora_less_dynamic_load():
+    """ComfyUI's own dynamic patcher after a load with no LoRA, as a comfy-managed Worker holds it.
+
+    Stock ``ModelPatcherDynamic.load`` on CPU, aimdo's host buffer stood in for as the bake
+    canary does (tests/canary/bake_equivalence_canary.py). The load force-loads the small
+    weights through ``patch_weight_to_device``, which writes ComfyUI's backup, and sets the
+    model's patches uuid, though no patch is attached.
+    """
+    import comfy.model_patcher
+    import comfy.ops
+    import comfy_aimdo.host_buffer
+    import torch
+
+    class _HostBuffer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    ops = comfy.ops.disable_weight_init
+
+    class _Block(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.small = ops.Linear(16, 16, bias=True)
+            self.big = ops.Linear(256, 256, bias=True)
+
+    class _Root(torch.nn.Module):
+        manual_cast_dtype = torch.bfloat16
+
+        def __init__(self):
+            super().__init__()
+            self.diffusion_model = _Block()
+
+        def get_dtype_inference(self):
+            return torch.bfloat16
+
+    cpu = torch.device("cpu")
+    root = _Root().to(torch.bfloat16)
+    real_buffer = comfy_aimdo.host_buffer.HostBuffer
+    comfy_aimdo.host_buffer.HostBuffer = _HostBuffer
+    patcher = object.__new__(comfy.model_patcher.ModelPatcherDynamic)  # its __new__ reroutes a CPU device
+    try:
+        patcher.__init__(root, cpu, cpu)
+        patcher.load(cpu)
+    finally:
+        comfy_aimdo.host_buffer.HostBuffer = real_buffer
+        getattr(root, "dynamic_patchers", set()).discard(id(patcher))
+    assert patcher.is_dynamic() and not patcher.patches
+    assert patcher.backup and root.current_weight_patches_uuid is not None
+    return patcher
+
+
+def test_a_lora_less_dynamic_load_is_left_alone_on_one_gpu_and_on_a_pair(installed, monkeypatch, caplog):
+    """Comfy-managed residency carries no LoRA. Its backup holds ComfyUI's force-loaded small
+    weights, not a stack's originals, so neither one GPU nor a rank of a pair weighs it: a
+    short rank is not short of a backup it does not hold, and the pair refuses nothing."""
+    from dgx_monarch.actor import backup_agreement
+
+    pytest.importorskip("comfy_aimdo.host_buffer")
+    patcher = _lora_less_dynamic_load()
+    slot = _slot(patcher)
+    held = dict(patcher.backup)
+    _asks(monkeypatch, ask_gib=9.0, room_gib=3.0)  # far under the ask: a rank holding a stack would be short
+    monkeypatch.setattr(backup_agreement, "_single_estimate", lambda _patcher, _shape, _conds: int(4.0 * GIB))
+    lora_partial_load.check(patcher, SAMPLING)
+    assert dict(patcher.backup) == held and slot.base_baked is False
+    mine = backup_agreement.vote((patcher,), SAMPLING, 0)
+    assert mine.elements[:3] == [1, 1, 1] and mine.freeable == [] and mine.why_not == ""
+    peer = [1, 1, 1, backup_agreement._margin(40 * GIB, 6 * GIB, 1), 1]
+    exchanged = []
+    with caplog.at_level("INFO"):
+        backup_agreement.settle(mine, [min(a, b) for a, b in zip(mine.elements, peer, strict=True)],
+                                lambda values: exchanged.append(values) or values)
+    assert exchanged == [] and dict(patcher.backup) == held
+    assert "pair backup" not in caplog.text
+
+
 def test_the_ask_is_comfyuis_batching_threshold_for_the_latent(installed, monkeypatch):
     """1.5 times the first of estimate_memory's two figures (the doubled batch), the free memory from
     which ComfyUI runs cond and uncond in one call; no figure when ComfyUI gives none."""

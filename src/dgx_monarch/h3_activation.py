@@ -285,9 +285,9 @@ def preflight_h3_activation_for_request(
                                          image=family == H3_IMAGE_FAMILY)
         if not rows.resolved:
             return
-        # Explicit presets load weights before this reading.
-        resident = memo_credit or str(
-            getattr(mesh, "topology_preset", "auto") or "auto") != "auto"
+        # The caller's credit, an explicit preset's placement included
+        # (render_preflight, nodes/recycle_drain.preset_placed).
+        resident = bool(memo_credit)
         weight_bytes = driver_footprint.file_size_bytes(path)
         note = ""
         if driver_footprint.dtype_cast_requested(getattr(model, "options", None)):

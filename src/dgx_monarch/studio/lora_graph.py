@@ -112,6 +112,10 @@ def apply_loras(original: dict[str, Any], info: dict[str, Any], stack: Any,
             clip, clip_targets = ([tail, 1], _consumers(prompt, [tail, 1])) if has_clip else (None, [])
             loader = prompt[tail]["class_type"]
         else:
+            # A graph without a LoRA chain needs a boundary; a draft that names none, such as one
+            # whose workflow was just loaded, is told what to choose on the LoRAs tab.
+            if insertion is None:
+                raise StudioError("lora_binding", "Choose an explicit LoRA loader type.")
             config = object_value(insertion, "lora_insertion")
             if set(config) - {"loader", "model_targets", "clip_targets"}:
                 raise StudioError("lora_binding", "Unsupported insertion boundary controls.")

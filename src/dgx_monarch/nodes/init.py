@@ -23,7 +23,7 @@ class DGXMonarchInit:
     DESCRIPTION = (
         "Attaches the DGX Monarch Workers and picks the topology for every render that "
         "uses this mesh; the advanced inputs set Worker policy. sync_ulysses has no "
-        "effect on the pinned xfuser 0.7.0 and stays only because removing an input "
+        "effect on xfuser 0.7.0 or 0.8.0 and stays only because removing an input "
         "needs a major release."
     )
 
@@ -57,7 +57,7 @@ class DGXMonarchInit:
                                     "on unified memory (docs/VALIDATION.md) and ComfyUI's own on a "
                                     "discrete GPU."}),
                 "sync_ulysses": ("BOOLEAN", {"default": True, "advanced": True,
-                                 "tooltip": "No effect on the pinned xfuser 0.7.0: its Ulysses "
+                                 "tooltip": "No effect on xfuser 0.7.0 or 0.8.0: its Ulysses "
                                  "all-to-all never receives this setting, so output and speed are "
                                  "the same either way (docs/ADAPTERS.md). Changing it still runs "
                                  "setup again, and a gate verdict covers one setting, so the first "
@@ -237,8 +237,9 @@ class DGXMonarchInit:
         """Initialize with an explicit custom-node bootstrap policy."""
         handle = get_mesh(config_path=config_path, mode=mode, gpus_per_host=gpus_per_host)
         # [worker_args] worker_vae_decode routes the stock VAE decodes over
-        # this mesh's Workers (vae_decode_route.py); arming never raises.
-        vae_decode_route.arm(handle)
+        # this mesh's Workers (vae_decode_route.py), read from the file this
+        # node names; arming never raises.
+        vae_decode_route.arm(handle, config_path)
         if topology != "auto":
             # An explicit preset sets the fleet up below, which an abandoned
             # lease refuses; heal it first so the spec carries the new fleet.

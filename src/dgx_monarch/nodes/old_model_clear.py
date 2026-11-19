@@ -354,7 +354,12 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
     worst failing window's unclamped shortfall
     (``DriverFootprintEstimate.shortfall``): a clear must make room in both
     windows. Slots this load reuses, and models this graph loads (``keep``),
-    are not old models. ``window`` names the worst window, the one the
+    are not old models, except the slot this load changes in place (a cast of
+    the file it holds), as at the agreement (``old_model.changes_in_place``):
+    its copy is not reused, and the memory its load left behind is in the way.
+    That holds only where the worst window charges this load: one that reads
+    the weights as placed does not price the reload a clear would need.
+    ``window`` names the worst window, the one the
     loader's own refusal leads with. ``windows`` are the uncredited ones: a
     cleared box holds no copy for a Worker to drop, so where the loader's price
     already counted a swap ``credit`` and still refused, the offer names that
@@ -372,6 +377,8 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
     gain = 0
     for answer in asked.mine:
         kept = old_model.kept_slots(answer.quotes, kept_names)
+        if worst.weight_bytes and old_model.changes_in_place(answer.quotes[0], unet_name):
+            kept -= {answer.quotes[0].slot}
         names.extend(old_model.old_models(answer.quotes[0], kept))
         gain += old_model.rank_gain(answer.quotes[0], kept)
     # The agreement named the box (box_names.py): rank 0 shares the driver

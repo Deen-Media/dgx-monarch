@@ -6,10 +6,10 @@ the [setup skill](skills/dgx-monarch/SKILL.md) for installation.
 
 ## Set up a development environment
 
-Follow the verified xFuser wheel and Torch-constraint procedure in
+Follow the Torch-constraint procedure in
 [docs/INSTALL.md](docs/INSTALL.md). Use `-e "$REPO_DIR[dev]"` in both the
-reviewed dry run and the install command. Keep the temporary wheel directory
-until installation finishes. The dev tools are listed in `pyproject.toml`.
+reviewed dry run and the install command. Keep the temporary constraint
+directory until installation finishes. The dev tools are listed in `pyproject.toml`.
 
 Use the Python environment you selected throughout. Preserve ComfyUI's working
 CUDA Torch build and the repository's exact Monarch pin; an older Monarch can
@@ -122,7 +122,14 @@ marks and tables they use. After reviewing a deliberate change, run
 `python tools/check_protected_tests.py --write`, include the inventory diff,
 and list added, removed or changed protected tests in the PR. A digest detects
 change; it does not prove equivalent coverage or track imported helpers,
-conftest fixtures or runtime code.
+conftest fixtures or runtime code. It counts the common ways a skip runs as the
+module imports, as a tripwire and not a proof. These import-time skips are not
+seen: one through `getattr(pytest, "skip")(...)`; one reached through an
+attribute call on a module the test module imports, such as
+`helpers.require()`; one reached through a class of the module, by its
+constructor or a method called at import, that method used as a decorator, or
+the class given as a metaclass; and one in a function or lambda that a module
+function defines and calls itself.
 
 For moved source or test citations, run
 `python tools/repin_trust_citations.py --base <rev>` and review the
@@ -146,9 +153,8 @@ copy or vendor dependency implementations; the compiled Studio bundle is build
 output, listed in [LICENSE-NOTES.md](LICENSE-NOTES.md#studio-frontend-bundle),
 and the one vendored source file, the MIT INT8 GEMM kernel, is listed under
 [Vendored INT8 GEMM kernel](LICENSE-NOTES.md#vendored-int8-gemm-kernel).
-xFuser remains external: its
-compatibility wheel is built locally from the verified official wheel, and
-neither the wheel nor dependency source belongs in the repository.
+xFuser remains external: it comes from the package index, and neither a
+wheel nor dependency source belongs in the repository.
 
 External contributions require a DCO sign-off on each commit with
 `git commit -s`. There is no Contributor License Agreement. See
@@ -283,7 +289,11 @@ Release maintainers must complete these checks on the intended release commit:
    both ComfyUI master and the newest release tag.
    The canary checks node-pack import, schemas, adapters, bake/slab behavior,
    every committed template and the stock API contracts in
-   `tests/canary/comfy_seam_contracts.py` on CPU.
+   `tests/canary/comfy_seam_contracts.py` on CPU. Run the full consent
+   enumeration too, which CI leaves out:
+   `DGXM_CONSENT_ENUMERATION_FULL=1 python -m pytest -q tests/test_no_material_consent_enumeration.py`
+   reads every gate-ledger sequence of up to three events (about two
+   minutes on one core).
 2. `python -m build` succeeds. Inspect both artifacts and install them only in
    disposable validation environments. The wheel contains the package and CLI;
    the source checkout provides the complete ComfyUI node pack. This project

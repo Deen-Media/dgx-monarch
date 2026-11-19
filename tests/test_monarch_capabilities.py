@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -179,3 +180,120 @@ def test_diagnostic_identity_caches_metadata_but_reads_current_policy(monkeypatc
         assert calls == ["torch", "torchmonarch"]
     finally:
         capabilities._diagnostic_base.cache_clear()
+
+
+def _installed(monkeypatch, native_modules, version, *, files=("monarch", "monarch._rust_bindings")):
+    """What the disk reads now: torchmonarch at ``version``, owning ``files``."""
+    monkeypatch.setattr(capabilities.importlib.metadata, "distribution", lambda _: SimpleNamespace(
+        version=version, files=list(files), locate_file=lambda name: native_modules[name].__file__))
+
+
+def test_the_version_read_after_the_import_is_kept_whatever_the_disk_reads_later(
+        native_modules, monkeypatch):
+    """A refused admission keeps its reading: installing the pin under the
+    running process changes the disk, not the loaded code, so it still
+    refuses and asks for a restart. An install on top of an admitted pin
+    changes nothing either, ownership verdict included."""
+    import sys
+
+    from dgx_monarch import TORCHMONARCH_PIN
+
+    _installed(monkeypatch, native_modules, TORCHMONARCH_PIN)
+    for name in ("monarch", "monarch._rust_bindings"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    with pytest.raises(RuntimeError, match="not owned"):
+        capabilities.loaded_version()  # monarch not imported yet: this reading is not kept
+    for name in ("monarch", "monarch._rust_bindings"):
+        monkeypatch.setitem(sys.modules, name, native_modules[name])
+    refusals = []
+    for disk in ("0.0.1", TORCHMONARCH_PIN):
+        _installed(monkeypatch, native_modules, disk)
+        with pytest.raises(RuntimeError) as refused:
+            capabilities.assert_supported_runtime()
+        refusals.append(str(refused.value))
+        assert capabilities.loaded_version() == "0.0.1"
+    for text in refusals:
+        assert "this process loaded torchmonarch 0.0.1" in text and "restart ComfyUI" in text
+        # A checkout updated under the running process holds the old pin in memory:
+        # reinstalling that pin would be the wrong first step.
+        assert ("If dgx-monarch was updated since this process started, restart it before "
+                "anything else; otherwise install the pin if it is missing") in text
+
+    monkeypatch.setattr(capabilities, "_LOADED", None)
+    _installed(monkeypatch, native_modules, TORCHMONARCH_PIN)
+    assert capabilities.assert_supported_runtime() == TORCHMONARCH_PIN
+    _installed(monkeypatch, native_modules, "0.0.1", files=())
+    assert capabilities.assert_supported_runtime() == TORCHMONARCH_PIN
+    assert capabilities.loaded_version() == TORCHMONARCH_PIN
+
+
+def _maps(tmp_path, monkeypatch, *lines):
+    path = tmp_path / "maps"
+    path.write_text("".join(line + "\n" for line in lines))
+    monkeypatch.setattr(capabilities, "_MAPS", str(path))
+
+
+def _mapping(path, stat, *, inode=None, removed=False):
+    device = f"{os.major(stat.st_dev):02x}:{os.minor(stat.st_dev):02x}"
+    return (f"ffff0000-ffff1000 r-xp 00000000 {device} {stat.st_ino if inode is None else inode}"
+            f"          {path}" + (" (deleted)" if removed else ""))
+
+
+def test_a_mapped_binding_is_checked_against_the_file_on_disk(native_modules, tmp_path, monkeypatch):
+    """The four readings of /proc/self/maps the check takes apart, on a file it can stat."""
+    binding = native_modules["monarch._rust_bindings"]
+    located = Path(binding.__file__).resolve()
+    located.write_bytes(b"binding")
+    stat = located.stat()
+    other = f"/elsewhere/{located.name}"
+    _maps(tmp_path, monkeypatch, _mapping(located, stat), _mapping(other, stat, inode=1))
+    assert capabilities._binding_replaced(binding) is False  # live at its path; another package's ignored
+    _maps(tmp_path, monkeypatch, _mapping(located, stat, inode=stat.st_ino + 1))
+    assert capabilities._binding_replaced(binding) is True   # same path and device, a new inode
+    _maps(tmp_path, monkeypatch, _mapping(f"{tmp_path}/~stash/{located.name}", stat, removed=True))
+    assert capabilities._binding_replaced(binding) is True   # moved aside by pip, then removed
+    _maps(tmp_path, monkeypatch, _mapping(other, stat, inode=1))
+    assert capabilities._binding_replaced(binding) is None   # nothing says either way
+    monkeypatch.setattr(capabilities, "_MAPS", str(tmp_path / "absent"))
+    assert capabilities._binding_replaced(binding) is None
+
+
+def test_without_proc_the_first_reading_keeps_the_installed_version(native_modules, tmp_path, monkeypatch):
+    """Where /proc cannot be read the reading is the installed version, as before the check."""
+    import sys
+
+    from dgx_monarch import TORCHMONARCH_PIN
+
+    for name in ("monarch", "monarch._rust_bindings"):
+        Path(native_modules[name].__file__).write_bytes(b"module")
+        monkeypatch.setitem(sys.modules, name, native_modules[name])
+    _installed(monkeypatch, native_modules, TORCHMONARCH_PIN)
+    monkeypatch.setattr(capabilities, "_MAPS", str(tmp_path / "absent"))
+    assert capabilities.assert_supported_runtime() == TORCHMONARCH_PIN
+
+
+def test_a_replaced_binding_and_a_failed_reading_both_ask_for_a_restart(native_modules, tmp_path, monkeypatch):
+    import sys
+
+    from dgx_monarch import TORCHMONARCH_PIN
+
+    binding = native_modules["monarch._rust_bindings"]
+    for name in ("monarch", "monarch._rust_bindings"):
+        Path(native_modules[name].__file__).write_bytes(b"module")
+        monkeypatch.setitem(sys.modules, name, native_modules[name])
+    located = Path(binding.__file__).resolve()
+    _maps(tmp_path, monkeypatch, _mapping(located, located.stat(), removed=True))
+    _installed(monkeypatch, native_modules, TORCHMONARCH_PIN)
+    for call in (capabilities.assert_supported_runtime, capabilities.loaded_version):
+        with pytest.raises(RuntimeError, match="reinstalled after this process loaded it") as refused:
+            call()
+        assert "restart ComfyUI" in str(refused.value)
+        # True after a reinstall of the same version too.
+        assert "so the file it runs is no longer the one installed" in str(refused.value)
+        assert "version is not the one it runs" not in str(refused.value)
+    monkeypatch.setattr(capabilities, "_LOADED", None)
+    monkeypatch.setattr(capabilities.importlib.metadata, "distribution", lambda _: 1 / 0)
+    for call in (capabilities.assert_supported_runtime, capabilities.loaded_version):
+        with pytest.raises(RuntimeError, match="identity is unavailable; this process keeps") as refused:
+            call()
+        assert "restart ComfyUI" in str(refused.value)

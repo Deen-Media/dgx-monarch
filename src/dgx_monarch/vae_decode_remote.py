@@ -57,17 +57,24 @@ def vae_source(vae: Any) -> dict[str, Any] | str:
     if patched is not None:
         return (f"the VAE Compute Dtype node set this VAE to compute in {patched} over the loader's "
                 "weights, and a Worker builds its VAE in one dtype, so the decode stays here")
-    path = os.path.realpath(str(args[0]))
+    # The loader joined a vae folder and the name its widget lists, so the name is the path under
+    # that folder as written. Links are not resolved: a symlinked file or folder, or a second name
+    # for a file, keeps the name a Worker resolves in its own folder and checks by signature. The
+    # text serves for the name only; the signature reads the loader's own path, as the OS
+    # resolves it, which is the file Load VAE opened.
+    opened = str(args[0])
+    path = os.path.abspath(opened)
     metadata = args[1] if len(args) > 1 and isinstance(args[1], dict) else None
     import folder_paths
 
     for folder in ("vae", "vae_approx"):
         for root in folder_paths.get_folder_paths(folder):
-            relative = os.path.relpath(path, os.path.realpath(root))
-            if not relative.startswith(os.pardir) and not os.path.isabs(relative):
+            relative = os.path.relpath(path, os.path.abspath(root))
+            # Only a ".." part leaves the folder; a name such as "..old.safetensors" stays in it.
+            if relative.split(os.sep)[0] != os.pardir and not os.path.isabs(relative):
                 from .gate_artifacts import artifact_signature
 
-                signature = artifact_signature(path)
+                signature = artifact_signature(opened)
                 if signature in ("unreadable", "unstable"):
                     return f"the VAE file's identity is {signature} on this host"
                 return {"folder": folder, "name": relative.replace(os.sep, "/"),

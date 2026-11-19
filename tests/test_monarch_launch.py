@@ -11,6 +11,7 @@ import pytest
 
 from dgx_monarch import monarch_launch as launch
 from dgx_monarch.config import ClusterConfig, HostConfig
+from dgx_monarch.mesh_stop import cleanup_stop_s
 from dgx_monarch.monarch_policy import MonarchPolicy, RdmaPolicy, policy_from_token
 
 
@@ -105,6 +106,50 @@ def test_expired_readiness_never_touches_native_future(monkeypatch):
         launch.wait_initialized(Mesh(), 20.0, "unused")
 
 
+@pytest.mark.parametrize("failed_phase", [None, "proc"])
+def test_each_proc_mesh_is_spawned_under_exactly_the_name_proc_stops_records(monkeypatch, failed_phase):
+    """Monarch names a ProcMesh's controller after the name it was spawned under,
+    and a stop report is tied to its stop by that name (proc_stops); on a
+    finished bring-up and on its rollback alike, the two must be the same."""
+    from contextlib import nullcontext
+
+    from monarch._src.actor import proc_mesh
+
+    from dgx_monarch import mesh_factory, proc_stops, runtime_diagnostics
+
+    monkeypatch.setattr(runtime_diagnostics, "phase", lambda *_a: nullcontext())
+    monkeypatch.setitem(sys.modules, "dgx_monarch.actor", SimpleNamespace(GPUWorker=object))
+    callbacks = []
+    monkeypatch.setattr(proc_mesh, "register_proc_mesh_spawn_callback", callbacks.append)
+    monkeypatch.setattr(proc_mesh, "unregister_proc_mesh_spawn_callback", callbacks.remove)
+
+    class Future:
+        def __init__(self, name): self.name = name
+        def get(self, timeout=None):
+            if self.name == failed_phase:
+                raise TimeoutError("readiness failed")
+
+    workers = SimpleNamespace(initialized=Future("actor"), status=SimpleNamespace(call=lambda: Future("status")))
+    procs = SimpleNamespace(initialized=Future("proc"), spawn=lambda *_a: workers,
+                            stop=lambda _reason: Future("stop"))
+    spawned_as: list = []
+
+    def spawn_procs(**kwargs):
+        spawned_as.append(kwargs.get("name"))
+        return procs
+
+    hosts = SimpleNamespace(spawn_procs=spawn_procs)
+    if failed_phase is None:
+        mesh_factory.spawn_worker_fleet(config(), True, 1, lambda *_a: hosts, None, mesh_factory.FleetHandoff())
+    else:
+        with pytest.raises(mesh_factory.WorkerSpawnError):
+            mesh_factory.spawn_worker_fleet(config(), True, 1, lambda *_a: hosts, None,
+                                            mesh_factory.FleetHandoff())
+    [name] = spawned_as
+    assert name and name.startswith(proc_stops.NAME_PREFIX)
+    assert proc_stops.name_of(procs) == name
+
+
 @pytest.mark.parametrize("failed_phase", ["proc", "actor", "status"])
 def test_readiness_failure_rolls_back_only_owned_mesh(monkeypatch, failed_phase):
     from contextlib import nullcontext
@@ -136,7 +181,7 @@ def test_readiness_failure_rolls_back_only_owned_mesh(monkeypatch, failed_phase)
     assert caught.value.rollback_confirmed and handoff.cleanup_confirmed
     assert handoff.fleet is None and callbacks == []
     assert [name for name, _ in calls][-1] == "stop"
-    assert calls[-1][1] == 60
+    assert calls[-1][1] == cleanup_stop_s()  # the state limit plus 5 s: a lone lost host's confirmation inside
 
 
 def test_worker_generators_encode_same_resolved_policy():
@@ -234,6 +279,38 @@ def test_driver_refuses_requested_diagnostics_it_cannot_start(driver_steps, reas
     assert events[-1] == 'activate'
 
 
+@pytest.mark.parametrize("refusal", ["per_signal_endpoint", "stop_limits"])
+def test_every_admission_refusal_keeps_the_loaded_version(driver_steps, monkeypatch, refusal):
+    """A refusal before the admission's try, or inside it, notes the loaded torchmonarch first."""
+    from dgx_monarch import mesh_stop, monarch_capabilities
+    from dgx_monarch.config import ClusterConfigError
+    noted: list = []
+    monkeypatch.setattr(monarch_capabilities, "note_loaded_version", lambda: noted.append(True))
+    if refusal == "per_signal_endpoint":
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://127.0.0.1:4318/v1/logs")
+    else:
+        monkeypatch.setattr(mesh_stop, "stop_limits_refusal", lambda: "Monarch's stop limits add up to 330 s")
+    with pytest.raises(ClusterConfigError):
+        launch.prepare_driver(config())
+    assert noted == [True]
+
+
+def test_driver_refuses_stop_limits_its_teardown_budgets_cannot_hold(driver_steps, monkeypatch):
+    """Beside the OTLP refusal: a Monarch stop limit above the budgets ends admission after the import."""
+    from dgx_monarch import mesh_stop
+    from dgx_monarch.config import ClusterConfigError
+    events, _ = driver_steps
+    monkeypatch.setattr(mesh_stop, "_stop_idle_limits", lambda: [
+        ("get_proc_state_max_idle", "HYPERACTOR_MESH_GET_PROC_STATE_MAX_IDLE", "5m", 300.0),
+        ("proc_stop_max_idle", "HYPERACTOR_MESH_PROC_STOP_MAX_IDLE", "30s", 30.0)])
+    monkeypatch.setenv("HYPERACTOR_MESH_GET_PROC_STATE_MAX_IDLE", "5m")
+    monkeypatch.delenv("HYPERACTOR_MESH_PROC_STOP_MAX_IDLE", raising=False)
+    with pytest.raises(ClusterConfigError, match="add up to 330 s") as caught:
+        launch.prepare_driver(config())
+    assert "unset HYPERACTOR_MESH_GET_PROC_STATE_MAX_IDLE where ComfyUI starts, or lower it" in str(caught.value)
+    assert events == [('apply', 'a', False), 'diagnostics', 'hook', 'admit', 'activate']
+
+
 def test_local_candidate_overlay_is_explicit_and_ambient_paths_are_not(commands, monkeypatch, tmp_path):
     import importlib.metadata
 
@@ -280,3 +357,33 @@ def test_a_local_actor_purges_host_memory_at_free_time_unless_the_driver_chose(c
     monkeypatch.setenv(HOST_ALLOCATOR_PURGE_ENV, "25")
     cmd = launch.actor_bootstrap_command(config(), False)({"gpus": 0})
     assert cmd.env[HOST_ALLOCATOR_PURGE_ENV] == "25"
+
+
+def test_a_driver_refused_before_its_admission_still_keeps_the_torchmonarch_it_loaded(monkeypatch):
+    """configure_policy imports monarch for its meter, and an export refusal
+    can follow before the admission reads the version. A pin installed under
+    the running driver before the next render must not then read as loaded."""
+    import sys
+    from types import SimpleNamespace
+
+    import monarch.actor  # noqa: F401 - what configure_policy's meter import loads
+
+    from dgx_monarch import TORCHMONARCH_PIN, monarch_capabilities, monarch_diagnostics, monarch_policy
+    from dgx_monarch.config import ClusterConfigError
+    from dgx_monarch.monarch_policy import DiagnosticsPolicy
+
+    def installed(version):
+        monkeypatch.setattr(monarch_capabilities.importlib.metadata, "distribution", lambda _: SimpleNamespace(
+            version=version, files=["monarch", "monarch._rust_bindings"],
+            locate_file=lambda name: sys.modules[name].__file__))
+
+    monkeypatch.setattr(monarch_policy, "apply_policy", lambda *_a, **_k: None)
+    monkeypatch.setattr(monarch_diagnostics, "configure_policy", lambda *_a: {
+        "metrics": False, "available": False, "reason": "instrument_setup_failed"})
+    installed("0.0.1")
+    requested = replace(config(), monarch=MonarchPolicy(diagnostics=DiagnosticsPolicy(metrics=True)))
+    with pytest.raises(ClusterConfigError, match="instrument_setup_failed"):
+        launch.prepare_driver(requested)
+    installed(TORCHMONARCH_PIN)
+    with pytest.raises(RuntimeError, match=r"this process loaded torchmonarch 0\.0\.1"):
+        monarch_capabilities.assert_supported_runtime()

@@ -1666,10 +1666,12 @@ def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str],
                 "checkpoint_pins": dict(Counter(pin.label for pin in row["pins"].values())),
                 # Also out of ID_KEYS, so a new count moves no settled cell id.
                 "text_tokens": text_tokens,
-                # Read the exact header predicate the loader calls. Retain
-                # only its boolean answer in the journal: local model paths
-                # do not belong in sweep records.
-                "upstream_refusal": upstream_gate.refusal_for(str(cond)) is not None,
+                # Read the exact header predicate the loader calls, for the
+                # ComfyUI checkout the driver runs. Retain only its boolean
+                # answer in the journal: local model paths do not belong in
+                # sweep records.
+                "upstream_refusal": upstream_gate.refusal_for(
+                    str(cond), comfy_dir=config["comfy_dir"]) is not None,
                 "upstream_gated": gated,
             }
             base_local = [_make(template, row, names, kernels[0], "single", "local",

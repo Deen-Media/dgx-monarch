@@ -26,6 +26,7 @@ from dgx_monarch.adapters import base, wan_animate2, wan_variants
 from dgx_monarch.adapters.base import InjectionContext, UnsupportedModelError
 from dgx_monarch.adapters.wan_variants import SCAIL2Adapter, SCAILAdapter, WanDancerAdapter
 from fake_model_base_helpers import install_fake_model_base
+from rank_exit_helpers import leave
 
 
 def _animate2_gloo_worker(rank: int, rendezvous: str) -> None:
@@ -108,6 +109,7 @@ def _animate2_gloo_worker(rank: int, rendezvous: str) -> None:
             wan_animate2.sp_world, wan_animate2.sp_rank = original_world, original_rank
     finally:
         dist.destroy_process_group()
+    leave()
 
 
 def test_wan_animate2_two_rank_gloo_spatial_gather_matches_stock(tmp_path):
@@ -211,6 +213,7 @@ def _animate2_real_comfy_gloo_worker(rank: int, rendezvous: str, comfy_dir: str)
             wan_animate2.sp_world, wan_animate2.sp_rank = original_world, original_rank
     finally:
         dist.destroy_process_group()
+    leave()
 
 
 @pytest.mark.skipif(not os.path.isdir(os.environ.get("COMFY_DIR", "")),

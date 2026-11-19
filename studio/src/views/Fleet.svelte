@@ -57,23 +57,21 @@
   /** Load the Fleet workflow unless the draft holds one, label the draft Fleet, then open Create. */
   async function setUp() {
     if (loading) return;
-    const chosen = plan,
-      previous = draft.operation;
+    const chosen = plan;
+    let loaded: string | void = '';
     loading = true;
     try {
-      if (previous !== 'fleet') changeDraft({ operation: 'fleet' });
       if (chosen.kind === 'load') {
-        await loadWorkflow(chosen.entry, inspect);
+        // The load sets the workflow and the Fleet label in one draft change, so one Undo brings
+        // back the workflow and operation the draft had.
+        loaded = await loadWorkflow(chosen.entry, inspect, 'fleet');
         // A refused or superseded load leaves its error on this page and the draft as it was.
-        if (!hasFleetSampler(draft.workflow)) {
-          if (previous !== 'fleet' && draft.operation === 'fleet')
-            changeDraft({ operation: previous });
-          return;
-        }
-      }
+        if (!hasFleetSampler(draft.workflow)) return;
+      } else if (draft.operation !== 'fleet') changeDraft({ operation: 'fleet' });
       // The draft holds the workflow either way; only a Fleet page still open moves to Create.
       if (open) navigate('workspace');
-      setNotice(fleetNextStep(chosen));
+      // The load's own notice, naming what the new workflow dropped, follows the next step.
+      setNotice([fleetNextStep(chosen), loaded].filter(Boolean).join(' '));
     } finally {
       loading = false;
     }

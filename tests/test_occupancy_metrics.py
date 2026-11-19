@@ -1,4 +1,4 @@
-"""Ownership occupancy up-down counters: levels, sources and the off switch."""
+"""Ownership occupancy gauges: levels, sources, exporter restarts and the off switch."""
 from __future__ import annotations
 
 import gc
@@ -13,24 +13,27 @@ from dgx_monarch import monarch_diagnostics as adapter
 from dgx_monarch import occupancy_metrics as occupancy
 from dgx_monarch import runtime_diagnostics as diagnostics
 
-NAMES = [name for name, _series in occupancy.COUNTERS]
+NAMES = [name for name, _series in occupancy.GAUGES]
 
 
-class _Counter:
-    def __init__(self, name, adds, fail):
-        self.name, self.adds, self.fail = name, adds, fail
+class _Gauge:
+    def __init__(self, name, meter):
+        self.name, self.meter = name, meter
 
-    def add(self, value, attributes):
-        if self.name in self.fail:
+    def set(self, value, attributes):
+        if self.name in self.meter.fail:
             raise RuntimeError("backend down")
-        self.adds.append((self.name, value, attributes))
+        self.meter.sets.append((self.name, value, attributes))
+        # Monarch 0.8.0 merges instruments of one name into one stream: a
+        # loopback OTLP sink saw one point per name, before and after a restart.
+        self.meter.exported[self.name] = value
 
 
 class _Meter:
-    """A fake Monarch meter: phase instruments plus up-down counters."""
+    """A fake Monarch 0.8.0 meter: phase instruments plus gauges, merged by name."""
 
     def __init__(self):
-        self.adds, self.fail, self.created = [], set(), []
+        self.sets, self.fail, self.created, self.exported = [], set(), [], {}
 
     def create_counter(self, name):
         return types.SimpleNamespace(add=lambda *_: None)
@@ -38,14 +41,13 @@ class _Meter:
     def create_histogram(self, name):
         return types.SimpleNamespace(record=lambda *_: None)
 
-    def create_up_down_counter(self, name):
+    def create_gauge(self, name):
         self.created.append(name)
-        return _Counter(name, self.adds, self.fail)
+        return _Gauge(name, self)
 
 
 @pytest.fixture(autouse=True)
 def fresh_levels(monkeypatch):
-    monkeypatch.setattr(occupancy, "_EXPORTED", {})
     monkeypatch.setattr(occupancy, "_WORKERS", [])
     monkeypatch.setattr(occupancy, "_FAILURE_LOGGED", threading.Event())
     monkeypatch.setattr(adapter, "_POLICY_STATE", {})
@@ -54,10 +56,10 @@ def fresh_levels(monkeypatch):
     adapter.configure()
 
 
-def test_counter_names_pair_with_the_prometheus_series():
+def test_gauge_names_pair_with_the_prometheus_series():
     from dgx_monarch.nodes.metrics_route import _metrics_text
 
-    assert [series for _name, series in occupancy.COUNTERS] == [
+    assert [series for _name, series in occupancy.GAUGES] == [
         "dgxm_" + name.removeprefix("dgxm.").replace(".", "_") for name in NAMES]
     assert NAMES == ["dgxm.return.live_handoffs", "dgxm.return.pending_read_jobs",
                      "dgxm.return.poison_owners", "dgxm.mesh.active_leases",
@@ -70,57 +72,60 @@ def test_counter_names_pair_with_the_prometheus_series():
         "mesh": {"state": "ok", "active_leases": 2, "abandoned_samples": 1},
         "native_return_latch": {"schema": 1, "latched": True, "fault_count": 1}})
     emitted = {line.split("{", 1)[0].split(" ", 1)[0] for line in text.splitlines()}
-    for _name, series in occupancy.COUNTERS:
+    for _name, series in occupancy.GAUGES:
         assert series in emitted, series
 
 
 @pytest.mark.parametrize("name", NAMES)
-def test_each_counter_adds_increments_and_decrements_as_level_changes(name):
+def test_each_gauge_is_set_to_the_level_when_it_changes(name):
     meter = _Meter()
-    counters = occupancy.LevelCounters(meter)
+    gauges = occupancy.LevelGauges(meter)
     assert meter.created == NAMES
     for level in (0, 2, 3, 3, 1, 0):
-        counters.sample({name: level})
-    # The first export sends the whole level, zero included, so the series exists.
-    assert meter.adds == [(name, 0, {}), (name, 2, {}), (name, 1, {}),
-                          (name, -2, {}), (name, -1, {})]
+        gauges.sample({name: level})
+    # The first set states the whole level, zero included, so the series exists.
+    assert meter.sets == [(name, 0, {}), (name, 2, {}), (name, 3, {}),
+                          (name, 1, {}), (name, 0, {})]
 
 
 def test_the_latch_rises_once_and_never_falls_within_a_process():
     meter = _Meter()
-    counters = occupancy.LevelCounters(meter)
+    gauges = occupancy.LevelGauges(meter)
     for latched in (0, 1, 1, 1):
-        counters.sample({"dgxm.native_return.latched": latched})
-    assert [value for _name, value, _ in meter.adds] == [0, 1]
+        gauges.sample({"dgxm.native_return.latched": latched})
+    assert [value for _name, value, _ in meter.sets] == [0, 1]
 
 
-def test_an_unavailable_reading_keeps_the_level_and_a_failed_add_is_resent():
+def test_an_unavailable_reading_keeps_the_level_and_a_failed_set_is_tried_again():
     meter = _Meter()
-    counters = occupancy.LevelCounters(meter)
-    counters.sample({"dgxm.return.poison_owners": 1})
-    counters.sample({})  # a busy lock or an unknown state: no reading this tick
+    gauges = occupancy.LevelGauges(meter)
+    gauges.sample({"dgxm.return.poison_owners": 1})
+    gauges.sample({})  # a busy lock or an unknown state: no reading this tick
     meter.fail.add("dgxm.return.poison_owners")
-    counters.sample({"dgxm.return.poison_owners": 3})
+    gauges.sample({"dgxm.return.poison_owners": 3})
     meter.fail.clear()
-    counters.sample({"dgxm.return.poison_owners": 3})
-    assert meter.adds == [("dgxm.return.poison_owners", 1, {}),
-                          ("dgxm.return.poison_owners", 2, {})]
+    gauges.sample({"dgxm.return.poison_owners": 3})
+    assert meter.sets == [("dgxm.return.poison_owners", 1, {}),
+                          ("dgxm.return.poison_owners", 3, {})]
+    assert meter.exported == {"dgxm.return.poison_owners": 3}
 
 
-def test_a_replacement_exporter_continues_from_the_exported_level():
+def test_a_replacement_exporter_states_the_whole_level_with_no_memory_of_the_old_one():
     meter = _Meter()
-    occupancy.LevelCounters(meter).sample({"dgxm.mesh.active_leases": 2})
-    occupancy.LevelCounters(meter).sample({"dgxm.mesh.active_leases": 2})
-    occupancy.LevelCounters(meter).sample({"dgxm.mesh.active_leases": 1})
-    assert [value for _name, value, _ in meter.adds] == [2, -1]
+    occupancy.LevelGauges(meter).sample({"dgxm.mesh.active_leases": 2})
+    occupancy.LevelGauges(meter).sample({"dgxm.mesh.active_leases": 2})
+    occupancy.LevelGauges(meter).sample({"dgxm.mesh.active_leases": 1})
+    assert [value for _name, value, _ in meter.sets] == [2, 2, 1]
+    assert meter.exported == {"dgxm.mesh.active_leases": 1}
+    assert not hasattr(occupancy, "_EXPORTED"), "no process-lifetime level bookkeeping"
 
 
 def test_invalid_levels_are_ignored():
     meter = _Meter()
-    counters = occupancy.LevelCounters(meter)
-    counters.sample({"dgxm.mesh.active_leases": True, "dgxm.return.poison_owners": -1,
-                     "dgxm.return.live_handoffs": 1.5, "not.a.counter": 4})
-    assert meter.adds == []
+    gauges = occupancy.LevelGauges(meter)
+    gauges.sample({"dgxm.mesh.active_leases": True, "dgxm.return.poison_owners": -1,
+                   "dgxm.return.live_handoffs": 1.5, "not.a.gauge": 4})
+    assert meter.sets == []
 
 
 class _Worker:
@@ -209,7 +214,7 @@ def test_tracked_workers_are_weak_and_bounded():
     del keep
 
 
-def test_disabled_metrics_never_build_counters_or_read_sources(monkeypatch):
+def test_disabled_metrics_never_build_gauges_or_read_sources(monkeypatch):
     meter = _Meter()
     monkeypatch.setitem(sys.modules, "monarch.actor", types.SimpleNamespace(
         get_meter=lambda: meter))
@@ -222,10 +227,10 @@ def test_disabled_metrics_never_build_counters_or_read_sources(monkeypatch):
     _Worker(live=2)
     diagnostics.record_phase("collect", 0.1)
     time.sleep(0.05)
-    assert meter.created == [] and meter.adds == [] and reads == []
+    assert meter.created == [] and meter.sets == [] and reads == []
 
 
-def test_turning_metrics_off_stops_the_sampling_and_the_adds(monkeypatch):
+def test_turning_metrics_off_stops_the_sampling_and_the_sets(monkeypatch):
     meter = _Meter()
     monkeypatch.setitem(sys.modules, "monarch.actor", types.SimpleNamespace(
         get_meter=lambda: meter))
@@ -244,10 +249,43 @@ def test_turning_metrics_off_stops_the_sampling_and_the_adds(monkeypatch):
     assert adapter.configure()["metrics"] is False
     exporter._thread.join(5)
     assert not exporter._thread.is_alive()
-    reads_at_stop, adds_at_stop = len(reads), len(meter.adds)
+    reads_at_stop, sets_at_stop = len(reads), len(meter.sets)
     time.sleep(0.05)
-    assert (len(reads), len(meter.adds)) == (reads_at_stop, adds_at_stop)
+    assert (len(reads), len(meter.sets)) == (reads_at_stop, sets_at_stop)
     assert meter.created == NAMES  # made once, when metrics turned on
+
+
+def _wait_for(predicate, seconds=5.0):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_metrics_off_and_on_again_export_the_level_read_after_the_restart(monkeypatch):
+    """The case the old process-lifetime bookkeeping existed for, through configure()."""
+    meter = _Meter()
+    monkeypatch.setitem(sys.modules, "monarch.actor", types.SimpleNamespace(
+        get_meter=lambda: meter))
+    monkeypatch.setattr(occupancy, "SAMPLE_INTERVAL_S", 0.01)
+    level = {"dgxm.mesh.active_leases": 3}
+    monkeypatch.setattr(occupancy, "read_levels", lambda: dict(level))
+    assert adapter.configure(metrics=True)["metrics"] is True
+    assert _wait_for(lambda: meter.exported.get("dgxm.mesh.active_leases") == 3)
+    first = adapter._EXPORTER
+    assert adapter.configure()["metrics"] is False
+    first._thread.join(5)
+    level["dgxm.mesh.active_leases"] = 5
+    time.sleep(0.05)
+    assert meter.exported["dgxm.mesh.active_leases"] == 3  # off: the last level stays
+    assert adapter.configure(metrics=True)["metrics"] is True
+    assert adapter._EXPORTER is not first
+    assert _wait_for(lambda: meter.exported.get("dgxm.mesh.active_leases") == 5)
+    level["dgxm.mesh.active_leases"] = 0
+    assert _wait_for(lambda: meter.exported.get("dgxm.mesh.active_leases") == 0)
+    assert meter.created == NAMES + NAMES  # each exporter made its own gauges
 
 
 def test_enabled_metrics_sample_levels_on_the_existing_thread(monkeypatch):
@@ -268,13 +306,13 @@ def test_enabled_metrics_sample_levels_on_the_existing_thread(monkeypatch):
     monkeypatch.setattr(occupancy, "read_levels", read)
     assert adapter.configure(metrics=True)["available"] is True
     assert seen.wait(5)
-    assert meter.adds == [("dgxm.return.poison_owners", 1, {}),
-                          ("dgxm.return.poison_owners", -1, {})]
+    assert meter.sets == [("dgxm.return.poison_owners", 1, {}),
+                          ("dgxm.return.poison_owners", 0, {})]
     # The existing metrics thread does the sampling; nothing else starts.
     assert [t.name for t in threading.enumerate()].count("dgxm-metrics") == 1
 
 
-def test_a_meter_without_up_down_counters_keeps_phase_metrics(monkeypatch):
+def test_a_meter_without_gauges_keeps_phase_metrics(monkeypatch):
     records, delivered = [], threading.Event()
 
     class PhaseOnlyMeter:
@@ -293,5 +331,5 @@ def test_a_meter_without_up_down_counters_keeps_phase_metrics(monkeypatch):
     assert adapter.configure(metrics=True)["available"] is True
     diagnostics.record_phase("collect", 0.25, return_mode="message")
     assert delivered.wait(2) and records == [1]
-    occupancy.level_counters(PhaseOnlyMeter())
+    occupancy.level_gauges(PhaseOnlyMeter())
     assert len(debug) == 1  # logged once per process, at DEBUG

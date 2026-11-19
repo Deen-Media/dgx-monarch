@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
@@ -181,8 +180,10 @@ def driver_widget_names(driver: str) -> WidgetNames:
 
     def names(node_class: str) -> list[str]:
         if node_class not in cache:
-            with urllib.request.urlopen(f"{driver}/object_info/{node_class}", timeout=30) as resp:
-                info = json.load(resp)[node_class]
+            # The sweep's one reader of a driver answer: one urllib cannot parse is a ConnectionError.
+            from .driver import get
+
+            info = get(f"{driver}/object_info/{node_class}", timeout=30)[node_class]
             cache[node_class] = object_info_widget_names(info["input"])
         return cache[node_class]
 
@@ -224,7 +225,7 @@ def widget_source(driver: str | None, repo: Path = REPO) -> tuple[WidgetNames, s
             names = driver_widget_names(driver)
             names("DGXMonarchInit")
             return names, "driver"
-        except OSError:
+        except (OSError, ValueError):  # no answer, or one that is not JSON
             pass
     return repo_widget_names(repo), "repo"
 

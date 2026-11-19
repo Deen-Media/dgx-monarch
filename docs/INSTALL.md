@@ -71,8 +71,12 @@ torch 2.15.0+cu132: on 2026-11-05 and 06 its ladder passed on the pair
 ([VALIDATION](VALIDATION.md#torch-2-15)) with cuDNN 9.26, Triton 3.9.0,
 torchvision 0.29.2 and torchaudio 2.11.1, and with NCCL 2.32.3 loaded through
 a symlink from the wheel's `libnccl.so.2` to a 2.32.3 build, in place of the
-2.30.7 torch 2.15 pins. Most of its other hardware checks ran on torch
-2.12.0+cu132, and the steps below complete with either build.
+2.30.7 torch 2.15 pins, and release test v5, the release's own test, ran
+whole on it on dev `07cc636` on 2026-11-15: of 75 templates, 73 rendered in
+the main pass and the 2 LoRA templates in its second leg, with no error
+([VALIDATION](VALIDATION.md#release-test-v5-07cc636)). Most of its other
+hardware checks ran on torch 2.12.0+cu132, and the steps below complete with
+either build.
 
 To match another Spark, install its torch and torchvision builds by exact
 version from the same PyTorch index. On 2026-11-03 neither the cu132 index nor
@@ -141,7 +145,7 @@ these files, since ComfyUI's own `.gitignore` covers `input/`.
 
 Set these paths explicitly, and run this block and every block up to the
 `DGXM` export in one shell, since later blocks read these exports and
-`$XFUSER_WHEELS`. `COMFY_PYTHON` must be the interpreter that starts
+`$INSTALL_TMP`. `COMFY_PYTHON` must be the interpreter that starts
 this ComfyUI checkout. If the intended node-pack path is absent, clone
 `https://github.com/Deen-Media/dgx-monarch.git` there and select the same reviewed
 commit on both hosts. An existing checkout or symlink must pass the inspection
@@ -156,19 +160,16 @@ test -f "$COMFY_DIR/main.py" && test -x "$COMFY_PYTHON"
 ```
 
 Stop if either check fails. Do not substitute another interpreter to make the
-check pass. Prepare the xFuser wheel and torch constraint before any pip
-resolution, then save a dry-run report:
+check pass. Prepare the torch constraint before any pip resolution, then save
+a dry-run report:
 
 ```bash
-XFUSER_WHEELS="$(mktemp -d)"
-"$COMFY_PYTHON" "$REPO_DIR/tools/build_xfuser_compat_wheel.py" \
-  --output-dir "$XFUSER_WHEELS" &&
-  TORCH_DIST_VERSION="$("$COMFY_PYTHON" -c 'from importlib.metadata import version; print(version("torch"))')" &&
-  printf 'torch==%s\n' "$TORCH_DIST_VERSION" > "$XFUSER_WHEELS/torch-constraint.txt" &&
+INSTALL_TMP="$(mktemp -d)"
+TORCH_DIST_VERSION="$("$COMFY_PYTHON" -c 'from importlib.metadata import version; print(version("torch"))')" &&
+  printf 'torch==%s\n' "$TORCH_DIST_VERSION" > "$INSTALL_TMP/torch-constraint.txt" &&
   "$COMFY_PYTHON" -m pip install --dry-run \
-    --report "$XFUSER_WHEELS/install-plan.json" -e "$REPO_DIR" \
-    --find-links "$XFUSER_WHEELS" \
-    --constraint "$XFUSER_WHEELS/torch-constraint.txt"
+    --report "$INSTALL_TMP/install-plan.json" -e "$REPO_DIR" \
+    --constraint "$INSTALL_TMP/torch-constraint.txt"
 ```
 
 Pip resolves the installed distribution metadata. A build from the Python
@@ -191,13 +192,16 @@ After reviewing the plan, run the matching install command:
 
 ```bash
 "$COMFY_PYTHON" -m pip install -e "$REPO_DIR" \
-  --find-links "$XFUSER_WHEELS" \
-  --constraint "$XFUSER_WHEELS/torch-constraint.txt"
+  --constraint "$INSTALL_TMP/torch-constraint.txt"
 ```
 
-The builder downloads the official xfuser 0.7.0 wheel unless `--wheel` names a
-local copy. It checks the SHA-256 and wheel contents, applies the lazy
-optional-NPU-import patch, and produces `xfuser==0.7.0+dgxm.npuimport1`.
+In an environment without xFuser, pip takes stock 0.8.0 from the package
+index. The requirement admits every 0.7 release and 0.8.0, so an environment
+that already holds a 0.7 release keeps it: the patched `0.7.0+dgxm.npuimport1`
+that an install of 1.4.0 built runs until you move it, and any other build,
+stock 0.7.0 among them, makes `dgxm doctor` fail and Worker setup refuse, each
+with the line that installs 0.8.0
+([TROUBLESHOOTING #104](TROUBLESHOOTING.md#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
 The editable install also brings in the exact `torchmonarch` pin
 ([DESIGN.md §6.3](DESIGN.md#63-versioning-and-compatibility-policy)). First
 installation needs network access; it must not replace ComfyUI's CUDA torch.
@@ -242,10 +246,10 @@ and starts no server:
 git -C "$REPO_DIR" rev-parse HEAD
 ```
 
-Copy `$XFUSER_WHEELS/install-plan.json` into the private test record, then
+Copy `$INSTALL_TMP/install-plan.json` into the private test record, then
 remove only the temporary directory created above when it is no longer
-needed. This procedure pins Monarch and xFuser; it does not lock every
-transitive dependency.
+needed. This procedure pins Monarch and installs stock xFuser 0.8.0 where no
+xFuser is installed; it does not lock every transitive dependency.
 
 The INT8 GEMM kernel, on by default for INT8 ConvRot checkpoints, needs the
 Python development headers for `$COMFY_PYTHON` on the driver and on every
@@ -982,10 +986,10 @@ parameter itself and names the fix.
 Offer the optional dgxm TUI during the initial setup questions, alongside the
 launch-script choice. If accepted, prefer one combined install with the `tui`
 extra. Follow the same dry-run and constrained installation procedure above,
-using the verified xFuser wheel and preserved Torch constraint, changing
+using the preserved Torch constraint, changing
 `-e "$REPO_DIR"` to
-`-e "$REPO_DIR[tui]"` in both commands. If the temporary wheel directory has
-already been removed, prepare it again first. Review the dependency plan and
+`-e "$REPO_DIR[tui]"` in both commands. If the temporary constraint directory
+has already been removed, prepare it again first. Review the dependency plan and
 verify torch afterward; do not run an unconstrained extras install. If the
 user declines, leave the extra out. Use the chosen ComfyUI environment rather
 than creating or overwriting another one.
@@ -996,7 +1000,7 @@ than creating or overwriting another one.
 
 The optional Studio companion (`dgxm-studio`) needs the `studio` extra, which
 adds aiohttp and Pillow. Install it with the same dry-run and constrained
-installation procedure, using the verified xFuser wheel and preserved Torch
+installation procedure, using the preserved Torch
 constraint, and change `-e "$REPO_DIR"` to `-e "$REPO_DIR[studio]"` in both
 commands, or to `-e "$REPO_DIR[tui,studio]"` to add both extras at once.
 Review the dependency plan and verify torch afterward; do not run an
@@ -1150,6 +1154,359 @@ old Python modules while restarted workers load the new ones. Start ComfyUI
 again afterwards; that restart loads the updated modules, so the node set on
 the canvas matches the tree.
 
+### Upgrading from 1.4.0
+
+Read this before the first update from 1.4.0, in this order. An install on
+1.3.0 or older follows the sections below as well.
+
+1. The first update from 1.4.0 runs the 1.4.0 updater, the `dgxm` installed
+   now, so its release-slot refusal, dependency checks, ownership check and
+   process scan govern that update; what this release changes in the verified
+   update applies from the next one. Before you start it, install
+   `nvidia-ml-py` into the driver's Python, `"$COMFY_PYTHON" -m pip install nvidia-ml-py`,
+   and the same into the Python cluster.toml names on every Worker host; it is
+   pure Python and needs nothing else. A torchmonarch pin of 0.8.0 or newer
+   requires it, neither update mode installs it, and until every Python holds
+   it an update to such a pin stops before any change. The 1.4.0 updater
+   names only the first Python that lacks it, so install it on every one
+   before you start; this release's updater names each. If the
+   1.4.0 updater stops with "foreign distribution inventory is ambiguous",
+   reinstall the package it names as
+   [TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)
+   says, or run this release's updater from a checkout of this release with
+   [the recovery procedure](TROUBLESHOOTING.md#recover-an-installation-with-an-older-verifier).
+2. If your Workers run from release slots, update only with
+   `dgxm update --verify`, as [Upgrading from 1.2.0](#upgrading-from-120)
+   describes
+   ([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
+3. This release moves the torchmonarch pin from 0.7.0 to 0.8.0, which
+   requires two packages 0.7.0 did not: `nvidia-ml-py`, which item 1 installs
+   before the update, and `psutil`, which ComfyUI's own requirements already
+   bring. Gate protocol 14 does not change. Its xFuser requirement admits the
+   patched build 1.4.0 installed as well as stock 0.8.0, so the update keeps
+   the xFuser you have; stock 0.8.0 goes in after it (item 30). A saved Gate
+   grant also names the package version, so the 1.4.0 grants go stale and each
+   model, residency and LoRA combination runs its first-use Gate again, once
+   ([TROUBLESHOOTING #114](TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
+4. This release needs ComfyUI 0.45.0 or newer on the driver and on every
+   Worker, at the same commit on each. Neither update mode moves ComfyUI, so
+   update it your own way, then reset the attached mesh so no actor keeps the
+   old ComfyUI imported. On an older ComfyUI the node pack still imports, but
+   a MiniMax H3 file with a stacked output head refuses under sequence
+   parallelism
+   ([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+5. INT8 ConvRot linears now run a Triton GEMM kernel by default, in the
+   ComfyUI process and in every actor, with the same output as
+   comfy-kitchen's CUTLASS kernel. Triton builds a launcher against the
+   Python headers, so check for them on the driver and on every Worker host,
+   as [Install the node pack](#install-the-node-pack) shows. Where they are
+   missing, install the system package for the interpreter's version,
+   `python3.12-dev` on Ubuntu 24.04. Without them a process runs CUTLASS and
+   logs one WARNING, and the new `INT8 GEMM` rows of `dgxm doctor` warn. To
+   keep CUTLASS, set `int8_gemm = "cutlass"` in `[worker_args]` and start
+   ComfyUI with `DGXM_INT8_GEMM=cutlass`
+   ([TROUBLESHOOTING #138](TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
+6. `[worker_args]` takes three new keys, `int8_gemm`, `fp8_matrix_mult` and
+   `worker_vae_decode`. A 1.4.0 checkout refuses a cluster.toml that holds
+   any of them, so add them only after the driver and every checkout that
+   reads the file run this release. Writing `int8_gemm` or `fp8_matrix_mult`,
+   with any value, changes every render's capability context and re-proves
+   every PASS; `worker_vae_decode` reaches only the driver and re-proves none
+   ([CLUSTER](CLUSTER.md#worker_args-optional)).
+7. On GB10, leave `fp8_matrix_mult` out or at `"auto"`. `"on"` sends plain
+   FP8 checkpoints in the actors down ComfyUI's FP8 matmul path, which
+   renders them as noise there, as `--fast fp8_matrix_mult` does in the
+   driver. Every model build now logs one `FP8 compute:` line that names the
+   path ComfyUI picked
+   ([TROUBLESHOOTING #141](TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).
+8. Worker-assisted VAE decode is off by default. With
+   `worker_vae_decode = "auto"` the stock VAE Decode and VAE Decode (Tiled)
+   nodes split a video decode over the Workers, byte-identical to the
+   one-host tiled decode. MiniMax H3, Wan 2.1, Wan 2.2 TI2V 5B, HunyuanVideo
+   1.0, HunyuanVideo 1.5 and LTX 2.5 have passed the hardware byte compare,
+   and LTX 2.3 and LTX 2.5's convolutional VAE are unchecked
+   ([MODELS](MODELS.md#worker-assisted-vae-decode),
+   [TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+9. The MiniMax H3 activation preflight charges each rank an 11.0 GiB floor
+   and 129,024 bytes per row on the rank, in place of 1,032,192 bytes per row
+   with no floor. Long clips now fit where 1.4.0 refused them, such as the
+   15 second clip, 362 frames at 1344x768, on one Spark, while every render
+   pays the floor, so a short one is charged more than on 1.4.0. Before a
+   render-site capacity check refuses, the driver unloads the models ComfyUI
+   holds on its host, then asks the actors to release their allocator caches,
+   and checks again; `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both steps off. Once
+   those checks pass, the driver also prices a model load still to come at
+   the Workers' own price, and where the Worker on its box would stop the
+   load, it frees the same way first, so a first use whose text models were
+   staged before the model's load no longer fails for room the driver held;
+   the same switch turns that off, and it adds no refusal
+   ([TROUBLESHOOTING #93](TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+   The identity gate runs the same checks before its proof render, and a request
+   that cannot fit the slab path records one INCONCLUSIVE capacity row and
+   renders on stock residency
+   ([TROUBLESHOOTING #56](TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+10. A capacity-rescue consent now keeps slab residency when stock residency
+    cannot load the checkpoint. The gate records INCONCLUSIVE with
+    `cross_mode=CAPACITY` and the render proceeds under slab, where 1.4.0
+    switched slab off and refused under stock. `DGXM_ALLOW_SLAB_RESCUE=1`,
+    `DGXM_AUTO_RESCUE=1` and the panel's Auto-allow toggle give the same
+    consent as a click on the card
+    ([TROUBLESHOOTING #5](TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
+    [#53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+11. The driver's deadline for a render's sample call grows with the work for
+    MiniMax H3 and Wan SCAIL, SCAIL-2 and Animate 2, up to six hours.
+    `DGXM_SAMPLE_TIMEOUT` stays the floor, 3600 s unless set, and wins over
+    that cap. A floor you raised on 1.4.0 for long clips still applies to
+    every render, so a hung render holds the queue that long; drop it once
+    the new deadline covers your clips. Above 180 steps the cap gives those
+    families less time than 1.4.0 did, so raise the floor for such a render
+    ([TROUBLESHOOTING #139](TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-when-the-sample-deadline-passes)).
+12. `compile_dit` no longer forces stock residency on the families it leaves
+    eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4, so their
+    slab residency stays available. Worker services keep torch inductor's
+    compile cache in `~/.cache/dgx-monarch/inductor`, so a reboot no longer
+    repeats the autotune; `TORCHINDUCTOR_CACHE_DIR` places it elsewhere
+    ([TROUBLESHOOTING #14](TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
+    The Init node's `sync_ulysses` input has no effect on xfuser 0.7.0 or
+    0.8.0, though changing it still reruns setup and the identity gate
+    ([Adapters](ADAPTERS.md#what-an-adapter-provides)). The Ideogram 4
+    template now leaves it on, as every other shipped template does, so the
+    first Ideogram 4 render after the update runs its identity gate once
+    more. A workflow saved from the older template keeps the setting off;
+    turn it on in its Init node to match
+    ([MODELS](MODELS.md#model-ideogram4)).
+13. A Gate PASS now names the torch, CUDA and xFuser build it was proven
+    under. Neither update mode replaces torch or xFuser, so keep the driver
+    and every Worker on one build: a pair on two builds refuses a risky render
+    until they match, and a torch or xFuser change proves each gated
+    combination again on first use
+    ([TROUBLESHOOTING #8](TROUBLESHOOTING.md#8-version-skew-between-hosts)).
+    Update every Worker to this release before the first render, too: a
+    fleet whose Workers run two builds of dgx-monarch, such as one still on
+    1.4.0 beside one on this release, refuses before its first load or
+    render, naming each Worker's build. Update each box, restart its Worker
+    and reset the attached mesh
+    ([DESIGN](DESIGN.md#55-model-store-reuse--lora-hot-swap)).
+    The Worker loop and `scripts/comfy-driver.sh` now set
+    `MIMALLOC_PURGE_DELAY=0`, so a process on torch 2.15 gives freed host
+    memory back at once. A driver you start by hand or from your own unit
+    needs the variable too
+    ([TROUBLESHOOTING #146](TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short)).
+14. On a DGX Spark the driver's ComfyUI now reads free memory as MemAvailable
+    less a 7.6 GiB floor, where it read the device figure that follows
+    MemFree, and it encodes a batch of images one image a VAE call. Every
+    conditioning of several images changes once against 1.4.0, and a stock
+    render recorded with little MemFree can change once, since its batches
+    no longer split. With DynamicVRAM off (`--disable-dynamic-vram`,
+    `--highvram`, `--gpu-only` or `--novram`), ComfyUI's own loader follows
+    the new reading too, so a model that streamed may now load whole and
+    fewer models are unloaded. Before a VAE decode that ComfyUI prices above its free
+    memory, the driver frees the decode's price from the text encoders it
+    holds and asks the Workers for the device memory they hold idle, and its
+    line says whether they released it; an encoder that gave up memory loads
+    it again when a prompt's text next changes. Each has a switch on the driver:
+    `DGXM_DISABLE_DRIVER_UMA_MEMORY=1`, `DGXM_DISABLE_VAE_ENCODE_ITEM=1` and
+    `DGXM_DISABLE_VAE_DECODE_RELIEF=1`. The new `driver memory reading` row
+    of `dgxm doctor` says which reading the running driver has
+    ([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+15. On a DGX Spark a Worker that finds less than 16 GiB free while 21 GiB or
+    more is available makes room for its CUDA context before it creates one,
+    and logs one line. `DGXM_DISABLE_CONTEXT_ROOM=1` in the Worker's
+    `worker.env` (step 22), then a recycle, turns that off, for diagnosis. A Worker that still cannot make
+    its context refuses in plain words, `this Worker could not start on its
+    GPU`, where it showed a traceback; on a pair the words show only when the
+    head's Worker failed, after about ten minutes
+    ([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+16. With `lora_low_rss` off, a LoRA stack's load is now priced with its
+    classic bake, by the checkpoint's format, so a load the earlier price
+    admitted can refuse with the new figure. Where the classic bake does not
+    fit and a bake in place would, the Worker bakes in place, but only when
+    the identity gate holds a PASS for that combination's in-place bake.
+    Render the combination once with `lora_low_rss` on to record that PASS.
+    The Init node's default is `auto`, which a Worker on a DGX Spark reads
+    as on, and that default is priced as before
+    ([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+17. A load that replaces a stock model in its own slot now counts the copy
+    the Worker drops first, at the loader and at the render-site checks, so
+    a change of model in one session meets the Old model in the way card
+    less often. On unified memory that drop copies nothing to the host.
+    `DGXM_DISABLE_SWAP_CREDIT=1` on the driver turns the count off, and
+    `DGXM_DISABLE_COPY_FREE_DROP=1` in the Worker's `worker.env`, set the
+    same way, turns the copy-free drop off
+    ([TROUBLESHOOTING #53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+18. Two things that need ComfyUI 0.45.0 or newer run on the Workers.
+    MiniMax-H3-Image is a new family on its own sharded adapter, with a text
+    to image template and an edit template: `auto` takes uly2 for it, and
+    cfg2, dp2, a padded ring and a batch above one refuse. Both templates
+    wire ComfyUI's prompt expander behind a switch that ships off, and a
+    graph that turns it on with an empty task prompt, or with one that lacks
+    the `{input text}` marker, refuses before the model loads
+    ([MODELS](MODELS.md#model-minimax-h3-image),
+    [TROUBLESHOOTING #153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
+    UltraTex, the FLUX.2 Klein 9B LoRAs that paint a mesh texture, runs on
+    one GPU, uly2 and uly2+fsdp, and refuses on cfg2, dp2, ring and any wider
+    mesh
+    ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
+19. Some renders now take another path than on 1.4.0. In a world of one GPU
+    a checkpoint's own attention pins run as stock ComfyUI runs them, with no
+    Sol-Attn waiver card
+    ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+    Anima under `auto` renders on uly2 at every size, where it took cfg2
+    below 1.2 MP on BF16, and the Workers prepare its text as stock ComfyUI
+    does
+    ([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+    `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP
+    only when the prompt and the negative encode to different text rows, and
+    Ulysses for an equal pair
+    ([VALIDATION](VALIDATION.md#campaign-k-equal-pairs)). uly2 renders of
+    Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1, and LTX renders
+    under sequence parallelism, run comfy-kitchen's fused AdaLN, and LTX's
+    gate projection, at the row count one GPU uses, because those calls pick
+    their kernel by row count. A render below about 1024 square, or of LTX,
+    can differ from the same render on 1.4.0
+    ([VALIDATION](VALIDATION.md#fused-adaln-switch-other-families)). A forced
+    `family_adapter` binds a model only where its adapter would take it
+    under `auto`
+    ([TROUBLESHOOTING #154](TROUBLESHOOTING.md#154-a-forced-family_adapter-refuses-a-model-its-adapter-does-not-take-under-auto)).
+    Sampler Custom renders and dual-model renders run the first-use identity
+    gate, so the first render of a new combination on the six LTX graphs, on
+    p-h3-image and on Ideogram 4 runs its check first
+    ([TROUBLESHOOTING #61](TROUBLESHOOTING.md#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
+20. The pack now ships the demo images, clips and music its templates name,
+    in `example_workflows/input`. At start it copies each one ComfyUI's
+    input folder lacks and never replaces a file, link or folder already
+    there; `DGXM_DEMO_INPUTS=off` skips the copy
+    ([Install the node pack](#install-the-node-pack)).
+21. `dgxm doctor`'s Worker service row reads unobserved, not FAIL, when a
+    host answered but could not tell whether the loop runs or listens. Doctor
+    then exits 75, and `dgxm update --verify` keeps the new release instead
+    of restoring the old one
+    ([TROUBLESHOOTING #1](TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout)).
+    `dgxm setup`'s cleanup of a reserved release slot refuses, and keeps the
+    slot, when its site holds anything beside the package. From this release
+    a verified update accepts the bytecode entries pip records under
+    `PYTHONPYCACHEPREFIX`. Every package-ownership refusal names its cause,
+    on the driver and per Worker host, and four also say what clears it: an
+    entry outside site-packages, a malformed RECORD, a package installed
+    twice and a missing shared file; the others ask you to inspect that
+    package. A Worker host whose release differs is named on a line of its
+    own even when no package check refused
+    ([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+    The attach refuses, before it dials, a Worker loop on a torchmonarch other
+    than the one the driver loaded, and doctor's `listener generation` row
+    shows the torchmonarch each running loop imported. The driver keeps the
+    version it loaded, so after the pin is installed under a running ComfyUI,
+    restart ComfyUI
+    ([TROUBLESHOOTING #8](TROUBLESHOOTING.md#8-version-skew-between-hosts)).
+22. A Worker's six diagnostic switches, `DGXM_DISABLE_CONTEXT_ROOM`,
+    `DGXM_DISABLE_COPY_FREE_DROP` and `DGXM_DISABLE_BACKUP_FREE` among them,
+    are set in `~/.config/dgx-monarch/worker.env` on that Worker's box, as
+    `NAME=value` lines, then a recycle. The unit a verified update writes
+    clears every variable a drop-in sets, so a drop-in never reached such a
+    Worker. The file must belong to the Worker's user and be writable by no
+    one else, and the Worker logs `Worker switches set on this box: ...` at
+    each start
+    ([CLUSTER](CLUSTER.md#setting-a-worker-side-variable)).
+23. With `lora_low_rss` off, as three Wan-Animate 2 templates ship it, a
+    Worker that loads a model whole under a classic LoRA bake frees ComfyUI's
+    weight backup before the first step where the load leaves less room than
+    the sampler is estimated to need, and logs a line that starts
+    `LoRA bake: ComfyUI loaded this model whole`; the next LoRA change on
+    that model reloads it from disk. On a pair the ranks decide together, and
+    the room a rank needs now counts the shared memory a fresh Worker maps in
+    its first forward, about 2.7 GiB. On a Spark short enough to free, the
+    first step can take up to about a minute longer, with the same latent.
+    Where a rank is still short after the free, the render refuses before its
+    first step with `pair_backup_room`, naming the short rank's box; clear the
+    Sparks and queue again, shorten the clip, or free memory on that box.
+    `DGXM_DISABLE_BACKUP_FREE=1` in the Worker's `worker.env` turns the step
+    off
+    ([TROUBLESHOOTING #12](TROUBLESHOOTING.md#12-bf16--large-model-load-hangs-at-0-mb-usable-uma)).
+24. The loader charges a MiniMax H3 still guide and the render activations
+    as alternatives, the larger of the two, where the guide's file proves it
+    a still and the guide encodes before every sampler; a clip still pays
+    both
+    ([TROUBLESHOOTING #82](TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode)).
+    It now charges a reference video's 40 GiB encode on a first queue where
+    ComfyUI holds models, and Load LTXV Audio Text Encoder for its text
+    encoder and the checkpoint's text projection where it charged the whole
+    checkpoint
+    ([DESIGN](DESIGN.md#the-residency-ladder)).
+25. The driver prices what a node spends on its box before the sampler where
+    the loader did not: Add Guide (MiniMax H3), Reference to Video (MiniMax
+    H3) with a reference video, and the stock loader nodes of a text encoder,
+    CLIP Vision file, checkpoint or model, on a re-queue whose loader ComfyUI
+    kept and on a first queue where ComfyUI runs those nodes first. A spend
+    that would take
+    the box under the loader's floor after the driver's unload and the
+    Workers' release where they can run refuses before anything is spent.
+    That is a new refusal
+    for a queue that renders today only by dipping under the floor; use a
+    shorter clip, a smaller canvas or file, or free memory on the box.
+    `DGXM_DISABLE_DRIVER_SPEND_PRICE=1` on the driver turns it off, for
+    diagnosis
+    ([TROUBLESHOOTING #82](TROUBLESHOOTING.md#82-a-minimax-h3-guide-refuses-at-the-loader-node-for-its-encode),
+    [#56](TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+26. MiniMax H3 under `auto` at four Sparks folds to `uly4`, on reports from
+    community four-Spark users. Where H3 or MiniMax-H3-Image lands on ring, a
+    padded packed total refuses on the driver at the sampler node or the
+    Identity Gate node, before any proof render, setup and the `auto` load,
+    and names the Ulysses preset that fits; on a pair an explicit `ring2` on
+    a padded sequence refuses there too
+    ([TROUBLESHOOTING #49](TROUBLESHOOTING.md#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence)).
+    A report from a cluster larger than two Sparks carries what
+    [CONTRIBUTING](../CONTRIBUTING.md#reports-from-clusters-larger-than-ours)
+    lists.
+27. On a graph with one model, no LoRA stack and no slab residency, the
+    first-use gate no longer renders twice before the first render: every
+    rank unloads and loads the file, and the Workers' swap cycle decides. A
+    first-use check that compared nothing no longer blocks a later capacity
+    rescue for that model. The Identity Gate node always renders
+    ([TROUBLESHOOTING #66](TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+28. A graph that renders `dpm_adaptive` under an explicit `+fsdp` preset that
+    leaves data parallelism now refuses: `dp2+fsdp` from two Sparks up, and
+    `uly2+fsdp` or `cfg2+fsdp` from four Sparks up. `auto` never resolves FSDP
+    and is not affected. On 1.4.0 such a render could wait until the sample
+    deadline once the data-parallel groups' step counts parted. Pick another
+    sampler; a preset without data parallelism, which on more than two Sparks
+    holds the whole model on every rank and so serves only where it fits
+    resident; or one without `+fsdp` where the model fits resident
+    ([TROUBLESHOOTING #156](TROUBLESHOOTING.md#156-dpm_adaptive-refuses-under-a-data-parallel-layout-with-fsdp)).
+29. Studio is a supported interface from this release, beside the CLI, the
+    TUI and the ComfyUI panel. Generate now checks the draft and starts the
+    job in one action, and Grids, Fleet and Operations sit under Utilities.
+    The tester's fourth round renamed the Operation select Job category and
+    changed Send to edit, the viewer and the telemetry panel
+    ([Studio](STUDIO.md#working-with-workflows)). The `studio` extra does not
+    change and neither update mode installs it
+    ([Optional Studio companion](#optional-studio-companion)).
+30. Stock xFuser 0.8.0 replaces the patched `0.7.0+dgxm.npuimport1` build
+    that an install of 1.4.0 made with `tools/build_xfuser_compat_wheel.py`,
+    which is gone. The patched build still runs, so the update needs nothing
+    from you here, and `dgxm doctor`'s `xfuser` rows warn on each box that has
+    it and give the line that moves it. Stock xFuser 0.8.0 goes in after the
+    first update from 1.4.0, never before it: xFuser 0.8.0 installs a
+    `tests/conftest.py` that torchmonarch also ships, and the 1.4.0 updater,
+    which runs that update, refuses it in verified mode as a pinned claim
+    with `foreign distribution claims pinned payload` (its plain mode runs no
+    ownership check); this release's updater accepts it
+    ([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+    Neither update mode installs xFuser. After a
+    verified update, first run
+    `"$COMFY_PYTHON" -m pip install -e "$REPO_DIR" --no-deps` on the driver,
+    as item 7 of [Upgrading from 1.1.0](#upgrading-from-110) says: until then
+    its install metadata still names the requirement of release 1.4.0,
+    `xfuser==0.7.0+dgxm.npuimport1`, and pip reports the move as a conflict.
+    Then, while no render runs, on the driver:
+    `"$COMFY_PYTHON" -m pip install --upgrade-strategy only-if-needed xfuser==0.8.0`,
+    and the same line on each Worker host with cluster.toml's `python` in
+    place of `COMFY_PYTHON`; then restart the Workers (in local mode, reset
+    the attached mesh or restart ComfyUI). Move every box: a pair on two
+    builds refuses a risky render until they match (item 13), and the move
+    runs each gated combination's first-use Gate again, once. Worker setup
+    refuses any other build, such as stock 0.7.0, with that line
+    ([TROUBLESHOOTING #104](TROUBLESHOOTING.md#104-worker-setup-refuses-the-installed-xfuser-or-doctor-warns-about-it)).
+
 ### Upgrading from 1.3.0
 
 Read this before the first update from 1.3.0, in this order. An install on
@@ -1165,9 +1522,9 @@ Read this before the first update from 1.3.0, in this order. An install on
    `dgxm update --verify`, as [Upgrading from 1.2.0](#upgrading-from-120)
    describes
    ([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
-3. This release keeps the torchmonarch pin, the required dependencies and the
-   Gate protocol of 1.3.0, so neither mode installs a new pin and the
-   dependency check passes wherever it passes on 1.3.0. A saved Gate grant also
+3. Release 1.4.0 kept the torchmonarch pin, the required dependencies and the
+   Gate protocol of 1.3.0. The pin and dependencies that 1.5.0 moves are in
+   [Upgrading from 1.4.0](#upgrading-from-140). A saved Gate grant also
    names the package version, so the 1.3.0 grants go stale and each model,
    residency and LoRA combination runs its first-use Gate again, once
    ([TROUBLESHOOTING #114](TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
@@ -1196,7 +1553,7 @@ Read this before the first update from 1.2.0, in this order. An install on
 
 1. The first update from 1.2.0 runs the 1.2.0 updater, the `dgxm` installed
    now. Its release-slot refusal and dependency checks apply in both modes.
-   The check of the packaged Studio files, which this release adds to
+   The check of the packaged Studio files, which release 1.3.0 brought to
    verified update, release staging and setup, applies from the next update
    on.
 2. If your Workers run from release slots, update only with
@@ -1206,16 +1563,16 @@ Read this before the first update from 1.2.0, in this order. An install on
    update on 1.2.0 refuses such a host with `release_slot_worker` before it
    fetches
    ([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
-3. This release keeps the torchmonarch pin and the required dependencies of
-   1.2.0, so neither mode installs a new pin, and the dependency check passes
-   wherever it passes on 1.2.0.
+3. Release 1.3.0 kept the torchmonarch pin and the required dependencies of
+   1.2.0. The pin and dependencies that 1.5.0 moves are in
+   [Upgrading from 1.4.0](#upgrading-from-140).
 4. The optional Studio companion needs the `studio` extra, which adds aiohttp
    and Pillow. Neither update mode installs an extra. To use Studio, install
    it as [Optional Studio companion](#optional-studio-companion) describes.
    Plain update reruns the editable install with `--no-deps`, which creates
    the `dgxm-studio` command. A verified update does not, so until you rerun
    that install, `pip show` reports 1.2.0 and `dgxm-studio` is missing,
-   although the code that runs is already this release.
+   although the code that runs is already the new release.
 5. MOSS-Image and Kromoss need ComfyUI 0.42.0 or newer on the driver and on
    every Worker, with the comfy-kitchen version that ComfyUI's requirements
    name
@@ -1239,7 +1596,7 @@ Read this before the first update from 1.2.0, in this order. An install on
 8. FLUX.3 Klein INT8 renders on uly2 can differ at the same seed from renders
    on 1.2.0. On 1.2.0 a Worker sent FLUX.3 Klein's `qkv` (or `q`, `k` and `v`)
    and `mlp_in` on an INT8 weight down a route that dequantizes the weight and
-   skips activation quantization. This release runs them through
+   skips activation quantization. From release 1.3.0 on they run through
    comfy-kitchen's INT8 GEMM, as stock does, and on 2026-10-21 FLUX.3 Klein
    INT8 uly2 renders were bit-identical to the pin-stripped one-GPU render. No
    hardware run rendered FLUX.3 Klein INT8 on uly2 under 1.2.0. The only
@@ -1260,8 +1617,8 @@ Read this before the first update from 1.2.0, in this order. An install on
 Read this before the first update from 1.1.0, in this order.
 
 1. The first update from 1.1.0 runs the 1.1.0 updater, the `dgxm` installed
-   now. The checks this release adds to both update modes apply from the next
-   update on, so check the points below yourself.
+   now. The checks release 1.2.0 brought to both update modes apply from the
+   next update on, so check the points below yourself.
 2. If your Workers run from release slots, update only with
    `dgxm update --verify`. A Worker runs from a slot when its host's
    `~/.local/share/dgx-monarch/src` resolves into
@@ -1275,12 +1632,12 @@ Read this before the first update from 1.1.0, in this order.
    update; repair that first with the same entry. The 1.1.0 verified updater
    has no `--privileged-process-inspection`, so where protected process
    environments are unreadable it refuses with `activity_unknown`; run the
-   update from a checkout of this release with the
+   update from a checkout of the release you update to with the
    [recovery procedure](TROUBLESHOOTING.md#recover-an-installation-with-an-older-verifier)
    and that flag instead.
 3. If cluster.toml sets `rdma_latent_return = true`, set it to `false` before
-   you update, in either mode. This release needs a `nic:` target in
-   `[monarch.rdma]` for native return, and the 1.1.0 loader rejects that
+   you update, in either mode. From release 1.2.0 on, native return needs a
+   `nic:` target in `[monarch.rdma]`, and the 1.1.0 loader rejects that
    table. After the update, add the target
    ([CLUSTER.md](CLUSTER.md#monarchrdma)), turn native return back on, and
    make the Workers start with the new policy. On an install whose Workers
@@ -1293,20 +1650,24 @@ Read this before the first update from 1.1.0, in this order.
    `xxhash` as point 6 says, then rerun `dgxm update` to finish it; on an
    install whose Workers run from release slots, follow TROUBLESHOOTING #118
    instead. Remove the table again before any return to 1.1.0.
-5. This release refuses to build a mesh on three kinds of ambient environment
-   variable: `OTEL_EXPORTER_OTLP_ENDPOINT` while export is off, a
+5. From release 1.2.0 on, a mesh build refuses three kinds of ambient
+   environment variable: `OTEL_EXPORTER_OTLP_ENDPOINT` while export is off, a
    `MONARCH_RDMA_*` name the policy does not set, and a variable the policy
    sets, such as `DGXM_RDMA_QP_SPLIT` or a `MONARCH_RDMA_*` name, set to
-   another value. 1.1.0 read `DGXM_RDMA_QP_SPLIT` as a user setting, and a
-   Worker of this release refuses to start on a value that differs from the
+   another value; 1.5.0 also refuses the per-signal OTLP endpoint variables
+   ([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+   1.1.0 read `DGXM_RDMA_QP_SPLIT` as a user setting, and a Worker of 1.2.0
+   or newer refuses to start on a value that differs from the
    policy, so the update's own Worker start would fail. Clear
    `DGXM_RDMA_QP_SPLIT` from each Worker's environment before you update: the
    systemd user manager (`systemctl --user show-environment`), any hand edit
    to the unit, and the shell that starts a `nohup` Worker. Clear the others
    before the first render
    ([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
-6. The torchmonarch pin this release installs requires `xxhash`, `pyarrow` 17
-   or newer and `numpy` 1.26 or newer. The 1.1.0 updater installs the pin with
+6. The torchmonarch pin of every release from 1.2.0 on requires `xxhash`,
+   `pyarrow` 17 or newer and `numpy` 1.26 or newer, and from release 1.5.0 on
+   it also requires `nvidia-ml-py` and `psutil`
+   ([Upgrading from 1.4.0](#upgrading-from-140)). The 1.1.0 updater installs the pin with
    `--no-deps` and checks none of them, so `pip check` and
    `tools/check_dependencies.py` then name any that is missing or too old; on
    the tested stack only `xxhash` was. Install what they name on the driver,
@@ -1320,11 +1681,11 @@ Read this before the first update from 1.1.0, in this order.
    reads the earlier version, so `pip show` and `pip check` report it, until
    the next `"$COMFY_PYTHON" -m pip install -e "$REPO_DIR" --no-deps`. Run that
    once after the update; the code that runs is already the new release.
-8. Run the driver and the Workers on the same release. A driver on this
-   release refuses Workers still on 1.1.0 before it dials, with an error that
+8. Run the driver and the Workers on the same release. A driver on 1.2.0 or
+   newer refuses Workers still on 1.1.0 before it dials, with an error that
    starts `no attach ran`, and `dgxm doctor` fails each such host's
    `listener generation` row. A ComfyUI started on 1.1.0 cannot attach to
-   Workers on this release; restart it
+   Workers on 1.2.0 or newer; restart it
    ([TROUBLESHOOTING #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 
 ### Update commands
@@ -1395,10 +1756,21 @@ update from any process, in either mode, refuses before it changes anything.
 
 A pin check that encounters a conflicting distribution or invalid inventory
 reports a bounded package name and relative path locally when they are safe
-to show. Inspect that distribution in the selected environment and plan its
-repair separately; the updater does not weaken ownership checks or repair
-third-party packages. The sanitized receipt retains the stable
-`driver_pin_drift` code, without those local details.
+to show, with what clears it where the cause is known. An inventory listing
+files outside site-packages that are not pip's bytecode for its own sources
+names them as the `../` rows of its RECORD, which a reinstall writes again;
+a malformed inventory asks for a reinstall; a distribution installed twice
+asks you to remove every copy and install one; a missing file torchmonarch
+shares with another distribution asks for a torchmonarch reinstall
+([TROUBLESHOOTING #155](TROUBLESHOOTING.md#155-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
+A Worker whose check refuses the same way prints its host name, the cause and
+the remedy above `prior_worker_drift`, and a Worker whose release differs for
+another reason, such as its payload digest, prints its host name and that its
+release differs. Otherwise inspect that distribution in
+the selected environment and plan its repair separately; the updater does not
+repair third-party packages. The sanitized receipt retains the stable
+`driver_pin_drift` or `prior_worker_drift` message, without those local
+details.
 
 For a cluster running from a Git source checkout, `dgxm update --verify`
 supports remote Workers and one Worker on the driver's host. It first copies
@@ -1425,7 +1797,9 @@ unchanged config, and refuses while ComfyUI, a Render session, a lease, or an
 actor is active, or when the evidence to decide that is missing. It then puts
 the target in a detached private worktree, confirms that every declared target
 dependency other than torchmonarch is already satisfied on the driver and on
-every host, builds a private release of the package and its exact torchmonarch
+every host (otherwise it names each requirement and the interpreter that
+failed it, `driver` or `host_<n>`, and refuses with
+`target_dependencies_unsatisfied`), builds a private release of the package and its exact torchmonarch
 pin, stages it on every Worker host, and reads each copy back. It downloads the
 prior and target exact torchmonarch wheels and installs each into a private
 verification site with offline `--no-index --no-deps`. The live driver pin

@@ -180,11 +180,20 @@ test('the output names the save nodes and follows their format choices in the dr
   const format = `${mp4.id}:14:format`;
   assert.equal(outputSummary(traitsOf(mp4, { [format]: 'webm' })), 'one WebM video with sound');
   assert.equal(outputSummary(traitsOf(mp4, { [format]: 'mkv' })), 'one MKV video with sound');
-  // Save Video's auto container is MP4, or WebM for AV1.
+  // Save Video's auto container is MP4, WebM for AV1 and MOV for ProRes, as ComfyUI saves it.
   const codec = `${mp4.id}:14:format.codec`;
   assert.equal(
     outputSummary(traitsOf(mp4, { [format]: 'auto', [codec]: 'av1' })),
     'one WebM video with sound',
+  );
+  const ti2v = graph('wan22-ti2v');
+  assert.equal(
+    outputSummary(traitsOf(ti2v, { [`${ti2v.id}:13:format.codec`]: 'prores' })),
+    'one MOV video without sound',
+  );
+  assert.equal(
+    outputSummary(traitsOf(ti2v, { [`${ti2v.id}:13:format.codec`]: 'h264' })),
+    'one MP4 video without sound',
   );
   const t2va = graph('minimax-h3-t2va');
   assert.equal(

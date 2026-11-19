@@ -15,10 +15,12 @@ interactive writer.
 In cluster mode the Init node checks a fingerprint of the file's bytes on
 every Queue, and any byte change, a comment included, retires the old fleet
 before attaching a replacement. An edit the driver refuses keeps the old fleet
-attached, and reverting the edit reuses it. In local mode the Init node does
-not fingerprint the file, and a local mesh reads only `[worker_args]`. An edit
-there does not reach a live local mesh on the next Queue; it applies when the
-Init node runs again (a changed widget or a new ComfyUI process). If the old
+attached, and reverting the edit reuses it. A local mesh reads only
+`[worker_args]` and `[monarch]`, and in local mode the Init node checks a
+fingerprint of those two tables on every Queue. An edit to a key the Workers
+read retires the live local fleet before attaching a replacement; an edit to
+`worker_vae_decode`, which only the driver reads, keeps the fleet and the
+models it holds, and the Init node arms the new value. If the old
 processes are not confirmed stopped, replacement is blocked to prevent two
 fleets from holding models or rendezvous ports at once.
 
@@ -105,7 +107,7 @@ a new file without these tables.
 
 ## `[monarch]` (optional)
 
-The 0.7.0 integration validates these settings before runtime initialization.
+The integration validates these settings before runtime initialization.
 `startup_timeout_s` defaults to `180` and accepts integers from `30` through
 `3600`. After host attachment completes, ProcMesh initialization and actor
 readiness share this observation budget. Host attachment and its configuration
@@ -189,21 +191,23 @@ messaging
 
 ### `[monarch.diagnostics]`
 
-`metrics = false` is the default. Enabling it publishes supported counters and
-histograms through Monarch; gauges and observable instruments are unavailable
-in this release. With it on, the driver, each actor and each Worker loop
+`metrics = false` is the default. Enabling it publishes counters, histograms
+and gauges through Monarch; observable instruments are unavailable in this
+release. With it on, the driver, each actor and each Worker loop
 publish two phase instruments, the counter `dgxm.phase.completed` and the histogram
 `dgxm.phase.duration.seconds`, both labelled `phase`, `outcome` and
 `return_mode` with the values in [Metrics reference](#metrics-reference), and
-the occupancy counters below. Local bounded phase timings remain advisory and
+the occupancy gauges below. Local bounded phase timings remain advisory and
 never prove transfer completion, cleanup or readiness.
 
 `otlp_endpoint = ""` disables export. A configured HTTP(S) endpoint must have no
 credentials, query, fragment or path other than a bare trailing `/` (the
 exporter appends each signal's path, such as `/v1/metrics`) and requires
 **`otlp_logs = true`** explicitly:
-Monarch 0.7 exports upstream raw logs as well as metrics to this destination.
-Those logs may contain more than dgx-monarch's sanitized metric labels. Use an
+Monarch 0.8 exports upstream raw logs and spans as well as metrics to this
+destination, and has no switch for spans alone. Every post carries the user
+and host names, and the logs carry process command lines.
+Those logs and spans may contain more than dgx-monarch's sanitized metric labels. Use an
 operator-controlled collector and review disclosure requirements before
 opting in.
 
@@ -230,11 +234,11 @@ backend call, it cannot restart, the driver logs an ERROR, and
 beside the requested policy in `monarch_policy`.
 
 The same `metrics = true` switch also exports ownership occupancy as Monarch
-up-down counters. With `metrics = false`, the default, they do nothing: they
-make no instrument and read no source. Each counter reads the source of the
+gauges. With `metrics = false`, the default, they do nothing: they
+make no instrument and read no source. Each gauge reads the source of the
 `/dgxm/metrics` series with the matching name:
 
-| Counter | `/dgxm/metrics` series | What it counts | Process |
+| Gauge | `/dgxm/metrics` series | What it counts | Process |
 | --- | --- | --- | --- |
 | `dgxm.return.live_handoffs` | `dgxm_return_live_handoffs` | native handoffs a Worker actor still owns | actor |
 | `dgxm.return.pending_read_jobs` | `dgxm_return_pending_read_jobs` | read leases: unresolved native reads; each pins its sample lease with read tokens until it settles | driver (actors report 0) |
@@ -244,19 +248,19 @@ make no instrument and read no source. Each counter reads the source of the
 | `dgxm.native_return.latched` | `dgxm_native_return_latched` | 1 once native return is latched off; it never falls, and the latch clears only with a driver restart | driver (actors report 0) |
 
 The thread that already exports phase metrics reads these levels at most once
-a second and adds the change since its last export, so a collector reads the
-current level; the first export sends the whole level. No new thread, timer or
-service starts. A process that has not loaded a source exports nothing for it.
-A return-ownership reading whose lock is busy, or a mesh state that is unknown,
-leaves that level as it was until the next sample. The mesh reading does not
-skip a busy lock: it waits for the mesh registry lock, as the telemetry route
-does. When metrics turn off, the counters keep their last exported level. When
-they turn on again in the same process, a new instrument with the same name
-continues from that level, provided Monarch merges same-name instruments into
-one stream, as OpenTelemetry requires; nobody has checked this in the pinned
-Monarch binding. A meter without up-down counters, or a counter that fails,
-logs one DEBUG line and leaves the phase metrics and renders running. The
-counters reach a collector only through `otlp_endpoint`.
+a second and sets each gauge to the level it read, so a collector reads the
+current level itself. No new thread, timer or service starts. A process that
+has not loaded a source exports nothing for it. A return-ownership reading
+whose lock is busy, or a mesh state that is unknown, leaves that gauge as it
+was until the next sample. The mesh reading does not skip a busy lock: it
+waits for the mesh registry lock, as the telemetry route does. When metrics
+turn off, the gauges keep their last level. When they turn on again in the
+same process, the new exporter sets every level at its first sample. In a CPU
+test on 2026-11-17 a loopback collector read one stream per gauge, and read a
+level changed while metrics were off at the first export after they came
+back. A meter without gauges, or a gauge that fails, logs one DEBUG line and
+leaves the phase metrics and renders running. The gauges reach a collector
+only through `otlp_endpoint`.
 
 `dgxm diagnostics --capabilities` explains the exact runtime's diagnostic
 limits. A finite capture reads existing telemetry only:
@@ -449,7 +453,8 @@ every decode stays on the driver. It is the one key here only the driver
 reads: it never reaches an actor, so it stays out of the worker policy, every
 identity-gate capability context and the trust fingerprint, and writing it
 re-proves no PASS. The Init node arms it when it runs, which a change to the
-file triggers in cluster mode. Each decode logs one line saying whether it
+key triggers in either mode; in local mode the change keeps the live fleet and
+its models. Each decode logs one line saying whether it
 split, and `dgxm doctor` shows the last one
 ([docs/TROUBLESHOOTING.md #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
 

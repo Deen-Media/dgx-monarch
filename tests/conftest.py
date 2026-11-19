@@ -11,6 +11,7 @@ warnings.
 
 from __future__ import annotations
 
+import atexit
 import fnmatch
 import gc
 import importlib.util
@@ -263,6 +264,15 @@ def _monarch_policy_starts_unadmitted(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _loaded_monarch_identity_starts_unread(monkeypatch):
+    """The torchmonarch a process loaded is read once and kept for its life
+    (``monarch_capabilities.loaded_version``); each test starts unread, as a fresh process."""
+    from dgx_monarch import monarch_capabilities
+
+    monkeypatch.setattr(monarch_capabilities, "_LOADED", None)
+
+
+@pytest.fixture(autouse=True)
 def _attach_dial_history_starts_empty(monkeypatch):
     """The ids a driver last dialed live as long as its process; each test starts fresh.
 
@@ -272,6 +282,17 @@ def _attach_dial_history_starts_empty(monkeypatch):
     from dgx_monarch import mesh_attach
 
     monkeypatch.setattr(mesh_attach, "_LAST_DIALED", {})
+
+
+@pytest.fixture(autouse=True)
+def _liveness_release_note_starts_disarmed(monkeypatch):
+    """A liveness release's note lives as long as a driver process; each test
+    starts with none. A test that arms it and never attaches would otherwise
+    leave the next test's attach to the same hosts without its retry."""
+    from dgx_monarch import mesh_teardown
+
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_PREDECESSOR", None)
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_ADDRESSES", None)
 
 
 @pytest.fixture(autouse=True)
@@ -366,6 +387,20 @@ def _the_battery_cannot_write_the_operator_memo():
     )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _no_driver_exit_hook_at_pytest_exit():
+    """Unregister the exit hook a test's mesh build registered (driver_exit.install).
+
+    At pytest's own exit it would log its notice to a stream pytest has closed,
+    a "Logging error" traceback after the summary. Probe subprocesses keep theirs.
+    A session that never imported driver_exit registered nothing and imports nothing here.
+    """
+    yield
+    module = sys.modules.get("dgx_monarch.driver_exit")
+    if module is not None:
+        atexit.unregister(module._begin)  # nothing to do when no test registered it
+
+
 @pytest.fixture
 def sp(monkeypatch):
     """Patch the xfuser rank accessors read by ``base.shard_seq``.
@@ -382,6 +417,26 @@ def sp(monkeypatch):
         monkeypatch.setattr(base, "sp_rank", lambda: rank)
 
     return set_rank
+
+
+@pytest.fixture
+def forget_modules_imported_here():
+    """Drop every ``dgx_monarch`` module first imported during the test, after it.
+
+    A test that imports the TUI under stand-in ``rich`` and ``textual`` modules
+    binds every TUI module it loads for the first time to the stand-ins. Its
+    monkeypatch restores ``rich`` and ``textual`` but not those modules, so a
+    later test that reloads only ``dgx_monarch.tui.app`` would draw with the
+    stand-ins, and whether it does depends on which test files the run
+    collected. Modules loaded before the test, with the real libraries, stay.
+    """
+    before = set(sys.modules)
+    yield
+    for name in [name for name in sys.modules if name not in before and name.split(".")[0] == "dgx_monarch"]:
+        module = sys.modules.pop(name, None)
+        parent, _, child = name.rpartition(".")
+        if parent in sys.modules and getattr(sys.modules[parent], child, None) is module:
+            delattr(sys.modules[parent], child)
 
 
 @pytest.fixture(autouse=True)

@@ -117,6 +117,18 @@ def quote(monkeypatch, tmp_path):
     return run
 
 
+def _quote_with(monkeypatch, store, stack, available, proven) -> cq.RankPrice:
+    """The ``quote`` fixture's question, with the render's in-place bake permission given or not
+    (a gate PASS with lora_low_rss on). Run after the fixture has installed its seams."""
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: available)
+    worker = types.SimpleNamespace(rank=0, world=2, topology={}, _setup_key=("ready",),
+                                   store=store, uma_reserve_gb=0.0)
+    envelope = worker_capacity.quote(worker, {"specs": [
+        {"unet_name": BASE, "options": {}, "loras": [{"name": n, "strength": s} for n, s in stack],
+         "slot": "cond"}], "rescue_consent": None, "in_place_bake_proven": proven})
+    return cq.RankPrice.from_row(envelope["quotes"][0])
+
+
 def _sibling(verdict: str = "fits") -> cq.RankPrice:
     fit = capacity_fit.StockFit(True, True, BF16_BYTES, SIBLING_AVAILABLE, credit_bytes=BF16_BYTES)
     return cq.RankPrice(
@@ -183,10 +195,12 @@ def test_the_credited_sentence_names_the_backup_when_the_box_is_still_short(quot
     assert tag is not None and tag.refusal_class is RefusalClass.CAPACITY
 
 
-def test_a_clear_is_weighed_against_the_price_a_cleared_box_pays(quote):
-    """credit_bytes carries both credits, so the card's need is still 69.1 GiB, the
-    fresh load a cleared box makes, and the new stack's files are not counted twice."""
-    head = quote(_b3_store(), [(LORA, 0.8)], available=int(8.0 * _GIB))
+def test_a_clear_is_weighed_against_the_price_a_cleared_box_pays(quote, monkeypatch):
+    """credit_bytes carries both credits, so with the in-place permission the card's need is
+    still 69.1 GiB, the fresh load a cleared box makes (the in-place bake after a bare load fits
+    inside the stock price), and the new stack's files are not counted twice."""
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    head = _quote_with(monkeypatch, _b3_store(), [(LORA, 0.8)], int(8.0 * _GIB), True)
     assert head.verdict == "refuse"
     with pytest.raises(old_model.OldModelRefusal) as raised:
         decide(_fleet(head), 2, unet_name=BASE, keep=frozenset({BASE}))
@@ -197,6 +211,51 @@ def test_a_clear_is_weighed_against_the_price_a_cleared_box_pays(quote):
     # Beyond the copy and the backup the price credited, net of the files it charged.
     assert box.left_bytes == HEAD_ARENA - BACKUP_BYTES + LORA_FILES[LORA]
     assert old_model.card_numbers(offer) == "needs 69.1 GiB, 8.0 GiB available on the head"
+
+
+@pytest.mark.parametrize("proven", [False, True], ids=["no in-place permission", "the in-place permission"])
+@pytest.mark.parametrize("gib", [6.0, 8.0, 10.0, 20.0, 24.3])
+def test_a_card_never_offers_a_clear_the_fresh_fleet_then_refuses(quote, monkeypatch, proven, gib):
+    """With lora_low_rss off, a strength change the backup covers is a hot swap that bakes nothing,
+    and the fresh load on a cleared box bakes the stack. Wherever the card says a clear makes room,
+    the fresh fleet's own quote, on an emptied slot at the reading the card promised, admits the load."""
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    head = _quote_with(monkeypatch, _b3_store(), [(LORA, 0.8)], int(gib * _GIB), proven)
+    try:
+        decide(_fleet(head), 2, unet_name=BASE, keep=frozenset({BASE}))
+        return  # admitted: no card
+    except (capacity_agreement.FleetCapacityError, old_model.OldModelRefusal) as raised:
+        offer = old_model.offer_of(raised)
+    if offer is None:
+        return
+    (box,) = offer.boxes
+    cleared = ms.ModelStore()
+    cleared.lora_low_rss, cleared.slab_weights = False, False
+    fresh = _quote_with(monkeypatch, cleared, [(LORA, 0.8)], box.cleared_bytes, proven)
+    assert fresh.would_load == "fresh" and fresh.verdict == cq.VERDICT_FITS, (
+        gib, round(box.required_bytes / _GIB, 1), round(box.cleared_bytes / _GIB, 1), fresh.measured)
+    assert box.required_bytes == fresh.measured["required_bytes"]
+
+
+def test_without_the_permission_the_card_names_the_cleared_boxs_classic_bake(quote, monkeypatch):
+    """A Worker holding 60 GiB beside its copy: a clear makes room even for the fresh load with its
+    classic bake, and the card offers it at that price, not the hot swap's 69.1 GiB. The fresh
+    fleet's own quote then admits the load at the reading the card promised."""
+    quote(_b3_store(), [(LORA, 1.0)])  # installs the fixture's seams
+    monkeypatch.setattr(actor_footprint, "arena_bytes", lambda *_a: 60 * _GIB)
+    head = _quote_with(monkeypatch, _b3_store(), [(LORA, 0.8)], int(8.0 * _GIB), False)
+    assert head.verdict == "refuse"
+    with pytest.raises(old_model.OldModelRefusal) as raised:
+        decide(_fleet(head), 2, unet_name=BASE, keep=frozenset({BASE}))
+    offer = old_model.offer_of(raised.value)
+    assert offer is not None and offer.same_file
+    assert old_model.card_numbers(offer) == "needs 84.0 GiB, 8.0 GiB available on the head"
+    (box,) = offer.boxes
+    cleared = ms.ModelStore()
+    cleared.lora_low_rss, cleared.slab_weights = False, False
+    fresh = _quote_with(monkeypatch, cleared, [(LORA, 0.8)], box.cleared_bytes, False)
+    assert (fresh.would_load, fresh.verdict) == ("fresh", cq.VERDICT_FITS)
+    assert fresh.measured["required_bytes"] == box.required_bytes and fresh.measured["bake"] == "classic"
 
 
 def test_the_new_stacks_own_files_stay_charged_beside_the_backup(quote):

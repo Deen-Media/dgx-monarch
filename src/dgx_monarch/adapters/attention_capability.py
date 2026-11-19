@@ -133,6 +133,56 @@ def assert_static_capability(kernel: str, family: str, head_dim: int | None) -> 
     ))
 
 
+# Kernels xFuser would not build in this process. Stock 0.8.0 checks for the
+# kernel's package as it builds the attention (hybrid/attn_layer.py
+# `_resolve_attn_type`); 0.7.0 built FA and FA3 without it and failed only where
+# the kernel ran. The check reads packages once, at xFuser's import, so the hold
+# lasts the process. Each value is the build's own error, for the refusal.
+_UNBUILT: dict[str, str] = {}
+_UNBUILT_NEEDS: Final[Mapping[str, str]] = MappingProxyType({
+    "FA": "flash-attn 2.7.0 or newer", "FA3": "FlashAttention-3"})
+
+
+def hold_unbuilt(kernel: str, exc: ImportError):
+    """Hold an FA or FA3 build failure until a render would run the kernel; re-raise any other.
+
+    A cfg, data-parallel or single render never runs the sharded attention, so
+    it sets up and renders as it did on 0.7.0. A render that would run it
+    refuses class P at the capability check before any collective
+    (``assert_kernel_capability``), and the returned stand-in refuses the same
+    way if it is ever called.
+    """
+    if kernel not in _UNBUILT_NEEDS:
+        raise exc
+    # xFuser's reason, not its advice: "Leave attn_type unset" is no choice the Init node offers.
+    _UNBUILT[kernel] = str(exc).split(". ", 1)[0].strip().rstrip(".")[:400] or type(exc).__name__
+    log.warning("attention: xFuser did not build %s here (%s); a render that runs it refuses",
+                kernel, _UNBUILT[kernel])
+
+    def unbuilt(*_args, **_kwargs):
+        raise_if_unbuilt(kernel, None)
+        raise RuntimeError(f"{kernel} stand-in called after its hold cleared")
+
+    return unbuilt
+
+
+def raise_if_unbuilt(kernel: str, head_dim: int | None) -> None:
+    """Refuse, class P, a kernel xFuser would not build in this process."""
+    held = _UNBUILT.get(kernel)
+    if held is None:
+        return
+    carry = (_kernels_that_carry(head_dim) if head_dim is not None
+             else "TORCH_FLASH needs only torch. Pick it with the Init node's attention input.")
+    raise UnsupportedModelError(refusal(
+        RefusalClass.PHYSICS,
+        f"{kernel} cannot run the sharded attention on this Worker: xFuser builds it only with "
+        f"{_UNBUILT_NEEDS[kernel]} installed, and here it reported: {held}. {carry} Run this "
+        "workflow on a cfg or single topology instead (for a batch of one, single needs "
+        "mode=local with gpus_per_host=1): neither installs the sharded attention.",
+        troubleshooting=104,
+    ))
+
+
 def _compute_dtype(model) -> torch.dtype:
     """The dtype this model attends in, which is never its stored fp8 weights."""
     for value in (getattr(model, "manual_cast_dtype", None),
@@ -173,6 +223,9 @@ def assert_kernel_capability(kernel: str, family: str, head_dim: int | None,
     if is_sol_kernel(kernel):
         # The sol kernels own this question already, geometry and family both.
         return
+    if kernel in _UNBUILT:
+        _RECORDS[(family, kernel)] = "declined: not built"
+    raise_if_unbuilt(kernel, head_dim)
     assert_static_capability(kernel, family, head_dim)
     if head_dim is None:
         return

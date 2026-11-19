@@ -135,7 +135,11 @@
       "mage_qwen3vl_4b_bf16.safetensors",
       "ministral-3-3b.safetensors",
       "mistral_3_small_flux2_bf16.safetensors",
+      "p-h3-image_prompt_upsampler_bf16.safetensors",
+      "p-h3-image_text_encoder_bf16.safetensors",
       "qwen3.5_9b_bf16.safetensors",
+      "qwen3.5_9b_w4a8_gptq.safetensors",
+      "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
       "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
       "qwen3vl_4b_bf16.safetensors",
       "qwen3vl_8b_bf16.safetensors",
@@ -181,7 +185,8 @@
       "minimax",
       "yue2",
       "flux3",
-      "moss_image"
+      "moss_image",
+      "fibo2"
      ]
     ]
    },
@@ -362,6 +367,59 @@
   "name": "CLIPVisionLoader",
   "python_module": "nodes"
  },
+ "ComfySwitchNode": {
+  "input": {
+   "required": {
+    "switch": [
+     "BOOLEAN",
+     {}
+    ]
+   },
+   "optional": {
+    "on_false": [
+     "COMFY_MATCHTYPE_V3",
+     {
+      "lazy": true,
+      "template": {
+       "template_id": "switch",
+       "allowed_types": "*"
+      }
+     }
+    ],
+    "on_true": [
+     "COMFY_MATCHTYPE_V3",
+     {
+      "lazy": true,
+      "template": {
+       "template_id": "switch",
+       "allowed_types": "*"
+      }
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "switch"
+   ],
+   "optional": [
+    "on_false",
+    "on_true"
+   ]
+  },
+  "output": [
+   "COMFY_MATCHTYPE_V3"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "output"
+  ],
+  "output_node": false,
+  "name": "ComfySwitchNode",
+  "python_module": "comfy_extras.nodes_logic"
+ },
  "ConditioningZeroOut": {
   "input": {
    "required": {
@@ -434,6 +492,20 @@
       ]
      }
     ],
+    "chroma_subsampling": [
+     "COMBO",
+     {
+      "default": "auto",
+      "multiselect": false,
+      "options": [
+       "auto",
+       "444",
+       "422",
+       "420",
+       "none"
+      ]
+     }
+    ],
     "codec": [
      "COMBO",
      {
@@ -444,7 +516,8 @@
        "none",
        "auto",
        "h264",
-       "av1"
+       "av1",
+       "prores"
       ]
      }
     ]
@@ -459,6 +532,7 @@
     "audio",
     "bit_depth",
     "color_space",
+    "chroma_subsampling",
     "codec"
    ]
   },
@@ -474,6 +548,36 @@
   "output_node": false,
   "name": "CreateVideo",
   "python_module": "comfy_extras.nodes_video"
+ },
+ "DGXMonarchBasicGuider": {
+  "input": {
+   "required": {
+    "model": [
+     "DGXM_MODEL"
+    ],
+    "conditioning": [
+     "CONDITIONING"
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "model",
+    "conditioning"
+   ]
+  },
+  "output": [
+   "DGXM_GUIDER"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "guider"
+  ],
+  "output_node": false,
+  "name": "DGXMonarchBasicGuider",
+  "python_module": "custom_nodes.dgx-monarch"
  },
  "DGXMonarchCFGGuider": {
   "input": {
@@ -947,7 +1051,8 @@
     ]
    },
    "hidden": {
-    "unique_id": "UNIQUE_ID"
+    "unique_id": "UNIQUE_ID",
+    "prompt": "PROMPT"
    }
   },
   "input_order": {
@@ -967,7 +1072,8 @@
     "run_id"
    ],
    "hidden": [
-    "unique_id"
+    "unique_id",
+    "prompt"
    ]
   },
   "output": [
@@ -1185,6 +1291,7 @@
       "ltx",
       "mage_flow",
       "minimax_h3",
+      "minimax_h3_image",
       "moss_image",
       "omnigen2",
       "pixeldit_comfy",
@@ -1383,7 +1490,8 @@
     ]
    },
    "hidden": {
-    "unique_id": "UNIQUE_ID"
+    "unique_id": "UNIQUE_ID",
+    "prompt": "PROMPT"
    }
   },
   "input_order": {
@@ -1400,7 +1508,8 @@
     "denoise"
    ],
    "hidden": [
-    "unique_id"
+    "unique_id",
+    "prompt"
    ]
   },
   "output": [
@@ -1571,7 +1680,8 @@
     ]
    },
    "hidden": {
-    "unique_id": "UNIQUE_ID"
+    "unique_id": "UNIQUE_ID",
+    "prompt": "PROMPT"
    }
   },
   "input_order": {
@@ -1591,7 +1701,8 @@
     "return_with_leftover_noise"
    ],
    "hidden": [
-    "unique_id"
+    "unique_id",
+    "prompt"
    ]
   },
   "output": [
@@ -1659,6 +1770,52 @@
   "name": "DGXMonarchLoraLoader",
   "python_module": "custom_nodes.dgx-monarch"
  },
+ "DGXMonarchModelSamplingMiniMaxH3": {
+  "input": {
+   "required": {
+    "model": [
+     "DGXM_MODEL"
+    ],
+    "shift_video": [
+     "FLOAT",
+     {
+      "default": 12.0,
+      "min": 0.01,
+      "max": 100.0,
+      "step": 0.01
+     }
+    ],
+    "shift_audio": [
+     "FLOAT",
+     {
+      "default": 3.0,
+      "min": 0.01,
+      "max": 100.0,
+      "step": 0.01
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "model",
+    "shift_video",
+    "shift_audio"
+   ]
+  },
+  "output": [
+   "DGXM_MODEL"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "model"
+  ],
+  "output_node": false,
+  "name": "DGXMonarchModelSamplingMiniMaxH3",
+  "python_module": "custom_nodes.dgx-monarch"
+ },
  "DGXMonarchModelSamplingSD3": {
   "input": {
    "required": {
@@ -1715,7 +1872,8 @@
     ]
    },
    "hidden": {
-    "unique_id": "UNIQUE_ID"
+    "unique_id": "UNIQUE_ID",
+    "prompt": "PROMPT"
    }
   },
   "input_order": {
@@ -1727,7 +1885,8 @@
     "latent_image"
    ],
    "hidden": [
-    "unique_id"
+    "unique_id",
+    "prompt"
    ]
   },
   "output": [
@@ -1845,9 +2004,11 @@
       "mage_flow_edit_turbo_int8_convrot.safetensors",
       "mage_flow_turbo_int8_convrot.safetensors",
       "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "minimax_h3_image_pruned_int8_convrot.safetensors",
       "moss_image_base_bf16.safetensors",
       "moss_image_sft_bf16.safetensors",
       "omnigen2_fp16.safetensors",
+      "p-h3-image_bf16.safetensors",
       "pid_flux1_1024_to_4096_4step_bf16.safetensors",
       "pixeldit_1300m_1024px_bf16.safetensors",
       "qwen_image_2.1_bf16.safetensors",
@@ -1863,6 +2024,7 @@
       "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
       "wan2.2_t2v_high_noise_14B_fp16.safetensors",
       "wan2.2_t2v_low_noise_14B_fp16.safetensors",
+      "wan2.2_ti2v_5B_fp16.safetensors",
       "wan21_1.3b_flow_rvs_bf16.safetensors",
       "wan_animate_2_bf16.safetensors",
       "wan_animate_2_distill_bf16.safetensors",
@@ -3703,7 +3865,10 @@
    "required": {
     "image": [
      [
+      "blue_dancer.png",
       "example.png",
+      "qwen21_canvas_rgba.png",
+      "qwen21_mask_rgba.png",
       "qwen21_reference_02_rgba.png",
       "qwen21_reference_03_rgba.png",
       "qwen21_reference_04_rgba.png",
@@ -3712,14 +3877,11 @@
       "qwen21_reference_07_rgba.png",
       "qwen21_reference_08_rgba.png",
       "qwen21_reference_09_rgba.png",
-      "reference.png",
-      "wan_animate2_reference.png",
-      "blue_dancer.png",
-      "qwen21_canvas_rgba.png",
-      "qwen21_mask_rgba.png",
       "qwen21_source.png",
+      "reference.png",
       "reference_character.png",
-      "reference_character_mask.png"
+      "reference_character_mask.png",
+      "wan_animate2_reference.png"
      ],
      {
       "image_upload": true
@@ -3796,10 +3958,10 @@
      {
       "multiselect": false,
       "options": [
-       "wan_animate2_driving.mp4",
        "driving_video.mp4",
        "driving_video_mask.mp4",
-       "source_video.mp4"
+       "source_video.mp4",
+       "wan_animate2_driving.mp4"
       ],
       "video_upload": true
      }
@@ -3946,6 +4108,92 @@
   "name": "MiniMaxH3AddGuide",
   "python_module": "comfy_extras.nodes_minimax_h3"
  },
+ "MiniMaxH3ImageConditioning": {
+  "input": {
+   "required": {
+    "clip": [
+     "CLIP",
+     {}
+    ],
+    "prompt": [
+     "STRING",
+     {
+      "multiline": true,
+      "dynamicPrompts": true
+     }
+    ],
+    "width": [
+     "INT",
+     {
+      "default": 0,
+      "min": 0,
+      "max": 16384,
+      "step": 32
+     }
+    ],
+    "height": [
+     "INT",
+     {
+      "default": 0,
+      "min": 0,
+      "max": 16384,
+      "step": 32
+     }
+    ]
+   },
+   "optional": {
+    "vae": [
+     "VAE",
+     {}
+    ],
+    "images": [
+     "COMFY_AUTOGROW_V3",
+     {
+      "template": {
+       "input": {
+        "required": {
+         "image": [
+          "IMAGE",
+          {}
+         ]
+        }
+       },
+       "prefix": "image_",
+       "min": 0,
+       "max": 100
+      }
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "clip",
+    "prompt",
+    "width",
+    "height"
+   ],
+   "optional": [
+    "vae",
+    "images"
+   ]
+  },
+  "output": [
+   "CONDITIONING",
+   "LATENT"
+  ],
+  "output_is_list": [
+   false,
+   false
+  ],
+  "output_name": [
+   "positive",
+   "LATENT"
+  ],
+  "output_node": false,
+  "name": "MiniMaxH3ImageConditioning",
+  "python_module": "comfy_extras.nodes_minimax_h3"
+ },
  "MiniMaxH3ImageToVideo": {
   "input": {
    "required": {
@@ -4033,6 +4281,101 @@
   "name": "MiniMaxH3ImageToVideo",
   "python_module": "comfy_extras.nodes_minimax_h3"
  },
+ "PH3ImageConditioning": {
+  "input": {
+   "required": {
+    "clip": [
+     "CLIP",
+     {}
+    ],
+    "prompt": [
+     "STRING",
+     {
+      "multiline": true,
+      "dynamicPrompts": true
+     }
+    ],
+    "width": [
+     "INT",
+     {
+      "default": 0,
+      "min": 0,
+      "max": 16384,
+      "step": 32
+     }
+    ],
+    "height": [
+     "INT",
+     {
+      "default": 0,
+      "min": 0,
+      "max": 16384,
+      "step": 32
+     }
+    ]
+   },
+   "optional": {
+    "vae": [
+     "VAE",
+     {}
+    ],
+    "images": [
+     "COMFY_AUTOGROW_V3",
+     {
+      "template": {
+       "input": {
+        "required": {
+         "image": [
+          "IMAGE",
+          {}
+         ]
+        }
+       },
+       "names": [
+        "image_1",
+        "image_2",
+        "image_3",
+        "image_4",
+        "image_5",
+        "image_6",
+        "image_7",
+        "image_8",
+        "image_9"
+       ],
+       "min": 0
+      }
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "clip",
+    "prompt",
+    "width",
+    "height"
+   ],
+   "optional": [
+    "vae",
+    "images"
+   ]
+  },
+  "output": [
+   "CONDITIONING",
+   "LATENT"
+  ],
+  "output_is_list": [
+   false,
+   false
+  ],
+  "output_name": [
+   "positive",
+   "LATENT"
+  ],
+  "output_node": false,
+  "name": "PH3ImageConditioning",
+  "python_module": "comfy_extras.nodes_minimax_h3"
+ },
  "PiDConditioning": {
   "input": {
    "required": {
@@ -4088,6 +4431,33 @@
   "output_node": false,
   "name": "PiDConditioning",
   "python_module": "comfy_extras.nodes_pid"
+ },
+ "PreviewAny": {
+  "input": {
+   "required": {
+    "source": [
+     "*",
+     {}
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "source"
+   ]
+  },
+  "output": [
+   "STRING"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "STRING"
+  ],
+  "output_node": true,
+  "name": "PreviewAny",
+  "python_module": "comfy_extras.nodes_preview_any"
  },
  "PrimitiveStringMultiline": {
   "input": {
@@ -4185,6 +4555,395 @@
   "output_node": false,
   "name": "ReferenceLatent",
   "python_module": "comfy_extras.nodes_edit_model"
+ },
+ "RegexExtract": {
+  "input": {
+   "required": {
+    "string": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ],
+    "regex_pattern": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ],
+    "mode": [
+     "COMBO",
+     {
+      "multiselect": false,
+      "options": [
+       "First Match",
+       "All Matches",
+       "First Group",
+       "All Groups"
+      ]
+     }
+    ],
+    "case_insensitive": [
+     "BOOLEAN",
+     {
+      "advanced": true,
+      "default": true
+     }
+    ],
+    "multiline": [
+     "BOOLEAN",
+     {
+      "advanced": true,
+      "default": false
+     }
+    ],
+    "dotall": [
+     "BOOLEAN",
+     {
+      "advanced": true,
+      "default": false
+     }
+    ],
+    "group_index": [
+     "INT",
+     {
+      "advanced": true,
+      "default": 1,
+      "min": 0,
+      "max": 100
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "string",
+    "regex_pattern",
+    "mode",
+    "case_insensitive",
+    "multiline",
+    "dotall",
+    "group_index"
+   ]
+  },
+  "output": [
+   "STRING"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "STRING"
+  ],
+  "output_node": false,
+  "name": "RegexExtract",
+  "python_module": "comfy_extras.nodes_string"
+ },
+ "RegexReplace": {
+  "input": {
+   "required": {
+    "string": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ],
+    "regex_pattern": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ],
+    "replace": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ]
+   },
+   "optional": {
+    "case_insensitive": [
+     "BOOLEAN",
+     {
+      "advanced": true,
+      "default": true
+     }
+    ],
+    "multiline": [
+     "BOOLEAN",
+     {
+      "advanced": true,
+      "default": false
+     }
+    ],
+    "dotall": [
+     "BOOLEAN",
+     {
+      "advanced": true,
+      "default": false
+     }
+    ],
+    "count": [
+     "INT",
+     {
+      "advanced": true,
+      "default": 0,
+      "min": 0,
+      "max": 100
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "string",
+    "regex_pattern",
+    "replace"
+   ],
+   "optional": [
+    "case_insensitive",
+    "multiline",
+    "dotall",
+    "count"
+   ]
+  },
+  "output": [
+   "STRING"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "STRING"
+  ],
+  "output_node": false,
+  "name": "RegexReplace",
+  "python_module": "comfy_extras.nodes_string"
+ },
+ "ResizeImageMaskNode": {
+  "input": {
+   "required": {
+    "input": [
+     "COMFY_MATCHTYPE_V3",
+     {
+      "template": {
+       "template_id": "input_type",
+       "allowed_types": "IMAGE,MASK"
+      }
+     }
+    ],
+    "resize_type": [
+     "COMFY_DYNAMICCOMBO_V3",
+     {
+      "options": [
+       {
+        "key": "scale dimensions",
+        "inputs": {
+         "required": {
+          "width": [
+           "INT",
+           {
+            "default": 512,
+            "min": 0,
+            "max": 16384,
+            "step": 1
+           }
+          ],
+          "height": [
+           "INT",
+           {
+            "default": 512,
+            "min": 0,
+            "max": 16384,
+            "step": 1
+           }
+          ],
+          "crop": [
+           "COMBO",
+           {
+            "default": "center",
+            "multiselect": false,
+            "options": [
+             "disabled",
+             "center"
+            ]
+           }
+          ]
+         }
+        }
+       },
+       {
+        "key": "scale by multiplier",
+        "inputs": {
+         "required": {
+          "multiplier": [
+           "FLOAT",
+           {
+            "default": 1.0,
+            "min": 0.01,
+            "max": 8.0,
+            "step": 0.01
+           }
+          ]
+         }
+        }
+       },
+       {
+        "key": "scale longer dimension",
+        "inputs": {
+         "required": {
+          "longer_size": [
+           "INT",
+           {
+            "default": 512,
+            "min": 0,
+            "max": 16384,
+            "step": 1
+           }
+          ]
+         }
+        }
+       },
+       {
+        "key": "scale shorter dimension",
+        "inputs": {
+         "required": {
+          "shorter_size": [
+           "INT",
+           {
+            "default": 512,
+            "min": 0,
+            "max": 16384,
+            "step": 1
+           }
+          ]
+         }
+        }
+       },
+       {
+        "key": "scale width",
+        "inputs": {
+         "required": {
+          "width": [
+           "INT",
+           {
+            "default": 512,
+            "min": 0,
+            "max": 16384,
+            "step": 1
+           }
+          ]
+         }
+        }
+       },
+       {
+        "key": "scale height",
+        "inputs": {
+         "required": {
+          "height": [
+           "INT",
+           {
+            "default": 512,
+            "min": 0,
+            "max": 16384,
+            "step": 1
+           }
+          ]
+         }
+        }
+       },
+       {
+        "key": "scale total pixels",
+        "inputs": {
+         "required": {
+          "megapixels": [
+           "FLOAT",
+           {
+            "default": 1.0,
+            "min": 0.01,
+            "max": 16.0,
+            "step": 0.01
+           }
+          ]
+         }
+        }
+       },
+       {
+        "key": "match size",
+        "inputs": {
+         "required": {
+          "match": [
+           "IMAGE,MASK",
+           {}
+          ],
+          "crop": [
+           "COMBO",
+           {
+            "default": "center",
+            "multiselect": false,
+            "options": [
+             "disabled",
+             "center"
+            ]
+           }
+          ]
+         }
+        }
+       },
+       {
+        "key": "scale to multiple",
+        "inputs": {
+         "required": {
+          "multiple": [
+           "INT",
+           {
+            "default": 8,
+            "min": 1,
+            "max": 16384,
+            "step": 1
+           }
+          ]
+         }
+        }
+       }
+      ]
+     }
+    ],
+    "scale_method": [
+     "COMBO",
+     {
+      "default": "area",
+      "multiselect": false,
+      "options": [
+       "nearest-exact",
+       "bilinear",
+       "area",
+       "bicubic",
+       "lanczos"
+      ]
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "input",
+    "resize_type",
+    "scale_method"
+   ]
+  },
+  "output": [
+   "COMFY_MATCHTYPE_V3"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "resized"
+  ],
+  "output_node": false,
+  "name": "ResizeImageMaskNode",
+  "python_module": "comfy_extras.nodes_post_processing"
  },
  "SaveAudioAdvanced": {
   "input": {
@@ -4436,6 +5195,12 @@
                 ]
                }
               }
+             },
+             {
+              "key": "prores",
+              "inputs": {
+               "required": {}
+              }
              }
             ]
            }
@@ -4628,6 +5393,12 @@
                 ]
                }
               }
+             },
+             {
+              "key": "prores",
+              "inputs": {
+               "required": {}
+              }
              }
             ]
            }
@@ -4685,6 +5456,26 @@
                  }
                 ]
                }
+              }
+             }
+            ]
+           }
+          ]
+         }
+        }
+       },
+       {
+        "key": "mov",
+        "inputs": {
+         "required": {
+          "codec": [
+           "COMFY_DYNAMICCOMBO_V3",
+           {
+            "options": [
+             {
+              "key": "prores",
+              "inputs": {
+               "required": {}
               }
              }
             ]
@@ -4784,6 +5575,12 @@
           ]
          }
         }
+       },
+       {
+        "key": "prores",
+        "inputs": {
+         "required": {}
+        }
        }
       ]
      }
@@ -4824,6 +5621,146 @@
   "output_node": true,
   "name": "SaveVideo",
   "python_module": "comfy_extras.nodes_video"
+ },
+ "StringCompare": {
+  "input": {
+   "required": {
+    "string_a": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ],
+    "string_b": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ],
+    "mode": [
+     "COMBO",
+     {
+      "multiselect": false,
+      "options": [
+       "Starts With",
+       "Ends With",
+       "Equal"
+      ]
+     }
+    ],
+    "case_sensitive": [
+     "BOOLEAN",
+     {
+      "advanced": true,
+      "default": true
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "string_a",
+    "string_b",
+    "mode",
+    "case_sensitive"
+   ]
+  },
+  "output": [
+   "BOOLEAN"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "BOOLEAN"
+  ],
+  "output_node": false,
+  "name": "StringCompare",
+  "python_module": "comfy_extras.nodes_string"
+ },
+ "StringReplace": {
+  "input": {
+   "required": {
+    "string": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ],
+    "find": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ],
+    "replace": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "string",
+    "find",
+    "replace"
+   ]
+  },
+  "output": [
+   "STRING"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "STRING"
+  ],
+  "output_node": false,
+  "name": "StringReplace",
+  "python_module": "comfy_extras.nodes_string"
+ },
+ "StringTrim": {
+  "input": {
+   "required": {
+    "string": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ],
+    "mode": [
+     "COMBO",
+     {
+      "multiselect": false,
+      "options": [
+       "Both",
+       "Left",
+       "Right"
+      ]
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "string",
+    "mode"
+   ]
+  },
+  "output": [
+   "STRING"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "STRING"
+  ],
+  "output_node": false,
+  "name": "StringTrim",
+  "python_module": "comfy_extras.nodes_string"
  },
  "TextEncodeMageFlowEdit": {
   "input": {
@@ -5051,6 +5988,491 @@
   "name": "TextEncodeQwenImage21",
   "python_module": "comfy_extras.nodes_qwen"
  },
+ "TextGenerateV2": {
+  "input": {
+   "required": {
+    "clip": [
+     "CLIP",
+     {}
+    ],
+    "prompt": [
+     "STRING",
+     {
+      "default": "",
+      "multiline": true,
+      "dynamicPrompts": true
+     }
+    ],
+    "max_length": [
+     "INT",
+     {
+      "default": 512,
+      "min": 1,
+      "max": 32768
+     }
+    ],
+    "sampling_mode": [
+     "COMFY_DYNAMICCOMBO_V3",
+     {
+      "display_name": "Sampling Mode",
+      "options": [
+       {
+        "key": "on",
+        "inputs": {
+         "required": {
+          "temperature": [
+           "FLOAT",
+           {
+            "default": 0.7,
+            "min": 0.01,
+            "max": 2.0,
+            "step": 1e-06
+           }
+          ],
+          "top_k": [
+           "INT",
+           {
+            "default": 64,
+            "min": 0,
+            "max": 1000
+           }
+          ],
+          "top_p": [
+           "FLOAT",
+           {
+            "default": 0.95,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+           }
+          ],
+          "min_p": [
+           "FLOAT",
+           {
+            "default": 0.05,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+           }
+          ],
+          "repetition_penalty": [
+           "FLOAT",
+           {
+            "default": 1.05,
+            "min": 0.0,
+            "max": 5.0,
+            "step": 0.01
+           }
+          ],
+          "presence_penalty": [
+           "FLOAT",
+           {
+            "default": 0.0,
+            "min": 0.0,
+            "max": 5.0,
+            "step": 0.01
+           }
+          ],
+          "seed": [
+           "INT",
+           {
+            "default": 0,
+            "min": 0,
+            "max": 18446744073709551615
+           }
+          ]
+         }
+        }
+       },
+       {
+        "key": "off",
+        "inputs": {
+         "required": {}
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "optional": {
+    "images": [
+     "COMFY_AUTOGROW_V3",
+     {
+      "template": {
+       "input": {
+        "required": {
+         "image": [
+          "IMAGE",
+          {}
+         ]
+        }
+       },
+       "names": [
+        "image1",
+        "image2",
+        "image3",
+        "image4",
+        "image5",
+        "image6",
+        "image7",
+        "image8",
+        "image9",
+        "image10",
+        "image11",
+        "image12",
+        "image13",
+        "image14",
+        "image15",
+        "image16",
+        "image17",
+        "image18",
+        "image19",
+        "image20",
+        "image21",
+        "image22",
+        "image23",
+        "image24",
+        "image25",
+        "image26",
+        "image27",
+        "image28",
+        "image29",
+        "image30",
+        "image31",
+        "image32",
+        "image33",
+        "image34",
+        "image35",
+        "image36",
+        "image37",
+        "image38",
+        "image39",
+        "image40",
+        "image41",
+        "image42",
+        "image43",
+        "image44",
+        "image45",
+        "image46",
+        "image47",
+        "image48",
+        "image49",
+        "image50"
+       ],
+       "min": 0
+      }
+     }
+    ],
+    "videos": [
+     "COMFY_AUTOGROW_V3",
+     {
+      "template": {
+       "input": {
+        "required": {
+         "video": [
+          "IMAGE",
+          {}
+         ]
+        }
+       },
+       "names": [
+        "video1",
+        "video2",
+        "video3",
+        "video4",
+        "video5",
+        "video6",
+        "video7",
+        "video8",
+        "video9",
+        "video10",
+        "video11",
+        "video12",
+        "video13",
+        "video14",
+        "video15",
+        "video16",
+        "video17",
+        "video18",
+        "video19",
+        "video20",
+        "video21",
+        "video22",
+        "video23",
+        "video24",
+        "video25",
+        "video26",
+        "video27",
+        "video28",
+        "video29",
+        "video30",
+        "video31",
+        "video32",
+        "video33",
+        "video34",
+        "video35",
+        "video36",
+        "video37",
+        "video38",
+        "video39",
+        "video40",
+        "video41",
+        "video42",
+        "video43",
+        "video44",
+        "video45",
+        "video46",
+        "video47",
+        "video48",
+        "video49",
+        "video50",
+        "video51",
+        "video52",
+        "video53",
+        "video54",
+        "video55",
+        "video56",
+        "video57",
+        "video58",
+        "video59",
+        "video60",
+        "video61",
+        "video62",
+        "video63",
+        "video64",
+        "video65",
+        "video66",
+        "video67",
+        "video68",
+        "video69",
+        "video70",
+        "video71",
+        "video72",
+        "video73",
+        "video74",
+        "video75",
+        "video76",
+        "video77",
+        "video78",
+        "video79",
+        "video80",
+        "video81",
+        "video82",
+        "video83",
+        "video84",
+        "video85",
+        "video86",
+        "video87",
+        "video88",
+        "video89",
+        "video90",
+        "video91",
+        "video92",
+        "video93",
+        "video94",
+        "video95",
+        "video96",
+        "video97",
+        "video98",
+        "video99",
+        "video100"
+       ],
+       "min": 0
+      }
+     }
+    ],
+    "audios": [
+     "COMFY_AUTOGROW_V3",
+     {
+      "template": {
+       "input": {
+        "required": {
+         "audio": [
+          "AUDIO",
+          {}
+         ]
+        }
+       },
+       "names": [
+        "audio1",
+        "audio2",
+        "audio3",
+        "audio4",
+        "audio5",
+        "audio6",
+        "audio7",
+        "audio8",
+        "audio9",
+        "audio10",
+        "audio11",
+        "audio12",
+        "audio13",
+        "audio14",
+        "audio15",
+        "audio16",
+        "audio17",
+        "audio18",
+        "audio19",
+        "audio20",
+        "audio21",
+        "audio22",
+        "audio23",
+        "audio24",
+        "audio25",
+        "audio26",
+        "audio27",
+        "audio28",
+        "audio29",
+        "audio30",
+        "audio31",
+        "audio32",
+        "audio33",
+        "audio34",
+        "audio35",
+        "audio36",
+        "audio37",
+        "audio38",
+        "audio39",
+        "audio40",
+        "audio41",
+        "audio42",
+        "audio43",
+        "audio44",
+        "audio45",
+        "audio46",
+        "audio47",
+        "audio48",
+        "audio49",
+        "audio50",
+        "audio51",
+        "audio52",
+        "audio53",
+        "audio54",
+        "audio55",
+        "audio56",
+        "audio57",
+        "audio58",
+        "audio59",
+        "audio60",
+        "audio61",
+        "audio62",
+        "audio63",
+        "audio64",
+        "audio65",
+        "audio66",
+        "audio67",
+        "audio68",
+        "audio69",
+        "audio70",
+        "audio71",
+        "audio72",
+        "audio73",
+        "audio74",
+        "audio75",
+        "audio76",
+        "audio77",
+        "audio78",
+        "audio79",
+        "audio80",
+        "audio81",
+        "audio82",
+        "audio83",
+        "audio84",
+        "audio85",
+        "audio86",
+        "audio87",
+        "audio88",
+        "audio89",
+        "audio90",
+        "audio91",
+        "audio92",
+        "audio93",
+        "audio94",
+        "audio95",
+        "audio96",
+        "audio97",
+        "audio98",
+        "audio99",
+        "audio100"
+       ],
+       "min": 0
+      }
+     }
+    ],
+    "thinking": [
+     "BOOLEAN",
+     {
+      "default": false
+     }
+    ],
+    "use_default_template": [
+     "BOOLEAN",
+     {
+      "advanced": true,
+      "default": true
+     }
+    ],
+    "mtp": [
+     "COMBO",
+     {
+      "default": "auto",
+      "multiselect": false,
+      "options": [
+       "auto",
+       "off",
+       "2",
+       "3",
+       "4",
+       "5",
+       "tree2s1",
+       "tree2s2",
+       "tree3s1",
+       "tree4s1m8"
+      ]
+     }
+    ],
+    "system_prompt": [
+     "STRING",
+     {
+      "forceInput": true,
+      "multiline": false
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "clip",
+    "prompt",
+    "max_length",
+    "sampling_mode"
+   ],
+   "optional": [
+    "images",
+    "videos",
+    "audios",
+    "thinking",
+    "use_default_template",
+    "mtp",
+    "system_prompt"
+   ]
+  },
+  "output": [
+   "STRING",
+   "STRING"
+  ],
+  "output_is_list": [
+   false,
+   false
+  ],
+  "output_name": [
+   "generated_text",
+   "thinking"
+  ],
+  "output_node": false,
+  "name": "TextGenerateV2",
+  "python_module": "comfy_extras.nodes_textgen"
+ },
  "TrimVideoLatent": {
   "input": {
    "required": {
@@ -5274,9 +6696,12 @@
       "ltx-2.5-video-vae-bf16.safetensors",
       "mage_flow_vae_bf16.safetensors",
       "minimax_h3_audio_vae_fp32.safetensors",
+      "minimax_h3_image_vae_fp16.safetensors",
       "minimax_h3_video_vae_fp16.safetensors",
+      "p-h3-image_vae_bf16.safetensors",
       "qwen_image_2.1_vae_bf16.safetensors",
       "qwen_image_vae.safetensors",
+      "wan2.2_vae.safetensors",
       "wan21_flow_rvs_mask_vae_bf16.safetensors",
       "wan_2.1_vae.safetensors",
       "pixel_space"
@@ -5301,6 +6726,81 @@
   "output_node": false,
   "name": "VAELoader",
   "python_module": "nodes"
+ },
+ "Wan22ImageToVideoLatent": {
+  "input": {
+   "required": {
+    "vae": [
+     "VAE",
+     {}
+    ],
+    "width": [
+     "INT",
+     {
+      "default": 1280,
+      "min": 32,
+      "max": 16384,
+      "step": 32
+     }
+    ],
+    "height": [
+     "INT",
+     {
+      "default": 704,
+      "min": 32,
+      "max": 16384,
+      "step": 32
+     }
+    ],
+    "length": [
+     "INT",
+     {
+      "default": 49,
+      "min": 1,
+      "max": 16384,
+      "step": 4
+     }
+    ],
+    "batch_size": [
+     "INT",
+     {
+      "default": 1,
+      "min": 1,
+      "max": 4096
+     }
+    ]
+   },
+   "optional": {
+    "start_image": [
+     "IMAGE",
+     {}
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "vae",
+    "width",
+    "height",
+    "length",
+    "batch_size"
+   ],
+   "optional": [
+    "start_image"
+   ]
+  },
+  "output": [
+   "LATENT"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "LATENT"
+  ],
+  "output_node": false,
+  "name": "Wan22ImageToVideoLatent",
+  "python_module": "comfy_extras.nodes_wan"
  },
  "WanAnimate2ToVideo": {
   "input": {

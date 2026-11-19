@@ -51,8 +51,11 @@ def _token(context):
 
 
 def test_runtime_identity_reads_this_interpreters_torch():
+    from dgx_monarch import xfuser_build
+
     assert gate_runtime.runtime_build_identity() == {
-        "torch": str(torch.__version__), "cuda": str(torch.version.cuda or "none")}
+        "torch": str(torch.__version__), "cuda": str(torch.version.cuda or "none"),
+        "xfuser": xfuser_build.installed_version()}
 
 
 def test_every_capability_context_carries_the_same_runtime(monkeypatch):

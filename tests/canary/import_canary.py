@@ -6,8 +6,9 @@
 The default path exercises the GPUWorker import surface: ComfyUI loaders and
 samplers, xFuser distributed state, Monarch actors, and dgx-monarch. Set
 ``DGXM_IMPORT_CPU=1`` in CPU-only CI. That mode keeps every other import but
-checks only that xFuser is installed: under a CPU-only torch build, importing
-xFuser raises NotImplementedError from ``xfuser.envs.get_device_version``.
+checks only that xFuser is installed: under a CPU-only torch build, the patched
+0.7.0+dgxm.npuimport1 build raises NotImplementedError from
+``xfuser.envs.get_device_version`` at import.
 """
 import os
 import socket
@@ -42,7 +43,7 @@ else:
     from xfuser_import_surface import load_gpu_surface
 
     load_gpu_surface()
-    xfuser_status = "xfuser distributed and lazy ring import OK"
+    xfuser_status = "xfuser distributed and ring import OK"
 
 from dgx_monarch import TORCHMONARCH_PIN, __version__  # noqa: E402
 from dgx_monarch.actor import GPUWorker  # noqa: F401, E402

@@ -28,6 +28,7 @@ from dgx_monarch.actor import (
     sample_protocol,
 )
 from dgx_monarch.refusal import parse_refusal_tag
+from rank_exit_helpers import ENDING
 
 REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src"
@@ -514,7 +515,7 @@ peer_record = pathlib.Path(out).with_name(f"rank{1 - rank}.json")
 deadline = time.monotonic() + hold_s
 while time.monotonic() < deadline and not peer_record.exists():
     time.sleep(0.05)
-'''
+''' + ENDING
 
 
 def _two_ranks(tmp_path, mode, hold_s, wait_s):

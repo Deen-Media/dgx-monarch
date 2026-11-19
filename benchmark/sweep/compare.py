@@ -157,7 +157,9 @@ def audio_line(audio: dict) -> str:
              f"at {first.get('rate')} Hz for {first.get('seconds')} s")
     if audio.get("identical"):
         return f"identical samples; {shape}"
-    return (f"lowest channel envelope correlation {audio.get('envelope_correlation')} over "
+    # A correlation of 1.0 does not say the samples matched; a record that kept the flag says so.
+    differ = "samples differ; " if audio.get("identical") is False else ""
+    return (f"{differ}lowest channel envelope correlation {audio.get('envelope_correlation')} over "
             f"{audio.get('channels_correlated')} channel(s); {shape}")
 
 
