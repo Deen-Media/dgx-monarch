@@ -220,6 +220,16 @@ on 2026-11-18, exits 0.5 to 8.0 s into the detour, by a normal return or by
 Ctrl+C, logged no warning and no error after the notice, and every process
 exited with code 0.
 
+A render that ComfyUI starts after the notice, the next prompt in its queue for
+one, does not reach the Workers: it waits at the pack's entry, logging nothing,
+and ComfyUI starts no other prompt behind it, so the process ends with that
+render still waiting. A closing ComfyUI therefore prints at most the cut
+render's own error, then nothing, for any length of queue. If the process is
+still alive 30 s after that render started, because an exit hook hung, the
+render stops with "the driver is exiting, so this render, load or node did not
+start", which ComfyUI logs as its error
+([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
+
 The render refuses at once instead, with a class C `cross_rank_capacity`
 refusal that names the remedy, when the reading finds:
 
@@ -2568,6 +2578,24 @@ service's actors were gone when the driver was, or 3 s after it when a call
 held the actor's process, as a render's step does; Monarch gives each one up
 to 10 s to stop, so allow about 10 s. ComfyUI itself may still log the
 interrupted render's own error.
+
+Nothing new reaches the Workers after the notice, from any thread. A render,
+load or node that starts then waits at the pack's entry, logging nothing, until
+the process ends; ComfyUI starts no other prompt while it waits. A price, a
+setup, a dispatch, a reset or a status poll that a render already under way
+would send next is not sent, and the lease renewals stop. A call in flight and
+a stop under way run to their end. So a closing ComfyUI prints at most the cut
+render's own error, then nothing, however many prompts were queued. Before,
+each queued prompt that started priced on the closing Workers and printed its
+error, and from about 1 s after the notice Monarch panicked on the send
+(`SendError` on stderr). A process still alive 30 s after the waiting render
+started, because an exit hook hung, ends that render with "the driver is
+exiting, so this render, load or node did not start". On loopback on
+2026-11-18, with 2 or 4 renders queued behind the cut one and the next
+starting 0.2 to 2.0 s after the notice, by a normal return or by Ctrl+C, one
+render entered and waited, none printed, Monarch did not panic, the exit took
+as long as before, and every process exited with code 0; with an exit hook held
+35 s, the waiting render stopped at 30 s with that one error.
 
 A ComfyUI stopped by SIGTERM (`systemctl stop`, `kill`), killed outright, or
 restarted by replacing its process without running its exit steps (as some

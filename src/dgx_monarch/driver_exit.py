@@ -22,6 +22,16 @@ the loggers that path writes through (``QUIET_LOGGERS``) drop its records once
 the flag is set. So no daemon thread of the driver's writes to stderr while the
 interpreter shuts down.
 
+Nothing new starts on the Workers once the flag is set. A render, load or node
+that starts then (ComfyUI's prompt worker takes every queued prompt until the
+interpreter stops it) waits at the top of ``mesh.get_mesh`` and
+``mesh.ensure_live`` (``hold_at_entry``) until the process ends, and raises only
+after ``HOLD_AT_EXIT_S``. Past the entry, each new send (a price, a setup, a
+dispatch, an all-rank call, a reset) raises ``DriverExitingError``
+(``refuse_new_call``), and the best-effort ones (the cancel, the lease renewal,
+a setup's rollback) skip themselves. No pack log line reports that error
+(``log.SilentInLogs``). A call in flight and a stop under way run to their end.
+
 The hook sets the flag only once the main thread has ended. Python marks it
 ended before it runs exit hooks (checked on 3.11, 3.12 and 3.13), so a call
 while ComfyUI still runs, which would leave every later lost Worker unevicted,
@@ -36,7 +46,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any, TypeVar
 
-from .log import get_logger
+from .log import SilentInLogs, get_logger
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 _log = get_logger("dgx_monarch.mesh")
@@ -112,6 +122,63 @@ def install() -> None:
 def exiting() -> bool:
     """Whether interpreter exit has begun (the hook ran)."""
     return _EXITING.is_set()
+
+
+class DriverExitingError(RuntimeError, SilentInLogs):
+    """A new call to the Worker actors that the driver did not send because it is exiting.
+
+    ``SilentInLogs``: no pack log line reports it, so a handler that catches it
+    and warns (an unload or a status poll that "failed") prints nothing.
+    """
+
+
+SENT_NOTHING = ("the driver is exiting, so it sent nothing new to the Worker actors: "
+                "Monarch's exit step stops them")
+
+
+def refuse_new_call() -> None:
+    """Raise ``DriverExitingError`` once exit has begun: no new call reaches the Workers.
+
+    The one check every new send makes (a price, a setup, a dispatch, an
+    all-rank call). A call already in flight and a stop already under way run
+    to their end; a best-effort send (the cancel, the lease renewal) reads
+    ``exiting`` and skips itself instead, since it raises nothing to its caller.
+    """
+    if _EXITING.is_set():
+        raise DriverExitingError(SENT_NOTHING)
+
+
+# How long a render, load or node that starts once the driver is exiting waits at
+# the entry for the process to end before it refuses. A process ends about 0.5 s
+# after the notice on loopback; one still alive at the bound has an exit hook that
+# hung, and the refusal is then the one error it prints.
+HOLD_AT_EXIT_S = 30.0
+_PROCESS_ENDS = threading.Event()  # never set: the process ends first
+NOT_STARTED = ("the driver is exiting, so this render, load or node did not start: "
+               "Monarch's exit step stops the Worker actors, and nothing was sent to them")
+
+
+def hold_at_entry(handle: Any = None) -> None:
+    """Hold a render, load or node that starts once exit has begun; refuse at the bound.
+
+    At the top of ``mesh.get_mesh`` and ``mesh.ensure_live``, before any lock,
+    registry change, attach, id reading or price. ComfyUI's prompt worker takes
+    every queued prompt until the interpreter stops it, and prints two ERROR
+    records for each that fails, so a refusal here would print a traceback per
+    queued prompt while the process closes. Held, the first such prompt waits,
+    logs nothing and takes no lock, and the worker takes no other: the process
+    ends, and the daemon thread with it. After ``HOLD_AT_EXIT_S`` it raises
+    ``DriverExitingError``. A thread that owns ``handle``'s lock, which a stop
+    takes, refuses at once instead of holding (no caller enters so; checked here).
+    """
+    if not _EXITING.is_set():
+        return
+    lock = getattr(handle, "lock", None)
+    owned = getattr(lock, "_is_owned", None)
+    if callable(owned) and owned():
+        raise DriverExitingError(NOT_STARTED)
+    _PROCESS_ENDS.wait(HOLD_AT_EXIT_S)
+    raise DriverExitingError(f"{NOT_STARTED} (it waited {HOLD_AT_EXIT_S:.0f} s for the process to end)")
 
 
 def skipped_at_exit(fn: _F) -> _F:

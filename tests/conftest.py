@@ -401,6 +401,39 @@ def _no_driver_exit_hook_at_pytest_exit():
         atexit.unregister(module._begin)  # nothing to do when no test registered it
 
 
+@pytest.fixture(autouse=True)
+def _driver_exit_flag_never_leaks():
+    """Every test starts and ends with the driver's exit flag clear.
+
+    Once it is set, every new call to the Workers refuses (driver_exit), so one
+    test that left it set would fail every later test that dispatches, far from
+    its cause. A test that sets the flag through ``driver_exit._begin`` must
+    clear it; one that swaps in its own ``_EXITING`` through monkeypatch leaves
+    the process's flag alone, which is the one checked here (monkeypatch may put
+    the swap back after this runs). A leak is cleared and fails the test that left it.
+    The entry's hold at exit (``hold_at_entry``) is bounded at 0.5 s here, so a
+    test that reaches the entry with the flag set fails in moments, not 30 s.
+    """
+    module = sys.modules.get("dgx_monarch.driver_exit")
+    flag = getattr(module, "_EXITING", None)
+    if flag is not None:
+        assert not flag.is_set(), "an earlier test left the driver's exit flag set"
+    bound = getattr(module, "HOLD_AT_EXIT_S", None)
+    if bound is not None:
+        module.HOLD_AT_EXIT_S = 0.5
+    try:
+        yield
+    finally:
+        if bound is not None:
+            module.HOLD_AT_EXIT_S = bound
+    if flag is None:
+        module = sys.modules.get("dgx_monarch.driver_exit")
+        flag = getattr(module, "_EXITING", None)
+    if flag is not None and flag.is_set():
+        flag.clear()
+        pytest.fail("this test left the driver's exit flag set (driver_exit.reset clears it)")
+
+
 @pytest.fixture
 def sp(monkeypatch):
     """Patch the xfuser rank accessors read by ``base.shard_seq``.

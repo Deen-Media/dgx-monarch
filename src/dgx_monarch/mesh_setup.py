@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 from typing import Any
 
+from . import driver_exit
 from . import mesh_setup_state as _state
 from .mesh_lease import (  # noqa: F401  # Public mesh_setup compatibility API.
     SetupBoundFuture,
@@ -258,6 +259,7 @@ def dispatch_sample(
     """Own a logical session through one sample's terminal lease."""
     from .mesh_session import RenderSession, claim_render_session
 
+    driver_exit.refuse_new_call()  # before any session, lease or send
     candidate = RenderSession()
     session = None
     owns_session = False

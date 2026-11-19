@@ -422,8 +422,9 @@ def collect(handle: Any, request: dict, world: int, *,
     any eviction, so a SupervisionError while every loop serves a new id ends
     it with the same error (``restart_reattach.PriceWait``).
     """
-    from . import delivery_faults, mesh_setup, restart_reattach
+    from . import delivery_faults, driver_exit, mesh_setup, restart_reattach
 
+    driver_exit.refuse_new_call()  # no quote is sent once the driver is exiting
     mesh_setup.require_endpoint(handle, "capacity_quote")
     gpus = int(getattr(handle, "gpus_per_host", 1) or 1)
     labels = list(handle.workers.extent.labels)

@@ -12,6 +12,7 @@ from typing import Any
 
 from .. import accuracy_waiver
 from ..accuracy_waiver import KNOWN_WRONG_KINDS, REQUEST_KEY, RESULT_KEY, STAMPED_RESULT_KEY
+from ..driver_exit import DriverExitingError
 from ..log import get_logger
 from ..transfer_utils import safe_call
 
@@ -207,8 +208,12 @@ def settle_aborted_ceremony(model: Any, exc: BaseException) -> None:
     proof itself. Ordinary residency can fall back to stock and raise the guard
     again during the requested render. Comfy-managed residency cannot switch to
     stock in-process: raise the class-K refusal here before a generic class-P
-    message incorrectly recommends retrying the same blocked proof.
+    message incorrectly recommends retrying the same blocked proof. The driver's
+    exit is no abort to settle: its refusal is raised as it came, with no stock
+    fallback and no quarantine (driver_exit).
     """
+    if isinstance(exc, DriverExitingError):
+        raise exc
     try:
         guard = blocking_guard(exc)
         descriptor = None if guard is None else blocking_descriptor(exc)

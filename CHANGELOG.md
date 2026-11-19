@@ -450,6 +450,16 @@ sections after them list every change.
   was closing; only `auto_heal`'s check already under way before an attach
   runs to its end, and may still restart a Worker service it found dead
   ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
+- A ComfyUI that closes with prompts queued prints at most the cut render's
+  own error, then nothing. A render, load or node that starts after the exit
+  notice waits at the pack's entry until the process ends instead of reaching
+  the Workers, and nothing new is sent to them from any thread; a call in
+  flight and a stop under way run to their end. Before, each queued prompt
+  that started priced on the closing Workers and printed its error, and from
+  about 1 s after the notice Monarch panicked natively on the send. A process
+  still alive 30 s later, because an exit hook hung, ends the waiting render
+  with "the driver is exiting, so this render, load or node did not start"
+  ([TROUBLESHOOTING #51](docs/TROUBLESHOOTING.md#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
 - A graph with no LoRA stack whose model takes no slab residency no longer
   pays two proof renders before its first render. The first-use gate could
   only record that there was nothing to compare there, and that verdict
