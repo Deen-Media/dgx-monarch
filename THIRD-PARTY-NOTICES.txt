@@ -142,7 +142,7 @@ The optional Studio application includes the following MIT-licensed runtime
 components. Development tools remain build dependencies. Each version below
 matches studio/package-lock.json.
 
-Svelte 5.57.2 runtime
+Svelte 5.57.3 runtime
 ---------------------
 Copyright (c) 2016-2025 [Svelte Contributors](https://github.com/sveltejs/svelte/graphs/contributors)
 
@@ -152,7 +152,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-Vite 7.3.7 module-preload helper
+Vite 7.3.8 module-preload helper
 --------------------------------
 # Vite core license
 Vite is released under the MIT license:
