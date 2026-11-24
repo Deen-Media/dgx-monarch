@@ -80,6 +80,19 @@ def rdma_drop_phase():
     return phase("rdma_drop", return_mode="rdma")
 
 
+def drop_rdma_buffer(buffer: Any, timeout: float) -> None:
+    """Release a Worker's RDMA buffer, or skip it once the driver is exiting.
+
+    A best-effort send, as the cancel is: Monarch's exit step stops the actor
+    that holds the buffer, which frees it, so nothing new is sent (driver_exit).
+    """
+    from . import driver_exit
+
+    if driver_exit.exiting():
+        return
+    buffer.drop().get(timeout=timeout)
+
+
 def rdma_register_phase():
     from .runtime_diagnostics import phase
 

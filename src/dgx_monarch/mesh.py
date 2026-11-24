@@ -11,6 +11,7 @@ from . import (
     TORCHMONARCH_PIN,
     __version__,
     client_lease,
+    driver_exit,
     mesh_attach,
     mesh_creation,
     mesh_factory,
@@ -182,21 +183,12 @@ class MeshHandle:
             raise
     def call_all(self, endpoint_name: str, *args, timeout_s: float = 900.0,
                  setup_token: mesh_setup.SetupToken | None = None, **kwargs) -> list:
-        return mesh_rpc.call_all(
-            self, endpoint_name, *args, timeout_s=timeout_s,
-            setup_token=setup_token, **kwargs)
-    def _call_all_bound(self, endpoint_name: str, *args,
-                        timeout_s: float = 900.0,
-                        setup_token: mesh_setup.SetupToken | None = None,
-                        **kwargs) -> list:
-        return mesh_rpc.call_all_bound(
-            self, endpoint_name, *args, timeout_s=timeout_s,
-            setup_token=setup_token, **kwargs)
-    def _latch_ambiguous_mutation(
-        self, endpoint_name: str, timeout_s: float, exc: BaseException
-    ) -> None:
-        mesh_rpc.latch_ambiguous_mutation(
-            self, endpoint_name, timeout_s, exc, logger=log)
+        return mesh_rpc.call_all(self, endpoint_name, *args, timeout_s=timeout_s, setup_token=setup_token, **kwargs)
+    def _call_all_bound(self, endpoint_name: str, *args, timeout_s: float = 900.0,
+                        setup_token: mesh_setup.SetupToken | None = None, **kwargs) -> list:
+        return mesh_rpc.call_all_bound(self, endpoint_name, *args, timeout_s=timeout_s, setup_token=setup_token, **kwargs)
+    def _latch_ambiguous_mutation(self, endpoint_name: str, timeout_s: float, exc: BaseException) -> None:
+        mesh_rpc.latch_ambiguous_mutation(self, endpoint_name, timeout_s, exc, logger=log)
     def _verify_request_artifacts(self, request: dict, worker_index: int | None = None) -> None:
         mesh_rpc.verify_request_artifacts(self, request, worker_index)
 
@@ -274,7 +266,8 @@ class MeshHandle:
         return mesh_rpc.cancel_sample(self, render_id, timeout_s, wait, log)
 
     def shutdown(
-        self, timeout_s: float = 60.0, *, stop_timeout_s: float | None = None, _reconcile_token: object | None = None
+        self, timeout_s: float = 60.0, *, stop_timeout_s: float | None = None, _reconcile_token: object | None = None,
+        _refuse_at_exit: bool = False,
     ) -> None:
         """Stop client-owned mesh processes while leaving Worker services available.
 
@@ -285,7 +278,11 @@ class MeshHandle:
 
         Local meshes also require an explicit process stop during eviction.
         ``owns_hosts`` controls only external Worker coordinators; this handle owns
-        its ProcMesh in every mode.
+        its ProcMesh in every mode. ``_refuse_at_exit``: the stop for a config
+        change (``get_mesh``) and the restart detour's stop of the stale fleet
+        (``restart_reattach``), which send nothing once the driver is exiting,
+        even after they waited for the lifecycle lock (driver_exit); every other
+        stop runs.
         """
         if getattr(self, "teardown_complete", False):
             # A recycle (or an earlier clean detach) already stopped these
@@ -296,7 +293,8 @@ class MeshHandle:
         envelope = mesh_teardown.shutdown_envelope_s(timeout_s, stop_timeout_s)
         try:
             mesh_helpers.run_blocking_off_loop(
-                lambda: self._shutdown_impl(timeout_s, stop_timeout_s=stop_timeout_s, _reconcile_token=_reconcile_token),
+                lambda: self._shutdown_impl(timeout_s, stop_timeout_s=stop_timeout_s, _reconcile_token=_reconcile_token,
+                                            refuse_at_exit=_refuse_at_exit),
                 envelope, "dgxm-shutdown")
         except TimeoutError as exc:
             raise mesh_safety.PriorTeardownUnknownError(
@@ -307,13 +305,14 @@ class MeshHandle:
 
     def _shutdown_impl(self, timeout_s: float = 60.0, *, stop_timeout_s: float | None = None,
                        _reconcile_token: object | None = None,
-                       lock_timeout_s: float = 10.0) -> None:
+                       lock_timeout_s: float = 10.0, refuse_at_exit: bool = False) -> None:
         phase, stop_phase = mesh_teardown.shutdown_phases(timeout_s, stop_timeout_s)
         with mesh_setup.lifecycle_lock(self, "shutdown", lock_timeout_s):
+            if refuse_at_exit:
+                driver_exit.refuse_new_call()  # it waited for the lock: no teardown, no stop
             if getattr(self, "teardown_complete", False):
                 return
-            expected_reconcile = getattr(
-                self, "_supervision_reconcile_token", None)
+            expected_reconcile = getattr(self, "_supervision_reconcile_token", None)
             force_reconcile = (
                 _reconcile_token is not None
                 and _reconcile_token is expected_reconcile
@@ -391,6 +390,7 @@ def get_mesh(
     """Get/create a mesh; a private claim marks only same-call creation."""
     global _TRANSPORT_MODE, _TRANSPORT_POISON
     global _TRANSPORT_CLAIM_GENERATION, _TRANSPORT_COMMITTED_GENERATION
+    driver_exit.hold_at_entry()  # at exit: waits for the process to end, before anything
     install_fault_hook()
     mesh_creation.reap_abandoned_attempts(globals())
     resolved = find_config_path(config_path or None)
@@ -516,11 +516,15 @@ def get_mesh(
             # Admit before recycling: a config edit the driver refuses keeps the working fleet.
             previous_admission = prepare_driver(config)
             if old is not None:
+                driver_exit.refuse_new_call()  # no new stop once the driver is exiting
                 log.info("mesh source/config changed; recycling the previous fleet")
                 try:
-                    old.shutdown(timeout_s=30, stop_timeout_s=mesh_teardown.proc_stop_bound_s())  # never under _MESH_LOCK
+                    old.shutdown(timeout_s=30, stop_timeout_s=mesh_teardown.proc_stop_bound_s(),  # never under _MESH_LOCK
+                                 _refuse_at_exit=True)
                 except Exception as exc:
                     restore_driver(previous_admission)  # old stays registered and reusable on a revert
+                    if isinstance(exc, driver_exit.DriverExitingError):
+                        raise  # the stop waited for the lock and the exit began: nothing was stopped
                     raise MeshAttachError(
                         "configuration changed, but old workers could not be stopped safely; reset "
                         "the Attached mesh, or restart ComfyUI once they are confirmed gone") from exc
@@ -633,6 +637,7 @@ def ensure_live(
     """Swap a defunct handle for a fresh mesh on the same config: ComfyUI caches
     node outputs, so a MeshSpec built before a worker death keeps referencing the
     evicted handle, and routing through here heals a re-queue without a restart."""
+    driver_exit.hold_at_entry(handle)  # at exit: before the liveness probe and any lock
     mesh_liveness.try_release(handle)
     verdict = _coherent_lifecycle_verdict(handle)
     if verdict in ("blocked", "unresolved"):

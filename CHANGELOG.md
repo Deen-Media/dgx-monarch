@@ -450,6 +450,31 @@ sections after them list every change.
   was closing; only `auto_heal`'s check already under way before an attach
   runs to its end, and may still restart a Worker service it found dead
   ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
+- A ComfyUI that closes with prompts queued prints at most the cut render's
+  own error, then nothing for the queue's DGX Monarch renders. The DGX Monarch
+  nodes with no wrapper and no mesh call (Load LoRA, the Model Sampling nodes,
+  the Qwen Image 2.1 Cache, Skip Layer Guidance, MiniMax H3 Context Windows and
+  the guiders) still run and print their own refusals, as stock ComfyUI nodes
+  do. A render, load or node that starts after the exit notice waits at the
+  pack's entry until the process ends instead of reaching the Workers, and
+  nothing new is sent to them from any thread; a call in flight, a stop under
+  way, the cleanup of a fleet bring-up under way and the steps of an attach
+  after its dial run to their end. Once the exit has begun, no DGX Monarch log
+  line that carries the exit's refusal, as the error itself or as its text, is
+  printed. The cut render leaves no verdict and no lever behind: a native
+  latent read the exit refused or cut no longer latches native return off with
+  a WARNING or reports its poisoned ownership at ERROR, and an identity gate
+  ceremony the exit cut no longer turns residency settings off or logs its
+  abort (it writes no verdict row, as before). Its open RETESTING row, and for
+  an FSDP proof the INCONCLUSIVE row that closes it, stay in the ledger and
+  change no decision. Before, each queued prompt that started priced on the
+  closing Workers and printed its error, and from about 1 s after the notice
+  Monarch panicked natively on the send. If the process is still alive 30 s after the waiting
+  render started, because an exit hook hung, that render stops with "the
+  driver is exiting, so this render, load or node did not start", and every
+  render after it waits until the process ends, so that is the one error
+  however long the hook hangs
+  ([TROUBLESHOOTING #51](docs/TROUBLESHOOTING.md#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
 - A graph with no LoRA stack whose model takes no slab residency no longer
   pays two proof renders before its first render. The first-use gate could
   only record that there was nothing to compare there, and that verdict

@@ -7,7 +7,7 @@ from typing import Any
 
 import torch
 
-from . import rdma_ownership
+from . import driver_exit, rdma_ownership
 from .transfer_utils import prefer_error, raise_with_distinct_cause, reconcile_error
 
 
@@ -360,6 +360,7 @@ def _read_and_release_owned(
                 try:
                     if verify_policy is not None:
                         verify_policy()
+                    driver_exit.refuse_new_call()  # no RDMA read is started once the driver is exiting
                     state["read_started"] = True
                     if len(parts) == 1:
                         from .runtime_diagnostics import phase

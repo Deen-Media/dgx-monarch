@@ -275,6 +275,84 @@ def test_a_failing_rank_falls_back_with_the_stock_bytes(comfy, ranks, monkeypatc
     assert "Worker-assisted VAE decode fell back to this driver for" in caplog.text
 
 
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_a_decode_under_way_at_exit_decodes_here_and_logs_nothing(comfy, monkeypatch, exiting):
+    """Through the real sender, the unit schedule and the decode's record. The
+    driver begins to exit while a Worker-assisted decode is split: the sender
+    sends no unit (driver_exit.refuse_new_call), every unit decodes on this
+    driver, the image is the stock decode, and the record logs nothing; before,
+    it warned "fell back to this driver for N of N units". The render under way
+    gets its image if the process lives long enough, and no Worker is asked.
+    Not exiting, a unit whose send fails still names the fallback at WARNING."""
+    from dgx_monarch import driver_exit, mesh_setup
+    from dgx_monarch.vae_decode_telemetry import publish
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    sent: list[str] = []
+
+    def dispatch(_handle, endpoint, _send, **_kwargs):
+        sent.append(endpoint)
+        raise RuntimeError("actor on the sibling died")
+
+    monkeypatch.setattr(mesh_setup, "dispatch_endpoint", dispatch)
+    monkeypatch.setattr(vae_decode_remote, "_worker", lambda _handle, _rank: SimpleNamespace())
+    kept: list[logging.LogRecord] = []
+    keep = logging.Handler()
+    keep.emit = kept.append  # type: ignore[method-assign]
+    logger = logging.getLogger("dgx_monarch.vae_decode")
+    monkeypatch.setattr(logger, "handlers", [*logger.handlers, keep])
+    samples = torch.randn(1, 4, 37, 41)
+    fake = _fake_decode([8, 8])
+    function = lambda a: fake(a).to(torch.float32)  # noqa: E731
+    vae = SimpleNamespace(vae_dtype=torch.float32, vae_output_dtype=lambda: torch.float32)
+    arguments = {"samples": samples, "function": function, "tile": (12, 12), "overlap": 4,
+                 "upscale_amount": 8, "out_channels": 3, "output_device": "cpu", "downscale": False,
+                 "index_formulas": None, "pbar": None}
+    route = _route(vae, MULTIDIM, [1])
+    if exiting:
+        flag.set()
+    split = route.split_multidim(comfy.tiled, arguments)
+    publish(route.record)
+    assert same_bytes(split, comfy.tiled(**arguments))
+    assert sum(route.record.remote.values()) == 0 and route.record.failures
+    loud = [record.getMessage() for record in kept if record.levelno >= logging.WARNING]
+    if exiting:
+        assert sent == [] and kept == [], [record.getMessage() for record in kept]
+        return
+    assert sent and any("fell back to this driver" in text for text in loud), loud
+
+
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_a_decode_that_starts_at_exit_stays_here_unlogged(comfy, monkeypatch, exiting):
+    """A decode that starts once the driver is exiting is not routed: no armed
+    mesh is looked up, nothing is logged, and ComfyUI's own decode runs here.
+    Not exiting, the route is planned as before (here it finds no live mesh and
+    says so at INFO)."""
+    from dgx_monarch import driver_exit
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    looked: list[int] = []
+    monkeypatch.setattr(vae_decode_route, "armed_handle", lambda: looked.append(1))
+    monkeypatch.setattr(vae_decode_route, "classify",
+                        lambda _vae: (Family("test", MULTIDIM, frozenset({"decode_tiled"})), ""))
+    monkeypatch.setattr(vae_decode_route, "small_still", lambda _vae, _samples: None)
+    monkeypatch.setattr(vae_decode_route, "_decode_device", lambda _vae: "cuda")
+    kept: list[logging.LogRecord] = []
+    keep = logging.Handler()
+    keep.emit = kept.append  # type: ignore[method-assign]
+    logger = logging.getLogger("dgx_monarch.vae_decode")
+    monkeypatch.setattr(logger, "handlers", [*logger.handlers, keep])
+    if exiting:
+        flag.set()
+    assert vae_decode_route._open(SimpleNamespace(), torch.randn(1, 4, 64, 64), "decode_tiled") is None
+    if exiting:
+        assert looked == [] and kept == []
+        return
+    assert looked == [1] and any("no live DGX Monarch mesh" in r.getMessage() for r in kept)
+
+
 @pytest.mark.parametrize("case", ["2d", "3d-wan"])
 def test_a_wrong_size_reply_is_refused_before_the_stock_blend(comfy, ranks, case):
     shape, tile, overlap, upscale, formulas, dtype = CASES[case]

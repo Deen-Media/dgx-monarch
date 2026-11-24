@@ -349,6 +349,37 @@ def test_a_gone_probe_retires_the_latch_once_and_issues_no_stop(monkeypatch, cap
     assert len(runner.calls) == 1
 
 
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_an_exit_during_the_liveness_probe_releases_nothing(monkeypatch, caplog, exiting):
+    """A reset (or a render) asks try_release to prove a latched fleet gone; its
+    probe can take 20 s. If the driver begins to exit during that probe, the
+    release changes nothing: no evidence is cached, the latch stays, and no
+    "liveness fold" WARNING prints. Not exiting, the same probe releases the
+    latch, as the row above shows."""
+    from dgx_monarch import driver_exit
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    handle = _latched(monkeypatch, ADDRESS_A)
+    probe = mesh_liveness.probe_fleet
+
+    def probe_then_exit(*args, **kwargs):
+        evidence = probe(*args, **kwargs)
+        if exiting:
+            flag.set()  # the exit begins while the probe runs
+        return evidence
+
+    monkeypatch.setattr(mesh_liveness, "probe_fleet", probe_then_exit)
+    with caplog.at_level("WARNING"):
+        released = mesh_liveness.try_release(handle, runner=Runner())
+    if exiting:
+        assert released is False and getattr(handle, "_liveness_evidence", None) is None
+        assert handle.teardown_complete is not True and "liveness fold" not in caplog.text
+        assert mesh_teardown.block_cause(handle) == mesh_teardown.TAG_STOP_TIMEOUT_AFTER_DEATH
+        return
+    assert released is True and handle.teardown_complete is True
+
+
 def test_the_release_emits_one_telemetry_event(monkeypatch):
     from dgx_monarch import telemetry
 

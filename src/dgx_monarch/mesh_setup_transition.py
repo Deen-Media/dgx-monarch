@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from . import mesh_helpers, mesh_safety, mesh_setup, residency_doors
+from . import driver_exit, mesh_helpers, mesh_safety, mesh_setup, residency_doors
 from .constants import DEFAULT_NCCL_MASTER_PORT
 from .log import get_logger
 from .topology import Topology
@@ -170,11 +170,13 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
     before the policy is published; an apply whose reply is lost marks where
     the inference (``drops_residents``) says a Worker may have dropped one.
     """
+    driver_exit.refuse_new_call()  # before the policy marker is retired
     effective = (handle.effective_worker_args(worker_args) if merge_config
                  else dict(worker_args))
     with handle.lock:
         from .mesh_session import require_mutation_authority
 
+        driver_exit.refuse_new_call()  # a caller that waited for the lock: nothing cleared, nothing sent
         mesh_setup.require_not_dirty(handle, "apply worker arguments")
         if handle.setup_key is None:
             raise RuntimeError("cannot apply worker arguments before setup is READY")
@@ -296,6 +298,7 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
                 handle.apply_worker_args(worker_args, timeout_s=budget.group_cleanup_s, merge_config=False)
             return []
 
+        driver_exit.refuse_new_call()  # no teardown and no setup once the driver is exiting
         mesh_setup.require_no_sample_leases(handle, "change distributed setup")
         require_mutation_authority(handle, "change distributed setup")
 
@@ -345,6 +348,7 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
         # groups before dispatch returns or the rollback handler starts.
         # Keep the generation DIRTY from before enqueue until READY is
         # atomically published or every rank confirms rollback.
+        driver_exit.refuse_new_call()  # an exit during the teardown above: no mark, no setup
         handle.setup_cleanup_state = mesh_setup.cleanup_in_progress(
             handle.setup_generation, "distributed setup", budget.rank_setup_s)
         fabric_env = handle.config.resolved_fabric_env()
@@ -373,6 +377,8 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
             from . import worker_box
 
             worker_box.name(setup_exc, handle, failed["rank"])
+            if driver_exit.exiting():  # Monarch's exit step stops the actors: no rollback is sent
+                raise
             # A failure seen ahead of the rank being awaited leaves that rank in
             # setup, waiting at its rendezvous for a peer that will not come, and
             # the rollback's teardown queues behind it. The rollback keeps what

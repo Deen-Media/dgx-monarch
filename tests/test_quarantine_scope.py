@@ -360,6 +360,44 @@ def test_a_delivery_failure_abort_takes_the_levers_and_pushes_nothing(monkeypatc
     assert model.mesh.worker_args == {"slab_weights": False, "lora_low_rss": False}
 
 
+@pytest.mark.parametrize("abort", ["refused_at_exit", "cut_at_exit", "not_exiting"])
+def test_an_abort_once_the_driver_is_exiting_takes_no_lever_and_pushes_nothing(
+        monkeypatch, caplog, abort):
+    """A ceremony in flight when the driver begins to exit aborts on the exit's
+    refusal (driver_exit.DriverExitingError) or on a call Monarch's exit step
+    cut. Neither says anything about the combination: no lever goes off, no
+    record is kept, no policy is pushed and no line names the abort. Not
+    exiting, the same untyped abort quarantines and pushes, as before."""
+    from dgx_monarch import driver_exit
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    monkeypatch.setattr(gate_quarantine_scope, "_RECORDS", [])
+    pushes = []
+    monkeypatch.setattr(gate_identity, "apply_worker_policy",
+                        lambda *args, **kwargs: pushes.append(args) or [])
+    model = _graph(slab_weights=True, lora_low_rss=True)
+    handle = SimpleNamespace(setup_key=("ready",), config=None)
+    cause = (driver_exit.DriverExitingError(driver_exit.SENT_NOTHING)
+             if abort == "refused_at_exit" else RuntimeError("actor died"))
+    if abort != "not_exiting":
+        flag.set()
+
+    with caplog.at_level(logging.INFO):
+        gate_identity.force_stock_quarantine(model, handle, cause=cause)
+
+    if abort == "not_exiting":
+        assert model.mesh.worker_args == {"slab_weights": False, "lora_low_rss": False}
+        assert len(gate_quarantine_scope._RECORDS) == 1 and len(pushes) == 1
+        assert any("could not complete" in record.getMessage() for record in caplog.records)
+        return
+    # The render-time callers (pipeline, common) quarantine without a push; the same holds.
+    gate_identity.quarantine_unproven_paths(model, cause)
+    assert model.mesh.worker_args == {"slab_weights": True, "lora_low_rss": True}
+    assert gate_quarantine_scope._RECORDS == [] and pushes == []
+    assert [record.getMessage() for record in caplog.records] == []
+
+
 def _patch_auto_state(monkeypatch, token):
     lock = threading.Lock()
     monkeypatch.setattr(

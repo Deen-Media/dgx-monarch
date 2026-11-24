@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from .. import driver_unload, first_render
+from .. import driver_exit, driver_unload, first_render
 from ..fsdp_reload_price import capacity_classification
 from ..gate_audit import fold_rank_certificates, parse_measured
 
@@ -100,7 +100,9 @@ def run_cross_residency_reference(
             cross_reference_latent = candidate
         samples = candidate["samples"]
     except Exception as exc:
-        if runtime["is_artifact_binding_error"](exc):
+        # Once the driver is exiting, a leg its exit cut proves nothing either way:
+        # the ceremony aborts on that error, with no verdict and no line (driver_exit).
+        if runtime["is_artifact_binding_error"](exc) or driver_exit.exiting():
             raise
         if runtime["is_stock_load_capacity_error"](exc):
             detail = failure_summary(exc)[:200]

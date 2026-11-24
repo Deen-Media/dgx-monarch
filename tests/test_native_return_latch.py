@@ -6,12 +6,13 @@ fault would repeat on every render and root one more latent each time.
 """
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 
 import pytest
 import torch
 
-from dgx_monarch import mesh_setup, native_return_latch, transfer
+from dgx_monarch import driver_exit, mesh_setup, native_return_latch, transfer
 from dgx_monarch.native_return_latch import NativeReturnLatchedError
 from dgx_monarch.refusal import parse_refusal_tag
 from topology_transition_helpers import (
@@ -94,6 +95,63 @@ def test_a_failed_native_read_latches_and_reraises_the_same_error(monkeypatch):
     assert raised.value is error
     assert native_return_latch.latched()
     assert native_return_latch.snapshot()["reason"] == "TimeoutError"
+
+
+@pytest.fixture
+def exit_flag(monkeypatch):
+    """A fresh exit flag for the test, put back after it."""
+    event = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", event)
+    return event
+
+
+@pytest.mark.parametrize("failure", ["refused", "cut"])
+def test_a_native_read_that_fails_once_the_driver_is_exiting_latches_nothing(
+        monkeypatch, exit_flag, failure):
+    """Once the driver is exiting, a native read fails because the exit refused
+    it (driver_exit.DriverExitingError) or because Monarch's exit step cut it.
+    Neither is a fault of the native return, and no next setup will read the
+    latch: the error propagates as itself, nothing is latched or counted, and
+    no WARNING tells the operator to restart. Not exiting, the same read
+    latches (test_a_failed_native_read_latches_and_reraises_the_same_error)."""
+    lines = _warnings(monkeypatch)
+    error = (driver_exit.DriverExitingError(driver_exit.SENT_NOTHING) if failure == "refused"
+             else TimeoutError("native read cut by the exit step"))
+    _failing_read(monkeypatch, error)
+    exit_flag.set()
+
+    with pytest.raises(type(error)) as raised:
+        transfer.read_latent_result(_native_descriptor())
+
+    assert raised.value is error
+    state = native_return_latch.snapshot()
+    assert state["latched"] is False and state["fault_count"] == 0
+    assert lines == []
+
+
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_a_read_that_fails_at_exit_after_an_earlier_fault_surfaces_as_itself(
+        exit_flag, exiting):
+    """An earlier render's native fault latched; a later read of the same
+    fleet's native descriptor fails once the driver is exiting. That failure is
+    the exit's, so it surfaces as itself, not as a native return fault whose
+    text names it. Not exiting, the latch still types the failure."""
+    native_return_latch.record(TimeoutError("an earlier render's native read"))
+    error = (driver_exit.DriverExitingError(driver_exit.SENT_NOTHING) if exiting
+             else RuntimeError("ibverbs read failed"))
+
+    def read(*_args):
+        raise error
+
+    if exiting:
+        exit_flag.set()
+    with pytest.raises(Exception) as raised:
+        native_return_latch.typed_read(read, _native_descriptor())
+
+    if exiting:
+        assert raised.value is error
+        return
+    assert isinstance(raised.value, NativeReturnLatchedError) and raised.value.__cause__ is error
 
 
 def test_cancellation_and_message_returns_leave_the_latch_alone(monkeypatch):

@@ -1089,8 +1089,8 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "deliberate on-loop pin of monarch's own semantics",
     ("progress.py", "ProgressReceiver.__enter__.pump"):
         "the dedicated dgxm-progress thread",
-    ("transfer.py", "_release_rdma_parts"):
-        "inside the dgxm-latent-read scratch thread",
+    ("transfer_utils.py", "drop_rdma_buffer"):
+        "called only from transfer._release_rdma_parts, inside the dgxm-latent-read scratch thread",
     ("transfer_utils.py", "read_parts_concurrent.read_one"):
         "pool thread under dgxm-latent-read",
     ("rdma_receiver.py", "_read_and_release_owned.drive"):
@@ -1214,3 +1214,28 @@ def test_every_direct_future_get_is_off_the_event_loop_by_construction():
         f"Queue, mapping) a ledger line. unlisted={sorted(actual - listed)}, "
         f"stale={sorted(listed - actual)}"
     )
+
+
+def test_the_rdma_drop_helper_has_only_the_callers_its_ledger_line_names():
+    """The ledger pins the blocking get inside ``transfer_utils.drop_rdma_buffer``
+    by the helper's own scope, so a new caller of the helper from the event loop
+    would not show there. Its line says the helper is called only from
+    ``transfer._release_rdma_parts``, inside the dgxm-latent-read scratch thread;
+    this row holds every reference to the helper to those two calls."""
+    package_root = pathlib.Path(__file__).resolve().parents[1] / "src" / "dgx_monarch"
+    found: list[tuple[str, str]] = []
+
+    def walk(node: ast.AST, relative: str, scope: tuple[str, ...]) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = (*scope, node.name)
+        name = (node.attr if isinstance(node, ast.Attribute)
+                else node.id if isinstance(node, ast.Name) else None)
+        if name == "drop_rdma_buffer":
+            found.append((relative, ".".join(scope)))
+        for child in ast.iter_child_nodes(node):
+            walk(child, relative, scope)
+
+    for path in sorted(package_root.rglob("*.py")):
+        walk(ast.parse(path.read_text()), path.relative_to(package_root).as_posix(), ())
+    assert found == [("transfer.py", "_release_rdma_parts")] * 2, found
+    assert "transfer._release_rdma_parts" in _OFF_LOOP_BY_CONSTRUCTION[("transfer_utils.py", "drop_rdma_buffer")]

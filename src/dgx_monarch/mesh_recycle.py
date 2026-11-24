@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Any, cast
 
 from . import (
+    driver_exit,
     mesh_factory,
     mesh_helpers,
     mesh_liveness,
@@ -64,8 +65,9 @@ def recycle_detailed(
     """Run the recycle transaction, bounded at 180 s only on an event-loop thread.
 
     With no running loop (the HTTP route's executor, cli/cluster_smoke) it runs inline.
+    A reset that starts once the driver is exiting sends nothing (driver_exit).
     """
-
+    driver_exit.refuse_new_call()
     try:
         return cast(
             RecycleOutcome,
@@ -115,6 +117,7 @@ def recycle_detailed_impl(
     try:
         lock_scope.__enter__()
         entered = True
+        driver_exit.refuse_new_call()  # a reset that waited for the lock: no teardown, no stop
         mesh_setup.require_no_sample_leases(
             handle, "reset the Attached mesh", allow_abandoned=True)
         require_mutation_authority(handle, "reset the Attached mesh")

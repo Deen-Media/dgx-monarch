@@ -639,14 +639,23 @@ def test_an_attach_the_exit_stands_down_leaves_the_transport_unpoisoned(driver, 
     reaches ends in the exit error and leaves the transport unpoisoned, as a
     refusal before any dial does. Before, the spawn's attach mark made get_mesh
     poison it ("cluster attach result handoff interrupted"). With the flag
-    cleared, the next get_mesh attaches."""
+    cleared, the next get_mesh attaches. The exit begins after get_mesh's entry,
+    which holds one that starts at exit (driver_exit.hold_at_entry)."""
     from dgx_monarch import driver_exit, mesh_factory
 
     monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
     stand_in, real_once = mesh_mod.spawn_worker_fleet, mesh_mod._attach_once
     monkeypatch.setattr(mesh_mod, "spawn_worker_fleet", mesh_factory.spawn_worker_fleet)
     if when == "before_the_dial":
-        driver_exit._EXITING.set()
+        real_fleet, fired = listener_generation.fleet, []
+
+        def fleet(config, **kwargs):
+            if not fired:
+                fired.append(1)
+                driver_exit._EXITING.set()  # the exit hook ran while the attach read the ids
+            return real_fleet(config, **kwargs)
+
+        monkeypatch.setattr(listener_generation, "fleet", fleet)
     else:
         def attach_once(dial):
             driver.dials.append(list(dial))
@@ -663,6 +672,57 @@ def test_an_attach_the_exit_stands_down_leaves_the_transport_unpoisoned(driver, 
     monkeypatch.setattr(mesh_mod, "_attach_once", real_once)
     assert mesh_mod.get_mesh(mode="cluster", config_path=SOURCE) is not None
     assert mesh_mod._TRANSPORT_POISON is None
+
+
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_a_config_change_the_exit_reaches_starts_no_stop(driver, monkeypatch, exiting):
+    """get_mesh finds the cluster config changed and would stop the previous
+    fleet before it builds the new one. The exit begins after its entry (here,
+    as it admits the new config): no stop is sent, nothing is poisoned and
+    nothing new is dialed. Not exiting, it tries the previous fleet's stop as
+    before (one that is never acknowledged, so the change refuses)."""
+    from dgx_monarch import driver_exit, monarch_launch
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    handle.config_fingerprint = "the file before its edit"
+
+    def prepare(_config):
+        if exiting:
+            driver_exit._EXITING.set()  # the exit hook ran after get_mesh's entry
+
+    monkeypatch.setattr(monarch_launch, "prepare_driver", prepare)
+    error = driver_exit.DriverExitingError if exiting else mesh_mod.MeshAttachError
+    with pytest.raises(error):
+        mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    assert len(driver.dials) == 1 and mesh_mod._TRANSPORT_POISON is None
+    assert driver.procs[0].stops == ([] if exiting else [driver.procs[0].stops[0]])
+
+
+def test_a_config_change_stop_that_waits_for_the_lock_as_the_exit_begins_stops_nothing(
+        driver, monkeypatch):
+    """get_mesh passed its own exit check and calls the previous fleet's stop
+    for a config change, which waits for that fleet's lifecycle lock; the exit
+    begins while it waits. The stop refuses under the lock (``_refuse_at_exit``):
+    the exit's refusal surfaces as itself, not as "old workers could not be
+    stopped safely", nothing is stopped or poisoned and nothing new is dialed."""
+    from dgx_monarch import driver_exit, mesh_setup
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    handle.config_fingerprint = "the file before its edit"
+    real_lock = mesh_setup.lifecycle_lock
+
+    def lifecycle_lock(target, operation, timeout_s=10.0):
+        if operation == "shutdown":
+            driver_exit._EXITING.set()  # the exit begins while the stop waits for the lock
+        return real_lock(target, operation, timeout_s)
+
+    monkeypatch.setattr(mesh_setup, "lifecycle_lock", lifecycle_lock)
+    with pytest.raises(driver_exit.DriverExitingError):
+        mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    assert len(driver.dials) == 1 and mesh_mod._TRANSPORT_POISON is None
+    assert driver.procs[0].stops == [] and handle.teardown_complete is not True
 
 
 def test_a_heal_whose_stop_is_confirmed_after_an_earlier_release_keeps_its_retry(
@@ -837,6 +897,39 @@ def test_an_exit_after_the_stop_ends_the_detour_with_the_exit_refusal(
     assert len(driver.dials) == 1 and attaches == []  # no attach was even begun
 
 
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_a_detour_stop_that_waits_for_the_lock_as_the_exit_begins_stops_nothing(
+        driver, monkeypatch, exiting):
+    """The restart detour passed its exit check and stops the stale fleet; that
+    stop (MeshHandle.shutdown) waits for the fleet's lifecycle lock, and the
+    exit begins as the wait begins. The stop refuses under the lock
+    (``_refuse_at_exit``): nothing is sent to the stale fleet, nothing new is
+    dialed, and the render's error is the exit refusal. Not exiting, the stop
+    is sent with the short bound and the detour attaches the new ids."""
+    from dgx_monarch import driver_exit, mesh_setup
+
+    monkeypatch.setattr(driver_exit, "_EXITING", threading.Event())
+    handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
+    real_lock = mesh_setup.lifecycle_lock
+
+    def lifecycle_lock(target, operation, timeout_s=10.0):
+        if exiting and operation == "shutdown":
+            driver_exit._EXITING.set()  # the exit begins as the stop waits for the lock
+        return real_lock(target, operation, timeout_s)
+
+    monkeypatch.setattr(mesh_setup, "lifecycle_lock", lifecycle_lock)
+    refused = _restarted(driver)
+    if not exiting:
+        outcome = restart_reattach.heal(handle, refused)
+        assert outcome.handle is not handle and driver.procs[0].stops == [restart_reattach.STOP_BOUND_S]
+        return
+    with pytest.raises(WorkerDeliveryError) as raised:
+        restart_reattach.heal(handle, refused)
+    assert "the driver is exiting, so this render stops here" in str(raised.value)
+    assert driver.procs[0].stops == [] and len(driver.dials) == 1
+    assert handle.teardown_complete is not True
+
+
 def _exit_rig(driver, monkeypatch):
     """A fresh exit flag, the real log methods through their filters, and a count of
     the id readings. Each reading is one ``listener_generation.fleet`` call, which on
@@ -903,14 +996,28 @@ def test_at_exit_the_first_id_reading_never_starts(driver, monkeypatch, site, ex
     thread, no eviction, no stop, no attach and no telemetry. On the commit before,
     each read every host first. Not exiting, each reads once and goes on as before:
     the check raises the heal's error with its reading, the heal attaches by the
-    new ids, and a pinned render retires the stale mesh and asks for a re-queue."""
+    new ids, and a pinned render retires the stale mesh and asks for a re-queue.
+    The price's quotes went out before the exit: a price that starts at exit
+    sends none (driver_exit.refuse_new_call)."""
     rig = _exit_rig(driver, monkeypatch)
     handle = mesh_mod.get_mesh(mode="cluster", config_path=SOURCE)
     error = _delivery_error(driver)  # every loop restarted; the error carries no reading
     fleet = _Fleet({0: _supervision_error(), 1: _supervision_error()})
     rig.listen()
     if exiting:
-        rig.flag.set()  # the exit hook ran after the price failed
+        if site == "price_check":
+            real_get = mesh_helpers.get_off_loop
+
+            def get_off_loop(future, step, *args, **kwargs):
+                try:
+                    return real_get(future, step, *args, **kwargs)
+                except Exception:
+                    rig.flag.set()  # the exit hook ran as the quote's wait failed
+                    raise
+
+            monkeypatch.setattr(mesh_helpers, "get_off_loop", get_off_loop)
+        else:
+            rig.flag.set()  # the exit hook ran after the price failed
         with pytest.raises(WorkerDeliveryError) as raised:
             _first_reading_site(site, handle, error, fleet)
         assert _EXIT_REFUSAL in str(raised.value)

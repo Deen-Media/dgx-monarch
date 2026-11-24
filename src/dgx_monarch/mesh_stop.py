@@ -189,9 +189,9 @@ def stop_with_reason(handle: Any, reason: str, timeout_s: float) -> None:
     parent draining", which no teardown marker in mesh_safety names
     (tests/test_spawn_contract.py). The actor stop is best effort: anything it
     raises but an interrupt is logged, the proc stop below still runs, and that
-    stop stays the authority. Run from the pack's atexit stop during
-    interpreter exit, the actor stop raises a native panic; that is caught
-    here too.
+    stop stays the authority. A stop already under way when the interpreter
+    begins to exit can meet a native panic from the actor stop once Monarch's
+    exit step has run; that is caught here too.
     """
     workers = getattr(handle, "workers", None)
     retired_meshes.retire(workers)  # its late faults are expected from here on

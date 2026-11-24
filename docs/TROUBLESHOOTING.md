@@ -220,6 +220,25 @@ on 2026-11-18, exits 0.5 to 8.0 s into the detour, by a normal return or by
 Ctrl+C, logged no warning and no error after the notice, and every process
 exited with code 0.
 
+A render that ComfyUI starts after the notice, the next prompt in its queue for
+one, does not reach the Workers: it waits at the pack's entry (its node, or the
+mesh entry for a node with no wrapper), logging nothing, and ComfyUI starts no
+other prompt behind it, so the process ends with that render still waiting. A
+closing ComfyUI therefore prints at most the cut render's own error, then
+nothing for the queue's DGX Monarch renders, for any length of queue. A queued
+prompt's stock ComfyUI nodes that run before its first DGX Monarch node still
+run and print what they print, and a prompt with no DGX Monarch node renders as
+usual. So do the DGX Monarch nodes that have no wrapper and reach no mesh (Load
+LoRA, the two Model Sampling nodes, the Qwen Image 2.1 Cache, Skip Layer
+Guidance, MiniMax H3 Context Windows and the guiders): they run and return, and
+a refusal of their own, such as Load LoRA's FSDP check, prints for that prompt
+as it would at any time. If the process is still alive 30 s after the waiting render started,
+because an exit hook hung, that render stops with "the driver is exiting, so
+this render, load or node did not start", which ComfyUI logs as its error;
+every render after it waits until the process ends, so that is the one error
+however long the hook hangs
+([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
+
 The render refuses at once instead, with a class C `cross_rank_capacity`
 refusal that names the remedy, when the reading finds:
 
@@ -2568,6 +2587,54 @@ service's actors were gone when the driver was, or 3 s after it when a call
 held the actor's process, as a render's step does; Monarch gives each one up
 to 10 s to stop, so allow about 10 s. ComfyUI itself may still log the
 interrupted render's own error.
+
+Nothing new reaches the Workers after the notice, from any thread. What runs
+to its end is work already started: a call in flight, a stop under way, the
+cleanup of a fleet bring-up under way, and the steps of an attach after its
+dial. A render, load or node that starts after the notice waits at the pack's
+entry, logging nothing, until the process ends; ComfyUI starts no other prompt
+while it waits. A price, a setup, a worker policy update, a dispatch, an RDMA
+latent read, a reset, a status poll or the stop that replaces a fleet whose
+config changed, which a render already under way would send next, is not sent,
+even one that was already waiting for the fleet's lock when the exit began, and
+the lease renewals stop; a stop that a teardown already under way sends still
+runs. A
+Worker-assisted VAE decode decodes its remaining units on the driver, as it
+would with the option off. Once the exit has begun, no DGX Monarch log line
+that carries the exit's refusal, as the error itself or as its text, is
+printed. A sample refused at its dispatch leaves no lease and no abandoned
+mark. The cut render leaves no verdict and no lever behind: a native latent
+read the exit refused or cut does not latch native return off and reports no
+poisoned ownership
+([#115](#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)),
+and an identity gate ceremony the exit cut writes no verdict row, turns no
+residency setting off and logs no abort. Two ledger rows of such a ceremony do
+stay on disk, and neither changes a decision: the RETESTING row it wrote before
+its first step, which stays open as a killed ceremony's does until the next
+ceremony of that combination supersedes it
+([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)), and,
+for an FSDP clean-reload proof, the INCONCLUSIVE row that closes that retest.
+So a closing ComfyUI prints at most the cut render's own error, then
+nothing for the queue's DGX Monarch renders, however many prompts were queued;
+a queued prompt's stock ComfyUI nodes that run before its first DGX Monarch
+node still print what they print, and so do the DGX Monarch nodes with no
+wrapper and no mesh call (Load LoRA, the two Model Sampling nodes, the Qwen
+Image 2.1 Cache, Skip Layer Guidance, MiniMax H3 Context Windows and the
+guiders), whose own refusals, such as Load LoRA's FSDP check, print as at any
+time. Before, each queued prompt that started
+priced on the closing Workers and printed its error, and from about 1 s after
+the notice Monarch panicked on the send (`SendError` on stderr). If the
+process is still alive 30 s after the waiting render started, because an exit
+hook hung, that render stops with "the driver is exiting, so this render, load
+or node did not start"; every render after it waits until the process ends, so
+that is the one error however long the hook hangs. On loopback on 2026-11-18, with 2 or 4 renders queued behind the cut
+one and the next starting 0.2 to 2.0 s after the notice, by a normal return or
+by Ctrl+C, one render entered and waited, none printed, Monarch did not panic,
+the exit took as long as before, and every process exited with code 0. With an
+exit hook held 35 s, the waiting render stopped at 30 s with that one error;
+with 3 renders queued and a hook held 70 s, the first stopped at 30 s and the
+next waited until the process ended at 70 s, with nothing printed after that
+one error.
 
 A ComfyUI stopped by SIGTERM (`systemctl stop`, `kill`), killed outright, or
 restarted by replacing its process without running its exit steps (as some
@@ -7234,7 +7301,15 @@ failed read's exception type as `reason`, `latched_unix_s`, `fault_count`,
 read on the driver trips the latch: a queue-pair initialization timeout, a
 registration or read failure, a read timeout, a policy readback refusal, a
 failed ACK, or a refusal before the read starts, including a read on a lease
-that already retired. Ownership settles as
+that already retired. A read that fails once ComfyUI is closing, because the
+driver's exit refused it or Monarch's exit step cut it, is the one exception: it
+does not trip the latch and its WARNING does not print, since no later setup
+will read the latch. A read cut mid-flight still keeps its destination owned
+until the process ends, as any failed read does, and the ERROR that reports
+that poisoned ownership does not print at exit either: its drops are left
+unconfirmed on purpose then
+([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
+Ownership settles as
 [#29](#29-large-rdma-latent-return-fails-after-workers-finish-rendering)
 describes: nothing is dropped or acknowledged without proof, a started read
 keeps its destination, and the failed render's lease stays abandoned. Before

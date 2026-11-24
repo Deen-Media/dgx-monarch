@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from typing import Any
 
+from . import driver_exit
 from .log import get_logger
 from .vae_decode_families import DECODE, DECODE_TILED, H3_CHUNK, MULTIDIM, Family, classify, small_still
 from .vae_decode_schedule import UnitBoard, pump
@@ -214,6 +215,8 @@ def _tiled_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
 
 def _open(vae: Any, samples: Any, entry: str) -> _Route | None:
     """A route for this decode, or None after logging why it stays here."""
+    if driver_exit.exiting():  # Monarch's exit step stops the Workers: the stock decode, unlogged
+        return None
     family, why = classify(vae)
     record = DecodeRecord(family=family.name if family else _class_name(vae), entry=entry)
     reason = why

@@ -24,7 +24,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
-from .. import consent_pending, consent_store, mesh_safety, old_model
+from .. import consent_pending, consent_store, driver_exit, mesh_safety, old_model
 from ..consent_descriptor import ENV_CLEAR_RETRY, KIND_CLEAR_RETRY
 from ..log import get_logger
 from ..refusal import parse_leading_refusal_tag
@@ -254,8 +254,8 @@ def clear_for_retry(handle: Any, exc: BaseException, *, inherited: bool = False)
     # The fleet the refusal came from: a cached MeshSpec may still hold a
     # retired handle while a fresh fleet served this load.
     handle = getattr(exc, "fleet", None) or handle
-    if offer is None or inherited or handle is None or not always_on():
-        return False
+    if offer is None or inherited or handle is None or not always_on() or driver_exit.exiting():
+        return False  # at exit Monarch's exit step stops the Workers; the refusal stands
     if not routes._begin_recycle_request():
         log.warning("Always clear and retry found another reset running; the refusal stands")
         return False

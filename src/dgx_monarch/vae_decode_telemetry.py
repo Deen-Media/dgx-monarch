@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import driver_exit
 from .log import get_logger
 
 log = get_logger("dgx_monarch.vae_decode")
@@ -78,12 +79,18 @@ _LAST: dict[str, Any] | None = None  # process lifetime, one slot: the last deco
 
 
 def publish(record: DecodeRecord) -> None:
-    """Log the decode, keep it as the last one and append one event."""
+    """Log the decode, keep it as the last one and append one event.
+
+    Once the driver is exiting nothing is logged: a decode under way then sends
+    no further unit (driver_exit) and decodes the rest on this driver, which is
+    the driver's exit and no Worker fault.
+    """
     global _LAST
-    log.info("%s", info_line(record))
-    warning = warning_line(record)
-    if warning is not None:
-        log.warning("%s", warning)
+    if not driver_exit.exiting():
+        log.info("%s", info_line(record))
+        warning = warning_line(record)
+        if warning is not None:
+            log.warning("%s", warning)
     row = record.as_dict()
     with _LOCK:
         _LAST = row

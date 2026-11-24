@@ -361,7 +361,7 @@ def _retire(handle: Any, moves: Moves, refused: BaseException) -> str:
             _refuse_retire(handle, moves, refused)
         _stand_down_at_exit(refused)
         try:
-            handle.shutdown(timeout_s=STOP_BOUND_S, _reconcile_token=token)
+            handle.shutdown(timeout_s=STOP_BOUND_S, _reconcile_token=token, _refuse_at_exit=True)
         except PriorTeardownUnknownError as exc:
             _stand_down_at_exit(refused)
             _refuse_retire(handle, moves, exc)
@@ -383,8 +383,8 @@ def _retire(handle: Any, moves: Moves, refused: BaseException) -> str:
 def _stand_down_at_exit(refused: BaseException) -> None:
     """Once the driver is exiting, end the detour: Monarch's exit step stops every mesh."""
     if driver_exit.exiting():
-        _refuse("the driver is exiting, so this render stops here: Monarch's exit step "
-                "stops the Worker actors, and nothing was loaded.", refused)
+        _refuse(f"{driver_exit.REFUSAL_OPENING} this render stops here: Monarch's exit "
+                "step stops the Worker actors, and nothing was loaded.", refused)
 
 
 def _record(outcome: str, moves: Moves, started: float, *, seq: int = 0,
