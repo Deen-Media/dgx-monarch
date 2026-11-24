@@ -2003,7 +2003,8 @@ no config, service, or cluster change and writes a local audit receipt only
 when one was explicitly requested. These may return without a default receipt:
 early setup validation, a declined setup confirmation, a repair refused by its
 arguments or unable to inspect the config, and a verified update given a
-relative `--receipt` or unable to acquire its per-checkout lock. After setup
+`--receipt` it refuses before any step (below) or unable to acquire its
+per-checkout lock. After setup
 confirmation, a config-lock refusal or interruption still attempts the required
 setup receipt before returning or re-raising. An applied setup or verified
 update interrupted by `KeyboardInterrupt` or `SystemExit` may settle without a
@@ -2025,10 +2026,17 @@ versions and raw check details; keep it private or redact it by hand before shar
 If the user needs a custom `--receipt`, check its absolute path and existing
 ancestors before apply. No parent may be a symlink. Group- or world-writable
 ancestors are rejected unless sticky; the final directory must belong to the
-current user. The command creates missing parents and sets the final directory
-to `0700`, so choose a dedicated private directory. Never change permissions
-on a shared or unrelated directory to make receipt publication pass. An
-optional dry-run receipt has the same path requirements.
+current user. The command creates missing parents with mode `0700` and never
+changes the mode of a directory that already exists, so a receipt in a home
+or group-shared directory leaves that directory as it was; the receipt file
+itself is `0600`. Never change permissions on a shared or unrelated directory
+to make receipt publication pass. An optional dry-run receipt has the same
+path requirements. `dgxm update --verify` checks its `--receipt` before the
+update lock and any update step: a path that already exists, a parent that
+is a symlink or a file, an unsafe ancestor, a final directory of another
+user, or a directory it cannot write refuses with exit 2 and changes nothing.
+A path taken by something else after that check is still never overwritten:
+the update then reports that its receipt could not be published.
 
 ## Uninstalling
 

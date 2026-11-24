@@ -2639,6 +2639,36 @@ sections after them list every change.
   (unknown) for a ProcMesh cleanup it could not confirm, where it exited 1 as
   for a failed check. Guided setup already read those cleanup codes as
   unknown.
+- Fix: `dgxm update --verify --receipt PATH` refuses with exit 2, before the
+  update lock and any update step, when PATH already exists or its folder
+  cannot take the receipt (a symlink or file in the path, an unsafe ancestor,
+  another user's folder, a folder it cannot write). It ran the whole update on
+  every host first and then exited 1 with no receipt
+  ([INSTALL](docs/INSTALL.md#operator-receipts)).
+- Fix: a custom `--receipt` path no longer sets a folder that already exists,
+  such as a home or a group-shared folder, to owner-only access; only the
+  folders the writer creates get `0700`.
+- Fix: a verified update whose controller cannot write its process record now
+  warns and reports the update's own result, where it reported "bootstrap
+  refused" with exit 2 after the update ran.
+- Fix: a plain `dgxm update` now refuses with `activity_unknown` when a
+  ComfyUI port answers the pack check with an HTTP error other than a missing
+  route, such as 401 or 403 from a login layer or a server error, or answers
+  from another address after a redirect. It read those as "ComfyUI is not
+  running" and could update and restart the Workers under a live driver
+  ([TROUBLESHOOTING #70](docs/TROUBLESHOOTING.md#70-dgxm-update-gate-or-top-misses-a-comfyui-driver-on-a-custom-port)).
+- Fix: when a verified update's staging fails, its cleanup removes only the
+  registration of its own staged checkout, where it pruned every git worktree
+  whose folder was absent at that moment, such as one on a disk that was not
+  mounted.
+- A verified update between two commits with the same torchmonarch pin, the
+  usual case, now downloads and stages that wheel once and leaves the
+  driver's torchmonarch untouched at the driver commit, where it downloaded
+  the wheel twice and reinstalled it in place; a failed reinstall of the same
+  wheel no longer ends the update `driver_commit_unknown`.
+- Fix: a verified update no longer refuses the driver pin's payload check when
+  a folder above the site, such as `/home`, is a symlink. A symlink at the
+  site itself or inside it still refuses.
 
 ### Development
 

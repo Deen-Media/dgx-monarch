@@ -17,6 +17,45 @@ def git(repo: Path, *args: str) -> str:
     return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
 
 
+def _git_runner(repo: Path, *, fail_first_remove: bool = False):
+    removes = []
+
+    def run(*args: str, timeout: float = 60) -> subprocess.CompletedProcess[str]:
+        if fail_first_remove and args[:2] == ("worktree", "remove") and not removes:
+            removes.append(args)
+            return subprocess.CompletedProcess(list(args), 128, "", "fatal: cannot remove")
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=timeout)
+
+    return run
+
+
+@pytest.mark.parametrize("registered", [False, True])
+def test_update_cleanup_never_prunes_another_worktree(tmp_path: Path, registered: bool):
+    """A worktree on a disk that is not mounted keeps its registration through an update's cleanup."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-q", "--allow-empty", "-m", "base")
+    disk = tmp_path / "other-disk"
+    disk.mkdir()
+    other = disk / "feature"
+    git(repo, "worktree", "add", "-q", "-b", "feature", str(other))
+    disk.rename(tmp_path / "unmounted")
+    root = tmp_path / "update-worktrees"
+    root.mkdir()
+    checkout = Path(tempfile.mkdtemp(prefix="update-", dir=root))
+    if registered:
+        git(repo, "worktree", "add", "-q", "--detach", str(checkout), "HEAD")
+
+    result = remove_worktree(checkout, root, _git_runner(repo, fail_first_remove=registered))
+
+    assert result.certainty == Certainty.SUCCEEDED
+    assert not checkout.exists()
+    listed = git(repo, "worktree", "list", "--porcelain")
+    assert f"worktree {other}" in listed
+    assert f"worktree {checkout}" not in listed
+
+
 @pytest.mark.parametrize("branch", ["main", "master"])
 def test_default_follows_remote_head_not_stale_tracking_ref(tmp_path: Path, branch: str):
     remote = tmp_path / "origin"

@@ -303,6 +303,60 @@ def test_a_refused_port_is_a_definite_answer_and_a_timeout_is_not(monkeypatch):
     assert _confirm_raising(monkeypatch, OSError("network is down")) is None
 
 
+def test_a_denied_or_failing_answer_is_unknown_and_only_a_missing_route_is_absent(monkeypatch):
+    """A login layer or a busy server in front of a live driver answers with an error.
+
+    Only a route that is not there (404, 410) says this pack is not loaded.
+    """
+    import urllib.error
+
+    for status in (400, 401, 403, 405, 407, 408, 429, 500, 502, 503, 504):
+        error = urllib.error.HTTPError("http://x", status, "error", {}, None)
+        assert _confirm_raising(monkeypatch, error) is None, status
+    for status in (404, 410):
+        error = urllib.error.HTTPError("http://x", status, "gone", {}, None)
+        assert _confirm_raising(monkeypatch, error) is False, status
+
+
+def test_an_answer_from_another_address_is_unknown(monkeypatch):
+    """A redirect, such as to a login page, is not the object-info route answering."""
+    import urllib.request
+
+    from dgx_monarch.cli import comfy_ports
+
+    class _Redirected(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def geturl(self): return "http://127.0.0.1:8188/login"
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda _url, timeout=1: _Redirected(b"<html>sign in</html>"))
+    assert comfy_ports._confirmed_driver("127.0.0.1:8188") is None
+
+
+def test_legacy_update_refuses_a_server_error_even_when_every_other_port_is_closed(
+    monkeypatch, tmp_path, capsys
+):
+    import urllib.error
+
+    from dgx_monarch.cli import main as cli
+    from dgx_monarch.cli import probe_certainty
+
+    busy = urllib.error.HTTPError("http://127.0.0.1:8188/object_info/DGXMonarchInit", 503, "busy", {}, None)
+    _probe_with(monkeypatch, {"8188": _driver(init=busy)})
+    refused = urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+    real = sys.modules["urllib.request"].urlopen
+
+    def closed_elsewhere(url, timeout=1):
+        if "8188" not in getattr(url, "full_url", url):
+            raise refused
+        return real(url, timeout=timeout)
+
+    monkeypatch.setattr(sys.modules["urllib.request"], "urlopen", closed_elsewhere)
+    assert cli._driver_probe() == (None, False)
+    assert _legacy_update_with(monkeypatch, tmp_path, cli._driver_probe) == probe_certainty.UNKNOWN_EXIT
+    assert "activity_unknown" in capsys.readouterr().err
+
+
 def test_driver_probe_reports_whether_every_candidate_answered(monkeypatch):
     from dgx_monarch.cli import comfy_ports
 

@@ -17,7 +17,7 @@ from typing import Any
 
 from ..config import ClusterConfig, load_cluster_config
 from ..runtime_provenance import dgx_source_manifest_sha256
-from .operator_receipt import receipt_destination
+from .receipt_preflight import check_receipt_destination
 
 # Verify the inventory before importing its package initializer.
 _LOADER = r'''
@@ -278,6 +278,19 @@ def _wait_child(process: subprocess.Popen[bytes], snapshot: Path, *, timeout: fl
         signal.signal(signal.SIGINT, prior_int)
 
 
+def _settle_controller(snapshot: Path, result: int) -> int:
+    """Remove the controller snapshot only after a confirmed success; keep the child's result."""
+    try:
+        confirmed = result == 0 and json.loads(_regular_bytes(snapshot / "settled.json")) == {"exit_code": 0}
+        if confirmed:
+            shutil.rmtree(snapshot)
+            return result
+    except (OSError, ValueError):
+        pass
+    print(f"update controller retained for recovery: {snapshot}", file=sys.stderr)
+    return result
+
+
 def launch_verified_update(
     config: ClusterConfig,
     *,
@@ -293,7 +306,8 @@ def launch_verified_update(
     try:
         if type(privileged_process_inspection) is not bool:
             raise ValueError("invalid privileged process inspection selection")
-        destination = str(receipt_destination(receipt_path)) if receipt_path is not None else None
+        # An occupied or unwritable --receipt refuses here, before any update step.
+        destination = str(check_receipt_destination(receipt_path)) if receipt_path is not None else None
         original_repo = repo.expanduser().resolve(strict=True)
         config_path = Path(config.source).expanduser().resolve(strict=True)
         if not config.source or not original_repo.is_dir():
@@ -340,14 +354,15 @@ def launch_verified_update(
                 "pid": process.pid, "executable": sys.executable, "manifest_sha256": digest,
                 "repo": str(original_repo),
             }).encode())
+        except OSError as exc:
+            # The update runs on in its own controller, and its receipt records
+            # the outcome: report the child's result, never "refused".
+            print(f"warning: the update controller's process record could not be written ({exc})",
+                  file=sys.stderr)
         finally:
             # Publication failure must not abandon a running transaction.
             result = _wait_child(process, snapshot)
-        if result == 0 and json.loads(_regular_bytes(snapshot / "settled.json")) == {"exit_code": 0}:
-            shutil.rmtree(snapshot)
-        else:
-            print(f"update controller retained for recovery: {snapshot}", file=sys.stderr)
-        return result
+        return _settle_controller(snapshot, result)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"verified update bootstrap refused: {exc}", file=sys.stderr)
         if snapshot is not None:

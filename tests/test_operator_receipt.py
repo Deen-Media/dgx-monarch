@@ -218,6 +218,54 @@ def test_write_is_private_atomic_and_deterministic(tmp_path: Path):
     assert not list(target.parent.glob(".*.tmp-*"))
 
 
+@pytest.mark.parametrize("occupied", [False, True])
+def test_a_custom_path_never_changes_the_mode_of_an_existing_folder(tmp_path: Path, occupied: bool):
+    shared = tmp_path / "project"
+    shared.mkdir()
+    shared.chmod(0o750)
+    target = shared / "update.json"
+    if occupied:
+        target.write_text("keep", encoding="utf-8")
+        with pytest.raises(FileExistsError):
+            receipt.write_receipt(_built(), target)
+        assert target.read_text(encoding="utf-8") == "keep"
+    else:
+        receipt.write_receipt(_built(), target)
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o750
+
+
+def test_a_failed_close_while_walking_the_parents_never_closes_a_descriptor_twice(
+    tmp_path: Path, monkeypatch
+):
+    closed: list[int] = []
+    real_close = os.close
+
+    def close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+        if len(closed) == 1:
+            raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(receipt.os, "close", close)
+    with pytest.raises(OSError):
+        receipt.write_receipt(_built(), tmp_path / "receipts" / "update.json")
+    assert len(closed) == len(set(closed))
+
+
+def test_the_receipt_preflight_reads_and_creates_nothing(tmp_path: Path):
+    from dgx_monarch.cli.receipt_preflight import check_receipt_destination
+
+    target = tmp_path / "new" / "deeper" / "update.json"
+    assert check_receipt_destination(target) == target
+    assert not (tmp_path / "new").exists()
+    (tmp_path / "taken.json").write_text("keep", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="already exists"):
+        check_receipt_destination(tmp_path / "taken.json")
+    with pytest.raises(ValueError, match="absolute"):
+        check_receipt_destination("relative.json")
+
+
 def test_write_never_replaces_an_existing_file_or_symlink(tmp_path: Path):
     parent = tmp_path / "receipts"
     parent.mkdir()

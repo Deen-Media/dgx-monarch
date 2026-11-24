@@ -4623,6 +4623,8 @@ dgx-monarch/
 │       │                       #   how long it has held it, the id it serves,
 │       │                       #   and the doctor row
 │       ├── operator_receipt.py # bounded disclosure-safe receipt schema/writer
+│       ├── receipt_preflight.py # read-only refusal of an unusable receipt path,
+│       │                       #   before any operation runs
 │       ├── receipt_sanitize.py # conservative receipt-note redaction leaf
 │       ├── sol_attn_prerequisites.py # passive optional dependency/header/cache evidence
 │       ├── sol_install.py      # per-host plans and reviewed fleet digest

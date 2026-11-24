@@ -4778,7 +4778,12 @@ process before probing its listening port.
 shape as a candidate only. It confirms the pack through ComfyUI's stock
 `/object_info/DGXMonarchInit` endpoint and requires the exact Init node name,
 category and output type, so an unrelated `main.py` listener or any HTTP 200
-or 503 is not enough. `gate` and `top` then use `/dgxm/telemetry` only to rank
+or 503 is not enough. Only a missing route (404 or 410), a refused connection
+or another schema shows the pack absent: any other HTTP error, such as a 401
+or 403 from a login layer or a server error, and an answer from another
+address after a redirect show nothing, so `dgxm update` refuses with
+`activity_unknown` until every probed port answers plainly or ComfyUI is
+stopped. `gate` and `top` then use `/dgxm/telemetry` only to rank
 confirmed instances by live workers; a cold telemetry timeout or a valid 503
 does not hide a confirmed driver, and `update` does not wait on that slower
 endpoint. If process inspection is unavailable or restricted, pass the address:

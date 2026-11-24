@@ -308,9 +308,15 @@ def default_receipt_path(receipt: Mapping[str, object], *,
 
 
 def _private_parent(path: Path) -> int:
+    """Open the receipt's folder, creating any missing part at 0700.
+
+    A folder that already exists keeps its mode: a custom receipt path may sit
+    in a home or a group-shared folder that the receipt must not tighten.
+    """
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     directory_fd = os.open(path.anchor, flags)
     pending_fd = -1
+    created = False
     try:
         for index, name in enumerate(path.parts[1:]):
             created = False
@@ -334,9 +340,12 @@ def _private_parent(path: Path) -> int:
                 or (not final and writable and not opened.st_mode & stat.S_ISVTX)
             ):
                 raise OSError("operator receipt parent chain is unsafe")
-            os.close(directory_fd)
-            directory_fd, pending_fd = child_fd, -1
-        os.fchmod(directory_fd, 0o700)
+            # Hand the parent over before closing it: a failed close must not
+            # leave its number for the handler below to close a second time.
+            previous, directory_fd, pending_fd = directory_fd, child_fd, -1
+            os.close(previous)
+        if created:
+            os.fchmod(directory_fd, 0o700)
     except BaseException:
         for descriptor in (pending_fd, directory_fd):
             if descriptor >= 0:
@@ -438,8 +447,6 @@ def write_receipt(receipt: Mapping[str, object], path: str | os.PathLike[str] | 
             raise OSError("operator receipt temporary identity changed")
         temporary_name = None
         os.fsync(directory_fd)
-        os.close(directory_fd)
-        directory_fd = -1
     except BaseException:
         cleanup_fd = directory_fd
         recovered_fd = -1
@@ -471,4 +478,7 @@ def write_receipt(receipt: Mapping[str, object], path: str | os.PathLike[str] | 
                 except BaseException:
                     pass
         raise
+    # The receipt is published and durable: closing its folder can no longer
+    # undo it, so a failed close does not reach the handler above.
+    os.close(directory_fd)
     return destination

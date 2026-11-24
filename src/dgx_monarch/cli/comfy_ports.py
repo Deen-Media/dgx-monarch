@@ -134,24 +134,31 @@ def _init_schema(payload: object) -> bool:
     )
 
 
+_ABSENT_ROUTE = frozenset({404, 410})
+
+
 def _confirmed_driver(candidate: str) -> bool | None:
     """Confirm the pack's Init-node schema through Comfy's object-info endpoint.
 
-    Return ``None`` on a timeout or transport error: neither proves absence.
-    Connection refusal, HTTP errors, and schema mismatches return ``False``.
-    Callers publishing activity or lease state must preserve this distinction.
+    Return ``None`` when the answer proves nothing about the pack: a timeout or
+    transport error, an HTTP error other than a missing route (a 401 or 403
+    from a login layer, a 429, a 5xx from a busy server), or an answer from
+    another address after a redirect. Connection refusal, a missing route
+    (404, 410) and a schema mismatch return ``False``. Callers publishing
+    activity or lease state must preserve this distinction.
     """
     import json
     import urllib.error
     import urllib.request
 
+    url = f"http://{candidate}/object_info/{_INIT_NODE}"
     try:
-        with urllib.request.urlopen(
-                f"http://{candidate}/object_info/{_INIT_NODE}",
-                timeout=_CONFIRM_TIMEOUT_S) as response:
+        with urllib.request.urlopen(url, timeout=_CONFIRM_TIMEOUT_S) as response:
+            if getattr(response, "geturl", lambda: url)() != url:
+                return None
             payload = json.load(response)
-    except urllib.error.HTTPError:
-        return False
+    except urllib.error.HTTPError as exc:
+        return False if exc.code in _ABSENT_ROUTE else None
     except urllib.error.URLError as exc:
         return False if isinstance(exc.reason, ConnectionRefusedError) else None
     except (TimeoutError, OSError):

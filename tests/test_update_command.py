@@ -527,19 +527,28 @@ def test_command_publishes_sanitized_receipt(
     assert str(destination) in capsys.readouterr().out
 
 
-def test_command_returns_failure_when_receipt_cannot_be_published(
+class _TakenDuringUpdate(_HappyOps):
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def finalize(self, _stage):
+        self.path.write_text("keep", encoding="utf-8")
+        return OperationResult(Certainty.SUCCEEDED)
+
+
+def test_command_returns_failure_when_receipt_is_taken_during_the_update(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
-    occupied = tmp_path / "receipt.json"
-    occupied.write_text("keep", encoding="utf-8")
+    """A path taken after the early check still never loses its file; the update says so."""
+    destination = tmp_path / "receipt.json"
 
     rc = update_command.run_verified_update(
         ClusterConfig(), repo=tmp_path, assume_yes=True,
-        receipt_path=occupied, ops=_HappyOps(),
+        receipt_path=destination, ops=_TakenDuringUpdate(destination),
     )
 
     assert rc == 1
-    assert occupied.read_text(encoding="utf-8") == "keep"
+    assert destination.read_text(encoding="utf-8") == "keep"
     assert "receipt publication failed" in capsys.readouterr().err
 
 
@@ -597,6 +606,78 @@ def test_command_refuses_a_bad_receipt_path_before_any_operation(
     captured = capsys.readouterr()
     assert captured.err == f"error: --receipt: {refusal}\n"
     assert captured.out == ""
+
+
+def _occupied(tmp_path: Path) -> Path:
+    path = tmp_path / "receipt.json"
+    path.write_text("keep", encoding="utf-8")
+    return path
+
+
+def _dangling_link(tmp_path: Path) -> Path:
+    path = tmp_path / "receipt.json"
+    path.symlink_to(tmp_path / "elsewhere.json")
+    return path
+
+
+def _read_only_parent(tmp_path: Path) -> Path:
+    parent = tmp_path / "read-only"
+    parent.mkdir(mode=0o500)
+    return parent / "receipt.json"
+
+
+def _file_parent(tmp_path: Path) -> Path:
+    (tmp_path / "plain-file").write_text("", encoding="utf-8")
+    return tmp_path / "plain-file" / "receipt.json"
+
+
+def _shared_ancestor(tmp_path: Path) -> Path:
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    return shared / "receipts" / "receipt.json"
+
+
+def _symlink_parent(tmp_path: Path) -> Path:
+    (tmp_path / "real").mkdir(mode=0o700)
+    (tmp_path / "linked").symlink_to(tmp_path / "real")
+    return tmp_path / "linked" / "receipt.json"
+
+
+@pytest.mark.parametrize(
+    ("make_path", "refusal"),
+    [(_occupied, "already exists"), (_dangling_link, "already exists"),
+     (_read_only_parent, "not writable"), (_file_parent, "real directory"),
+     (_shared_ancestor, "unsafe"), (_symlink_parent, "real directory")],
+    ids=["occupied", "dangling-link", "read-only-parent", "file-parent", "shared-ancestor", "symlink-parent"],
+)
+def test_command_refuses_an_unusable_receipt_path_before_any_operation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+    make_path, refusal: str,
+):
+    """An occupied or unwritable --receipt is found before the lock and any operation.
+
+    Found only at publication, the update ran on every host and then exited 1
+    with no receipt. The check reads and creates nothing.
+    """
+    root = tmp_path / "root"
+    root.mkdir(mode=0o700)
+    path = make_path(root)
+    before = sorted(str(item.relative_to(root)) for item in root.rglob("*"))
+    ops = _RecordingOps()
+    lock_root = tmp_path / "locks"
+    monkeypatch.setattr(update_entrypoint, "UpdateLock", lambda repo: UpdateLock(repo, state_root=lock_root))
+
+    rc = update_command.run_verified_update(
+        ClusterConfig(), repo=tmp_path, assume_yes=True, receipt_path=path, ops=ops,
+    )
+
+    assert rc == 2
+    assert ops.calls == []
+    assert not lock_root.exists()
+    assert sorted(str(item.relative_to(root)) for item in root.rglob("*")) == before
+    err = capsys.readouterr().err
+    assert err.startswith("error: --receipt: ") and refusal in err
 
 
 def test_command_refuses_concurrent_verified_update_before_any_operation(

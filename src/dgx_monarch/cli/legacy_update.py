@@ -201,10 +201,12 @@ def _run_locked(
         return 2
     if not observed:
         print(
-            "refusing to update: a driver probe never answered, so driver activity "
-            "is unknown (activity_unknown). A driver this run could not reach would "
-            "keep old Python modules while restarted workers load new ones. Rerun "
-            "`dgxm update` once every probed ComfyUI port answers (the local ports "
+            "refusing to update: a driver probe never answered, or answered with an "
+            "HTTP error that does not show the pack absent (such as 401, 403 or a "
+            "server error) or from another address, so driver activity is unknown "
+            "(activity_unknown). A driver this run could not see would keep old "
+            "Python modules while restarted workers load new ones. Rerun `dgxm "
+            "update` once every probed ComfyUI port answers plainly (the local ports "
             "and any --host), or stop ComfyUI first.",
             file=sys.stderr,
         )
