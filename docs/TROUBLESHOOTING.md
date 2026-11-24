@@ -4708,17 +4708,20 @@ ownership handoff are process-global.
 **Fix:** read the original spawn, handoff or lease failure first; rollback
 evidence adds to it and never replaces it. Confirmed cleanup after an
 already-built handle or client-lease startup failure may evict that handle and
-retry the same transport mode. A `WorkerSpawnError` after transport
-initialization leaves the process poisoned even when its partial ProcMesh
-rollback was confirmed. In a cluster, the poison lifts once every host shows
-the processes the bring-up spawned gone: the next render and **Reset attached
-mesh** ask, as [#65](#65-dgxm-status-and-dgxm-doctor-are-green-and-every-attach-still-fails)
-says, since the transport itself survives the failed spawn (the driver
-attaches again in the same session after the loops restart). An attach whose
-result handoff was interrupted, or a spawn callback whose removal is
-unconfirmed, keeps the poison until ComfyUI restarts. A local fleet's poison
-needs a restart too; only a local failure proven to occur before transport
-import or initialization is retryable in-session.
+retry the same transport mode. In a cluster the transport survives a failed
+spawn, so a `WorkerSpawnError` that says `rolled back` leaves nothing to
+clean: Monarch confirmed the stop of every process the bring-up spawned, on
+every host, or none had started. The next render attaches a fresh fleet in
+the same session (since 1.5.0; before, it needed a ComfyUI restart). When the
+rollback stop did not confirm (`not safely stopped`), the poison lifts once
+every host shows the processes the bring-up spawned gone: the next render and
+**Reset attached mesh** ask, as [#65](#65-dgxm-status-and-dgxm-doctor-are-green-and-every-attach-still-fails)
+says. An attach whose result handoff was interrupted, or a spawn callback
+whose removal is unconfirmed, keeps the poison until ComfyUI restarts, even
+after a confirmed rollback. A local fleet's `WorkerSpawnError` after
+transport initialization needs a restart even when its rollback was
+confirmed; only a local failure proven to occur before transport import or
+initialization is retryable in-session.
 If a completed stop call reports a definite non-timeout ordinary failure,
 replacement stays blocked, but a later explicit **Reset attached mesh**,
 shutdown or supervision cleanup gets a fresh bounded stop attempt. A second

@@ -9,7 +9,9 @@ Worker loops again and spawns a fresh fleet in the same session after the
 loops restarted (restart_reattach), and after a stop that timed out once the
 liveness proof released it (mesh_liveness); nothing in a failed spawn closes
 the process transport, which ``enable_transport`` binds once. What is unknown
-is whether the processes the bring-up spawned still run.
+is whether the processes the bring-up spawned still run. A bring-up whose
+rollback stop Monarch confirmed, or that started no process, leaves nothing
+unknown and records no poison (mesh_factory.left_nothing_running).
 
 So the next render, and Reset attached mesh, ask every configured host the
 liveness question the stop-timeout latch uses (mesh_liveness.probe_fleet): no

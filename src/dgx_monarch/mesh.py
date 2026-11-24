@@ -552,9 +552,10 @@ def get_mesh(
                 if _TRANSPORT_POISON is None:
                     _TRANSPORT_POISON = spawn_poison
                 transport_releasable = not use_cluster and not exc.local_transport_initialized
-                if transport_releasable and _TRANSPORT_POISON is spawn_poison:
+                settled = use_cluster and mesh_factory.left_nothing_running(fleet_handoff, exc)
+                if (transport_releasable or settled) and _TRANSPORT_POISON is spawn_poison:
                     _TRANSPORT_POISON = None
-                elif not transport_releasable:
+                elif not (transport_releasable or settled):
                     _TRANSPORT_POISON = f"actor spawn failed: {exc.original_text}" + (f"; rollback failed: {exc.cleanup_text}" if exc.cleanup is not None else "")
                 exc.raise_cancellation()
                 raise MeshAttachError(

@@ -257,7 +257,8 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
   fleet starts its cleanup without waiting for it. A cluster bring-up that
   failed with a Worker's loss poisons the session only until every host shows
   the processes it spawned gone (`failed_bring_up`): the next render and the
-  Reset ask. A mutation RPC that times out
+  Reset ask. One whose rollback stop Monarch confirmed, or that started no
+  process, poisons nothing (`mesh_factory.left_nothing_running`). A mutation RPC that times out
   or is interrupted after its send latches the mesh DIRTY until a recycle
   (`mesh_rpc.call_all_bound`). `dgxm up` restarts wedged Worker services
   idempotently, and the driver restarts dead services before attaching

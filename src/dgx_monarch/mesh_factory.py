@@ -333,6 +333,23 @@ class WorkerSpawnError(RuntimeError):
         raise winner from cause
 
 
+def left_nothing_running(handoff: FleetHandoff, exc: WorkerSpawnError) -> bool:
+    """Whether a failed cluster spawn left nothing unknown (no process started, or
+    Monarch confirmed the rollback stop); if so, it closes the spawn.
+
+    A bring-up's only processes are its one ProcMesh's ranks on every host; it
+    never starts or stops the attached Worker loops. The ProcMesh it stops is the
+    object Monarch built, returned or raised after its spawn callback (the build's
+    last step), and that stop returns only once the controller saw every rank stop
+    (mesh_stop.stop_procs), the signal a normal teardown trusts before it attaches
+    a replacement. A spawn callback whose removal is unconfirmed is still open.
+    """
+    if not exc.rollback_confirmed or exc.cleanup is not None or handoff.callback_cleanup_unconfirmed:
+        return False
+    handoff.spawn_in_progress = False
+    return True
+
+
 def _mesh_name(workers: Any) -> str | None:
     """The new mesh's name, read once at bring-up for the fault hook (retired_meshes)."""
     try:

@@ -2499,6 +2499,11 @@ sections after them list every change.
   attaches in the same session; while a host still shows them, the refusal
   names it. Before, the Reset answered `no_live_mesh` and only a restart helped
   ([TROUBLESHOOTING #69](docs/TROUBLESHOOTING.md#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)).
+- Fix: a cluster bring-up that fails with its spawned processes rolled back,
+  or before it starts any process, no longer leaves the session refusing
+  every render until ComfyUI restarts. Monarch confirmed that nothing it
+  started still runs, so the next render attaches a fresh fleet without
+  asking any host.
 - Fix: the liveness check no longer reads a process as gone when its main
   thread has exited and another thread still runs. The kernel shows such a
   process as a zombie with no command line while it keeps every page; it now
