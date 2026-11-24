@@ -2669,6 +2669,19 @@ sections after them list every change.
 - Fix: a verified update no longer refuses the driver pin's payload check when
   a folder above the site, such as `/home`, is a symlink. A symlink at the
   site itself or inside it still refuses.
+- Fix: the uninstall steps in the install guide no longer delete the checkout
+  when `dgxm uninstall` refuses, as it does while Studio's service is
+  installed; that left Worker and Studio services behind with no `dgxm` to
+  remove them. `dgxm uninstall` now stands alone, with what a refusal means,
+  and the removal of the node pack refuses while a dgx-monarch service unit
+  is still installed on the machine or `COMFY_DIR` is unset
+  ([INSTALL](docs/INSTALL.md#uninstalling)).
+- The install guide's optional swap procedure writes its swappiness to
+  `/etc/sysctl.d/99-dgxm-swap.conf`, where it overwrote any file named
+  `99-swap.conf`, and comments out only the fstab line for `/swap.img`
+  itself; its undo step names the earlier file too. The launcher and Sol
+  install blocks now put the plan and the apply in separate blocks, so a
+  paste never applies a plan nobody read.
 
 ### Development
 

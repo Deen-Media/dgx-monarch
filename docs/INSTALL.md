@@ -299,6 +299,11 @@ launcher can make bare `dgxm` available without activating the environment:
 "$DGXM" launcher --executable "$DGXM" \
   --cluster-config /absolute/path/to/cluster.toml \
   --destination "$HOME/.local/bin/dgxm" --check
+```
+
+Review that plan, and apply it only once the plan reads as intended:
+
+```bash
 "$DGXM" launcher --executable "$DGXM" \
   --cluster-config /absolute/path/to/cluster.toml \
   --destination "$HOME/.local/bin/dgxm" --apply
@@ -1040,7 +1045,12 @@ clients and refuses incomplete observations.
 
 ```bash
 dgxm sol-install
-# Review the per-host package changes and copy the emitted token and digest.
+```
+
+Review the per-host package changes, then apply with the token and digest
+the plan printed in place of `TOKEN` and `SHA256`:
+
+```bash
 dgxm sol-install --apply --plan TOKEN --plan-digest SHA256 --idle-maintenance
 ```
 
@@ -1137,14 +1147,18 @@ OOM kill of one process.
 turn swap off and keep it off across reboots:
 
 ```bash
-sudo swapoff -a && sudo sed -i 's|^/swap.img|#/swap.img|' /etc/fstab \
-  && printf 'vm.swappiness=10\n' | sudo tee /etc/sysctl.d/99-swap.conf \
-  && sudo sysctl -q -p /etc/sysctl.d/99-swap.conf && swapon --show
+sudo swapoff -a && sudo sed -i 's|^/swap\.img\([[:space:]]\)|#/swap.img\1|' /etc/fstab \
+  && printf 'vm.swappiness=10\n' | sudo tee /etc/sysctl.d/99-dgxm-swap.conf \
+  && sudo sysctl -q -p /etc/sysctl.d/99-dgxm-swap.conf && swapon --show
 ```
 
-`swapon --show` prints nothing once swap is off. To undo, uncomment the fstab
-line, run `sudo swapon -a`, and delete `/etc/sysctl.d/99-swap.conf` to restore
-the default swappiness at the next boot.
+`swapon --show` prints nothing once swap is off. The fstab edit comments out
+only the line for `/swap.img` itself, and the swappiness goes into a file of
+this guide's own name, so no other setting is touched. To undo, uncomment the
+fstab line, run `sudo swapon -a`, and delete `/etc/sysctl.d/99-dgxm-swap.conf`
+to restore the default swappiness at the next boot. An earlier version of this
+guide wrote `/etc/sysctl.d/99-swap.conf` instead: if that file holds only
+`vm.swappiness=10`, delete it too.
 
 ## Updating
 
@@ -2040,10 +2054,36 @@ the update then reports that its receipt could not be published.
 
 ## Uninstalling
 
-```bash
-dgxm uninstall                      # removes Worker services/units; offers reviewed config removal
-rm -rf "$COMFY_DIR/custom_nodes/dgx-monarch"   # a symlink here: only the link goes
-```
+Uninstall in two steps, and start the second only after the first finished.
+
+1. Remove the Worker services and units. Run this line on its own, since it
+   asks before it removes the config file:
+
+   ```bash
+   dgxm uninstall
+   ```
+
+   It finished when its last line reads `worker services and units removed`,
+   or `no cluster config was found`, and it exits 0. Anything else is a
+   refusal: it removed nothing it could not prove safe, and the services it
+   found are still installed. A refusal that names `dgxm-studio.service`
+   asks you to run `dgxm studio down` first. Keep the checkout after a
+   refusal, since the `dgxm` command runs from it; clear the cause the
+   refusal names and run `dgxm uninstall` again.
+
+2. Remove the node pack. It deletes any local work in the checkout, so look
+   first with `git -C "$COMFY_DIR/custom_nodes/dgx-monarch" status --short`.
+   The block removes nothing while a dgx-monarch service unit is still
+   installed on this machine, or while `COMFY_DIR` is unset; a symlink there
+   is removed alone and the folder it names stays:
+
+   ```bash
+   if [ -e ~/.config/systemd/user/dgxm-studio.service ] || [ -e ~/.config/systemd/user/dgxm-worker.service ]; then
+     echo "a dgx-monarch service unit is still installed: finish step 1 first"; false
+   else
+     rm -rf -- "${COMFY_DIR:?set COMFY_DIR to your ComfyUI folder}/custom_nodes/dgx-monarch"
+   fi
+   ```
 
 Uninstall holds the shared config lock across service/unit removal, rereads the
 config, and asks separately before its checked unlink. Lock contention or
