@@ -1,8 +1,9 @@
 """Driver preflights for the per-render model patches (Skip Layer Guidance, MiniMax H3
-context windows, the SD3 and MiniMax H3 shifts, LoRA), for MOSS-Image reference
+context windows, the SD3 and MiniMax H3 shifts, LoRA), for a quantization kind a
+family has not measured on a sharded layout, for MOSS-Image reference
 images and text attention bias, and for UltraTex view conditioning on the Flux family.
 
-All eight run once per render in nodes/render_submit.py, after the topology
+All nine run once per render in nodes/render_submit.py, after the topology
 resolves and before any Worker call, so a refusal costs no dispatch. Each fails
 open where it cannot read its facts: the Worker belts (actor/guidance_render.py,
 actor/context_windows_render.py, actor/model_sampling_render.py) still guard
@@ -32,7 +33,7 @@ log = get_logger(__name__)
 
 
 def preflight_model_patches(model: Any, topo: Any, request: Mapping[str, Any]) -> None:
-    """The one driver entry: the skip check, then the shift and LoRA checks on every model."""
+    """The one driver entry: the skip check, then the shift, LoRA and sharded-kind checks on every model."""
     preflight_skip_layer_guidance(model, topo, request)
     preflight_context_windows(model, request)
     preflight_shift_node(model)
@@ -40,6 +41,7 @@ def preflight_model_patches(model: Any, topo: Any, request: Mapping[str, Any]) -
     if uncond is not None:
         preflight_shift_node(uncond)
     preflight_lora_quant(model, uncond)
+    preflight_sharded_quant(model, topo, uncond)
 
 
 def honouring_families() -> frozenset[str]:
@@ -65,6 +67,24 @@ def _sniffed_checkpoint(unet_name: Any, override: str | None) -> tuple[str, str]
         return None
 
 
+def _named_layer_kind(unet_name: Any, reader: str) -> str | None:
+    """A file's kind by its layer records, through one of adapters/layer_records.py's readers; None when they do not say."""
+    try:
+        import folder_paths
+
+        from ..adapters import layer_records
+
+        path = folder_paths.get_full_path("diffusion_models", unet_name)
+        return None if path is None else getattr(layer_records, reader)(path)
+    except Exception:
+        return None
+
+
+def _named_int8_kind(unet_name: Any) -> str | None:
+    """What a file with an int8 header is by its layer records: "w4a4", "int8", or None when they do not say."""
+    return _named_layer_kind(unet_name, "name_int8_header_kind")
+
+
 def _sniffed_family(model: Any) -> str | None:
     """The checkpoint family from its header, or None when it cannot be read."""
     try:
@@ -75,7 +95,7 @@ def _sniffed_family(model: Any) -> str | None:
 
 
 def preflight_lora_quant(model: Any, uncond: Any = None) -> None:
-    """Refuse a LoRA on a quantized file whose baked LoRA renders wrong (#129).
+    """Refuse a LoRA on a quantized file whose LoRA render is wrong or unmeasured (#129).
 
     Checks the model and the unconditional model of a two-checkpoint guider,
     a ModelSpec or a model request dict alike. A header is read only for a
@@ -90,8 +110,88 @@ def preflight_lora_quant(model: Any, uncond: Any = None) -> None:
         if not loras or not unet_name:
             continue
         sniffed = _sniffed_checkpoint(unet_name, family_select.override_for_model(model))
-        if sniffed is not None:
-            lora_quant_guard.assert_lora_quant_supported(*sniffed, list(loras))
+        if sniffed is None:
+            continue
+        family, kind = sniffed
+        open_question = False
+        if lora_quant_guard.header_kind_is_open(family, kind):
+            # A ConvRot W4A4 header reads int8 too. The file's own layer
+            # records say which it is; with none readable the refusal
+            # describes both kinds instead of calling the file INT8.
+            named = _named_int8_kind(unet_name)
+            kind, open_question = (named, False) if named is not None else (kind, True)
+        lora_quant_guard.assert_lora_quant_supported(
+            family, kind, list(loras), int8_or_w4a4=open_question)
+
+
+# The quantized kinds the driver can name before dispatch: a header reads fp8
+# (a block-scaled file's too) or w4a8, an fp8 weight_dtype cast makes fp8 of a
+# full-precision file, and a file's layer records name w4a4 behind an int8
+# header and mxfp8 or nvfp4 behind an fp8 one. Any other reading is left to
+# the Worker, which sees the loaded model.
+_KINDS_NAMED_BEFORE_DISPATCH = frozenset({"fp8", "mxfp8", "nvfp4", "w4a8", "w4a4"})
+
+
+def preflight_sharded_quant(model: Any, topo: Any, uncond: Any = None) -> None:
+    """Refuse, before dispatch, a kind its family has not measured on a sharded layout.
+
+    The Worker's own check (adapters/cfg_parallel.py assert_sp_quant_supported,
+    called once the file is loaded) stays the authority; this is the same
+    check, with the same words, on what the driver can read without loading
+    anything, so that the user is not made to wait for every rank to load a
+    whole file that cannot run on the chosen layout. It reads the header, and
+    for an int8 header the file's layer records, which tell a ConvRot W4A4
+    file from an INT8 one. Only a family that lists the kinds it measured has
+    a check at all, an unreadable file passes, and so does every kind the
+    driver cannot name for certain.
+    """
+    sp = int(getattr(topo, "ulysses", 1)) * int(getattr(topo, "ring", 1))
+    cfg = int(getattr(topo, "cfg", 1))
+    if sp <= 1 and cfg <= 1:
+        return
+    from ..adapters import ADAPTERS, cfg_parallel
+
+    for target in (model, uncond):
+        if isinstance(target, Mapping):
+            unet_name, options = target.get("unet_name"), target.get("options")
+        else:
+            unet_name, options = getattr(target, "unet_name", None), getattr(target, "options", None)
+        if not unet_name:
+            continue
+        sniffed = _sniffed_checkpoint(unet_name, family_select.override_for_model(model))
+        if sniffed is None:
+            continue
+        family, kind = sniffed
+        adapter = next((a for a in ADAPTERS if getattr(a, "family", None) == family), None)
+        if adapter is None or getattr(adapter, "sp_validated_quants", None) is None:
+            continue
+        read_from, kind_note = "the file's header", ""
+        weight_dtype = str((options or {}).get("weight_dtype", "default")) if isinstance(options, Mapping) else ""
+        if kind in ("bf16", "fp16", "fp32") and weight_dtype.startswith("fp8"):
+            kind, read_from = "fp8", "the file under the loader's fp8 weight_dtype"
+        elif kind == "int8" and _named_int8_kind(unet_name) == "w4a4":
+            kind, read_from = "w4a4", "a layer record of the file"
+        elif kind == "fp8":
+            # A header reads fp8 for an FP8, an MXFP8 and an NVFP4 file alike.
+            # The layer records name the one it is; where they do not, the
+            # refusal says the reading covers all three.
+            named = _named_layer_kind(unet_name, "name_fp8_header_kind")
+            if named is None:
+                kind_note = ", as the header of an FP8, an MXFP8 and an NVFP4 file all do"
+            else:
+                kind, read_from = named, "the file by its layer records"
+        if kind not in _KINDS_NAMED_BEFORE_DISPATCH:
+            continue
+        # The Worker's own clause (actor/worker.py _inject_for_topology): a
+        # two-checkpoint guider at cfg2 runs a whole batch on each rank.
+        dual_model_cfg = (
+            bool(getattr(adapter, "dual_model_cfg_supported", False))
+            and cfg == 2 and sp == 1
+            and int(getattr(topo, "world", 0) or 0) == 2
+            and not bool(getattr(topo, "fsdp", False)))
+        cfg_parallel.assert_sp_quant_supported(
+            adapter, sp, kind, cfg=cfg, dual_model_cfg=dual_model_cfg, read_from=read_from,
+            kind_note=kind_note)
 
 
 def renders_on_one_gpu(topo: Any) -> bool:

@@ -8366,7 +8366,7 @@ vendor's shift of 5, and the other families render with their own sampling.
 dgx-monarch carries no other shift node, so a different shift on those
 families needs stock ComfyUI on one GPU.
 
-## 129. A MOSS-Image INT8 render with a LoRA refuses on every topology
+## 129. A MOSS-Image INT8, grouped INT8 or ConvRot W4A4 render with a LoRA refuses on every topology
 
 **Symptom:** a render of a `moss_image` INT8 file (MOSS-Image SFT, Base or
 Kromoss) with a LoRA in its stack refuses class P before dispatch, or on
@@ -8416,6 +8416,21 @@ they are not refused. Since #145 every Worker bakes stock's cast-time weight,
 which a probe found bit-identical to stock's own cast on H3's INT8 ConvRot
 layers; MOSS-Image's INT8 files keep this refusal until a hardware run
 measures a LoRA on them with the new bake.
+
+A MOSS-Image file of the kinds `w4a8` (ComfyUI's grouped INT8 formats, 3 to 6
+bit weights) or `w4a4` (ConvRot W4A4) with a LoRA refuses at the same sites,
+class P, with a message of its own that opens "moss_image: no render has
+measured a LoRA" and names the LoRA and the kind. Nothing was measured on
+those kinds: no such MOSS-Image file is known here. They refuse because the
+family's one measured quantized kind, INT8, rendered wrong with a LoRA and
+nothing shows they do better, and the refusal stands until a render measures
+the pair. A ConvRot W4A4 file's header reads `int8`, as an INT8 file's does,
+so before dispatch the driver reads the file's own layer records, a few dozen
+bytes a layer and no weight, to learn which it holds. An INT8 file gets the
+message above, a ConvRot W4A4 file the one that names `W4A4`, and a file with
+no readable layer record a third, which opens "moss_image: an INT8 or ConvRot
+W4A4 file with a LoRA" and says the header reads int8 as both kinds do. The
+Worker always names the kind it read off the loaded layers.
 
 **Fix:** render the graph in stock ComfyUI on one GPU with its default
 DynamicVRAM loader; with DynamicVRAM off, stock fails the same way. Or remove

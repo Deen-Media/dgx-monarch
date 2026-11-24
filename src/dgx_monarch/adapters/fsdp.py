@@ -234,10 +234,10 @@ def fsdp_precision_profile_is_admitted(
 def validate_fsdp_launch_quant(quant_kind: str) -> None:
     """Enforce the coarse FSDP launch contract on the checkpoint kind."""
     if quant_kind not in FSDP_ADMITTED_CHECKPOINT_KINDS:
-        if quant_kind in {"mxfp8", "nvfp4", "w4a8"}:
+        if quant_kind in {"mxfp8", "nvfp4", "w4a8", "w4a4"}:
             remediation = (
-                "Block-scaled and grouped 4-bit layouts have no registered shard layout; fp8 and "
-                "int8 files shard as stored bytes."
+                "Block-scaled layouts, the grouped INT8 layouts and ConvRot W4A4 have no "
+                "registered shard layout; fp8 and int8 files shard as stored bytes."
             )
         elif quant_kind == "fp32":
             remediation = (
