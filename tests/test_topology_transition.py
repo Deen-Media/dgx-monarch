@@ -348,6 +348,36 @@ def test_interrupted_worker_policy_marker_forces_complete_reapply(monkeypatch):
     assert len(workers.apply_worker_args.calls) == 2
 
 
+def test_the_parity_marker_carries_the_generation_the_proof_ran_under(monkeypatch):
+    """A setup that moves the generation during the proof must not inherit its marker.
+
+    The cache check skips the proof for a marker equal to the current
+    generation, so a marker stamped with the generation read afterwards would
+    pass a later dispatch of the same request with no proof against it.
+    """
+    from dgx_monarch.actor import model_store
+
+    workers = _Workers([])
+    handle, _old, _new = _handle(workers)
+    identity = {"digest": "model", "comfy": "commit", "artifacts": []}
+    monkeypatch.setattr(model_store, "request_artifact_identity", lambda *_args: identity)
+    proofs: list = []
+
+    def call_all(endpoint, *_args, **_kwargs):
+        proofs.append((endpoint, handle.setup_generation))
+        handle.setup_generation += 1  # a setup lands while the proof is in flight
+        return [{"artifact_sets": [identity]}, {"artifact_sets": [identity]}]
+
+    handle.call_all = call_all
+    request = {"model": {"unet_name": "model.sft", "options": {}, "loras": []},
+               "_dgxm_normal_residency_mode": "operator_off"}
+
+    handle._verify_request_artifacts(request)
+    assert request["_dgxm_artifact_preflight"] == {"generation": 1, "worker_index": None}
+    handle._verify_request_artifacts(request)  # generation 2 now: no marker for it
+    assert proofs == [("artifact_identity", 1), ("artifact_identity", 2)]
+
+
 def test_topology_cleanup_timeout_is_unknown_blocks_dispatch_and_recycles_once(monkeypatch):
     from dgx_monarch.actor import model_store
 
