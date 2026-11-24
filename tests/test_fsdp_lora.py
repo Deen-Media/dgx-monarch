@@ -502,3 +502,199 @@ def test_capture_refuses_a_key_with_no_checkpoint_tensor_typed(tmp_path, monkeyp
         assert set(active.patches) == {"blocks.0.lin.weight", _NORM_KEY}
     finally:
         torch.distributed.destroy_process_group()
+
+
+# A weight large enough that the sampled check reads only part of it: 64 x 128
+# bf16 is 16 KiB, sampled in three 4 KiB windows, so bytes 4096 to 6143 are
+# never read by the sampled check.
+_BIG_KEY = "blocks.0.lin.weight"
+_GAP_ELEMENT = 2100                     # byte 4200, between the first two windows
+
+
+class _BigBlock(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lin = torch.nn.Linear(128, 64, bias=False, dtype=torch.bfloat16)
+
+    def forward(self, x):
+        return self.lin(x)
+
+
+class _BigRoot(_Root):
+    def __init__(self, process=None):
+        super().__init__()
+        self.blocks = torch.nn.ModuleList([_BigBlock()])
+        if process is not None:
+            self.model_config = SimpleNamespace(process_unet_state_dict=process)
+
+
+def _big_weight() -> torch.Tensor:
+    return (torch.arange(64 * 128, dtype=torch.float32).reshape(64, 128) % 97 / 97).to(torch.bfloat16)
+
+
+def _gap_twin(weight: torch.Tensor) -> torch.Tensor:
+    """The same tensor with one element changed where no sampled window reads."""
+    twin = weight.clone()
+    twin.view(-1)[_GAP_ELEMENT] += 1
+    return twin
+
+
+def test_a_checkpoint_replaced_after_its_header_is_read_bakes_nothing(tmp_path, monkeypatch):
+    """The bake reads through one descriptor bound to the header it read.
+
+    A same-size replacement that differs only outside the sampled windows
+    passed the sampled check, and the bake read the new file's bytes at the old
+    offsets into the shard. Now the open descriptor must be the inode the
+    header named, so the replacement refuses before any write.
+    """
+    import torch.distributed.fsdp
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    _install_comfy_stub(monkeypatch)
+    model = _BigRoot()
+    weight = _big_weight()
+    with torch.no_grad():
+        model.blocks[0].lin.weight.copy_(weight)
+    path = tmp_path / "m.safetensors"
+    _write_safetensors(path, {_BIG_KEY: weight})
+    replacement = tmp_path / "replacement.safetensors"
+    _write_safetensors(replacement, {_BIG_KEY: _gap_twin(weight)})
+    real_header = fsdp_lora.read_safetensors_header
+
+    def header_then_replace(*args, **kwargs):
+        out = real_header(*args, **kwargs)
+        if replacement.exists():
+            replacement.replace(path)               # atomic: a new inode at the same name
+        return out
+
+    monkeypatch.setattr(fsdp_lora, "read_safetensors_header", header_then_replace)
+    try:
+        model = _one_rank_fsdp(tmp_path, model)
+        with pytest.raises(UnbakeError, match="changed after its header was read"):
+            fsdp_lora.apply_stack(SimpleNamespace(swap_verify=0),
+                                  _Active(model, {_BIG_KEY: ["patch"]}), str(path), None)
+        assert torch.equal(fsdp_lora.local_shard(model.blocks[0].lin.weight), weight)
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_the_bake_drops_the_checkpoint_pages_it_read(tmp_path, monkeypatch):
+    """Each patched key is read whole through the page cache; the bake gives those pages back."""
+    import os
+
+    import torch.distributed.fsdp
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    _install_comfy_stub(monkeypatch)
+    model = _Root()
+    pristine = torch.ones(4, 4, dtype=torch.bfloat16)
+    with torch.no_grad():
+        model.blocks[0].lin.weight.copy_(pristine)
+    path = tmp_path / "m.safetensors"
+    _write_safetensors(path, {"blocks.0.lin.weight": pristine})
+    advised: list[tuple] = []
+    real_advise = os.posix_fadvise
+
+    def advise(fd, offset, length, advice):
+        advised.append((os.fstat(fd).st_ino, offset, length, advice))
+        return real_advise(fd, offset, length, advice)
+
+    monkeypatch.setattr(os, "posix_fadvise", advise)
+    try:
+        model = _one_rank_fsdp(tmp_path, model)
+        fsdp_lora.apply_stack(SimpleNamespace(swap_verify=0),
+                              _Active(model, {"blocks.0.lin.weight": ["patch"]}), str(path), None)
+        assert (os.stat(path).st_ino, 0, 0, os.POSIX_FADV_DONTNEED) in advised
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def _rename_big(state_dict):
+    """A config rename like ComfyUI's: the file's ``lin_file`` is the model's ``lin``."""
+    return {key.replace(".lin_file.", ".lin."): value for key, value in state_dict.items()}
+
+
+def test_two_candidates_that_agree_in_the_sampled_windows_bind_by_every_byte(tmp_path):
+    """A file holds the key under its own name and under the name ComfyUI renames to it.
+
+    The two tensors agree in every sampled window of this rank's rows and
+    differ between them. The bake reads the bound tensor whole, so the first
+    sampled match bound the wrong one; with more than one candidate the
+    binding compares every byte of this rank's rows.
+    """
+    model = _BigRoot(_rename_big)
+    weight = _big_weight()
+    with torch.no_grad():
+        model.blocks[0].lin.weight.copy_(weight)
+    path = tmp_path / "m.safetensors"
+    _write_safetensors(path, {_BIG_KEY: _gap_twin(weight), "blocks.0.lin_file.weight": weight})
+    replicated = frozenset({id(model.blocks[0].lin.weight)})
+    record = fsdp_lora.capture_record(model, [_BIG_KEY], str(path), 0, 1, replicated)
+    header = fsdp_lora.read_safetensors_header(str(path))
+    assert record.mapped[_BIG_KEY] == header["blocks.0.lin_file.weight"]
+
+
+@pytest.mark.parametrize("rank", [0, 1])
+def test_a_rank_whose_rows_cannot_choose_between_two_names_refuses(tmp_path, rank):
+    """The two tensors differ only in rank 1's rows of 2.
+
+    Rank 1's rows pick the tensor the model loaded. Rank 0's rows equal both,
+    and the bake reads the bound tensor whole, so a patch that mixes rows
+    would depend on a guess; rank 0 refuses instead.
+    """
+    model = _BigRoot(_rename_big)
+    weight = _big_weight()
+    decoy = weight.clone()
+    decoy[40, 7] += 1                                   # a row rank 1 holds
+    param = torch.nn.Parameter(weight.clone(), requires_grad=False)
+    param._local_tensor = weight[32 * rank:32 * (rank + 1)].clone()   # a rank-of-2 shard
+    model.blocks[0].lin.weight = param
+    path = tmp_path / "m.safetensors"
+    _write_safetensors(path, {_BIG_KEY: decoy, "blocks.0.lin_file.weight": weight})
+    header = fsdp_lora.read_safetensors_header(str(path))
+    if rank == 0:
+        with pytest.raises(UnbakeError, match="two names that agree on this rank's rows"):
+            fsdp_lora.capture_record(model, [_BIG_KEY], str(path), rank, 2)
+    else:
+        record = fsdp_lora.capture_record(model, [_BIG_KEY], str(path), rank, 2)
+        assert record.mapped[_BIG_KEY] == header["blocks.0.lin_file.weight"]
+
+
+def test_a_quantized_setter_refuses_before_a_leaving_key_is_restored(tmp_path, monkeypatch):
+    """Every refusal the stack can meet runs before the first write.
+
+    The setter check ran inside the bake loop, after the keys leaving the stack
+    were restored, so a refusal left a half-changed model behind and the store
+    had to drop it. Now it refuses first, typed, and the resident keeps the
+    stack it had.
+    """
+    from dgx_monarch.actor import unbake
+
+    _install_comfy_stub(monkeypatch)
+    model = _BigRoot()
+    weight = _big_weight()
+    norm = torch.nn.Parameter(torch.ones(64, dtype=torch.bfloat16), requires_grad=False)
+    model.blocks[0].norm = torch.nn.Module()
+    model.blocks[0].norm.weight = norm
+    with torch.no_grad():
+        model.blocks[0].lin.weight.copy_(weight)
+    path = tmp_path / "m.safetensors"
+    _write_safetensors(path, {_BIG_KEY: weight, "blocks.0.norm.weight": torch.ones(64, dtype=torch.bfloat16)})
+    replicated = frozenset({id(model.blocks[0].lin.weight), id(norm)})
+    monkeypatch.setattr(fsdp_lora, "replicated_parameter_ids", lambda _model: replicated)
+    previous = fsdp_lora.capture_record(model, [_BIG_KEY], str(path), 0, 1, replicated)
+    with torch.no_grad():
+        model.blocks[0].lin.weight.mul_(2)          # the previous stack's bake
+    baked = model.blocks[0].lin.weight.detach().clone()
+    stub = sys.modules["comfy.model_patcher"]
+    real_get = stub.get_key_weight
+    monkeypatch.setattr(stub, "get_key_weight", lambda m, key: (
+        (real_get(m, key)[0], lambda *a, **k: None, None) if key == "blocks.0.norm.weight"
+        else real_get(m, key)))
+    with pytest.raises(UnbakeError, match="LoRA on quantized shards") as raised:
+        fsdp_lora.apply_stack(SimpleNamespace(swap_verify=0),
+                              _Active(model, {"blocks.0.norm.weight": ["patch"]}), str(path), previous)
+    assert isinstance(raised.value, getattr(unbake, "UnbakeRefused", ()))
+    assert torch.equal(model.blocks[0].lin.weight, baked)   # the leaving key was not restored

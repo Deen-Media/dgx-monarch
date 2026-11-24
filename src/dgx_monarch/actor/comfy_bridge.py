@@ -88,6 +88,19 @@ def _patch_uma_free_memory(uma_pool_shares: int = 1) -> None:
     )
 
 
+def _without_slab(worker_args: dict, why: str) -> dict:
+    """Keep slab residency off where the GPU's memory is not the host's.
+
+    A slab wraps the arena's host address as a device tensor, which is true
+    only on unified memory. Any request for it, an explicit ``on`` or a
+    configured ``"auto"``, turns off with a warning, and the weights load stock.
+    """
+    if not worker_args.get("slab_weights"):
+        return worker_args
+    safe_call(log.warning, "slab_weights needs unified memory and %s; weights stay on cudaMalloc", why)
+    return {**worker_args, "slab_weights": False}
+
+
 def _uma_memory_defaults(worker_args: dict, integrated: bool | None = None) -> dict:
     """Default the loop-hosted workers to the validated single-Spark memory posture.
 
@@ -121,9 +134,9 @@ def _uma_memory_defaults(worker_args: dict, integrated: bool | None = None) -> d
                 "defaults and skips the unified-memory posture",
                 failure_summary(exc),
             )
-            return worker_args
+            return _without_slab(worker_args, "the unified-memory probe failed")
     if not integrated:
-        return worker_args
+        return _without_slab(worker_args, "this GPU is discrete")
     out = dict(worker_args)
     out.setdefault("disable_pinned_memory", True)
     out.setdefault("disable_async_offload", True)

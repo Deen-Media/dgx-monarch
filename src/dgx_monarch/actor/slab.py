@@ -6,6 +6,7 @@ after model release. GB10 prerequisites and measured results: docs/VALIDATION.md
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import sys
@@ -20,6 +21,7 @@ from ..transfer_utils import (
     failure_summary,
     raise_with_distinct_cause,
     reconcile_error,
+    safe_call,
 )
 from . import slab_lifetime
 from .slab_arena import _ALIGN, _Arena, _discard_identity, _OwnedDescriptor
@@ -102,7 +104,10 @@ class WeightSlab:
         self.key_map: dict[str, _Region] = {}
         self.cast_keys: list[str] = []      # filled by the load hook
         self.read_seconds = 0.0
-        self.stray_bytes = 0                # quant strays reabsorb cannot take
+        # Quantized weight name -> its bytes outside the slab (payload and
+        # scales reabsorb could not take). A full pass recounts every weight;
+        # a lazy swap updates each key it touches (reabsorb_key).
+        self._strays: dict[str, int] = {}
         try:
             # Retain this exact object at process level before any file, mapping, or descriptor.
             self._provisional_poisoned_before = slab_lifetime.prepublish_resource(self)
@@ -280,6 +285,11 @@ class WeightSlab:
         total = self.arena.capacity + (self.annex.capacity if self.annex else 0)
         return round(total / (1 << 30), 2)
 
+    @property
+    def stray_bytes(self) -> int:
+        """Bytes of quantized weights that sit in cudaMalloc beside this slab."""
+        return sum(self._strays.values())
+
     def _region_for_stray(self, name: str, tensor: torch.Tensor) -> _Region | None:
         region = self.key_map.get(name) or self.regions.get(name)
         if (region is not None
@@ -288,52 +298,186 @@ class WeightSlab:
             return region
         return None
 
-    def _reabsorb_quant(self, module: Any, name: str, prefix: str) -> int:
-        """Migrate one strayed QuantizedTensor weight's payload into the slab.
+    def _region_for(self, key: str, nbytes: int) -> _Region | None:
+        region = self.key_map.get(key) or self.regions.get(key)
+        return region if region is not None and region.nbytes == nbytes else None
 
-        comfy's bake replaces the whole wrapper: `set_weight` requantizes and
-        assigns a new Parameter in cudaMalloc. The wrapper is cloned, never
-        re-derived: the payload bytes (`_qdata`) are copied into the layer's
-        original slab region and a new wrapper is built from the same layout
-        name and the same params object (scale tensors, a few KB, stay where
-        they are). Never rebuild a baked wrapper from file metadata: baked
-        bytes need not match the file's serialization transforms (int8-convrot
-        diverged; see docs/VALIDATION.md).
+    def _outside(self, tensors: list[torch.Tensor]) -> int:
+        return sum(t.numel() * t.element_size() for t in tensors
+                   if t.numel() and not self.contains(t.data_ptr()))
 
-        Returns migrated bytes; 0 leaves the key in cudaMalloc (still
-        correct, but heavier)."""
-        module_key, _, param_name = name.rpartition(".")
-        if param_name != "weight" or not module_key:
-            return 0
-        live = live_tensor(module, name)
+    def _into_region(self, region: _Region, tensor: torch.Tensor) -> torch.Tensor:
+        """Copy ``tensor`` into ``region`` and return the slab view that holds it."""
+        nbytes = tensor.numel() * tensor.element_size()
+        dest = _wrap_u8(self.arena.base + region.offset, nbytes,
+                        cuda=tensor.device.type == "cuda")
+        held = dest.view(tensor.dtype).reshape(tensor.shape)
+        held.copy_(tensor.detach())
+        return held
+
+    @staticmethod
+    def _wrapper(live: Any) -> Any:
         # the wrapper attrs may sit on the Parameter or on its .data,
         # depending on how the subclass propagates through Parameter()
-        wrapper: Any = None
         for cand in (live, getattr(live, "data", None)):
             if cand is not None and getattr(cand, "_qdata", None) is not None:
-                wrapper = cand
-                break
-        if wrapper is None:
-            return 0
-        qdata = wrapper._qdata
+                return cand
+        return None
+
+    @staticmethod
+    def _scale_fields(wrapper: Any, layout_name: str, params: Any) -> dict[str, tuple[str | None, torch.Tensor]]:
+        """{params field: (file component suffix or None, tensor)} for each tensor the params hold.
+
+        The layout's own serialization map (``state_dict_tensors``) names the
+        file component of each scale, so ``block_scale`` maps to
+        ``weight_scale`` on NVFP4 and ``scale`` to ``weight_scale_2``. Params
+        that are not a dataclass (a stand-in) carry no tensors this reads.
+        """
+        if not dataclasses.is_dataclass(params) or isinstance(params, type):
+            return {}
+        tensors = {field.name: getattr(params, field.name) for field in dataclasses.fields(params)
+                   if isinstance(getattr(params, field.name), torch.Tensor)}
+        suffixes: dict[str, str] = {}
+        try:
+            import comfy.quant_ops as quant_ops
+
+            named = quant_ops.get_layout_class(layout_name).state_dict_tensors(wrapper._qdata, params)
+        except Exception:
+            named = {}
+        for suffix, tensor in dict(named).items():
+            for field, value in tensors.items():
+                if suffix and value is tensor:
+                    suffixes[field] = suffix
+        return {field: (suffixes.get(field), value) for field, value in tensors.items()}
+
+    def _reabsorb_quant(self, module: Any, name: str, prefix: str) -> tuple[int, int]:
+        """Migrate one quantized weight's payload and scales into their slab regions.
+
+        comfy's bake replaces the whole wrapper: `set_weight` requantizes and
+        assigns a new Parameter in cudaMalloc, with a new payload and new
+        scales. The wrapper is cloned, never re-derived: the payload bytes
+        (`_qdata`) are copied into the layer's original slab region and a new
+        wrapper is built from the same layout name and the same params. Never
+        rebuild a baked wrapper from file metadata: baked bytes need not match
+        the file's serialization transforms (int8-convrot diverged; see
+        docs/VALIDATION.md).
+
+        The scales go next, each into its own file component's region when the
+        sizes agree (an NVFP4 block scale is an eighth of the payload). They
+        are set on the live wrapper's params in place, because comfy_kitchen
+        clones a wrapper's params whenever it is wrapped in a Parameter: a
+        freshly loaded layer's scales sit in cudaMalloc too, beside their idle
+        regions. The payload move stands on its own: a scale that cannot move
+        stays where it is and is counted.
+
+        A payload already in the slab is not copied onto itself and keeps its
+        Parameter. Returns (migrated bytes, bytes still outside the slab).
+        Each step changes the module only as its last action, so an exception
+        leaves the model intact.
+        """
+        module_key, _, param_name = name.rpartition(".")
+        live = live_tensor(module, name)
+        wrapper = self._wrapper(live)
         layout_name = getattr(wrapper, "_layout_cls", None)
         params = getattr(wrapper, "_params", None)
-        if not isinstance(layout_name, str) or params is None:
-            return 0
+        if (param_name != "weight" or not module_key or wrapper is None
+                or not isinstance(layout_name, str) or params is None):
+            return 0, self._outside([live])
+        qdata = wrapper._qdata
         fkey = f"{prefix}{module_key}.{param_name}"
-        region = self.key_map.get(fkey) or self.regions.get(fkey)
-        nbytes = qdata.numel() * qdata.element_size()
-        if region is None or region.nbytes != nbytes:
-            return 0  # padded storage or layout drift: leave it be
+        moved = 0
+        if not self.contains(qdata.data_ptr()):
+            region = self._region_for(fkey, qdata.numel() * qdata.element_size())
+            if region is not None:  # else padded storage or layout drift: leave it be
+                slab_qdata = self._into_region(region, qdata)
+                constructed = type(wrapper)(slab_qdata, layout_name, params)
+                adopted = torch.nn.Parameter(constructed, requires_grad=False)
+                op: Any = live_tensor(module, module_key)
+                op.weight = adopted
+                moved += region.nbytes
+                # The live wrapper is the Parameter itself when the subclass keeps
+                # its attributes through Parameter(), as comfy_kitchen's does.
+                rebuilt = self._wrapper(adopted)
+                wrapper = constructed if rebuilt is None else rebuilt
+        try:
+            moved += self._reabsorb_scales(wrapper, layout_name, fkey)
+        except Exception as exc:
+            safe_call(log.warning, "scale reabsorb failed for %s (%s); its scales stay in cudaMalloc",
+                      name, failure_summary(exc))
+        fields = self._scale_fields(wrapper, layout_name, wrapper._params)
+        return moved, self._outside([wrapper._qdata] + [value for _suffix, value in fields.values()])
 
-        dest = _wrap_u8(self.arena.base + region.offset, nbytes,
-                        cuda=qdata.device.type == "cuda")
-        slab_qdata = dest.view(qdata.dtype).reshape(qdata.shape)
-        slab_qdata.copy_(qdata.detach())
-        op: Any = live_tensor(module, module_key)
-        op.weight = torch.nn.Parameter(
-            type(wrapper)(slab_qdata, layout_name, params), requires_grad=False)
-        return nbytes
+    def _reabsorb_scales(self, wrapper: Any, layout_name: str, fkey: str) -> int:
+        """Move a live wrapper's scales into their regions, in place on its params; returns bytes moved."""
+        params = wrapper._params
+        replaced: dict[str, torch.Tensor] = {}
+        moved = 0
+        for field, (suffix, value) in self._scale_fields(wrapper, layout_name, params).items():
+            if suffix is None or not value.numel() or self.contains(value.data_ptr()) or not value.is_contiguous():
+                continue
+            region = self._region_for(fkey + suffix, value.numel() * value.element_size())
+            if region is not None:
+                replaced[field] = self._into_region(region, value)
+                moved += region.nbytes
+        if replaced:
+            wrapper._params = dataclasses.replace(params, **replaced)
+        return moved
+
+    def _quant_outside(self, module: Any, name: str) -> int:
+        """A failed migration's figure: what the live weight holds outside the slab."""
+        live = live_tensor(module, name)
+        wrapper = self._wrapper(live)
+        if wrapper is None:
+            return self._outside([live])
+        params = getattr(wrapper, "_params", None)
+        fields = self._scale_fields(wrapper, getattr(wrapper, "_layout_cls", ""), params)
+        return self._outside([wrapper._qdata] + [value for _suffix, value in fields.values()])
+
+    def _settle_quant(self, module: Any, name: str, prefix: str) -> int:
+        """Reabsorb one quantized weight and record what stays outside; returns moved bytes."""
+        try:
+            moved, stray = self._reabsorb_quant(module, name, prefix)
+        except Exception as exc:
+            try:
+                log.warning(
+                    "quant reabsorb failed for %s (%s); the tensor stays in cudaMalloc",
+                    name,
+                    failure_summary(exc),
+                )
+            except BaseException:
+                pass
+            moved = 0
+            try:
+                stray = self._quant_outside(module, name)
+            except Exception:
+                stray = 0
+        if stray:
+            self._strays[prefix + name] = stray
+        else:
+            self._strays.pop(prefix + name, None)
+        return moved
+
+    def reabsorb_key(self, module: torch.nn.Module, name: str, prefix: str = "") -> int:
+        """Return one parameter a lazy swap just restored or re-baked to its slab region.
+
+        The store calls this as the swap passes each key, so a patched weight
+        never sits twice in unified memory: at most the key in hand has a
+        second copy. A quantized weight goes back as the fresh load's pass
+        moves it; a plain weight the swap wrote out of place goes back to its
+        own region when the size and dtype agree. Returns the bytes moved, and
+        keeps ``stray_bytes`` true for this key.
+        """
+        live = live_tensor(module, name)
+        t = getattr(live, "data", live)
+        if type(t) is not torch.Tensor:
+            return self._settle_quant(module, name, prefix)
+        if self.contains(t.data_ptr()):
+            return 0
+        region = self._region_for_stray(prefix + name, t)
+        if region is None:
+            return 0  # no region of its own: it stays where the swap put it
+        live.data = self._into_region(region, t)
+        return region.nbytes
 
     def reabsorb(self, module: torch.nn.Module, prefix: str = "") -> dict:
         """Migrate strayed Parameters back into slab memory.
@@ -344,19 +488,20 @@ class WeightSlab:
         For each named parameter whose storage is outside the slab: copy it
         into its original region (same dtype+size for the baked case) or into
         the annex (the cast case), and swap the Parameter in place. A strayed
-        QuantizedTensor weight gets its payload copied into the slab under a
-        cloned wrapper (_reabsorb_quant); any that cannot move stay in
-        cudaMalloc, counted in `quant_stray_gib`.
+        QuantizedTensor weight gets its payload and scales copied into the slab
+        under a cloned wrapper (_reabsorb_quant); a weight already there is left
+        alone, and any that cannot move stay in cudaMalloc, counted in
+        `quant_stray_gib`.
         """
         strays: list[tuple[str, torch.nn.Parameter]] = []
-        quant_strays: list[str] = []
+        quant_weights: list[str] = []
         annex_need = 0
-        self.stray_bytes = 0                   # recomputed per pass
+        self._strays = {}                      # recomputed per pass
         quant_moved_bytes = 0
         for name, param in module.named_parameters():
             t = param.data
             if type(t) is not torch.Tensor:      # QuantizedTensor subclass etc.
-                quant_strays.append(name)
+                quant_weights.append(name)
                 continue
             if self.contains(t.data_ptr()):
                 continue
@@ -364,25 +509,10 @@ class WeightSlab:
             if self._region_for_stray(prefix + name, t) is None:
                 annex_need += t.numel() * t.element_size() + _ALIGN
 
-        for name in quant_strays:
-            try:
-                migrated = self._reabsorb_quant(module, name, prefix)
-                if not migrated:
-                    t = live_tensor(module, name)
-                    self.stray_bytes += t.numel() * t.element_size()
-            except Exception as exc:
-                # _reabsorb_quant mutates the module only as its last action,
-                # so the model is intact here; the stray stays in cudaMalloc.
-                try:
-                    log.warning(
-                        "quant reabsorb failed for %s (%s); the tensor stays in cudaMalloc",
-                        name,
-                        failure_summary(exc),
-                    )
-                except BaseException:
-                    pass
-                continue
-            quant_moved_bytes += migrated
+        for name in quant_weights:
+            # _reabsorb_quant mutates the module only as its last action, so a
+            # failure leaves the model intact; the stray stays in cudaMalloc.
+            quant_moved_bytes += self._settle_quant(module, name, prefix)
 
         if annex_need and self.annex is None:
             _Arena("dgxm-weight-slab-annex", annex_need,
@@ -405,7 +535,7 @@ class WeightSlab:
                 target_arena, off = self.arena, region.offset
             else:
                 annex = self.annex
-                if annex is None or annex.cursor + nbytes > annex.capacity:
+                if annex is None or not annex.fits(nbytes):
                     skipped += 1
                     continue
                 target_arena, off = annex, annex.place(nbytes)

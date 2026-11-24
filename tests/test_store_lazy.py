@@ -176,6 +176,62 @@ def test_strength_change_reuses_record_no_capture(rig):
     assert store.current.lora_sig == lora_signature(STACK_A2)
 
 
+STACK_NO_DELTA = [{"name": "pins.safetensors", "strength": 1.0}]
+STACK_NO_DELTA2 = [{"name": "pins.safetensors", "strength": 1.05}]
+
+
+def _no_delta_build(monkeypatch):
+    """A LoRA whose keys match no weight of the model: its stack patches nothing."""
+    real = ModelStore._build_active
+
+    def build(self, base_patcher, lora_stack):
+        active = real(self, base_patcher, lora_stack)
+        active.patches.pop("pins.safetensors", None)
+        return active
+
+    monkeypatch.setattr(ModelStore, "_build_active", build)
+
+
+def test_a_stack_that_patches_nothing_stays_lazy_across_strength_changes(rig, monkeypatch):
+    """The Gate's nudge and return on a LoRA with no weight delta both hot-swap.
+
+    The stack leaves the base pristine, so the swap needs an empty record, not
+    none: with none, the next change of the same stack reloaded from disk, the
+    Gate's cycle ended inconclusive, and the session lost both levers.
+    """
+    store, calls = rig
+    _no_delta_build(monkeypatch)
+    store.current = _stored(STACK_A)
+    for stack in (STACK_NO_DELTA, STACK_NO_DELTA2, STACK_NO_DELTA):
+        _, transition = store.ensure("m.safetensors", None, stack)
+        assert transition == "hot-swap"
+        assert store.current.unbake is not None and not store.current.unbake.mapped
+    assert calls.load == 0 and calls.drop == 0 and calls.bake == 0
+    assert store.current.unbake.path == "/fake/m.safetensors"
+
+
+def test_a_pristine_base_binds_the_empty_record_to_the_file(rig, monkeypatch, tmp_path):
+    """With no record before the swap, the empty record takes the file's own identity."""
+    import json
+    import os
+    import struct
+
+    store, calls = rig
+    _no_delta_build(monkeypatch)
+    path = tmp_path / "m.safetensors"
+    body = json.dumps({"w": {"dtype": "BF16", "shape": [2], "data_offsets": [0, 4]}}).encode()
+    path.write_bytes(struct.pack("<Q", len(body)) + body + b"\0" * 4)
+    monkeypatch.setattr(ms, "resolve_model_path", lambda kind, name: str(path))
+    store.current = _stored([], unbake=None)      # the identity it holds names this file
+    for stack in (STACK_NO_DELTA, STACK_NO_DELTA2):
+        _, transition = store.ensure("m.safetensors", None, stack)
+        assert transition == "hot-swap"
+    record = store.current.unbake
+    st = os.stat(path)
+    assert (record.path, record.file_size, record.file_ino) == (str(path), st.st_size, st.st_ino)
+    assert calls.load == 0
+
+
 def test_stack_change_captures_only_novel_keys(rig):
     store, calls = rig
     store.current = _stored(STACK_A)
@@ -741,12 +797,13 @@ def test_bake_failure_drops_slot_and_reloads(rig, monkeypatch):
 def test_fsdp_tagged_quantized_key_refusal_still_falls_through_to_reload(
     rig, monkeypatch,
 ):
-    """actor/fsdp_lora.py's class P quantized-key and dtype-mismatch refusals keep the reload contract.
+    """A tagged UnbakeError that may follow a write keeps the reload contract.
 
-    They raise UnbakeError, not UnsupportedModelError, so store_bake.lazy_swap_transition's
-    ``except UnsupportedModelError: raise`` does not match them, and a tagged UnbakeError falls
-    through to a fresh reload like an untagged one. The operator meets the typed error from that
-    reload's own bake, or on the first FSDP LoRA render."""
+    The tag alone does not say nothing was written, so store_bake.lazy_swap_transition lets a
+    plain UnbakeError, tagged or not, fall through to a fresh reload, and the operator meets the
+    typed error from that reload's own bake. Only an UnbakeRefused, which actor/fsdp_lora.py
+    raises before its first write, keeps the resident
+    (test_a_stack_refused_before_any_write_keeps_the_fsdp_resident)."""
     from dgx_monarch.actor import fsdp_lora
     from dgx_monarch.actor.unbake import UnbakeError
     from dgx_monarch.refusal import RefusalClass, refusal
@@ -767,6 +824,38 @@ def test_fsdp_tagged_quantized_key_refusal_still_falls_through_to_reload(
     _, transition = store.ensure("m.safetensors", None, STACK_B)
     assert transition == "load"
     assert calls.drop >= 1 and calls.load == 1
+
+
+def test_a_stack_refused_before_any_write_keeps_the_fsdp_resident(rig, monkeypatch):
+    """The capture's class P refusals run before the first write, so the store keeps the model.
+
+    Dropping the healthy resident and re-sharding it only met the same
+    refusal in the fresh load's bake, and lost the stack that was rendering.
+    The refusal reaches the caller typed, and the old stack stays in place.
+    """
+    import torch
+
+    from dgx_monarch.actor import fsdp_lora
+    from dgx_monarch.actor.unbake import UnbakeError
+
+    store, calls = rig
+    stored = _stored(STACK_A)
+    stored.base_patcher = SimpleNamespace(model="MODEL", _dgxm_fsdp=True)
+    store.current = stored
+
+    def refused_lazy_swap(_store, _stored, _active, _unet_name):
+        # What the capture raises for a patched key the file holds under no name.
+        fsdp_lora._file_tensor({}, "diffusion_model.x.weight", torch.zeros(2))
+
+    monkeypatch.setattr(fsdp_lora, "lazy_swap", refused_lazy_swap)
+    with pytest.raises(UnbakeError, match="holds no tensor under that name"):
+        store.ensure("m.safetensors", None, STACK_B)
+    assert calls.drop == 0 and calls.load == 0
+    assert store.current is stored and store.current.lora_sig == lora_signature(STACK_A)
+    assert "cond" not in store._drop_failed
+    # The old stack is still there to reuse.
+    _, transition = store.ensure("m.safetensors", None, STACK_A)
+    assert transition == "reuse"
 
 
 def test_novel_capture_failure_returns_reload_contract(rig, monkeypatch):

@@ -268,3 +268,17 @@ def auxiliary_module_parameters(diffusion_model, model=None) -> set:
         if module is not None and callable(parameters):
             ignored.update(parameters())
     return ignored
+
+
+def replicated_parameters(diffusion_model, model=None) -> set:
+    """Every parameter the FSDP wrap leaves whole on each rank.
+
+    The fp32 islands, the parameters of modules a family runs outside its
+    denoise path, and every zero-dimensional parameter (FSDP2 has no dim 0 to
+    chunk). The wrap passes this set to ``fully_shard`` as ``ignored_params``
+    and the LoRA bake (``actor/fsdp_lora.py``) bakes each of them whole, so the
+    two read one set and cannot drift.
+    """
+    return (island_parameters(diffusion_model)
+            | auxiliary_module_parameters(diffusion_model, model)
+            | {parameter for parameter in diffusion_model.parameters() if parameter.ndim == 0})

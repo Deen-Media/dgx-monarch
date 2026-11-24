@@ -214,22 +214,35 @@ def _cast_match(fd: int, ft: _FileTensor, tensor: torch.Tensor) -> bool:
     return True
 
 
-def _quant_layer_conf(
-    metadata: dict,
-    header: dict[str, _FileTensor],
-    file_layer: str,
-    model_prefix: str | None,
-    fd: int,
-) -> tuple[dict | None, str | None]:
-    """Return Comfy's layer config and its checkpoint authority.
+class QuantLayerMap:
+    """The checkpoint's embedded quantization layer map, parsed once, on first use.
 
-    Embedded metadata wins for layers it names and suppresses legacy
-    conversion, matching Comfy. A direct per-layer marker remains authoritative
-    when valid embedded metadata omits that layer. Without embedded metadata,
-    an applicable legacy scaled-FP8 conversion wins over the direct marker.
+    One capture looks a layer up for every patched quantized key and every
+    candidate name, so parsing the whole map per lookup cost a parse per key,
+    seconds on a map of a thousand layers. A capture builds one of these and
+    hands it to each lookup. The parse waits for the first lookup, so a capture
+    that patches no quantized key never reads the map, and a malformed map
+    refuses every lookup the same way.
     """
-    if "_quantization_metadata" in metadata:
-        raw_metadata = metadata["_quantization_metadata"]
+
+    def __init__(self, metadata: dict):
+        self._metadata = metadata
+        self._layers: dict | None = None
+        self._failure: str | None = None
+
+    def layers(self) -> dict:
+        if self._failure is not None:
+            raise _InvalidQuantConfError(self._failure)
+        if self._layers is None:
+            try:
+                self._layers = self._parse()
+            except _InvalidQuantConfError as exc:
+                self._failure = str(exc)
+                raise
+        return self._layers
+
+    def _parse(self) -> dict:
+        raw_metadata = self._metadata["_quantization_metadata"]
         if not isinstance(raw_metadata, str):
             raise _InvalidQuantConfError("quantization metadata is not text")
         try:
@@ -247,6 +260,27 @@ def _quant_layer_conf(
         layers = decoded.get("layers")
         if not isinstance(layers, dict):
             raise _InvalidQuantConfError("quantization layer map is malformed")
+        return layers
+
+
+def _quant_layer_conf(
+    metadata: dict,
+    header: dict[str, _FileTensor],
+    file_layer: str,
+    model_prefix: str | None,
+    fd: int,
+    layer_map: QuantLayerMap | None = None,
+) -> tuple[dict | None, str | None]:
+    """Return Comfy's layer config and its checkpoint authority.
+
+    Embedded metadata wins for layers it names and suppresses legacy
+    conversion, matching Comfy. A direct per-layer marker remains authoritative
+    when valid embedded metadata omits that layer. Without embedded metadata,
+    an applicable legacy scaled-FP8 conversion wins over the direct marker.
+    ``layer_map`` is the capture's one parse of the embedded map.
+    """
+    if "_quantization_metadata" in metadata:
+        layers = (layer_map or QuantLayerMap(metadata)).layers()
         if file_layer in layers:
             conf = layers[file_layer]
             if not isinstance(conf, dict):

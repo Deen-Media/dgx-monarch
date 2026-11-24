@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from dgx_monarch.actor import model_store as ms
+from dgx_monarch.actor.store_detect import LivePrecisionEvidence
 from dgx_monarch.constants import TRANSITION_LOAD, TRANSITION_REUSE
 from store_ensure_helpers import STACK
 from store_ensure_helpers import rig as rig  # a fixture tests ask for by name.
@@ -167,6 +168,43 @@ def test_fp16_full_load_reuses_and_hotswaps_without_quant_invalidation(
     assert transition == "hot-swap"
     assert store.current.request_key[-1] == "fp16"
     assert invalidated == []
+
+
+def test_a_quantized_swap_between_stacks_that_patch_nothing_keeps_the_gpu_weights(
+        rig, monkeypatch):
+    """No weight changes, so nothing is unloaded: the model on the GPU is already right.
+
+    A LoRA whose keys match no weight of the model leaves the base pristine.
+    A strength change on it unloaded every model, copying the whole quantized
+    model to the host and back (93 s on the pair for a change that alters no
+    weight). A change to a stack that does patch weights still invalidates.
+    """
+    store, _calls = rig
+    store.lora_low_rss = False
+    monkeypatch.setattr(ms, "_detect_checkpoint_kind", lambda _path, _kind: "fp8")
+    monkeypatch.setattr(
+        ms, "_detect_live_precision",
+        lambda _patcher, _kind: LivePrecisionEvidence("fp8", "uniform_or_quantized_fp8"))
+    invalidated = []
+    monkeypatch.setattr(
+        store, "_invalidate_gpu_weights", lambda patcher: invalidated.append(patcher))
+    patched = {"k.weight": ["delta"]}
+    monkeypatch.setattr(
+        ms.ModelStore, "_build_active",
+        lambda self, base, stack: SimpleNamespace(
+            tag="ACTIVE", model=base.model,
+            patches=dict(patched) if stack and stack[0]["name"] == "real.safetensors" else {}))
+    no_delta = [{"name": "pins.safetensors", "strength": 1.0}]
+
+    _active, transition = store.ensure("m.safetensors", None, no_delta)
+    assert transition == TRANSITION_LOAD and store.current.quant_kind == "fp8"
+    _active, transition = store.ensure("m.safetensors", None, [{**no_delta[0], "strength": 1.05}])
+    assert transition == "hot-swap"
+    assert invalidated == []
+    old = store.current.active_patcher
+    _active, transition = store.ensure("m.safetensors", None, [{"name": "real.safetensors", "strength": 1.0}])
+    assert transition == "hot-swap"
+    assert invalidated == [old]
 
 
 def test_reuse_routes_without_reload(rig):

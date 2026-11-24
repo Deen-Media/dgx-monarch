@@ -411,7 +411,7 @@ copied from historical evidence.
    load at [`gate_ceremony.py:241-262`](../src/dgx_monarch/nodes/gate_ceremony.py#L241-L262 "anchor:gather_ceremony_evidence").
    FSDP disables slab residency, and it takes a LoRA stack only with
    `lora_low_rss` on at
-   [`fsdp.py:355-367`](../src/dgx_monarch/adapters/fsdp.py#L355-L367 "anchor:validate_fsdp_launch_loras"),
+   [`fsdp.py:356-368`](../src/dgx_monarch/adapters/fsdp.py#L356-L368 "anchor:validate_fsdp_launch_loras"),
    so a no-LoRA FSDP ceremony has a separate exact proof rather than counting
    either risky lineage as run.
    Under a resolved FSDP capability only, every worker must hold the bound
@@ -431,14 +431,14 @@ copied from historical evidence.
    Audited family-specific mixed-live classification and public precision
    admission remain adapter-owned; actor and gate code consume only their
    generic evidence contract at
-   [`fsdp.py:168-168`](../src/dgx_monarch/adapters/fsdp.py#L168-L168 "anchor:classify_audited_live_precision") and
-   [`fsdp.py:190-190`](../src/dgx_monarch/adapters/fsdp.py#L190-L190 "anchor:fsdp_precision_profile_is_admitted").
+   [`fsdp.py:169-169`](../src/dgx_monarch/adapters/fsdp.py#L169-L169 "anchor:classify_audited_live_precision") and
+   [`fsdp.py:191-191`](../src/dgx_monarch/adapters/fsdp.py#L191-L191 "anchor:fsdp_precision_profile_is_admitted").
    Each FSDP injection runs only cheap quant and LoRA refusals before adapter
    and compile preparation. The sole authoritative live-precision scan runs
    after that preparation and immediately before the first FSDP parameter
    mutation; direct calls use the same path. This is enforced by
    [`store_fsdp.py:103-120`](../src/dgx_monarch/actor/store_fsdp.py#L103-L120 "anchor:validate_injection") and
-   [`fsdp.py:379-437`](../src/dgx_monarch/adapters/fsdp.py#L379-L437 "anchor:apply_fsdp_capacity_mode"), with one-scan and same-patcher drift coverage in
+   [`fsdp.py:380-440`](../src/dgx_monarch/adapters/fsdp.py#L380-L440 "anchor:apply_fsdp_capacity_mode"), with one-scan and same-patcher drift coverage in
    [`test_fsdp_capacity.py:1207-1207`](../tests/test_fsdp_capacity.py#L1207-L1207 "anchor:test_worker_runs_one_live_precision_scan_after_preparation"),
    [`test_fsdp_capacity.py:1237-1237`](../tests/test_fsdp_capacity.py#L1237-L1237 "anchor:test_worker_live_scan_observes_same_patcher_model_replacement"), and
    [`test_fsdp_capacity.py:1278-1278`](../tests/test_fsdp_capacity.py#L1278-L1278 "anchor:test_worker_live_scan_observes_dtype_mutation_during_compile_preparation").
@@ -1095,8 +1095,8 @@ copied from historical evidence.
   checkpoint on non-Linux workers or Linux environments without
   `/proc/self/fd`; it never falls back to a racy path reopen. Failed-load
   integration, ownership, refusal, status, platform binding, and release are
-  [`comfy_bridge.py:162-268`](../src/dgx_monarch/actor/comfy_bridge.py#L162-L268 "anchor:slab_load"),
-  [`comfy_bridge.py:271-330`](../src/dgx_monarch/actor/comfy_bridge.py#L271-L330 "anchor:load_diffusion_model_slab"),
+  [`comfy_bridge.py:175-281`](../src/dgx_monarch/actor/comfy_bridge.py#L175-L281 "anchor:slab_load"),
+  [`comfy_bridge.py:284-343`](../src/dgx_monarch/actor/comfy_bridge.py#L284-L343 "anchor:load_diffusion_model_slab"),
   [`model_store.py:239-352`](../src/dgx_monarch/actor/model_store.py#L239-L352 "anchor:ensure"),
   [`slab_lifetime.py:22-22`](../src/dgx_monarch/actor/slab_lifetime.py#L22-L22 "anchor:_RETAINED_FAILED_LOAD_SLABS"),
   [`slab_lifetime.py:28-28`](../src/dgx_monarch/actor/slab_lifetime.py#L28-L28 "anchor:_RETAINED_FAILED_LOAD_RESOURCES"),
@@ -1115,10 +1115,10 @@ copied from historical evidence.
   [`slab_arena.py:20-48`](../src/dgx_monarch/actor/slab_arena.py#L20-L48 "anchor:_OwnedDescriptor"),
   [`slab_arena.py:60-130`](../src/dgx_monarch/actor/slab_arena.py#L60-L130 "anchor:_SlabHookRestore"),
   [`slab_arena.py:156-179`](../src/dgx_monarch/actor/slab_arena.py#L156-L179 "anchor:_finish_prepublished"),
-  [`slab_arena.py:182-301`](../src/dgx_monarch/actor/slab_arena.py#L182-L301 "anchor:_Arena"),
-  [`slab.py:86-152`](../src/dgx_monarch/actor/slab.py#L86-L152 "anchor:__init__"),
-  [`slab.py:161-227`](../src/dgx_monarch/actor/slab.py#L161-L227 "anchor:_read_all"),
-  [`slab.py:436-480`](../src/dgx_monarch/actor/slab.py#L436-L480 "anchor:close"),
+  [`slab_arena.py:182-306`](../src/dgx_monarch/actor/slab_arena.py#L182-L306 "anchor:_Arena"),
+  [`slab.py:88-157`](../src/dgx_monarch/actor/slab.py#L88-L157 "anchor:__init__"),
+  [`slab.py:166-232`](../src/dgx_monarch/actor/slab.py#L166-L232 "anchor:_read_all"),
+  [`slab.py:566-610`](../src/dgx_monarch/actor/slab.py#L566-L610 "anchor:close"),
   [`slab_lifetime.py:203-252`](../src/dgx_monarch/actor/slab_lifetime.py#L203-L252 "anchor:release_after_explicit_unload"),
   [`slab_lifetime.py:255-378`](../src/dgx_monarch/actor/slab_lifetime.py#L255-L378 "anchor:cleanup_failed_load"),
   [`model_store.py:419-462`](../src/dgx_monarch/actor/model_store.py#L419-L462 "anchor:_drop"),
@@ -1126,11 +1126,11 @@ copied from historical evidence.
   [`model_store.py:484-487`](../src/dgx_monarch/actor/model_store.py#L484-L487 "anchor:release_retained_cleanup"), and
   [`model_store.py:494-509`](../src/dgx_monarch/actor/model_store.py#L494-L509 "anchor:snapshot").
   Retention, refusal, and recovery are covered by
-  [`test_slab.py:256-279`](../tests/test_slab.py#L256-L279 "anchor:test_close_attempts_annex_after_primary_arena_failure"),
-  [`test_slab.py:670-681`](../tests/test_slab.py#L670-L681 "anchor:test_close_retains_live_export_until_retry"),
-  [`test_slab.py:684-719`](../tests/test_slab.py#L684-L719 "anchor:test_arena_fd_close_uncertainty_is_terminal_and_never_retried"),
-  [`test_slab.py:722-765`](../tests/test_slab.py#L722-L765 "anchor:test_partial_weight_slab_preserves_primary_and_retains_uncertain_arena"),
-  [`test_slab.py:920-958`](../tests/test_slab.py#L920-L958 "anchor:test_slab_load_exposed_baseexception_has_durable_owner"),
+  [`test_slab.py:258-281`](../tests/test_slab.py#L258-L281 "anchor:test_close_attempts_annex_after_primary_arena_failure"),
+  [`test_slab.py:983-994`](../tests/test_slab.py#L983-L994 "anchor:test_close_retains_live_export_until_retry"),
+  [`test_slab.py:997-1032`](../tests/test_slab.py#L997-L1032 "anchor:test_arena_fd_close_uncertainty_is_terminal_and_never_retried"),
+  [`test_slab.py:1035-1078`](../tests/test_slab.py#L1035-L1078 "anchor:test_partial_weight_slab_preserves_primary_and_retains_uncertain_arena"),
+  [`test_slab.py:1233-1271`](../tests/test_slab.py#L1233-L1271 "anchor:test_slab_load_exposed_baseexception_has_durable_owner"),
   [`test_slab_instruction_handoffs.py:524-631`](../tests/test_slab_instruction_handoffs.py#L524-L631 "anchor:test_failed_hook_restore_guards_slab_until_later_confirmed_restore"),
   [`test_store_ensure.py:505-551`](../tests/test_store_ensure.py#L505-L551 "anchor:test_fsdp_pin_close_failure_blocks_reuse_until_exact_resource_retry"),
   [`test_store_ensure.py:554-608`](../tests/test_store_ensure.py#L554-L608 "anchor:test_fsdp_pin_fd_close_is_never_retried_after_release_then_raise"),

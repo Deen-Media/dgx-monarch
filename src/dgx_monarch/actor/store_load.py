@@ -259,10 +259,11 @@ def fresh_load(
             # fp8 at load); those keep the full-reload contract.
             if getattr(base, "_dgxm_fsdp", False):
                 # Sharded weights: comfy's load never runs; the bake reads the
-                # pristine full weight from disk and writes this rank's chunk.
+                # pristine full weight from disk and writes this rank's chunk,
+                # from the file the load pinned and no other.
                 from . import fsdp_lora
 
-                unbake_record = fsdp_lora.bake_stack(store, active, path)
+                unbake_record = fsdp_lora.bake_stack(store, active, path, fsdp_checkpoint_pin)
             else:
                 if slab is not None:
                     # The header estimate priced the ladder; this backstop

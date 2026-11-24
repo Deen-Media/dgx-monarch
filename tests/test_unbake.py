@@ -9,6 +9,7 @@ import json
 import os
 import struct
 import sys
+import time
 import types
 from types import SimpleNamespace
 
@@ -207,7 +208,15 @@ def test_capture_rejects_metadata_change_during_component_reads(rig, monkeypatch
         capture_unbake_record(model, KEYS, path)
 
 
-def test_capture_accepts_ctime_only_change_during_component_reads(rig, monkeypatch):
+def test_capture_refuses_a_ctime_only_change_during_component_reads(rig, monkeypatch):
+    """A change time that moved during the capture discards the record.
+
+    A metadata-only change (here a chmod) and an in-place rewrite that put the
+    old size and modification time back look the same to a stat, except for
+    the change time, which no tool can set back. The record must never vouch
+    for bytes that changed, so it binds the change time too, and a metadata
+    change costs one reload from disk instead of a lazy swap.
+    """
     model, path, _file_tensors = rig
     real_match = ub._bytes_match
     changed = False
@@ -235,10 +244,38 @@ def test_capture_accepts_ctime_only_change_during_component_reads(rig, monkeypat
         return result
 
     monkeypatch.setattr(ub, "_bytes_match", match_then_chmod)
-    record = capture_unbake_record(model, KEYS, path)
-
+    with pytest.raises(CaptureAborted, match="while capturing"):
+        capture_unbake_record(model, KEYS, path)
     assert changed
-    assert set(record.mapped) == set(KEYS)
+
+
+def test_restore_refuses_an_in_place_rewrite_that_kept_size_and_mtime(rig):
+    """A loaded checkpoint rewritten in place, its old modification time put back.
+
+    The rewrite lands on the same inode with the same size, outside every
+    sampled window, so only the change time tells. Restoring from it would
+    take the patched keys from the new bytes while the rest of the model stays
+    the old file's: a silently mixed model. The restore refuses, and the store
+    drops the slot and reloads.
+    """
+    model, path, file_tensors = rig
+    record = capture_unbake_record(model, KEYS, path)
+    _bake(model)
+    before = os.stat(path)
+    time.sleep(0.05)    # past a coarse timestamp tick, so the rewrite's change time differs
+    changed = {name: tensor.clone() for name, tensor in file_tensors.items()}
+    changed["blocks.0.wq.weight"] = changed["blocks.0.wq.weight"] + 1
+    staged = path + ".staged"
+    write_safetensors(staged, changed)
+    with open(staged, "rb") as src, open(path, "r+b") as dst:   # in place: the same inode
+        dst.write(src.read())
+    os.remove(staged)
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = os.stat(path)
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+        before.st_ino, before.st_size, before.st_mtime_ns)
+    with pytest.raises(UnbakeError, match="changed since capture"):
+        restore_pristine(model, record)
 
 
 def test_capture_rejects_atomic_replacement_during_component_reads(
@@ -789,6 +826,57 @@ def test_per_layer_quant_marker_accepts_direct_int8_contract(
     assert spec.layer_conf == conf
     assert set(spec.components) == {"weight", "weight_scale"}
     assert not spec.resident and record.resident_count == 0
+
+
+def test_a_capture_parses_the_embedded_quantization_map_once(quant_rig, tmp_path, monkeypatch):
+    """One parse per capture, not one per patched key and candidate name.
+
+    Each lookup encoded, parsed and validated the whole map, so a broad LoRA
+    on a quantized DiT paid a parse per key, the cost growing with the square
+    of the layer count (seconds on a map of a thousand layers).
+    """
+    from dgx_monarch.actor import unbake_file
+
+    model, _module, _path, _qdata, _scale, _recorded = quant_rig
+    conf = {"format": "float8_e4m3fn"}
+    names = [f"blk{index}" for index in range(6)]
+    tensors, modules = {}, {}
+    for index, name in enumerate(names):
+        qdata = (torch.randn(8, 8) * 0.1).to(torch.float8_e4m3fn)
+        scale = torch.tensor(0.01 + index / 100, dtype=torch.float32)
+        tensors |= {f"{name}.weight": qdata.clone(), f"{name}.weight_scale": scale.clone()}
+        modules[name] = _FakeQuantLinear(qdata.clone(), scale.clone())
+    path = str(tmp_path / "many-layers.safetensors")
+    write_safetensors(path, tensors, metadata={"_quantization_metadata": json.dumps(
+        {"layers": dict.fromkeys(names, conf)})})
+    model.diffusion_model = SimpleNamespace(**modules)
+    parses: list[int] = []
+    real_decode = unbake_file._decode_quant_conf_bytes
+
+    def counting_decode(raw, *, bounded=True):
+        if not bounded:
+            parses.append(len(raw))
+        return real_decode(raw, bounded=bounded)
+
+    monkeypatch.setattr(unbake_file, "_decode_quant_conf_bytes", counting_decode)
+    record = capture_unbake_record(model, [f"diffusion_model.{name}.weight" for name in names], path)
+    assert set(record.quant) == {f"diffusion_model.{name}.weight" for name in names}
+    assert len(parses) == 1
+
+
+def test_a_malformed_map_still_aborts_only_a_capture_that_needs_it(quant_rig, tmp_path):
+    """The parse runs on first use: a capture of plain keys never reads the map."""
+    model, _module, _path, qdata, scale, _recorded = quant_rig
+    path = str(tmp_path / "malformed-map.safetensors")
+    plain = torch.randn(8, 8).to(torch.bfloat16)
+    write_safetensors(path, {"blk.weight": qdata.clone(), "blk.weight_scale": scale.clone(),
+                             "norm.weight": plain.clone()},
+                      metadata={"_quantization_metadata": "{not json"})
+    model.diffusion_model.norm = SimpleNamespace(weight=plain.clone())
+    record = capture_unbake_record(model, ["diffusion_model.norm.weight"], path)
+    assert set(record.mapped) == {"diffusion_model.norm.weight"}
+    with pytest.raises(CaptureAborted, match="malformed checkpoint quantization authority"):
+        capture_unbake_record(model, ["diffusion_model.blk.weight", "diffusion_model.norm.weight"], path)
 
 
 def test_embedded_quant_metadata_precedes_per_layer_marker(quant_rig, tmp_path):

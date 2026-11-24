@@ -30,36 +30,48 @@ log = get_logger(__name__)
 
 
 def constructed_dtypes(module: Any) -> dict[str, Any]:
-    """{qualified name: dtype} for every parameter and buffer of ``module``."""
-    named = itertools.chain(module.named_parameters(), module.named_buffers())
+    """{qualified name: dtype} for every parameter and buffer of ``module``.
+
+    Every name, a second name of a shared tensor included: the default walks
+    yield a shared tensor once and would leave its other name out.
+    """
+    named = itertools.chain(module.named_parameters(remove_duplicate=False),
+                            module.named_buffers(remove_duplicate=False))
     return {name: tensor.dtype for name, tensor in named}
 
 
 def recast_to_constructed(module: Any, constructed: dict[str, Any]) -> tuple[int, int]:
     """Give every assigned tensor the dtype the model constructed it with.
 
-    Returns (tensor count, bytes) of what was recast. Tensors the model did not
-    construct (file keys with no constructed tensor of that name) keep the
-    file's dtype, as they would under the copying load.
+    Returns (tensor count, bytes at the new dtype) of what was recast. Tensors
+    the model did not construct (file keys with no constructed tensor of that
+    name) keep the file's dtype, as they would under the copying load. Every
+    name is walked, so a buffer registered under two names takes its dtype
+    under both, and one source tensor is converted once, so one tensor under
+    two names stays one tensor, as the copying load keeps it.
     """
     count = 0
     nbytes = 0
-    for name, parameter in list(module.named_parameters()):
+    for name, parameter in list(module.named_parameters(remove_duplicate=False)):
         want = constructed.get(name)
         if want is None or parameter.dtype == want:
-            continue
+            continue  # a shared Parameter's second name sees the first conversion
         parameter.data = parameter.data.to(want)
         count += 1
         nbytes += parameter.numel() * parameter.element_size()
-    for name, buffer in list(module.named_buffers()):
+    converted: dict[int, Any] = {}  # id(source buffer) -> its recast tensor
+    for name, buffer in list(module.named_buffers(remove_duplicate=False)):
         want = constructed.get(name)
         if want is None or buffer.dtype == want:
             continue
         owner_name, _, attr = name.rpartition(".")
         owner = module.get_submodule(owner_name) if owner_name else module
-        owner._buffers[attr] = buffer.to(want)
-        count += 1
-        nbytes += buffer.numel() * buffer.element_size()
+        recast = converted.get(id(buffer))
+        if recast is None or recast.dtype != want:
+            recast = converted[id(buffer)] = buffer.to(want)
+            count += 1
+            nbytes += recast.numel() * recast.element_size()
+        owner._buffers[attr] = recast
     return count, nbytes
 
 

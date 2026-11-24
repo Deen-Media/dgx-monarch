@@ -847,9 +847,10 @@ shape. That check and the quantized-key check in `capture_record`/`bake_key`
 tag as the launch-time refusal, not a bare `UnbakeError`: both are
 deterministic per checkpoint, so every rank raises the identical refusal,
 which is what makes tagging them rank symmetric and safe. A key on an island
-kept at fp32 passes the `_file_tensor` check and still raises a bare
-`UnbakeError`: islands stay whole, but outside the census the bake reads as
-replicated. Header and
+kept at fp32 passes the `_file_tensor` check and bakes whole on every rank:
+the bake reads the set the wrap leaves whole (the census modules, the fp32
+islands and every zero-dimensional parameter,
+`fsdp_islands.replicated_parameters`), so the two cannot drift. Header and
 loaded-model detection both classify any full-precision mix containing F16 as
 `fp16`, while fp8/int8 storage markers take precedence; an fp16 core is
 admitted uniform only. One family names F16 tensors as islands instead:
@@ -1027,7 +1028,20 @@ uncertain-arena rules live in `actor/slab_arena.py`,
   its checkpoint tensor by name and verified by bytes; a key ComfyUI renames as
   it loads the file (a FLUX q/k norm weight, `<...>_norm.scale` in the file and
   `<...>_norm.weight` in the model) is found under the file's name, taken from
-  the model config's own rename (`actor/load_renames.py`).
+  the model config's own rename (`actor/load_renames.py`). The un-bake record
+  binds the checkpoint's device, inode, size, modification time and change
+  time: a tool can put an old size and modification time back after rewriting
+  the file in place, but not the change time, so a record never vouches for
+  bytes that changed. It lives only in the Worker's memory, so the binding
+  costs nothing across machines; a metadata-only change costs one reload. A
+  stack that patches no weight leaves an empty record, so its next change stays
+  lazy. On a slab resident each key goes back to its own slab region as the
+  swap finishes with it: ComfyUI bakes a quantized weight into a new tensor,
+  and the swap keeps one copy of every weight, with at most the key in hand
+  doubled (`store_bake._SwapSettle`). Under FSDP every check that can refuse a
+  stack runs before the first write, and a refused stack keeps the resident
+  and the stack it held; the bake reads through one descriptor bound to the
+  header it read and to the file the load pinned (`actor/fsdp_lora.py`).
 - Outside `lora_low_rss`, a hot-swap on a stock base that ComfyUI has placed on
   the GPU is a fresh load instead when ComfyUI holds no host copy of a weight
   the new stack patches (`store_bake.copies_off_the_gpu`). ComfyUI re-applies a
@@ -1055,7 +1069,10 @@ uncertain-arena rules live in `actor/slab_arena.py`,
   hot-swap outside `lora_low_rss` (the clone path) also unloads every model, so
   the patched GPU weights rebuild from the CPU state dict and the other slot
   reloads on its next use. This is the measured fp8/int8 conversion-spike
-  workaround (`store_detect._is_quantized_kind`).
+  workaround (`store_detect._is_quantized_kind`). A change between two stacks
+  that patch no weight keeps the placed weights, which are already right: the
+  unload copies the whole model to the host, 93 s on the pair for such a
+  change.
 - A miss is a full load. Every transition logs its class (`reuse`, `hot-swap`
   or `load`), so the log line names the source of a slowdown.
 

@@ -25,6 +25,7 @@ from .unbake_file import (
     _ST_TO_TORCH as _ST_TO_TORCH,
 )
 from .unbake_file import (
+    QuantLayerMap,
     _bytes_match,
     _candidate_file_bindings,
     _candidate_file_keys,
@@ -55,6 +56,15 @@ class UnbakeError(RuntimeError):
 
     The model may be partially restored, so the caller must discard it and
     perform a full reload.
+    """
+
+
+class UnbakeRefused(UnbakeError):
+    """A typed refusal of a LoRA stack, raised before any weight was written.
+
+    The resident and the stack it holds are exactly as they were, so the store
+    keeps the model and passes the refusal on: dropping it and loading again
+    would only meet the same refusal (``store_bake.lazy_swap_transition``).
     """
 
 
@@ -134,8 +144,16 @@ class UnbakeRecord:
             return False
         if self.file_ino is not None and st.st_ino != self.file_ino:
             return False
-        # ctime is not compared: metadata-only changes move it without changing
-        # contents. Size and mtime catch mutation; device and inode catch replacement.
+        # Device and inode catch replacement; size and mtime catch an ordinary
+        # rewrite. The change time catches the rest: a tool can put an old size
+        # and mtime back after rewriting the same inode, but no tool can set
+        # the change time back, and a record must never vouch for bytes that
+        # changed. A metadata-only change (chmod, chown, a new hard link) moves
+        # it too and costs one reload from disk instead of a lazy swap. The
+        # record lives only in this Worker's memory, so nothing on another
+        # machine or after a copy depends on it.
+        if self.file_ctime_ns is not None and st.st_ctime_ns != self.file_ctime_ns:
+            return False
         return True
 
     def stat_ok(self) -> bool:
@@ -209,6 +227,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                 )
 
             renames = load_time_renames(model, header)  # a key ComfyUI renames at load: the file's name
+            layer_map = QuantLayerMap(metadata)  # the embedded quantization map: one parse per capture
 
             def _map_plain(key: str, tensor: torch.Tensor) -> bool:
                 candidates = with_renamed(_candidate_file_keys(key), renames, key)
@@ -244,7 +263,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                     file_layer = candidate[:-len(".weight")]
                     try:
                         conf, conf_source = _quant_layer_conf(
-                            metadata, header, file_layer, model_prefix, fd
+                            metadata, header, file_layer, model_prefix, fd, layer_map
                         )
                     except _InvalidQuantConfError as exc:
                         raise CaptureAborted(
