@@ -1835,6 +1835,7 @@
     },
     "tests/test_int8_gemm_kitchen_version.py": {
       "test_comfyuis_requirements_pin_a_validated_comfy_kitchen": "2f97315b8bfb8d10",
+      "test_the_compile_safe_wrapper_takes_the_installed_comfy_kitchens_own_calls": "c47e252187d5197b",
       "test_the_docs_name_the_validated_set": "131ef1445b12e9dd",
       "test_the_installed_comfy_kitchen_is_validated": "9136c3d703f8029e",
       "test_the_requirements_check_reads_one_exact_pin": "1767bf8c192ded59"
@@ -1868,6 +1869,7 @@
       "test_the_schema_admits_exactly_the_two_modes": "695c442ffb64e12a",
       "test_the_validated_set_is_the_recorded_one": "84e7816bb5153045",
       "test_the_worker_never_writes_the_default_into_its_args": "b31aab7faf0da865",
+      "test_the_wrapper_hands_on_a_keyword_comfy_kitchen_adds_later": "51b1d7293024382e",
       "test_triton_failing_to_load_keeps_stock_cutlass_with_one_warning": "8b73fbea0100dd3f"
     },
     "tests/test_ledger_v9.py": {

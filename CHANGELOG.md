@@ -1419,6 +1419,9 @@ sections after them list every change.
   five paths, and stock's own choice of path on both sides of its 16 KiB
   cut-off. No file of any of the four formats is on the rig, so this is held
   by CPU tests only ([CONCEPTS](docs/CONCEPTS.md#model-words)).
+- The `int8_linear` wrapper the INT8 GEMM kernel puts in place now hands on
+  any keyword a newer comfy-kitchen release passes; it changes nothing on the
+  validated releases ([Models](docs/MODELS.md#int8-gemm-kernel)).
 - The video templates follow ComfyUI 0.44.0's Create Video, which gained
   `chroma_subsampling` before `codec` (ComfyUI #17463); they hold its default,
   `auto`. On ComfyUI 0.43 and older, which lack the widget, this pack's
