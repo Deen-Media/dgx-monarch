@@ -18,6 +18,9 @@ class Certainty(StrEnum):
 @dataclass(frozen=True)
 class OperationResult:
     certainty: Certainty
+    # For a FAILED result that no check decided: a lowercase identifier the
+    # update names in its result code (``update_transaction.FAILURE_CAUSES``).
+    cause: str = ""
 
 
 @dataclass(frozen=True)

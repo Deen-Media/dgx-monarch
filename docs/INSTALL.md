@@ -1858,7 +1858,16 @@ its prior unit and link, which the prior start reads back first. A failed start,
 services stopped (for a driver commit, also that the driver still reads back at
 its prior commit and pin), then compensates the slots and starts the prior
 release; each recovery step runs only after the one before it succeeded, and a
-prior start that definitely fails gets one more stop. If a stop, activation,
+prior start that definitely fails gets one more stop. Two smoke outcomes that
+decide no check count as a failed smoke here, each under its own code: checks
+that all passed while the smoke could not confirm the stop of the ProcMesh it
+started (`cluster_smoke_cleanup_unconfirmed`), and a smoke killed by a signal
+before it reported (`cluster_smoke_killed`). The restore is safe for both: it
+waits for the confirmed stop of every new Worker, the Worker unit stops its
+whole control group, so that stop ends every actor the smoke left on a Worker
+host, and the smoke process has already exited. It leaves the pair working on
+the old release, where an unknown result would leave the new Workers stopped
+for the forward repair. If a stop, activation,
 target start, compensation, or prior restart is unknown or throws, the command
 performs no later mutation; the one exception is the readback of an
 unanswered switch above, which writes only its cancel mark and runs the

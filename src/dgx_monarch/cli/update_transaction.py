@@ -2,8 +2,16 @@
 
 Platform operations are injected through UpdateOps. A timeout during stop,
 activation or driver-pin promotion leaves the outcome unknown; do not roll
-back, restart or clean up after it. One containment stop is allowed only if
-target startup was confirmed and the recorded generation still matches.
+back, restart or clean up after it. (An unanswered activation is first read
+back under its own locks: ReleaseManager.activate_workers.) One containment
+stop is allowed only if target startup was confirmed and the recorded
+generation still matches.
+
+A definite failure after target start restores the prior release, and only
+after the stop of every new Worker is confirmed. Besides a failed check, two
+smoke outcomes count as such a failure (FAILURE_CAUSES): checks that passed
+with an unconfirmed cleanup of the smoke's own ProcMesh, and a smoke killed by
+a signal. A smoke that lost its evidence stays unknown.
 """
 from __future__ import annotations
 
@@ -38,6 +46,17 @@ GATE_NOTE = (
     "a new version expires context-scoped FAILs, so auto_gate=first_use retests them and "
     "auto_gate=off treats them as untested."
 )
+# A FAILED check that no check decided names its cause in the result code
+# (``<check>_<cause>``) and the message. Any other cause reads as plain failed.
+FAILURE_CAUSES = {
+    "cleanup_unconfirmed": "passed its checks but could not confirm the stop of its own ProcMesh",
+    "killed": "was killed by a signal before it reported",
+}
+
+
+def _failure_cause(result: OperationResult) -> str:
+    cause = getattr(result, "cause", "")
+    return cause if isinstance(cause, str) and cause in FAILURE_CAUSES else ""
 
 
 @dataclass(frozen=True)
@@ -294,10 +313,16 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
                     f"{name} outcome is unknown; the update did not roll back",
                 )
             if check.certainty == Certainty.FAILED:
-                steps.append(_Step(name, "failed"))
+                cause = _failure_cause(check)
+                steps.append(_Step(name, "failed", notes=(cause,) if cause else ()))
                 target_settlement_attempted = True
                 settled = _restore_prior_release(ops, staged, steps)
                 cleanup_allowed = settled
+                if cause:
+                    raise _Abort(
+                        f"{name}_{cause}",
+                        f"{name} {FAILURE_CAUSES[cause]}, so it did not verify the activated release",
+                    )
                 raise _Abort(f"{name}_failed", f"{name} did not verify the activated release")
             steps.append(_Step(name, "succeeded"))
 

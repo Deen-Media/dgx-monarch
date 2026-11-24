@@ -547,6 +547,86 @@ def test_the_real_setup_dependency_decides_or_leaves_the_outcome_unknown(tmp_pat
         mesh_setup.ensure_setup_token(lost)
 
 
+def _real_recycle_types(rig: _Rig) -> smoke.ClusterSmokeDependencies:
+    from dataclasses import replace
+
+    from dgx_monarch.mesh_recycle import RecycleOutcome, RecycleStatus
+
+    return replace(rig.dependencies, recycle_outcome_type=RecycleOutcome,
+                   recycle_status_type=RecycleStatus, recycled_status=RecycleStatus.RECYCLED)
+
+
+@pytest.mark.parametrize("status", ["proc_stop_timed_out", "proc_stop_failed", "overall_timed_out",
+                                    "prior_teardown_unknown", "active_work", "lifecycle_busy"])
+def test_a_cleanup_the_smoke_could_not_confirm_is_unknown(tmp_path, status):
+    """Whatever the recycle answered, the checks passed and only the cleanup is unproven."""
+    from dgx_monarch.mesh_recycle import RecycleOutcome, RecycleStatus
+
+    rig = _rig(tmp_path)
+    rig.primary.recycle_outcome = RecycleOutcome(RecycleStatus(status), "process state is unknown")
+
+    with pytest.raises(smoke.ClusterSmokeError, match="cleanup_not_confirmed") as raised:
+        smoke.run_cluster_smoke(rig.path, dependencies=_real_recycle_types(rig))
+
+    assert raised.value.unknown is True
+    assert raised.value.code in smoke.CLEANUP_CODES
+
+
+def test_a_recycle_that_raised_is_an_unknown_cleanup(tmp_path):
+    rig = _rig(tmp_path)
+    rig.primary.recycle_error = RuntimeError("transport lost")
+
+    with pytest.raises(smoke.ClusterSmokeError, match="cleanup_recycle_failed") as raised:
+        smoke.run_cluster_smoke(rig.path, dependencies=rig.dependencies)
+
+    assert raised.value.unknown is True
+
+
+def test_an_unknown_body_keeps_its_own_code_over_an_unconfirmed_cleanup(tmp_path):
+    from dgx_monarch.mesh_recycle import RecycleOutcome, RecycleStatus
+
+    rig = _rig(tmp_path)
+    rig.primary.status_error = TimeoutError("status RPC timed out")
+    rig.primary.recycle_outcome = RecycleOutcome(RecycleStatus.PROC_STOP_TIMED_OUT, "unknown")
+
+    with pytest.raises(smoke.ClusterSmokeError, match="status_unknown") as raised:
+        smoke.run_cluster_smoke(rig.path, dependencies=_real_recycle_types(rig))
+
+    assert raised.value.unknown is True
+    assert any("cleanup also failed" in note for note in raised.value.__notes__)
+
+
+def test_a_definite_body_failure_stays_definite_beside_an_unconfirmed_cleanup(tmp_path):
+    from dgx_monarch.mesh_recycle import RecycleOutcome, RecycleStatus
+
+    rig = _rig(tmp_path)
+    rig.primary.rows = []
+    rig.primary.recycle_outcome = RecycleOutcome(RecycleStatus.PROC_STOP_TIMED_OUT, "unknown")
+
+    with pytest.raises(smoke.ClusterSmokeError, match="cleanup_not_confirmed") as raised:
+        smoke.run_cluster_smoke(rig.path, dependencies=_real_recycle_types(rig))
+
+    assert raised.value.unknown is False
+    assert any("body also failed" in note for note in raised.value.__notes__)
+
+
+def test_smoke_main_exits_unknown_for_a_cleanup_it_could_not_confirm(tmp_path, monkeypatch, capsys):
+    """A caller that runs the smoke entry point itself reads 75, not a failed check."""
+    from dgx_monarch.mesh_recycle import RecycleOutcome, RecycleStatus
+
+    rig = _rig(tmp_path)
+    rig.primary.recycle_outcome = RecycleOutcome(RecycleStatus.PROC_STOP_TIMED_OUT, "unknown")
+    dependencies = _real_recycle_types(rig)
+    original = smoke.run_cluster_smoke
+    monkeypatch.setattr(smoke, "run_cluster_smoke",
+                        lambda config_path, **_kwargs: original(config_path, dependencies=dependencies))
+
+    assert smoke.smoke_main(str(rig.path)) == 75
+    assert json.loads(capsys.readouterr().out.splitlines()[-1]) == {
+        "result": "FAIL", "error": "cleanup_not_confirmed",
+    }
+
+
 def test_cleanup_non_success_overrides_body_failure_and_is_exposed(tmp_path):
     rig = _rig(tmp_path)
     rig.primary.rows = []

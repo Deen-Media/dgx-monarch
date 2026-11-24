@@ -13,7 +13,7 @@ from typing import cast
 
 from ..config import ClusterConfig
 from . import comfy_ports
-from .cluster_smoke import exact_pass_evidence
+from .cluster_smoke import CLEANUP_CODES, exact_pass_evidence
 from .update_activity import activity_snapshot, privileged_actor_count
 from .update_cancellation import run_finalizer_pair
 from .update_dependency_contract import require_candidate_dependencies
@@ -61,6 +61,27 @@ _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _OK = OperationResult(Certainty.SUCCEEDED)
 _FAILED = OperationResult(Certainty.FAILED)
 _UNKNOWN = OperationResult(Certainty.UNKNOWN)
+
+
+def _unknown_smoke(stdout: str) -> OperationResult:
+    """Read the smoke's unknown exit: lost evidence, or a cleanup it could not confirm.
+
+    A transport loss or RPC timeout in the checks stays UNKNOWN, so the update
+    makes its one containment stop and nothing more. A smoke whose checks all
+    passed but whose own ProcMesh stop went unconfirmed is a named failure, and
+    so is a smoke killed by a signal: the update then restores the prior
+    release, which leaves the pair working. That restore runs only once the stop
+    of every new Worker is confirmed; the Worker unit stops its whole control
+    group, so that stop ends every actor the smoke left on a Worker host, and
+    the smoke process itself has already exited.
+    """
+    try:
+        payload = json.loads(stdout.splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        return _UNKNOWN
+    if isinstance(payload, dict) and payload.get("error") in CLEANUP_CODES:
+        return OperationResult(Certainty.FAILED, "cleanup_unconfirmed")
+    return _UNKNOWN
 
 
 class SystemUpdateOps(UpdateOps):
@@ -307,9 +328,12 @@ class SystemUpdateOps(UpdateOps):
                 [sys.executable, "-c", script, str(self._config_path)], cwd=self.repo,
                 capture_output=True, text=True, timeout=600, env=_runtime_env(site),
             )
-            # Transport loss or RPC timeout exits 75: the smoke result is unknown.
             if result.returncode == LIFECYCLE_UNKNOWN_EXIT:
-                return _UNKNOWN
+                return _unknown_smoke(result.stdout)
+            if result.returncode < 0:
+                # A signal killed the smoke before it reported. See _unknown_smoke
+                # for why the restore that a failure starts is safe here.
+                return OperationResult(Certainty.FAILED, "killed")
             if result.returncode != 0:
                 return _FAILED
             payload = json.loads(result.stdout.splitlines()[-1])

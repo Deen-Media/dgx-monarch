@@ -2625,6 +2625,20 @@ sections after them list every change.
   release is no longer in the way.
 - Fix: a Worker thread that exits while a verified update reads the Worker's
   threads no longer ends the update `stop_unknown`.
+- Fix: a verified update whose cluster smoke passed its checks but could not
+  confirm the stop of its own ProcMesh now ends
+  `cluster_smoke_cleanup_unconfirmed`, and one whose smoke a signal killed
+  ends `cluster_smoke_killed`, where both read `cluster_smoke_failed`. Each
+  still restores the prior release once every new Worker's stop is
+  confirmed, and the update's contract now says so. A smoke that lost its
+  evidence in its checks stays `cluster_smoke_unknown` even when its cleanup
+  failed too, where the cleanup's failure took its place and restored the
+  prior release
+  ([INSTALL](docs/INSTALL.md#verified-activation-and-recovery)).
+- Fix: the cluster smoke's entry point, run by a script of its own, exits 75
+  (unknown) for a ProcMesh cleanup it could not confirm, where it exited 1 as
+  for a failed check. Guided setup already read those cleanup codes as
+  unknown.
 
 ### Development
 

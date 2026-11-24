@@ -514,6 +514,39 @@ def test_failed_smoke_quarantines_without_readback():
     assert "readback" not in ops.events
 
 
+@pytest.mark.parametrize(("cause", "words"), [
+    ("cleanup_unconfirmed", "could not confirm the stop of its own ProcMesh"),
+    ("killed", "killed by a signal"),
+])
+def test_a_named_smoke_failure_restores_the_prior_release_and_says_why(cause: str, words: str):
+    ops = FakeOps()
+    ops.smoke_result = OperationResult(Certainty.FAILED, cause)
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == f"cluster_smoke_{cause}"
+    assert words in result.message and words in result.receipt["notes"][0]
+    assert result.receipt["status"] == "failed"
+    assert ops.events.count("stop") == 2
+    assert ops.events.count("start_no_sync") == 2
+    assert "compensate" in ops.events and "readback" not in ops.events
+    step = next(item for item in result.receipt["steps"] if item["name"] == "cluster_smoke")
+    assert step["status"] == "failed" and step["notes"] == [cause]
+    restored = next(item for item in result.receipt["steps"] if item["name"] == "prior_release_start")
+    assert restored["status"] == "succeeded"
+
+
+def test_an_unrecognized_failure_cause_reads_as_a_plain_failure():
+    ops = FakeOps()
+    ops.smoke_result = OperationResult(Certainty.FAILED, "host worker-01 at /private")
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == "cluster_smoke_failed"
+    step = next(item for item in result.receipt["steps"] if item["name"] == "cluster_smoke")
+    assert step["notes"] == []
+
+
 @pytest.mark.parametrize("check", ["doctor", "cluster_smoke"])
 def test_unknown_post_activation_check_preserves_state_without_rollback(check: str):
     ops = FakeOps()

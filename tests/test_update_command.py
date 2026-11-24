@@ -754,6 +754,42 @@ def test_a_smoke_that_lost_its_transport_is_unknown_not_failed(
         _stage(metadata)).certainty == Certainty.FAILED
 
 
+def test_an_unconfirmed_smoke_cleanup_or_a_killed_smoke_is_a_named_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Both settle by the restore of the prior release, and the result names why.
+
+    The restore runs only once the stop of every new Worker is confirmed. The
+    Worker unit stops its whole control group, so that stop ends every actor
+    the smoke left on a Worker host, and the smoke process itself has already
+    exited. A smoke that lost its evidence stays unknown.
+    """
+    repo, _sha = _checkout(tmp_path)
+    config_path = tmp_path / "cluster.toml"
+    config_path.write_text("[cluster]\n", encoding="utf-8")
+    target_site = tmp_path / "target-site"
+    target_site.mkdir()
+    stage = _stage(ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS))
+    release = SimpleNamespace(ensure_supported=lambda: None,
+                              slot=SimpleNamespace(site=target_site, remote_activated=True))
+
+    def smoke_exiting(returncode: int, stdout: str) -> OperationResult:
+        ops = update_command.SystemUpdateOps(
+            repo, ClusterConfig(source=str(config_path)), release_manager=release,
+            command_runner=lambda argv, **_kwargs: subprocess.CompletedProcess(list(argv), returncode, stdout, ""),
+        )
+        monkeypatch.setattr(ops, "_target_site", lambda: target_site)
+        return ops.cluster_smoke(stage)
+
+    for code in ("cleanup_not_confirmed", "cleanup_recycle_failed"):
+        unconfirmed = json.dumps({"error": code, "result": "FAIL"}) + "\n"
+        assert smoke_exiting(75, unconfirmed) == OperationResult(Certainty.FAILED, "cleanup_unconfirmed")
+    assert smoke_exiting(-9, "") == OperationResult(Certainty.FAILED, "killed")
+    assert smoke_exiting(-15, '{"result": "PASS"}\n') == OperationResult(Certainty.FAILED, "killed")
+    assert smoke_exiting(75, "a line that is not JSON\n") == OperationResult(Certainty.UNKNOWN)
+    assert smoke_exiting(75, "") == OperationResult(Certainty.UNKNOWN)
+
+
 def test_doctor_carries_the_unknown_exit_through_to_certainty(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):

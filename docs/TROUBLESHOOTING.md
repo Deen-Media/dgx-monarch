@@ -7830,7 +7830,8 @@ match the driver.
   confirmed. The driver and the Workers are as they were; clear the cause
   the code names and rerun.
 - An `activation_failed`, `start_failed`, `doctor_failed`,
-  `cluster_smoke_failed`, `readback_mismatch` or `driver_commit_failed`
+  `cluster_smoke_failed`, `cluster_smoke_cleanup_unconfirmed`,
+  `cluster_smoke_killed`, `readback_mismatch` or `driver_commit_failed`
   whose `prior_release_start` step succeeded: the old release was restored
   and its Workers run again, and only the `stage_cleanup` step was not
   confirmed. The driver and the Workers match on the old release; clear the
@@ -7840,7 +7841,8 @@ match the driver.
   Workers may be stopped, and the driver is unchanged. `dgxm up` starts them
   again; then rerun the update.
 - `activation_unknown`, and an `activation_failed`, `start_failed`,
-  `doctor_failed`, `cluster_smoke_failed`, `readback_mismatch` or
+  `doctor_failed`, `cluster_smoke_failed`, `cluster_smoke_cleanup_unconfirmed`,
+  `cluster_smoke_killed`, `readback_mismatch` or
   `driver_commit_failed` whose `prior_release_start` step is missing or did
   not succeed, so the restore of the old release was not confirmed: each
   host's link and unit can name either release, Workers of either

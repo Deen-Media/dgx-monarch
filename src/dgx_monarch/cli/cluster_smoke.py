@@ -14,14 +14,17 @@ from typing import Any, NoReturn
 
 _DIGEST_LENGTH = 64
 _ATTENTION = "TORCH_FLASH"
+# Codes of a ProcMesh cleanup the smoke could not confirm: never a check's verdict, so unknown.
+CLEANUP_CODES = frozenset({"cleanup_attempt_repeated", "cleanup_not_confirmed",
+                           "cleanup_outcome_untyped", "cleanup_recycle_failed"})
 
 
 class ClusterSmokeError(RuntimeError):
     """A disclosure-safe smoke refusal or unknown outcome.
 
     ``unknown`` distinguishes a failed check from a run that lost its evidence,
-    such as through transport failure. Only a definite refusal can authorize
-    rollback.
+    such as through transport failure, or could not confirm its own ProcMesh
+    cleanup. Whether an unknown result may restore is the update's decision.
     """
 
     def __init__(self, code: str, *, unknown: bool = False) -> None:
@@ -240,16 +243,16 @@ class _OwnedProcMeshes:
                 continue
             identity = id(handle)
             if identity in self._attempted:
-                candidate = ClusterSmokeError("cleanup_attempt_repeated")
+                candidate = ClusterSmokeError("cleanup_attempt_repeated", unknown=True)
             else:
                 self._attempted.add(identity)
                 try:
                     outcome = handle.recycle_detailed()
                 except BaseException as exc:
-                    candidate = exc if not isinstance(exc, Exception) else ClusterSmokeError("cleanup_recycle_failed")
+                    candidate = exc if not isinstance(exc, Exception) else ClusterSmokeError("cleanup_recycle_failed", unknown=True)
                 else:
                     if not isinstance(outcome, dependencies.recycle_outcome_type):
-                        candidate = ClusterSmokeError("cleanup_outcome_untyped")
+                        candidate = ClusterSmokeError("cleanup_outcome_untyped", unknown=True)
                     else:
                         status = getattr(outcome, "status", None)
                         if (
@@ -258,7 +261,7 @@ class _OwnedProcMeshes:
                             or getattr(handle, "teardown_complete", None) is not True
                             or getattr(handle, "replacement_blocked", None) is not None
                         ):
-                            candidate = ClusterSmokeError("cleanup_not_confirmed")
+                            candidate = ClusterSmokeError("cleanup_not_confirmed", unknown=True)
                         else:
                             confirmed += 1
             if candidate is not None:
@@ -334,7 +337,7 @@ def _normalize_failure(
 
 
 def smoke_main(config_path: str) -> int:
-    """Print one smoke result for the update wrapper; exit 1 on a refusal, 75 when unknown."""
+    """Print one smoke result; exit 1 on a failed check, 75 when unknown, an unconfirmed cleanup included."""
     import json
 
     from .probe_certainty import UNKNOWN_EXIT
@@ -348,6 +351,8 @@ def smoke_main(config_path: str) -> int:
 
 
 def _prefer_cleanup_failure(primary: BaseException | None, cleanup: BaseException) -> BaseException:
+    """A cancellation wins, an unknown body keeps its own code, and after a failed
+    check the cleanup's code is reported, as definite as the check."""
     if primary is None:
         return cleanup
     if not isinstance(primary, Exception):
@@ -356,6 +361,11 @@ def _prefer_cleanup_failure(primary: BaseException | None, cleanup: BaseExceptio
     if not isinstance(cleanup, Exception):
         _safe_note(cleanup, "cluster smoke body also failed")
         return cleanup
+    if isinstance(primary, ClusterSmokeError) and primary.unknown:
+        _safe_note(primary, "cluster smoke ProcMesh cleanup also failed")
+        return primary
+    if isinstance(cleanup, ClusterSmokeError):
+        cleanup.unknown = False
     _safe_note(cleanup, "cluster smoke body also failed")
     return cleanup
 
@@ -477,7 +487,7 @@ def run_cluster_smoke(
     if primary is not None:
         raise primary from None
     if evidence is None or confirmed != owners.count or owners.count != 1:
-        _fail("cleanup_not_confirmed")
+        raise ClusterSmokeError("cleanup_not_confirmed", unknown=True)
     world, source_digest, status_coverage = evidence
     return ClusterSmokeResult(
         world=world,
