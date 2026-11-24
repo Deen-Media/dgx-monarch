@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -68,8 +69,8 @@ def test_every_weight_only_layout_gets_rows_and_other_weights_keep_the_input():
     chained = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
     view = torch.zeros(2, 7, 4)[:, :3]
     weight_only = (_weight(), _weight(convrot=True),
-                   _weight(layout_name="TensorCoreConvRotW4A4Layout"),
-                   _weight(layout_name="AsymW4A8Int8Layout"))
+                   *(_weight(layout_name=name) for name in sorted(layout.WEIGHT_ONLY_LAYOUTS)))
+    assert len(weight_only) == 5
     for value in (chained, view, chained.transpose(1, 2)):
         for weight in weight_only:
             out = tree.linear._forward(value, weight, torch.tensor(0.0))
@@ -85,15 +86,38 @@ def test_every_weight_only_layout_gets_rows_and_other_weights_keep_the_input():
         assert tree.linear.calls[-1] is flat
 
 
-@pytest.mark.parametrize("quant_format,layout_type", [
-    ("int8_tensorwise", "TensorWiseINT8Layout"),
-    ("convrot_w4a4", "TensorCoreConvRotW4A4Layout"),
-    ("asym_w4a8_int8", "AsymW4A8Int8Layout"),
-    ("w6a8_int8", "AsymW4A8Int8Layout"),
-])
-def test_each_weight_only_format_wraps_once(quant_format, layout_type):
+# Every weight-only format by name, with the layout ComfyUI loads it as, what
+# comfy-kitchen's quantizer takes for it and the bytes a packed row of 256
+# inputs holds. The grouped formats share one layout class and differ in code
+# width, so each has its own row here and in the canary seam.
+_FORMATS = {
+    "int8_tensorwise": ("TensorWiseINT8Layout", {"is_weight": True, "per_channel": True}, 256),
+    "convrot_w4a4": ("TensorCoreConvRotW4A4Layout", {}, 128),
+    "w3a8_int8": ("AsymW4A8Int8Layout", {"bits": 3}, 96),
+    "asym_w4a8_int8": ("AsymW4A8Int8Layout", {"bits": 4}, 128),
+    "w5a8_int8": ("AsymW4A8Int8Layout", {"bits": 5}, 160),
+    "w6a8_int8": ("AsymW4A8Int8Layout", {"bits": 6}, 192),
+}
+
+
+def test_every_format_of_the_table_has_a_row_by_name():
+    assert {name: row[0] for name, row in _FORMATS.items()} == dict(layout.WEIGHT_ONLY_FORMATS)
+    assert layout.WEIGHT_ONLY_LAYOUTS == frozenset(layout.WEIGHT_ONLY_FORMATS.values())
+
+
+def test_a_format_ahead_of_a_release_is_in_the_table_and_names_its_comfy_commit():
+    """The seam excuses a listed format only where ComfyUI does not know the
+    name and this table names the ComfyUI commit that adds it."""
+    assert set(layout.FORMATS_AHEAD_OF_A_RELEASE) == {"w3a8_int8", "w5a8_int8"}
+    for name, commit in layout.FORMATS_AHEAD_OF_A_RELEASE.items():
+        assert name in layout.WEIGHT_ONLY_FORMATS
+        assert len(commit) == 40 and set(commit) <= set("0123456789abcdef")
+
+
+@pytest.mark.parametrize("quant_format", sorted(_FORMATS))
+def test_each_weight_only_format_wraps_once(quant_format):
     tree = _Tree()
-    tree.linear.quant_format, tree.linear.layout_type = quant_format, layout_type
+    tree.linear.quant_format, tree.linear.layout_type = quant_format, _FORMATS[quant_format][0]
     assert layout.install(tree) == 1
     assert layout.install(tree) == 0
 
@@ -281,6 +305,119 @@ with torch.no_grad():
     assert completed.returncode == 0, completed.stderr
     if completed.stdout.strip():
         print(completed.stdout.strip())
+
+
+_ABSENT = "FORMAT-ABSENT-FROM-THIS-COMFYUI"
+
+
+@pytest.mark.parametrize("quant_format", sorted(_FORMATS))
+def test_comfy_linear_of_each_weight_only_format_matches_stock_through_the_wrapper(quant_format):
+    """Each format by name: comfy-kitchen packs the weight at the format's own
+    width, ComfyUI's loader loads it under the format's name, and the wrapped
+    Linear, outside inference mode, gives stock's inference-mode bits through
+    ``mm`` for 3-D views whose strides do not chain. The same views unwrapped
+    are only reported: whether they take the dequantizing ``expand`` depends
+    on the torch build.
+
+    A format of ``FORMATS_AHEAD_OF_A_RELEASE`` skips on a ComfyUI that does
+    not list it, and only then: the child process says so in a line of its
+    own and exits clean, so a crash is never a skip.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    comfy_dir = os.environ.get("COMFY_DIR") or os.environ.get("COMFYUI_DIR")
+    if not comfy_dir:
+        pytest.skip("set COMFY_DIR or COMFYUI_DIR to run the optional current-Comfy case")
+    source = Path(__file__).resolve().parents[1] / "src"
+    layout_type, pack, packed_width = _FORMATS[quant_format]
+    code = r"""
+import json, sys
+name, layout_type, pack, packed_width, absent = json.loads(sys.argv[1])
+sys.argv = ["weight-only-format-row", "--cpu"]
+import comfy.options
+comfy.options.enable_args_parsing()
+import torch
+import comfy.ops
+from comfy.quant_ops import QUANT_ALGOS, QuantizedTensor
+from dgx_monarch.adapters import int8_linear_layout as layout
+
+if name not in QUANT_ALGOS:
+    print(absent)
+    sys.exit(0)
+assert QUANT_ALGOS[name].get("quantize_input", True) is False, QUANT_ALGOS[name]
+assert QUANT_ALGOS[name]["comfy_tensor_layout"] == layout_type, QUANT_ALGOS[name]
+
+seen = []
+stock_dispatch = QuantizedTensor.__torch_dispatch__.__func__
+def spy(cls, func, types, args=(), kwargs=None):
+    seen.append(func.overloadpacket.__name__)
+    return stock_dispatch(cls, func, types, args, kwargs)
+QuantizedTensor.__torch_dispatch__ = classmethod(spy)
+
+torch.manual_seed(5)
+width, out_features, rows = 256, 64, 5
+packed = QuantizedTensor.from_float((torch.randn(out_features, width) * 0.02).to(torch.bfloat16),
+                                    layout_type, **pack)
+assert tuple(packed._qdata.shape) == (out_features, packed_width), packed._qdata.shape
+params = packed._params
+state = {"weight": packed._qdata,
+         "comfy_quant": torch.tensor(list(json.dumps({"format": name}).encode()), dtype=torch.uint8)}
+if layout_type == "AsymW4A8Int8Layout":
+    state["weight_s_rel"], state["weight_s_channel"] = params.scale, params.s_channel
+    if params.codebook is not None:
+        state["weight_codebook"] = params.codebook
+else:
+    state["weight_scale"] = params.scale
+def build():
+    linear = comfy.ops.mixed_precision_ops({}, compute_dtype=torch.bfloat16).Linear(
+        width, out_features, bias=False)
+    linear.load_state_dict({key: value.clone() for key, value in state.items()}, strict=False)
+    assert (linear.quant_format, linear.layout_type) == (name, layout_type)
+    assert isinstance(linear.weight, QuantizedTensor)
+    assert tuple(linear.weight._qdata.shape) == (out_features, packed_width)
+    return linear
+def run(linear, x):
+    seen.clear()
+    out = linear(x)
+    return out, list(seen)
+
+plain, wrapped = build(), build()
+assert layout.install(wrapped) == 1, f"the wrapper does not take a {name} Linear"
+wide = torch.randn(2, 9, width).to(torch.bfloat16)
+views = {"prefix slice": wide[:, :rows], "stepped rows": wide[:, ::2],
+         "transposed": wide.transpose(1, 2).contiguous().transpose(1, 2),
+         "expanded batch": wide[:1, :rows].expand(2, rows, width)}
+for what, view in views.items():
+    assert not view.is_contiguous(), what
+    with torch.inference_mode():
+        stock, _route = run(plain, view.clone())
+    with torch.no_grad():
+        bare, unwrapped = run(plain, view)
+        out, route = run(wrapped, view)
+    assert "mm" in route and "expand" not in route, (name, what, route)
+    assert out.shape == stock.shape and torch.equal(out, stock), (name, what)
+    print(f"{name} {what}: unwrapped {unwrapped}, equal to stock {torch.equal(bare, stock)}")
+"""
+    # The parent's own path entries follow, so a comfy-kitchen put ahead of the
+    # installed one for this run (the release ComfyUI master pins) reaches the child too.
+    inherited = os.environ.get("PYTHONPATH")
+    child_path = f"{comfy_dir}:{source}" + (f":{inherited}" if inherited else "")
+    env = os.environ | {"PYTHONPATH": child_path, "CUDA_VISIBLE_DEVICES": ""}
+    argument = json.dumps([quant_format, layout_type, pack, packed_width, _ABSENT])
+    completed = subprocess.run([sys.executable, "-c", code, argument], env=env, text=True,
+                               capture_output=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+    lines = completed.stdout.strip().splitlines()
+    if _ABSENT in lines:
+        assert quant_format in layout.FORMATS_AHEAD_OF_A_RELEASE, (
+            f"this ComfyUI does not list {quant_format}, and FORMATS_AHEAD_OF_A_RELEASE does not excuse it")
+        pytest.skip(f"this ComfyUI does not list {quant_format}; ComfyUI commit "
+                    f"{layout.FORMATS_AHEAD_OF_A_RELEASE[quant_format][:9]} adds it")
+    assert len(lines) >= 4 and all(line.startswith(quant_format) for line in lines[-4:]), completed.stdout
+    print(completed.stdout.strip())
 
 
 class _Nvfp4Input:

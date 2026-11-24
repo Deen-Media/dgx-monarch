@@ -162,7 +162,11 @@ The seams, in run order:
                               inference mode the INT8 GEMM through mm for a
                               3-D activation whose strides chain, the
                               dequantizing expand for one whose strides do
-                              not, and mm for both behind the pack's wrapper
+                              not, and mm for both behind the pack's wrapper;
+                              each format ComfyUI lists then runs a row of its
+                              own through the wrapper, bit-exact against
+                              stock, and a format the pack lists ahead of a
+                              release must name the ComfyUI commit that adds it
  48. minimax h3 context windows  the stock node's widgets and frame map, the
                               handler its execute puts on a clone and the
                               static schedule it runs, and one model call per
@@ -6227,6 +6231,113 @@ def _assert_dynamic_prompt_asymmetry_seam() -> None:
         "browser would rewrite the MOSS-Image layout graph's JSON braces on Queue")
 
 
+# comfy-canary.yml sets this to its matrix entry, "master" or "release". Only the
+# release entry changes a check, in the weight-only linear dispatch seam.
+_CANARY_TARGET_ENV = "DGXM_COMFY_CANARY_TARGET"
+
+# How each weight-only format packs a [64, 256] weight for its row: the layout,
+# what ``QuantizedTensor.from_float`` takes, the comfy_quant record beside
+# ``format``, and the packed width in bytes. A format ComfyUI adds has no entry
+# here, and the seam fails until it gets a row of its own.
+_WEIGHT_ONLY_ROWS: dict[str, tuple[str, dict, dict, int]] = {
+    "int8_tensorwise": ("TensorWiseINT8Layout", {"is_weight": True, "per_channel": True}, {}, 256),
+    "convrot_w4a4": ("TensorCoreConvRotW4A4Layout", {}, {}, 128),
+    "w3a8_int8": ("AsymW4A8Int8Layout", {"bits": 3}, {"group_size": 16}, 96),
+    "asym_w4a8_int8": ("AsymW4A8Int8Layout", {"bits": 4}, {"group_size": 16}, 128),
+    "w5a8_int8": ("AsymW4A8Int8Layout", {"bits": 5}, {"group_size": 16}, 160),
+    "w6a8_int8": ("AsymW4A8Int8Layout", {"bits": 6}, {"group_size": 16}, 192),
+}
+
+
+def _weight_only_format_row(name: str, route) -> None:
+    """One weight-only format through ComfyUI's Linear and the pack's wrapper, against stock.
+
+    The weight is packed by comfy-kitchen at this format's width and loaded by
+    ComfyUI's own loader under this format's name, so a row cannot stand in
+    for another format. Outside inference mode, as on a Worker's sampling
+    thread, three 3-D views go through the wrapped Linear: a prefix slice of a
+    batch of two, whose strides do not chain; a transposed view; and the rows
+    ``at_stock_rows`` keeps. Each must reach the layout's ``mm``, never
+    ``expand``, and equal the inference-mode result, stock's own, bit for
+    bit. What the prefix slice does unwrapped depends on the torch build, so
+    the row only reports it. ``route`` runs a Linear and returns its output
+    with the ops ``QuantizedTensor`` dispatched.
+    """
+    import json
+
+    import comfy.ops
+    import torch
+    from comfy.quant_ops import QUANT_ALGOS, QuantizedTensor
+
+    from dgx_monarch.adapters import int8_linear_layout
+    from dgx_monarch.adapters.flux3_adaln_parity import at_stock_rows
+
+    label = f"weight-only linear dispatch seam: {name}"
+    assert name in _WEIGHT_ONLY_ROWS, (
+        f"{label}: ComfyUI lists this format and the seam has no row for it; add one to "
+        "_WEIGHT_ONLY_ROWS, since a shared layout class does not prove a format exact")
+    layout, pack, record, packed_width = _WEIGHT_ONLY_ROWS[name]
+    assert QUANT_ALGOS[name]["comfy_tensor_layout"] == layout, (
+        f"{label}: ComfyUI now loads it as {QUANT_ALGOS[name]['comfy_tensor_layout']}, and "
+        f"the row packs {layout}")
+    generator = torch.Generator().manual_seed(47)
+    width, out_features, rows, stock_rows = 256, 64, 5, 9
+    packed = QuantizedTensor.from_float(
+        (torch.randn(out_features, width, generator=generator) * 0.02).to(torch.bfloat16),
+        layout, **pack)
+    assert tuple(packed._qdata.shape) == (out_features, packed_width), (
+        f"{label}: comfy-kitchen packs a [{out_features}, {width}] weight as "
+        f"{tuple(packed._qdata.shape)}, and this format's row expects {packed_width} bytes a row")
+    params = packed._params
+    state = {"weight": packed._qdata,
+             "comfy_quant": torch.tensor(list(json.dumps({"format": name} | record).encode()),
+                                         dtype=torch.uint8)}
+    if layout == "AsymW4A8Int8Layout":
+        state["weight_s_rel"], state["weight_s_channel"] = params.scale, params.s_channel
+        if params.codebook is not None:
+            state["weight_codebook"] = params.codebook
+    else:
+        state["weight_scale"] = params.scale
+
+    def build():
+        linear = comfy.ops.mixed_precision_ops({}, compute_dtype=torch.bfloat16).Linear(
+            width, out_features, bias=False)
+        linear.load_state_dict({key: value.clone() for key, value in state.items()}, strict=False)
+        assert (linear.quant_format, linear.layout_type) == (name, layout) and isinstance(
+            linear.weight, QuantizedTensor) and tuple(linear.weight._qdata.shape) == (
+                out_features, packed_width), (
+            f"{label}: ComfyUI's loader no longer gives a {layout} QuantizedTensor of "
+            f"{packed_width} bytes a row under this format's name")
+        return linear
+
+    plain, wrapped = build(), build()
+    assert int8_linear_layout.install(wrapped) == 1, (
+        f"{label}: the pack's wrapper does not take a loaded Linear of this format, so "
+        f"adapters/int8_linear_layout.py WEIGHT_ONLY_FORMATS does not list it under {layout}")
+    wide = torch.randn(2, stock_rows, width, generator=generator).to(torch.bfloat16)
+    piece = torch.randn(1, rows, width, generator=generator).to(torch.bfloat16)
+    with torch.no_grad():
+        kept = at_stock_rows(lambda call: call * 1, piece, stock_rows)
+    views = {"a prefix slice of a batch of two": wide[:, :rows],
+             "a transposed view": wide.transpose(1, 2).contiguous().transpose(1, 2),
+             "the rows at_stock_rows keeps": kept}
+    assert not views["a prefix slice of a batch of two"].is_contiguous()
+    for what, view in views.items():
+        with torch.inference_mode():
+            stock, _path = route(plain, view.clone())
+        with torch.no_grad():
+            _out, unwrapped = route(plain, view)
+            out, path = route(wrapped, view)
+        assert "mm" in path and "expand" not in path, (
+            f"{label}: behind the wrapper {what} dispatches {path}")
+        assert out.shape == stock.shape and torch.equal(out, stock), (
+            f"{label}: behind the wrapper {what} no longer equals stock's inference-mode "
+            f"result ({int((out != stock).sum())} of {stock.numel()} values differ)")
+        if what.startswith("a prefix") and "expand" not in unwrapped:
+            print(f"{label}: this torch already folds the unwrapped prefix slice ({unwrapped}); "
+                  "the wrapper has no expand route to close here")
+
+
 def _assert_weight_only_linear_dispatch_seam() -> None:
     """The route ComfyUI's weight-only quantized Linear takes into its kernel.
 
@@ -6246,6 +6357,22 @@ def _assert_weight_only_linear_dispatch_seam() -> None:
     equal to the inference-mode result, stock's own, bit for bit. Whether
     that slice unwrapped still takes ``expand`` depends on the torch build,
     so the seam only reports it.
+
+    The table is held to ComfyUI's from both sides. Every format ComfyUI
+    lists with ``quantize_input`` False must be in the pack's table with
+    ComfyUI's layout. A name the pack lists and this ComfyUI does not must be
+    one this ComfyUI does not know at all and must be in
+    ``FORMATS_AHEAD_OF_A_RELEASE``, which names the ComfyUI commit that adds
+    it: the pack follows ComfyUI master and its newest release, and a format
+    can reach master first. A format ComfyUI lists with an activation it now
+    quantizes, or under another layout, fails. On the canary's release entry,
+    which says so in ``DGXM_COMFY_CANARY_TARGET``, a name that list still
+    carries once the release lists it fails too, naming the entry to drop, so
+    the list never outlives its reason. Nothing else sets that variable, and
+    a run without it checks as master does.
+
+    A shared layout class is no proof that a format is exact, so every format
+    this ComfyUI lists then gets a row of its own (``_weight_only_format_row``).
     """
     import json
 
@@ -6258,10 +6385,39 @@ def _assert_weight_only_linear_dispatch_seam() -> None:
 
     weight_only = {name: config["comfy_tensor_layout"] for name, config in QUANT_ALGOS.items()
                    if config.get("quantize_input", True) is False}
-    assert weight_only == dict(int8_linear_layout.WEIGHT_ONLY_FORMATS), (
+    copied = dict(int8_linear_layout.WEIGHT_ONLY_FORMATS)
+    ahead = dict(int8_linear_layout.FORMATS_AHEAD_OF_A_RELEASE)
+    unlisted = {name: layout for name, layout in weight_only.items() if copied.get(name) != layout}
+    assert not unlisted, (
         "weight-only linear dispatch seam: ComfyUI's formats that quantize no activation are "
-        f"now {weight_only}, and adapters/int8_linear_layout.py copies "
-        f"{dict(int8_linear_layout.WEIGHT_ONLY_FORMATS)}")
+        f"now {weight_only}, and adapters/int8_linear_layout.py copies {copied}: it lacks, or "
+        f"holds under another layout, {unlisted}")
+    assert set(ahead) <= set(copied) and all(
+            isinstance(commit, str) and len(commit) == 40 and set(commit) <= set("0123456789abcdef")
+            for commit in ahead.values()), (
+        "weight-only linear dispatch seam: FORMATS_AHEAD_OF_A_RELEASE must name formats of "
+        f"WEIGHT_ONLY_FORMATS, each with the full ComfyUI commit that adds it, got {ahead}")
+    if os.environ.get(_CANARY_TARGET_ENV) == "release":
+        # The newest release: a name it lists is no longer ahead of a release,
+        # and its entry would go on excusing the name if ComfyUI later dropped
+        # it. So the entry has to go now, and the list empties itself back to
+        # the plain equality of the two tables.
+        released = sorted(name for name in ahead if name in QUANT_ALGOS)
+        assert not released, (
+            f"weight-only linear dispatch seam: the newest ComfyUI release now lists {released}, "
+            "so drop each from FORMATS_AHEAD_OF_A_RELEASE in adapters/int8_linear_layout.py: an "
+            "entry left there would hide the day ComfyUI removes the format")
+    for name in sorted(set(copied) - set(weight_only)):
+        assert name not in QUANT_ALGOS, (
+            f"weight-only linear dispatch seam: ComfyUI lists {name!r} as {QUANT_ALGOS[name]}, no "
+            "longer a format that quantizes no activation, and adapters/int8_linear_layout.py "
+            "still wraps it as one")
+        assert name in ahead, (
+            f"weight-only linear dispatch seam: adapters/int8_linear_layout.py lists {name!r}, "
+            "which this ComfyUI does not know, and FORMATS_AHEAD_OF_A_RELEASE does not name the "
+            "ComfyUI commit that adds it")
+        print(f"weight-only linear dispatch seam: this ComfyUI does not list {name!r} (ComfyUI "
+              f"commit {ahead[name][:9]} adds it), so its row does not run here")
     source = inspect.getsource(comfy.ops.mixed_precision_ops)
     for phrase in ('.get("quantize_input", True)', "if _use_quantized and quantize_input:",
                    "input.reshape(-1, input_shape[-1])",
@@ -6327,6 +6483,8 @@ def _assert_weight_only_linear_dispatch_seam() -> None:
             if "expand" not in unwrapped:
                 print("weight-only linear dispatch seam: this torch already folds the unwrapped "
                       f"prefix slice ({unwrapped}); the wrapper has no expand route to close here")
+        for name in weight_only:
+            _weight_only_format_row(name, route)
     finally:
         if own:
             QuantizedTensor.__torch_dispatch__ = stock_dispatch

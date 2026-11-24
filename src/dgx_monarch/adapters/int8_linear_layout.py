@@ -2,7 +2,7 @@
 
 ComfyUI quantizes no activation for the formats whose ``quantize_input`` is
 False (INT8 tensorwise with or without ConvRot, ConvRot W4A4, and the grouped
-W4A8 and W6A8 formats). Its mixed-precision Linear then hands ``F.linear`` the
+W3A8, W4A8, W5A8 and W6A8 formats). Its mixed-precision Linear then hands ``F.linear`` the
 activation as it arrives, a 3-D one included. Under ``torch.inference_mode()``,
 as in stock's prompt thread, that reaches the layout's ``aten.linear`` handler.
 A Worker's sampling thread runs outside inference mode, where ``aten.linear``
@@ -25,14 +25,29 @@ _MARK = "_dgxm_tensorwise_int8_layout_forward"
 # ComfyUI's quantization formats with ``quantize_input`` False, and the layout
 # each one loads as. This module imports no ComfyUI, so the table is copied;
 # the "weight-only linear dispatch" seam in tests/canary/comfy_seam_contracts.py
-# holds it equal to ComfyUI's own QUANT_ALGOS.
+# holds it to ComfyUI's own QUANT_ALGOS: every format ComfyUI lists is here
+# with ComfyUI's layout, and a name here that a ComfyUI does not know must be
+# in FORMATS_AHEAD_OF_A_RELEASE.
 WEIGHT_ONLY_FORMATS: Mapping[str, str] = MappingProxyType({
     "int8_tensorwise": "TensorWiseINT8Layout",
     "convrot_w4a4": "TensorCoreConvRotW4A4Layout",
+    "w3a8_int8": "AsymW4A8Int8Layout",
     "asym_w4a8_int8": "AsymW4A8Int8Layout",
+    "w5a8_int8": "AsymW4A8Int8Layout",
     "w6a8_int8": "AsymW4A8Int8Layout",
 })
 WEIGHT_ONLY_LAYOUTS = frozenset(WEIGHT_ONLY_FORMATS.values())
+# Formats of the table that ComfyUI master carries and its newest release may
+# not, each with the ComfyUI commit that adds it. The pack follows both, so the
+# seam lets a ComfyUI that does not know one of these names go without it, and
+# no other name. A listed name does nothing where no Linear carries it. Drop an
+# entry as soon as the newest ComfyUI release lists its format: the canary's
+# release entry fails from that day, naming the entry, so that an empty list
+# leaves the two tables held equal.
+FORMATS_AHEAD_OF_A_RELEASE: Mapping[str, str] = MappingProxyType({
+    "w3a8_int8": "a88593173fa3eb31fa25f2ad2db9521f7bb74744",
+    "w5a8_int8": "a88593173fa3eb31fa25f2ad2db9521f7bb74744",
+})
 
 
 def _is_weight_only_quantized(weight: Any) -> bool:

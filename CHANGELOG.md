@@ -1343,6 +1343,31 @@ sections after them list every change.
   one only when it changes the INT8 path. The comfy canary's comfy-kitchen check, red against ComfyUI
   master, passes again ([Models](docs/MODELS.md#int8-gemm-kernel),
   [VALIDATION](docs/VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).
+- ComfyUI master gained two grouped INT8 formats on 2026-11-23, `w3a8_int8`
+  and `w5a8_int8`: 3 and 5 bit weights on the layout `asym_w4a8_int8` and
+  `w6a8_int8` use (ComfyUI commit a88593173). The pack's list of the formats
+  that quantize no activation lacked them, so it left a Linear of either
+  unwrapped. Outside inference mode, where a Worker samples, a 3-D input whose
+  strides do not chain then took the route that dequantizes the weight: on
+  CPU about four in five outputs of such a Linear differed from stock's. Both
+  formats are listed now, and each gives stock's bits through the wrapper.
+  The comfy canary's weight-only linear dispatch seam, red against ComfyUI
+  master since that day, passes again. It now runs a row for every format by
+  name: comfy-kitchen packs the weight at the format's own width, ComfyUI's
+  loader loads it under the format's name, and three views through the
+  wrapper must equal stock's result bit for bit. The newest release, 0.46.3,
+  lacks the two formats, and the same code passes there: every format ComfyUI
+  lists must be in the pack's list with ComfyUI's layout, and a format the
+  pack lists that a ComfyUI does not know must name the ComfyUI commit that
+  adds it. That allowance ends by itself: the canary's release entry fails,
+  naming the entry to drop, as soon as the newest release lists the format.
+  The two new formats are proven on CPU against ComfyUI master only:
+  no file in either format has rendered on hardware here. The canary's
+  comfy-kitchen check is still red against master, which pins comfy-kitchen
+  0.2.42: that release is outside the INT8 GEMM kernel's validated set, so an
+  install on it runs every INT8 linear on CUTLASS with a WARNING until the
+  kernel is checked on it ([CONCEPTS](docs/CONCEPTS.md#model-words),
+  [Models](docs/MODELS.md#int8-gemm-kernel)).
 - The video templates follow ComfyUI 0.44.0's Create Video, which gained
   `chroma_subsampling` before `codec` (ComfyUI #17463); they hold its default,
   `auto`. On ComfyUI 0.43 and older, which lack the widget, this pack's
