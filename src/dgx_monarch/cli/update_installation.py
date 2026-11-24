@@ -107,8 +107,33 @@ def capture_installation(config: ClusterConfig, host: HostConfig, run: HostRunne
         return None
 
 
+def _change_request(config: ClusterConfig, host: HostConfig, token: str, snapshot: dict[str, Any], operation: str) -> dict[str, Any]:
+    unit = systemd_worker_unit(config, host, managed_source=True, update_token=token, site_packages=snapshot.get("site_packages") or None)
+    return {"operation": operation, "token": token, "prior": snapshot, "unit": base64.b64encode(unit.encode()).decode()}
+
+
+def settle_installation(config: ClusterConfig, host: HostConfig, token: str, snapshot: dict[str, Any], run: HostRunner) -> Certainty:
+    """Read back, under the activation's own locks, a switch whose reply was lost.
+
+    SUCCEEDED: the host switched. FAILED: it holds a state compensation
+    restores, or the switch never began and is now cancelled there. UNKNOWN:
+    neither could be read.
+    """
+    request = _change_request(config, host, token, snapshot, "settle")
+    try:
+        result = run(config, host, locked_script(config.python_bin, installation_script(request), generation_fence=True), 60)
+    except (OSError, subprocess.TimeoutExpired):
+        return Certainty.UNKNOWN
+    lines = result.stdout.splitlines()
+    if result.returncode == 0 and "ACTIVATED" in lines:
+        return Certainty.SUCCEEDED
+    if result.returncode == 0 and "ACTIVATION_PROBE_PRIOR" in lines:
+        return Certainty.FAILED
+    return Certainty.UNKNOWN
+
+
 def change_installation(config: ClusterConfig, host: HostConfig, token: str, snapshot: dict[str, Any], run: HostRunner, *, compensate: bool = False, finalize: bool = False, preflight_script: str = "") -> Certainty:
-    request = {"operation": "finalize" if finalize else "compensate" if compensate else "activate", "token": token, "prior": snapshot, "unit": base64.b64encode(systemd_worker_unit(config, host, managed_source=True, update_token=token, site_packages=snapshot.get("site_packages") or None).encode()).decode()}
+    request = _change_request(config, host, token, snapshot, "finalize" if finalize else "compensate" if compensate else "activate")
     try:
         result = run(config, host, locked_script(config.python_bin, preflight_script + "\n" + installation_script(request), generation_fence=not finalize), 60)
     except (OSError, subprocess.TimeoutExpired):
@@ -131,10 +156,10 @@ def stop_installation(config: ClusterConfig, host: HostConfig, snapshot: dict[st
     return Certainty.SUCCEEDED if result.returncode == 0 and "STOPPED" in result.stdout.splitlines() else Certainty.UNKNOWN
 
 
-def start_prior_installation(config: ClusterConfig, host: HostConfig, token: str, snapshot: dict[str, Any], run: HostRunner, preflight_script: str, generation: str) -> Certainty:
+def start_prior_installation(config: ClusterConfig, host: HostConfig, token: str, snapshot: dict[str, Any], run: HostRunner, preflight_script: str, generation: str, *, attempted: bool = True) -> Certainty:
     validate_generation(generation)
     proc_table, endpoint = _proc_listener_target(host.address)
-    request = {"token": token, "prior": snapshot, "python_bin": config.python_bin, "address": host.address, "generation": generation, "pattern": lifecycle._loop_regex(host), "proc_table": proc_table, "endpoint": endpoint}
+    request = {"token": token, "prior": snapshot, "python_bin": config.python_bin, "address": host.address, "generation": generation, "pattern": lifecycle._loop_regex(host), "proc_table": proc_table, "endpoint": endpoint, "attempted": attempted}
     source = Path(update_installation_remote.__file__).read_text(encoding="utf-8")
     starter = Path(update_installation_start.__file__).read_text(encoding="utf-8")
     generation_source = _GENERATION_LIBRARY

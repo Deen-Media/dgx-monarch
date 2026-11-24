@@ -1826,7 +1826,16 @@ refuse migration.
 Activation journals the exact prior unit and source layout, then switches
 each stopped Worker to its staged release and writes a unit bound to that
 release. A prior source directory moves to a backup; a prior link's target is
-recorded. The live driver checkout stays at its prior commit. The command
+recorded. The live driver checkout stays at its prior commit. Activation
+switches one host at a time, in the order cluster.toml lists them, and sends
+no host an activation before the host ahead of it reads back as switched.
+When a switch's reply is lost, or the switch never ran, the updater reads
+that host back under the same locks before it touches the next one. A switch
+that never began is marked cancelled there, so a copy still waiting on the
+lock cannot run later. A host that reads back switched lets the next one
+switch; one that reads back unchanged, or in a state compensation restores,
+is a definite failure. Only a host that still cannot be read leaves the
+outcome unknown, and every host after it still runs the old release. The command
 starts Workers without syncing, runs target-code doctor and the client-owned
 cluster smoke, and checks release, dependency and all-rank source agreement.
 Only after those checks pass does it promote the verified driver pin,
@@ -1843,14 +1852,20 @@ remains `unknown`.
 
 A worker stop that definitely fails ends the update before activation and
 starts nothing; any host that did stop stays down. A failed activation
-compensates the remote slots and, if that succeeds, starts the prior release
-without syncing. A failed start, doctor, smoke, readback, or driver commit first confirms the new
+compensates the hosts it reached and, if that succeeds, starts the prior
+release on every host without syncing; a host it never reached still holds
+its prior unit and link, which the prior start reads back first. A failed start, doctor, smoke, readback, or driver commit first confirms the new
 services stopped (for a driver commit, also that the driver still reads back at
 its prior commit and pin), then compensates the slots and starts the prior
 release; each recovery step runs only after the one before it succeeded, and a
 prior start that definitely fails gets one more stop. If a stop, activation,
 target start, compensation, or prior restart is unknown or throws, the command
-performs no later mutation.
+performs no later mutation; the one exception is the readback of an
+unanswered switch above, which writes only its cancel mark and runs the
+service-manager reload a finished switch would have run itself. After an
+unknown activation the command prints each host's state: the hosts before
+the one it could not read run the new release, and the hosts after it were
+never sent an activation.
 
 After target start is confirmed, an unknown, thrown, or cancelled doctor,
 cluster smoke, exact readback, or driver-commit step authorizes exactly one

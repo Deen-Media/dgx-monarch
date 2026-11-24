@@ -2608,6 +2608,23 @@ sections after them list every change.
   driver as unreadable, and a poll that arrives while a refresh runs reads
   the mesh row as it is now, where it read the last refresh's row or none
   ([TROUBLESHOOTING #4](docs/TROUBLESHOOTING.md#4-supervisionerror--process-exited-with-non-zero-code)).
+- Fix: `dgxm update --verify` now switches the Worker hosts one at a time and
+  sends no host its activation before the host ahead of it reads back as
+  switched. A switch whose reply is lost, or that never ran, is read back
+  under the same locks first, and one that never began is cancelled there,
+  so a lost reply on the first host no longer leaves the second host on the
+  new release and the first unknown: the update goes on, or restores the
+  prior release on both. Only a host that still cannot be read ends the
+  update `activation_unknown`, and the update then names each host's state
+  and the repair. Earlier, every host was switched before any result was
+  read ([INSTALL](docs/INSTALL.md#verified-activation-and-recovery)).
+- Fix: a Worker unit write that fails during a verified update, on a full or
+  failing disk, no longer leaves a fixed `dgxm-worker.service.next` file that
+  made the rollback's own write fail and every later verified update refuse
+  until it was deleted by hand. A file of that name left by an earlier
+  release is no longer in the way.
+- Fix: a Worker thread that exits while a verified update reads the Worker's
+  threads no longer ends the update `stop_unknown`.
 
 ### Development
 
@@ -2682,6 +2699,12 @@ sections after them list every change.
   a module with the check still green. A skip mark does not count
   ([CONTRIBUTING](CONTRIBUTING.md) names the import-time skips the digest does
   not see).
+- The verified update's older release-switch, compensation and finalize
+  scripts are removed: they ran only for a release slot with no captured
+  Worker installation, which no command creates, and a failed step in the
+  switch script could still print that it had switched. The tests that held
+  the lifecycle lock around them now hold it around the real installation
+  helper.
 
 ## [1.4.0] - 2026-10-28
 

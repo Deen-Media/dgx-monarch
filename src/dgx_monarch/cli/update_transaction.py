@@ -242,7 +242,8 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
             steps.append(_Step("activation", "unknown"))
             raise _Abort(
                 "activation_unknown",
-                "activation outcome is unknown; the update did not roll back or start workers",
+                "activation could not be read back on one host and no later host was switched, "
+                "so the hosts may run different releases; the update did not roll back or start workers",
             )
         if activation.certainty == Certainty.FAILED:
             steps.append(_Step("activation", "failed"))

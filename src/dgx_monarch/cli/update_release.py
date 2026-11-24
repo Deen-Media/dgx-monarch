@@ -20,17 +20,11 @@ from .update_installation import (
     capture_installation,
     change_installation,
     installation_script,
+    settle_installation,
     start_prior_installation,
     stop_installation,
 )
 from .update_pin_diagnostic import PinDiagnostic
-from .update_release_finalize import finalize_release
-from .update_release_switch import (
-    activate_hosts,
-    activation_script,
-    lifecycle_host_runner,
-    probe_activation,
-)
 from .update_release_types import (  # noqa: F401  # Public update_release API.
     _DIGEST,
     _REMOTE_BASE,
@@ -245,59 +239,106 @@ class ReleaseManager:
         return _result(Certainty.SUCCEEDED)
 
     def start_prior_workers(self, generation: str) -> OperationResult:
-        """Restart only a definitely compensated prior installation."""
+        """Restart only a definitely compensated prior installation.
+
+        A host after the one where activation stopped was never sent an
+        activation, so its prior start expects no journal of this transaction.
+        """
         slot = self._require_slot()
         if slot.activation_ambiguous or slot.remote_activated or not slot.installations:
             return _result(Certainty.UNKNOWN)
-        for host in self.config.hosts:
-            certainty = start_prior_installation(self.config, host, slot.token, slot.installations[host.name], self._host_run, self._prior_attestation_script(host, slot), generation)
+        for index, host in enumerate(self.config.hosts):
+            certainty = start_prior_installation(
+                self.config, host, slot.token, slot.installations[host.name], self._host_run,
+                self._prior_attestation_script(host, slot), generation,
+                attempted=index < slot.activation_attempted,
+            )
             if certainty != Certainty.SUCCEEDED:
                 return _result(certainty)
         return _result(Certainty.SUCCEEDED)
 
     def activate_workers(self) -> OperationResult:
+        """Switch one host at a time and stop at the first switch that does not confirm.
+
+        No host is sent an activation before the host ahead of it read back as
+        switched. A switch whose reply was lost, or that never ran, is read back
+        under the same locks first (``settle_installation``), which also cancels
+        a switch that never began. Only a host that still cannot be read leaves
+        the result unknown; the later hosts then still run the prior release.
+        After a definite failure compensation restores only the hosts the
+        update reached.
+        """
         slot = self._require_slot()
-        if slot.prior_metadata is None or _DIGEST.fullmatch(slot.prior_pin_payload_digest) is None:
+        if (
+            slot.prior_metadata is None
+            or _DIGEST.fullmatch(slot.prior_pin_payload_digest) is None
+            or not slot.installations
+        ):
             return _result(Certainty.UNKNOWN)
+        slot.activation_attempted = 0
+        certainty = Certainty.SUCCEEDED
         try:
-            if slot.installations:
-                values = [change_installation(self.config, host, slot.token, slot.installations[host.name], self._host_run, preflight_script=self._prior_attestation_script(host, slot)) for host in self.config.hosts]
-                certainty = (Certainty.SUCCEEDED if all(value == Certainty.SUCCEEDED for value in values) else Certainty.UNKNOWN if Certainty.UNKNOWN in values else Certainty.FAILED)
-            else:
-                certainty = activate_hosts(
-                    self.config, self.config.hosts, slot.token, self._host_run
+            for host in self.config.hosts:
+                slot.activation_attempted += 1
+                certainty = change_installation(
+                    self.config, host, slot.token, slot.installations[host.name], self._host_run,
+                    preflight_script=self._prior_attestation_script(host, slot),
                 )
+                if certainty == Certainty.UNKNOWN:
+                    certainty = settle_installation(
+                        self.config, host, slot.token, slot.installations[host.name], self._host_run,
+                    )
+                if certainty != Certainty.SUCCEEDED:
+                    break
         except BaseException:
             slot.activation_ambiguous = True
             raise
         if certainty == Certainty.SUCCEEDED:
             slot.remote_activated = True
             return _result(Certainty.SUCCEEDED)
+        self._report_activation(slot, certainty)
         if certainty == Certainty.UNKNOWN:
             slot.activation_ambiguous = True
             return _result(Certainty.UNKNOWN)
         return _result(Certainty.FAILED)
 
-    def _activation_script(self, slot: ReleaseSlot) -> str:
-        return activation_script(slot.token)
-
-    def _probe_activation(self, host: HostConfig, slot: ReleaseSlot) -> Certainty:
-        return probe_activation(
-            self.config,
-            host,
-            slot.token,
-            lifecycle_host_runner(self._host_run),
-        )
+    def _report_activation(self, slot: ReleaseSlot, certainty: Certainty) -> None:
+        """Name each host's release after a switch that stopped short, on stderr only."""
+        hosts = self.config.hosts
+        stopped_at = slot.activation_attempted - 1
+        host = hosts[stopped_at].name
+        switched = ", ".join(item.name for item in hosts[:stopped_at])
+        untouched = ", ".join(item.name for item in hosts[stopped_at + 1:])
+        if certainty == Certainty.UNKNOWN:
+            print(f"activation on {host} is unknown: its source link and unit can name either release", file=sys.stderr)
+        else:
+            print(f"activation on {host} failed and left a state the update can restore", file=sys.stderr)
+        if switched:
+            print(f"switched to the new release before it: {switched}", file=sys.stderr)
+        if untouched:
+            print(f"never sent an activation, still on the old release: {untouched}", file=sys.stderr)
+        if certainty == Certainty.UNKNOWN:
+            print(
+                "the hosts may now run different releases, all stopped. Read each host's link "
+                "(readlink -f ~/.local/share/dgx-monarch/src): when every link names the old "
+                "release, `dgxm up` starts the Workers again on it; when any names the new one, "
+                "follow the forward repair in TROUBLESHOOTING entry 118",
+                file=sys.stderr,
+            )
 
     def compensate_workers(self) -> OperationResult:
+        """Restore every host activation reached; the hosts after them were never changed."""
         slot = self._require_slot()
-        if slot.activation_ambiguous:
+        if slot.activation_ambiguous or not slot.installations:
             return _result(Certainty.UNKNOWN)
         certainties: list[Certainty] = []
         pending: BaseException | None = None
-        for host in self.config.hosts:
+        for host in self.config.hosts[:slot.activation_attempted]:
             try:
-                certainties.append(self._compensate_host(host, slot))
+                certainties.append(change_installation(
+                    self.config, host, slot.token, slot.installations[host.name], self._host_run,
+                    compensate=True,
+                ))
             except BaseException as error:
                 certainties.append(Certainty.UNKNOWN)
                 pending = stronger_cancellation(pending, error)
@@ -323,7 +364,7 @@ class ReleaseManager:
 
     def _prior_hosts_match(self, slot: ReleaseSlot) -> bool:
         meta = slot.prior_metadata
-        if meta is None:
+        if meta is None or not slot.installations:
             return False
         identity = WorkerReleaseIdentity(
             meta.version, meta.torchmonarch_pin,
@@ -331,8 +372,7 @@ class ReleaseManager:
         )
         return all(
             remote_release_matches(
-                self.config, host, site=slot.installations[host.name]["site"] if slot.installations else f"$HOME/{_REMOTE_BASE}/src",
-                captured_site=bool(slot.installations),
+                self.config, host, site=slot.installations[host.name]["site"], captured_site=True,
                 tools=self._remote(slot.token, "verifier"), identity=identity,
                 host_runner=self._host_run, verifier_digest=slot.verifier_digest,
             )
@@ -342,61 +382,25 @@ class ReleaseManager:
     def prior_hosts_match(self) -> bool:
         return self._prior_hosts_match(self._require_slot())
 
-    def _compensate_host(self, host: HostConfig, slot: ReleaseSlot) -> Certainty:
-        if slot.installations:
-            return change_installation(self.config, host, slot.token, slot.installations[host.name], self._host_run, compensate=True)
-        token = slot.token
-        script = f"""
-set -eu
-BASE="$HOME/{_REMOTE_BASE}"
-LIVE="$BASE/src"
-NEW="{self._remote(token, 'site')}"
-TXN="$BASE/transactions/{token}"
-BACKUP="$BASE/backups/{token}/src"
-test -f "$TXN/kind"
-KIND=$(cat "$TXN/kind")
-if [ "$KIND" = symlink ]; then
-  PRIOR=$(cat "$TXN/prior")
-  case "$PRIOR" in "$BASE"/releases/*/site) ;; *) exit 50;; esac
-  if [ -L "$LIVE" ] && [ "$(readlink -f -- "$LIVE")" = "$PRIOR" ]; then :
-  elif {{ [ -L "$LIVE" ] && [ "$(readlink -f -- "$LIVE")" = "$NEW" ]; }} || [ ! -e "$LIVE" ]; then
-    NEXT="$BASE/.src-prior-{token}"
-    rm -f -- "$NEXT"
-    test ! -e "$NEXT"
-    ln -s -- "$PRIOR" "$NEXT"
-    mv -T -- "$NEXT" "$LIVE"
-  else exit 51; fi
-elif [ "$KIND" = directory ]; then
-  if [ -L "$LIVE" ] && [ "$(readlink -f -- "$LIVE")" = "$NEW" ]; then rm -- "$LIVE"; fi
-  if [ ! -e "$LIVE" ] && [ -d "$BACKUP" ]; then
-    mv -- "$BACKUP" "$LIVE"
-  fi
-  [ -d "$LIVE" ] && [ ! -L "$LIVE" ] || exit 52
-elif [ "$KIND" = absent ]; then
-  if [ -L "$LIVE" ] && [ "$(readlink -f -- "$LIVE")" = "$NEW" ]; then rm -- "$LIVE"; fi
-  [ ! -e "$LIVE" ] || exit 53
-else exit 54
-fi
-echo COMPENSATED
-"""
-        try:
-            result = lifecycle_host_runner(self._host_run)(self.config, host, script, 60)
-        except (OSError, subprocess.TimeoutExpired):
-            return Certainty.UNKNOWN
-        return Certainty.SUCCEEDED if result.returncode == 0 and "COMPENSATED" in result.stdout else Certainty.FAILED
-
     def finalize(self) -> OperationResult:
+        """Finalize every host, after the driver commit, even when an earlier one fails."""
         slot = self._require_slot()
-        if slot.activation_ambiguous or not slot.remote_activated:
+        if slot.activation_ambiguous or not slot.remote_activated or not slot.installations:
             return _result(Certainty.UNKNOWN)
-        if slot.installations:
-            values = [change_installation(self.config, host, slot.token, slot.installations[host.name], self._host_run, finalize=True) for host in self.config.hosts]
-            certainty = Certainty.SUCCEEDED if all(value == Certainty.SUCCEEDED for value in values) else Certainty.UNKNOWN
-        else:
-            certainty = finalize_release(
-                self.config, self.config.hosts, slot.token,
-                lifecycle_host_runner(self._host_run),
-            )
+        certainties: list[Certainty] = []
+        pending: BaseException | None = None
+        for host in self.config.hosts:
+            try:
+                certainties.append(change_installation(
+                    self.config, host, slot.token, slot.installations[host.name], self._host_run,
+                    finalize=True,
+                ))
+            except BaseException as error:
+                certainties.append(Certainty.UNKNOWN)
+                pending = stronger_cancellation(pending, error)
+        if pending is not None:
+            raise pending
+        certainty = Certainty.SUCCEEDED if all(value == Certainty.SUCCEEDED for value in certainties) else Certainty.UNKNOWN
         slot.finalized = certainty == Certainty.SUCCEEDED
         return _result(certainty)
 

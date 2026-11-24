@@ -222,6 +222,126 @@ def test_legacy_rollback_start_records_real_generation_identity(layout, monkeypa
             os.close(generation["fencefd"])
 
 
+def _start_attempt(request, monkeypatch, *, attempted):
+    """Run the prior start until its service command, which is refused here."""
+    import subprocess
+
+    from dgx_monarch.cli.update_installation_start import start_restored
+
+    calls = []
+    def refuse(argv, **_kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 1)
+    monkeypatch.setattr(subprocess, "run", refuse)
+    api = {"read": remote.read, "stopped": remote.stopped, "link_state": remote.link_state, "durable": remote.durable}
+    generation = {"matching": lambda _pattern: [], "remove_marker": lambda: True, "fencefd": -1}
+    start_request = {"token": TOKEN, "prior": request["prior"], "pattern": "unused", "attempted": attempted}
+    with pytest.raises((ValueError, OSError)) as raised:
+        start_restored(start_request, api, generation)
+    return calls, raised.value
+
+
+def test_a_host_the_transaction_never_reached_starts_its_prior_installation(layout, monkeypatch):
+    base, unit, _, _, request = layout
+    calls, error = _start_attempt(request, monkeypatch, attempted=False)
+    assert calls == [["systemctl", "--user", "start", unit.name]]
+    assert "did not complete" in str(error)
+    assert not (base / "transactions").exists()
+
+
+def test_a_host_the_transaction_reached_needs_its_compensation_to_start(layout, monkeypatch):
+    _, _, _, _, request = layout
+    calls, _error = _start_attempt(request, monkeypatch, attempted=True)
+    assert calls == []
+    remote.main(request)
+    calls, error = _start_attempt(request, monkeypatch, attempted=False)
+    assert calls == [] and "reached" in str(error)
+
+
+def test_a_failed_unit_write_leaves_nothing_that_blocks_the_rollback(layout, monkeypatch, capsys):
+    import os
+
+    _, unit, external, live, request = layout
+    real_fsync = os.fsync
+    failures = []
+
+    def full_disk_once(fd):
+        if not failures and os.readlink(f"/proc/self/fd/{fd}").startswith(str(unit.parent) + "/"):
+            failures.append(fd)
+            raise OSError(28, "No space left on device")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(remote.os, "fsync", full_disk_once)
+    remote.main(request)
+    assert capsys.readouterr().out.strip() == "ACTIVATION_PROBE_PRIOR"
+    assert failures and sorted(path.name for path in unit.parent.iterdir()) == [unit.name]
+    remote.main({**request, "operation": "compensate"})
+    assert capsys.readouterr().out.strip() == "COMPENSATED"
+    assert unit.read_bytes() == b"original unit\n" and live.resolve() == external
+    assert sorted(path.name for path in unit.parent.iterdir()) == [unit.name]
+    # A later update writes the same unit again.
+    remote.durable(unit, b"next unit\n")
+    assert unit.read_bytes() == b"next unit\n"
+
+
+def test_settle_reads_a_completed_activation_as_switched(layout, capsys):
+    base, unit, _, live, request = layout
+    remote.main(request)
+    assert capsys.readouterr().out.strip() == "ACTIVATED"
+    remote.main({**request, "operation": "settle"})
+    assert capsys.readouterr().out.strip() == "ACTIVATED"
+    assert unit.read_bytes() == b"new unit\n" and live.resolve() == base / "releases" / TOKEN / "site"
+
+
+def test_settle_reads_a_failed_activation_as_restorable(layout, monkeypatch, capsys):
+    _, unit, _, _, request = layout
+    original = remote.durable
+    monkeypatch.setattr(remote, "durable", lambda path, data, mode=0o600: (_ for _ in ()).throw(OSError("full")) if path == unit else original(path, data, mode))
+    remote.main(request)
+    assert capsys.readouterr().out.strip() == "ACTIVATION_PROBE_PRIOR"
+    monkeypatch.setattr(remote, "durable", original)
+    remote.main({**request, "operation": "settle"})
+    assert capsys.readouterr().out.strip() == "ACTIVATION_PROBE_PRIOR"
+
+
+def test_settle_cancels_an_activation_that_never_began(layout, monkeypatch, capsys):
+    _, unit, external, live, request = layout
+    remote.main({**request, "operation": "settle"})
+    assert capsys.readouterr().out.strip() == "ACTIVATION_PROBE_PRIOR"
+    # A copy of the activation still queued on the lock finds the mark and changes nothing.
+    with pytest.raises(ValueError, match="cancelled"):
+        remote.main(request)
+    assert unit.read_bytes() == b"original unit\n" and live.resolve() == external
+    remote.main({**request, "operation": "compensate"})
+    assert capsys.readouterr().out.strip() == "COMPENSATED"
+    calls, error = _start_attempt(request, monkeypatch, attempted=True)
+    assert calls == [["systemctl", "--user", "start", unit.name]] and "did not complete" in str(error)
+    remote.main({"operation": "cleanup", "token": TOKEN})
+    assert capsys.readouterr().out.strip() == "CLEANED"
+
+
+def test_settle_reads_an_unexpected_state_as_unknown(layout, capsys):
+    _, unit, _, _, request = layout
+    unit.write_bytes(b"someone else's unit\n")
+    remote.main({**request, "operation": "settle"})
+    assert capsys.readouterr().out.strip() == "ACTIVATION_PROBE_UNKNOWN"
+    with pytest.raises(ValueError, match="outside transaction"):
+        remote.main({**request, "operation": "compensate"})
+
+
+def test_a_thread_that_exits_during_the_child_scan_is_skipped(tmp_path):
+    process = tmp_path / "proc" / "4242"
+    (process / "task" / "4242").mkdir(parents=True)
+    (process / "task" / "4242" / "children").write_text("")
+    (process / "task" / "4243").mkdir()  # the thread exited between the listing and the read
+    assert remote.has_child_processes(process) is False
+    (process / "task" / "4244").mkdir()
+    (process / "task" / "4244" / "children").write_text("5000 ")
+    assert remote.has_child_processes(process) is True
+    with pytest.raises(FileNotFoundError):
+        remote.has_child_processes(tmp_path / "proc" / "4999")
+
+
 def test_reservation_collision_cleanup_preserves_existing_release(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()

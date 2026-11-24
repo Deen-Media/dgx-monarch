@@ -4682,9 +4682,8 @@ dgx-monarch/
 │       ├── update_receipt.py   # bounded update step-to-receipt adapter
 │       ├── update_repository.py # read-only checkout and origin observations
 │       │                       #   the update controllers share
-│       ├── update_release.py   # private remote release-slot switch/compensation
-│       ├── update_release_finalize.py # all-host verified finalization scripts
-│       ├── update_release_switch.py # journaled remote live-site switch scripts
+│       ├── update_release.py   # private remote release slots: one host at a time
+│       │                       #   switch, readback, compensation, finalize
 │       ├── update_release_types.py # slot value types, runner seams, metadata checks
 │       ├── update_stage_cleanup.py # total pre-activation cleanup settlement
 │       ├── update_stage_failure.py # cleanup-aware staging failures

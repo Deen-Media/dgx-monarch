@@ -48,15 +48,27 @@ def sync(path: Path) -> None:
 
 
 def durable(path: Path, content: bytes, mode: int = 0o600) -> None:
+    """Replace ``path`` through a temporary of its own; a failed write removes it.
+
+    Each write takes a fresh name, so a temporary that a crash left behind can
+    never refuse the next write of the same file, such as the rollback's.
+    """
     checked(path.parent, directory=True)
-    temporary = path.with_name(path.name + ".next")
+    temporary = path.with_name("." + path.name + "." + os.urandom(8).hex() + ".tmp")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "wb") as output:
-        os.fchmod(output.fileno(), mode)
-        output.write(content)
-        output.flush()
-        os.fsync(output.fileno())
-    os.replace(temporary, path)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            os.fchmod(output.fileno(), mode)
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
     sync(path.parent)
 
 
@@ -116,6 +128,23 @@ def worker_suffix(unit: bytes, address: str) -> list[str]:
     return suffix + ["--runtime-policy", match[1]] + (["--native-rdma"] if match[2] else [])
 
 
+def has_child_processes(process: Path) -> bool:
+    """Whether any thread of the process has a child, from /proc/<pid>/task/*/children.
+
+    A thread that exits between the listing and the read is skipped: its
+    children, if any, pass to a thread that remains. A process that is gone
+    raises, as its task listing does.
+    """
+    for task in (process / "task").iterdir():
+        try:
+            children = (task / "children").read_text()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if children.strip():
+            return True
+    return False
+
+
 def snapshot(unit: Path, live: Path, python_bin: str, address: str) -> dict[str, object]:
     for parent in (unit.parent, unit.parent.parent, unit.parent.parent.parent):
         checked(parent, directory=True)
@@ -157,9 +186,8 @@ def snapshot(unit: Path, live: Path, python_bin: str, address: str) -> dict[str,
     members = (Path("/sys/fs/cgroup") / group.lstrip("/") / "cgroup.procs").read_text().split()
     if members != [pid]:
         raise ValueError("Worker cgroup contains other processes")
-    for task in (process / "task").iterdir():
-        if (task / "children").read_text().strip():
-            raise ValueError("Worker has child actors")
+    if has_child_processes(process):
+        raise ValueError("Worker has child actors")
     result: dict[str, object] = {"unit": base64.b64encode(data).decode(), "mode": stat.S_IMODE(unit.lstat().st_mode), "sha256": hashlib.sha256(data).hexdigest(), "site": str(source), "site_packages": site_packages, "user": pwd.getpwuid(os.geteuid()).pw_name, "home": str(Path.home()), "live": link_state(live), "pid": pid, "birth": birth}
     if read(unit) != data or unit_state(unit) != state or (process / "stat").read_text().rsplit(") ", 1)[1].split()[19] != birth:
         raise ValueError("Worker changed during capture")
@@ -192,6 +220,31 @@ def known(unit: Path, live: Path, backup: Path, prior: dict, new: bytes, target:
         return False
     current = link_state(live)
     return current in (prior["live"], {"kind": "symlink", "target": target}) or (current["kind"] == "absent" and prior["live"]["kind"] == "directory" and backup.is_dir())
+
+
+def settle(unit: Path, live: Path, journal: Path, backup: Path, request: dict, old: bytes, new: bytes, target: str) -> str:
+    """Read back an activation whose reply was lost, under the activation's own locks.
+
+    It switches nothing. Without the activation's record the activation never
+    began: a cancel mark then stops any copy of it still queued on the lock,
+    so the answer given here stays true. An activation that finished all its
+    file changes gets the service-manager reload it would have run itself.
+    """
+    prior = request["prior"]
+    record = journal / "installation.json"
+    if not record.exists():
+        mkdir(journal)
+        if not (journal / "cancelled").exists():
+            durable(journal / "cancelled", b"CANCELLED\n")
+        untouched = read(unit) == old and link_state(live) == prior["live"] and not backup.exists() and not backup.is_symlink()
+        return "ACTIVATION_PROBE_PRIOR" if untouched else "ACTIVATION_PROBE_UNKNOWN"
+    if json.loads(read(record)) != {**request, "operation": "activate"}:
+        return "ACTIVATION_PROBE_UNKNOWN"
+    if read(unit) == new and link_state(live) == {"kind": "symlink", "target": target}:
+        reload()
+        stopped(unit)
+        return "ACTIVATED"
+    return "ACTIVATION_PROBE_PRIOR" if known(unit, live, backup, prior, new, target) else "ACTIVATION_PROBE_UNKNOWN"
 
 
 def main(request: dict) -> None:
@@ -264,7 +317,10 @@ def main(request: dict) -> None:
         durable(journal / "finalized", b"FINALIZED\n")
         print("FINALIZED")
         return
-    stopped(unit, allow_stale=operation == "compensate")
+    stopped(unit, allow_stale=operation in ("compensate", "settle"))
+    if operation == "settle":
+        print(settle(unit, live, journal, backup, request, old, new, target))
+        return
     if operation == "activate":
         if read(unit) != old or link_state(live) != prior["live"]:
             print("ACTIVATION_PROBE_UNKNOWN")
@@ -272,6 +328,8 @@ def main(request: dict) -> None:
         checked(Path(target), directory=True)
         mkdir(journal)
         mkdir(backup.parent)
+        if (journal / "cancelled").exists():
+            raise ValueError("transaction was cancelled by its readback")
         if (journal / "installation.json").exists() or backup.exists():
             raise ValueError("transaction already exists")
         durable(journal / "installation.json", json.dumps(request, sort_keys=True).encode())
@@ -289,6 +347,16 @@ def main(request: dict) -> None:
             print("ACTIVATED")
         except (OSError, ValueError, subprocess.SubprocessError):
             print("ACTIVATION_PROBE_PRIOR" if known(unit, live, backup, prior, new, target) else "ACTIVATION_PROBE_UNKNOWN")
+        return
+    if operation == "compensate" and not (journal / "installation.json").exists():
+        # Only a readback's cancel mark leaves a journal with no record: the
+        # activation never began, so restoring means proving nothing changed.
+        if read(journal / "cancelled") != b"CANCELLED\n":
+            raise ValueError("installation journal is missing")
+        if read(unit) != old or link_state(live) != prior["live"] or backup.exists() or backup.is_symlink():
+            raise ValueError("installation changed outside transaction")
+        durable(journal / "compensated", b"COMPENSATED\n")
+        print("COMPENSATED")
         return
     recorded = json.loads(read(journal / "installation.json"))
     if recorded != {**request, "operation": "activate"}:

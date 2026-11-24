@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,8 +50,33 @@ from update_command_helpers import (  # noqa: F401  # autouse fixture import.
 
 
 def _operation(script: str, operation: str) -> bool:
-    markers = {"activate": "echo ACTIVATED", "compensate": "echo COMPENSATED", "cleanup": "echo CLEANED", "finalize": "echo FINALIZED"}
-    return f"# DGXM_INSTALLATION_OPERATION={operation}\n" in script or markers.get(operation, "never-match-operation") in script
+    return f"# DGXM_INSTALLATION_OPERATION={operation}\n" in script
+
+
+def _pair() -> ClusterConfig:
+    return ClusterConfig(
+        hosts=(
+            HostConfig("one", "tcp://192.0.2.10:26600", gpus=1),
+            HostConfig("two", "tcp://192.0.2.11:26600", gpus=1),
+        ),
+        transport_security="trusted_fabric",
+    )
+
+
+def _start_request(script: str) -> dict:
+    payload = re.search(r"start_restored\(json\.loads\(base64\.b64decode\('([A-Za-z0-9+/=]+)'\)\)", script)
+    assert payload is not None
+    return json.loads(base64.b64decode(payload[1]))
+
+
+def _recording(host_run, calls: list[tuple[str, str]]):
+    """Record (operation, host) for each installation call, then run it."""
+    def run(config, host, script, timeout):
+        for operation in ("activate", "settle", "compensate", "start_prior", "finalize"):
+            if _operation(script, operation):
+                calls.append((operation, host.name))
+        return host_run(config, host, script, timeout)
+    return run
 
 
 class _HostHarness:
@@ -65,6 +91,8 @@ class _HostHarness:
             unit = systemd_worker_unit(_config, _host, managed_source=True)
             row = {"unit": base64.b64encode(unit.encode()).decode(), "sha256": hashlib.sha256(unit.encode()).hexdigest(), "site": "/home/user/.local/share/dgx-monarch/src", "home": "/home/user", "user": "user", "site_packages": "", "live": {"kind": "directory", "target": ""}}
             return subprocess.CompletedProcess([], 0, json.dumps(row), "")
+        if _operation(script, "start_prior"):
+            return subprocess.CompletedProcess([], 0, "STARTED_PRIOR\n", "")
         if "echo RELEASE_MATCH" in script and not _operation(script, "activate"):
             return subprocess.CompletedProcess([], 0, "RELEASE_MATCH\n", "")
         if _operation(script, "activate"):
@@ -91,14 +119,15 @@ class _HostHarness:
 
 
 def _manager(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, harness: _HostHarness
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, harness: _HostHarness,
+    config: ClusterConfig | None = None,
 ) -> ReleaseManager:
     monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
     monkeypatch.setattr(
         "dgx_monarch.cli.update_release.site_payload_digest", lambda _site, _pin: "c" * 64
     )
     manager = ReleaseManager(
-        _config(), command_runner=harness.command, host_runner=harness.host,
+        config or _config(), command_runner=harness.command, host_runner=harness.host,
         state_root=tmp_path / "state", token_factory=lambda: RELEASE_ID,
     )
 
@@ -126,34 +155,78 @@ def _hold_lifecycle_lock(home: Path) -> int:
     return fd
 
 
+class _LiveInstallation:
+    """One host whose Worker unit and source link the real installation helper switches.
+
+    The helper runs through bash under the real lifecycle lock. A stand-in
+    ``systemctl`` reports the unit stopped and loaded from its own file, so no
+    real service manager is reached.
+    """
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.home = tmp_path / "home"
+        self.home.mkdir(mode=0o700)
+        base = self.home / ".local" / "share" / "dgx-monarch"
+        self.prior_site = base / "releases" / "u-111111111111-2222222222222222" / "site"
+        self.target_site = base / "releases" / RELEASE_ID / "site"
+        self.prior_site.mkdir(parents=True)
+        (self.target_site / "dgx_monarch").mkdir(parents=True)
+        (self.home / ".local").chmod(0o700)
+        self.live = base / "src"
+        self.live.symlink_to(self.prior_site, target_is_directory=True)
+        self.journal = base / "transactions" / RELEASE_ID
+        self.unit = self.home / ".config" / "systemd" / "user" / "dgxm-worker.service"
+        self.unit.parent.mkdir(parents=True)
+        self.unit.write_bytes(b"prior unit\n")
+        self.unit.chmod(0o600)
+        tools = tmp_path / "bin"
+        tools.mkdir()
+        systemctl = tools / "systemctl"
+        systemctl.write_text(
+            "#!/bin/sh\n"
+            'if [ "$2" = show ]; then\n'
+            "  printf 'FragmentPath=%s\\nDropInPaths=\\nMainPID=0\\nActiveState=inactive\\n"
+            "SubState=dead\\nJob=\\nNeedDaemonReload=no\\nControlGroup=\\n' "
+            f"'{self.unit}'\n"
+            "fi\n",
+            encoding="ascii",
+        )
+        systemctl.chmod(0o755)
+        self.environment = {"HOME": str(self.home), "PATH": f"{tools}:{os.defpath}"}
+        self.entered = threading.Event()
+        self.snapshot = {
+            "unit": base64.b64encode(b"prior unit\n").decode(), "mode": 0o600, "site_packages": "",
+            "live": {"kind": "symlink", "target": str(self.prior_site)},
+        }
+
+    def host(self, _config, _host, script, timeout):
+        self.entered.set()
+        return subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, timeout=timeout,
+            env=self.environment,
+        )
+
+    def manager(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ReleaseManager:
+        metadata = ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS)
+        config = replace(_config(), python_bin=sys.executable)
+        manager = ReleaseManager(config, host_runner=self.host)
+        manager.slot = ReleaseSlot(
+            RELEASE_ID, tmp_path / "slot", tmp_path / "site", metadata,
+            prior_metadata=metadata, prior_pin_payload_digest="d" * 64,
+            installations={config.hosts[0].name: self.snapshot},
+        )
+        # The prior attestation reads a staged verifier; it has its own tests.
+        monkeypatch.setattr(manager, "_prior_attestation_script", lambda _host, _slot: ":")
+        return manager
+
+
 def test_activation_and_compensation_wait_for_shared_lifecycle_lock(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    home = tmp_path / "home"
-    home.mkdir(mode=0o700)
-    base = home / ".local" / "share" / "dgx-monarch"
-    prior_site = base / "releases" / "u-111111111111-2222222222222222" / "site"
-    target_site = base / "releases" / RELEASE_ID / "site"
-    prior_site.mkdir(parents=True)
-    (target_site / "dgx_monarch").mkdir(parents=True)
-    live = base / "src"
-    live.symlink_to(prior_site, target_is_directory=True)
-    config = replace(_config(), python_bin=sys.executable)
-    entered = threading.Event()
-
-    def host_runner(_config, _host, script, timeout):
-        entered.set()
-        return subprocess.run(
-            ["bash", "-c", script], capture_output=True, text=True, timeout=timeout,
-            env={"HOME": str(home), "PATH": os.defpath},
-        )
-
-    metadata = ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS)
-    manager = ReleaseManager(config, host_runner=host_runner)
-    manager.slot = ReleaseSlot(
-        RELEASE_ID, tmp_path / "slot", tmp_path / "site", metadata,
-        prior_metadata=metadata, prior_pin_payload_digest="d" * 64,
-    )
+    installation = _LiveInstallation(tmp_path)
+    home, live, entered = installation.home, installation.live, installation.entered
+    prior_site, target_site = installation.prior_site, installation.target_site
+    manager = installation.manager(monkeypatch, tmp_path)
     results: list[OperationResult] = []
     errors: list[BaseException] = []
 
@@ -178,6 +251,7 @@ def test_activation_and_compensation_wait_for_shared_lifecycle_lock(
     assert not thread.is_alive() and not errors
     assert results.pop().certainty == Certainty.SUCCEEDED
     assert live.resolve() == target_site
+    assert installation.unit.read_bytes() != b"prior unit\n"
 
     monkeypatch.setattr(manager, "_prior_hosts_match", lambda _slot: True)
     entered.clear()
@@ -196,52 +270,35 @@ def test_activation_and_compensation_wait_for_shared_lifecycle_lock(
     assert not thread.is_alive()
     assert results.pop().certainty == Certainty.SUCCEEDED
     assert live.resolve() == prior_site
+    assert installation.unit.read_bytes() == b"prior unit\n"
 
 
-def test_source_finalization_waits_for_shared_lifecycle_lock(tmp_path: Path):
-    home = tmp_path / "home"
-    home.mkdir(mode=0o700)
-    base = home / ".local" / "share" / "dgx-monarch"
-    prior_root = base / "releases" / "u-111111111111-2222222222222222"
-    target_site = base / "releases" / RELEASE_ID / "site"
-    (prior_root / "site").mkdir(parents=True)
-    target_site.mkdir(parents=True)
-    (base / "src").symlink_to(target_site, target_is_directory=True)
-    txn = base / "transactions" / RELEASE_ID
-    txn.mkdir(parents=True)
-    (txn / "kind").write_text("symlink", encoding="ascii")
-    (txn / "prior").write_text(str(prior_root / "site"), encoding="ascii")
-    entered = threading.Event()
-
-    def host_runner(_config, _host, script, timeout):
-        entered.set()
-        return subprocess.run(
-            ["bash", "-c", script], capture_output=True, text=True, timeout=timeout,
-            env={"HOME": str(home), "PATH": os.defpath},
-        )
-
-    manager = ReleaseManager(replace(_config(), python_bin=sys.executable), host_runner=host_runner)
-    manager.slot = ReleaseSlot(
-        RELEASE_ID, tmp_path / "slot", tmp_path / "site",
-        ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS),
-        remote_activated=True,
-    )
+def test_source_finalization_waits_for_shared_lifecycle_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    installation = _LiveInstallation(tmp_path)
+    manager = installation.manager(monkeypatch, tmp_path)
+    assert manager.activate_workers().certainty == Certainty.SUCCEEDED
+    finalized = installation.journal / "finalized"
+    installation.entered.clear()
     results: list[OperationResult] = []
-    fd = _hold_lifecycle_lock(home)
+    fd = _hold_lifecycle_lock(installation.home)
     thread = threading.Thread(target=lambda: results.append(manager.finalize()))
     thread.start()
-    assert entered.wait(2)
+    assert installation.entered.wait(2)
     try:
         thread.join(0.1)
         assert thread.is_alive()
-        assert prior_root.is_dir()
+        assert not finalized.exists()
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
     thread.join(5)
     assert not thread.is_alive()
     assert results.pop().certainty == Certainty.SUCCEEDED
-    assert not prior_root.exists()
+    assert finalized.read_bytes() == b"FINALIZED\n"
+    # Prior releases stay on disk after finalize.
+    assert installation.prior_site.is_dir() and installation.live.resolve() == installation.target_site
 
 
 def test_release_manager_supports_one_colocated_worker(monkeypatch: pytest.MonkeyPatch):
@@ -641,6 +698,171 @@ def test_release_activation_unknown_suppresses_compensation_and_cleanup(
     assert not any(_operation(script, "compensate") for script in harness.scripts)
 
 
+def _activated_pair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, harness: _HostHarness):
+    repo, sha = _checkout(tmp_path)
+    manager = _manager(tmp_path, monkeypatch, harness, config=_pair())
+    manager.prepare(repo, _metadata(repo, sha))
+    _attest_prior(manager, repo, sha)
+    calls: list[tuple[str, str]] = []
+    manager._host_run = _recording(manager._host_run, calls)
+    return manager, calls
+
+
+def test_an_unanswered_activation_switches_no_later_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    harness = _HostHarness()
+    manager, calls = _activated_pair(tmp_path, monkeypatch, harness)
+    harness.activation = "timeout"
+
+    assert manager.activate_workers().certainty == Certainty.UNKNOWN
+    assert [host for operation, host in calls if operation == "activate"] == ["one"]
+    assert manager.compensate_workers().certainty == Certainty.UNKNOWN
+    assert not [call for call in calls if call[0] in ("compensate", "start_prior")]
+
+
+def test_a_definite_activation_failure_switches_no_later_host_and_restores_the_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    harness = _HostHarness()
+    manager, calls = _activated_pair(tmp_path, monkeypatch, harness)
+    harness.activation = "failed"
+
+    assert manager.activate_workers().certainty == Certainty.FAILED
+    assert manager.compensate_workers().certainty == Certainty.SUCCEEDED
+    starts: list[tuple[str, bool]] = []
+    recorded = manager._host_run
+
+    def start(config, host, script, timeout):
+        if _operation(script, "start_prior"):
+            starts.append((host.name, _start_request(script)["attempted"]))
+        return recorded(config, host, script, timeout)
+
+    manager._host_run = start
+    assert manager.start_prior_workers(RELEASE_ID).certainty == Certainty.SUCCEEDED
+    # The second host was never switched: nothing on it is compensated, and its
+    # prior start knows that no transaction reached it.
+    assert [call for call in calls if call[0] in ("activate", "compensate")] == [
+        ("activate", "one"), ("compensate", "one"),
+    ]
+    assert starts == [("one", True), ("two", False)]
+
+
+def _settled_as(harness: _HostHarness, answer: str):
+    def run(config, host, script, timeout):
+        if _operation(script, "settle"):
+            return subprocess.CompletedProcess([], 0, answer, "")
+        return harness.host(config, host, script, timeout)
+    return run
+
+
+def test_a_lost_activation_reply_is_read_back_before_the_next_host_is_switched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    harness = _HostHarness()
+    calls: list[tuple[str, str]] = []
+    manager, _ = _activated_pair(tmp_path, monkeypatch, harness)
+    lost = {"one"}
+
+    def first_reply_lost(config, host, script, timeout):
+        if _operation(script, "activate") and host.name in lost:
+            lost.discard(host.name)
+            raise subprocess.TimeoutExpired([], 60)
+        return _settled_as(harness, "ACTIVATED\n")(config, host, script, timeout)
+
+    manager._host_run = _recording(first_reply_lost, calls)
+    assert manager.activate_workers().certainty == Certainty.SUCCEEDED
+    assert calls == [("activate", "one"), ("settle", "one"), ("activate", "two")]
+
+
+def test_an_activation_that_never_began_is_a_definite_failure_and_restores_the_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    harness = _HostHarness()
+    harness.activation = "timeout"
+    calls: list[tuple[str, str]] = []
+    manager, _ = _activated_pair(tmp_path, monkeypatch, harness)
+    manager._host_run = _recording(_settled_as(harness, "ACTIVATION_PROBE_PRIOR\n"), calls)
+
+    assert manager.activate_workers().certainty == Certainty.FAILED
+    assert manager.compensate_workers().certainty == Certainty.SUCCEEDED
+    assert manager.start_prior_workers(RELEASE_ID).certainty == Certainty.SUCCEEDED
+    assert [call for call in calls if call[0] != "start_prior"] == [
+        ("activate", "one"), ("settle", "one"), ("compensate", "one"),
+    ]
+
+
+def test_an_unreadable_activation_stops_with_the_later_hosts_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    harness = _HostHarness()
+    harness.activation = "timeout"
+    manager, calls = _activated_pair(tmp_path, monkeypatch, harness)
+
+    assert manager.activate_workers().certainty == Certainty.UNKNOWN
+    assert calls == [("activate", "one"), ("settle", "one")]
+    err = capsys.readouterr().err
+    assert "activation on one is unknown" in err
+    assert "never sent an activation, still on the old release: two" in err
+    assert "different releases" in err and "dgxm up" in err
+
+
+def test_the_readback_of_a_lost_reply_runs_the_real_helper_under_the_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    installation = _LiveInstallation(tmp_path)
+    manager = installation.manager(monkeypatch, tmp_path)
+    scripts: list[str] = []
+
+    def reply_lost(config, host, script, timeout):
+        scripts.append(script)
+        result = installation.host(config, host, script, timeout)
+        if _operation(script, "activate"):
+            assert "ACTIVATED" in result.stdout.splitlines(), result.stderr
+            raise subprocess.TimeoutExpired([], timeout)
+        return result
+
+    manager._host_run = reply_lost
+    assert manager.activate_workers().certainty == Certainty.SUCCEEDED
+    assert installation.live.resolve() == installation.target_site
+    assert [_operation(script, "settle") for script in scripts] == [False, True]
+    assert all("flock" in script for script in scripts)
+
+
+def test_a_failure_on_the_second_host_compensates_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    harness = _HostHarness()
+    manager, calls = _activated_pair(tmp_path, monkeypatch, harness)
+    recorded = manager._host_run
+
+    def second_fails(config, host, script, timeout):
+        if _operation(script, "activate") and host.name == "two":
+            calls.append(("activate", host.name))
+            return subprocess.CompletedProcess([], 0, "ACTIVATION_PROBE_PRIOR\n", "")
+        return recorded(config, host, script, timeout)
+
+    manager._host_run = second_fails
+    assert manager.activate_workers().certainty == Certainty.FAILED
+    assert manager.compensate_workers().certainty == Certainty.SUCCEEDED
+    assert [call for call in calls if call[0] in ("activate", "compensate")] == [
+        ("activate", "one"), ("activate", "two"), ("compensate", "one"), ("compensate", "two"),
+    ]
+
+
+def test_an_empty_installation_capture_never_activates(tmp_path: Path):
+    calls: list[str] = []
+    manager = ReleaseManager(_config(), host_runner=lambda *_args: calls.append("host") or subprocess.CompletedProcess([], 0, "", ""))
+    metadata = ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS)
+    manager.slot = ReleaseSlot(
+        RELEASE_ID, tmp_path / "slot", tmp_path / "site", metadata,
+        prior_metadata=metadata, prior_pin_payload_digest="d" * 64,
+    )
+    assert manager.activate_workers().certainty == Certainty.UNKNOWN
+    assert manager.compensate_workers().certainty == Certainty.UNKNOWN
+    assert calls == []
+
+
 def test_keyboard_interrupt_during_activation_latches_ambiguity_and_retains_stage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -707,45 +929,24 @@ def test_definite_partial_promotion_can_be_compensated_and_cleaned(
     assert not (tmp_path / "state" / RELEASE_ID).exists()
 
 
-def test_interrupted_directory_activation_is_ambiguous_and_preserves_backup(
-    tmp_path: Path,
-):
+def test_an_ambiguous_activation_keeps_its_backup_and_stage(tmp_path: Path):
     home = tmp_path / "home"
-    base = home / ".local" / "share" / "dgx-monarch"
-    (base / "transactions" / RELEASE_ID).mkdir(parents=True)
-    backup = base / "backups" / RELEASE_ID / "src"
+    backup = home / ".local" / "share" / "dgx-monarch" / "backups" / RELEASE_ID / "src"
     backup.mkdir(parents=True)
-    site = tmp_path / "site"
-    site.mkdir()
-    metadata = ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS)
-
-    def host_runner(_config, _host, script, _timeout):
-        return subprocess.run(
-            ["bash", "-c", script], capture_output=True, text=True,
-            env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
-        )
-
-    manager = ReleaseManager(_config(), host_runner=host_runner)
-    slot = ReleaseSlot(RELEASE_ID, tmp_path / "slot", site, metadata)
-
-    assert manager._probe_activation(_config().hosts[0], slot) == Certainty.UNKNOWN
-    slot.activation_ambiguous = True
-    manager.slot = slot
-    assert manager.cleanup().certainty == Certainty.UNKNOWN
-    assert backup.is_dir()
-
-
-def test_directory_switch_durably_journals_before_moving_live_tree(tmp_path: Path):
-    manager = ReleaseManager(_config())
+    calls: list[str] = []
+    manager = ReleaseManager(_config(), host_runner=lambda *_args: calls.append("host") or subprocess.CompletedProcess([], 0, "", ""),
+                             state_root=tmp_path / "state")
     slot = ReleaseSlot(
-        RELEASE_ID, tmp_path / "slot", tmp_path / "site",
-        ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS),
+        RELEASE_ID, tmp_path / "state" / RELEASE_ID, tmp_path / "state" / RELEASE_ID / "site",
+        ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS), remote_staged=1,
+        activation_ambiguous=True,
     )
-    script = manager._activation_script(slot)
-    journal = script.index('printf %s directory > "$TXN/kind"')
-    durable = script.index('sync "$TXN/kind" "$TXN/prior"')
-    moved = script.index('mv -- "$LIVE" "$BACKUP"')
-    assert journal < durable < moved
+    slot.site.mkdir(parents=True)
+    manager.slot = slot
+
+    assert manager.cleanup().certainty == Certainty.UNKNOWN
+    assert backup.is_dir() and slot.root.is_dir()
+    assert calls == []
 
 
 def test_unconfirmed_remote_cleanup_retains_local_recovery_stage(
@@ -898,10 +1099,11 @@ def test_finalize_attempts_every_host_before_aggregating_failure(tmp_path: Path)
     metadata = ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS)
     manager.slot = ReleaseSlot(
         RELEASE_ID, tmp_path / "slot", tmp_path / "site", metadata,
-        remote_activated=True,
+        remote_activated=True, installations=_captured(hosts),
     )
 
-    assert manager.finalize().certainty == Certainty.FAILED
+    # A finalize that does not answer FINALIZED after the commit is unknown.
+    assert manager.finalize().certainty == Certainty.UNKNOWN
     assert calls == ["one", "two"]
 
 
@@ -926,45 +1128,21 @@ def test_finalize_attempts_every_host_and_preserves_cancellation(tmp_path: Path)
     manager.slot = ReleaseSlot(
         RELEASE_ID, tmp_path / "slot", tmp_path / "site",
         ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS),
-        remote_activated=True,
+        remote_activated=True, installations=_captured(hosts),
     )
     with pytest.raises(KeyboardInterrupt) as raised:
         manager.finalize()
     assert raised.value is interrupt
     assert calls == ["one", "two"]
+    assert not manager.slot.finalized
 
 
-def test_finalize_retires_previous_symlink_release(tmp_path: Path):
-    home = tmp_path / "home"
-    base = home / ".local" / "share" / "dgx-monarch"
-    old_release_id = "u-111111111111-2222222222222222"
-    old_site = base / "releases" / old_release_id / "site"
-    new_site = base / "releases" / RELEASE_ID / "site"
-    old_site.mkdir(parents=True)
-    new_site.mkdir(parents=True)
-    (home / ".local").chmod(0o700)
-    (base / "src").symlink_to(new_site, target_is_directory=True)
-    transaction = base / "transactions" / RELEASE_ID
-    transaction.mkdir(parents=True)
-    (transaction / "kind").write_text("symlink", encoding="ascii")
-    (transaction / "prior").write_text(str(old_site), encoding="ascii")
-
-    def host_runner(_config, _host, script, _timeout):
-        return subprocess.run(
-            ["bash", "-c", script], capture_output=True, text=True,
-            env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
-        )
-
-    manager = ReleaseManager(_config(), host_runner=host_runner)
-    manager.slot = ReleaseSlot(
-        RELEASE_ID, tmp_path / "slot", tmp_path / "site",
-        ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS),
-        remote_activated=True,
-    )
-    assert manager.finalize().certainty == Certainty.SUCCEEDED
-    assert not (base / "releases" / old_release_id).exists()
-    assert not transaction.exists()
-    assert new_site.is_dir()
+def _captured(hosts) -> dict[str, dict]:
+    unit = base64.b64encode(b"prior unit\n").decode()
+    return {
+        host.name: {"unit": unit, "mode": 0o600, "site_packages": "", "live": {"kind": "directory", "target": ""}}
+        for host in hosts
+    }
 
 
 @pytest.mark.parametrize("unsafe_context", [False, True])
