@@ -1,6 +1,6 @@
 # Studio measurement record
 
-Asset sizes updated: 2026-11-16 (UTC). Observer timings updated: 2026-10-21
+Asset sizes updated: 2026-11-19 (UTC). Observer timings updated: 2026-10-21
 (UTC). Status: partial engineering measurements; performance acceptance remains
 **NOT RUN**.
 
@@ -13,7 +13,7 @@ overhead.
 
 | Asset | Bytes | Gzip bytes |
 |---|---:|---:|
-| `index-Ct66OJHZ.js` | 352,833 | 124,491 |
+| `index-SxtGdAQX.js` | 352,805 | 124,483 |
 | `index-DZRUgSeS.css` | 42,709 | 9,864 |
 
 ## CPU observer microbenchmark
