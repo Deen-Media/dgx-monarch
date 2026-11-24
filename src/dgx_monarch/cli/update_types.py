@@ -21,6 +21,9 @@ class OperationResult:
     # For a FAILED result that no check decided: a lowercase identifier the
     # update names in its result code (``update_transaction.FAILURE_CAUSES``).
     cause: str = ""
+    # Counts the receipt step records beside the outcome, such as how many
+    # hosts an activation switched; names are lowercase identifiers.
+    counts: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True)

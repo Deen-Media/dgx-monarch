@@ -293,14 +293,20 @@ class ReleaseManager:
         except BaseException:
             slot.activation_ambiguous = True
             raise
+        hosts = len(self.config.hosts)
         if certainty == Certainty.SUCCEEDED:
             slot.remote_activated = True
-            return _result(Certainty.SUCCEEDED)
+            return OperationResult(Certainty.SUCCEEDED, counts={"hosts_switched": hosts})
         self._report_activation(slot, certainty)
+        counts = {
+            "hosts_switched": slot.activation_attempted - 1,
+            "hosts_unknown" if certainty == Certainty.UNKNOWN else "hosts_failed": 1,
+            "hosts_not_reached": hosts - slot.activation_attempted,
+        }
         if certainty == Certainty.UNKNOWN:
             slot.activation_ambiguous = True
-            return _result(Certainty.UNKNOWN)
-        return _result(Certainty.FAILED)
+            return OperationResult(Certainty.UNKNOWN, counts=counts)
+        return OperationResult(Certainty.FAILED, counts=counts)
 
     def _report_activation(self, slot: ReleaseSlot, certainty: Certainty) -> None:
         """Name each host's release after a switch that stopped short, on stderr only."""

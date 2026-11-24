@@ -41,6 +41,7 @@ from .update_types import (
 _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}")
+_COUNT_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 GATE_NOTE = (
     "Gate results tied to the old source lapse. A FAIL stays quarantined within one package version; "
     "a new version expires context-scoped FAILs, so auto_gate=first_use retests them and "
@@ -57,6 +58,16 @@ FAILURE_CAUSES = {
 def _failure_cause(result: OperationResult) -> str:
     cause = getattr(result, "cause", "")
     return cause if isinstance(cause, str) and cause in FAILURE_CAUSES else ""
+
+
+def _result_counts(result: OperationResult) -> Mapping[str, int] | None:
+    counts = getattr(result, "counts", None)
+    if not isinstance(counts, Mapping) or not all(
+        isinstance(name, str) and _COUNT_NAME.fullmatch(name) and type(value) is int and 0 <= value < 2**31
+        for name, value in counts.items()
+    ):
+        return None
+    return dict(counts)
 
 
 @dataclass(frozen=True)
@@ -257,15 +268,17 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
         steps.append(_Step("worker_stop", "succeeded"))
 
         activation = ops.activate(staged)
+        activation_counts = _result_counts(activation)
         if activation.certainty == Certainty.UNKNOWN:
-            steps.append(_Step("activation", "unknown"))
+            steps.append(_Step("activation", "unknown", counts=activation_counts))
             raise _Abort(
                 "activation_unknown",
                 "activation could not be read back on one host and no later host was switched, "
-                "so the hosts may run different releases; the update did not roll back or start workers",
+                "so the hosts may run different releases; the update did not roll back or start workers. "
+                "Read each host's link as TROUBLESHOOTING entry 118 says for activation_unknown",
             )
         if activation.certainty == Certainty.FAILED:
-            steps.append(_Step("activation", "failed"))
+            steps.append(_Step("activation", "failed", counts=activation_counts))
             compensation = ops.compensate(staged)
             steps.append(_Step("compensation", _operation_status(compensation)))
             if compensation.certainty == Certainty.SUCCEEDED:
@@ -282,7 +295,7 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
                 else "activation failed and compensation was not confirmed"
             )
             raise _Abort("activation_failed", compensation_note)
-        steps.append(_Step("activation", "succeeded"))
+        steps.append(_Step("activation", "succeeded", counts=activation_counts))
 
         started = ops.start_target_workers(staged)
         if started.certainty == Certainty.UNKNOWN:

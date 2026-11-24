@@ -333,6 +333,52 @@ def test_an_answer_from_another_address_is_unknown(monkeypatch):
     assert comfy_ports._confirmed_driver("127.0.0.1:8188") is None
 
 
+def test_the_pack_check_reads_a_real_loopback_server(monkeypatch):
+    """The real urllib path: an answer at the route confirms, a redirect does not."""
+    import http.server
+    import threading
+
+    from dgx_monarch.cli import comfy_ports
+
+    routes: dict[str, tuple[int, dict[str, str], bytes]] = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            status, headers, body = routes.get(self.path, (404, {}, b"{}"))
+            self.send_response(status)
+            for name, value in headers.items():
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    candidate = f"127.0.0.1:{server.server_address[1]}"
+    route = "/object_info/DGXMonarchInit"
+    try:
+        routes[route] = (200, {"Content-Type": "application/json"}, json.dumps(_INIT_INFO).encode())
+        assert comfy_ports._confirmed_driver(candidate) is True
+        routes[route] = (200, {"Content-Type": "application/json"}, b"{}")
+        assert comfy_ports._confirmed_driver(candidate) is False
+        routes.pop(route)
+        assert comfy_ports._confirmed_driver(candidate) is False
+        for status in (401, 403, 503):
+            routes[route] = (status, {}, b"")
+            assert comfy_ports._confirmed_driver(candidate) is None, status
+        routes[route] = (302, {"Location": "/login"}, b"")
+        routes["/login"] = (200, {"Content-Type": "application/json"}, json.dumps(_INIT_INFO).encode())
+        assert comfy_ports._confirmed_driver(candidate) is None
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
 def test_legacy_update_refuses_a_server_error_even_when_every_other_port_is_closed(
     monkeypatch, tmp_path, capsys
 ):

@@ -514,6 +514,31 @@ def test_failed_smoke_quarantines_without_readback():
     assert "readback" not in ops.events
 
 
+def test_an_unknown_activation_records_each_hosts_count_and_names_the_repair():
+    ops = FakeOps()
+    ops.activation = OperationResult(
+        Certainty.UNKNOWN, counts={"hosts_switched": 0, "hosts_unknown": 1, "hosts_not_reached": 1})
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == "activation_unknown"
+    assert "different releases" in result.message and "TROUBLESHOOTING entry 118" in result.message
+    step = next(item for item in result.receipt["steps"] if item["name"] == "activation")
+    assert step["status"] == "unknown"
+    assert step["counts"] == {"hosts_not_reached": 1, "hosts_switched": 0, "hosts_unknown": 1}
+    assert "compensate" not in ops.events and ops.events.count("start_no_sync") == 0
+
+
+def test_activation_counts_that_are_not_plain_counts_are_left_out():
+    ops = FakeOps()
+    ops.activation = OperationResult(Certainty.SUCCEEDED, counts={"host worker-01": 1})
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    step = next(item for item in result.receipt["steps"] if item["name"] == "activation")
+    assert result.code == "updated" and step["counts"] == {}
+
+
 @pytest.mark.parametrize(("cause", "words"), [
     ("cleanup_unconfirmed", "could not confirm the stop of its own ProcMesh"),
     ("killed", "killed by a signal"),

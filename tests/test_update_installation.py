@@ -69,6 +69,29 @@ def test_directory_source_restored_after_partial_activation(layout, monkeypatch,
     assert (live / "prior").read_text() == "prior"
 
 
+def test_directory_switch_durably_journals_before_moving_live_tree(layout, monkeypatch, capsys):
+    """The record that compensation reads exists before the live source moves."""
+    import os
+
+    base, _, _, live, request = layout
+    live.unlink()
+    live.mkdir()
+    request["prior"]["live"] = remote.link_state(live)
+    record = base / "transactions" / TOKEN / "installation.json"
+    real_rename = os.rename
+    seen = []
+
+    def rename(source, destination):
+        if Path(source) == live:
+            seen.append(record.is_file() and remote.read(record) != b"")
+        return real_rename(source, destination)
+
+    monkeypatch.setattr(remote.os, "rename", rename)
+    remote.main(request)
+    assert capsys.readouterr().out.strip() == "ACTIVATED"
+    assert seen == [True]
+
+
 def test_active_worker_prevents_any_migration(layout, monkeypatch):
     base, unit, external, live, request = layout
     monkeypatch.setattr(remote, "unit_state", lambda _, **_kwargs: {"MainPID": "123", "ActiveState": "active", "SubState": "running", "Job": ""})

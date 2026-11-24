@@ -800,7 +800,10 @@ def test_start_target_main_never_exits_1_on_a_fault_it_did_not_observe():
 def test_a_smoke_that_lost_its_transport_is_unknown_not_failed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """A smoke child that lost its transport reads UNKNOWN; only a definite refusal reads FAILED.
+    """A smoke child that lost its transport reads UNKNOWN; a definite refusal reads FAILED.
+
+    The two other FAILED readings, a cleanup the smoke could not confirm and a
+    smoke a signal killed, have their own test below.
 
     The child's 60 s status timeout and the parent's 600 s timeout are one class of
     evidence; if they read differently, rollback depends on which clock fires first.
@@ -869,6 +872,22 @@ def test_an_unconfirmed_smoke_cleanup_or_a_killed_smoke_is_a_named_failure(
     assert smoke_exiting(-15, '{"result": "PASS"}\n') == OperationResult(Certainty.FAILED, "killed")
     assert smoke_exiting(75, "a line that is not JSON\n") == OperationResult(Certainty.UNKNOWN)
     assert smoke_exiting(75, "") == OperationResult(Certainty.UNKNOWN)
+
+
+def test_the_update_unit_stops_its_whole_control_group():
+    """The restore after a named smoke failure relies on this: a confirmed stop ends every actor.
+
+    The unit a verified update writes takes systemd's default kill mode,
+    control-group, and kills what survives the stop signal.
+    """
+    from dgx_monarch.cli.lifecycle_systemd import systemd_worker_unit
+    from dgx_monarch.config import HostConfig
+
+    config = ClusterConfig(hosts=(HostConfig("remote", "tcp://192.0.2.10:26600", gpus=2),))
+    unit = systemd_worker_unit(config, config.hosts[0], managed_source=True, update_token=RELEASE_ID)
+    lines = unit.splitlines()
+    assert [line for line in lines if line.startswith("KillMode=")] in ([], ["KillMode=control-group"])
+    assert not [line for line in lines if line.startswith(("SendSIGKILL=", "KillSignal=", "Delegate="))]
 
 
 def test_doctor_carries_the_unknown_exit_through_to_certainty(

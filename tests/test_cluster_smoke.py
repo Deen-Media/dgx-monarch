@@ -498,7 +498,8 @@ def test_a_decided_setup_verdict_is_definite_and_a_lost_setup_is_not(tmp_path):
 def test_smoke_main_exit_codes_separate_a_verdict_from_a_lost_run(
     tmp_path, monkeypatch, capsys, phase, error, code, exit_code
 ):
-    """What the verified update reads: 1 restores, 75 stops fail-closed."""
+    """What the verified update reads: 1 restores, and 75 stops fail-closed
+    unless its code names a cleanup the smoke could not confirm."""
     rig = _rig(tmp_path)
     if phase == "setup":
         rig.control["setup_error"] = error

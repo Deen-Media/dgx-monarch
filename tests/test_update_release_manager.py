@@ -799,7 +799,8 @@ def test_an_unreadable_activation_stops_with_the_later_hosts_unchanged(
     harness.activation = "timeout"
     manager, calls = _activated_pair(tmp_path, monkeypatch, harness)
 
-    assert manager.activate_workers().certainty == Certainty.UNKNOWN
+    assert manager.activate_workers() == OperationResult(
+        Certainty.UNKNOWN, counts={"hosts_switched": 0, "hosts_unknown": 1, "hosts_not_reached": 1})
     assert calls == [("activate", "one"), ("settle", "one")]
     err = capsys.readouterr().err
     assert "activation on one is unknown" in err
@@ -843,7 +844,8 @@ def test_a_failure_on_the_second_host_compensates_both(
         return recorded(config, host, script, timeout)
 
     manager._host_run = second_fails
-    assert manager.activate_workers().certainty == Certainty.FAILED
+    assert manager.activate_workers() == OperationResult(
+        Certainty.FAILED, counts={"hosts_switched": 1, "hosts_failed": 1, "hosts_not_reached": 0})
     assert manager.compensate_workers().certainty == Certainty.SUCCEEDED
     assert [call for call in calls if call[0] in ("activate", "compensate")] == [
         ("activate", "one"), ("activate", "two"), ("compensate", "one"), ("compensate", "two"),

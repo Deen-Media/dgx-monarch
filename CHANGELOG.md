@@ -2616,8 +2616,10 @@ sections after them list every change.
   new release and the first unknown: the update goes on, or restores the
   prior release on both. Only a host that still cannot be read ends the
   update `activation_unknown`, and the update then names each host's state
-  and the repair. Earlier, every host was switched before any result was
-  read ([INSTALL](docs/INSTALL.md#verified-activation-and-recovery)).
+  and the repair, and its receipt's `activation` step counts the hosts it
+  switched, the one it could not read and those it never reached. Earlier,
+  every host was switched before any result was read
+  ([INSTALL](docs/INSTALL.md#verified-activation-and-recovery)).
 - Fix: a Worker unit write that fails during a verified update, on a full or
   failing disk, no longer leaves a fixed `dgxm-worker.service.next` file that
   made the rollback's own write fail and every later verified update refuse

@@ -7856,7 +7856,9 @@ match the driver.
   Hosts whose link names the old release match the driver. When every link
   names the old release, `dgxm up` starts the stopped ones; if any names the
   new one, use the forward repair above. After `activation_unknown` the
-  update printed each host's state: activation switches one host at a time,
+  update printed each host's state, and the receipt's `activation` step
+  counts them (`hosts_switched`, `hosts_unknown`, `hosts_not_reached`):
+  activation switches one host at a time,
   so only the host it could not read back can name either release; the
   hosts before it name the new release, and the hosts after it were never
   sent an activation and name the old one.
