@@ -244,6 +244,26 @@ def test_completed_mesh_may_be_idle_with_inert_lease_bookkeeping():
     assert report["lifecycle"]["attached_mesh"]["state"] == "idle"
 
 
+def test_a_stopped_fleet_whose_render_abandoned_its_lease_is_idle_not_blocked():
+    """The ordinary lost-Worker path: the render abandoned its lease, the cleanup's stop confirmed."""
+    report = _telemetry(mesh={
+        "state": "idle", "verdict": "completed", "active_leases": 0,
+        "abandoned_samples": 1,
+    })
+    assert report["overall"] == "ready"
+    assert report["lifecycle"]["attached_mesh"]["state"] == "idle"
+    assert "recover-attached-mesh" not in _action_ids(report)
+
+
+def test_the_lost_fleets_running_stop_reads_busy_not_blocked():
+    report = _telemetry(mesh={
+        "state": "busy", "verdict": "unresolved", "active_leases": 0,
+        "abandoned_samples": 1, "busy_phase": "the stop of the previous Worker fleet",
+    })
+    assert report["lifecycle"]["attached_mesh"]["state"] != "blocked"
+    assert "recover-attached-mesh" not in _action_ids(report)
+
+
 def test_telemetry_error_is_not_echoed_and_forces_unknown():
     private_detail = "/home/operator?credential=private-value"
     report = _telemetry(telemetry_error=private_detail)

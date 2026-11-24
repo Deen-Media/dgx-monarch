@@ -232,7 +232,9 @@ def stop_procs(procs: Any, reason: str, timeout_s: float,
     stop = proc_stops.started(procs, proc_stop_bound_s() + SHUTDOWN_MARGIN_S)
     done = threading.Event()
     outcome: dict[str, Any] = {}
-    confirmed = False
+    # A stop whose call failed, or whose Future answered (anything but its own
+    # get's timeout), has no report to come: proc_stops gives later ones to a retry.
+    confirmed = answered = False
 
     def wait(future: Any) -> None:
         try:
@@ -244,13 +246,18 @@ def stop_procs(procs: Any, reason: str, timeout_s: float,
             stop.ended.set()
 
     try:
-        future = procs.stop(reason)
+        try:
+            future = procs.stop(reason)
+        except Exception:
+            answered = True
+            raise
         try:
             threading.Thread(target=wait, args=(future,), name=thread_name, daemon=True).start()
         except RuntimeError:  # interpreter shutdown starts no thread: wait here instead
             wait(future)
         stop.ended.wait(timeout_s + ACTOR_STOP_S)
         if done.is_set():  # read first, without waiting: a finished stop keeps its outcome
+            answered = not isinstance(outcome.get("error"), TimeoutError)
             if "error" in outcome:
                 raise outcome["error"]
             confirmed = True
@@ -260,4 +267,4 @@ def stop_procs(procs: Any, reason: str, timeout_s: float,
         raise TimeoutError("Monarch ended the proc stop without confirming every proc, so its "
                            f"outcome is unknown: {' '.join(stop.report.split())[:400]}")
     finally:
-        proc_stops.left(stop, confirmed=confirmed)
+        proc_stops.left(stop, confirmed=confirmed, answered=answered)

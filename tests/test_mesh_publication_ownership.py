@@ -1129,6 +1129,29 @@ def test_lease_start_failure_with_unconfirmed_proc_cleanup_blocks_every_retry(mo
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
 
 
+def test_the_transport_poison_after_a_released_fleets_failed_replacement_names_the_release(
+        monkeypatch):
+    from dgx_monarch import mesh_teardown
+
+    proc_mesh = _PublishedProcMesh(RuntimeError("proc stop was not confirmed"))
+
+    def spawn(*_args):
+        return SimpleNamespace(), proc_mesh, SimpleNamespace(), False
+
+    def start():
+        raise RuntimeError("client lease thread did not start")
+
+    mesh = _mesh_publication_fakes(monkeypatch, spawn, start)
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_PREDECESSOR", None)
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_ADDRESSES", None)
+    mesh_teardown.note_liveness_release()
+    with pytest.raises(RuntimeError, match="client lease thread did not start"):
+        mesh.get_mesh(mode="local", gpus_per_host=1)
+
+    assert "owned ProcMesh cleanup unconfirmed" in mesh._TRANSPORT_POISON
+    assert "proved its worker processes were gone" in mesh._TRANSPORT_POISON
+
+
 def test_confirmed_stop_outranks_an_interrupted_cache_eviction(monkeypatch):
     proc_mesh = _PublishedProcMesh()
     startup_error = RuntimeError("client lease thread did not start")
@@ -1168,3 +1191,72 @@ def test_confirmed_stop_outranks_an_interrupted_cache_eviction(monkeypatch):
     assert mesh._MESHES == {}
     assert mesh._TRANSPORT_POISON is None
     assert getattr(failure.value, "__notes__", ()) == ()
+
+
+def _strand(mesh, **fields):
+    """Leave a READY handle in the pending registry, as an interrupted publication does."""
+    import threading
+
+    handle = SimpleNamespace(
+        lock=threading.RLock(), teardown_complete=False, defunct=True,
+        setup_cleanup_state=None, sample_leases={}, abandoned_sample_leases={},
+        _replacement_retryable=False, **fields)
+    key = mesh._mesh_cache_key(mesh.local_config(None).source, "/comfy", False)
+    mesh._MESH_PENDING[key] = handle
+    return handle
+
+
+def test_the_next_render_over_a_stranded_fleet_whose_stop_is_unknown_refuses_at_once(monkeypatch):
+    """No second fleet beside processes whose stop is unknown, and no wait for a creation."""
+    import time
+
+    from dgx_monarch import mesh_teardown
+
+    spawned: list[object] = []
+    mesh = _mesh_publication_fakes(
+        monkeypatch, lambda *args: spawned.append(args) or pytest.fail("spawned a second fleet"),
+        lambda: True)
+    _strand(mesh, replacement_blocked="TimeoutError('proc stop did not finish within 100 s')",
+            _block_cause=mesh_teardown.TAG_STOP_TIMEOUT_DELIBERATE)
+
+    started = time.monotonic()
+    with pytest.raises(mesh.MeshAttachError) as refused:
+        mesh.get_mesh(mode="local", gpus_per_host=1)
+
+    assert time.monotonic() - started < 5.0
+    assert spawned == []
+    text = str(refused.value)
+    assert "never published" in text and "Reset cannot reach" in text
+    assert mesh_teardown.label_for_cause(mesh_teardown.TAG_STOP_TIMEOUT_DELIBERATE) in text
+    assert mesh._MESH_CREATING == {} and mesh._TRANSPORT_CLAIMS == set()
+
+
+def test_a_stranded_fleet_proven_gone_after_a_worker_death_is_replaced_by_the_next_render(
+        monkeypatch):
+    """The liveness release reaches a handle the cache never held, as it does a cached one."""
+    import time
+
+    from dgx_monarch import mesh_liveness, mesh_teardown
+
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_PREDECESSOR", None)
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_ADDRESSES", None)
+    proc_mesh = _PublishedProcMesh()
+
+    def spawn(_config, _cluster, _gph, _attach, _bootstrap, handoff):
+        handoff.fleet = SimpleNamespace(), proc_mesh, SimpleNamespace(), False
+        return handoff.fleet
+
+    mesh = _mesh_publication_fakes(monkeypatch, spawn, lambda: True)
+    stranded = _strand(
+        mesh, replacement_blocked="TimeoutError('proc stop did not finish within 100 s')",
+        _block_cause=mesh_teardown.TAG_STOP_TIMEOUT_AFTER_DEATH,
+        _supervision_death_report="{'SupervisionError'} peer closed",
+        _supervision_reconcile_thread=None)
+    monkeypatch.setattr(mesh_liveness, "probe_fleet", lambda _handle, **_kwargs: (
+        mesh_liveness.LivenessEvidence(
+            mesh_liveness.GONE, (("local", mesh_liveness.GONE),), time.monotonic())))
+
+    fresh = mesh.get_mesh(mode="local", gpus_per_host=1)
+
+    assert stranded.teardown_complete is True
+    assert fresh is not stranded and fresh.procs is proc_mesh

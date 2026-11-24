@@ -2461,6 +2461,37 @@ sections after them list every change.
   whose pair it cannot see, so after a wtmp rotation, or in a full window with
   an even count, a hard power-off is counted
   ([TROUBLESHOOTING](docs/TROUBLESHOOTING.md#pd-stuck-state)).
+- Fix: the driver's cleanup after a lost Worker no longer leaves a fleet that
+  only a ComfyUI restart clears when it could not send its stop. It now waits
+  out a setup rollback or a Gate policy restore that holds the lifecycle lock
+  and stops the fleet itself; refused for another reason (a native latent read
+  still in flight), it says "no stop was issued", and Reset attached mesh stops
+  the fleet. A fleet that died also takes no new worker policy or setup, so a
+  Gate's policy restore no longer sends one to it
+  ([TROUBLESHOOTING #65](docs/TROUBLESHOOTING.md#65-dgxm-status-and-dgxm-doctor-are-green-and-every-attach-still-fails)).
+- Fix: a setup rollback whose stop of a dead Worker's processes times out now
+  keeps that timeout as its cause, so the next render replaces the fleet once
+  the driver proves the processes gone; a rollback stop that reports a failure
+  names the Reset that retries it. Both said "the setup rollback stop was
+  interrupted" and asked for a ComfyUI restart.
+- Fix: after a lost Worker's cleanup has stopped the fleet, `dgxm doctor` and
+  `dgxm status` read the mesh as idle until the next render, and while that
+  stop is still running they read it as busy; both read DIRTY before, with a
+  Reset the driver refused, and `dgxm status` exited 1 until the next render.
+- Fix: a Reset that retries a stop which failed ends when Monarch reports on
+  that retry, not up to 100 s later behind the first stop's record.
+- Fix: the next render over a fleet whose publication was interrupted now
+  refuses, with the cause, while that fleet's stop is unconfirmed, and replaces
+  it once the driver proves its processes gone after a Worker died; before, it
+  started a second fleet beside processes whose stop was unknown.
+- Fix: a cluster.toml saved while a render attaches no longer leaves a fleet
+  built from the old settings that later attaches reuse as matching the new
+  file.
+- Fix: the restart-ComfyUI refusal after a failed bring-up that followed a
+  liveness release now says the fleet it replaced was proven gone, where
+  only the handle's text said so before.
+- Fix: with native latent return on, a latent read whose start was interrupted
+  twice now settles and returns, where its render could wait for ever.
 
 ### Development
 

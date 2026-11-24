@@ -299,3 +299,22 @@ def get_off_loop(future, timeout_s: float, thread_name: str = "dgxm-await"):
     return run_blocking_off_loop(
         lambda: future.get(timeout=timeout_s), timeout_s + FUTURE_GET_JOIN_MARGIN_S,
         thread_name)
+
+
+def pinned_cluster_config(path, load, fingerprint, error_type: type[Exception]):
+    """cluster.toml's settings from ``load`` and the digest of the very bytes they came from.
+
+    The file is hashed before and after it is parsed, and parsed again until the
+    two agree, so a save that lands during the read cannot stamp a fleet built
+    from the old settings with the new file's digest, which every later attach
+    would then reuse as matching the file. ``load`` and ``fingerprint`` are the
+    caller's, so its seams stay where they were.
+    """
+    digest = fingerprint(path)
+    for _attempt in range(4):
+        config = load(path)
+        after = fingerprint(path)
+        if after == digest:
+            return config, digest
+        digest = after
+    raise error_type(f"{path} kept changing while the driver read it; retry once the edit is saved")

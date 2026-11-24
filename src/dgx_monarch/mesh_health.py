@@ -21,6 +21,12 @@ log = get_logger(__name__)
 # These verdicts are unusable after `_busy_phase` excludes active work.
 _UNUSABLE_VERDICTS = ("blocked", "unresolved")
 
+# The busy phase while the supervision cleanup still stops a fleet it lost (a
+# lost Worker, a stall eviction). That stop settles the render's abandoned
+# samples as well, and the driver refuses a Reset as busy until it ends, so no
+# row sends the operator to one meanwhile (mesh_evidence reads the same).
+CLEANUP_STOP_PHASE = "the stop of the previous Worker fleet"
+
 
 def _busy_phase(handle: Any) -> str:
     """The operation the driver is still waiting on, or empty.
@@ -31,8 +37,9 @@ def _busy_phase(handle: Any) -> str:
     check keeps a decided stop from reading as busy while the token remains.
     """
     if getattr(handle, "defunct", False):
-        # Supervision already failed this fleet.
-        return ""
+        # Supervision already failed this fleet: its cleanup's stop is the only
+        # work left on it, and only while that cleanup runs.
+        return CLEANUP_STOP_PHASE if mesh_teardown.cleanup_running(handle) else ""
     if client_lease.dispatch_in_flight(handle):
         state = getattr(handle, "setup_cleanup_state", None)
         return str(getattr(state, "phase", "") or "a worker RPC")
@@ -90,6 +97,8 @@ class MeshHealth:
             return True
         if self.verdict in ("completed", "unknown", "none"):
             return False
+        if self.busy_phase == CLEANUP_STOP_PHASE:
+            return False
         if self.pending and not self.busy_phase:
             return True
         if self.abandoned_samples > 0:
@@ -139,6 +148,10 @@ class MeshHealth:
             parts.append(
                 "a worker fleet was created but was never published to the attached-mesh cache"
             )
+        elif self.verdict == "blocked" and self.block_cause == mesh_teardown.TAG_NO_STOP_ISSUED:
+            parts.append(
+                "the driver's cleanup of a failed fleet could not send its stop, so "
+                "replacement is blocked until one is sent (no stop was issued)")
         elif self.verdict == "blocked":
             label = mesh_teardown.label_for_cause(self.block_cause or None)
             parts.append(
@@ -162,11 +175,13 @@ class MeshHealth:
             # "no attached mesh to reset" for a handle that never reached it.
             # The next render settles this row instead: through
             # mesh_creation.admission_occupant it creates over an interrupted
-            # fleet that is gone, and refuses with a typed error naming the
-            # restart while that fleet is still live.
+            # fleet whose stop is confirmed or proven gone, and refuses with a
+            # typed error naming the restart while that fleet is live or its
+            # stop is unconfirmed.
             return ("start the next render: if the interrupted fleet is gone, it drops "
-                    "this creation and attaches a fresh fleet; if that fleet is still live or its state "
-                    "cannot be read, it refuses with a typed error that says to restart ComfyUI. "
+                    "this creation and attaches a fresh fleet; if that fleet is still live, its stop "
+                    "is unconfirmed or its state cannot be read, it refuses with a typed error that "
+                    "says to restart ComfyUI. "
                     "The sidebar Reset attached mesh cannot reach a fleet the cache never held")
         if self.verdict in _UNUSABLE_VERDICTS and not self.busy_phase:
             base = ("reset the attached mesh; restart ComfyUI if that stop cannot "

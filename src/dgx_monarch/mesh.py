@@ -31,6 +31,7 @@ from .config import ClusterConfig, find_config_path, load_cluster_config, local_
 from .config_schema import actor_worker_args
 from .log import get_logger
 from .mesh_factory import FleetHandoff, WorkerSpawnError, spawn_worker_fleet
+from .mesh_runtime import pinned_cluster_config
 from .topology import Topology
 
 _attach_once = mesh_helpers.attach_once
@@ -411,11 +412,11 @@ def get_mesh(
             f"one transport per process, so switching to {wanted_transport} mode needs a "
             "ComfyUI restart."
         )
-    if use_cluster:
+    if use_cluster:  # the digest is the parsed bytes' own (pinned_cluster_config)
         assert resolved is not None  # noqa: S101  # Narrowed for mypy; guarded above.
-        config = load_cluster_config(resolved)
+        config, cluster_digest = pinned_cluster_config(resolved, load_cluster_config, config_fingerprint, MeshAttachError)
     else:
-        config = local_config(resolved)
+        config, cluster_digest = local_config(resolved), ""
     comfy = _detect_comfy_dir(comfy_dir or config.comfy_dir)
     if use_cluster:
         n_hosts = len(config.hosts)
@@ -440,8 +441,7 @@ def get_mesh(
         except OSError:
             pass
         # A local mesh consumes the [worker_args] its actors read, so it needs a digest of its own.
-        config_digest = (config_fingerprint(resolved) if use_cluster
-                         else mesh_helpers.local_worker_args_fingerprint(actor_worker_args(config.worker_args), config.monarch))
+        config_digest = cluster_digest or mesh_helpers.local_worker_args_fingerprint(actor_worker_args(config.worker_args), config.monarch)
     key = _mesh_cache_key(config.source, comfy, use_cluster)
     # The provisional claim is releasable until the fail-closed publication
     # immediately before the first native transport/fleet call below.
@@ -454,6 +454,7 @@ def get_mesh(
     try:
         try:
             mesh_liveness.try_release(_MESHES.get(key))
+            mesh_liveness.try_release(_MESH_PENDING.get(key))  # a stranded fleet, which admission reads
             with _MESH_CONDITION:
                 mesh_helpers.wait_for_mesh_creation(
                     _MESH_CONDITION, _MESH_CREATING, key, MeshAttachError)
@@ -604,8 +605,7 @@ def get_mesh(
             blocked = blocked or ("ProcMesh spawn callback cleanup is unconfirmed" if fleet_handoff.callback_cleanup_unconfirmed else None)
             if blocked:
                 _TRANSPORT_POISON = "mesh creation failed; owned ProcMesh cleanup unconfirmed"
-                blocked_text = mesh_factory.safe_failure_evidence(blocked)
-                mesh_teardown.publish_creation_block(handle, blocked_text)
+                blocked_text = mesh_teardown.publish_creation_block(handle, mesh_factory.safe_failure_evidence(blocked))
                 primary_text = mesh_factory.safe_failure_evidence(primary)
                 mesh_factory.safe_note(primary, f"owned ProcMesh cleanup after mesh creation failed: {blocked_text}")
                 _TRANSPORT_POISON = (f"mesh creation failed ({primary_text}); owned "

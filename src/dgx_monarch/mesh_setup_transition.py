@@ -159,6 +159,17 @@ def reported_drop(replies: list, inferred: bool) -> bool:
     return inferred and not named
 
 
+def _refuse_defunct(handle: Any, operation: str) -> None:
+    """A fleet that supervision failed, or a stop retired, takes no new policy and no setup.
+
+    Its cleanup stops it from a thread of its own and needs the handle lock. A
+    send to a fleet with a dead rank can hold that lock for its whole timeout,
+    and a Gate's policy restore would send one right after the apply failed.
+    """
+    if getattr(handle, "defunct", False):
+        raise RuntimeError(f"cannot {operation}: worker fleet is defunct")
+
+
 def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
                       merge_config: bool = True) -> list[dict]:
     """Broadcast a worker policy and publish its driver key only on success.
@@ -178,6 +189,7 @@ def apply_worker_args(handle: Any, worker_args: dict, timeout_s: float = 120.0,
 
         driver_exit.refuse_new_call()  # a caller that waited for the lock: nothing cleared, nothing sent
         mesh_setup.require_not_dirty(handle, "apply worker arguments")
+        _refuse_defunct(handle, "apply worker arguments")
         if handle.setup_key is None:
             raise RuntimeError("cannot apply worker arguments before setup is READY")
         mesh_setup.require_no_sample_leases(handle, "change worker arguments")
@@ -289,6 +301,7 @@ def ensure_setup(handle: Any, topology: Topology, attention: str, sync_ulysses: 
         from .mesh_session import require_mutation_authority
 
         mesh_setup.require_not_dirty(handle, "begin distributed setup")
+        _refuse_defunct(handle, "begin distributed setup")
         if handle.setup_key == key:
             if handle.worker_args_key != wa_key:
                 mesh_setup.require_no_sample_leases(

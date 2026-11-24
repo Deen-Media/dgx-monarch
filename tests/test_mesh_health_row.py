@@ -191,6 +191,83 @@ def test_a_confirmed_stop_reads_as_idle_even_holding_abandoned_leases():
     assert not health.dirty
 
 
+def test_after_a_lost_worker_cleanup_doctor_and_status_read_the_stopped_fleet_as_idle():
+    """The render that lost a Worker abandoned its lease; the cleanup's stop then confirmed.
+
+    The handle stays cached until the next render replaces it. Until then every
+    reader of the block must agree with the driver: idle, nothing to reset.
+    """
+    block = mesh_health.health_of([_handle(
+        teardown_complete=True, defunct=True, abandoned_sample_leases={3: 1})]).as_dict()
+
+    assert (block["state"], block["verdict"], block["abandoned_samples"]) == ("idle", "completed", 1)
+    assert not mesh_evidence.mesh_block_dirty(block)
+    assert mesh_health_row.state_name(block) == "idle"
+    assert mesh_health_row.doctor_verdict(block)[0] == "ok"
+    assert mesh_health_row.status_line(block).startswith("idle")
+
+
+def test_a_poisoned_transport_beside_a_stopped_fleet_still_reads_dirty():
+    block = mesh_health.health_of([_handle(
+        teardown_complete=True, defunct=True, abandoned_sample_leases={3: 1})],
+        poison="actor spawn failed").as_dict()
+    assert mesh_evidence.mesh_block_dirty(block)
+    assert mesh_health_row.doctor_verdict(block)[0] == "fail"
+
+
+def _running_cleanup(release: threading.Event, **overrides):
+    """A defunct handle whose supervision cleanup is still stopping it, as after a lost Worker."""
+    from dgx_monarch import reconcile_running
+
+    thread = threading.Thread(target=release.wait, daemon=True)
+    thread.start()
+    handle = _handle(defunct=True, **overrides)
+    handle._supervision_reconcile_thread = thread
+    reconcile_running.note_started(handle)
+    return handle
+
+
+@pytest.mark.parametrize("abandoned", [{}, {3: 1}])
+def test_while_the_lost_fleets_stop_runs_the_rows_say_busy_and_send_no_one_to_reset(
+        teardown_token, abandoned):
+    release = threading.Event()
+    handle = teardown_token(_running_cleanup(release, abandoned_sample_leases=abandoned))
+    try:
+        health = mesh_health.health_of([handle])
+        block = health.as_dict()
+        assert (health.state, health.dirty) == ("busy", False), block
+        assert "stop" in health.busy_phase and "fleet" in health.busy_phase
+        assert health.remedy == ""
+        assert not mesh_evidence.mesh_block_dirty(block)
+        assert mesh_health_row.doctor_verdict(block)[0] == "ok"
+        assert mesh_health_row.status_line(block).startswith("busy")
+    finally:
+        release.set()
+
+
+def test_a_cleanup_that_sent_no_stop_is_not_worded_as_a_failed_stop():
+    from dgx_monarch import mesh_teardown
+
+    handle = _handle(defunct=True, replacement_blocked="LifecycleBusyError('cannot shutdown')")
+    handle._block_cause = mesh_teardown.TAG_NO_STOP_ISSUED
+    health = mesh_health.health_of([handle])
+
+    assert health.state == "dirty"
+    assert "stop failed" not in health.reason
+    assert "could not send its stop" in health.reason
+    assert health.remedy.endswith(
+        mesh_teardown.sentence_for_cause(mesh_teardown.TAG_NO_STOP_ISSUED))
+
+
+def test_once_the_cleanup_has_ended_without_an_outcome_the_handle_is_dirty_again():
+    release = threading.Event()
+    handle = _running_cleanup(release)
+    release.set()
+    handle._supervision_reconcile_thread.join(5.0)
+    health = mesh_health.health_of([handle])
+    assert (health.state, health.busy_phase) == ("dirty", "")
+
+
 def test_unreadable_lease_maps_never_raise():
     health = mesh_health.health_of([_handle(
         sample_leases={0: "junk", 1: None, 2: 2},
@@ -432,6 +509,47 @@ def test_the_stranded_remedy_names_the_answer_the_next_render_actually_gives():
 
     runtime["_MESH_PENDING"] = {("key",): dead}
     assert mesh_creation.admission_occupant(runtime, ("key",)) is None
+
+
+@pytest.mark.parametrize("verdict", ["blocked", "unresolved", "unknown"])
+def test_a_stranded_fleet_whose_stop_is_unconfirmed_is_refused_with_its_cause(verdict):
+    """Only a confirmed stop admits a second fleet: these processes may still be running."""
+    from dgx_monarch import mesh_teardown
+
+    stranded = _handle(replacement_blocked="TimeoutError('proc stop did not finish')"
+                       if verdict == "blocked" else None,
+                       defunct=verdict != "blocked")
+    stranded._block_cause = mesh_teardown.TAG_STOP_TIMEOUT_DELIBERATE
+
+    def read(_handle):
+        if verdict == "unknown":
+            raise RuntimeError("mesh lifecycle state kept changing while deciding reuse; retry")
+        return verdict
+
+    runtime = {"_MESHES": {}, "_MESH_PENDING": {("key",): stranded},
+               "_coherent_lifecycle_verdict": read, "MeshAttachError": RuntimeError}
+
+    with pytest.raises(RuntimeError) as refused:
+        mesh_creation.admission_occupant(runtime, ("key",))
+    text = str(refused.value)
+    assert "never published" in text and "unconfirmed" in text
+    assert "Reset cannot reach" in text and "restart ComfyUI" in text
+    if verdict == "blocked":
+        assert mesh_teardown.label_for_cause(mesh_teardown.TAG_STOP_TIMEOUT_DELIBERATE) in text
+
+
+def test_a_stranded_fleet_whose_cleanup_still_runs_is_refused_with_the_wait_not_a_restart():
+    release = threading.Event()
+    stranded = _running_cleanup(release)
+    runtime = {"_MESHES": {}, "_MESH_PENDING": {("key",): stranded},
+               "_coherent_lifecycle_verdict": lambda _handle: "unresolved",
+               "MeshAttachError": RuntimeError}
+    try:
+        with pytest.raises(RuntimeError, match="still stopping") as refused:
+            mesh_creation.admission_occupant(runtime, ("key",))
+        assert "restart ComfyUI" not in str(refused.value)
+    finally:
+        release.set()
 
 
 def test_an_abandoned_creation_does_not_hide_its_stranded_pending_handle():

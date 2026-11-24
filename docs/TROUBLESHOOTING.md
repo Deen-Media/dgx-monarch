@@ -4304,6 +4304,23 @@ The row names the operation and passes `doctor`, because the reset a DIRTY
 row prescribes would kill that load. Wait for it. If the named operation is
 still there long past its budget, treat it as the dirty case below.
 
+**After a lost Worker.** While the driver's cleanup stops the fleet it lost,
+the row reads `busy (the stop of the previous Worker fleet in flight)`, the
+render's abandoned sample included: that stop settles it, and the driver
+refuses a Reset until the stop ends (about 135 s at most). Once the stop is
+confirmed the row reads `idle` until the next render replaces the stopped
+fleet; `doctor` passes and `dgxm status` exits 0. Since 1.5.0; before, both
+read DIRTY with a Reset remedy the driver refused, and `dgxm status` exited 1
+until the next render.
+
+**When that cleanup could not send its stop.** A cleanup that finds the
+lifecycle lock held by another transition (a setup rollback, a Gate's policy
+restore) waits for it, then stops the fleet itself. One refused for any other
+reason before it sent a stop, a native latent read still in flight for
+instance, says so: the row names `no stop was issued`, and **Reset attached
+mesh** stops the fleet. Before 1.5.0 such a cleanup left the fleet blocked with
+no recorded cause, the Reset refused it, and only a ComfyUI restart cleared it.
+
 **Fix:** follow the mesh row's remedy. An abandoned sample clears with **Reset attached
 mesh** in the sidebar panel; restart the Worker service only if setup still
 fails after that. An unresolved teardown outcome asks for the same reset first;
@@ -4317,10 +4334,12 @@ with an empty cache and no reset touches it: restart ComfyUI. A `DIRTY` row
 naming a fleet that was created and never published is the other one. The reset
 route reads the published cache only, so it answers `no_live_mesh` there and
 changes nothing. Start the next render instead: it drops an interrupted fleet
-that is already gone and attaches a fresh one. While that fleet is still live,
-or while the driver cannot tell whether it is, the render refuses with a typed
-error naming the restart, because a second fleet on
-one transport is worse than a stopped render.
+whose stop was confirmed, or that the driver proves gone after a Worker died,
+and attaches a fresh one. While that fleet is still live, its stop is
+unconfirmed, or the driver cannot tell, the render refuses with a typed error
+naming the restart, because a second fleet beside processes whose stop is
+unknown is worse than a stopped render. ComfyUI's exit stops the processes the
+driver started; `dgxm restart` clears any that outlive it.
 
 **Related:** [#1](#1-attach-fails-with-mesh_attach_config_timeout) and [#2](#2-every-attach-times-out-after-one-failed-attach) cover attach timeouts and a wedged Worker service, a
 different failure that looks the same at first. Start there when the mesh row

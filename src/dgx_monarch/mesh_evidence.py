@@ -25,17 +25,24 @@ def _text(value: object) -> str:
 
 
 def mesh_block_dirty(block: Mapping) -> bool:
-    """Whether the block reports a fleet the next attach cannot use."""
+    """Whether the block reports a fleet the next attach cannot use.
+
+    Abandoned samples count except on a stopped fleet (verdict completed: the
+    next attach replaces it, and its lease bookkeeping with it) and while the
+    driver reports busy, which with abandoned samples it does only while its
+    cleanup's stop, the stop that settles them, still runs (mesh_health).
+    """
+    state = _text(block.get("state"))
     verdict = _text(block.get("verdict"))
     replacement = block.get("replacement_blocked", False)
     busy = block.get("busy_phase")
     return (
-        _text(block.get("state")) in {"dirty", "blocked", "poisoned"}
+        state in {"dirty", "blocked", "poisoned"}
         or verdict in {"blocked", "poisoned"}
-        or any(
+        or (verdict != "completed" and state != "busy" and any(
             (strict_count(block.get(key)) or 0) > 0
             for key in ("abandoned_samples", "abandoned_leases")
-        )
+        ))
         or replacement is True
         or (isinstance(replacement, str) and bool(replacement.strip()))
         or block.get("poisoned") is True

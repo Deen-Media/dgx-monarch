@@ -135,6 +135,53 @@ def test_a_stop_whose_waiter_gave_up_still_owns_its_late_report_and_no_other_wai
     heal.finish.set()
 
 
+def test_a_retried_stop_after_a_stop_that_failed_with_an_answer_ends_at_its_own_report():
+    """The only retry the lifecycle sends: the first stop's Future answered with a failure.
+
+    That first stop stays registered for its keep window, and the retry's
+    report must end the retry, not wait out its whole bound behind it.
+    """
+    class FailsThenHangs(_Procs):
+        calls = 0
+
+        def stop(self, reason):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(get=lambda timeout=None: (_ for _ in ()).throw(
+                    RuntimeError("positive stop failure")))
+            return super().stop(reason)
+
+    procs = FailsThenHangs()
+    with pytest.raises(RuntimeError, match="positive stop failure"):
+        mesh_stop.stop_procs(procs, "dgx-monarch recycle", 30.0)
+    labels = _hook_soon(OWN_REPORT)
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError, match="without confirming every proc"):
+        mesh_stop.stop_procs(procs, "dgx-monarch recycle", 30.0)
+    assert time.monotonic() - started < 10.0
+    assert labels == [retired_meshes.STOP_NOTICE]
+    procs.finish.set()
+
+
+def test_a_late_report_for_a_stop_that_gave_up_unanswered_is_not_the_retrys():
+    """The controller answers one ProcMesh's stops in order, one report each.
+
+    A stop whose waiter gave up before its Future answered or its report came
+    still owns the next report; a second stop's own report is the one after it.
+    """
+    procs = _Procs()
+    first = proc_stops.started(procs, keep_s=130.0)
+    proc_stops.left(first, confirmed=False)
+    retry = proc_stops.started(procs, keep_s=130.0)
+
+    assert proc_stops.claim(OWN_REPORT) is True
+    assert first.report == OWN_REPORT and not retry.ended.is_set()
+    assert proc_stops.claim(OWN_REPORT) is True
+    assert retry.ended.is_set()
+    assert proc_stops.claim(OWN_REPORT) is True  # one more stays recognised, so kept quiet
+
+
 def test_a_given_up_stop_is_forgotten_once_it_can_no_longer_report():
     stop = proc_stops.started(_Procs(), keep_s=0.1)
     proc_stops.left(stop, confirmed=False)

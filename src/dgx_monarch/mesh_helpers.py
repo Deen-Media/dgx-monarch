@@ -439,10 +439,11 @@ def _launch_reconcile_thread(
                             )
                         handle._supervision_reconcile_thread = thread
                     else:
-                        thread = current
-                        if current is not getattr(
-                                handle, "_supervision_reconcile_thread", None):
+                        if current is not thread:
+                            # Another caller's thread, published while this
+                            # one's start was interrupted: its starter waits on it.
                             creator = False
+                        thread = current
                     if _reconcile_thread_started(thread):
                         started = True
                         break

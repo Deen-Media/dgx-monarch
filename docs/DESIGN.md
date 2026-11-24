@@ -244,7 +244,15 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
 - The ComfyUI process is the single Monarch client: when it dies its procs die,
   so no orphaned process holds a model. A supervision-class failure on a
   setup, load or render dispatch evicts the fleet, so the next Init or render
-  respawns it (`MeshHandle._await_or_evict`), and a mutation RPC that times out
+  respawns it (`MeshHandle._await_or_evict`). A fleet so evicted takes no new
+  policy and no setup, and its cleanup stops it from a thread of its own
+  (`mesh_teardown.reconcile_stop`): it waits out a transition that holds the
+  lifecycle lock and, if that transition published nothing, stops the fleet
+  then; refused before it sent a stop for any other reason, it records that no
+  stop was issued, and a Reset stops the fleet. A fleet whose publication was
+  interrupted admits a second fleet over it only once its stop is confirmed or
+  its processes are proven gone (`mesh_creation.admission_occupant`). A
+  mutation RPC that times out
   or is interrupted after its send latches the mesh DIRTY until a recycle
   (`mesh_rpc.call_all_bound`). `dgxm up` restarts wedged Worker services
   idempotently, and the driver restarts dead services before attaching

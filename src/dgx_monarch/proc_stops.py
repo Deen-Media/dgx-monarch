@@ -47,6 +47,9 @@ class ProcStop:
     ended: threading.Event = field(default_factory=threading.Event)
     report: str | None = None
     waiting: bool = True
+    # The stop's call failed or its Future answered, so no report of the
+    # controller's is this stop's: a failing controller never answers the Future.
+    answered: bool = False
 
 
 _STOPS: list[ProcStop] = []
@@ -96,10 +99,11 @@ def started(procs: Any, keep_s: float) -> ProcStop:
     return stop
 
 
-def left(stop: ProcStop, *, confirmed: bool) -> None:
+def left(stop: ProcStop, *, confirmed: bool, answered: bool = False) -> None:
     """The waiter is done: a confirmed stop is forgotten, any other kept until it cannot report."""
     with _LOCK:
         stop.waiting = False
+        stop.answered = answered
         if confirmed and stop in _STOPS:
             _STOPS.remove(stop)
         _prune(time.monotonic())
@@ -110,18 +114,32 @@ def is_report(text: object) -> bool:
 
 
 def claim(text: str) -> bool:
-    """Hand a controller report to the registered stop it names; False when it names none."""
+    """Hand a controller report to the registered stop it names; False when it names none.
+
+    A retried stop of one ProcMesh is registered beside the first, under the
+    same label. A retry follows only a stop that failed with an answer (a
+    timeout is never retried, mesh_teardown.stop_failure_is_retryable), and a
+    controller that fails never answers the stop's Future, so no report is an
+    answered stop's. A report goes to the oldest stop with neither an answer
+    nor a report yet: the retry's own report ends the retry, and one stop's
+    report never ends another's wait. When no match is left, the newest takes
+    it, so it stays recognised and quiet.
+    """
     match = _LABEL.search(text)
     label = match.group(1) if match else None
+    if not label:
+        return False
     with _LOCK:
         _prune(time.monotonic())
-        for stop in _STOPS:
-            if label and stop.prefix and label.startswith(stop.prefix):
-                stop.report = text
-                if stop.waiting:
-                    stop.ended.set()
-                return True
-    return False
+        named = [stop for stop in _STOPS if stop.prefix and label.startswith(stop.prefix)]
+        if not named:
+            return False
+        stop = next((stop for stop in named if stop.report is None and not stop.answered),
+                    named[-1])
+        stop.report = text
+        if stop.waiting:
+            stop.ended.set()
+        return True
 
 
 def reset() -> None:

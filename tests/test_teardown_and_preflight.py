@@ -102,6 +102,83 @@ def test_relocated_lifecycle_verdict_preserves_precedence(
         handle, mesh_mod.MeshAttachError) == expected
 
 
+def test_a_fleet_handle_built_where_a_freed_one_lived_starts_with_no_teardown_token(monkeypatch):
+    """Tokens are keyed by a handle's address, and a freed handle's address is reused.
+
+    A token stranded by an interrupted stop outlives its handle only in that
+    key; the next fleet built at the same address must not read it as its own
+    stop in flight, which would refuse its publication, renewal and shutdown.
+    get_mesh publishes every new handle as pending right after building it.
+    """
+    from dgx_monarch import mesh_creation
+
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    handle = _bare_handle()
+    mesh_safety.begin_deliberate_teardown(id(handle))  # what the freed handle left behind
+    runtime = {"_MESH_LOCK": threading.Lock(), "_MESH_PENDING": {}}
+
+    mesh_creation.publish_pending_handle(runtime, ("key",), handle)
+
+    assert runtime["_MESH_PENDING"] == {("key",): handle}
+    assert not mesh_safety.token_present(id(handle))
+    assert mesh_safety.coherent_lifecycle_verdict(handle, RuntimeError) == "live"
+
+
+def test_a_caller_that_adopts_another_callers_cleanup_thread_does_not_wait_on_it(monkeypatch):
+    """Its own thread's start was interrupted, and another caller published one meanwhile.
+
+    A render thread waits only for a cleanup it started itself; the adopted
+    thread is its own starter's to wait on.
+    """
+    from dgx_monarch import driver_exit, mesh_helpers
+
+    real_thread = threading.Thread
+    gate, joined = threading.Event(), []
+
+    class Theirs(real_thread):
+        def join(self, timeout=None):
+            joined.append(timeout)
+            return super().join(0)
+
+    theirs = Theirs(target=gate.wait, daemon=True)
+    theirs.start()
+    handle = SimpleNamespace(lock=threading.RLock(), replacement_blocked=None,
+                             _supervision_reconcile_thread=None)
+
+    class StartInterrupted(real_thread):
+        def start(self):
+            if (self.name == driver_exit.RECONCILE_THREAD
+                    and handle._supervision_reconcile_thread is self):
+                handle._supervision_reconcile_thread = theirs
+                raise RuntimeError("thread start interrupted")
+            return super().start()
+
+    monkeypatch.setattr(threading, "Thread", StartInterrupted)
+    try:
+        mesh_helpers._launch_reconcile_thread(
+            handle, RuntimeError("Supervision event: peer closed"), object(), wait=True)
+    finally:
+        monkeypatch.setattr(threading, "Thread", real_thread)
+        gate.set()
+
+    assert handle._supervision_reconcile_thread is theirs
+    assert joined == []
+
+
+def test_a_new_fleet_leaves_another_handles_teardown_token_alone(monkeypatch):
+    from dgx_monarch import mesh_creation
+
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    stopping = _bare_handle()
+    mesh_safety.begin_deliberate_teardown(id(stopping))
+    try:
+        mesh_creation.publish_pending_handle(
+            {"_MESH_LOCK": threading.Lock(), "_MESH_PENDING": {}}, ("key",), _bare_handle())
+        assert mesh_safety.token_present(id(stopping))
+    finally:
+        mesh_safety.end_deliberate_teardown(id(stopping), stop_confirmed=False)
+
+
 def test_relocated_lifecycle_verdict_preserves_typed_churn_refusal(monkeypatch):
     from dgx_monarch import mesh as mesh_mod
 

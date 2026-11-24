@@ -651,6 +651,18 @@ def test_a_release_older_than_one_bring_up_no_longer_claims_the_failure(monkeypa
     assert "proved its worker processes were gone" not in later.replacement_blocked
 
 
+def test_a_bring_up_that_left_no_handle_still_names_the_release_in_its_poison_text(monkeypatch):
+    """The poison text is what every later attach prints, so the note belongs there too."""
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_PREDECESSOR", None)
+    mesh_teardown.note_liveness_release()
+
+    text = mesh_teardown.publish_creation_block(None, "worker spawn rollback outcome is unconfirmed")
+
+    assert text.startswith("worker spawn rollback outcome is unconfirmed")
+    assert "proved its worker processes were gone" in text
+    assert mesh_teardown.released_predecessor_recently() is False  # the one shot is spent
+
+
 def test_a_creation_block_never_poisons_a_handle_whose_stop_confirmed():
     handle = _handle(ADDRESS_A)
     handle.teardown_complete = True

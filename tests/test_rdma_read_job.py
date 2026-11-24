@@ -1103,3 +1103,178 @@ def test_read_authority_publication_interrupt_reuses_exact_token():
     guard.abandon()
     assert handle.sample_leases == {}
     assert handle.abandoned_sample_leases == {1: 1}
+
+
+def _drive_read(guard, operation, *, on_loop: bool) -> tuple[threading.Event, list]:
+    """Run one read as ComfyUI does (on its loop) or as a plain thread does, on a daemon thread."""
+    import asyncio
+
+    done, outcome = threading.Event(), []
+
+    def call():
+        return rdma_read_driver.run_owned_off_loop(guard, operation, 2.0, "dgxm-latent-read")
+
+    def drive():
+        try:
+            if on_loop:
+                async def main():
+                    return call()
+
+                outcome.append(("returned", asyncio.run(main())))
+            else:
+                outcome.append(("returned", call()))
+        except BaseException as exc:  # the test reads what the caller ended with
+            outcome.append(("raised", exc))
+        finally:
+            done.set()
+
+    threading.Thread(target=drive, daemon=True).start()
+    return done, outcome
+
+
+def _claims_interrupted(monkeypatch, times: int | None) -> list:
+    """Interrupt the job's claim publication ``times`` times, or every time."""
+    real = rdma_read_job.LatentReadJob._claim
+    jobs: list = []
+
+    def claim(self, claim):
+        if not any(job is self for job in jobs):
+            jobs.append(self)
+        if times is None or len(getattr(self, "_zz_interrupts", ())) < times:
+            self.__dict__.setdefault("_zz_interrupts", []).append(1)
+            raise RuntimeError("claim publication interrupted")
+        return real(self, claim)
+
+    monkeypatch.setattr(rdma_read_job.LatentReadJob, "_claim", claim)
+    return jobs
+
+
+@pytest.mark.parametrize("on_loop", [False, True], ids=["off_loop", "on_loop"])
+def test_a_read_whose_claim_is_interrupted_twice_still_settles_once(monkeypatch, on_loop):
+    """Both claim attempts interrupted while no runner had claimed the job.
+
+    The runner is no loser then: nobody won, and a winner it waited for would
+    never come. It claims again, settles the read unread, retires its token and
+    unroots the job, so a later shutdown finds no read in the way.
+    """
+    from dgx_monarch import mesh_setup
+
+    monkeypatch.setattr(rdma_read_job._registry, "_JOBS", [])
+    jobs = _claims_interrupted(monkeypatch, 2)
+    handle = SimpleNamespace(
+        lock=threading.RLock(), sample_leases={1: 1},
+        abandoned_sample_leases={}, deferred_supervision_error=None)
+    guard = SetupBoundFuture(None, handle, 1)
+    entered: list = []
+
+    def operation(primary, _before_ack, enter, _publish):
+        enter()
+        entered.append(primary)
+        if primary is not None:
+            raise primary  # the unread settlement a real receiver runs
+        return "read"
+
+    done, outcome = _drive_read(guard, operation, on_loop=on_loop)
+    assert done.wait(10.0), f"the caller is still waiting: {jobs[0].state if jobs else None}"
+
+    assert outcome[0][0] == "raised"
+    assert len(entered) == 1 and entered[0] is not None  # one settlement, unread
+    assert rdma_read_job.pending_job_count_for_handle(handle) == 0
+    assert guard.readers == 0
+    assert not any(runner.is_alive() for runner in jobs[0].runners)
+    guard.abandon()
+    mesh_setup.require_no_sample_leases(handle, "shut down the worker fleet", allow_abandoned=True)
+
+
+def test_a_real_read_whose_claim_is_interrupted_twice_drops_unread_and_acknowledges(monkeypatch):
+    """Through the receiver: the descriptor is settled without a read, and the sender is told."""
+    class ImmediateFuture:
+        def get(self, timeout=None):
+            return None
+
+    class Buffer:
+        def __init__(self):
+            self.reads = self.drops = 0
+
+        def read_into(self, _dst, timeout=None):
+            self.reads += 1
+            return ImmediateFuture()
+
+        def drop(self):
+            self.drops += 1
+            return ImmediateFuture()
+
+    generation = 2
+    registry = HandoffRegistry()
+    buffer = Buffer()
+    actor_part = {"buffer": buffer, "offset": 0, "nbytes": 1}
+    handoff: dict = {}
+    registry.publish(handoff, generation, 1)
+    handoff.update(parts=[actor_part], keepalive=object(), state="registered")
+    registry.mark_ready(handoff)
+    token = handoff["token"]
+
+    class Handle:
+        world = 1
+
+        def __init__(self):
+            self.lock = threading.RLock()
+            self.sample_leases = {generation: 1}
+            self.abandoned_sample_leases = {}
+            self.deferred_supervision_error = None
+
+        def call_all(self, _endpoint, setup_generation, owner_token, timeout_s):
+            return [{"setup_generation": setup_generation, "token": owner_token,
+                     "status": registry.acknowledge(setup_generation, owner_token), "rank": 0}]
+
+    monkeypatch.setattr(rdma_read_job._registry, "_JOBS", [])
+    _claims_interrupted(monkeypatch, 2)
+    handle = Handle()
+    guard = SetupBoundFuture(None, handle, generation)
+    desc = {"kind": "rdma", "dtype": "uint8", "shape": [1], "parts": [dict(actor_part)],
+            "owner_token": token, "setup_generation": generation}
+
+    outcome: list = []
+
+    def read():
+        try:
+            outcome.append(read_latent_result(desc, guard))
+        except BaseException as exc:  # the test reads what the caller ended with
+            outcome.append(exc)
+
+    reader = threading.Thread(target=read, daemon=True)  # a regression waits for ever
+    reader.start()
+    reader.join(10.0)
+    assert not reader.is_alive(), "the read is still waiting for a winner"
+    assert isinstance(outcome[0], RuntimeError) and "claim publication interrupted" in str(outcome[0])
+    assert buffer.reads == 0 and buffer.drops == 1
+    assert guard.readers == 0
+    assert registry.get(generation, token)["_registry_state"] == "RELEASED"
+    assert rdma_read_job.pending_job_count() == 0
+
+
+@pytest.mark.parametrize("on_loop", [False, True], ids=["off_loop", "on_loop"])
+def test_a_read_that_can_never_be_claimed_returns_and_leaves_no_polling_runner(monkeypatch, on_loop):
+    """No runner ever claims it: no outcome can come, so no caller or runner waits for one.
+
+    The job stays rooted, as every job whose descriptor was never settled does
+    (test_rdma_job_registry), and lifecycle work keeps refusing on it.
+    """
+    monkeypatch.setattr(rdma_read_job._registry, "_JOBS", [])
+    jobs = _claims_interrupted(monkeypatch, None)
+
+    done, outcome = _drive_read(object(), lambda *_args: "read", on_loop=on_loop)
+    try:
+        assert done.wait(10.0), f"the caller is still waiting: {jobs[0].state if jobs else None}"
+        assert outcome[0][0] == "raised"
+        job = jobs[0]
+        for runner in job.runners:
+            if runner.ident is not None:  # off the loop the caller's own thread ran the job
+                runner.join(5.0)
+        assert not any(runner.is_alive() for runner in job.runners)
+        assert job.state == rdma_read_job.PENDING and not job.outcome_owner
+        assert rdma_read_job.pending_job_count() == 1
+    finally:
+        for job in jobs:
+            if not job.outcome_owner:
+                job.outcome_owner.append((None, RuntimeError("test cleanup")))

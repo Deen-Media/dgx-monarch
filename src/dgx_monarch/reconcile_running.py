@@ -46,10 +46,11 @@ def reconcile_stop_limit_s() -> float:
     hold its GPU lock, which its group teardown waits for (on one machine a
     stalled Worker's cleanup took 40 s, 30 of them in that wait). Before the
     phases the shutdown waits up to 10 s for the handle's lifecycle lock, only
-    while a Reset or another shutdown of this handle holds it; when that wait
-    runs out the reconcile ends without a stop. The figure leaves that wait
-    out. The shutdown's margin holds it, and so does reconcile_join_s, the
-    render's wait and cleanup_running's limit.
+    while another transition of this handle holds it; when that wait runs out
+    the reconcile waits for that transition to end and, if it published
+    nothing, runs the shutdown once more (mesh_teardown.reconcile_stop). The
+    figure leaves those waits out. The shutdown's margin holds the first, and
+    so do reconcile_join_s, the render's wait and cleanup_running's limit.
     """
     group, stop = shutdown_phases(RECONCILE_GROUP_S, proc_stop_bound_s())
     return group + min(ACTOR_STOP_S, stop) + stop
