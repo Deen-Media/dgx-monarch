@@ -9,6 +9,7 @@ import asyncio
 import math
 import re
 import sys
+import time
 from typing import Any
 
 from . import proc_stops, retired_meshes
@@ -204,11 +205,65 @@ def stop_with_reason(handle: Any, reason: str, timeout_s: float) -> None:
         except BaseException as exc:
             log.info("actor stop before the proc stop (%s) did not confirm: %s",
                      reason, failure_summary(exc))
-    stop_procs(handle.procs, reason, timeout_s)
+    if stop_procs(handle.procs, reason, timeout_s, proof=_death_proof(handle)) is PROVEN_GONE:
+        # The same Monarch state the liveness release leaves: the replacement's
+        # attach takes the released fleet's rules (mesh_teardown.note_liveness_release).
+        from . import mesh_teardown
+
+        mesh_teardown.note_liveness_release(addresses=[
+            host.address for host in getattr(getattr(handle, "config", None), "hosts", ()) or ()])
+
+
+# When a stop after a reported Worker death asks every host whether the fleet's
+# processes are gone, in seconds after the proc stop is sent. A slot is used
+# only when a whole fleet probe (PROOF_BUDGET_S, mesh_liveness's fleet budget)
+# fits before the stop's own wait ends, so the proof never lengthens a stop: a
+# restart heal's 2 s stop asks nothing.
+PROOF_AT_S = (2.0, 5.0, 10.0, 20.0, 40.0)
+PROOF_BUDGET_S = 20.0
+PROVEN_GONE = object()  # what stop_procs returns when the proof ended its wait
+
+
+def _death_proof(handle: Any) -> Any:
+    """The liveness proof a stop of this fleet may end on, or None.
+
+    Only after a reported Worker death, the case the stop-timeout latch's
+    release covers (mesh_teardown.timeout_cause): the lost host's processes are
+    gone and the live host's actors were just stopped, so every host can show
+    no actor at all while Monarch still waits on the lost host. A Reset of a
+    live fleet has no death behind it and keeps its stop's own outcome.
+    """
+    report = getattr(handle, "_supervision_death_report", None)
+    if (not isinstance(report, str) or not report
+            or getattr(handle, "_deferred_eviction_deliberate", False)
+            or getattr(handle, "config", None) is None):
+        return None
+    from . import mesh_liveness
+
+    return lambda: mesh_liveness.fleet_gone(handle)
+
+
+def _wait_or_prove(ended: Any, wait_s: float, proof: Any) -> bool:
+    """Wait for the stop to end; True when ``proof`` showed the processes gone first."""
+    if proof is None:
+        ended.wait(wait_s)
+        return False
+    started = time.monotonic()
+    slots = [at for at in PROOF_AT_S if at + PROOF_BUDGET_S <= wait_s]
+    for at in (*slots, None):
+        until = wait_s if at is None else at
+        if ended.wait(max(0.0, until - (time.monotonic() - started))) or at is None:
+            return False
+        try:
+            if proof():
+                return not ended.is_set()
+        except Exception as exc:  # a probe that cannot run proves nothing
+            log.info("liveness proof during the stop did not run: %s", failure_summary(exc))
+    return False
 
 
 def stop_procs(procs: Any, reason: str, timeout_s: float,
-               thread_name: str = "dgxm-proc-stop-wait") -> Any:
+               thread_name: str = "dgxm-proc-stop-wait", proof: Any = None) -> Any:
     """Stop a ProcMesh and wait up to ``timeout_s``; Monarch's report on this stop ends the wait.
 
     With one host lost and another alive, Monarch's ProcMesh controller ends
@@ -226,6 +281,14 @@ def stop_procs(procs: Any, reason: str, timeout_s: float,
     outcome. A stop not confirmed stays registered for as long as it could
     report. The Future's get runs on a daemon thread, which its own timeout
     ends; during interpreter shutdown, which starts no thread, it runs here.
+
+    ``proof`` (stop_with_reason gives one after a reported Worker death) is
+    asked at the PROOF_AT_S slots that fit while the wait runs; when it shows
+    the processes gone on every host the wait ends there, as a stop that freed
+    what it had to free, and returns PROVEN_GONE. The stop stays registered,
+    so Monarch's later report on it is kept quiet. On a pair a lost host's stop
+    otherwise waits out Monarch's report, about 30 to 90 s, with nothing left
+    to stop.
     """
     import threading
 
@@ -255,7 +318,12 @@ def stop_procs(procs: Any, reason: str, timeout_s: float,
             threading.Thread(target=wait, args=(future,), name=thread_name, daemon=True).start()
         except RuntimeError:  # interpreter shutdown starts no thread: wait here instead
             wait(future)
-        stop.ended.wait(timeout_s + ACTOR_STOP_S)
+        proven = _wait_or_prove(stop.ended, timeout_s + ACTOR_STOP_S, proof)
+        if proven and not done.is_set():
+            log.warning("proc stop (%s) ends on the liveness proof: every host shows the "
+                        "fleet's processes gone, so nothing is left to stop; Monarch's own "
+                        "report on that stop is kept quiet when it comes", reason)
+            return PROVEN_GONE
         if done.is_set():  # read first, without waiting: a finished stop keeps its outcome
             answered = not isinstance(outcome.get("error"), TimeoutError)
             if "error" in outcome:

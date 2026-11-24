@@ -2492,6 +2492,22 @@ sections after them list every change.
   only the handle's text said so before.
 - Fix: with native latent return on, a latent read whose start was interrupted
   twice now settles and returns, where its render could wait for ever.
+- Fix: a Worker lost while the driver brings a cluster fleet up no longer
+  leaves the session refusing every render until ComfyUI restarts. The next
+  render, and Reset attached mesh, ask every host whether the processes that
+  bring-up spawned are gone, and once every host says so a fresh fleet
+  attaches in the same session; while a host still shows them, the refusal
+  names it. Before, the Reset answered `no_live_mesh` and only a restart helped
+  ([TROUBLESHOOTING #69](docs/TROUBLESHOOTING.md#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)).
+- Fix: the stop of a fleet that lost a Worker ends as soon as every host shows
+  the fleet's processes gone, where it waited out Monarch's report on the lost
+  host, about 30 to 90 s with nothing left to stop; the render that met the
+  loss gets its error, and the next render attaches, that much sooner. A
+  status poll that meets the dead fleet starts its stop and answers at once,
+  so `dgxm status` and `dgxm doctor` read the stop as busy rather than the
+  driver as unreadable, and a poll that arrives while a refresh runs reads
+  the mesh row as it is now, where it read the last refresh's row or none
+  ([TROUBLESHOOTING #4](docs/TROUBLESHOOTING.md#4-supervisionerror--process-exited-with-non-zero-code)).
 
 ### Development
 

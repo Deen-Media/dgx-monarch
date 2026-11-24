@@ -829,6 +829,29 @@ def test_fetch_distinguishes_no_driver_from_a_driver_with_no_view(monkeypatch):
     assert mesh_health_row.fetch_mesh_block() == {}
 
 
+def test_a_poll_during_a_slow_refresh_reads_the_mesh_as_it_is_now(monkeypatch):
+    """Status and doctor polls that arrive while a refresh runs read the current mesh row.
+
+    Before any refresh had ended they read no mesh block at all ("no mesh
+    view", exit 75), and after one, the last refresh's row.
+    """
+    from dgx_monarch.nodes import routes
+
+    release = threading.Event()
+    busy = mesh_health.health_of([_running_cleanup(release, abandoned_sample_leases={3: 1})])
+    release.set()
+    monkeypatch.setattr(mesh_health, "mesh_health_snapshot", lambda: busy.as_dict())
+    monkeypatch.setattr(routes, "_TELEMETRY_CACHE", {
+        "t": 0.0, "data": None, "inflight": True, "generation": 0})
+
+    block = routes._telemetry()["mesh"]
+
+    assert block["state"] == "busy"
+    assert mesh_health_row.state_name(block) == "busy"
+    assert mesh_health_row.doctor_verdict(block)[0] == "ok"
+    assert not mesh_health_row.unobserved(block)
+
+
 def test_doctor_prints_the_mesh_row(monkeypatch, capsys):
     monkeypatch.setattr(mesh_health_row, "fetch_mesh_block", lambda: _block())
     row = doctor._mesh_health_row()

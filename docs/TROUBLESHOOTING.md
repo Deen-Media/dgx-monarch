@@ -583,6 +583,21 @@ torchmonarch 0.8.0):
   ([#86](#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)),
   whose Worker can still be alive and hold its GPU lock, which the group
   teardown waits for.
+- Since 1.5.0 that stop does not wait out Monarch's report once the processes
+  are gone: 2, 5, 10, 20 and 40 s after it is sent, the driver asks every host
+  the question the liveness release asks ([#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)),
+  and when every host shows no actor process left the stop ends there and the
+  log says `proc stop (...) ends on the liveness proof`. A lost box whose Worker
+  loop came back, and a live box whose actors the stop just ended, answer gone
+  within seconds, so the render's error and the next render's attach no longer
+  wait for the stop to time out; that attach follows the rules for a fleet the
+  liveness release replaced ([#2](#2-every-attach-times-out-after-one-failed-attach)),
+  since Monarch never confirmed the stop. The figures above were taken before
+  this change; the pair has not measured the new ones yet. A host that stays
+  alive or cannot be read keeps the full stop, as before, and a stop too short
+  for a whole check (a restart heal's 2 s stop) asks nothing. A `dgxm status`
+  or panel poll that meets the dead fleet starts the same stop and answers at
+  once, so the mesh row reads busy while it runs rather than unreadable.
 
 These figures come from Worker services killed or frozen on one machine, over
 loopback, on 2026-11-17 and 2026-11-18. A powered-off box or a cut link sends
@@ -847,7 +862,8 @@ timeout and a poisoned driver transport; see [the dated lifecycle results](VALID
 A poisoned transport requires a fresh driver after confirmed owned cleanup;
 resetting its attached mesh does not clear that transport state. That check
 came before per-start Worker ids; see [#2](#2-every-attach-times-out-after-one-failed-attach) for
-re-attach after a Worker restart.
+re-attach after a Worker restart, and [#69](#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)
+for the one poison that lifts in-session since 1.5.0.
 
 ## 10. First RDMA latent return is slow
 
@@ -4307,11 +4323,15 @@ still there long past its budget, treat it as the dirty case below.
 **After a lost Worker.** While the driver's cleanup stops the fleet it lost,
 the row reads `busy (the stop of the previous Worker fleet in flight)`, the
 render's abandoned sample included: that stop settles it, and the driver
-refuses a Reset until the stop ends (about 135 s at most). Once the stop is
-confirmed the row reads `idle` until the next render replaces the stopped
-fleet; `doctor` passes and `dgxm status` exits 0. Since 1.5.0; before, both
-read DIRTY with a Reset remedy the driver refused, and `dgxm status` exited 1
-until the next render.
+refuses a Reset until the stop ends (about 135 s at most, and seconds once
+every host shows the processes gone, [#4](#4-supervisionerror--process-exited-with-non-zero-code)).
+Once the stop is confirmed the row reads `idle` until the next render replaces
+the stopped fleet; `doctor` passes and `dgxm status` exits 0. Since 1.5.0;
+before, both read DIRTY with a Reset remedy the driver refused, and `dgxm
+status` exited 1 until the next render. A poll that met the dead fleet also held
+the telemetry route for the whole stop, so both commands read the driver as
+unreadable (`dgxm status` exited 75 and `doctor` only warned); that poll now
+starts the stop and answers at once.
 
 **When that cleanup could not send its stop.** A cleanup that finds the
 lifecycle lock held by another transition (a setup rollback, a Gate's policy
@@ -4330,7 +4350,15 @@ Never restart the Worker service underneath a live driver mesh.
 **Two rows the reset button cannot clear.** `POISONED` reports that this
 driver's Monarch transport cannot be reused after a partial bring-up or a
 creation failure. It is process state, not handle state, so it reads the same
-with an empty cache and no reset touches it: restart ComfyUI. A `DIRTY` row
+with an empty cache and no reset touches it: restart ComfyUI. One `POISONED`
+row lifts in the same session: a cluster bring-up that failed because a Worker
+was lost, which leaves only its spawned processes unknown. Its row says the
+driver cannot yet prove them gone. The next render, and **Reset attached
+mesh**, ask every host whether they are gone, and when every host says so the
+poison lifts and the render attaches a fresh fleet; while a host still shows
+them, the refusal names it, and a ComfyUI restart clears it (since 1.5.0;
+before, every such session needed a restart, and the Reset answered
+`no_live_mesh`). A `DIRTY` row
 naming a fleet that was created and never published is the other one. The reset
 route reads the published cache only, so it answers `no_live_mesh` there and
 changes nothing. Start the next render instead: it drops an interrupted fleet
@@ -4682,9 +4710,15 @@ evidence adds to it and never replaces it. Confirmed cleanup after an
 already-built handle or client-lease startup failure may evict that handle and
 retry the same transport mode. A `WorkerSpawnError` after transport
 initialization leaves the process poisoned even when its partial ProcMesh
-rollback was confirmed; restart ComfyUI or the driver before retrying. Only a
-local failure proven to occur before transport import or initialization is
-retryable in-session.
+rollback was confirmed. In a cluster, the poison lifts once every host shows
+the processes the bring-up spawned gone: the next render and **Reset attached
+mesh** ask, as [#65](#65-dgxm-status-and-dgxm-doctor-are-green-and-every-attach-still-fails)
+says, since the transport itself survives the failed spawn (the driver
+attaches again in the same session after the loops restart). An attach whose
+result handoff was interrupted, or a spawn callback whose removal is
+unconfirmed, keeps the poison until ComfyUI restarts. A local fleet's poison
+needs a restart too; only a local failure proven to occur before transport
+import or initialization is retryable in-session.
 If a completed stop call reports a definite non-timeout ordinary failure,
 replacement stays blocked, but a later explicit **Reset attached mesh**,
 shutdown or supervision cleanup gets a fresh bounded stop attempt. A second

@@ -753,3 +753,50 @@ def test_worker_status_ttl_ignores_wall_clock_steps(monkeypatch):
     clocks[:] = [8600.0, 201.9]  # wall forward two hours, 0.4 s passed: cached
     assert routes._worker_snapshot() == second
     assert len(calls) == 2
+
+
+def test_a_status_poll_that_meets_a_dead_fleet_answers_while_its_cleanup_still_stops_it(monkeypatch):
+    """The poll sets the cleanup off and returns; it never waits for the stop.
+
+    Waiting held the telemetry route for the whole stop, so `dgxm status` and
+    `dgxm doctor` read a driver that was busy stopping a lost fleet as one that
+    gave no readable answer.
+    """
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import mesh_health, mesh_safety
+    from dgx_monarch.nodes import routes
+    from topology_transition_helpers import _acks, _Endpoint, _Future, _handle, _Workers
+
+    class SupervisionError(RuntimeError):
+        pass
+
+    stopping, release = threading.Event(), threading.Event()
+
+    class SlowProcs:
+        def stop(self, _reason):
+            stopping.set()
+            return types.SimpleNamespace(get=lambda timeout=None: release.wait(10.0))
+
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    workers = _Workers([_Future(_acks())])
+    workers.status = _Endpoint(_Future(error=SupervisionError("peer closed")))
+    handle, _old, _new = _handle(workers)
+    handle.procs = SlowProcs()
+    monkeypatch.setattr(mesh_mod, "_MESHES", {("key",): handle})
+    monkeypatch.setattr(routes, "_CACHE", {"t": 0.0, "workers": [], "inflight": False,
+                                           "busy_note": None, "generation": 0, "fresh": False})
+    answered: list = []
+    poll = threading.Thread(target=lambda: answered.append(routes._workers()), daemon=True)
+    try:
+        poll.start()
+        poll.join(5.0)
+        assert not poll.is_alive(), "the poll waited for the cleanup's stop"
+        assert answered[0] == [{"status_error": "SupervisionError"}]
+        assert stopping.wait(5.0)
+        block = mesh_health.health_of([handle]).as_dict()
+        assert block["state"] == "busy", block  # what status and doctor now read
+    finally:
+        release.set()
+        thread = handle._supervision_reconcile_thread
+        if thread is not None:
+            thread.join(10.0)

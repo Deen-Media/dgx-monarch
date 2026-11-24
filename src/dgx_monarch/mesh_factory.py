@@ -33,6 +33,7 @@ class FleetHandoff:
         self.transport_failure_safe = False
         self.spawn_in_progress = False
         self.bootstrap_refusal: BaseException | None = None
+        self.config: Any | None = None  # the hosts the spawn ran on, for a liveness proof
 
 
 def recording_bootstrap_refusal(command: Any, handoff: FleetHandoff) -> Any:
@@ -365,6 +366,7 @@ def spawn_worker_fleet(config, use_cluster: bool, gpus_per_host: int,
                        handoff: FleetHandoff | None = None) -> Fleet:
     if handoff is None:
         handoff = FleetHandoff()
+    handoff.config = config
     if use_cluster:
         try:
             handoff.attach_in_progress = True

@@ -1129,6 +1129,41 @@ def test_lease_start_failure_with_unconfirmed_proc_cleanup_blocks_every_retry(mo
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
 
 
+def test_the_next_render_after_a_failed_bring_up_proven_gone_builds_a_fresh_fleet(monkeypatch):
+    """A Worker lost during a cluster bring-up: once every host shows its processes gone."""
+    import time
+
+    from dgx_monarch import failed_bring_up, mesh_factory, mesh_liveness
+
+    proc_mesh = _PublishedProcMesh()
+
+    def spawn(_config, _cluster, _gph, _attach, _bootstrap, handoff):
+        handoff.fleet = SimpleNamespace(), proc_mesh, SimpleNamespace(), False
+        return handoff.fleet
+
+    mesh = _mesh_publication_fakes(monkeypatch, spawn, lambda: True)
+    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", [])
+    failed = mesh_factory.FleetHandoff()
+    failed.config = SimpleNamespace(hosts=(SimpleNamespace(address="box-b"),))
+    failed.failure_latched = failed.spawn_in_progress = failed.cleanup_started = True
+    mesh_factory.begin_creation_cleanup(object(), failed)
+    poison = ("mesh creation failed (MeshAttachError('worker actor bring-up failed')); owned "
+              "ProcMesh cleanup unconfirmed (worker spawn rollback outcome is unconfirmed)")
+    monkeypatch.setattr(mesh, "_TRANSPORT_POISON", poison)
+    answers = [mesh_liveness.ALIVE, mesh_liveness.GONE]
+    monkeypatch.setattr(mesh_liveness, "probe_fleet", lambda _handle, **_kwargs: (
+        mesh_liveness.LivenessEvidence(
+            answers[0], (("box-b", answers[0]),), time.monotonic())))
+
+    with pytest.raises(mesh.MeshAttachError, match="cannot yet prove gone"):
+        mesh.get_mesh(mode="local", gpus_per_host=1)
+    answers.pop(0)
+    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", [])  # the alive answer's interval passed
+    fresh = mesh.get_mesh(mode="local", gpus_per_host=1)
+
+    assert fresh.procs is proc_mesh and mesh._TRANSPORT_POISON is None
+
+
 def test_the_transport_poison_after_a_released_fleets_failed_replacement_names_the_release(
         monkeypatch):
     from dgx_monarch import mesh_teardown

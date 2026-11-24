@@ -12,6 +12,7 @@ from . import (
     __version__,
     client_lease,
     driver_exit,
+    failed_bring_up,
     mesh_attach,
     mesh_creation,
     mesh_factory,
@@ -393,7 +394,7 @@ def get_mesh(
     global _TRANSPORT_CLAIM_GENERATION, _TRANSPORT_COMMITTED_GENERATION
     driver_exit.hold_at_entry()  # at exit: waits for the process to end, before anything
     install_fault_hook()
-    mesh_creation.reap_abandoned_attempts(globals())
+    failed_bring_up.settle(globals())  # reaps abandoned creations, lifts a proven bring-up's poison
     resolved = find_config_path(config_path or None)
     use_cluster = mode == "cluster" or (mode == "auto" and resolved is not None)
     if use_cluster and resolved is None:
@@ -403,9 +404,7 @@ def get_mesh(
         )
     wanted_transport = "cluster" if use_cluster else "local"
     if _TRANSPORT_POISON is not None:
-        raise MeshAttachError(
-            "this ComfyUI session's Monarch transport is not reusable after a "
-            f"partial bring-up failure ({_TRANSPORT_POISON}); restart ComfyUI before retrying")
+        raise MeshAttachError(failed_bring_up.refusal(_TRANSPORT_POISON))
     if _TRANSPORT_MODE is not None and _TRANSPORT_MODE != wanted_transport:
         raise MeshAttachError(
             f"this ComfyUI session already brought up a {_TRANSPORT_MODE} mesh; monarch allows "

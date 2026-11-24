@@ -324,6 +324,30 @@ def _fold_text(evidence: LivenessEvidence) -> str:
     return ",".join(f"{address}={answer}" for address, answer in evidence.per_host)
 
 
+def fleet_gone(handle: Any, *, runner: Callable[..., Any] | None = None,
+               scanner: Callable[[], Any] | None = None) -> bool:
+    """Whether every configured host shows the fleet's processes gone, asked during its stop.
+
+    The latch release's question (try_release), asked while a stop after a
+    reported Worker death still waits on Monarch's report (mesh_stop.stop_procs).
+    A fleet-wide gone ends that wait: no actor, no live ledger row and no
+    unreadable process on any host, so nothing remains to stop. The evidence
+    is kept on the handle, where the release reads it within its window.
+    """
+    if driver_exit.exiting():
+        return False
+    evidence = probe_fleet(handle, runner=runner, scanner=scanner)
+    if driver_exit.exiting():
+        return False
+    try:
+        handle._liveness_evidence = evidence
+    except Exception:
+        pass
+    log.warning("liveness fold during the stop answer=%s hosts=%s",
+                evidence.answer, _fold_text(evidence))
+    return evidence.answer == GONE
+
+
 def try_release(handle: Any, *, runner: Callable[..., Any] | None = None,
                 scanner: Callable[[], Any] | None = None) -> bool:
     """Clear an eligible stop-timeout latch after proving all workers are gone.

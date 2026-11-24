@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from . import client_lease, mesh_safety, mesh_teardown
+from . import client_lease, failed_bring_up, mesh_safety, mesh_teardown
 from .log import get_logger
 
 log = get_logger(__name__)
@@ -130,7 +130,11 @@ class MeshHealth:
         if not self.dirty:
             return ""
         parts = []
-        if self.poison:
+        if self.poison and failed_bring_up.liftable(self.poison):
+            parts.append(
+                "a failed bring-up left processes the driver cannot yet prove gone "
+                f"({self.poison})")
+        elif self.poison:
             parts.append(
                 "the driver's Monarch transport cannot be reused "
                 f"({self.poison})")
@@ -167,6 +171,10 @@ class MeshHealth:
         """Return the recovery action for a dirty fleet, or empty."""
         if not self.dirty:
             return ""
+        if self.poison and failed_bring_up.liftable(self.poison):
+            return ("start the next render or press Reset attached mesh: once every host shows "
+                    "the failed bring-up's processes gone, a fresh fleet attaches; restart "
+                    "ComfyUI if a host keeps them")
         if self.poison:
             # The poison lives in the driver process, so only a new one attaches.
             return "restart ComfyUI; no attached-mesh reset clears a poisoned transport"

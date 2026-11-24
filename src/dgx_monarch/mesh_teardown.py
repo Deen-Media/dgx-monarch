@@ -16,6 +16,7 @@ from .mesh_stop import RECONCILE_GROUP_S, proc_stop_bound_s, stop_with_reason
 from .mesh_stop import reconcile_join_s as reconcile_join_s
 from .mesh_stop import shutdown_envelope_s as shutdown_envelope_s
 from .mesh_stop import shutdown_phases as shutdown_phases
+from .reconcile_running import caller_waits as caller_waits
 from .reconcile_running import cleanup_running as cleanup_running  # re-exported for the refusals' callers
 from .reconcile_running import cleanup_running_sentence as cleanup_running_sentence
 from .reconcile_running import unresolved_refusal as unresolved_refusal

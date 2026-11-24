@@ -25,6 +25,7 @@ from dgx_monarch import (
     mesh_teardown,
 )
 from dgx_monarch.cli import actor_reaper, lifecycle
+from dgx_monarch.mesh_liveness import fleet_gone as REAL_FLEET_GONE  # conftest makes it inert
 
 ADDRESS_A = "tcp://10.0.0.1:26600"
 ADDRESS_B = "tcp://10.0.0.2:26600"
@@ -661,6 +662,18 @@ def test_a_bring_up_that_left_no_handle_still_names_the_release_in_its_poison_te
     assert text.startswith("worker spawn rollback outcome is unconfirmed")
     assert "proved its worker processes were gone" in text
     assert mesh_teardown.released_predecessor_recently() is False  # the one shot is spent
+
+
+@pytest.mark.parametrize(("answer", "gone"), [
+    (_line(), True), (_line(actors=1), False), (_line(unreadable=1), False)],
+    ids=["gone", "alive", "unknown"])
+def test_the_proof_a_stop_after_a_death_ends_on_is_the_releases_own_fleet_wide_gone(answer, gone):
+    handle = SimpleNamespace(config=_config(ADDRESS_A, ADDRESS_B))
+    runner = Runner(answers={ADDRESS_B: (answer, "", 0)})
+
+    assert REAL_FLEET_GONE(handle, runner=runner) is gone
+    assert sorted(address for address, _script, _timeout in runner.calls) == [ADDRESS_A, ADDRESS_B]
+    assert (handle._liveness_evidence.answer == mesh_liveness.GONE) is gone  # kept for the release
 
 
 def test_a_creation_block_never_poisons_a_handle_whose_stop_confirmed():

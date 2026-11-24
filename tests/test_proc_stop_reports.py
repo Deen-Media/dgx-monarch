@@ -164,6 +164,49 @@ def test_a_retried_stop_after_a_stop_that_failed_with_an_answer_ends_at_its_own_
     procs.finish.set()
 
 
+def test_a_stop_whose_processes_are_proven_gone_ends_there_and_keeps_its_late_report_quiet(
+        monkeypatch):
+    """After a Worker death the lost host's stop waits on Monarch with nothing left to stop."""
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.05, 0.1, 0.2))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.01)
+    procs = _Procs()  # its Future never finishes on its own
+    answers = iter([False, True])
+    started = time.monotonic()
+
+    assert mesh_stop.stop_procs(procs, "dgx-monarch client detach", 30.0,
+                                proof=lambda: next(answers)) is mesh_stop.PROVEN_GONE
+
+    assert time.monotonic() - started < 5.0
+    assert retired_meshes.notice(OWN_REPORT) == retired_meshes.STOP_NOTICE  # still recognised
+    procs.finish.set()
+
+
+def test_a_stop_with_no_proof_or_a_proof_that_never_says_gone_keeps_its_bound(monkeypatch):
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.05, 0.1))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.01)
+    asked: list = []
+    with pytest.raises(TimeoutError, match="did not finish"):
+        mesh_stop.stop_procs(_Procs(), "dgx-monarch client detach", 0.3,
+                             proof=lambda: asked.append(1) or False)
+    assert asked == [1, 1]
+
+
+def test_only_a_stop_after_a_reported_worker_death_asks_for_the_proof(monkeypatch):
+    from dgx_monarch import mesh_liveness
+
+    proofs: list = []
+    monkeypatch.setattr(mesh_liveness, "fleet_gone", lambda handle: proofs.append(handle) or True)
+    dead = SimpleNamespace(config=object(), _supervision_death_report="{'SupervisionError'} x")
+    deliberate = SimpleNamespace(config=object(), _supervision_death_report="x",
+                                 _deferred_eviction_deliberate=True)
+    live = SimpleNamespace(config=object())
+
+    assert mesh_stop._death_proof(live) is None
+    assert mesh_stop._death_proof(deliberate) is None
+    proof = mesh_stop._death_proof(dead)
+    assert proof is not None and proof() is True and proofs == [dead]
+
+
 def test_a_late_report_for_a_stop_that_gave_up_unanswered_is_not_the_retrys():
     """The controller answers one ProcMesh's stops in order, one report each.
 

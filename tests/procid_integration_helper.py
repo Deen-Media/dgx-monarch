@@ -460,10 +460,10 @@ def _lost_beside_live(handle, mesh_helpers, mesh_stop) -> None:
     name = proc_stops.name_of(handle.procs)
     real, timed = mesh_stop.stop_procs, {}
 
-    def stop_procs(procs, reason, timeout_s, *args):
+    def stop_procs(procs, reason, timeout_s, *args, **kwargs):
         timed["bound_s"], started = timeout_s, time.monotonic()
         try:
-            return real(procs, reason, timeout_s, *args)
+            return real(procs, reason, timeout_s, *args, **kwargs)
         except BaseException as exc:
             timed["error"] = f"{type(exc).__name__}: {exc}"[:600]
             raise
@@ -548,8 +548,13 @@ def _exit_attach_client(config, delay_s: float) -> None:
 
 def client(spec_json: str) -> None:
     spec = json.loads(spec_json)
+    from dgx_monarch import mesh_liveness
     from dgx_monarch.cli import lifecycle
     from dgx_monarch.config import ClusterConfig, HostConfig
+
+    # These modes pin Monarch's own stop outcomes. A stop after a death would
+    # otherwise also ask the hosts, and this box's other actors answer for them.
+    mesh_liveness.fleet_gone = lambda *_args, **_kwargs: False
 
     homes = spec["homes"]
 

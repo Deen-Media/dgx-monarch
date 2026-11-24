@@ -251,8 +251,13 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
   then; refused before it sent a stop for any other reason, it records that no
   stop was issued, and a Reset stops the fleet. A fleet whose publication was
   interrupted admits a second fleet over it only once its stop is confirmed or
-  its processes are proven gone (`mesh_creation.admission_occupant`). A
-  mutation RPC that times out
+  its processes are proven gone (`mesh_creation.admission_occupant`). A stop
+  after a reported Worker death ends as soon as every host shows the fleet's
+  processes gone (`mesh_stop.stop_procs`), and a status poll that meets a dead
+  fleet starts its cleanup without waiting for it. A cluster bring-up that
+  failed with a Worker's loss poisons the session only until every host shows
+  the processes it spawned gone (`failed_bring_up`): the next render and the
+  Reset ask. A mutation RPC that times out
   or is interrupted after its send latches the mesh DIRTY until a recycle
   (`mesh_rpc.call_all_bound`). `dgxm up` restarts wedged Worker services
   idempotently, and the driver restarts dead services before attaching

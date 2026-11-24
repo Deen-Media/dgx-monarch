@@ -131,6 +131,33 @@ def attached_fleet(handle: Any) -> Any:
     return None
 
 
+def _poisoned_reset(mesh_mod: Any) -> tuple[dict[str, Any], int]:
+    """A Reset with no attached mesh while a failed bring-up poisoned the session.
+
+    The Reset runs the check the next render runs (failed_bring_up.release):
+    when every host shows the bring-up's processes gone it lifts the poison,
+    and otherwise it says what still refuses and the restart that clears it.
+    """
+    from .. import failed_bring_up
+
+    if failed_bring_up.release(mesh_mod.__dict__):
+        return ({
+            "ok": True,
+            "status": "poison_released",
+            "retryable": False,
+            "detail": "the processes the failed bring-up spawned are gone on every host; "
+                      "the next render attaches a fresh fleet",
+        }, 200)
+    poison = mesh_mod._TRANSPORT_POISON
+    return ({
+        "ok": False,
+        "status": "poisoned",
+        "retryable": False,
+        "detail": (failed_bring_up.refusal(poison) if poison is not None else
+                   "no attached mesh to reset; worker services are unchanged"),
+    }, 200)
+
+
 def recycle_attached_mesh(only: Any = None) -> tuple[dict[str, Any], int]:
     """Reset the attached mesh, as POST /dgxm/recycle does; (payload, HTTP status).
 
@@ -138,10 +165,13 @@ def recycle_attached_mesh(only: Any = None) -> tuple[dict[str, Any], int]:
     mesh: when it is not attached any more, nothing is reset and the status
     says the fleet changed.
     """
+    from .. import mesh as mesh_mod
     from ..mesh import _MESH_LOCK, _MESHES
 
     with _MESH_LOCK:  # snapshot under lock; recycle is idempotent anyway
         attached = list(_MESHES.values())
+    if not attached and only is None and mesh_mod._TRANSPORT_POISON is not None:
+        return _poisoned_reset(mesh_mod)  # the panel's Reset; a card's clear names its own fleet
     if not attached:
         return ({
             "ok": False,

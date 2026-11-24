@@ -19,6 +19,7 @@ import pytest
 
 from dgx_monarch import mesh_safety, mesh_setup, mesh_teardown, rdma_read_job
 from dgx_monarch.mesh import mark_defunct_on_supervision_failure
+from dgx_monarch.mesh_liveness import fleet_gone as real_fleet_gone  # conftest makes it inert
 from dgx_monarch.mesh_recycle import RecycleStatus
 from dgx_monarch.nodes.render_session import RenderSession
 from dgx_monarch.rdma_read_driver import run_owned_off_loop
@@ -281,6 +282,46 @@ def test_setup_and_policy_changes_refuse_a_defunct_fleet_before_any_send():
     assert workers.apply_worker_args.calls == []
     assert workers.teardown_group.calls == []
     assert handle.setup_cleanup_state is None
+
+
+class _NeverStops:
+    """A ProcMesh with a lost host: its stop's Future never answers, Monarch never reports."""
+
+    def __init__(self):
+        self.reasons: list[str] = []
+        self.release = threading.Event()
+
+    def stop(self, reason):
+        self.reasons.append(reason)
+        return SimpleNamespace(get=lambda timeout=None: (self.release.wait(timeout), None)[1])
+
+
+def test_a_lost_workers_fleet_proven_gone_is_stopped_without_waiting_out_monarch(monkeypatch):
+    """The render that met the loss gets its error in seconds, not when the stop times out."""
+    import time
+
+    from dgx_monarch import mesh_liveness, mesh_stop
+
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.05, 0.2))
+    monkeypatch.setattr(mesh_liveness, "fleet_gone", real_fleet_gone)
+    probes: list = []
+    monkeypatch.setattr(mesh_liveness, "probe_fleet", lambda handle, **_kwargs: probes.append(1) or (
+        mesh_liveness.LivenessEvidence(mesh_liveness.GONE, (("local", "gone"),), time.monotonic())))
+    handle, _old, _new = _handle(_Workers([_Future(_acks())]))
+    handle.procs = _NeverStops()
+    started = time.monotonic()
+    try:
+        mark_defunct_on_supervision_failure(handle, SupervisionError("peer closed"))  # waits, as a render does
+        elapsed = time.monotonic() - started
+    finally:
+        handle.procs.release.set()
+
+    assert elapsed < 10.0, elapsed
+    assert handle.teardown_complete is True and handle.replacement_blocked is None
+    assert handle.procs.reasons == ["dgx-monarch client detach"] and probes
+    assert mesh_teardown.block_cause(handle) is None
+    # Monarch never confirmed that stop: the replacement attaches as after a release.
+    assert mesh_teardown.released_predecessor_recently() is True
 
 
 class _GatedFuture(_Future):

@@ -11,7 +11,10 @@ its line limit; mesh_teardown re-exports them.
 """
 from __future__ import annotations
 
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from .mesh_stop import ACTOR_STOP_S, RECONCILE_GROUP_S, proc_stop_bound_s, reconcile_join_s, shutdown_phases
@@ -54,6 +57,31 @@ def reconcile_stop_limit_s() -> float:
     """
     group, stop = shutdown_phases(RECONCILE_GROUP_S, proc_stop_bound_s())
     return group + min(ACTOR_STOP_S, stop) + stop
+
+
+_CALLER = threading.local()
+
+
+@contextmanager
+def caller_does_not_wait() -> Iterator[None]:
+    """Run a read-only caller whose call may set off the cleanup without waiting for its stop.
+
+    A render waits for the stop its own call set off, so its error comes once
+    the fleet is stopped. A status poll is a read: waiting there held the
+    telemetry route for the whole stop, and every `dgxm status` and `dgxm
+    doctor` read the busy driver as unreadable.
+    """
+    previous = getattr(_CALLER, "no_wait", False)
+    _CALLER.no_wait = True
+    try:
+        yield
+    finally:
+        _CALLER.no_wait = previous
+
+
+def caller_waits() -> bool:
+    """Whether this thread's caller waits for a cleanup its call set off."""
+    return not getattr(_CALLER, "no_wait", False)
 
 
 def note_started(handle: Any) -> None:

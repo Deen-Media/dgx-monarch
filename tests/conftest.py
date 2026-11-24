@@ -285,6 +285,20 @@ def _attach_dial_history_starts_empty(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _a_stops_liveness_proof_reaches_no_host(monkeypatch):
+    """A stop after a reported Worker death asks every host whether its processes are gone.
+
+    mesh_stop.stop_procs asks mesh_liveness.fleet_gone once such a stop outlasts
+    its first slice. No test may reach a real host scan through it: this box may
+    run actors and CI runs none, so one test could end two ways. A test of that
+    proof puts the real function back itself.
+    """
+    from dgx_monarch import mesh_liveness
+
+    monkeypatch.setattr(mesh_liveness, "fleet_gone", lambda *_args, **_kwargs: False)
+
+
+@pytest.fixture(autouse=True)
 def _liveness_release_note_starts_disarmed(monkeypatch):
     """A liveness release's note lives as long as a driver process; each test
     starts with none. A test that arms it and never attaches would otherwise

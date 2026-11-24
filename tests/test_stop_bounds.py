@@ -345,6 +345,33 @@ def test_an_interrupt_in_the_actor_stop_still_propagates(interrupt):
         mesh_stop.stop_with_reason(handle, "dgx-monarch client detach", 15.0)
 
 
+def test_the_liveness_proof_never_lengthens_a_stop():
+    """A slot is used only when a whole fleet probe fits before the stop's own wait ends.
+
+    The reconcile's stop after a death uses every slot; a restart heal's short
+    stop uses none, so every sum this file pins holds with the proof in place.
+    """
+    from dgx_monarch import mesh_liveness, restart_reattach
+
+    assert mesh_stop.PROOF_BUDGET_S == mesh_liveness.PROBE_FLEET_BUDGET_S
+    reconcile_wait = mesh_stop.proc_stop_bound_s() + mesh_stop.ACTOR_STOP_S
+    heal_wait = restart_reattach.STOP_BOUND_S + mesh_stop.ACTOR_STOP_S
+    used = [at for at in mesh_stop.PROOF_AT_S if at + mesh_stop.PROOF_BUDGET_S <= reconcile_wait]
+    assert used == list(mesh_stop.PROOF_AT_S)
+    assert all(at + mesh_stop.PROOF_BUDGET_S > heal_wait for at in mesh_stop.PROOF_AT_S)
+
+    class Ended:
+        def wait(self, _timeout):
+            return False
+
+        def is_set(self):
+            return False
+
+    asked: list = []
+    assert mesh_stop._wait_or_prove(Ended(), heal_wait, lambda: asked.append(1) or True) is False
+    assert asked == []
+
+
 def test_a_cancellation_in_the_actor_stop_still_propagates():
     import asyncio
 
