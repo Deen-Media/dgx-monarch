@@ -9,8 +9,10 @@ channel; supervision text alone cannot prove process exit. Only fleet-wide
 * ``alive``: a live actor or ledger row.
 * ``unknown``: unreadable evidence, malformed output, or an unreachable host.
 
-Zombies are gone because they released their pages; stopped processes
-(state T) remain alive and retain memory.
+A zombie whose thread group is empty is gone, since it released its pages; a
+zombie leader whose other threads still run holds them all and is not
+(proc_identity.zombie_group). Stopped processes (state T) remain alive and
+retain memory.
 
 Remote scans use ``cli.lifecycle.run_on_host``'s subprocess deadline. Local
 scans use one process-lifetime worker and a separate wait deadline.

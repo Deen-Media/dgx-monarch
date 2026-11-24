@@ -72,7 +72,9 @@ def make_proc(
     (directory / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
     if env is not None:
         (directory / "environ").write_bytes(b"\0".join(e.encode() for e in env) + b"\0")
-    (directory / "status").write_text(f"Name:\tpython\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n")
+    # A real kernel always writes Threads:; a lone zombie reads 1, as any process does.
+    (directory / "status").write_text(
+        f"Name:\tpython\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\nThreads:\t1\n")
     pages = int((anon_gib + file_gib) * 2**30 / pi._PAGE_SIZE)
     (directory / "statm").write_text(f"{pages} {pages} 0 0 0 0 0\n")
     anon_kb, file_kb = int(anon_gib * 2**20), int(file_gib * 2**20)
@@ -836,6 +838,87 @@ def test_a_ledger_row_for_a_zombie_does_not_count_as_alive(tmp_path):
     make_proc(root, 4500, state="Z")
     ledger = write_ledger(tmp_path, [{"pid": 4500, "starttime": 1000}])
     assert liveness(root, ledger_file=ledger)["ledger_rows_alive"] == 0
+
+
+def _zombie_leader(root: Path, pid: int, *, threads: str | None = "2",
+                   tasks: tuple[int, ...] | None = None, **proc) -> None:
+    """A thread-group leader that exited: state Z, and what status and task still say."""
+    make_proc(root, pid, state="Z", **proc)
+    lines = f"Name:\tpython\nUid:\t{UID}\t{UID}\t{UID}\t{UID}\n"
+    (root / str(pid) / "status").write_text(
+        lines + (f"Threads:\t{threads}\n" if threads is not None else ""))
+    for tid in tasks or ():
+        (root / str(pid) / "task" / str(tid)).mkdir(parents=True)
+
+
+def test_a_zombie_leader_whose_threads_still_run_is_never_read_as_gone(tmp_path):
+    """The leader exited; another thread still holds every page. Its reads come back empty."""
+    root = make_proc_root(tmp_path)
+    _zombie_leader(root, 5100, argv=(), env=(), tasks=(5100, 5107))
+    ledger = write_ledger(tmp_path, [{"pid": 5100, "starttime": 1000}])
+
+    answer = liveness(root, ledger_file=ledger)
+
+    assert (answer["actors"], answer["zombies"]) == (0, 0)
+    assert answer["unreadable"] == 1 and answer["ledger_rows_alive"] == 1
+    assert pi.zombie_group(5100, str(root)) == "threads"
+    assert pi.alive_and_not_zombie(5100, 1000, str(root)) is True
+
+
+def test_a_marked_zombie_leader_with_live_threads_still_counts_as_an_actor(tmp_path):
+    root = make_proc_root(tmp_path)
+    _zombie_leader(root, 5200)
+    answer = liveness(root)
+    assert (answer["actors"], answer["zombies"], answer["unreadable"]) == (1, 0, 0)
+
+
+@pytest.mark.parametrize(("threads", "tasks", "expected"), [
+    (None, (5300, 5301), "threads"),  # no Threads: line, the task directory decides
+    (None, (5300,), "gone"),
+    (None, None, "unknown"),          # neither reads: unknown, never gone
+    ("x", None, "unknown"),
+], ids=["task_threads", "task_alone", "unreadable", "malformed"])
+def test_a_zombie_whose_group_will_not_read_is_unknown_never_gone(tmp_path, threads, tasks, expected):
+    root = make_proc_root(tmp_path)
+    _zombie_leader(root, 5300, argv=(), env=(), threads=threads, tasks=tasks)
+    ledger = write_ledger(tmp_path, [{"pid": 5300, "starttime": 1000}])
+
+    answer = liveness(root, ledger_file=ledger)
+
+    assert pi.zombie_group(5300, str(root)) == expected
+    gone = expected == "gone"
+    assert (answer["zombies"], answer["unreadable"]) == ((1, 0) if gone else (0, 1))
+    assert answer["ledger_rows_alive"] == (0 if gone else 1)
+
+
+def test_a_real_process_whose_leader_exited_while_a_thread_runs_reads_as_threads():
+    """What the kernel shows: Z, an empty cmdline and environ, and the pages still held."""
+    import platform
+    import subprocess
+    import sys
+    import time
+
+    if platform.system() != "Linux":
+        pytest.skip("procfs is Linux only")
+    exit_thread = 93 if platform.machine() in ("aarch64", "arm64") else 60
+    child_code = (
+        "import ctypes, threading, time\n"
+        "threading.Thread(target=time.sleep, args=(30,), daemon=False).start()\n"
+        "time.sleep(0.3)\n"
+        f"ctypes.CDLL(None, use_errno=True).syscall({exit_thread}, 0)\n")
+    child = subprocess.Popen([sys.executable, "-I", "-c", child_code], env={"PATH": "/usr/bin:/bin"},
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and pi.read_state(child.pid) != "Z":
+            time.sleep(0.05)
+        starttime = pi.read_stat(child.pid)[1]
+        assert child.poll() is None and pi.read_state(child.pid) == "Z"
+        assert pi.zombie_group(child.pid) == "threads"
+        assert pi.alive_and_not_zombie(child.pid, starttime) is True
+    finally:
+        child.kill()
+        child.wait(timeout=10)
 
 
 def test_a_stopped_actor_is_alive_because_it_still_holds_its_memory(tmp_path):

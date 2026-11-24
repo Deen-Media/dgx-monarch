@@ -5843,8 +5843,11 @@ it answers unknown: the liveness command prints no answer, exits non-zero and
 says `cannot list the process table`. Unidentified includes empty command line
 plus environment, and a process holding >=4 GiB with unreadable environment and
 no Python module in
-its command line. A named actor module is counted as an actor. Zombies count
-as gone; stopped processes remain alive.
+its command line. A named actor module is counted as an actor. A zombie counts
+as gone only when its thread group is empty (`Threads: 1`); a zombie leader
+whose other threads still run holds every page and counts as alive or
+unknown, as does a zombie whose thread group cannot be read (since 1.5.0;
+before, every zombie counted as gone). Stopped processes remain alive.
 
 All hosts must report gone before the fleet is considered gone. Any live
 process keeps it alive; incomplete evidence stays unknown. Either blocks

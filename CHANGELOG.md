@@ -2499,6 +2499,12 @@ sections after them list every change.
   attaches in the same session; while a host still shows them, the refusal
   names it. Before, the Reset answered `no_live_mesh` and only a restart helped
   ([TROUBLESHOOTING #69](docs/TROUBLESHOOTING.md#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)).
+- Fix: the liveness check no longer reads a process as gone when its main
+  thread has exited and another thread still runs. The kernel shows such a
+  process as a zombie with no command line while it keeps every page; it now
+  counts as alive or unknown, and only a zombie with no thread left counts as
+  gone. The latch release, the bring-up lift and the early stop end all rest
+  on this check.
 - Fix: the stop of a fleet that lost a Worker ends as soon as every host shows
   the fleet's processes gone, where it waited out Monarch's report on the lost
   host, about 30 to 90 s with nothing left to stop; the render that met the

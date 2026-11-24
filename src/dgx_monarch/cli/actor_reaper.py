@@ -427,14 +427,17 @@ def liveness(
     uid = os.getuid() if uid is None else uid
     self_pid = os.getpid() if self_pid is None else self_pid
     # One scan gives both `actors` and `actors_marked`; a second scan would
-    # double every procfs read on a starved host. A zombie is not an actor here:
-    # it has already released every page, so counting one would answer alive.
+    # double every procfs read on a starved host. A zombie whose thread group
+    # is empty is not an actor here: it has released every page, so counting
+    # one would answer alive. A zombie leader whose other threads still run
+    # holds every page, so it stays (proc_identity.zombie_group).
     actors = [proc for proc in scan(
         proc_root=proc_root, ledger_file=ledger_file, uid=uid,
         self_pid=self_pid, loop_addresses=loop_addresses,
         require_marker=False, sizes=False)
-        if pi.read_state(proc.pid, proc_root) != "Z"]
+        if pi.zombie_group(proc.pid, proc_root) in (None, "threads")]
     marked = sum(1 for proc in actors if proc.strictly_marked)
+    actor_pids = {proc.pid for proc in actors}
 
     excluded = {self_pid, 1, 0, *pi.ancestry(self_pid, proc_root)}
     zombies = unreadable = 0
@@ -445,10 +448,17 @@ def liveness(
         if stat is None or pi.read_uid(pid, proc_root) != uid:
             continue
         empty = pi.reads_empty(pid, proc_root)
-        if pi.read_state(pid, proc_root) == "Z":
+        group = pi.zombie_group(pid, proc_root)
+        if group is not None:
             info = pi.proc_info(pid, proc_root)
-            if empty or (info is not None and info.marked):
-                zombies += 1
+            ours = empty or (info is not None and info.marked)
+            if group == "gone":
+                zombies += int(ours)
+            elif ours and pid not in actor_pids:
+                # A leader that exited while its other threads run (its reads
+                # come back empty), or a group that will not read: it may still
+                # hold every page, so the host answers unknown, never gone.
+                unreadable += 1
             continue
         if pi.unreadable_to_us(pid, stat[1], empty, proc_root):
             unreadable += 1
@@ -471,9 +481,11 @@ def liveness(
         "schema": LIVENESS_SCHEMA,
         "actors": len(actors),
         "actors_marked": marked,
-        # Every own-uid zombie, not only actor zombies: the kernel frees a
-        # zombie's mm, so both reads come back empty and nothing identifies it
-        # any more. A stray zombie from an unrelated command raises this count.
+        # Every own-uid zombie whose thread group is empty, not only actor
+        # zombies: the kernel frees its mm, so both reads come back empty and
+        # nothing identifies it any more. A stray zombie from an unrelated
+        # command raises this count. A zombie leader with live threads counts
+        # in `unreadable` (or `actors`) instead.
         "zombies": zombies,
         "unreadable": unreadable,
         "ledger_rows_alive": rows_alive,
