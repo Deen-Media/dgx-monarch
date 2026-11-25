@@ -1158,7 +1158,7 @@ def test_no_creation_under_another_key_beside_a_fleet_whose_stop_is_unknown(monk
         mesh.get_mesh(mode="local", gpus_per_host=1, comfy_dir="/second")
 
     text = str(refused.value)
-    assert spawned == [] and "under another configuration on the same machines" in text
+    assert spawned == [] and "under another configuration in this session" in text
     assert ("restart ComfyUI" in text) if where == "stranded" else ("did not finish within 100 s" in text)
 
 
@@ -1168,25 +1168,45 @@ def _host(address):
 
 @pytest.mark.parametrize(("theirs", "verdict", "refused"), [
     (("box-a", "box-b"), "blocked", True),       # the same hosts under a second cluster.toml path
-    (("box-b", "box-c"), "unresolved", True),    # one machine in common is enough
-    (("box-c", "box-d"), "blocked", False),      # other machines: nothing of theirs is shared
+    (("box-b", "box-c"), "unresolved", True),    # one machine in common
+    (("box-c", "box-d"), "blocked", True),       # other names: still possibly the same machines
     (("box-a", "box-b"), "completed", False),    # a confirmed stop
     (("box-a", "box-b"), "live", False),         # a live fleet of another key, as before
-], ids=["same_hosts", "one_shared", "other_hosts", "completed", "live"])
-def test_another_keys_cluster_fleet_refuses_only_on_a_shared_machine_with_its_stop_unknown(
+], ids=["same_hosts", "one_shared", "other_names", "completed", "live"])
+def test_another_keys_cluster_fleet_whose_stop_is_unknown_refuses_whatever_hosts_it_names(
         theirs, verdict, refused):
+    """A machine's several addresses and its hostname cannot be told apart, so no host list
+    shows two fleets of one session on different machines; the refusal says so."""
     from dgx_monarch import mesh_creation
 
     other = _blocked_fleet(owns_hosts=True, config=SimpleNamespace(hosts=tuple(map(_host, theirs))))
     runtime = {"_MESHES": {("cluster", "/a.toml"): other}, "_MESH_PENDING": {},
                "_coherent_lifecycle_verdict": lambda _handle: verdict, "MeshAttachError": RuntimeError}
-    wanted = (_host("box-a"), _host("box-b"))
 
     if refused:
-        with pytest.raises(RuntimeError, match="under another configuration on the same machines"):
-            mesh_creation.admission_occupant(runtime, ("cluster", "/b.toml"), wanted)
+        with pytest.raises(RuntimeError) as refusal:
+            mesh_creation.admission_occupant(runtime, ("cluster", "/b.toml"))
+        text = str(refusal.value)
+        assert "under another configuration in this session" in text
+        assert "a machine's several addresses cannot be told apart" in text
+        assert "separate cluster waits too until that stop is confirmed or ComfyUI restarts" in text
     else:
-        assert mesh_creation.admission_occupant(runtime, ("cluster", "/b.toml"), wanted) is None
+        assert mesh_creation.admission_occupant(runtime, ("cluster", "/b.toml")) is None
+
+
+def test_a_local_fleet_of_another_key_refuses_only_while_its_stop_is_unknown():
+    """Two local fleets share this machine, as before: a stopped or live one admits."""
+    from dgx_monarch import mesh_creation
+
+    for verdict, refused in (("blocked", True), ("completed", False), ("live", False)):
+        runtime = {"_MESHES": {("local", "/first"): _blocked_fleet(owns_hosts=False)}, "_MESH_PENDING": {},
+                   "_coherent_lifecycle_verdict": lambda _handle, v=verdict: v,
+                   "MeshAttachError": RuntimeError}
+        if refused:
+            with pytest.raises(RuntimeError, match="under another configuration in this session"):
+                mesh_creation.admission_occupant(runtime, ("local", "/second"))
+        else:
+            assert mesh_creation.admission_occupant(runtime, ("local", "/second")) is None
 
 
 def test_the_next_render_after_a_failed_bring_up_proven_gone_builds_a_fresh_fleet(monkeypatch):

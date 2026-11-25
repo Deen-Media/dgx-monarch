@@ -124,7 +124,7 @@ def publication_resolved(
         return False
 
 
-def admission_occupant(runtime: Runtime, key: tuple, hosts: Any = None) -> Any | None:
+def admission_occupant(runtime: Runtime, key: tuple) -> Any | None:
     """This key's public handle, refusing admission over a stranded fleet.
 
     Callers hold ``_MESH_LOCK`` and have already proved no creator is active.
@@ -134,9 +134,8 @@ def admission_occupant(runtime: Runtime, key: tuple, hosts: Any = None) -> Any |
     transport, and a blocked, unresolved or unreadable one may still have
     processes whose stop is unknown. get_mesh runs the liveness release on
     every cached and stranded handle first, so one proven gone is admitted.
-    Another key's fleet refuses too, when its stop is unconfirmed on a machine
-    the new fleet would use (_refuse_beside_unknown_stop). ``hosts`` names the
-    new fleet's cluster hosts, None for a local fleet.
+    Another key's fleet whose stop is unconfirmed refuses too
+    (_refuse_beside_unknown_stop).
     """
     published = runtime["_MESHES"].get(key)
     stranded = runtime["_MESH_PENDING"].get(key)
@@ -144,7 +143,7 @@ def admission_occupant(runtime: Runtime, key: tuple, hosts: Any = None) -> Any |
         verdict = _verdict(runtime, stranded)
         if verdict != "completed":
             raise runtime["MeshAttachError"](_stranded_refusal(stranded, verdict))
-    _refuse_beside_unknown_stop(runtime, key, hosts)
+    _refuse_beside_unknown_stop(runtime, key)
     return published
 
 
@@ -168,44 +167,24 @@ def _verdict(runtime: Runtime, handle: Any) -> str:
         return "unknown"
 
 
-_LOCAL = frozenset({"this machine"})
-
-
-def _machines(handle_or_hosts: Any, *, hosts: bool = False) -> frozenset[str] | None:
-    """The machines a fleet runs on: _LOCAL for a local fleet, the cluster hosts'
-    addresses and names for a cluster one, None when the handle does not say."""
-    if hosts:
-        listed = handle_or_hosts
-    elif getattr(handle_or_hosts, "owns_hosts", None) is False:
-        return _LOCAL
-    else:
-        listed = getattr(getattr(handle_or_hosts, "config", None), "hosts", None)
-    if listed is None:
-        return _LOCAL if hosts else None
-    names = {str(value) for host in listed for value in (getattr(host, "address", None),
-                                                         getattr(host, "name", None)) if value}
-    return frozenset(names) or None
-
-
-def _refuse_beside_unknown_stop(runtime: Runtime, key: tuple, hosts: Any) -> None:
-    """Refuse a creation beside another key's fleet whose stop is unconfirmed on a shared machine.
+def _refuse_beside_unknown_stop(runtime: Runtime, key: tuple) -> None:
+    """Refuse a creation beside another key's fleet whose stop is unconfirmed.
 
     The first rule: never start a second fleet beside processes whose stop is
-    unknown. "The same processes" means a fleet on any machine the new one
-    would use. Two local fleets share this machine. Two cluster fleets share a
-    machine when their configs name a common host address or name; two configs
-    that name one machine by different addresses read as different machines.
-    A local and a cluster fleet cannot meet here (one transport mode per
-    session) and count as shared if they did, as does a handle that does not
-    say where it runs. A completed or live fleet of another key admits as before.
+    unknown, and every fleet of this session counts as sharing the new one's
+    machines. Two local fleets share this machine. Two cluster fleets of one
+    session share one transport on one fabric, and no config text tells a
+    machine's several addresses and its hostname apart, so the driver cannot
+    show that two configs name different machines; an exact machine identity
+    would need a new probe on every host before admission. The cost: a session
+    that drives two separate clusters refuses the second while the first's stop
+    is unconfirmed, until that stop is confirmed (its Reset, or the liveness
+    proof after a Worker's death) or ComfyUI restarts. A completed or live fleet
+    of another key admits as before.
     """
-    wanted = _machines(hosts, hosts=True)
     for registry in ("_MESHES", "_MESH_PENDING"):
         for other_key, handle in list(runtime[registry].items()):
-            theirs = _machines(handle)
-            shared = (theirs is None or wanted is None or (theirs is _LOCAL) != (wanted is _LOCAL)
-                      or bool(theirs & wanted))
-            if other_key == key or not shared:
+            if other_key == key:
                 continue
             verdict = _verdict(runtime, handle)
             if verdict in ("completed", "live"):
@@ -223,8 +202,11 @@ def _beside_refusal(handle: Any, verdict: str, published: bool) -> str:
         inner = mesh_teardown.blocked_refusal(handle, mesh_teardown.GET_MESH_DOOR)
     else:
         inner = mesh_teardown.unresolved_refusal(handle)
-    return ("this driver already started a Worker fleet under another configuration on the same "
-            f"machines, and its stop is unconfirmed, so a second fleet could run beside its processes: {inner}")
+    return ("this driver already started a Worker fleet under another configuration in this "
+            "session, and its stop is unconfirmed, so a second fleet could run beside its processes. "
+            "Every fleet of one session counts as sharing machines, since a machine's several "
+            "addresses cannot be told apart, so a second, separate cluster waits too until that "
+            f"stop is confirmed or ComfyUI restarts: {inner}")
 
 
 def _stranded_refusal(stranded: Any, verdict: str) -> str:

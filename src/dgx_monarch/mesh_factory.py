@@ -341,9 +341,9 @@ def left_nothing_running(handoff: FleetHandoff, exc: WorkerSpawnError) -> bool:
     bring-up's only processes are its one ProcMesh's ranks (it never starts or stops a
     Worker loop); that ProcMesh is the object Monarch built, returned or raised after its
     spawn callback. Its stop awaits the spawn first, and Monarch completes it once every
-    rank is terminating, killing a rank that will not stop: no rank process still runs
-    then (tests/test_stop_future_contract.py), the signal a normal teardown trusts before
-    a replacement. An unremoved spawn callback is still open.
+    rank has stopped or been killed: no rank process still runs then, though a killed one
+    may free memory for seconds (tests/test_stop_future_contract.py); a normal teardown
+    trusts the same signal. An unremoved spawn callback is still open.
     """
     if not exc.rollback_confirmed or exc.cleanup is not None or handoff.callback_cleanup_unconfirmed:
         return False

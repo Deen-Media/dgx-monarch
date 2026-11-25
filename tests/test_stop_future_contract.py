@@ -7,8 +7,9 @@ every rank is terminating, which includes failed and timed out, so this pins
 the property the lift rests on with a rank that cannot answer: the stop's
 Future is still pending, or it completed and that rank's process no longer
 runs. A completed Future beside a running rank is the failure. CPU only; the
-probe runs in its own interpreter (stop_future_probe.py), and every rank it
-started is killed here if it outlives the probe.
+probe runs in its own interpreter and its own session (stop_future_probe.py),
+and every process of that session, recorded or not, is killed here if it
+outlives the probe.
 """
 from __future__ import annotations
 
@@ -29,19 +30,37 @@ PROBE = Path(__file__).resolve().parent / "stop_future_probe.py"
 GRACE_S = 15.0  # how long the probe's processes may take to leave after it exits
 
 
-def _kill_left_ranks(ranks_file: Path) -> list[int]:
-    """Clean up every process the probe recorded; return the ranks that had to be killed.
+def _session_members(session: int, born: int) -> set[tuple[int, int]]:
+    """Every process of the session the probe leads, by pid and start time.
 
-    The probe's own children (its local host agent among them) leave once it
-    exits; whatever still runs after GRACE_S is killed, identity-checked by
-    start time. A rank killed here means the probe left it running.
+    The probe starts its own session, and every rank and helper it spawns
+    stays in it, so this finds them even when the probe died before it wrote
+    the ranks file. Only this uid's processes started no earlier than the
+    probe can match.
+    """
+    members = set()
+    for pid in pi.iter_pids():
+        stat = pi.read_stat(pid)
+        if (stat is not None and stat[1] >= born and pi.read_session(pid) == session
+                and pi.read_uid(pid) == os.getuid()):
+            members.add((pid, stat[1]))
+    return members
+
+
+def _kill_left_ranks(ranks_file: Path, session: int, born: int) -> list[int]:
+    """Clean up the probe's session and every process it recorded; return the ranks that had to be killed.
+
+    Its children (its local host agent among them) leave once it exits;
+    whatever still runs after GRACE_S is killed, identity-checked by start
+    time. A rank killed here means the probe left it running.
     """
     try:
         recorded = json.loads(ranks_file.read_text())
     except (OSError, ValueError):
-        return []
-    ranks = [(int(pid), int(start)) for pid, start in recorded.get("ranks", ())]
-    everyone = set(ranks) | {(int(pid), int(start)) for pid, start in recorded.get("children", ())}
+        recorded = {}
+    ranks = {(int(pid), int(start)) for pid, start in recorded.get("ranks", ())}
+    everyone = ranks | {(int(pid), int(start)) for pid, start in recorded.get("children", ())}
+    everyone |= _session_members(session, born)
 
     def running(pid: int, start: int) -> bool:
         return pi.alive(pid, start) and pi.read_state(pid) != "Z"
@@ -49,10 +68,13 @@ def _kill_left_ranks(ranks_file: Path) -> list[int]:
     deadline = time.monotonic() + GRACE_S
     while any(running(*entry) for entry in everyone) and time.monotonic() < deadline:
         time.sleep(0.1)
-    killed = [entry for entry in everyone if running(*entry)]
+    killed = [entry for entry in everyone | _session_members(session, born) if running(*entry)]
     for pid, _start in killed:
-        os.kill(pid, signal.SIGKILL)
-    return sorted(pid for pid, start in killed if (pid, start) in set(ranks))
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    return sorted(pid for pid, start in killed if (pid, start) in ranks)
 
 
 def _run_probe(tmp_path: Path) -> dict:
@@ -64,14 +86,16 @@ def _run_probe(tmp_path: Path) -> dict:
     environment.update(HOME=str(tmp_path), XDG_RUNTIME_DIR=str(runtime_dir), CUDA_VISIBLE_DEVICES="",
                        PYTHONPATH=os.pathsep.join(filter(None, (str(SRC), os.environ.get("PYTHONPATH")))))
     probe = subprocess.Popen([sys.executable, str(PROBE), str(ranks_file)], stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True, env=environment)
+                             stderr=subprocess.PIPE, text=True, env=environment, start_new_session=True)
+    born = (pi.read_stat(probe.pid) or (0, 0))[1]  # the session id is the probe's own pid
+    stdout = stderr = ""
     try:
         stdout, stderr = probe.communicate(timeout=300)
     finally:
         if probe.poll() is None:
             probe.kill()
             probe.communicate(timeout=30)
-        left = _kill_left_ranks(ranks_file)
+        left = _kill_left_ranks(ranks_file, probe.pid, born)
     assert probe.returncode == 0, (
         f"probe crashed rc={probe.returncode}\nstdout: {stdout[-2000:]}\nstderr: {stderr[-2000:]}")
     assert left == [], f"ranks outlived the probe and were killed here: {left}"

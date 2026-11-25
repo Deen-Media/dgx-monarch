@@ -469,7 +469,7 @@ def get_mesh(
                     raise MeshAttachError(
                         f"Monarch transport is not reusable after a creation failure ({_TRANSPORT_POISON or mesh_factory.CREATION_CLEANUP_POISON}); "
                         "restart ComfyUI")
-                old = mesh_creation.admission_occupant(globals(), key, config.hosts if use_cluster else None)
+                old = mesh_creation.admission_occupant(globals(), key)
                 verdict = _coherent_lifecycle_verdict(old) if old is not None else "live"
                 if verdict == "completed":
                     mesh_safety.clear_stale_token(id(old))

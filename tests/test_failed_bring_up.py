@@ -461,6 +461,9 @@ def test_a_spawn_host_that_cannot_be_isolated_names_its_cause_in_the_restart_ref
 
     with pytest.raises(RuntimeError, match="cannot be isolated"):
         mesh.get_mesh(mode="cluster")
+    # Its text begins like a liftable poison, but get_mesh popped the settled claim: nothing to prove.
+    assert mesh_factory.creation_cleanup_pending() is False
+    assert failed_bring_up.liftable(mesh._TRANSPORT_POISON) is False
     with pytest.raises(mesh.MeshAttachError) as refused:
         mesh.get_mesh(mode="cluster")
 
@@ -639,8 +642,8 @@ def test_a_queued_spawn_the_attach_kept_no_loop_for_holds_and_asks_for_a_restart
 
 
 def test_a_host_on_an_older_package_holds_until_it_can_list_its_loops(monkeypatch):
-    """A host that prints no loop list: a Worker restart first (a loop the scan could not name),
-    then the current package (one too old to list loops)."""
+    """A host that prints no loop list: dgxm up first (it syncs the package and restarts every
+    Worker), with a Worker restart named as the narrower fix for a loop the scan could not name."""
     from dgx_monarch.cli import lifecycle
 
     monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
@@ -651,8 +654,8 @@ def test_a_host_on_an_older_package_holds_until_it_can_list_its_loops(monkeypatc
     assert failed_bring_up.release(runtime, runner=Runner(**{ADDRESS_B: _line(loop_gens=[])})) is False
     assert failed_bring_up.held_hosts() == ((ADDRESS_A, "unlisted"),)
     text = failed_bring_up.refusal(POISON)
-    restart = text.index("restart the Worker service on box-a (dgxm restart)")
-    assert restart < text.index("deploy the current package there (dgxm up)")
+    up = text.index("run dgxm up, which syncs the current package and restarts the Worker service")
+    assert up < text.index("a Worker restart on box-a alone, dgxm restart")
 
     listed = Runner(**{ADDRESS_A: _line(loop_gens=["0123456789ab"]), ADDRESS_B: _line(loop_gens=[])})
     assert failed_bring_up.release(runtime, runner=listed) is True  # the package now lists its loops

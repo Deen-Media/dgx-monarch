@@ -256,8 +256,9 @@ def _wait_or_prove(ended: Any, wait_s: float, proof: Any) -> bool:
     left, measured when the slot comes, still holds a whole probe
     (PROOF_BUDGET_S), so slow probes cannot run back to back past the wait.
     Each probe runs on a thread of its own while this one keeps watching the
-    stop, so a stop that ends during a probe is seen within PROOF_POLL_S; the
-    probe then finishes on its own, and its answer is not used.
+    stop, so a stop that ends during a probe is seen within PROOF_POLL_S, and a
+    probe that overruns its budget is left at the stop's own wait; either way
+    the probe finishes on its own, and its answer is not used.
     """
     if proof is None:
         ended.wait(wait_s)
@@ -270,7 +271,8 @@ def _wait_or_prove(ended: Any, wait_s: float, proof: Any) -> bool:
             break
         answer = _ask_beside(proof)
         while not answer.done.is_set():
-            if ended.wait(PROOF_POLL_S):
+            left = wait_s - (time.monotonic() - started)
+            if left <= 0.0 or ended.wait(min(PROOF_POLL_S, left)):
                 return False
         if answer.gone:
             return not ended.is_set()

@@ -4716,9 +4716,11 @@ already-built handle or client-lease startup failure may evict that handle and
 retry the same transport mode. In a cluster the transport survives a failed
 spawn, so a `WorkerSpawnError` that says `rolled back` leaves nothing to
 clean: none of its processes had started, or its rollback stop completed
-without error, which Monarch gives once every rank is stopping, stopped or
-ended, killing a rank that will not stop, so no process of that bring-up
-still runs on any host. The next render attaches a fresh fleet in
+without error, which Monarch gives once every rank has stopped or been killed
+(it kills a rank that will not stop), so no process of that bring-up still
+runs on any host. A killed actor can go on freeing its memory for some
+seconds after that (1.1 to 2.7 s for a 12 GiB model on the pair, longer for a
+larger one). The next render attaches a fresh fleet in
 the same session (since 1.5.0; before, it needed a ComfyUI restart). When the
 rollback stop did not confirm (`not safely stopped`), the poison lifts once
 every host shows the processes the bring-up spawned gone: the next render and
@@ -4731,9 +4733,10 @@ bring-up attached to no longer runs. Where it still runs, the refusal and the
 mesh row name the host: restart the Worker service there (`dgxm restart`),
 which ends the queued spawn with its loop, and the next render or **Reset
 attached mesh** builds a fresh fleet. A host that cannot list its loops is
-named too: restart its Worker service first (a loop the check could not name
-ends with it), then, if it still cannot, deploy the current package there
-(`dgxm up`). A bring-up that failed before it called Monarch at all, on a
+named too: run `dgxm up`, which syncs the current package (one too old to
+list loops is the usual cause) and restarts the Worker service on every host;
+a Worker restart on that host alone (`dgxm restart`) clears only a live loop
+the check could not name. A bring-up that failed before it called Monarch at all, on a
 spawn host that cannot be isolated (a torchmonarch other than the pin) or a
 Worker module that will not import, says so and names the cause: nothing of
 it runs, but the same process meets the fault again, so fix the cause and

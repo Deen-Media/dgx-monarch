@@ -232,6 +232,25 @@ def test_a_stop_that_ends_while_a_probe_runs_is_seen_at_once(monkeypatch):
     assert finished.wait(2.0)  # the probe finished on its own
 
 
+def test_a_probe_that_overruns_its_budget_is_left_at_the_stops_own_wait(monkeypatch):
+    """A stuck probe never holds the stop past its bound; it finishes on its own later."""
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.02,))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.1)
+    monkeypatch.setattr(mesh_stop, "PROOF_POLL_S", 0.01)
+    release = threading.Event()
+
+    def stuck_probe():
+        release.wait(5.0)  # far past its budget
+        return True
+
+    started = time.monotonic()
+    try:
+        assert mesh_stop._wait_or_prove(threading.Event(), 0.5, stuck_probe) is False
+        assert time.monotonic() - started < 0.6
+    finally:
+        release.set()
+
+
 @pytest.mark.parametrize(("threads", "ends_early"), [("2", False), ("1", True)],
                          ids=["threads_run", "lone_zombie"])
 def test_a_zombie_leader_whose_threads_run_keeps_the_stops_bound(monkeypatch, tmp_path, threads, ends_early):

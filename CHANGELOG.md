@@ -2501,8 +2501,8 @@ sections after them list every change.
   names it. A bring-up that failed before every rank's process started also
   needs the Worker loop it attached to gone on every host, since a stalled
   loop may still hold its spawn; the refusal names such a host, and a Worker
-  service restart there clears it (then `dgxm up`, on a host that still cannot
-  list its loops). A bring-up that failed before it called Monarch now names
+  service restart there clears it (`dgxm up` on a host that cannot list its
+  loops, since it syncs the package and restarts every Worker). A bring-up that failed before it called Monarch now names
   its cause (a spawn host that cannot be isolated, a Worker module that will
   not import) where it read "cleanup state unavailable". Before, the Reset
   answered `no_live_mesh`
@@ -2510,9 +2510,11 @@ sections after them list every change.
   ([TROUBLESHOOTING #69](docs/TROUBLESHOOTING.md#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)).
 - Fix: a render under another Init folder or cluster.toml path no longer
   starts a second fleet beside a fleet of this session whose stop is
-  unconfirmed on the same machines; it refuses with that fleet's cause and
-  remedy. Fleets on other machines, and fleets that stopped or still run,
-  are left as before.
+  unconfirmed; it refuses with that fleet's cause and remedy. Every fleet of
+  one session counts as sharing machines, since a machine's several addresses
+  cannot be told apart, so a second, separate cluster driven from the same
+  session waits for that stop too. Fleets that stopped or still run are left
+  as before.
 - Fix: a cluster bring-up that fails with its spawned processes rolled back,
   or before it starts any process, no longer leaves the session refusing
   every render until ComfyUI restarts. Its rollback stop completed without

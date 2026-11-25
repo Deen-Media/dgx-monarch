@@ -68,6 +68,10 @@ _PROOF_LOCK = threading.Lock()
 # rollback: a spawn host that cannot be isolated (another torchmonarch than the
 # pin) or a Worker module that will not import. Nothing started, and a retry in
 # this process meets the same fault, so the refusal names it, not the generic poison.
+# It stays restart-only though its text begins like a liftable bring-up poison
+# (provable): the outer except in get_mesh confirms and pops this attempt's
+# settled creation claim, so _claims_to_prove finds nothing left to prove and
+# liftable() is False.
 _BEFORE_ANY_PROCESS = "actor spawn failed before any process started"
 
 
@@ -164,11 +168,13 @@ _HOLD_WORDS = {
     "running": ("the Worker loop it attached to still runs on {hosts}",
                 "restart the Worker service on {hosts} (dgxm restart), which ends the queued spawn "
                 "with its loop"),
-    # A live loop the scan could not name ends with its loop; a package too old
-    # to list loops needs the current one. Try the cheaper first.
+    # Two causes: a package too old to list loops, and a live loop the scan could
+    # not name. dgxm up syncs the package and restarts every Worker service, so it
+    # clears both; a Worker restart on that host clears only the second.
     "unlisted": ("{hosts} could not list its Worker loops",
-                 "restart the Worker service on {hosts} (dgxm restart), and if the next check "
-                 "still cannot list them, deploy the current package there (dgxm up)"),
+                 "run dgxm up, which syncs the current package and restarts the Worker service "
+                 "on every host (a Worker restart on {hosts} alone, dgxm restart, clears only a "
+                 "live loop the check could not name)"),
     "unrecorded": ("the attach recorded no loop for {hosts}", "restart ComfyUI"),
 }
 

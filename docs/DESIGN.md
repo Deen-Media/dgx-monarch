@@ -252,8 +252,9 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
   stop was issued, and a Reset stops the fleet. A fleet whose publication was
   interrupted admits a second fleet over it only once its stop is confirmed or
   its processes are proven gone (`mesh_creation.admission_occupant`), and no
-  creation under another cache key starts while a fleet whose stop is
-  unconfirmed runs on a machine the new one would use. A stop
+  creation under another cache key starts while another fleet of this session
+  has an unconfirmed stop: every fleet of one session counts as sharing
+  machines, since a machine's addresses cannot be told apart. A stop
   after a reported Worker death ends as soon as every host shows the fleet's
   processes gone (`mesh_stop.stop_procs`), and a status poll that meets a dead
   fleet starts its cleanup without waiting for it. A cluster bring-up that
