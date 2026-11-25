@@ -78,7 +78,7 @@ def residency_modes(args: dict, *, integrated: bool, fsdp: bool) -> tuple[bool |
     ``lora_low_rss`` is on, an absent ``slab_weights`` is ``auto``, and slab is
     off where low-RSS is (``actor/comfy_bridge._uma_memory_defaults``); off
     unified memory slab is off whatever was asked
-    (``actor/comfy_bridge._without_slab``); FSDP turns slab off
+    (``actor/slab_posture.without_slab``); FSDP turns slab off
     (``actor/worker_env.slab_mode_effective``).
     """
     managed = args.get("comfy_managed") is True

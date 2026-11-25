@@ -1044,6 +1044,32 @@ def test_a_swap_that_would_leave_an_unpriced_copy_loads_fresh_instead(slab_swap_
     assert len(swaps) == 1                                # it fits: the lazy swap runs
 
 
+def test_a_key_that_strayed_at_the_fresh_load_does_not_send_the_next_change_to_a_reload(
+        slab_swap_rig, monkeypatch):
+    """The reload route runs once, not at every later change.
+
+    A newly patched key that cannot fit its region sends the swap to a fresh
+    load; that load's bake leaves the key as a counted stray, which the load
+    priced. The next strength change must then take the lazy swap: a key that
+    already strays is not new, and each swap replaces its copy with one of the
+    same size. Without that exception every later change would reload from disk.
+    """
+    from dgx_monarch.actor import store_bake
+
+    rig = slab_swap_rig
+    key = _PaddingStore.padded
+    monkeypatch.setattr(_SwapLayout, "get_storage_shape",
+                        staticmethod(lambda shape: (shape[0] + 1, shape[1])), raising=False)
+    stored = SimpleNamespace(slab=rig.ws, base_patcher=SimpleNamespace(model=rig.model))
+    active = SimpleNamespace(model=rig.model, patches={key: ["delta"]})
+    assert store_bake.slab_misfits(stored, active) == [key]      # this change reloads
+    # The fresh load that follows: ComfyUI's bake pads the payload, then the slab's pass.
+    _PaddingStore({key: 1.0})._bake_key(SimpleNamespace(model=rig.model), key)
+    rig.ws.reabsorb(rig.model.diffusion_model)
+    assert rig.ws.strays(key[len("diffusion_model."):])
+    assert store_bake.slab_misfits(stored, active) == []         # the next change stays lazy
+
+
 def test_the_fresh_load_pass_leaves_a_weight_already_in_the_slab_alone(slab_swap_rig):
     """A quantized weight whose payload is in the slab is neither copied nor counted as moved.
 

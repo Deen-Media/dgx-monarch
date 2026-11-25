@@ -427,8 +427,7 @@ def apply_fsdp_capacity_mode(
     # scalar outright: it has no dim 0 to chunk, and replicating it costs
     # only a few bytes (for example, PiD's `log_alpha`). Build this set after
     # the quantized wrappers so it holds the objects the wrap will see. The
-    # LoRA bake reads the same set (fsdp_islands.replicated_parameters); the
-    # three parts are kept for the capacity log line below.
+    # LoRA bake reads the same set; the three parts below feed the log line.
     ignored = replicated_parameters(dm, patcher.model)
     islands = island_parameters(dm)
     auxiliary = auxiliary_module_parameters(dm, patcher.model)

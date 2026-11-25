@@ -148,19 +148,19 @@
       "waivable": false
     },
     {
-      "site": "actor/fsdp_lora.py::_file_tensor::UnbakeRefused#0",
-      "class": "P",
-      "guard": null,
-      "waivable": false
-    },
-    {
-      "site": "actor/fsdp_lora.py::_file_tensor::UnbakeRefused#1",
-      "class": "P",
-      "guard": null,
-      "waivable": false
-    },
-    {
       "site": "actor/fsdp_lora.py::_refuse_quantized::UnbakeRefused#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/fsdp_lora_file.py::_file_tensor::UnbakeRefused#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/fsdp_lora_file.py::_file_tensor::UnbakeRefused#1",
       "class": "P",
       "guard": null,
       "waivable": false

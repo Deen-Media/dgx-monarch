@@ -51,7 +51,7 @@ def test_slab_residency_stays_off_on_a_discrete_gpu(requested, caplog):
     """
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="dgx_monarch.actor.comfy_bridge"):
+    with caplog.at_level(logging.WARNING, logger="dgx_monarch.actor.slab_posture"):
         d = _uma_memory_defaults({"slab_weights": requested, "lora_low_rss": True}, integrated=False)
     assert d["slab_weights"] is False
     assert d["lora_low_rss"] is True                  # nothing else changes

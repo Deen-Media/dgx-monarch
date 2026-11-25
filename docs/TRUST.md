@@ -438,7 +438,7 @@ copied from historical evidence.
    after that preparation and immediately before the first FSDP parameter
    mutation; direct calls use the same path. This is enforced by
    [`store_fsdp.py:103-120`](../src/dgx_monarch/actor/store_fsdp.py#L103-L120 "anchor:validate_injection") and
-   [`fsdp.py:380-440`](../src/dgx_monarch/adapters/fsdp.py#L380-L440 "anchor:apply_fsdp_capacity_mode"), with one-scan and same-patcher drift coverage in
+   [`fsdp.py:380-439`](../src/dgx_monarch/adapters/fsdp.py#L380-L439 "anchor:apply_fsdp_capacity_mode"), with one-scan and same-patcher drift coverage in
    [`test_fsdp_capacity.py:1207-1207`](../tests/test_fsdp_capacity.py#L1207-L1207 "anchor:test_worker_runs_one_live_precision_scan_after_preparation"),
    [`test_fsdp_capacity.py:1237-1237`](../tests/test_fsdp_capacity.py#L1237-L1237 "anchor:test_worker_live_scan_observes_same_patcher_model_replacement"), and
    [`test_fsdp_capacity.py:1278-1278`](../tests/test_fsdp_capacity.py#L1278-L1278 "anchor:test_worker_live_scan_observes_dtype_mutation_during_compile_preparation").
@@ -549,7 +549,7 @@ copied from historical evidence.
    [`test_runtime_remediation.py:734-763`](../tests/test_runtime_remediation.py#L734-L763 "anchor:test_worker_rechecks_fleet_grant_after_driver_preflight"),
    [`test_runtime_remediation.py:766-805`](../tests/test_runtime_remediation.py#L766-L805 "anchor:test_worker_binds_loaded_model_to_grant_after_execution_recheck"),
    [`test_fleet.py:1473-1501`](../tests/test_fleet.py#L1473-L1501 "anchor:test_fleet_source_manifest_failure_forces_stock_without_a_grant"), and
-   [`test_runtime_remediation.py:1722-1759`](../tests/test_runtime_remediation.py#L1722-L1759 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch").
+   [`test_runtime_remediation.py:1737-1774`](../tests/test_runtime_remediation.py#L1737-L1774 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch").
 9. **`auto_gate=first_use` gates every normal sampler path before the user's
    render, and LoRA-less slab renders still gate.** KSampler, KSampler Advanced
    and Sampler Custom renders all reach it; a Sampler Custom proof replays the
@@ -637,7 +637,7 @@ copied from historical evidence.
     [`test_runtime_remediation.py:123-138`](../tests/test_runtime_remediation.py#L123-L138 "anchor:test_normal_residency_grant_binds_every_reconstructible_boundary"),
     [`test_runtime_remediation.py:141-174`](../tests/test_runtime_remediation.py#L141-L174 "anchor:test_normal_residency_grant_rejects_tampering"),
     [`test_runtime_remediation.py:177-188`](../tests/test_runtime_remediation.py#L177-L188 "anchor:test_risky_normal_render_requires_driver_mode_and_grant"), and
-    [`test_runtime_remediation.py:1660-1693`](../tests/test_runtime_remediation.py#L1660-L1693 "anchor:test_worker_rechecks_normal_grant_before_model_load").
+    [`test_runtime_remediation.py:1675-1708`](../tests/test_runtime_remediation.py#L1675-L1708 "anchor:test_worker_rechecks_normal_grant_before_model_load").
 12. **Process verdicts cannot resurrect a newly disproved durable PASS.** One
     copy-on-write publication covers normal, Fleet, and sibling tokens. Negative
     verdicts live in a non-evicting revocation map and outrank both the bounded
@@ -682,8 +682,8 @@ copied from historical evidence.
     Later normal and Fleet workers independently recompute the same source-bound
     token before model load. Source-token and driver/worker skew are covered by
     [`test_gate_ledger.py:1047-1089`](../tests/test_gate_ledger.py#L1047-L1089 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
-    [`test_runtime_remediation.py:1722-1759`](../tests/test_runtime_remediation.py#L1722-L1759 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch"), and
-    [`test_runtime_remediation.py:1762-1788`](../tests/test_runtime_remediation.py#L1762-L1788 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
+    [`test_runtime_remediation.py:1737-1774`](../tests/test_runtime_remediation.py#L1737-L1774 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch"), and
+    [`test_runtime_remediation.py:1777-1803`](../tests/test_runtime_remediation.py#L1777-L1803 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
 13. **v9 audit rows are permanent evidence and can never become authority.**
     Every consented bypass writes a `WAIVER` row naming what was waived, under
     which capability context, from which channel, and a certified rescue load
@@ -871,7 +871,7 @@ copied from historical evidence.
   [`mesh_rpc.py:273-396`](../src/dgx_monarch/mesh_rpc.py#L273-L396 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:145-155`](../src/dgx_monarch/actor/worker_authorization.py#L145-L155 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
-  [`test_runtime_remediation.py:1762-1788`](../tests/test_runtime_remediation.py#L1762-L1788 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
+  [`test_runtime_remediation.py:1777-1803`](../tests/test_runtime_remediation.py#L1777-L1803 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
 
 - A persisted runtime grant exists only when contextual lookup selects a
   current row and returns `pass` for a known matching ComfyUI commit and
@@ -1095,8 +1095,8 @@ copied from historical evidence.
   checkpoint on non-Linux workers or Linux environments without
   `/proc/self/fd`; it never falls back to a racy path reopen. Failed-load
   integration, ownership, refusal, status, platform binding, and release are
-  [`comfy_bridge.py:175-281`](../src/dgx_monarch/actor/comfy_bridge.py#L175-L281 "anchor:slab_load"),
-  [`comfy_bridge.py:284-343`](../src/dgx_monarch/actor/comfy_bridge.py#L284-L343 "anchor:load_diffusion_model_slab"),
+  [`comfy_bridge.py:162-268`](../src/dgx_monarch/actor/comfy_bridge.py#L162-L268 "anchor:slab_load"),
+  [`comfy_bridge.py:271-330`](../src/dgx_monarch/actor/comfy_bridge.py#L271-L330 "anchor:load_diffusion_model_slab"),
   [`model_store.py:239-352`](../src/dgx_monarch/actor/model_store.py#L239-L352 "anchor:ensure"),
   [`slab_lifetime.py:22-22`](../src/dgx_monarch/actor/slab_lifetime.py#L22-L22 "anchor:_RETAINED_FAILED_LOAD_SLABS"),
   [`slab_lifetime.py:28-28`](../src/dgx_monarch/actor/slab_lifetime.py#L28-L28 "anchor:_RETAINED_FAILED_LOAD_RESOURCES"),
@@ -1116,9 +1116,9 @@ copied from historical evidence.
   [`slab_arena.py:60-130`](../src/dgx_monarch/actor/slab_arena.py#L60-L130 "anchor:_SlabHookRestore"),
   [`slab_arena.py:156-179`](../src/dgx_monarch/actor/slab_arena.py#L156-L179 "anchor:_finish_prepublished"),
   [`slab_arena.py:182-306`](../src/dgx_monarch/actor/slab_arena.py#L182-L306 "anchor:_Arena"),
-  [`slab.py:88-157`](../src/dgx_monarch/actor/slab.py#L88-L157 "anchor:__init__"),
-  [`slab.py:166-232`](../src/dgx_monarch/actor/slab.py#L166-L232 "anchor:_read_all"),
-  [`slab.py:603-647`](../src/dgx_monarch/actor/slab.py#L603-L647 "anchor:close"),
+  [`slab.py:87-156`](../src/dgx_monarch/actor/slab.py#L87-L156 "anchor:__init__"),
+  [`slab.py:165-231`](../src/dgx_monarch/actor/slab.py#L165-L231 "anchor:_read_all"),
+  [`slab.py:395-439`](../src/dgx_monarch/actor/slab.py#L395-L439 "anchor:close"),
   [`slab_lifetime.py:203-252`](../src/dgx_monarch/actor/slab_lifetime.py#L203-L252 "anchor:release_after_explicit_unload"),
   [`slab_lifetime.py:255-378`](../src/dgx_monarch/actor/slab_lifetime.py#L255-L378 "anchor:cleanup_failed_load"),
   [`model_store.py:419-462`](../src/dgx_monarch/actor/model_store.py#L419-L462 "anchor:_drop"),
@@ -1127,10 +1127,10 @@ copied from historical evidence.
   [`model_store.py:494-509`](../src/dgx_monarch/actor/model_store.py#L494-L509 "anchor:snapshot").
   Retention, refusal, and recovery are covered by
   [`test_slab.py:258-281`](../tests/test_slab.py#L258-L281 "anchor:test_close_attempts_annex_after_primary_arena_failure"),
-  [`test_slab.py:1077-1088`](../tests/test_slab.py#L1077-L1088 "anchor:test_close_retains_live_export_until_retry"),
-  [`test_slab.py:1091-1126`](../tests/test_slab.py#L1091-L1126 "anchor:test_arena_fd_close_uncertainty_is_terminal_and_never_retried"),
-  [`test_slab.py:1129-1172`](../tests/test_slab.py#L1129-L1172 "anchor:test_partial_weight_slab_preserves_primary_and_retains_uncertain_arena"),
-  [`test_slab.py:1327-1365`](../tests/test_slab.py#L1327-L1365 "anchor:test_slab_load_exposed_baseexception_has_durable_owner"),
+  [`test_slab.py:1103-1114`](../tests/test_slab.py#L1103-L1114 "anchor:test_close_retains_live_export_until_retry"),
+  [`test_slab.py:1117-1152`](../tests/test_slab.py#L1117-L1152 "anchor:test_arena_fd_close_uncertainty_is_terminal_and_never_retried"),
+  [`test_slab.py:1155-1198`](../tests/test_slab.py#L1155-L1198 "anchor:test_partial_weight_slab_preserves_primary_and_retains_uncertain_arena"),
+  [`test_slab.py:1353-1391`](../tests/test_slab.py#L1353-L1391 "anchor:test_slab_load_exposed_baseexception_has_durable_owner"),
   [`test_slab_instruction_handoffs.py:524-631`](../tests/test_slab_instruction_handoffs.py#L524-L631 "anchor:test_failed_hook_restore_guards_slab_until_later_confirmed_restore"),
   [`test_store_ensure.py:505-551`](../tests/test_store_ensure.py#L505-L551 "anchor:test_fsdp_pin_close_failure_blocks_reuse_until_exact_resource_retry"),
   [`test_store_ensure.py:554-608`](../tests/test_store_ensure.py#L554-L608 "anchor:test_fsdp_pin_fd_close_is_never_retried_after_release_then_raise"),

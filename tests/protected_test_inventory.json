@@ -651,7 +651,7 @@
       "test_the_rdma_guard_sits_at_the_single_constructor_of_that_path": "62b5afc29117dc3f",
       "test_the_spike_dyntrace_hook_is_gone_for_good": "9a6ac6a1fc9b57a6",
       "test_the_submodule_rewire_names_every_capturing_submodule": "c2cad927c923288a",
-      "test_the_swap_machinery_never_learns_about_this_rung": "c927649e5484f6ff",
+      "test_the_swap_machinery_never_learns_about_this_rung": "d91170f31abd5065",
       "test_the_worker_policy_endpoint_runs_the_same_gate": "74e85799f3a0dbf6"
     },
     "tests/test_comfy_managed_footprint.py": {
@@ -2832,6 +2832,7 @@
       "test_the_wire_turns_json_integers_into_floats_and_passes_none": "ddf8037e082aa445"
     },
     "tests/test_slab.py": {
+      "test_a_key_that_strayed_at_the_fresh_load_does_not_send_the_next_change_to_a_reload": "8cd9ed65ffb21e21",
       "test_a_lora_change_on_a_slab_resident_keeps_one_copy_of_every_weight": "333da6dbfaad2b40",
       "test_a_payload_that_cannot_fit_its_region_stays_one_counted_copy_across_swaps": "978753fb7fdeaa3f",
       "test_a_quantized_weight_that_fails_to_move_is_still_counted": "5e1e9c465e5854ab",
