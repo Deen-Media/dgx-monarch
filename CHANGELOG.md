@@ -2674,7 +2674,10 @@ sections after them list every change.
   the whole update on every host first and then exited 1 with no receipt. A
   receipt folder on a filesystem without hard links, such as a vfat or exFAT
   stick, now gets its receipt, created exclusively under its final name,
-  where publication failed ([INSTALL](docs/INSTALL.md#operator-receipts)).
+  where publication failed, and a folder the writer creates there may show
+  the mount's mode, never more open than the folder it was made in, where it
+  was refused after the update had run
+  ([INSTALL](docs/INSTALL.md#operator-receipts)).
 - Fix: a custom `--receipt` path no longer sets a folder that already exists,
   such as a home or a group-shared folder, to owner-only access; only the
   folders the writer creates get `0700`.

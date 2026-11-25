@@ -2094,7 +2094,11 @@ A path taken by something else after that check is still never overwritten:
 the update then reports that its receipt could not be published. A receipt
 directory on a filesystem without hard links, such as a vfat or exFAT stick,
 gets its receipt created exclusively under its final name instead of linked
-into place, still never over an existing file.
+into place, still never over an existing file. Such a filesystem also has no
+permission bits of its own: its mount options give every folder and file the
+same mode. A folder the command creates there shows that mode instead of
+`0700`, and is accepted when it is no more open than the folder it was made
+in.
 
 ## Uninstalling
 

@@ -20,13 +20,16 @@ def private_parent(path: Path, *, create: bool = True) -> int:
 
     With ``create`` a missing part is made at 0700; a folder that already
     exists keeps its mode, since a custom receipt path may sit in a home or a
-    group-shared folder. Without it nothing is created: a missing part ends the
-    walk, the deepest existing folder must let this user create in it, and -1
-    is returned.
+    group-shared folder. A filesystem without permission bits (vfat, exFAT)
+    gives every folder the mount's mode, so a created folder may show more
+    than 0700, but never more than the folder it was made in. Without
+    ``create`` nothing is created: a missing part ends the walk, the deepest
+    existing folder must let this user create in it, and -1 is returned.
     """
     directory_fd = os.open(path.anchor, _DIRECTORY)
     pending_fd = -1
     created = False
+    parent_mode = 0
     try:
         for index, name in enumerate(path.parts[1:]):
             created = False
@@ -38,6 +41,7 @@ def private_parent(path: Path, *, create: bool = True) -> int:
                         raise OSError("operator receipt directory is not writable") from None
                     os.close(directory_fd)
                     return -1
+                parent_mode = os.fstat(directory_fd).st_mode
                 os.mkdir(name, 0o700, dir_fd=directory_fd)
                 created = True
                 os.fsync(directory_fd)
@@ -55,7 +59,7 @@ def private_parent(path: Path, *, create: bool = True) -> int:
             if final and opened.st_uid != os.geteuid():
                 raise OSError("operator receipt directory belongs to another user")
             if (
-                (created and (opened.st_uid != os.geteuid() or opened.st_mode & 0o077))
+                (created and (opened.st_uid != os.geteuid() or opened.st_mode & 0o077 & ~parent_mode))
                 or (not final and writable and not opened.st_mode & stat.S_ISVTX)
             ):
                 raise OSError("operator receipt parent chain is unsafe")

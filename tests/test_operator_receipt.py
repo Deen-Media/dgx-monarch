@@ -329,6 +329,38 @@ def test_a_folder_without_hard_links_still_gets_its_receipt(tmp_path: Path, monk
     assert sorted(path.name for path in target.parent.iterdir()) == ["update.json"]
 
 
+@pytest.mark.parametrize(("stick_mode", "published"), [(0o755, True), (0o700, False)])
+def test_a_folder_created_on_a_mount_without_permission_bits(tmp_path: Path, monkeypatch, stick_mode, published):
+    """vfat gives a new folder the mount's mode: accepted when no more open than the folder it was made in.
+
+    Simulated as the kernel's vfat and exFAT drivers behave: mkdir takes the
+    mount's mode whatever was asked, and a chmod that mode cannot hold
+    succeeds and changes nothing.
+    """
+    from dgx_monarch.cli import receipt_files
+    from dgx_monarch.cli.receipt_preflight import check_receipt_destination
+
+    stick = tmp_path / "stick"
+    stick.mkdir()
+    stick.chmod(stick_mode)
+    real_mkdir = os.mkdir
+
+    def mount_mode(name, mode=0o777, *, dir_fd=None):
+        real_mkdir(name, mode, dir_fd=dir_fd)
+        os.chmod(name, 0o755, dir_fd=dir_fd)  # noqa: S103  # the mount's mode, whatever was asked
+
+    monkeypatch.setattr(receipt_files.os, "mkdir", mount_mode)
+    monkeypatch.setattr(receipt_files.os, "fchmod", lambda _fd, _mode: None)
+    target = stick / "receipts" / "update.json"
+    assert check_receipt_destination(target) == target
+    if published:
+        assert receipt.write_receipt(_built(), target) == target
+        assert target.read_text(encoding="ascii") == receipt.canonical_json(_built())
+    else:
+        with pytest.raises(OSError, match="unsafe"):
+            receipt.write_receipt(_built(), target)
+
+
 def test_a_file_that_appears_at_the_final_name_is_never_overwritten(tmp_path: Path, monkeypatch):
     """Another writer takes the name after the absence check: the exclusive create refuses, its file stays."""
     import errno
