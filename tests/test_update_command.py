@@ -74,6 +74,22 @@ def test_repo_snapshot_detects_dirty_and_hidden_index_state(tmp_path: Path):
     assert ops.repo_snapshot(sha).clean is False
 
 
+def test_the_real_ops_and_the_studio_wrapper_both_reach_the_release_retirement(tmp_path: Path):
+    """The transaction calls retire_releases on what the CLI and Studio pass it; both reach the release manager."""
+    from dgx_monarch.cli.update_retirement import retire_after_finalize
+    from dgx_monarch.studio.management_update import ReviewedUpdate
+
+    retired = OperationResult(Certainty.SUCCEEDED, counts={"releases_retired": 2})
+    calls: list[str] = []
+    manager = SimpleNamespace(retire_releases=lambda: calls.append("retire") or retired)
+    config = ClusterConfig(source=str(tmp_path / "cluster.toml"))
+    ops = update_command.SystemUpdateOps(tmp_path, config, release_manager=manager)
+    staged = SimpleNamespace()
+    assert retire_after_finalize(ops, staged) == retired
+    assert retire_after_finalize(ReviewedUpdate(ops, {}), staged) == retired
+    assert calls == ["retire", "retire"]
+
+
 def test_repo_snapshot_rechecks_exact_cluster_config_bytes(tmp_path: Path):
     repo, sha = _checkout(tmp_path)
     config_path = tmp_path / "cluster.toml"
@@ -527,19 +543,28 @@ def test_command_publishes_sanitized_receipt(
     assert str(destination) in capsys.readouterr().out
 
 
-def test_command_returns_failure_when_receipt_cannot_be_published(
+class _TakenDuringUpdate(_HappyOps):
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def finalize(self, _stage):
+        self.path.write_text("keep", encoding="utf-8")
+        return OperationResult(Certainty.SUCCEEDED)
+
+
+def test_command_returns_failure_when_receipt_is_taken_during_the_update(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
-    occupied = tmp_path / "receipt.json"
-    occupied.write_text("keep", encoding="utf-8")
+    """A path taken after the early check still never loses its file; the update says so."""
+    destination = tmp_path / "receipt.json"
 
     rc = update_command.run_verified_update(
         ClusterConfig(), repo=tmp_path, assume_yes=True,
-        receipt_path=occupied, ops=_HappyOps(),
+        receipt_path=destination, ops=_TakenDuringUpdate(destination),
     )
 
     assert rc == 1
-    assert occupied.read_text(encoding="utf-8") == "keep"
+    assert destination.read_text(encoding="utf-8") == "keep"
     assert "receipt publication failed" in capsys.readouterr().err
 
 
@@ -597,6 +622,99 @@ def test_command_refuses_a_bad_receipt_path_before_any_operation(
     captured = capsys.readouterr()
     assert captured.err == f"error: --receipt: {refusal}\n"
     assert captured.out == ""
+
+
+def _occupied(tmp_path: Path) -> Path:
+    path = tmp_path / "receipt.json"
+    path.write_text("keep", encoding="utf-8")
+    return path
+
+
+def _dangling_link(tmp_path: Path) -> Path:
+    path = tmp_path / "receipt.json"
+    path.symlink_to(tmp_path / "elsewhere.json")
+    return path
+
+
+def _read_only_parent(tmp_path: Path) -> Path:
+    parent = tmp_path / "read-only"
+    parent.mkdir(mode=0o500)
+    return parent / "receipt.json"
+
+
+def _file_parent(tmp_path: Path) -> Path:
+    (tmp_path / "plain-file").write_text("", encoding="utf-8")
+    return tmp_path / "plain-file" / "receipt.json"
+
+
+def _shared_ancestor(tmp_path: Path) -> Path:
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    return shared / "receipts" / "receipt.json"
+
+
+def _symlink_parent(tmp_path: Path) -> Path:
+    (tmp_path / "real").mkdir(mode=0o700)
+    (tmp_path / "linked").symlink_to(tmp_path / "real")
+    return tmp_path / "linked" / "receipt.json"
+
+
+@pytest.mark.parametrize(
+    ("make_path", "refusal"),
+    [(_occupied, "already exists"), (_dangling_link, "already exists"),
+     (_read_only_parent, "not writable"), (_file_parent, "real directory"),
+     (_shared_ancestor, "unsafe"), (_symlink_parent, "real directory")],
+    ids=["occupied", "dangling-link", "read-only-parent", "file-parent", "shared-ancestor", "symlink-parent"],
+)
+def test_command_refuses_an_unusable_receipt_path_before_any_operation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+    make_path, refusal: str,
+):
+    """An occupied or unwritable --receipt is found before the lock and any operation.
+
+    Found only at publication, the update ran on every host and then exited 1
+    with no receipt. The check reads and creates nothing.
+    """
+    root = tmp_path / "root"
+    root.mkdir(mode=0o700)
+    path = make_path(root)
+    before = sorted(str(item.relative_to(root)) for item in root.rglob("*"))
+    ops = _RecordingOps()
+    lock_root = tmp_path / "locks"
+    monkeypatch.setattr(update_entrypoint, "UpdateLock", lambda repo: UpdateLock(repo, state_root=lock_root))
+
+    rc = update_command.run_verified_update(
+        ClusterConfig(), repo=tmp_path, assume_yes=True, receipt_path=path, ops=ops,
+    )
+
+    assert rc == 2
+    assert ops.calls == []
+    assert not lock_root.exists()
+    assert sorted(str(item.relative_to(root)) for item in root.rglob("*")) == before
+    err = capsys.readouterr().err
+    assert err.startswith("error: --receipt: ") and refusal in err
+
+
+def test_command_refuses_a_receipt_under_an_unreadable_folder_before_any_operation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+):
+    """Publication opens every folder of the path, so a folder it can search but not read refuses first."""
+    gate = tmp_path / "gate"
+    (gate / "receipts").mkdir(parents=True, mode=0o700)
+    ops = _RecordingOps()
+    lock_root = tmp_path / "locks"
+    monkeypatch.setattr(update_entrypoint, "UpdateLock", lambda repo: UpdateLock(repo, state_root=lock_root))
+    gate.chmod(0o311)
+    try:
+        rc = update_command.run_verified_update(
+            ClusterConfig(), repo=tmp_path, assume_yes=True,
+            receipt_path=gate / "receipts" / "update.json", ops=ops,
+        )
+    finally:
+        gate.chmod(0o700)
+    assert rc == 2 and ops.calls == [] and not lock_root.exists()
+    assert "cannot be opened" in capsys.readouterr().err
 
 
 def test_command_refuses_concurrent_verified_update_before_any_operation(
@@ -719,10 +837,12 @@ def test_start_target_main_never_exits_1_on_a_fault_it_did_not_observe():
 def test_a_smoke_that_lost_its_transport_is_unknown_not_failed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """A smoke child that lost its transport reads UNKNOWN; only a definite refusal reads FAILED.
+    """A smoke child that lost its transport reads UNKNOWN; a definite refusal reads FAILED.
 
-    The child's 60 s status timeout and the parent's 600 s timeout are one class of
-    evidence; if they read differently, rollback depends on which clock fires first.
+    The child's own 60 s status timeout is the smoke reporting that it lost its
+    evidence. A smoke that never reports (killed, or stopped at the parent's
+    600 s limit) and one that could not confirm its own cleanup are named
+    failures that restore the prior release; they have their own test below.
     """
     repo, _sha = _checkout(tmp_path)
     config_path = tmp_path / "cluster.toml"
@@ -752,6 +872,69 @@ def test_a_smoke_that_lost_its_transport_is_unknown_not_failed(
     refused = '{"error": "status_topology_invalid", "result": "FAIL"}\n'
     assert ops_exiting(1, refused).cluster_smoke(
         _stage(metadata)).certainty == Certainty.FAILED
+
+
+def test_an_unconfirmed_smoke_cleanup_or_a_killed_smoke_is_a_named_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Both settle by the restore of the prior release, and the result names why.
+
+    The restore runs only once the stop of every new Worker is confirmed. The
+    Worker unit stops its whole control group, so that stop ends every actor
+    the smoke left on a Worker host, and the smoke process itself has already
+    exited. A smoke that lost its evidence stays unknown.
+    """
+    repo, _sha = _checkout(tmp_path)
+    config_path = tmp_path / "cluster.toml"
+    config_path.write_text("[cluster]\n", encoding="utf-8")
+    target_site = tmp_path / "target-site"
+    target_site.mkdir()
+    stage = _stage(ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS))
+    release = SimpleNamespace(ensure_supported=lambda: None,
+                              slot=SimpleNamespace(site=target_site, remote_activated=True))
+
+    def ops_running(runner):
+        ops = update_command.SystemUpdateOps(
+            repo, ClusterConfig(source=str(config_path)), release_manager=release, command_runner=runner,
+        )
+        monkeypatch.setattr(ops, "_target_site", lambda: target_site)
+        return ops
+
+    def smoke_exiting(returncode: int, stdout: str) -> OperationResult:
+        return ops_running(lambda argv, **_kwargs: subprocess.CompletedProcess(
+            list(argv), returncode, stdout, "")).cluster_smoke(stage)
+
+    def stopped_at_the_limit(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+
+    for code in ("cleanup_not_confirmed", "cleanup_recycle_failed"):
+        unconfirmed = json.dumps({"error": code, "result": "FAIL"}) + "\n"
+        assert smoke_exiting(75, unconfirmed) == OperationResult(Certainty.FAILED, "cleanup_unconfirmed")
+    assert smoke_exiting(-9, "") == OperationResult(Certainty.FAILED, "killed")
+    assert smoke_exiting(-15, '{"result": "PASS"}\n') == OperationResult(Certainty.FAILED, "killed")
+    assert ops_running(stopped_at_the_limit).cluster_smoke(stage) == OperationResult(Certainty.FAILED, "timed_out")
+    assert smoke_exiting(75, "a line that is not JSON\n") == OperationResult(Certainty.UNKNOWN)
+    assert smoke_exiting(75, "") == OperationResult(Certainty.UNKNOWN)
+    # Doctor follows the same rule: no verdict at all is a named failure, its own unknown stays unknown.
+    doctor = ops_running(lambda argv, **_kwargs: subprocess.CompletedProcess(list(argv), -9, "", ""))
+    assert doctor.doctor() == OperationResult(Certainty.FAILED, "killed")
+    assert ops_running(stopped_at_the_limit).doctor() == OperationResult(Certainty.FAILED, "timed_out")
+
+
+def test_the_update_unit_stops_its_whole_control_group():
+    """The restore after a named smoke failure relies on this: a confirmed stop ends every actor.
+
+    The unit a verified update writes takes systemd's default kill mode,
+    control-group, and kills what survives the stop signal.
+    """
+    from dgx_monarch.cli.lifecycle_systemd import systemd_worker_unit
+    from dgx_monarch.config import HostConfig
+
+    config = ClusterConfig(hosts=(HostConfig("remote", "tcp://192.0.2.10:26600", gpus=2),))
+    unit = systemd_worker_unit(config, config.hosts[0], managed_source=True, update_token=RELEASE_ID)
+    lines = unit.splitlines()
+    assert [line for line in lines if line.startswith("KillMode=")] in ([], ["KillMode=control-group"])
+    assert not [line for line in lines if line.startswith(("SendSIGKILL=", "KillSignal=", "Delegate="))]
 
 
 def test_doctor_carries_the_unknown_exit_through_to_certainty(

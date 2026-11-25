@@ -218,6 +218,193 @@ def test_write_is_private_atomic_and_deterministic(tmp_path: Path):
     assert not list(target.parent.glob(".*.tmp-*"))
 
 
+@pytest.mark.parametrize("occupied", [False, True])
+def test_a_custom_path_never_changes_the_mode_of_an_existing_folder(tmp_path: Path, occupied: bool):
+    shared = tmp_path / "project"
+    shared.mkdir()
+    shared.chmod(0o750)
+    target = shared / "update.json"
+    if occupied:
+        target.write_text("keep", encoding="utf-8")
+        with pytest.raises(FileExistsError):
+            receipt.write_receipt(_built(), target)
+        assert target.read_text(encoding="utf-8") == "keep"
+    else:
+        receipt.write_receipt(_built(), target)
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o750
+
+
+def test_a_failed_close_while_walking_the_parents_never_closes_a_descriptor_twice(
+    tmp_path: Path, monkeypatch
+):
+    closed: list[int] = []
+    real_close = os.close
+
+    def close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+        if len(closed) == 1:
+            raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(receipt.os, "close", close)
+    with pytest.raises(OSError):
+        receipt.write_receipt(_built(), tmp_path / "receipts" / "update.json")
+    assert len(closed) == len(set(closed))
+
+
+def test_the_receipt_preflight_reads_and_creates_nothing(tmp_path: Path):
+    from dgx_monarch.cli.receipt_preflight import check_receipt_destination
+
+    target = tmp_path / "new" / "deeper" / "update.json"
+    assert check_receipt_destination(target) == target
+    assert not (tmp_path / "new").exists()
+    (tmp_path / "taken.json").write_text("keep", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="already exists"):
+        check_receipt_destination(tmp_path / "taken.json")
+    with pytest.raises(ValueError, match="absolute"):
+        check_receipt_destination("relative.json")
+
+
+def test_the_receipt_preflight_refuses_a_folder_it_cannot_create_in(tmp_path: Path):
+    """A part is missing: the deepest folder that exists must let this user create the rest."""
+    from dgx_monarch.cli.receipt_preflight import check_receipt_destination
+
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o500)
+    try:
+        with pytest.raises(OSError, match="not writable"):
+            check_receipt_destination(locked / "new" / "update.json")
+    finally:
+        locked.chmod(0o700)
+    assert not (locked / "new").exists()
+
+
+def test_the_receipt_preflight_refuses_another_users_folder(tmp_path: Path, monkeypatch):
+    """The writer needs the receipt's own folder to be this user's; so does the check."""
+    from dgx_monarch.cli import receipt_files
+    from dgx_monarch.cli.receipt_preflight import check_receipt_destination
+
+    folder = tmp_path / "receipts"
+    folder.mkdir(mode=0o700)
+    real_uid = os.geteuid()
+    monkeypatch.setattr(receipt_files.os, "geteuid", lambda: real_uid + 1)
+    with pytest.raises(OSError, match="another user"):
+        check_receipt_destination(folder / "update.json")
+
+
+def test_the_preflight_refuses_an_ancestor_it_can_search_but_not_open(tmp_path: Path):
+    """Publication opens every folder of the path; an unreadable one refuses both, in the same words."""
+    from dgx_monarch.cli.receipt_preflight import check_receipt_destination
+
+    gate = tmp_path / "gate"
+    (gate / "receipts").mkdir(parents=True, mode=0o700)
+    gate.chmod(0o311)
+    try:
+        for check in (check_receipt_destination, lambda path: receipt.write_receipt(_built(), path)):
+            with pytest.raises(OSError, match="cannot be opened") as raised:
+                check(gate / "receipts" / "update.json")
+            assert "symlink" not in str(raised.value)
+    finally:
+        gate.chmod(0o700)
+    assert not (gate / "receipts" / "update.json").exists()
+
+
+def test_a_folder_without_hard_links_still_gets_its_receipt(tmp_path: Path, monkeypatch):
+    """vfat and exFAT refuse link(2): the receipt is then created exclusively, never over a file."""
+    import errno
+
+    def no_links(*_args, **_kwargs):
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(receipt.os, "link", no_links)
+    target = tmp_path / "stick" / "update.json"
+    assert receipt.write_receipt(_built(), target) == target
+    assert target.read_text(encoding="ascii") == receipt.canonical_json(_built())
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert sorted(path.name for path in target.parent.iterdir()) == ["update.json"]
+    with pytest.raises(FileExistsError):
+        receipt.write_receipt(_built(note="a second run"), target)
+    assert target.read_text(encoding="ascii") == receipt.canonical_json(_built())
+    assert sorted(path.name for path in target.parent.iterdir()) == ["update.json"]
+
+
+@pytest.mark.parametrize(("stick_mode", "published"), [(0o755, True), (0o700, False)])
+def test_a_folder_created_on_a_mount_without_permission_bits(tmp_path: Path, monkeypatch, stick_mode, published):
+    """vfat gives a new folder the mount's mode: accepted when no more open than the folder it was made in.
+
+    Simulated as the kernel's vfat and exFAT drivers behave: mkdir takes the
+    mount's mode whatever was asked, and a chmod that mode cannot hold
+    succeeds and changes nothing.
+    """
+    from dgx_monarch.cli import receipt_files
+    from dgx_monarch.cli.receipt_preflight import check_receipt_destination
+
+    stick = tmp_path / "stick"
+    stick.mkdir()
+    stick.chmod(stick_mode)
+    real_mkdir = os.mkdir
+
+    def mount_mode(name, mode=0o777, *, dir_fd=None):
+        real_mkdir(name, mode, dir_fd=dir_fd)
+        os.chmod(name, 0o755, dir_fd=dir_fd)  # noqa: S103  # the mount's mode, whatever was asked
+
+    monkeypatch.setattr(receipt_files.os, "mkdir", mount_mode)
+    monkeypatch.setattr(receipt_files.os, "fchmod", lambda _fd, _mode: None)
+    target = stick / "receipts" / "update.json"
+    assert check_receipt_destination(target) == target
+    if published:
+        assert receipt.write_receipt(_built(), target) == target
+        assert target.read_text(encoding="ascii") == receipt.canonical_json(_built())
+    else:
+        with pytest.raises(OSError, match="unsafe"):
+            receipt.write_receipt(_built(), target)
+
+
+def test_a_file_that_appears_at_the_final_name_is_never_overwritten(tmp_path: Path, monkeypatch):
+    """Another writer takes the name after the absence check: the exclusive create refuses, its file stays."""
+    import errno
+
+    target = tmp_path / "stick" / "update.json"
+    target.parent.mkdir(mode=0o700)
+
+    def another_writer_then_no_links(*_args, **_kwargs):
+        target.write_text("another writer's file", encoding="ascii")
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(receipt.os, "link", another_writer_then_no_links)
+    with pytest.raises(FileExistsError):
+        receipt.write_receipt(_built(), target)
+    assert target.read_text(encoding="ascii") == "another writer's file"
+    assert sorted(path.name for path in target.parent.iterdir()) == ["update.json"]
+
+
+def test_a_failed_exclusive_publication_leaves_nothing(tmp_path: Path, monkeypatch):
+    import errno
+
+    from dgx_monarch.cli import receipt_files
+
+    def no_links(*_args, **_kwargs):
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    real_fsync = os.fsync
+    calls = []
+
+    def full_disk_on_the_final_file(fd):
+        calls.append(fd)
+        if len(calls) == 2:  # the temporary's fsync passes; the final file's fails
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(receipt.os, "link", no_links)
+    monkeypatch.setattr(receipt_files.os, "fsync", full_disk_on_the_final_file)
+    target = tmp_path / "stick" / "update.json"
+    target.parent.mkdir(mode=0o700)
+    with pytest.raises(OSError, match="No space"):
+        receipt.write_receipt(_built(), target)
+    assert list(target.parent.iterdir()) == []
+
+
 def test_write_never_replaces_an_existing_file_or_symlink(tmp_path: Path):
     parent = tmp_path / "receipts"
     parent.mkdir()

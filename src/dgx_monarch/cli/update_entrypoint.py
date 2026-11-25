@@ -5,7 +5,8 @@ import os
 import sys
 from pathlib import Path
 
-from .operator_receipt import receipt_destination, write_receipt
+from .operator_receipt import write_receipt
+from .receipt_preflight import check_receipt_destination
 from .update_lock import UpdateLock, UpdateLockUnavailable
 from .update_receipt import interrupted_receipt
 from .update_transaction import UpdateOps, UpdateRequest, execute_verified_update
@@ -19,12 +20,12 @@ def run_serialized_update(
     receipt_path: str | os.PathLike[str] | None,
 ) -> int:
     # The --receipt check runs here, before the lock and the update. Checked only
-    # at write time, a relative or nameless path would fail after the update had
-    # run on every host, with no receipt and exit 1.
+    # at write time, a relative, nameless, occupied or unwritable path would fail
+    # after the update had run on every host, with no receipt and exit 1.
     if receipt_path is not None:
         try:
-            receipt_destination(receipt_path)
-        except (TypeError, ValueError) as exc:
+            check_receipt_destination(receipt_path)
+        except (TypeError, ValueError, OSError) as exc:
             print(f"error: --receipt: {exc}", file=sys.stderr)
             return 2
     try:

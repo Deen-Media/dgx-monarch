@@ -124,6 +124,25 @@ def test_same_normalized_foreign_distribution_twice_is_ambiguous(payload):
         _scan_tree(site, expected)
 
 
+def test_a_folder_above_the_site_may_be_a_symlink(payload, tmp_path_factory):
+    """A home mounted elsewhere (``/home`` linked to ``/var/home``) is not a payload claim."""
+    site, expected = payload
+    install(site, "other", {"examples/foreign/__init__.py": b"", "examples/foreign/demo.py": b"foreign"})
+    linked = tmp_path_factory.mktemp("mount") / "home"
+    linked.symlink_to(site.parent, target_is_directory=True)
+    through_link = linked / site.name
+    assert _scan_tree(through_link, expected) == expected
+    assert site_payload_digest(through_link, "1") == site_payload_digest(site, "1")
+
+
+def test_a_symlinked_site_root_still_refuses(payload, tmp_path_factory):
+    site, expected = payload
+    linked = tmp_path_factory.mktemp("mount") / "site"
+    linked.symlink_to(site, target_is_directory=True)
+    with pytest.raises(PayloadOwnershipError, match="symlink ancestor"):
+        _scan_tree(linked, expected)
+
+
 def test_foreign_metadata_symlink_is_refused(payload):
     site, expected = payload
     info, _rows = install(site, "other", {"examples/foreign.py": b"foreign"})

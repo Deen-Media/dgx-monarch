@@ -299,6 +299,11 @@ launcher can make bare `dgxm` available without activating the environment:
 "$DGXM" launcher --executable "$DGXM" \
   --cluster-config /absolute/path/to/cluster.toml \
   --destination "$HOME/.local/bin/dgxm" --check
+```
+
+Review that plan, and apply it only once the plan reads as intended:
+
+```bash
 "$DGXM" launcher --executable "$DGXM" \
   --cluster-config /absolute/path/to/cluster.toml \
   --destination "$HOME/.local/bin/dgxm" --apply
@@ -1040,7 +1045,12 @@ clients and refuses incomplete observations.
 
 ```bash
 dgxm sol-install
-# Review the per-host package changes and copy the emitted token and digest.
+```
+
+Review the per-host package changes, then apply with the token and digest
+the plan printed in place of `TOKEN` and `SHA256`:
+
+```bash
 dgxm sol-install --apply --plan TOKEN --plan-digest SHA256 --idle-maintenance
 ```
 
@@ -1137,14 +1147,18 @@ OOM kill of one process.
 turn swap off and keep it off across reboots:
 
 ```bash
-sudo swapoff -a && sudo sed -i 's|^/swap.img|#/swap.img|' /etc/fstab \
-  && printf 'vm.swappiness=10\n' | sudo tee /etc/sysctl.d/99-swap.conf \
-  && sudo sysctl -q -p /etc/sysctl.d/99-swap.conf && swapon --show
+sudo swapoff -a && sudo sed -i 's|^/swap\.img\([[:space:]]\)|#/swap.img\1|' /etc/fstab \
+  && printf 'vm.swappiness=10\n' | sudo tee /etc/sysctl.d/99-dgxm-swap.conf \
+  && sudo sysctl -q -p /etc/sysctl.d/99-dgxm-swap.conf && swapon --show
 ```
 
-`swapon --show` prints nothing once swap is off. To undo, uncomment the fstab
-line, run `sudo swapon -a`, and delete `/etc/sysctl.d/99-swap.conf` to restore
-the default swappiness at the next boot.
+`swapon --show` prints nothing once swap is off. The fstab edit comments out
+only the line for `/swap.img` itself, and the swappiness goes into a file of
+this guide's own name, so no other setting is touched. To undo, uncomment the
+fstab line, run `sudo swapon -a`, and delete `/etc/sysctl.d/99-dgxm-swap.conf`
+to restore the default swappiness at the next boot. An earlier version of this
+guide wrote `/etc/sysctl.d/99-swap.conf` instead: if that file holds only
+`vm.swappiness=10`, delete it too.
 
 ## Updating
 
@@ -1826,12 +1840,53 @@ refuse migration.
 Activation journals the exact prior unit and source layout, then switches
 each stopped Worker to its staged release and writes a unit bound to that
 release. A prior source directory moves to a backup; a prior link's target is
-recorded. The live driver checkout stays at its prior commit. The command
+recorded. The live driver checkout stays at its prior commit. Activation
+switches one host at a time, in the order cluster.toml lists them, and sends
+no host an activation before the host ahead of it reads back as switched.
+When a switch's reply is lost, or the switch never ran, the updater reads
+that host back under the same locks before it touches the next one. A switch
+that never began is marked cancelled there, so a copy still waiting on the
+lock cannot run later. A host that reads back switched lets the next one
+switch; one that reads back unchanged, or in a state compensation restores,
+is a definite failure. Only a host that still cannot be read leaves the
+outcome unknown, and every host after it still runs the old release. The command
 starts Workers without syncing, runs target-code doctor and the client-owned
 cluster smoke, and checks release, dependency and all-rank source agreement.
 Only after those checks pass does it promote the verified driver pin,
 fast-forward and read back the driver checkout, then finalize the transaction.
-Prior release slots, source backups and installation journals are retained.
+Source backups and installation journals are retained.
+
+Once every host is finalized, the update has succeeded, and a separate
+`release_retirement` step removes old release slots under
+`~/.local/share/dgx-monarch/releases`. On each host it holds the lifecycle
+lock, which every update, setup and lifecycle command takes, and first repeats
+finalize's own check: the journal, the unit bytes and the source link must
+still name this update's slot, and a running Worker must import from it. It
+leaves the Worker generation lock free, so a Worker that restarts meanwhile
+starts from the kept slot. It then removes only a slot it can prove dead:
+
+- named like a release slot, owned by you, and not a symlink;
+- neither this update's slot nor the slot it replaced, compared by real path,
+  so a rollback still has the old release;
+- its own transaction is over: an update's journal holds `finalized` or
+  `compensated`, or a failed guided setup's `closed.json`. A slot that guided
+  setup installed has no such mark and stays;
+- no process of yours that it can read works in it, runs or maps a file from
+  it, holds a file open in it, or names it in `PYTHONPATH`. A process it
+  cannot read, such as one that blocks inspection of itself, is not checked.
+
+Every other folder stays, including a slot another update is still staging.
+Each slot is renamed to `.retiring-<name>` before removal, so a stop halfway
+leaves nothing that looks like a slot, and the next update removes that
+leftover first. A host starts no new removal after 120 seconds, or once the
+updater stops reading its output, and the updater waits up to 240 seconds for
+it, the wait for the lifecycle lock included. The receipt step counts the slots
+removed, their bytes, the slots kept back for now and the hosts that did not
+confirm. Its status is `partial` when slots were kept back and `unknown` when
+a host did not confirm or you stopped the step; some slots may then remain,
+and the next update tries again. This step never changes the update's
+outcome: a Ctrl+C during it is recorded as an `unknown` step, and the update
+still ends `updated` with exit 0. Earlier releases kept every slot.
 
 Migrated units include the canonical generation-invalidating `ExecStartPre`.
 Compensation restores the captured unit bytes, mode and source layout before
@@ -1843,14 +1898,38 @@ remains `unknown`.
 
 A worker stop that definitely fails ends the update before activation and
 starts nothing; any host that did stop stays down. A failed activation
-compensates the remote slots and, if that succeeds, starts the prior release
-without syncing. A failed start, doctor, smoke, readback, or driver commit first confirms the new
+compensates the hosts it reached and, if that succeeds, starts the prior
+release on every host without syncing; a host it never reached still holds
+its prior unit and link, which the prior start reads back first. A failed start, doctor, smoke, readback, or driver commit first confirms the new
 services stopped (for a driver commit, also that the driver still reads back at
 its prior commit and pin), then compensates the slots and starts the prior
-release; each recovery step runs only after the one before it succeeded, and a
-prior start that definitely fails gets one more stop. If a stop, activation,
+release; each recovery step runs only after the one before it succeeded. The
+prior start is tried on every host, so one host that does not confirm leaves
+no later host stopped, and a prior start that definitely fails gets one more
+stop. A doctor or smoke whose process ended with no verdict also counts as a
+failed check here, each under its own code: killed by a signal
+(`doctor_killed`, `cluster_smoke_killed`) or stopped at its time limit, 180
+seconds for doctor and 600 for the smoke (`doctor_timed_out`,
+`cluster_smoke_timed_out`); so does a smoke whose checks all passed while it
+could not confirm the stop of the ProcMesh it started
+(`cluster_smoke_cleanup_unconfirmed`). The restore is safe for all of them: it
+waits for the confirmed stop of every new Worker, the Worker unit stops its
+whole control group, so that stop ends every actor a check left on a Worker
+host, and the check's process has already exited or was stopped and reaped.
+It leaves the pair working on the old release, where an unknown result would
+leave the new Workers stopped for the forward repair. A doctor that reports
+unknown (exit 75) and a smoke that lost its evidence stay unknown. Whatever
+the end, the update's last line says which release each host is on, whether
+its Worker runs, and the repair: `dgxm up` where that one command repairs it,
+otherwise the case in TROUBLESHOOTING entry 118 for its code; the lines above
+it name the hosts. If a stop, activation,
 target start, compensation, or prior restart is unknown or throws, the command
-performs no later mutation.
+performs no later mutation; the one exception is the readback of an
+unanswered switch above, which writes only its cancel mark and runs the
+service-manager reload a finished switch would have run itself. After an
+unknown activation the command prints each host's state: the hosts before
+the one it could not read run the new release, and the hosts after it were
+never sent an activation.
 
 After target start is confirmed, an unknown, thrown, or cancelled doctor,
 cluster smoke, exact readback, or driver-commit step authorizes exactly one
@@ -1979,7 +2058,8 @@ no config, service, or cluster change and writes a local audit receipt only
 when one was explicitly requested. These may return without a default receipt:
 early setup validation, a declined setup confirmation, a repair refused by its
 arguments or unable to inspect the config, and a verified update given a
-relative `--receipt` or unable to acquire its per-checkout lock. After setup
+`--receipt` it refuses before any step (below) or unable to acquire its
+per-checkout lock. After setup
 confirmation, a config-lock refusal or interruption still attempts the required
 setup receipt before returning or re-raising. An applied setup or verified
 update interrupted by `KeyboardInterrupt` or `SystemExit` may settle without a
@@ -2001,17 +2081,62 @@ versions and raw check details; keep it private or redact it by hand before shar
 If the user needs a custom `--receipt`, check its absolute path and existing
 ancestors before apply. No parent may be a symlink. Group- or world-writable
 ancestors are rejected unless sticky; the final directory must belong to the
-current user. The command creates missing parents and sets the final directory
-to `0700`, so choose a dedicated private directory. Never change permissions
-on a shared or unrelated directory to make receipt publication pass. An
-optional dry-run receipt has the same path requirements.
+current user. The command creates missing parents with mode `0700` and never
+changes the mode of a directory that already exists, so a receipt in a home
+or group-shared directory leaves that directory as it was; the receipt file
+itself is `0600`. Never change permissions on a shared or unrelated directory
+to make receipt publication pass. An optional dry-run receipt has the same
+path requirements. `dgxm update --verify` checks its `--receipt` before the
+update lock and any update step, walking the path as publication does: a
+path that already exists, a parent that is a symlink or a file, a parent it
+can search but not open, an unsafe ancestor, a final directory of another
+user, or a directory it cannot write refuses with exit 2 and changes nothing.
+A path taken by something else after that check is still never overwritten:
+the update then reports that its receipt could not be published. A receipt
+directory on a filesystem without hard links, such as a vfat or exFAT stick,
+gets its receipt created exclusively under its final name instead of linked
+into place, still never over an existing file. Such a filesystem also has no
+permission bits of its own: its mount options give every folder and file the
+same mode. A folder the command creates there shows that mode instead of
+`0700`, and is accepted when it is no more open than the folder it was made
+in.
 
 ## Uninstalling
 
-```bash
-dgxm uninstall                      # removes Worker services/units; offers reviewed config removal
-rm -rf "$COMFY_DIR/custom_nodes/dgx-monarch"   # a symlink here: only the link goes
-```
+Uninstall in two steps, and start the second only after the first exits 0.
+
+1. Remove the Worker services and units. Run this line on its own, since it
+   asks before it removes the config file:
+
+   ```bash
+   dgxm uninstall
+   ```
+
+   Go by its exit status, which `echo $?` prints right after it: `0` means
+   it finished. On success it prints `worker services and units removed`
+   and then asks you to remove the checkout, or, with nothing to remove, it
+   prints `no cluster config was found`. Any other status is a refusal or an
+   incomplete removal, and the lines above it name the cause; one that names
+   `dgxm-studio.service` asks you to run `dgxm studio down` first. Keep the
+   checkout until it succeeds, since the `dgxm` command runs from it: clear
+   the cause and run `dgxm uninstall` again. Step 2 checks again on its own
+   and removes nothing while a dgx-monarch service unit is still installed on
+   this machine.
+
+2. Remove the node pack. It deletes any local work in the checkout, so look
+   first with `git -C "$COMFY_DIR/custom_nodes/dgx-monarch" status --short`.
+   The block removes nothing while a dgx-monarch service unit is still
+   installed on this machine, or while `COMFY_DIR` is unset; a symlink there
+   is removed alone and the folder it names stays:
+
+   ```bash
+   if [ -e "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/dgxm-studio.service" ] \
+     || [ -e ~/.config/systemd/user/dgxm-studio.service ] || [ -e ~/.config/systemd/user/dgxm-worker.service ]; then
+     echo "a dgx-monarch service unit is still installed: finish step 1 first"; false
+   else
+     rm -rf -- "${COMFY_DIR:?set COMFY_DIR to your ComfyUI folder}/custom_nodes/dgx-monarch"
+   fi
+   ```
 
 Uninstall holds the shared config lock across service/unit removal, rereads the
 config, and asks separately before its checked unlink. Lock contention or

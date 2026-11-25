@@ -168,6 +168,69 @@ def test_child_locks_original_repo_and_publishes_settlement(tmp_path, monkeypatc
     assert json.loads((snapshot / "settled.json").read_text()) == {"exit_code": 0}
 
 
+def test_an_occupied_receipt_is_refused_before_source_or_subprocess(tmp_path, monkeypatch):
+    from dgx_monarch.config import ClusterConfig
+    config_path = tmp_path / "cluster.toml"
+    config_path.write_text("")
+    config = ClusterConfig(source=str(config_path))
+    monkeypatch.setattr(bootstrap, "load_cluster_config", lambda path: config)
+    monkeypatch.setattr(bootstrap, "dgx_source_manifest_sha256", lambda path: "a" * 64)
+    snapshot = Mock(return_value=(tmp_path / "controller", "b" * 64))
+    spawn = Mock()
+    monkeypatch.setattr(bootstrap, "_snapshot", snapshot)
+    monkeypatch.setattr(bootstrap.subprocess, "Popen", spawn)
+    occupied = tmp_path / "receipts" / "update.json"
+    occupied.parent.mkdir(mode=0o700)
+    occupied.write_text("an earlier receipt")
+    assert bootstrap.launch_verified_update(
+        config, repo=tmp_path, target_ref="origin/master", assume_yes=True,
+        driver_host=None, receipt_path=occupied,
+    ) == 2
+    snapshot.assert_not_called()
+    spawn.assert_not_called()
+    assert occupied.read_text() == "an earlier receipt"
+
+
+@pytest.mark.parametrize("result", [0, 1])
+def test_a_process_record_that_cannot_be_written_keeps_the_childs_result(
+    tmp_path, monkeypatch, capsys, result
+):
+    from dgx_monarch.config import ClusterConfig
+    config_path = tmp_path / "cluster.toml"
+    config_path.write_text("")
+    config = ClusterConfig(source=str(config_path))
+    monkeypatch.setattr(bootstrap, "load_cluster_config", lambda path: config)
+    monkeypatch.setattr(bootstrap, "dgx_source_manifest_sha256", lambda path: "a" * 64)
+    snapshot = tmp_path / "controller"
+    snapshot.mkdir()
+    monkeypatch.setattr(bootstrap, "_snapshot", lambda source, root, request: (snapshot, "b" * 64))
+    process = Mock(pid=42)
+    waited = []
+
+    def wait(timeout=None):
+        waited.append(timeout)
+        (snapshot / "settled.json").write_text(json.dumps({"exit_code": result}))
+        return result
+
+    process.wait.side_effect = wait
+    monkeypatch.setattr(bootstrap.subprocess, "Popen", Mock(return_value=process))
+    write = bootstrap._write_private
+
+    def full_disk(path, payload):
+        if path.name == "process.json":
+            raise OSError(28, "No space left on device")
+        return write(path, payload)
+
+    monkeypatch.setattr(bootstrap, "_write_private", full_disk)
+    assert bootstrap.launch_verified_update(
+        config, repo=tmp_path, target_ref="origin/master", assume_yes=True,
+        driver_host=None, receipt_path=None,
+    ) == result
+    assert waited == [None]
+    err = capsys.readouterr().err
+    assert "refused" not in err and "process record" in err
+
+
 @pytest.mark.parametrize("result", [0, 1, 130])
 def test_launcher_cleans_only_confirmed_success(tmp_path, monkeypatch, result):
     from dgx_monarch.config import ClusterConfig

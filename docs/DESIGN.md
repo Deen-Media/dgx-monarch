@@ -4623,6 +4623,10 @@ dgx-monarch/
 │       │                       #   how long it has held it, the id it serves,
 │       │                       #   and the doctor row
 │       ├── operator_receipt.py # bounded disclosure-safe receipt schema/writer
+│       ├── receipt_files.py    # receipt folder walk (writer and preflight) and
+│       │                       #   no-clobber file steps
+│       ├── receipt_preflight.py # read-only refusal of an unusable receipt path,
+│       │                       #   before any operation runs
 │       ├── receipt_sanitize.py # conservative receipt-note redaction leaf
 │       ├── sol_attn_prerequisites.py # passive optional dependency/header/cache evidence
 │       ├── sol_install.py      # per-host plans and reviewed fleet digest
@@ -4667,6 +4671,8 @@ dgx-monarch/
 │       ├── update_activity.py  # read-only driver activity and opt-in
 │       │                       #   privileged process checks
 │       ├── update_cancellation.py # cancellation-precedence helper
+│       ├── update_check_outcome.py # how a doctor or smoke process ended: verdict,
+│       │                       #   unknown, or no verdict (a named failure)
 │       ├── update_command.py   # concrete verified-update platform adapter
 │       ├── update_dependency_contract.py # read-only dependency closure checks
 │       │                       #   run in each target interpreter
@@ -4675,6 +4681,7 @@ dgx-monarch/
 │       ├── update_doctor_diagnostics.py # bounded Doctor categories for updater
 │       │                       #   stderr
 │       ├── update_driver_pin.py # driver-pin change: stage both wheels, switch or restore offline
+│       ├── update_end_state.py # where an update that stopped short left the hosts
 │       ├── update_entrypoint.py # serialized execution and receipt publication
 │       ├── update_inspect.py   # exact target dependency/source inventory checks
 │       ├── update_lock.py      # per-checkout flock: one driver-side update at a time
@@ -4682,10 +4689,12 @@ dgx-monarch/
 │       ├── update_receipt.py   # bounded update step-to-receipt adapter
 │       ├── update_repository.py # read-only checkout and origin observations
 │       │                       #   the update controllers share
-│       ├── update_release.py   # private remote release-slot switch/compensation
-│       ├── update_release_finalize.py # all-host verified finalization scripts
-│       ├── update_release_switch.py # journaled remote live-site switch scripts
+│       ├── update_release.py   # private remote release slots: one host at a time
+│       │                       #   switch, readback, compensation, finalize
+│       ├── update_release_report.py # per-host stderr lines when a release change stops short
 │       ├── update_release_types.py # slot value types, runner seams, metadata checks
+│       ├── update_retire_remote.py # host side: remove only release slots proven dead
+│       ├── update_retirement.py # release_retirement step: per-host runs and counts
 │       ├── update_stage_cleanup.py # total pre-activation cleanup settlement
 │       ├── update_stage_failure.py # cleanup-aware staging failures
 │       ├── update_support.py   # private staging dir and process-enumeration guards

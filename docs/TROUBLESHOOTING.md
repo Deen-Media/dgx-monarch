@@ -4778,7 +4778,13 @@ process before probing its listening port.
 shape as a candidate only. It confirms the pack through ComfyUI's stock
 `/object_info/DGXMonarchInit` endpoint and requires the exact Init node name,
 category and output type, so an unrelated `main.py` listener or any HTTP 200
-or 503 is not enough. `gate` and `top` then use `/dgxm/telemetry` only to rank
+or 503 is not enough. Only a missing route (404 or 410) answered by the probed
+address itself, a refused connection or another schema shows the pack absent:
+any other HTTP error, such as a 401 or 403 from a login layer or a server
+error, and an answer from another address after a redirect, a 404 there
+included, show nothing, so `dgxm update`, with or without
+`--verify`, and guided setup refuse with `activity_unknown` until every
+probed port answers plainly or ComfyUI is stopped. `gate` and `top` then use `/dgxm/telemetry` only to rank
 confirmed instances by live workers; a cold telemetry timeout or a valid 503
 does not hide a confirmed driver, and `update` does not wait on that slower
 endpoint. If process inspection is unavailable or restricted, pass the address:
@@ -7821,7 +7827,9 @@ before you change anything read each host's link (`readlink -f
 rev-parse HEAD`) and the driver's torchmonarch (`"$COMFY_PYTHON" -m pip show
 torchmonarch`) beside the pin in that checkout's `pyproject.toml`. A rerun of
 the same update refuses with `prior_worker_drift` while the Workers do not
-match the driver.
+match the driver. The update's own last line already says which release each
+host is on, whether its Worker runs, and the repair, and the lines above it
+name the hosts; the cases below give the detail.
 
 - Any code whose receipt lists neither a `worker_stop` nor a
   `pre_stop_recheck` step: the update stopped before any live change, while
@@ -7829,8 +7837,10 @@ match the driver.
   the removal of its staging area (the `stage_cleanup` step) was not
   confirmed. The driver and the Workers are as they were; clear the cause
   the code names and rerun.
-- An `activation_failed`, `start_failed`, `doctor_failed`,
-  `cluster_smoke_failed`, `readback_mismatch` or `driver_commit_failed`
+- An `activation_failed`, `start_failed`, `doctor_failed`, `doctor_killed`,
+  `doctor_timed_out`, `cluster_smoke_failed`,
+  `cluster_smoke_cleanup_unconfirmed`, `cluster_smoke_killed`,
+  `cluster_smoke_timed_out`, `readback_mismatch` or `driver_commit_failed`
   whose `prior_release_start` step succeeded: the old release was restored
   and its Workers run again, and only the `stage_cleanup` step was not
   confirmed. The driver and the Workers match on the old release; clear the
@@ -7840,7 +7850,9 @@ match the driver.
   Workers may be stopped, and the driver is unchanged. `dgxm up` starts them
   again; then rerun the update.
 - `activation_unknown`, and an `activation_failed`, `start_failed`,
-  `doctor_failed`, `cluster_smoke_failed`, `readback_mismatch` or
+  `doctor_failed`, `doctor_killed`, `doctor_timed_out`,
+  `cluster_smoke_failed`, `cluster_smoke_cleanup_unconfirmed`,
+  `cluster_smoke_killed`, `cluster_smoke_timed_out`, `readback_mismatch` or
   `driver_commit_failed` whose `prior_release_start` step is missing or did
   not succeed, so the restore of the old release was not confirmed: each
   host's link and unit can name either release, Workers of either
@@ -7848,7 +7860,13 @@ match the driver.
   (a driver commit reports `failed` only after it put the driver back).
   Hosts whose link names the old release match the driver. When every link
   names the old release, `dgxm up` starts the stopped ones; if any names the
-  new one, use the forward repair above.
+  new one, use the forward repair above. After `activation_unknown` the
+  update printed each host's state, and the receipt's `activation` step
+  counts them (`hosts_switched`, `hosts_unknown`, `hosts_not_reached`):
+  activation switches one host at a time,
+  so only the host it could not read back can name either release; the
+  hosts before it name the new release, and the hosts after it were never
+  sent an activation and name the old one.
 - `start_unknown`: every link and unit names the new release, and the new
   Workers may be running, because the update stopped nothing after it. The
   driver's checkout and torchmonarch are unchanged. Use the forward repair.

@@ -263,7 +263,12 @@ def foreign_namespace_files(
     the official one. ``shared`` receives each such path with the pinned hash
     to count it at, so the payload digest is the same whichever install wrote
     last. A named shared path that is gone still refuses.
+
+    The folders above the site are resolved first: a symlink there, such as a
+    home mounted elsewhere, says nothing about who owns the payload. A symlink
+    at the site itself or below it still refuses.
     """
+    site = site.parent.resolve(strict=True) / site.name
     owners: dict[str, list[str]] = {}
     identities: dict[str, int] = {}
     pinned_records: dict[str, tuple[str, str]] = {}
