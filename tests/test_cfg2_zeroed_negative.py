@@ -199,10 +199,14 @@ def _qwen21(comfy):
 
 
 @pytest.mark.parametrize("negative", ["zeroed-positive", "real"])
-def test_qwen_image21_cfg2_slice_path_is_stocks_batched_call(comfy_modules, monkeypatch,
-                                                              negative):
+def test_qwen_image21_cfg2_slice_path_is_stocks_separate_calls(comfy_modules, monkeypatch,
+                                                                negative):
     """Qwen-Image 2.1 pads nothing (cfg_cond_padding none): an equal pair takes
-    the slice path, and each rank's row is stock's batched call's row."""
+    the slice path, where each rank runs one entry alone. Its row is therefore
+    stock's own call on that conditioning alone, bit for bit, and agrees with
+    stock's batched call only to float rounding: with mkldnn off this CPU rounds
+    the batch-2 call apart from the two batch-1 calls, and the ranks still equal
+    the batch-1 calls."""
     generator = torch.Generator().manual_seed(7)
     prompt = torch.randn(1, 9, 4, generator=generator)
     other = torch.zeros_like(prompt) if negative == "zeroed-positive" else torch.randn(
@@ -217,8 +221,11 @@ def test_qwen_image21_cfg2_slice_path_is_stocks_batched_call(comfy_modules, monk
     with torch.no_grad():
         batched = model._forward(*calls[0][:3], transformer_options={})
         alone = [model._forward(x, t, c, transformer_options={}) for c in (prompt, other)]
-    # This CPU rounds the toy's batch-2 call as its two batch-1 calls.
-    assert all(torch.equal(batched[i:i + 1], alone[i]) for i in range(2))
+    # Stock's batch-2 call and its two batch-1 calls are the same math but may
+    # round apart, by CPU, BLAS and thread count; that is why an equal pair leaves
+    # cfg2 where a bytes-equal route exists. Only float rounding separates them.
+    assert all(torch.allclose(batched[i:i + 1], alone[i], rtol=1e-4, atol=1e-5)
+               for i in range(2))
     ranks = _split_on_two_ranks(monkeypatch, comfy_modules, adapter, model, calls[0])
     for rank, local in enumerate(ranks):
-        assert torch.equal(local, batched[rank:rank + 1]), f"rank {rank}"
+        assert torch.equal(local, alone[rank]), f"rank {rank}"
