@@ -2686,8 +2686,9 @@ sections after them list every change.
   refused" with exit 2 after the update ran.
 - Fix: a plain `dgxm update` now refuses with `activity_unknown` when a
   ComfyUI port answers the pack check with an HTTP error other than a missing
-  route, such as 401 or 403 from a login layer or a server error, or answers
-  from another address after a redirect. It read those as "ComfyUI is not
+  route at the probed address, such as 401 or 403 from a login layer or a
+  server error, or answers from another address after a redirect, a missing
+  page there included. It read those as "ComfyUI is not
   running" and could update and restart the Workers under a live driver. The
   same check gates `dgxm update --verify`'s activity guard and guided setup's
   activity check, which now refuse `activity_unknown` on such an answer too,
