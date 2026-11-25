@@ -77,8 +77,9 @@ def blocked_refusal(handle: Any, door: str) -> str:
     sentence = block_cause_sentence(handle)
     if door == GET_MESH_DOOR:
         blocked = getattr(handle, "replacement_blocked", None)
-        return ("the previous worker fleet could not be stopped safely; "
-                f"replacement is blocked ({blocked}). {sentence}")
+        head = ("has not been stopped yet" if block_cause(handle) == TAG_NO_STOP_ISSUED
+                else "could not be stopped safely")
+        return f"the previous worker fleet {head}; replacement is blocked ({blocked}). {sentence}"
     return ("the cached mesh cannot be used or replaced: group cleanup is "
             "dirty, a prior proc stop failed, or a teardown outcome was lost "
             f"or is unknown. {sentence}")
@@ -378,7 +379,8 @@ def reconcile_stop(handle: Any, exc: BaseException, token: object) -> None:
         try:
             stop_fleet()
         except LifecycleBusyError as busy:
-            if (isinstance(busy, SampleResultBusyError) or not _nothing_published(handle)
+            if ((isinstance(busy, SampleResultBusyError) and not reconcile_running.reads_drained(handle))
+                    or not _nothing_published(handle)
                     or driver_exit.exiting()):  # read after the wait: an exit sends nothing
                 raise
             log.info("the defunct mesh's cleanup waited for another lifecycle transition "

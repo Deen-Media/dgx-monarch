@@ -337,13 +337,13 @@ class WorkerSpawnError(RuntimeError):
 def left_nothing_running(handoff: FleetHandoff, exc: WorkerSpawnError) -> bool:
     """Whether a failed cluster spawn left nothing unknown; if so, it closes the spawn.
 
-    True when no spawn was issued, or Monarch confirmed the rollback stop. A bring-up's
-    only processes are its one ProcMesh's ranks on every host (it never starts or stops
-    a Worker loop), and that ProcMesh is the object Monarch built, returned or raised
-    after its spawn callback (the build's last step). Its stop first awaits the spawn
-    (ProcMesh._stop) and completes without error only once every rank stopped
-    (mesh_stop.stop_procs): nothing is left queued, and a normal teardown trusts the
-    same signal before it attaches a replacement. An unremoved spawn callback is open.
+    True when no spawn was issued, or the rollback stop completed without error. A
+    bring-up's only processes are its one ProcMesh's ranks (it never starts or stops a
+    Worker loop); that ProcMesh is the object Monarch built, returned or raised after its
+    spawn callback. Its stop awaits the spawn first, and Monarch completes it once every
+    rank is terminating, killing a rank that will not stop: no rank process still runs
+    then (tests/test_stop_future_contract.py), the signal a normal teardown trusts before
+    a replacement. An unremoved spawn callback is still open.
     """
     if not exc.rollback_confirmed or exc.cleanup is not None or handoff.callback_cleanup_unconfirmed:
         return False

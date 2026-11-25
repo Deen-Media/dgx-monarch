@@ -2463,10 +2463,11 @@ sections after them list every change.
   ([TROUBLESHOOTING](docs/TROUBLESHOOTING.md#pd-stuck-state)).
 - Fix: the driver's cleanup after a lost Worker no longer leaves a fleet that
   only a ComfyUI restart clears when it could not send its stop. It now waits
-  out a setup rollback or a Gate policy restore that holds the lifecycle lock
-  and stops the fleet itself; refused for another reason (a native latent read
-  still in flight), it says "no stop was issued", and Reset attached mesh stops
-  the fleet. A fleet that died also takes no new worker policy or setup, so a
+  out a setup rollback or a Gate policy restore that holds the lifecycle lock,
+  or a native latent read that outlived its render until that read ends, and
+  stops the fleet itself; refused for another reason (a read whose job never
+  ends), it says "no stop was issued", and Reset attached mesh stops the
+  fleet. A fleet that died also takes no new worker policy or setup, so a
   Gate's policy restore no longer sends one to it
   ([TROUBLESHOOTING #65](docs/TROUBLESHOOTING.md#65-dgxm-status-and-dgxm-doctor-are-green-and-every-attach-still-fails)).
 - Fix: a setup rollback whose stop of a dead Worker's processes times out now
@@ -2504,11 +2505,16 @@ sections after them list every change.
   list its loops). Before, the Reset answered `no_live_mesh`
   and only a restart helped
   ([TROUBLESHOOTING #69](docs/TROUBLESHOOTING.md#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)).
+- Fix: a render under another Init folder or cluster.toml path no longer
+  starts a second fleet beside a fleet of this session whose stop is
+  unconfirmed on the same machines; it refuses with that fleet's cause and
+  remedy. Fleets on other machines, and fleets that stopped or still run,
+  are left as before.
 - Fix: a cluster bring-up that fails with its spawned processes rolled back,
   or before it starts any process, no longer leaves the session refusing
-  every render until ComfyUI restarts. Monarch confirmed that nothing it
-  started still runs, so the next render attaches a fresh fleet without
-  asking any host.
+  every render until ComfyUI restarts. Its rollback stop completed without
+  error, so nothing it started still runs, and the next render attaches a
+  fresh fleet without asking any host.
 - Fix: the liveness check no longer reads a process as gone when its main
   thread has exited and another thread still runs. The kernel shows such a
   process as a zombie with no command line while it keeps every page; it now

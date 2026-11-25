@@ -9,6 +9,7 @@ import asyncio
 import math
 import re
 import sys
+import threading
 import time
 from typing import Any
 
@@ -219,10 +220,11 @@ def stop_with_reason(handle: Any, reason: str, timeout_s: float) -> None:
 # When a stop after a reported Worker death asks every host whether the fleet's
 # processes are gone, in seconds after the proc stop is sent. A slot is used
 # only when a whole fleet probe (PROOF_BUDGET_S, mesh_liveness's fleet budget)
-# fits before the stop's own wait ends, so the proof never lengthens a stop: a
-# restart heal's 2 s stop asks nothing.
+# fits in the time the stop's wait has left when the slot comes, so the proof
+# never lengthens a stop (_wait_or_prove): a restart heal's 2 s stop asks nothing.
 PROOF_AT_S = (2.0, 5.0, 10.0, 20.0, 40.0)
 PROOF_BUDGET_S = 20.0
+PROOF_POLL_S = 0.05  # how often a wait beside a running probe looks at the stop
 PROVEN_GONE = object()  # what stop_procs returns when the proof ended its wait
 
 
@@ -248,22 +250,56 @@ def _death_proof(handle: Any) -> Any:
 
 
 def _wait_or_prove(ended: Any, wait_s: float, proof: Any) -> bool:
-    """Wait for the stop to end; True when ``proof`` showed the processes gone first."""
+    """Wait for the stop to end; True when ``proof`` showed the processes gone first.
+
+    The proof never lengthens the stop. A slot is asked only while the time
+    left, measured when the slot comes, still holds a whole probe
+    (PROOF_BUDGET_S), so slow probes cannot run back to back past the wait.
+    Each probe runs on a thread of its own while this one keeps watching the
+    stop, so a stop that ends during a probe is seen within PROOF_POLL_S; the
+    probe then finishes on its own, and its answer is not used.
+    """
     if proof is None:
         ended.wait(wait_s)
         return False
     started = time.monotonic()
-    slots = [at for at in PROOF_AT_S if at + PROOF_BUDGET_S <= wait_s]
-    for at in (*slots, None):
-        until = wait_s if at is None else at
-        if ended.wait(max(0.0, until - (time.monotonic() - started))) or at is None:
+    for at in PROOF_AT_S:
+        if ended.wait(max(0.0, at - (time.monotonic() - started))):
             return False
+        if time.monotonic() - started + PROOF_BUDGET_S > wait_s:
+            break
+        answer = _ask_beside(proof)
+        while not answer.done.is_set():
+            if ended.wait(PROOF_POLL_S):
+                return False
+        if answer.gone:
+            return not ended.is_set()
+    ended.wait(max(0.0, wait_s - (time.monotonic() - started)))
+    return False
+
+
+class _Answer:
+    def __init__(self) -> None:
+        self.done, self.gone = threading.Event(), False
+
+
+def _ask_beside(proof: Any) -> _Answer:
+    """Run one probe on a daemon thread; during interpreter shutdown, which starts none, run it here."""
+    answer = _Answer()
+
+    def ask() -> None:
         try:
-            if proof():
-                return not ended.is_set()
+            answer.gone = bool(proof())
         except Exception as exc:  # a probe that cannot run proves nothing
             log.info("liveness proof during the stop did not run: %s", failure_summary(exc))
-    return False
+        finally:
+            answer.done.set()
+
+    try:
+        threading.Thread(target=ask, name="dgxm-stop-proof", daemon=True).start()
+    except RuntimeError:
+        ask()
+    return answer
 
 
 def stop_procs(procs: Any, reason: str, timeout_s: float,
@@ -294,8 +330,6 @@ def stop_procs(procs: Any, reason: str, timeout_s: float,
     otherwise waits out Monarch's report, about 30 to 90 s, with nothing left
     to stop.
     """
-    import threading
-
     stop = proc_stops.started(procs, proc_stop_bound_s() + SHUTDOWN_MARGIN_S)
     done = threading.Event()
     outcome: dict[str, Any] = {}

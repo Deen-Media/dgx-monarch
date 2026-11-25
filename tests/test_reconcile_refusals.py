@@ -158,6 +158,41 @@ def test_a_refused_cleanup_leaves_a_block_another_stop_published_alone(monkeypat
     assert handle.replacement_blocked == "TimeoutError('proc stop did not finish within 100 s')"
 
 
+@pytest.mark.parametrize("cause", [mesh_teardown.TAG_STOP_INTERRUPTED, mesh_teardown.TAG_STOP_TIMEOUT_DELIBERATE])
+def test_a_failed_cleanup_launch_never_rewrites_a_block_another_stop_published(cause):
+    """Its outcome is unknown and may not be retried: a retryable no-stop latch would license a second stop."""
+    evidence = "TimeoutError('proc stop did not finish within 100 s')"
+    handle = SimpleNamespace(lock=threading.RLock(), teardown_complete=False, defunct=True,
+                             replacement_blocked=evidence, _replacement_retryable=False, _block_cause=cause)
+
+    mesh_teardown.latch_reconcile_launch_failure(handle, "RuntimeError('can't start new thread')")
+
+    assert (handle._block_cause, handle._replacement_retryable, handle.replacement_blocked) == (
+        cause, False, evidence)
+
+
+def test_a_cleanup_whose_lock_wait_ends_after_the_exit_began_sends_no_second_stop(monkeypatch):
+    """Monarch's exit step stops the client: nothing new is sent once ComfyUI is exiting."""
+    from dgx_monarch import driver_exit
+
+    exiting: list = []
+    handle = SimpleNamespace(lock=threading.RLock(), teardown_complete=False, defunct=True,
+                             replacement_blocked=None, _replacement_retryable=False, _block_cause=None)
+    calls: list = []
+
+    def shutdown(**_kwargs):
+        calls.append(1)
+        exiting.append(True)  # the exit begins while this stop waits for the lifecycle lock
+        raise mesh_setup.LifecycleBusyError("cannot shutdown: another lifecycle transition still owns the mesh")
+
+    handle.shutdown = shutdown
+    monkeypatch.setattr(driver_exit, "exiting", lambda: bool(exiting))
+
+    mesh_teardown.reconcile_stop(handle, SupervisionError("peer closed"), object())
+
+    assert calls == [1]
+
+
 def test_a_refused_cleanup_writes_nothing_while_another_stop_holds_the_token(monkeypatch):
     """A stop still in flight publishes its own outcome; a retryable latch would license a second."""
     handle = SimpleNamespace(
@@ -178,13 +213,16 @@ def test_a_refused_cleanup_writes_nothing_while_another_stop_holds_the_token(mon
         mesh_safety.end_deliberate_teardown(id(handle), stop_confirmed=False)
 
 
-def test_a_worker_death_during_a_read_that_outlives_its_render_leaves_a_working_reset(monkeypatch):
+def test_a_worker_death_during_a_read_that_outlives_its_render_stops_the_fleet_itself(monkeypatch):
     """The read job resumes the deferred cleanup from its own token retirement.
 
-    The job is still rooted at that instant, so the cleanup's shutdown refuses
-    on it. Nothing was stopped: the handle says so, and once the job has gone
-    a Reset stops the fleet.
+    The job is still rooted at that instant, so the cleanup's first stop
+    refuses on it; the job does not wait for the cleanup, its root retires, and
+    the cleanup then stops the fleet itself. No Reset is needed, and the next
+    render attaches a fresh fleet.
     """
+    from test_mesh_publication_ownership import _mesh_publication_fakes, _PublishedProcMesh
+
     monkeypatch.setattr(rdma_read_job._registry, "_JOBS", [])
     workers = _Workers([_Future(_acks())])
     handle, _old, _new = _handle(workers)
@@ -222,13 +260,35 @@ def test_a_worker_death_during_a_read_that_outlives_its_render_leaves_a_working_
     _join_reconcile(handle)
     assert rdma_read_job.pending_job_count_for_handle(handle) == 0
 
+    assert handle.procs.reasons == ["dgx-monarch client detach"]
+    assert handle.teardown_complete is True and handle.replacement_blocked is None
+
+    fresh = _PublishedProcMesh()
+    mesh = _mesh_publication_fakes(
+        monkeypatch, lambda *_args: (SimpleNamespace(), fresh, SimpleNamespace(), False), lambda: True)
+    monkeypatch.setattr(mesh, "_detect_comfy_dir", lambda path: path)
+    monkeypatch.setattr(mesh, "_mesh_cache_key", lambda _source, comfy, _cluster: ("test", comfy))
+    mesh._MESHES[("test", "/comfy")] = handle
+    assert mesh.get_mesh(mode="local", gpus_per_host=1, comfy_dir="/comfy").procs is fresh
+
+
+def test_a_cleanup_that_meets_a_read_root_that_stays_still_says_no_stop_was_issued(monkeypatch):
+    """A root that never retires (its token never published) is waited for only so long."""
+    from dgx_monarch import reconcile_running
+
+    monkeypatch.setattr(reconcile_running, "READ_DRAIN_S", 0.2)
+    monkeypatch.setattr(rdma_read_job._registry, "_JOBS", [])
+    handle, _old, _new = _handle(_Workers([_Future(_acks())]))
+    stuck = SimpleNamespace(guard=SimpleNamespace(handle=handle), state="pending")
+    rdma_read_job._registry._JOBS.append(stuck)
+    token = object()
+    handle.defunct, handle._supervision_reconcile_token = True, token  # what the publication stores
+
+    mesh_teardown.reconcile_stop(handle, SupervisionError("peer closed"), token)
+
     assert handle.procs.reasons == []
     assert mesh_teardown.block_cause(handle) == mesh_teardown.TAG_NO_STOP_ISSUED
-    assert handle._replacement_retryable is True
     assert "unresolved sample result" in handle.replacement_blocked
-    reset = handle.recycle_detailed()
-    assert reset.status is RecycleStatus.RECYCLED, reset
-    assert handle.procs.reasons == ["dgx-monarch recycle"]
 
 
 def test_a_gate_policy_restore_sends_nothing_to_a_fleet_that_died_in_the_apply(monkeypatch):

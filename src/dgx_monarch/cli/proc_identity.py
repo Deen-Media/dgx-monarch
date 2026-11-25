@@ -253,11 +253,8 @@ def alive(pid: int, starttime: int, proc_root: str = PROC_ROOT) -> bool:
 
 
 def read_state(pid: int, proc_root: str = PROC_ROOT) -> str | None:
-    """The state letter from ``/proc/<pid>/stat`` (the tail ``read_stat`` parses), or None.
-
-    ``Z``: the leader exited and awaits its reap (``zombie_group`` says whether its
-    threads still hold memory). ``T``: stopped, holding every page, so alive.
-    """
+    """The state letter from ``/proc/<pid>/stat``, or None. ``Z``: the leader exited and awaits its
+    reap (``zombie_group`` says whether its threads hold memory); ``T``: stopped, holding every page."""
     text = _read_text(f"{proc_root}/{pid}/stat")
     if not text:
         return None
@@ -282,7 +279,10 @@ def zombie_group(pid: int, proc_root: str = PROC_ROOT) -> str | None:
 
 
 def alive_and_not_zombie(pid: int, starttime: int, proc_root: str = PROC_ROOT) -> bool:
-    """Identity-checked liveness about held memory, so a zombie with an empty thread group fails it."""
+    """Identity-checked liveness about held memory, so a zombie with an empty thread group fails it.
+
+    ``alive`` keeps its own answer: the kill ladder still has a pid to confirm and a signal to send.
+    """
     return alive(pid, starttime, proc_root) and zombie_group(pid, proc_root) != "gone"
 
 

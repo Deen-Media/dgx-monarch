@@ -11,8 +11,10 @@ channel; supervision text alone cannot prove process exit. Only fleet-wide
 
 A zombie whose thread group is empty is gone, since it released its pages; a
 zombie leader whose other threads still run holds them all and is not
-(proc_identity.zombie_group). Stopped processes (state T) remain alive and
-retain memory.
+(proc_identity.zombie_group). On the pair a dying actor with a 12 GiB model
+read Z with two threads for 1 to 3 s, and never Z with one: an actor's zombie
+is one still freeing its memory, longer with a larger model. Stopped
+processes (state T) remain alive and retain memory.
 
 Remote scans use ``cli.lifecycle.run_on_host``'s subprocess deadline. Local
 scans use one process-lifetime worker and a separate wait deadline.

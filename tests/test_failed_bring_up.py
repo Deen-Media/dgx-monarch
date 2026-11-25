@@ -212,6 +212,27 @@ def test_a_check_whose_probe_outlives_another_checks_lift_returns_quietly(monkey
     assert failed_bring_up.held_hosts() == ()
 
 
+def test_an_exit_during_the_lifts_probe_keeps_the_poison_and_the_claims(monkeypatch):
+    """Monarch's exit step is under way: no lift, no claim retired, nothing new started."""
+    from dgx_monarch import driver_exit
+    from dgx_monarch.cli import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
+    _failed_spawn()
+    state = {"exiting": False}
+
+    class ExitDuring(Runner):
+        def __call__(self, *args, **kwargs):
+            state["exiting"] = True
+            return super().__call__(*args, **kwargs)
+
+    monkeypatch.setattr(driver_exit, "exiting", lambda: state["exiting"])
+    runtime = _runtime()
+
+    assert failed_bring_up.release(runtime, runner=ExitDuring()) is False
+    assert runtime["_TRANSPORT_POISON"] == POISON and mesh_factory.creation_cleanup_pending() is True
+
+
 def test_no_release_while_another_creation_runs():
     _failed_spawn()
     runtime, runner = _runtime(creating={("key",): object()}), Runner()
@@ -432,6 +453,23 @@ def test_the_mesh_row_names_the_remedy_that_lifts_a_provable_poison():
     assert health.remedy.startswith("start the next render or press Reset attached mesh")
     unprovable = mesh_health.health_of([], poison="cluster attach failed: x")
     assert unprovable.remedy.startswith("restart ComfyUI")
+
+
+@pytest.mark.parametrize(("error", "callback_open", "nothing_left"), [
+    (mesh_factory.WorkerSpawnError(RuntimeError("init"), None, rollback_confirmed=True), False, True),
+    (mesh_factory.WorkerSpawnError(RuntimeError("init"), None, rollback_confirmed=False), False, False),
+    (mesh_factory.WorkerSpawnError(RuntimeError("init"), RuntimeError("stop"), rollback_confirmed=True),
+     False, False),
+    (mesh_factory.WorkerSpawnError(RuntimeError("init"), None, rollback_confirmed=True), True, False),
+], ids=["confirmed", "not_confirmed", "cleanup_error", "callback_open"])
+def test_only_a_confirmed_rollback_with_nothing_open_closes_the_spawn(error, callback_open, nothing_left):
+    """Each refusal of left_nothing_running on its own: get_mesh re-poisons these cases too, so only
+    a direct call shows the function's own answer."""
+    handoff = mesh_factory.FleetHandoff()
+    handoff.spawn_in_progress, handoff.callback_cleanup_unconfirmed = True, callback_open
+
+    assert mesh_factory.left_nothing_running(handoff, error) is nothing_left
+    assert handoff.spawn_in_progress is not nothing_left
 
 
 class _HostScans:

@@ -248,7 +248,7 @@ def _with_readiness(snapshot: dict) -> dict:
 
 
 def _stale_snapshot(cached: object, marker: str) -> dict:
-    """The last payload, marked, with the mesh row read now: it takes no lock and never waits.
+    """The last payload, marked, with the mesh row read now: no handle lock, never a wait on a stop.
 
     A poll that arrives while a refresh is in flight, or after one failed,
     must still see the mesh as it is, or `dgxm status` and `doctor` read an old

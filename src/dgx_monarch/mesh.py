@@ -452,8 +452,7 @@ def get_mesh(
     primary_error: BaseException | None = None
     try:
         try:
-            mesh_liveness.try_release(_MESHES.get(key))
-            mesh_liveness.try_release(_MESH_PENDING.get(key))  # a stranded fleet, which admission reads
+            mesh_creation.try_release_all(globals())  # every key's cached and stranded fleet, which admission reads
             with _MESH_CONDITION:
                 mesh_helpers.wait_for_mesh_creation(
                     _MESH_CONDITION, _MESH_CREATING, key, MeshAttachError)
@@ -470,7 +469,7 @@ def get_mesh(
                     raise MeshAttachError(
                         f"Monarch transport is not reusable after a creation failure ({_TRANSPORT_POISON or mesh_factory.CREATION_CLEANUP_POISON}); "
                         "restart ComfyUI")
-                old = mesh_creation.admission_occupant(globals(), key)
+                old = mesh_creation.admission_occupant(globals(), key, config.hosts if use_cluster else None)
                 verdict = _coherent_lifecycle_verdict(old) if old is not None else "live"
                 if verdict == "completed":
                     mesh_safety.clear_stale_token(id(old))

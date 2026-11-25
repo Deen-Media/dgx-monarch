@@ -217,6 +217,27 @@ def test_each_hosts_loop_list_is_named_exactly_or_reads_as_cannot_tell(gens, exp
     assert evidence.loops == ((ADDRESS_A, ("0123456789ab",)), (ADDRESS_B, expected))
 
 
+@pytest.mark.parametrize("when", ["before", "during"])
+def test_no_stop_proof_counts_once_the_driver_is_exiting(monkeypatch, when):
+    """An exit before the probe asks nothing; one during it keeps the answer off the handle."""
+    from dgx_monarch import driver_exit
+
+    state = {"exiting": when == "before"}
+    asked: list = []
+
+    def runner(_config, host, _script, timeout=None):
+        asked.append(host.address)
+        state["exiting"] = True
+        return SimpleNamespace(stdout=_line(), stderr="", returncode=0)
+
+    monkeypatch.setattr(driver_exit, "exiting", lambda: state["exiting"])
+    handle = SimpleNamespace(config=_config(ADDRESS_A, ADDRESS_B))
+
+    assert REAL_FLEET_GONE(handle, runner=runner) is False
+    assert not hasattr(handle, "_liveness_evidence")
+    assert (asked == []) is (when == "before")
+
+
 def test_a_host_that_did_not_answer_cannot_name_its_loops():
     runner = Runner(answers={ADDRESS_B: ("", "boom", 1)}, default=(_line(loop_gens=[]), "", 0))
     evidence = mesh_liveness.probe_fleet(SimpleNamespace(config=_config(ADDRESS_A, ADDRESS_B)),
@@ -780,8 +801,10 @@ def test_each_cause_reaches_every_operator_surface(monkeypatch, tag):
     handle.replacement_blocked = "an earlier stop"
     handle._block_cause = tag
     assert sentence in mesh_teardown.blocked_refusal(handle, "get_mesh")
-    assert "could not be stopped safely" in mesh_teardown.blocked_refusal(
-        handle, "get_mesh")
+    # A fleet no stop was sent to was never shown unstoppable: its head says so.
+    head = ("has not been stopped yet" if tag == mesh_teardown.TAG_NO_STOP_ISSUED
+            else "could not be stopped safely")
+    assert head in mesh_teardown.blocked_refusal(handle, "get_mesh")
     assert sentence in mesh_teardown.blocked_refusal(handle, "ensure_live")
     assert sentence in mesh_health.health_of([handle]).remedy
     outcome = mesh_recycle.recycle_detailed_impl(handle, lambda: None, lambda: None)

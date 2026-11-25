@@ -119,6 +119,31 @@ def cleanup_running_sentence() -> str:
             f"{reconcile_stop_limit_s():.0f} s; try again when it ends")
 
 
+READ_DRAIN_S = 10.0  # how long a cleanup waits for a finished read's job root to retire
+
+
+def reads_drained(handle: Any) -> bool:
+    """Whether this fleet's RDMA read roots retired within READ_DRAIN_S, with no live sample lease.
+
+    A read that outlived its render resumes the cleanup from its own token
+    retirement, a moment before its job root retires (rdma_read_job), and does
+    not wait for it; the cleanup's first stop meets the root and refuses, so it
+    waits the root out and stops the fleet itself (mesh_teardown.reconcile_stop).
+    A root that stays (a token never published) or a live lease still refuses.
+    """
+    from . import driver_exit
+    from .rdma_read_job import pending_job_count_for_handle
+
+    deadline = time.monotonic() + READ_DRAIN_S
+    while not sum(int(count) for count in dict(getattr(handle, "sample_leases", None) or {}).values()):
+        if not pending_job_count_for_handle(handle):
+            return True
+        if time.monotonic() >= deadline or driver_exit.exiting():
+            return False
+        time.sleep(0.05)
+    return False
+
+
 def unresolved_refusal(handle: Any) -> str:
     """get_mesh's refusal of a predecessor whose teardown has no known outcome yet."""
     if cleanup_running(handle):

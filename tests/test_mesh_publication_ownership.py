@@ -1129,6 +1129,66 @@ def test_lease_start_failure_with_unconfirmed_proc_cleanup_blocks_every_retry(mo
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
 
 
+def _blocked_fleet(**fields):
+    import threading
+
+    return SimpleNamespace(
+        lock=threading.RLock(), teardown_complete=False, defunct=True, setup_cleanup_state=None,
+        sample_leases={}, abandoned_sample_leases={}, _replacement_retryable=False,
+        replacement_blocked="TimeoutError('proc stop did not finish within 100 s')",
+        _block_cause="stop_timeout_deliberate", **fields)
+
+
+@pytest.mark.parametrize("where", ["stranded", "published"])
+def test_no_creation_under_another_key_beside_a_fleet_whose_stop_is_unknown(monkeypatch, where):
+    """Another Init folder in the same session is another cache key, on the same machine."""
+    spawned: list = []
+
+    def spawn(*args):
+        spawned.append(args)
+        return SimpleNamespace(), _PublishedProcMesh(), SimpleNamespace(), False
+
+    mesh = _mesh_publication_fakes(monkeypatch, spawn, lambda: True)
+    monkeypatch.setattr(mesh, "_detect_comfy_dir", lambda path: path)
+    monkeypatch.setattr(mesh, "_mesh_cache_key", lambda _source, comfy, _cluster: ("test", comfy))
+    registry = mesh._MESH_PENDING if where == "stranded" else mesh._MESHES
+    registry[("test", "/first")] = _blocked_fleet(owns_hosts=False)
+
+    with pytest.raises(mesh.MeshAttachError) as refused:
+        mesh.get_mesh(mode="local", gpus_per_host=1, comfy_dir="/second")
+
+    text = str(refused.value)
+    assert spawned == [] and "under another configuration on the same machines" in text
+    assert ("restart ComfyUI" in text) if where == "stranded" else ("did not finish within 100 s" in text)
+
+
+def _host(address):
+    return SimpleNamespace(address=address, name=address)
+
+
+@pytest.mark.parametrize(("theirs", "verdict", "refused"), [
+    (("box-a", "box-b"), "blocked", True),       # the same hosts under a second cluster.toml path
+    (("box-b", "box-c"), "unresolved", True),    # one machine in common is enough
+    (("box-c", "box-d"), "blocked", False),      # other machines: nothing of theirs is shared
+    (("box-a", "box-b"), "completed", False),    # a confirmed stop
+    (("box-a", "box-b"), "live", False),         # a live fleet of another key, as before
+], ids=["same_hosts", "one_shared", "other_hosts", "completed", "live"])
+def test_another_keys_cluster_fleet_refuses_only_on_a_shared_machine_with_its_stop_unknown(
+        theirs, verdict, refused):
+    from dgx_monarch import mesh_creation
+
+    other = _blocked_fleet(owns_hosts=True, config=SimpleNamespace(hosts=tuple(map(_host, theirs))))
+    runtime = {"_MESHES": {("cluster", "/a.toml"): other}, "_MESH_PENDING": {},
+               "_coherent_lifecycle_verdict": lambda _handle: verdict, "MeshAttachError": RuntimeError}
+    wanted = (_host("box-a"), _host("box-b"))
+
+    if refused:
+        with pytest.raises(RuntimeError, match="under another configuration on the same machines"):
+            mesh_creation.admission_occupant(runtime, ("cluster", "/b.toml"), wanted)
+    else:
+        assert mesh_creation.admission_occupant(runtime, ("cluster", "/b.toml"), wanted) is None
+
+
 def test_the_next_render_after_a_failed_bring_up_proven_gone_builds_a_fresh_fleet(monkeypatch):
     """A Worker lost during a cluster bring-up: once every host shows its processes gone."""
     import time

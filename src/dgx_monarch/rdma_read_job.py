@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import rdma_job_registry as _registry
-from . import rdma_read_token
+from . import rdma_read_token, reconcile_running
 from .execution_events import bind_operation
 from .rdma_read_attempt import NOT_ENTERED
 from .rdma_read_attempt import Claim as _Claim
@@ -188,7 +188,7 @@ class LatentReadJob:
                         self._phase = (RESULT_READY, outcome)
                         self._condition.notify_all()
                 return outcome
-            if self._unclaimable():
+            if self._unclaimable() and not self.outcome_owner:  # a runner may settle between the reads
                 raise RuntimeError(
                     "no runner could claim this RDMA read job, so it has no outcome; "
                     "its descriptor stays rooted")
@@ -207,7 +207,10 @@ class LatentReadJob:
         if self.token_owner:
             for attempt in range(2):
                 try:
-                    evidence = _retire_token(self.guard, self.token_owner[0])
+                    # A deferred fleet cleanup this retirement resumes runs on: this job's
+                    # root retires only after it, and the cleanup waits for that.
+                    with reconcile_running.caller_does_not_wait():
+                        evidence = _retire_token(self.guard, self.token_owner[0])
                 except BaseException as cleanup:
                     primary = _prefer(
                         primary, cleanup,

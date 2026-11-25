@@ -251,7 +251,9 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
   then; refused before it sent a stop for any other reason, it records that no
   stop was issued, and a Reset stops the fleet. A fleet whose publication was
   interrupted admits a second fleet over it only once its stop is confirmed or
-  its processes are proven gone (`mesh_creation.admission_occupant`). A stop
+  its processes are proven gone (`mesh_creation.admission_occupant`), and no
+  creation under another cache key starts while a fleet whose stop is
+  unconfirmed runs on a machine the new one would use. A stop
   after a reported Worker death ends as soon as every host shows the fleet's
   processes gone (`mesh_stop.stop_procs`), and a status poll that meets a dead
   fleet starts its cleanup without waiting for it. A cluster bring-up that
@@ -260,7 +262,7 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
   Reset ask. One that failed before every rank's process started may still
   have a spawn queued in a stalled Worker loop, so it also needs the loop it
   attached to gone on every host, and the refusal names a host where it still
-  runs. One whose rollback stop Monarch confirmed, or that started no
+  runs. One whose rollback stop completed without error, or that started no
   process, poisons nothing (`mesh_factory.left_nothing_running`). A mutation RPC that times out
   or is interrupted after its send latches the mesh DIRTY until a recycle
   (`mesh_rpc.call_all_bound`). `dgxm up` restarts wedged Worker services

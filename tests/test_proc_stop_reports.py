@@ -192,6 +192,46 @@ def test_a_stop_with_no_proof_or_a_proof_that_never_says_gone_keeps_its_bound(mo
     assert asked == [1, 1]
 
 
+def test_slow_probes_never_run_the_stop_past_its_wait(monkeypatch):
+    """Scaled 1:100: a 55 s wait and probes that take their whole 20 s budget.
+
+    A slot is asked only while the time left, measured when the slot comes,
+    holds a whole probe; asked by nominal time, these ran back to back to 0.82 s.
+    """
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.02, 0.05, 0.10, 0.20, 0.40))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.20)
+    asked: list = []
+
+    def slow_probe():
+        asked.append(1)
+        time.sleep(0.20)
+        return False
+
+    started = time.monotonic()
+    assert mesh_stop._wait_or_prove(threading.Event(), 0.55, slow_probe) is False
+    took = time.monotonic() - started
+    assert 0.5 <= took <= 0.6, took
+    assert len(asked) == 2
+
+
+def test_a_stop_that_ends_while_a_probe_runs_is_seen_at_once(monkeypatch):
+    """Monarch's report lands 20 ms into a 300 ms probe: the wait ends then, not when the probe does."""
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.02,))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.30)
+    ended, finished = threading.Event(), threading.Event()
+
+    def probe():
+        threading.Timer(0.02, ended.set).start()
+        time.sleep(0.30)
+        finished.set()
+        return True  # a gone after the stop ended is not used
+
+    started = time.monotonic()
+    assert mesh_stop._wait_or_prove(ended, 2.0, probe) is False
+    assert time.monotonic() - started < 0.15
+    assert finished.wait(2.0)  # the probe finished on its own
+
+
 @pytest.mark.parametrize(("threads", "ends_early"), [("2", False), ("1", True)],
                          ids=["threads_run", "lone_zombie"])
 def test_a_zombie_leader_whose_threads_run_keeps_the_stops_bound(monkeypatch, tmp_path, threads, ends_early):

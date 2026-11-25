@@ -4335,10 +4335,12 @@ starts the stop and answers at once.
 
 **When that cleanup could not send its stop.** A cleanup that finds the
 lifecycle lock held by another transition (a setup rollback, a Gate's policy
-restore) waits for it, then stops the fleet itself. One refused for any other
-reason before it sent a stop, a native latent read still in flight for
-instance, says so: the row names `no stop was issued`, and **Reset attached
-mesh** stops the fleet. Before 1.5.0 such a cleanup left the fleet blocked with
+restore) waits for it, then stops the fleet itself. So does one that meets a
+native latent read which outlived its render: the read resumes the cleanup as
+it ends, and the cleanup waits up to 10 s for the read's job to retire. One
+refused for any other reason before it sent a stop, a read job that never
+retires for instance, says so: the row names `no stop was issued`, and
+**Reset attached mesh** stops the fleet. Before 1.5.0 such a cleanup left the fleet blocked with
 no recorded cause, the Reset refused it, and only a ComfyUI restart cleared it.
 
 **Fix:** follow the mesh row's remedy. An abandoned sample clears with **Reset attached
@@ -4713,8 +4715,10 @@ evidence adds to it and never replaces it. Confirmed cleanup after an
 already-built handle or client-lease startup failure may evict that handle and
 retry the same transport mode. In a cluster the transport survives a failed
 spawn, so a `WorkerSpawnError` that says `rolled back` leaves nothing to
-clean: Monarch confirmed the stop of every process the bring-up spawned, on
-every host, or none had started. The next render attaches a fresh fleet in
+clean: none of its processes had started, or its rollback stop completed
+without error, which Monarch gives once every rank is stopping, stopped or
+ended, killing a rank that will not stop, so no process of that bring-up
+still runs on any host. The next render attaches a fresh fleet in
 the same session (since 1.5.0; before, it needed a ComfyUI restart). When the
 rollback stop did not confirm (`not safely stopped`), the poison lifts once
 every host shows the processes the bring-up spawned gone: the next render and
