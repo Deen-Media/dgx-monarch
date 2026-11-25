@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from dgx_monarch import mesh_stop, proc_stops, retired_meshes
+from dgx_monarch.mesh_liveness import fleet_gone as REAL_FLEET_GONE  # conftest makes it inert
 
 NAME = "dgxm-procs-testmesh"
 OWN_REPORT = (
@@ -133,6 +134,192 @@ def test_a_stop_whose_waiter_gave_up_still_owns_its_late_report_and_no_other_wai
     assert mesh_stop.stop_procs(recycle, "dgx-monarch recycle", 30.0) == "stopped"
     assert labels == [retired_meshes.STOP_NOTICE]  # the heal's, kept quiet
     heal.finish.set()
+
+
+def test_a_retried_stop_after_a_stop_that_failed_with_an_answer_ends_at_its_own_report():
+    """The only retry the lifecycle sends: the first stop's Future answered with a failure.
+
+    That first stop stays registered for its keep window, and the retry's
+    report must end the retry, not wait out its whole bound behind it.
+    """
+    class FailsThenHangs(_Procs):
+        calls = 0
+
+        def stop(self, reason):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(get=lambda timeout=None: (_ for _ in ()).throw(
+                    RuntimeError("positive stop failure")))
+            return super().stop(reason)
+
+    procs = FailsThenHangs()
+    with pytest.raises(RuntimeError, match="positive stop failure"):
+        mesh_stop.stop_procs(procs, "dgx-monarch recycle", 30.0)
+    labels = _hook_soon(OWN_REPORT)
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError, match="without confirming every proc"):
+        mesh_stop.stop_procs(procs, "dgx-monarch recycle", 30.0)
+    assert time.monotonic() - started < 10.0
+    assert labels == [retired_meshes.STOP_NOTICE]
+    procs.finish.set()
+
+
+def test_a_stop_whose_processes_are_proven_gone_ends_there_and_keeps_its_late_report_quiet(
+        monkeypatch):
+    """After a Worker death the lost host's stop waits on Monarch with nothing left to stop."""
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.05, 0.1, 0.2))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.01)
+    procs = _Procs()  # its Future never finishes on its own
+    answers = iter([False, True])
+    started = time.monotonic()
+
+    assert mesh_stop.stop_procs(procs, "dgx-monarch client detach", 30.0,
+                                proof=lambda: next(answers)) is mesh_stop.PROVEN_GONE
+
+    assert time.monotonic() - started < 5.0
+    assert retired_meshes.notice(OWN_REPORT) == retired_meshes.STOP_NOTICE  # still recognised
+    procs.finish.set()
+
+
+def test_a_stop_with_no_proof_or_a_proof_that_never_says_gone_keeps_its_bound(monkeypatch):
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.05, 0.1))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.01)
+    asked: list = []
+    with pytest.raises(TimeoutError, match="did not finish"):
+        mesh_stop.stop_procs(_Procs(), "dgx-monarch client detach", 0.3,
+                             proof=lambda: asked.append(1) or False)
+    assert asked == [1, 1]
+
+
+def test_slow_probes_never_run_the_stop_past_its_wait(monkeypatch):
+    """Scaled 1:25: a 55 s wait and probes that take their whole 20 s budget.
+
+    A slot is asked only while the time left, measured when the slot comes,
+    holds a whole probe; asked by nominal time, these ran back to back to about
+    3.3 s. The bounds leave room for a loaded two-core runner.
+    """
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.08, 0.2, 0.4, 0.8, 1.6))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.8)
+    wait_s, starts = 2.2, []
+
+    def slow_probe():
+        starts.append(time.monotonic() - started)
+        time.sleep(0.8)
+        return False
+
+    started = time.monotonic()
+    assert mesh_stop._wait_or_prove(threading.Event(), wait_s, slow_probe) is False
+    took = time.monotonic() - started
+    assert took <= wait_s + 0.5, took
+    assert len(starts) in (1, 2), starts
+    assert all(start + 0.8 <= wait_s + 0.1 for start in starts), starts
+
+
+def test_a_stop_that_ends_while_a_probe_runs_is_seen_at_once(monkeypatch):
+    """Monarch's report lands 20 ms into a 1 s probe: the wait ends then, not when the probe does."""
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.02,))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 1.0)
+    ended, finished = threading.Event(), threading.Event()
+
+    def probe():
+        threading.Timer(0.02, ended.set).start()
+        time.sleep(1.0)
+        finished.set()
+        return True  # a gone after the stop ended is not used
+
+    started = time.monotonic()
+    assert mesh_stop._wait_or_prove(ended, 2.0, probe) is False
+    assert time.monotonic() - started < 0.5
+    assert finished.wait(5.0)  # the probe finished on its own
+
+
+def test_a_probe_that_overruns_its_budget_is_left_at_the_stops_own_wait(monkeypatch):
+    """A stuck probe never holds the stop past its bound; it finishes on its own later."""
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.02,))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.1)
+    monkeypatch.setattr(mesh_stop, "PROOF_POLL_S", 0.01)
+    release = threading.Event()
+
+    def stuck_probe():
+        release.wait(5.0)  # far past its budget
+        return True
+
+    started = time.monotonic()
+    try:
+        assert mesh_stop._wait_or_prove(threading.Event(), 0.5, stuck_probe) is False
+        assert time.monotonic() - started < 2.0  # held by the probe, it would wait the full 5 s
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize(("threads", "ends_early"), [("2", False), ("1", True)],
+                         ids=["threads_run", "lone_zombie"])
+def test_a_zombie_leader_whose_threads_run_keeps_the_stops_bound(monkeypatch, tmp_path, threads, ends_early):
+    """The decision, not only the scan: the real scan's line through the real fleet-wide proof.
+
+    A host holds a leader that exited while another thread still holds every
+    page. The stop keeps its bound; a zombie whose group is empty ends it early.
+    """
+    from dgx_monarch.cli import lifecycle
+    from test_failed_bring_up import _HostScans
+
+    monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.05, 0.1))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.01)
+    scans = _HostScans(tmp_path)
+    scans.zombie_leaders = {"box-b": threads}
+    hosts = tuple(SimpleNamespace(address=name, name=name) for name in ("box-a", "box-b"))
+    handle = SimpleNamespace(config=SimpleNamespace(hosts=hosts, python_bin="~/venv/bin/python"))
+    procs = _Procs()
+
+    def ask():
+        return REAL_FLEET_GONE(handle, runner=scans)
+
+    try:
+        if ends_early:
+            assert mesh_stop.stop_procs(procs, "dgx-monarch client detach", 0.4,
+                                        proof=ask) is mesh_stop.PROVEN_GONE
+        else:
+            with pytest.raises(TimeoutError, match="did not finish"):
+                mesh_stop.stop_procs(procs, "dgx-monarch client detach", 0.4, proof=ask)
+    finally:
+        procs.finish.set()
+    assert scans.asked and set(scans.asked) <= {"box-a", "box-b"}
+
+
+def test_only_a_stop_after_a_reported_worker_death_asks_for_the_proof(monkeypatch):
+    from dgx_monarch import mesh_liveness
+
+    proofs: list = []
+    monkeypatch.setattr(mesh_liveness, "fleet_gone", lambda handle: proofs.append(handle) or True)
+    dead = SimpleNamespace(config=object(), _supervision_death_report="{'SupervisionError'} x")
+    deliberate = SimpleNamespace(config=object(), _supervision_death_report="x",
+                                 _deferred_eviction_deliberate=True)
+    live = SimpleNamespace(config=object())
+
+    assert mesh_stop._death_proof(live) is None
+    assert mesh_stop._death_proof(deliberate) is None
+    proof = mesh_stop._death_proof(dead)
+    assert proof is not None and proof() is True and proofs == [dead]
+
+
+def test_a_late_report_for_a_stop_that_gave_up_unanswered_is_not_the_retrys():
+    """The controller answers one ProcMesh's stops in order, one report each.
+
+    A stop whose waiter gave up before its Future answered or its report came
+    still owns the next report; a second stop's own report is the one after it.
+    """
+    procs = _Procs()
+    first = proc_stops.started(procs, keep_s=130.0)
+    proc_stops.left(first, confirmed=False)
+    retry = proc_stops.started(procs, keep_s=130.0)
+
+    assert proc_stops.claim(OWN_REPORT) is True
+    assert first.report == OWN_REPORT and not retry.ended.is_set()
+    assert proc_stops.claim(OWN_REPORT) is True
+    assert retry.ended.is_set()
+    assert proc_stops.claim(OWN_REPORT) is True  # one more stays recognised, so kept quiet
 
 
 def test_a_given_up_stop_is_forgotten_once_it_can_no_longer_report():

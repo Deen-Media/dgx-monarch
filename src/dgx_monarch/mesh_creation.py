@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from . import mesh_factory
+from . import mesh_factory, mesh_safety
 from .error_utils import (
     prefer_error,
     raise_with_distinct_cause,
@@ -44,6 +44,11 @@ def attempt_is_active(attempt: CreationAttempt) -> bool:
 
 
 def publish_pending_handle(runtime: Runtime, key: tuple, handle: Any) -> None:
+    # Teardown tokens are keyed by a handle's address (mesh_safety). A live
+    # handle's stop holds the handle, so a token already at a new handle's
+    # address is one a freed handle stranded, never a stop of this fleet.
+    if mesh_safety.token_present(id(handle)):
+        mesh_safety.clear_stale_token(id(handle))
     with runtime["_MESH_LOCK"]:
         runtime["_MESH_PENDING"][key] = handle
 
@@ -103,7 +108,11 @@ def publication_resolved(
     its marker, its transport claim and its cleanup claim until the exact
     handle is public or is no longer live. Releasing any of the three first
     lets the next ``get_mesh`` read an empty ``_MESHES`` and spawn a second
-    fleet over the transport and ports this one still holds.
+    fleet over the transport and ports this one still holds. A handle that
+    is no longer live stays in ``_MESH_PENDING``, where ``admission_occupant``
+    refuses every creation over it until its stop is confirmed; keeping the
+    claims as well would refuse those creations as an endless one in flight,
+    with no cause and no remedy.
     """
     if handle is None or not attempt.handoff.ready_for_publication:
         return True
@@ -119,23 +128,105 @@ def admission_occupant(runtime: Runtime, key: tuple) -> Any | None:
     """This key's public handle, refusing admission over a stranded fleet.
 
     Callers hold ``_MESH_LOCK`` and have already proved no creator is active.
-    A live handle left in ``_MESH_PENDING`` is a fleet whose publication was
-    interrupted; ``_MESHES`` alone cannot see it, and creating over it puts a
-    second fleet on the same transport.
+    A handle left in ``_MESH_PENDING`` is a fleet whose publication was
+    interrupted; ``_MESHES`` alone cannot see it. Only a confirmed stop
+    (``completed``) admits a new fleet over it: a live one would share its
+    transport, and a blocked, unresolved or unreadable one may still have
+    processes whose stop is unknown. get_mesh runs the liveness release on
+    every cached and stranded handle first, so one proven gone is admitted.
+    Another key's fleet whose stop is unconfirmed refuses too
+    (_refuse_beside_unknown_stop).
     """
     published = runtime["_MESHES"].get(key)
     stranded = runtime["_MESH_PENDING"].get(key)
     if stranded is not None and stranded is not published:
-        try:
-            live = runtime["_coherent_lifecycle_verdict"](stranded) == "live"
-        except Exception:
-            live = True
-        if live:
-            raise runtime["MeshAttachError"](
-                "a worker fleet from an interrupted creation is still live but "
-                "was never published, and a second fleet would share its "
-                "transport; restart ComfyUI")
+        verdict = _verdict(runtime, stranded)
+        if verdict != "completed":
+            raise runtime["MeshAttachError"](_stranded_refusal(stranded, verdict))
+    _refuse_beside_unknown_stop(runtime, key)
     return published
+
+
+def try_release_all(runtime: Runtime) -> None:
+    """Run the liveness release on every cached and stranded handle, before any lock.
+
+    Each returns at once unless its fleet is latched after a Worker's death, so
+    admission, for this key and every other, sees a fleet proven gone as stopped.
+    """
+    from . import mesh_liveness
+
+    for registry in ("_MESHES", "_MESH_PENDING"):
+        for handle in list(runtime[registry].values()):
+            mesh_liveness.try_release(handle)
+
+
+def _verdict(runtime: Runtime, handle: Any) -> str:
+    try:
+        return runtime["_coherent_lifecycle_verdict"](handle)
+    except Exception:
+        return "unknown"
+
+
+def _refuse_beside_unknown_stop(runtime: Runtime, key: tuple) -> None:
+    """Refuse a creation beside another key's fleet whose stop is unconfirmed.
+
+    The first rule: never start a second fleet beside processes whose stop is
+    unknown, and every fleet of this session counts as sharing the new one's
+    machines. Two local fleets share this machine. Two cluster fleets of one
+    session share one transport on one fabric, and no config text tells a
+    machine's several addresses and its hostname apart, so the driver cannot
+    show that two configs name different machines; an exact machine identity
+    would need a new probe on every host before admission. The cost: a session
+    that drives two separate clusters refuses the second while the first's stop
+    is unconfirmed, until that stop is confirmed (its Reset, or the liveness
+    proof after a Worker's death) or ComfyUI restarts. A completed or live fleet
+    of another key admits as before.
+    """
+    for registry in ("_MESHES", "_MESH_PENDING"):
+        for other_key, handle in list(runtime[registry].items()):
+            if other_key == key:
+                continue
+            verdict = _verdict(runtime, handle)
+            if verdict in ("completed", "live"):
+                continue
+            raise runtime["MeshAttachError"](_beside_refusal(handle, verdict, registry == "_MESHES"))
+
+
+def _beside_refusal(handle: Any, verdict: str, published: bool) -> str:
+    """Why another key's fleet refuses this creation: its own cause and remedy."""
+    from . import mesh_teardown
+
+    if not published:
+        inner = _stranded_refusal(handle, verdict)
+    elif verdict == "blocked":
+        inner = mesh_teardown.blocked_refusal(handle, mesh_teardown.GET_MESH_DOOR)
+    else:
+        inner = mesh_teardown.unresolved_refusal(handle)
+    return ("this driver already started a Worker fleet under another configuration in this "
+            "session, and its stop is unconfirmed, so a second fleet could run beside its processes. "
+            "Every fleet of one session counts as sharing machines, since a machine's several "
+            "addresses cannot be told apart, so a second, separate cluster waits too until that "
+            f"stop is confirmed or ComfyUI restarts: {inner}")
+
+
+def _stranded_refusal(stranded: Any, verdict: str) -> str:
+    """Why a stranded fleet refuses admission, and the remedy that reaches it."""
+    from . import mesh_teardown
+
+    head = "a worker fleet from an interrupted creation"
+    if verdict == "live":
+        return (f"{head} is still live but was never published, and a second fleet "
+                "would share its transport; restart ComfyUI")
+    if mesh_teardown.cleanup_running(stranded):
+        return f"{head} was never published, and {mesh_teardown.cleanup_running_sentence()}"
+    label = (mesh_teardown.label_for_cause(mesh_teardown.block_cause(stranded))
+             if verdict == "blocked" else "")
+    state = {"blocked": "its stop failed", "unresolved": "its teardown has no outcome"}.get(
+        verdict, "its state cannot be read")
+    return (f"{head} was never published and its stop is unconfirmed ({label or state}); a "
+            "second fleet could run beside its processes. The sidebar Reset cannot reach a "
+            "fleet the cache never held, so restart ComfyUI: its exit stops the processes "
+            "this driver started, and dgxm restart clears any that outlive it")
 
 
 def recover_owned_spawned_proc(

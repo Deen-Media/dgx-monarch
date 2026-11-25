@@ -81,7 +81,7 @@
       "test_cfg_parallel_requires_every_output_patch_to_be_condition_local": "2038668a4cae756f",
       "test_cfg_patch_contract_rejects_marked_callable_patches_container": "696d69d1756cbf33",
       "test_cluster_packed_preflight_uses_refreshed_smaller_world": "55165beae64fb8a7",
-      "test_cluster_world_drift_refuses_inside_mesh_resolution_before_side_effects": "5b80670809fcdbde",
+      "test_cluster_world_drift_refuses_inside_mesh_resolution_before_side_effects": "95332135d6c12322",
       "test_custom_node_fails_closed_when_packed_denoised_transport_is_missing": "8d02ee150c8192a5",
       "test_custom_node_validates_schedule_and_clones_plain_fallback": "fa2cd6444c6be3f9",
       "test_custom_node_zero_step_packed_fallback_clones_structure": "f01eb9728b8a65cc",

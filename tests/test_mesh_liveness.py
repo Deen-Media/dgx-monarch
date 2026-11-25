@@ -25,6 +25,7 @@ from dgx_monarch import (
     mesh_teardown,
 )
 from dgx_monarch.cli import actor_reaper, lifecycle
+from dgx_monarch.mesh_liveness import fleet_gone as REAL_FLEET_GONE  # conftest makes it inert
 
 ADDRESS_A = "tcp://10.0.0.1:26600"
 ADDRESS_B = "tcp://10.0.0.2:26600"
@@ -194,6 +195,54 @@ def test_a_host_without_the_flag_answers_unknown_and_names_the_remedy(caplog):
     assert "run dgxm up" in caplog.text
     assert "restart ComfyUI if that host runs the driver" in caplog.text
     assert "unrecognized arguments" in caplog.text
+
+
+@pytest.mark.parametrize(("gens", "expected"), [
+    (["0123456789ab", "ba9876543210"], ("0123456789ab", "ba9876543210")),
+    ([], ()),
+    ("missing", None),          # an older package on the host prints no list
+    (None, None), ("0123456789ab", None), (["0123456789ab", 7], None), (["0123456789AB"], None),
+], ids=["two", "none_running", "missing", "null", "not_a_list", "not_text", "upper_case"])
+def test_each_hosts_loop_list_is_named_exactly_or_reads_as_cannot_tell(gens, expected):
+    payload = json.loads(_line())
+    if gens != "missing":
+        payload["loop_gens"] = gens
+    runner = Runner(answers={ADDRESS_B: (json.dumps(payload), "", 0)},
+                    default=(_line(loop_gens=["0123456789ab"]), "", 0))
+
+    evidence = mesh_liveness.probe_fleet(SimpleNamespace(config=_config(ADDRESS_A, ADDRESS_B)),
+                                         runner=runner)
+
+    assert evidence.answer == mesh_liveness.GONE  # the list never changes the fold
+    assert evidence.loops == ((ADDRESS_A, ("0123456789ab",)), (ADDRESS_B, expected))
+
+
+@pytest.mark.parametrize("when", ["before", "during"])
+def test_no_stop_proof_counts_once_the_driver_is_exiting(monkeypatch, when):
+    """An exit before the probe asks nothing; one during it keeps the answer off the handle."""
+    from dgx_monarch import driver_exit
+
+    state = {"exiting": when == "before"}
+    asked: list = []
+
+    def runner(_config, host, _script, timeout=None):
+        asked.append(host.address)
+        state["exiting"] = True
+        return SimpleNamespace(stdout=_line(), stderr="", returncode=0)
+
+    monkeypatch.setattr(driver_exit, "exiting", lambda: state["exiting"])
+    handle = SimpleNamespace(config=_config(ADDRESS_A, ADDRESS_B))
+
+    assert REAL_FLEET_GONE(handle, runner=runner) is False
+    assert not hasattr(handle, "_liveness_evidence")
+    assert (asked == []) is (when == "before")
+
+
+def test_a_host_that_did_not_answer_cannot_name_its_loops():
+    runner = Runner(answers={ADDRESS_B: ("", "boom", 1)}, default=(_line(loop_gens=[]), "", 0))
+    evidence = mesh_liveness.probe_fleet(SimpleNamespace(config=_config(ADDRESS_A, ADDRESS_B)),
+                                         runner=runner)
+    assert evidence.loops == ((ADDRESS_A, ()), (ADDRESS_B, None))
 
 
 def test_the_host_script_asks_for_every_configured_address():
@@ -651,6 +700,30 @@ def test_a_release_older_than_one_bring_up_no_longer_claims_the_failure(monkeypa
     assert "proved its worker processes were gone" not in later.replacement_blocked
 
 
+def test_a_bring_up_that_left_no_handle_still_names_the_release_in_its_poison_text(monkeypatch):
+    """The poison text is what every later attach prints, so the note belongs there too."""
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_PREDECESSOR", None)
+    mesh_teardown.note_liveness_release()
+
+    text = mesh_teardown.publish_creation_block(None, "worker spawn rollback outcome is unconfirmed")
+
+    assert text.startswith("worker spawn rollback outcome is unconfirmed")
+    assert "proved its worker processes were gone" in text
+    assert mesh_teardown.released_predecessor_recently() is False  # the one shot is spent
+
+
+@pytest.mark.parametrize(("answer", "gone"), [
+    (_line(), True), (_line(actors=1), False), (_line(unreadable=1), False)],
+    ids=["gone", "alive", "unknown"])
+def test_the_proof_a_stop_after_a_death_ends_on_is_the_releases_own_fleet_wide_gone(answer, gone):
+    handle = SimpleNamespace(config=_config(ADDRESS_A, ADDRESS_B))
+    runner = Runner(answers={ADDRESS_B: (answer, "", 0)})
+
+    assert REAL_FLEET_GONE(handle, runner=runner) is gone
+    assert sorted(address for address, _script, _timeout in runner.calls) == [ADDRESS_A, ADDRESS_B]
+    assert (handle._liveness_evidence.answer == mesh_liveness.GONE) is gone  # kept for the release
+
+
 def test_a_creation_block_never_poisons_a_handle_whose_stop_confirmed():
     handle = _handle(ADDRESS_A)
     handle.teardown_complete = True
@@ -728,8 +801,10 @@ def test_each_cause_reaches_every_operator_surface(monkeypatch, tag):
     handle.replacement_blocked = "an earlier stop"
     handle._block_cause = tag
     assert sentence in mesh_teardown.blocked_refusal(handle, "get_mesh")
-    assert "could not be stopped safely" in mesh_teardown.blocked_refusal(
-        handle, "get_mesh")
+    # A fleet no stop was sent to was never shown unstoppable: its head says so.
+    head = ("has not been stopped yet" if tag == mesh_teardown.TAG_NO_STOP_ISSUED
+            else "could not be stopped safely")
+    assert head in mesh_teardown.blocked_refusal(handle, "get_mesh")
     assert sentence in mesh_teardown.blocked_refusal(handle, "ensure_live")
     assert sentence in mesh_health.health_of([handle]).remedy
     outcome = mesh_recycle.recycle_detailed_impl(handle, lambda: None, lambda: None)

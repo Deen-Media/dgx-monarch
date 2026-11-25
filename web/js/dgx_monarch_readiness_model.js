@@ -166,10 +166,15 @@ function legacyMesh(value) {
             || !knownState || !knownVerdict) {
         return ["unknown", "Attached mesh state is malformed."];
     }
+    // Abandoned samples do not block a stopped fleet (the next attach replaces
+    // it) or one the driver reports busy (only its cleanup's stop, which
+    // settles them, is then running): mesh_evidence.mesh_block_dirty.
+    const abandonedBlocks = verdict !== "completed" && state !== "busy"
+        && (abandoned > 0 || abandonedLeases > 0);
     const blocked = ["dirty", "blocked", "poisoned"].includes(state)
         || ["blocked", "poisoned"].includes(verdict)
         || (verdict === "unresolved" && !busyPhase.trim())
-        || abandoned > 0 || abandonedLeases > 0 || poisoned
+        || abandonedBlocks || poisoned
         || replacement === true || (typeof replacement === "string" && replacement.trim());
     if (blocked) return ["blocked", "The attached mesh is not safe to reuse."];
     if (state === "unknown" || verdict === "unknown") {

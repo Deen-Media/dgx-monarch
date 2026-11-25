@@ -283,9 +283,12 @@ def verify_request_artifacts(
     normal_grant = request.get("_dgxm_normal_residency_grant")
     artifact_binding = request.get("_dgxm_artifact_binding")
     marker = request.get("_dgxm_artifact_preflight")
+    # Read once: the marker names the generation this proof ran under, so a
+    # setup that lands during the proof leaves the next dispatch to prove again.
+    proved_generation = handle.setup_generation
     if (residency_grant is None and normal_grant is None
             and artifact_binding is None and marker == {
-        "generation": handle.setup_generation,
+        "generation": proved_generation,
         "worker_index": worker_index,
     }):
         return
@@ -366,7 +369,7 @@ def verify_request_artifacts(
             effective_worker_args=active_worker_args,
             expected_context=expected_context,
             rank_world=int(getattr(handle, "world", 0) or 0),
-            setup_generation=int(getattr(handle, "setup_generation", -1)),
+            setup_generation=int(proved_generation),
             setup_key=tuple(setup_key),
             worker_args_key=tuple(getattr(handle, "worker_args_key", ()) or ()),
             worker_topology=driver_topology,
@@ -393,6 +396,6 @@ def verify_request_artifacts(
     mesh_safety.assert_artifact_parity(results, expected)
     request["_dgxm_artifact_sets"] = expected
     request["_dgxm_artifact_preflight"] = {
-        "generation": handle.setup_generation,
+        "generation": proved_generation,
         "worker_index": worker_index,
     }

@@ -477,10 +477,10 @@ def test_cluster_world_drift_refuses_inside_mesh_resolution_before_side_effects(
         "spawn_worker_fleet",
         lambda *_args: pytest.fail("unsafe config spawned a replacement mesh"),
     )
-    monkeypatch.setattr(
-        mesh_mod,
-        "config_fingerprint",
-        lambda *_args: pytest.fail("preflight ran after cache transition began"),
+    monkeypatch.setattr(mesh_mod, "config_fingerprint", lambda *_args: "new")  # read with the file
+    monkeypatch.setattr(  # the cache key is the first step past the preflight
+        mesh_mod, "_mesh_cache_key",
+        lambda *_args, **_kwargs: pytest.fail("preflight ran after cache transition began"),
     )
 
     with pytest.raises(

@@ -448,6 +448,24 @@ def test_local_post_transport_failure_still_poisons(transport_state, monkeypatch
         mesh_mod.get_mesh(mode="local", gpus_per_host=1)
 
 
+def test_a_local_failure_after_transport_init_poisons_even_with_its_rollback_confirmed(
+        transport_state, monkeypatch):
+    """Only a cluster rollback Monarch confirmed lifts without a restart (TROUBLESHOOTING entry 69)."""
+    _attach_fakes(monkeypatch)
+
+    def spawn(config, use_cluster, gph, attach, bootstrap, handoff):
+        handoff.failure_latched = True
+        raise WorkerSpawnError(RuntimeError("actor spawn exploded"), None,
+                               local_transport_initialized=True, rollback_confirmed=True)
+
+    monkeypatch.setattr(mesh_mod, "spawn_worker_fleet", spawn)
+    with pytest.raises(MeshAttachError, match="rolled back"):
+        mesh_mod.get_mesh(mode="local", gpus_per_host=1)
+    assert mesh_mod._TRANSPORT_POISON.startswith("actor spawn failed: actor spawn exploded")
+    with pytest.raises(MeshAttachError, match="not reusable"):
+        mesh_mod.get_mesh(mode="local", gpus_per_host=1)
+
+
 def test_active_creator_blocks_other_claims_without_releasing_mode_early(
         transport_state, monkeypatch):
     _attach_fakes(monkeypatch)

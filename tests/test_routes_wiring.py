@@ -107,14 +107,17 @@ def test_telemetry_route_reads_the_driver_rules_for_each_answer(monkeypatch):
                                              "vae_decode_relief": "stepped_aside"}
             assert second["telemetry_error"] == "OSError" and second["workers"] == []
 
-            # The route's own timeout answer carries the rules too.
+            # The route's own timeout answer carries the rules too, and the mesh
+            # block, read without a lock, so status and doctor still see the mesh.
             async def too_slow(_fn, _timeout_s):
                 raise TimeoutError
 
             monkeypatch.setattr(routes_mod, "_await_bounded", too_slow)
             resp = await client.get("/dgxm/telemetry")
             assert resp.status == 503
-            assert await resp.json() == {"t": pytest.approx(time.time(), abs=60), "workers": [],
+            body = await resp.json()
+            assert body.pop("mesh")["state"] == "idle"
+            assert body == {"t": pytest.approx(time.time(), abs=60), "workers": [],
                                          "telemetry_error": "TimeoutError",
                                          "driver_rules": {"vae_encode_item": "stepped_aside",
                                                           "vae_decode_relief": "stepped_aside"}}

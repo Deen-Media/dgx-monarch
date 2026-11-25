@@ -34,6 +34,7 @@ import threading
 import time
 from collections.abc import Mapping
 
+from .. import reconcile_running
 from ..constants import RECYCLE_HTTP_DEADLINE_S
 from ..log import get_logger
 from . import recycle_guard
@@ -191,7 +192,9 @@ def _workers() -> list:
     try:
         handle = next(iter(_MESHES.values()), None)
         if handle is not None and getattr(handle, "setup_key", None) is not None:
-            results = handle.call_all("status", timeout_s=10)
+            # A poll that meets a dead fleet sets off its cleanup and returns at once.
+            with reconcile_running.caller_does_not_wait():
+                results = handle.call_all("status", timeout_s=10)
     except Exception as exc:
         ok = False
         _log_refresh_failure(exc)
@@ -245,9 +248,18 @@ def _with_readiness(snapshot: dict) -> dict:
 
 
 def _stale_snapshot(cached: object, marker: str) -> dict:
+    """The last payload, marked, with the mesh row read now: no handle lock, never a wait on a stop.
+
+    A poll that arrives while a refresh is in flight, or after one failed,
+    must still see the mesh as it is, or `dgxm status` and `doctor` read an old
+    row, or none at all before the first refresh ends.
+    """
+    from ..mesh_health import mesh_health_snapshot
+
     snapshot = dict(cached) if isinstance(cached, dict) else {
         "t": time.time(), "workers": []}
     snapshot["telemetry_error"] = marker
+    snapshot["mesh"] = mesh_health_snapshot()
     return _with_readiness(snapshot)
 
 
@@ -391,8 +403,11 @@ def register() -> None:
         try:
             data = await _await_bounded(_telemetry_payload, _TELEMETRY_TIMEOUT_S)
         except TimeoutError:
+            from ..mesh_health import mesh_health_snapshot  # lock-free: the mesh row stays readable
+
             return web.json_response(_with_driver_rules(
-                {"t": time.time(), "workers": [], "telemetry_error": "TimeoutError"}), status=503)
+                {"t": time.time(), "workers": [], "telemetry_error": "TimeoutError",
+                 "mesh": mesh_health_snapshot()}), status=503)
         return web.json_response(_json_payload(data))
 
     @app.routes.post("/dgxm/recycle")

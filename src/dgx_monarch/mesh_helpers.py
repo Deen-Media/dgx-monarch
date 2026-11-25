@@ -439,10 +439,9 @@ def _launch_reconcile_thread(
                             )
                         handle._supervision_reconcile_thread = thread
                     else:
-                        thread = current
-                        if current is not getattr(
-                                handle, "_supervision_reconcile_thread", None):
+                        if current is not thread:  # another caller's, published meanwhile: its starter waits
                             creator = False
+                        thread = current
                     if _reconcile_thread_started(thread):
                         started = True
                         break
@@ -489,7 +488,7 @@ def _launch_reconcile_thread(
                     raise
     if not started:
         return
-    if creator and wait and thread is not None:
+    if creator and wait and mesh_teardown.caller_waits() and thread is not None:
         try:
             thread.join(timeout=mesh_teardown.reconcile_join_s())
         except BaseException as join_exc:

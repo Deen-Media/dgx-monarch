@@ -11,7 +11,10 @@ its line limit; mesh_teardown re-exports them.
 """
 from __future__ import annotations
 
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from .mesh_stop import ACTOR_STOP_S, RECONCILE_GROUP_S, proc_stop_bound_s, reconcile_join_s, shutdown_phases
@@ -46,13 +49,39 @@ def reconcile_stop_limit_s() -> float:
     hold its GPU lock, which its group teardown waits for (on one machine a
     stalled Worker's cleanup took 40 s, 30 of them in that wait). Before the
     phases the shutdown waits up to 10 s for the handle's lifecycle lock, only
-    while a Reset or another shutdown of this handle holds it; when that wait
-    runs out the reconcile ends without a stop. The figure leaves that wait
-    out. The shutdown's margin holds it, and so does reconcile_join_s, the
-    render's wait and cleanup_running's limit.
+    while another transition of this handle holds it; when that wait runs out
+    the reconcile waits for that transition to end and, if it published
+    nothing, runs the shutdown once more (mesh_teardown.reconcile_stop). The
+    figure leaves those waits out. The shutdown's margin holds the first, and
+    so do reconcile_join_s, the render's wait and cleanup_running's limit.
     """
     group, stop = shutdown_phases(RECONCILE_GROUP_S, proc_stop_bound_s())
     return group + min(ACTOR_STOP_S, stop) + stop
+
+
+_CALLER = threading.local()
+
+
+@contextmanager
+def caller_does_not_wait() -> Iterator[None]:
+    """Run a read-only caller whose call may set off the cleanup without waiting for its stop.
+
+    A render waits for the stop its own call set off, so its error comes once
+    the fleet is stopped. A status poll is a read: waiting there held the
+    telemetry route for the whole stop, and every `dgxm status` and `dgxm
+    doctor` read the busy driver as unreadable.
+    """
+    previous = getattr(_CALLER, "no_wait", False)
+    _CALLER.no_wait = True
+    try:
+        yield
+    finally:
+        _CALLER.no_wait = previous
+
+
+def caller_waits() -> bool:
+    """Whether this thread's caller waits for a cleanup its call set off."""
+    return not getattr(_CALLER, "no_wait", False)
 
 
 def note_started(handle: Any) -> None:
@@ -88,6 +117,31 @@ def cleanup_running_sentence() -> str:
     """
     return ("the driver is still stopping the previous Worker fleet; that stop ends within about "
             f"{reconcile_stop_limit_s():.0f} s; try again when it ends")
+
+
+READ_DRAIN_S = 10.0  # how long a cleanup waits for a finished read's job root to retire
+
+
+def reads_drained(handle: Any) -> bool:
+    """Whether this fleet's RDMA read roots retired within READ_DRAIN_S, with no live sample lease.
+
+    A read that outlived its render resumes the cleanup from its own token
+    retirement, a moment before its job root retires (rdma_read_job), and does
+    not wait for it; the cleanup's first stop meets the root and refuses, so it
+    waits the root out and stops the fleet itself (mesh_teardown.reconcile_stop).
+    A root that stays (a token never published) or a live lease still refuses.
+    """
+    from . import driver_exit
+    from .rdma_read_job import pending_job_count_for_handle
+
+    deadline = time.monotonic() + READ_DRAIN_S
+    while not sum(int(count) for count in dict(getattr(handle, "sample_leases", None) or {}).values()):
+        if not pending_job_count_for_handle(handle):
+            return True
+        if time.monotonic() >= deadline or driver_exit.exiting():
+            return False
+        time.sleep(0.05)
+    return False
 
 
 def unresolved_refusal(handle: Any) -> str:

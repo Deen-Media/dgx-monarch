@@ -244,7 +244,27 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
 - The ComfyUI process is the single Monarch client: when it dies its procs die,
   so no orphaned process holds a model. A supervision-class failure on a
   setup, load or render dispatch evicts the fleet, so the next Init or render
-  respawns it (`MeshHandle._await_or_evict`), and a mutation RPC that times out
+  respawns it (`MeshHandle._await_or_evict`). A fleet so evicted takes no new
+  policy and no setup, and its cleanup stops it from a thread of its own
+  (`mesh_teardown.reconcile_stop`): it waits out a transition that holds the
+  lifecycle lock and, if that transition published nothing, stops the fleet
+  then; refused before it sent a stop for any other reason, it records that no
+  stop was issued, and a Reset stops the fleet. A fleet whose publication was
+  interrupted admits a second fleet over it only once its stop is confirmed or
+  its processes are proven gone (`mesh_creation.admission_occupant`), and no
+  creation under another cache key starts while another fleet of this session
+  has an unconfirmed stop: every fleet of one session counts as sharing
+  machines, since a machine's addresses cannot be told apart. A stop
+  after a reported Worker death ends as soon as every host shows the fleet's
+  processes gone (`mesh_stop.stop_procs`), and a status poll that meets a dead
+  fleet starts its cleanup without waiting for it. A cluster bring-up that
+  failed with a Worker's loss poisons the session only until every host shows
+  the processes it spawned gone (`failed_bring_up`): the next render and the
+  Reset ask. One that failed before every rank's process started may still
+  have a spawn queued in a stalled Worker loop, so it also needs the loop it
+  attached to gone on every host, and the refusal names a host where it still
+  runs. One whose rollback stop completed without error, or that started no
+  process, poisons nothing (`mesh_factory.left_nothing_running`). A mutation RPC that times out
   or is interrupted after its send latches the mesh DIRTY until a recycle
   (`mesh_rpc.call_all_bound`). `dgxm up` restarts wedged Worker services
   idempotently, and the driver restarts dead services before attaching

@@ -56,6 +56,7 @@ _TEARDOWN_STATE_LOCK = threading.Lock()
 # asynchronous readers cannot see a partial transition. The lock serializes
 # writers; readers consume the immutable binding lock-free.
 _TEARDOWN_STATE: tuple[dict[int, float], float, int] = ({}, float("-inf"), 0)
+_PROOF_ENDED: set[int] = set()  # in-flight tokens whose stop the liveness proof ended
 
 
 class PriorTeardownUnknownError(RuntimeError):
@@ -63,10 +64,9 @@ class PriorTeardownUnknownError(RuntimeError):
 
 
 def begin_deliberate_teardown(token: int) -> None:
-    """Mark one handle's proc stop in flight.
+    """Mark one handle's proc stop in flight; the token scopes suppression to this teardown.
 
-    Call inside the try whose ``finally`` publishes the outcome and then calls
-    ``end_deliberate_teardown``. The token scopes suppression to this teardown.
+    Call inside the try whose ``finally`` publishes the outcome, then ``end_deliberate_teardown``.
     """
     global _TEARDOWN_STATE
     with _TEARDOWN_STATE_LOCK:
@@ -75,24 +75,30 @@ def begin_deliberate_teardown(token: int) -> None:
 
 
 def end_deliberate_teardown(token: int, stop_confirmed: bool) -> None:
-    """Close the mark and open grace only after a confirmed stop.
+    """Close the mark and open grace only after a stop Monarch confirmed.
 
-    A failed stop leaves process state unknown, so later faults remain visible.
-    Calling without a published begin mark is safe.
+    A failed stop leaves process state unknown, so later faults remain visible. A stop
+    the liveness proof ended (``stop_ended_on_proof``) confirmed nothing either, so like
+    the liveness release it opens none. Calling without a published begin mark is safe.
     """
     global _TEARDOWN_STATE
     with _TEARDOWN_STATE_LOCK:
         tokens, grace, version = _TEARDOWN_STATE
+        opens = stop_confirmed and token not in _PROOF_ENDED
+        _PROOF_ENDED.discard(token)
         _TEARDOWN_STATE = ({k: v for k, v in tokens.items() if k != token},
-                           time.monotonic() if stop_confirmed else grace,
-                           version + 1)
+                           time.monotonic() if opens else grace, version + 1)
+
+
+def stop_ended_on_proof(token: int) -> None:
+    """Withhold grace from this in-flight teardown: the liveness proof ended its stop."""
+    with _TEARDOWN_STATE_LOCK:
+        if token in _TEARDOWN_STATE[0]:
+            _PROOF_ENDED.add(token)
 
 
 def clear_stale_token(token: int) -> None:
-    """Clear a stranded token after the handle outcome is already published.
-
-    Never open grace retroactively when the stop-success instant was lost.
-    """
+    """Clear a stranded token once its handle's outcome is published; never opens grace late."""
     end_deliberate_teardown(token, stop_confirmed=False)
 
 
@@ -121,10 +127,7 @@ def token_within_authority(token: int) -> bool:
 
 
 def token_present(token: int) -> bool:
-    """Return whether a token exists at any age.
-
-    Presence alone blocks reuse; age limits only fault absorption.
-    """
+    """Return whether a token exists at any age: presence alone blocks reuse, age limits absorption."""
     return token in _TEARDOWN_STATE[0]
 
 

@@ -250,6 +250,72 @@ def test_driver_refusal_keeps_the_live_fleet_a_config_edit_would_replace(monkeyp
     assert mesh_mod._MESHES == {}
 
 
+def _saved_during_the_read(monkeypatch, versions, saves):
+    """cluster.toml as a file on disk: each read may be followed by a save that lands at once."""
+    from dgx_monarch import mesh as mesh_mod
+
+    disk = {"at": 0}
+
+    def load(_path):
+        config = versions[disk["at"]][1]
+        if saves and disk["at"] < len(versions) - 1:
+            saves.pop(0)
+            disk["at"] += 1
+        return config
+
+    monkeypatch.setattr(mesh_mod, "load_cluster_config", load)
+    monkeypatch.setattr(mesh_mod, "config_fingerprint", lambda _path: versions[disk["at"]][0])
+
+
+def test_a_save_that_lands_while_the_attach_reads_cluster_toml_builds_from_the_saved_file(
+        monkeypatch, isolated_environ):
+    """The digest a fleet is stamped with is the digest of the bytes its settings came from.
+
+    Stamping the old settings with the new file's digest would let every later
+    attach reuse that fleet as if it matched the file.
+    """
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import monarch_launch
+
+    def config():
+        return types.SimpleNamespace(
+            source="cluster.toml", hosts=(types.SimpleNamespace(gpus=1),), comfy_dir="/comfy")
+
+    old, edited = config(), config()
+    events: list = []
+    _key, handle = _replaceable_fleet(monkeypatch, old, events)
+    handle.config_fingerprint = "old"
+    _saved_during_the_read(monkeypatch, [("old", old), ("edited", edited)], saves=[1])
+    admitted: list = []
+
+    def admit(config):
+        admitted.append(config)
+        raise RuntimeError("admission reached")
+
+    monkeypatch.setattr(monarch_launch, "prepare_driver", admit)
+    with pytest.raises(RuntimeError, match="admission reached"):
+        mesh_mod.get_mesh(mode="cluster")
+    assert len(admitted) == 1 and admitted[0] is edited
+
+
+def test_a_cluster_toml_that_keeps_changing_under_the_attach_is_refused_with_a_retry(
+        monkeypatch, isolated_environ):
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import monarch_launch
+
+    config = types.SimpleNamespace(
+        source="cluster.toml", hosts=(types.SimpleNamespace(gpus=1),), comfy_dir="/comfy")
+    events: list = []
+    _replaceable_fleet(monkeypatch, config, events)
+    monkeypatch.setattr(monarch_launch, "prepare_driver", lambda _config: events.append("admit"))
+    versions = [(f"save-{index}", config) for index in range(8)]
+    _saved_during_the_read(monkeypatch, versions, saves=list(range(8)))
+
+    with pytest.raises(mesh_mod.MeshAttachError, match="kept changing"):
+        mesh_mod.get_mesh(mode="cluster")
+    assert events == []
+
+
 def test_real_native_admission_refuses_before_recycling_the_fleet(monkeypatch, isolated_environ):
     from dataclasses import replace
 

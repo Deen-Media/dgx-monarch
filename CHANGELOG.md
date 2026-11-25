@@ -2531,6 +2531,83 @@ sections after them list every change.
   whose pair it cannot see, so after a wtmp rotation, or in a full window with
   an even count, a hard power-off is counted
   ([TROUBLESHOOTING](docs/TROUBLESHOOTING.md#pd-stuck-state)).
+- Fix: the driver's cleanup after a lost Worker no longer leaves a fleet that
+  only a ComfyUI restart clears when it could not send its stop. It now waits
+  out a setup rollback or a Gate policy restore that holds the lifecycle lock,
+  or a native latent read that outlived its render until that read ends, and
+  stops the fleet itself; refused for another reason (a read whose job never
+  ends), it says "no stop was issued", and Reset attached mesh stops the
+  fleet. A fleet that died also takes no new worker policy or setup, so a
+  Gate's policy restore no longer sends one to it
+  ([TROUBLESHOOTING #65](docs/TROUBLESHOOTING.md#65-dgxm-status-and-dgxm-doctor-are-green-and-every-attach-still-fails)).
+- Fix: a setup rollback whose stop of a dead Worker's processes times out now
+  keeps that timeout as its cause, so the next render replaces the fleet once
+  the driver proves the processes gone; a rollback stop that reports a failure
+  names the Reset that retries it. Both said "the setup rollback stop was
+  interrupted" and asked for a ComfyUI restart.
+- Fix: after a lost Worker's cleanup has stopped the fleet, `dgxm doctor` and
+  `dgxm status` read the mesh as idle until the next render, and while that
+  stop is still running they read it as busy; both read DIRTY before, with a
+  Reset the driver refused, and `dgxm status` exited 1 until the next render.
+- Fix: a Reset that retries a stop which failed ends when Monarch reports on
+  that retry, not up to 100 s later behind the first stop's record.
+- Fix: the next render over a fleet whose publication was interrupted now
+  refuses, with the cause, while that fleet's stop is unconfirmed, and replaces
+  it once the driver proves its processes gone after a Worker died; before, it
+  started a second fleet beside processes whose stop was unknown.
+- Fix: a cluster.toml saved while a render attaches no longer leaves a fleet
+  built from the old settings that later attaches reuse as matching the new
+  file.
+- Fix: the restart-ComfyUI refusal after a failed bring-up that followed a
+  liveness release now says the fleet it replaced was proven gone, where
+  only the handle's text said so before.
+- Fix: with native latent return on, a latent read whose start was interrupted
+  twice now settles and returns, where its render could wait for ever.
+- Fix: a Worker lost while the driver brings a cluster fleet up no longer
+  leaves the session refusing every render until ComfyUI restarts. The next
+  render, and Reset attached mesh, ask every host whether the processes that
+  bring-up spawned are gone, and once every host says so a fresh fleet
+  attaches in the same session; while a host still shows them, the refusal
+  names it. With another fleet attached, whose processes keep every host
+  busy, Reset attached mesh resets that fleet first and then asks every host,
+  where it reset that fleet and reported success while the session stayed
+  poisoned. A bring-up that failed before every rank's process started also
+  needs the Worker loop it attached to gone on every host, since a stalled
+  loop may still hold its spawn; the refusal names such a host, and a Worker
+  service restart there clears it (`dgxm up` on a host that cannot list its
+  loops, since it syncs the package and restarts every Worker). A bring-up that failed before it called Monarch now names
+  its cause (a spawn host that cannot be isolated, a Worker module that will
+  not import) where it read "cleanup state unavailable". Before, the Reset
+  answered `no_live_mesh`
+  and only a restart helped
+  ([TROUBLESHOOTING #69](docs/TROUBLESHOOTING.md#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)).
+- Fix: a render under another Init folder or cluster.toml path no longer
+  starts a second fleet beside a fleet of this session whose stop is
+  unconfirmed; it refuses with that fleet's cause and remedy. Every fleet of
+  one session counts as sharing machines, since a machine's several addresses
+  cannot be told apart, so a second, separate cluster driven from the same
+  session waits for that stop too. Fleets that stopped or still run are left
+  as before.
+- Fix: a cluster bring-up that fails with its spawned processes rolled back,
+  or before it starts any process, no longer leaves the session refusing
+  every render until ComfyUI restarts. Its rollback stop completed without
+  error, so nothing it started still runs, and the next render attaches a
+  fresh fleet without asking any host.
+- Fix: the liveness check no longer reads a process as gone when its main
+  thread has exited and another thread still runs. The kernel shows such a
+  process as a zombie with no command line while it keeps every page; it now
+  counts as alive or unknown, and only a zombie with no thread left counts as
+  gone. The latch release, the bring-up lift and the early stop end all rest
+  on this check.
+- Fix: the stop of a fleet that lost a Worker ends as soon as every host shows
+  the fleet's processes gone, where it waited out Monarch's report on the lost
+  host, about 30 to 90 s with nothing left to stop; the render that met the
+  loss gets its error, and the next render attaches, that much sooner. A
+  status poll that meets the dead fleet starts its stop and answers at once,
+  so `dgxm status` and `dgxm doctor` read the stop as busy rather than the
+  driver as unreadable, and a poll that arrives while a refresh runs reads
+  the mesh row as it is now, where it read the last refresh's row or none
+  ([TROUBLESHOOTING #4](docs/TROUBLESHOOTING.md#4-supervisionerror--process-exited-with-non-zero-code)).
 
 ### Development
 

@@ -146,15 +146,19 @@ def snapshot_generations(config: ClusterConfig, trace: attach_trace.AttachTrace,
 
 
 def read_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,
-              *, attempt: int, monarch: str) -> list[str]:
+              *, attempt: int, monarch: str, handoff: Any = None) -> list[str]:
     """Each loop's id value, in host order, read just before this attempt.
 
     Raises ``worker_proc_id.WorkerProcIdError`` before this attempt dials when
     a loop's current id is unknown, or when a loop runs a torchmonarch other
     than ``monarch``, the one this driver loaded. Every bookkeeping key stays
-    the bare address; only the dial carries the id.
+    the bare address; only the dial carries the id. The handoff keeps each
+    loop's generation from the reading the next dial rides on, so a spawn the
+    fleet then queues names the loops that hold it (failed_bring_up).
     """
     readings = snapshot_generations(config, trace, phase=f"before_attach_{attempt}")
+    if handoff is not None:
+        handoff.loop_gens = {address: str(fields.get("gen", "")) for address, fields in readings.items()}
     return worker_proc_id.read_values(config.hosts, readings, monarch=monarch)
 
 
@@ -207,7 +211,7 @@ def _stand_down_at_exit(runtime: dict[str, Any], trace: attach_trace.AttachTrace
 
 
 def _read_retry_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,
-                     dialed: list[str], *, monarch: str,
+                     dialed: list[str], *, monarch: str, handoff: Any = None,
                      ) -> tuple[list[str] | None, worker_proc_id.WorkerProcIdError | None]:
     """Read the ids again after a failed attempt; name every loop that moved.
 
@@ -215,7 +219,7 @@ def _read_retry_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,
     more attempt with the new id can win where the first could not.
     """
     try:
-        values = read_dial(config, trace, attempt=2, monarch=monarch)
+        values = read_dial(config, trace, attempt=2, monarch=monarch, handoff=handoff)
     except worker_proc_id.WorkerProcIdError as exc:
         return None, exc
     moved = [host.address
@@ -263,7 +267,7 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
                 "attach was attempted, so fix the lifecycle/SSH error and retry") from exc
         _stand_down_at_exit(runtime, trace, handoff=handoff)  # a heal under way ran to its end
     try:
-        dial = read_dial(config, trace, attempt=1, monarch=monarch)
+        dial = read_dial(config, trace, attempt=1, monarch=monarch, handoff=handoff)
     except worker_proc_id.WorkerProcIdError as exc:
         # Nothing dialed, so the transport carries no failed attach and the
         # next render reads the ids again.
@@ -281,7 +285,7 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
             trace.closed("poisoned", stage="attach_1", evidence=first_evidence)
             raise
         _stand_down_at_exit(runtime, trace, first_exc, handoff=handoff)  # no reread or retry
-        retry_dial, refusal = _read_retry_dial(config, trace, dial, monarch=monarch)
+        retry_dial, refusal = _read_retry_dial(config, trace, dial, monarch=monarch, handoff=handoff)
         _stand_down_at_exit(runtime, trace, first_exc, handoff=handoff)  # an exit during the reread
         if refusal is not None and refusal.skew:
             # No poison: the next attach stands where an in-process second attempt

@@ -260,6 +260,20 @@ def test_coherent_legacy_mesh_states_keep_their_conservative_meaning():
         "ready", "degraded", "degraded", "ready"]
 
 
+def test_legacy_view_reads_abandoned_samples_as_the_driver_does():
+    """A stopped fleet and the cleanup's own stop do not block; any other abandoned sample does."""
+    base = {"workers": [{"healthy": True}], "render": {"active": False}}
+    stopped, stopping, live = _run_model([
+        {**base, "mesh": {"state": "idle", "verdict": "completed", "abandoned_samples": 1}},
+        {**base, "mesh": {"state": "busy", "verdict": "unresolved", "abandoned_samples": 1,
+                           "busy_phase": "the stop of the previous Worker fleet"}},
+        {**base, "mesh": {"state": "ok", "verdict": "live", "abandoned_samples": 1}},
+    ])
+    assert stopped["rows"][1]["state"] == "idle"
+    assert stopping["rows"][1]["state"] == "active"
+    assert live["rows"][1]["state"] == "blocked"
+
+
 # --- topology and rail lines (web/js/dgx_monarch_fabric_model.js) ----------
 
 FABRIC = Path(__file__).parents[1] / "web/js/dgx_monarch_fabric_model.js"

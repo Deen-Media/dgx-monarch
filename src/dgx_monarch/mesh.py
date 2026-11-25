@@ -12,6 +12,7 @@ from . import (
     __version__,
     client_lease,
     driver_exit,
+    failed_bring_up,
     mesh_attach,
     mesh_creation,
     mesh_factory,
@@ -31,6 +32,7 @@ from .config import ClusterConfig, find_config_path, load_cluster_config, local_
 from .config_schema import actor_worker_args
 from .log import get_logger
 from .mesh_factory import FleetHandoff, WorkerSpawnError, spawn_worker_fleet
+from .mesh_runtime import pinned_cluster_config
 from .topology import Topology
 
 _attach_once = mesh_helpers.attach_once
@@ -392,7 +394,7 @@ def get_mesh(
     global _TRANSPORT_CLAIM_GENERATION, _TRANSPORT_COMMITTED_GENERATION
     driver_exit.hold_at_entry()  # at exit: waits for the process to end, before anything
     install_fault_hook()
-    mesh_creation.reap_abandoned_attempts(globals())
+    failed_bring_up.settle(globals())  # reaps abandoned creations, lifts a proven bring-up's poison
     resolved = find_config_path(config_path or None)
     use_cluster = mode == "cluster" or (mode == "auto" and resolved is not None)
     if use_cluster and resolved is None:
@@ -402,20 +404,18 @@ def get_mesh(
         )
     wanted_transport = "cluster" if use_cluster else "local"
     if _TRANSPORT_POISON is not None:
-        raise MeshAttachError(
-            "this ComfyUI session's Monarch transport is not reusable after a "
-            f"partial bring-up failure ({_TRANSPORT_POISON}); restart ComfyUI before retrying")
+        raise MeshAttachError(failed_bring_up.refusal(_TRANSPORT_POISON, globals()))
     if _TRANSPORT_MODE is not None and _TRANSPORT_MODE != wanted_transport:
         raise MeshAttachError(
             f"this ComfyUI session already brought up a {_TRANSPORT_MODE} mesh; monarch allows "
             f"one transport per process, so switching to {wanted_transport} mode needs a "
             "ComfyUI restart."
         )
-    if use_cluster:
+    if use_cluster:  # the digest is the parsed bytes' own (pinned_cluster_config)
         assert resolved is not None  # noqa: S101  # Narrowed for mypy; guarded above.
-        config = load_cluster_config(resolved)
+        config, cluster_digest = pinned_cluster_config(resolved, load_cluster_config, config_fingerprint, MeshAttachError)
     else:
-        config = local_config(resolved)
+        config, cluster_digest = local_config(resolved), ""
     comfy = _detect_comfy_dir(comfy_dir or config.comfy_dir)
     if use_cluster:
         n_hosts = len(config.hosts)
@@ -440,8 +440,7 @@ def get_mesh(
         except OSError:
             pass
         # A local mesh consumes the [worker_args] its actors read, so it needs a digest of its own.
-        config_digest = (config_fingerprint(resolved) if use_cluster
-                         else mesh_helpers.local_worker_args_fingerprint(actor_worker_args(config.worker_args), config.monarch))
+        config_digest = cluster_digest or mesh_helpers.local_worker_args_fingerprint(actor_worker_args(config.worker_args), config.monarch)
     key = _mesh_cache_key(config.source, comfy, use_cluster)
     # The provisional claim is releasable until the fail-closed publication
     # immediately before the first native transport/fleet call below.
@@ -453,7 +452,7 @@ def get_mesh(
     primary_error: BaseException | None = None
     try:
         try:
-            mesh_liveness.try_release(_MESHES.get(key))
+            mesh_creation.try_release_all(globals())  # every key's cached and stranded fleet, which admission reads
             with _MESH_CONDITION:
                 mesh_helpers.wait_for_mesh_creation(
                     _MESH_CONDITION, _MESH_CREATING, key, MeshAttachError)
@@ -552,9 +551,10 @@ def get_mesh(
                 if _TRANSPORT_POISON is None:
                     _TRANSPORT_POISON = spawn_poison
                 transport_releasable = not use_cluster and not exc.local_transport_initialized
-                if transport_releasable and _TRANSPORT_POISON is spawn_poison:
+                settled = use_cluster and mesh_factory.left_nothing_running(fleet_handoff, exc)
+                if (transport_releasable or settled) and _TRANSPORT_POISON is spawn_poison:
                     _TRANSPORT_POISON = None
-                elif not transport_releasable:
+                elif not (transport_releasable or settled):
                     _TRANSPORT_POISON = f"actor spawn failed: {exc.original_text}" + (f"; rollback failed: {exc.cleanup_text}" if exc.cleanup is not None else "")
                 exc.raise_cancellation()
                 raise MeshAttachError(
@@ -584,9 +584,8 @@ def get_mesh(
             unsafe_attach = (fleet_handoff.attach_in_progress
                              and not fleet_handoff.transport_failure_safe)
             if _TRANSPORT_POISON is None and (unsafe_attach or fleet_handoff.spawn_in_progress):
-                _TRANSPORT_POISON = ("cluster attach result handoff interrupted"
-                                     if unsafe_attach else
-                                     "actor spawn failed; cleanup state unavailable")
+                _TRANSPORT_POISON = ("cluster attach result handoff interrupted" if unsafe_attach
+                                     else failed_bring_up.spawn_failure_poison(fleet_handoff, primary))
             blocked = handle.replacement_blocked if handle is not None and not handle.teardown_complete else None
             fleet = fleet if fleet is not None else fleet_handoff.fleet
             owned_procs = (
@@ -604,8 +603,7 @@ def get_mesh(
             blocked = blocked or ("ProcMesh spawn callback cleanup is unconfirmed" if fleet_handoff.callback_cleanup_unconfirmed else None)
             if blocked:
                 _TRANSPORT_POISON = "mesh creation failed; owned ProcMesh cleanup unconfirmed"
-                blocked_text = mesh_factory.safe_failure_evidence(blocked)
-                mesh_teardown.publish_creation_block(handle, blocked_text)
+                blocked_text = mesh_teardown.publish_creation_block(handle, mesh_factory.safe_failure_evidence(blocked))
                 primary_text = mesh_factory.safe_failure_evidence(primary)
                 mesh_factory.safe_note(primary, f"owned ProcMesh cleanup after mesh creation failed: {blocked_text}")
                 _TRANSPORT_POISON = (f"mesh creation failed ({primary_text}); owned "

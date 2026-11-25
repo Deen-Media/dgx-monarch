@@ -50,8 +50,9 @@ def recover_mesh() -> dict[str, object]:
         "recover-attached-mesh",
         "Recover the attached mesh",
         "The next attach cannot use the attached mesh. Confirm that no render session is active, "
-        "then follow the remedy the mesh row names. A reset cannot clear a poisoned transport, "
-        "which needs a ComfyUI restart, or a fleet that was never published.",
+        "then follow the remedy the mesh row names. A reset clears a failed cluster bring-up's "
+        "poisoned transport only once every host shows its processes gone; any other poisoned "
+        "transport, and a fleet that was never published, needs a ComfyUI restart.",
         "manual",
         reversible=False,
         requires_confirmation=True,
