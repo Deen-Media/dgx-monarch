@@ -1628,12 +1628,20 @@ def test_artifact_preflight_marker_hit_skips_identity_io(monkeypatch):
     assert identity_calls == [1]
 
 
-def test_unbake_stat_ok_survives_metadata_only_changes(tmp_path):
-    """chmod and chown change ctime, not bytes; the record must stay valid, or
-    a permission fix costs a full reload."""
-    import os
+def test_unbake_stat_ok_refuses_a_metadata_only_change(tmp_path):
+    """The record binds the change time, so a chmod costs one reload and nothing worse.
 
-    from dgx_monarch.actor.unbake import UnbakeRecord
+    chmod and chown move the change time and not the bytes, but an in-place
+    rewrite that puts the old size and modification time back moves only the
+    change time too, and no tool can set it back. A record must never vouch for
+    bytes that could have changed, so after a metadata-only change the record
+    no longer matches, and the restore refuses typed (the store then reloads)
+    instead of reading the file. An untouched file still matches.
+    """
+    import os
+    import time
+
+    from dgx_monarch.actor.unbake import UnbakeError, UnbakeRecord, restore_pristine
 
     path = tmp_path / "model.safetensors"
     path.write_bytes(b"AAAA")
@@ -1646,8 +1654,15 @@ def test_unbake_stat_ok_survives_metadata_only_changes(tmp_path):
         file_ino=captured.st_ino,
         file_ctime_ns=captured.st_ctime_ns,
     )
-    os.chmod(path, 0o600)
     assert record.stat_ok()
+    time.sleep(0.05)    # past a coarse timestamp tick, so the change time moves
+    os.chmod(path, 0o600)
+    after = os.stat(path)
+    assert (after.st_size, after.st_mtime_ns, after.st_ino) == (
+        captured.st_size, captured.st_mtime_ns, captured.st_ino)
+    assert not record.stat_ok()
+    with pytest.raises(UnbakeError, match="changed since capture"):
+        restore_pristine(object(), record)
 
 
 @pytest.mark.parametrize(

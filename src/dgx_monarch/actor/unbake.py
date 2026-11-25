@@ -14,7 +14,6 @@ CPU-only tests.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -25,19 +24,24 @@ from .unbake_file import (
     _ST_TO_TORCH as _ST_TO_TORCH,
 )
 from .unbake_file import (
+    QuantLayerMap,
     _bytes_match,
     _candidate_file_bindings,
     _candidate_file_keys,
     _cast_match,
-    _decode_live_quant_conf,
-    _direct_quant_conf_reason,
-    _direct_quant_module_supported,
     _FileTensor,
     _InvalidQuantConfError,
-    _quant_conf_matches_live,
     _quant_layer_conf,
     read_safetensors_header,
 )
+from .unbake_quant_live import (
+    _decode_live_quant_conf,
+    _direct_quant_conf_reason,
+    _direct_quant_module_supported,
+    _quant_conf_matches_live,
+)
+from .unbake_record import QuantSpec as QuantSpec
+from .unbake_record import UnbakeRecord as UnbakeRecord
 
 log = get_logger(__name__)
 
@@ -58,6 +62,15 @@ class UnbakeError(RuntimeError):
     """
 
 
+class UnbakeRefused(UnbakeError):
+    """A typed refusal of a LoRA stack, raised before any weight was written.
+
+    The resident and the stack it holds are exactly as they were, so the store
+    keeps the model and passes the refusal on: dropping it and loading again
+    would only meet the same refusal (``store_bake.lazy_swap_transition``).
+    """
+
+
 class CaptureAborted(RuntimeError):
     """Capture discarded the record: the checkpoint changed, a quantized layer cannot be rebuilt
     exactly from one checkpoint binding and its live contract, or the resident set went over the cap."""
@@ -73,77 +86,6 @@ def drop_file_cache(path: str) -> None:
             os.close(fd)
     except OSError:
         pass
-
-
-@dataclass
-class QuantSpec:
-    """Restore recipe for one quantized weight wrapper.
-
-    module_key: attribute path of the owning op ("" allowed);
-    layer_conf: this layer's entry from the file's _quantization_metadata;
-    components: state-dict suffix ("weight", "weight_scale", ...) -> file
-    slice; resident: components that failed byte-verify, kept as snapshots."""
-    module_key: str
-    layer_conf: dict
-    components: dict[str, _FileTensor] = field(default_factory=dict)
-    resident: dict[str, torch.Tensor] = field(default_factory=dict)
-    full_precision_mm_config: bool | None = None
-
-
-@dataclass
-class UnbakeRecord:
-    """Where every patched key's pristine bytes live.
-
-    mapped:   plain-tensor patcher key -> checkpoint slice (byte-verified)
-    quant:    quantized patcher key -> QuantSpec (per-component slices)
-    resident: plain patcher key -> pristine tensor snapshot (mapping failed)
-    """
-    path: str
-    file_size: int
-    file_mtime_ns: int
-    file_dev: int | None = None
-    file_ino: int | None = None
-    file_ctime_ns: int | None = None
-    mapped: dict[str, _FileTensor] = field(default_factory=dict)
-    quant: dict[str, QuantSpec] = field(default_factory=dict)
-    resident: dict[str, torch.Tensor] = field(default_factory=dict)
-
-    @property
-    def mapped_bytes(self) -> int:
-        return (sum(ft.nbytes for ft in self.mapped.values())
-                + sum(ft.nbytes for spec in self.quant.values()
-                      for ft in spec.components.values()))
-
-    @property
-    def resident_bytes(self) -> int:
-        tensors = list(self.resident.values())
-        tensors += [t for spec in self.quant.values() for t in spec.resident.values()]
-        return sum(t.numel() * t.element_size() for t in tensors)
-
-    @property
-    def resident_count(self) -> int:
-        return len(self.resident) + sum(len(s.resident) for s in self.quant.values())
-
-    def matches_stat(self, st: os.stat_result) -> bool:
-        basic = st.st_size == self.file_size and st.st_mtime_ns == self.file_mtime_ns
-        if not basic:
-            return False
-        # Captures pin filesystem identity as well as timestamp and size.
-        # Optional fields permit synthetic records used by callers and tests.
-        if self.file_dev is not None and st.st_dev != self.file_dev:
-            return False
-        if self.file_ino is not None and st.st_ino != self.file_ino:
-            return False
-        # ctime is not compared: metadata-only changes move it without changing
-        # contents. Size and mtime catch mutation; device and inode catch replacement.
-        return True
-
-    def stat_ok(self) -> bool:
-        try:
-            st = os.stat(self.path)
-        except OSError:
-            return False
-        return self.matches_stat(st)
 
 
 def live_tensor(model: Any, key: str) -> torch.Tensor:
@@ -209,6 +151,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                 )
 
             renames = load_time_renames(model, header)  # a key ComfyUI renames at load: the file's name
+            layer_map = QuantLayerMap(metadata)  # the embedded quantization map: one parse per capture
 
             def _map_plain(key: str, tensor: torch.Tensor) -> bool:
                 candidates = with_renamed(_candidate_file_keys(key), renames, key)
@@ -244,7 +187,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                     file_layer = candidate[:-len(".weight")]
                     try:
                         conf, conf_source = _quant_layer_conf(
-                            metadata, header, file_layer, model_prefix, fd
+                            metadata, header, file_layer, model_prefix, fd, layer_map
                         )
                     except _InvalidQuantConfError as exc:
                         raise CaptureAborted(

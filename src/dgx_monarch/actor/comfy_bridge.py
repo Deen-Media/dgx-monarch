@@ -20,7 +20,7 @@ from ..transfer_utils import (
     reconcile_error,
     safe_call,
 )
-from . import comfy_dynamic, slab_lifetime
+from . import comfy_dynamic, slab_lifetime, slab_posture
 from .comfy_custom_nodes import (
     load_custom_node_modules as _load_custom_node_modules,
 )
@@ -121,9 +121,9 @@ def _uma_memory_defaults(worker_args: dict, integrated: bool | None = None) -> d
                 "defaults and skips the unified-memory posture",
                 failure_summary(exc),
             )
-            return worker_args
+            return slab_posture.without_slab(worker_args, "the unified-memory probe failed")
     if not integrated:
-        return worker_args
+        return slab_posture.without_slab(worker_args, "this GPU is discrete")
     out = dict(worker_args)
     out.setdefault("disable_pinned_memory", True)
     out.setdefault("disable_async_offload", True)

@@ -19,7 +19,9 @@ equality with comfy's own ``patch_weight_to_device`` where comfy imports.
 from __future__ import annotations
 
 import copy
+import json
 import os
+import struct
 import sys
 from types import SimpleNamespace
 
@@ -213,6 +215,142 @@ def test_a_quantized_key_on_a_census_module_still_refuses_class_p(tmp_path, monk
                               _Active(model, {REPLICATED: ["patch"]}), path, None)
     assert parse_leading_refusal_tag(str(raised.value)) == RefusalTag(
         refusal_class=RefusalClass.PHYSICS, guard=None, waivable=False)
+
+
+# The wrap leaves two more kinds of parameter whole beside the census: the
+# fp32 islands a family keeps at full precision (ChromaRadiance's nerf
+# embedder) and every zero-dimensional parameter. The bake reads the set the
+# wrap passes as ignored_params, so a LoRA key on either bakes whole.
+
+ISLAND = "diffusion_model.nerf_embedder.weight"
+SCALAR = "diffusion_model.log_alpha"
+
+
+class _IslandModel(torch.nn.Module):
+    """One sharded block, an fp32 island Linear and a bf16 scalar parameter."""
+
+    def __init__(self):
+        super().__init__()
+        dm = torch.nn.Module()
+        dm.blocks = torch.nn.ModuleList([_Block()])
+        dm.nerf_embedder = torch.nn.Linear(4, 4, bias=False, dtype=torch.float32)
+        dm.log_alpha = torch.nn.Parameter(torch.tensor(0.75, dtype=torch.bfloat16))
+        self.diffusion_model = dm
+
+
+def _island_file(tmp_path, tensors: dict[str, torch.Tensor]) -> str:
+    """The test file writer, with the flat view a zero-dimensional tensor needs."""
+    header, blob = {}, b""
+    for name, tensor in tensors.items():
+        raw = tensor.reshape(-1).contiguous().view(torch.uint8).numpy().tobytes()
+        dtype = {torch.bfloat16: "BF16", torch.float32: "F32"}[tensor.dtype]
+        header[name[len("diffusion_model."):]] = {
+            "dtype": dtype, "shape": list(tensor.shape), "data_offsets": [len(blob), len(blob) + len(raw)]}
+        blob += raw
+    encoded = json.dumps(header).encode()
+    path = tmp_path / "radiance.safetensors"
+    path.write_bytes(struct.pack("<Q", len(encoded)) + encoded + blob)
+    return str(path)
+
+
+def _island_pristine(model: _IslandModel) -> dict[str, torch.Tensor]:
+    weights = {
+        SHARDED: torch.arange(16, dtype=torch.float32).reshape(4, 4).to(torch.bfloat16),
+        ISLAND: torch.arange(16, 32, dtype=torch.float32).reshape(4, 4) / 8,
+        SCALAR: torch.tensor(0.75, dtype=torch.bfloat16),
+    }
+    with torch.no_grad():
+        for key, value in weights.items():
+            fsdp_lora.live_tensor(model, key).copy_(value)
+    return weights
+
+
+def test_the_bake_reads_the_set_the_wrap_leaves_whole():
+    model = _IslandModel()
+    dm = model.diffusion_model
+    from dgx_monarch.adapters.fsdp_islands import replicated_parameters
+
+    assert fsdp_lora.replicated_parameter_ids(model) == frozenset(
+        id(p) for p in replicated_parameters(dm, model))
+    assert fsdp_lora.replicated_parameter_ids(model) == {id(dm.nerf_embedder.weight), id(dm.log_alpha)}
+
+
+def test_a_lora_key_on_a_retained_fp32_island_bakes_whole_under_the_real_wrap(tmp_path, monkeypatch):
+    """The pack's own records call a checkpoint whose island stays live fp32 safe to bake.
+
+    It failed with a bare "parameter is not FSDP-sharded" on every +fsdp
+    topology. Now it captures, bakes, verifies and restores whole, beside a
+    sharded key, under real FSDP2 on a one-rank gloo group.
+    """
+    import torch.distributed.fsdp
+    from torch.distributed.device_mesh import init_device_mesh
+
+    from dgx_monarch.adapters.fsdp_islands import island_parameters
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    _install_comfy_stub(monkeypatch)
+    model = _IslandModel()
+    pristine = _island_pristine(model)
+    path = _island_file(tmp_path, pristine)
+    patches = {SHARDED: ["patch"], ISLAND: ["patch"]}
+    torch.distributed.init_process_group(
+        backend="gloo", init_method=f"file://{tmp_path / 'pg'}", rank=0, world_size=1)
+    try:
+        mesh = init_device_mesh("cpu", (1,))
+        dm = model.diffusion_model
+        for p in dm.parameters():
+            p.requires_grad = False
+        # The three sets adapters/fsdp.py passes as ignored_params.
+        ignored = (island_parameters(dm) | auxiliary_module_parameters(dm, model)
+                   | {p for p in dm.parameters() if p.ndim == 0})
+        for block in dm.blocks:
+            torch.distributed.fsdp.fully_shard(block, mesh=mesh, ignored_params=ignored)
+        torch.distributed.fsdp.fully_shard(dm, mesh=mesh, reshard_after_forward=True,
+                                           ignored_params=ignored)
+        island = dm.nerf_embedder.weight
+        assert type(island) is torch.nn.Parameter        # the wrap left it whole
+        store = SimpleNamespace(swap_verify=-1)
+        record = fsdp_lora.apply_stack(store, _Active(model, patches), path, None)
+        assert set(record.mapped) == {SHARDED, ISLAND}
+        assert dm.nerf_embedder.weight is island and island.dtype == torch.float32
+        assert torch.equal(island, pristine[ISLAND] * 2)
+        assert torch.equal(fsdp_lora.local_shard(dm.blocks[0].lin.weight), pristine[SHARDED] * 2)
+        fsdp_lora.apply_stack(store, _Active(model, {}), path, record)
+        assert torch.equal(island, pristine[ISLAND])
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_an_island_the_load_cast_still_refuses_class_p(tmp_path, monkeypatch):
+    """An island the file stores at another dtype was cast live: the file is no pristine copy."""
+    from dgx_monarch.actor.unbake import UnbakeRefused
+
+    _install_comfy_stub(monkeypatch)
+    model = _IslandModel()
+    pristine = _island_pristine(model)
+    path = _island_file(tmp_path, {**pristine, ISLAND: pristine[ISLAND].to(torch.bfloat16)})
+    with pytest.raises(UnbakeRefused, match="needs the file's own dtype") as raised:
+        fsdp_lora.apply_stack(SimpleNamespace(swap_verify=0),
+                              _Active(model, {ISLAND: ["patch"]}), path, None)
+    assert parse_leading_refusal_tag(str(raised.value)) == RefusalTag(
+        refusal_class=RefusalClass.PHYSICS, guard=None, waivable=False)
+    assert torch.equal(model.diffusion_model.nerf_embedder.weight, pristine[ISLAND])
+
+
+def test_a_zero_dimensional_parameter_bakes_verifies_and_restores_whole(tmp_path, monkeypatch):
+    """A scalar has no rows: the bake writes it whole and the restore reads it whole."""
+    _install_comfy_stub(monkeypatch)
+    model = _IslandModel()
+    pristine = _island_pristine(model)
+    path = _island_file(tmp_path, pristine)
+    store = SimpleNamespace(swap_verify=-1)
+    record = fsdp_lora.apply_stack(store, _Active(model, {SCALAR: ["patch"]}), path, None)
+    assert set(record.mapped) == {SCALAR}
+    scalar = model.diffusion_model.log_alpha
+    assert scalar.ndim == 0 and torch.equal(scalar, pristine[SCALAR] * 2)
+    fsdp_lora.apply_stack(store, _Active(model, {}), path, record)
+    assert torch.equal(scalar, pristine[SCALAR])
 
 
 # Real comfy, CPU only. Keep it last in the file: the conftest comfy guard

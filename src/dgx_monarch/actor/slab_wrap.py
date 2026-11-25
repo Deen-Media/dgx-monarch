@@ -42,13 +42,16 @@ class _DLManagedTensor(ctypes.Structure):
 _KDL_CPU = 1
 _KDL_CUDA = 2
 
-# DLManagedTensor and its deleter must outlive every wrapped tensor: torch keeps
-# the struct pointer for collection, even after slab closure on a failure path.
-# Freeing it early can crash the collector. Torch copies the shape, pointer, and
-# device at construction, so one process-lifetime struct with a fixed deleter
-# serves all wraps. Set its fields under the lock before calling from_dlpack;
-# this retains constant-size metadata rather than allocating it per load.
-_NOOP_DELETER = ctypes.CFUNCTYPE(None, ctypes.c_void_p)(lambda _: None)
+# DLManagedTensor must outlive every wrapped tensor: torch keeps the struct
+# pointer for collection, even after slab closure on a failure path. Freeing it
+# early can crash the collector. Torch copies the shape, pointer, and device at
+# construction, so one process-lifetime struct serves all wraps. Set its fields
+# under the lock before calling from_dlpack; this retains constant-size
+# metadata rather than allocating it per load. The deleter is NULL, which
+# DLPack allows and torch checks before calling: the slab owns the bytes, so
+# there is nothing to free, and a Python callback here would take the GIL inside
+# a C++ destructor each time any thread freed a wrapped tensor.
+_NULL_DELETER = ctypes.CFUNCTYPE(None, ctypes.c_void_p)()
 _WRAP_LOCK = threading.Lock()
 _SHARED_SHAPE = (ctypes.c_int64 * 1)(0)
 _SHARED_MT = _DLManagedTensor()
@@ -58,7 +61,7 @@ _SHARED_MT.dl_tensor.shape = _SHARED_SHAPE
 _SHARED_MT.dl_tensor.strides = None
 _SHARED_MT.dl_tensor.byte_offset = 0
 _SHARED_MT.manager_ctx = None
-_SHARED_MT.deleter = _NOOP_DELETER
+_SHARED_MT.deleter = _NULL_DELETER
 
 
 def wrap_u8(ptr: int, nbytes: int, *, cuda: bool) -> torch.Tensor:

@@ -108,6 +108,11 @@ REFUSAL_CLASSES = frozenset({
     # Class C under the driver-host guard, its own type so no stock-load consent card offers
     # a slab load for an encode; the driver's unload and trim run before it stands.
     "DriverSpendCapacityError",
+    # A LoRA stack the FSDP bake refuses before any weight is written
+    # (actor/fsdp_lora.py). Class P and rank symmetric: every rank reads the
+    # same header and wrappers. Its own type so the store keeps the resident
+    # (store_bake.lazy_swap_transition) where a plain UnbakeError reloads.
+    "UnbakeRefused",
 })
 
 # Declared exceptions that are not user-facing model/capacity refusals: control

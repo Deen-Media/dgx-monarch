@@ -382,7 +382,10 @@ def test_the_swap_machinery_never_learns_about_this_rung():
     forbidden = ("comfy_managed", "aimdo", "ModelPatcherDynamic", "residency_mode")
     offenders = {}
     for relative in ("actor/store_bake.py", "actor/unbake.py", "actor/unbake_file.py",
-                     "actor/slab.py", "actor/slab_certificate.py"):
+                     "actor/slab.py", "actor/slab_certificate.py",
+                     # The pieces those modules moved out to stay under the line cap.
+                     "actor/store_hot_swap.py", "actor/store_slab_settle.py",
+                     "actor/unbake_record.py", "actor/unbake_quant_live.py", "actor/slab_quant.py"):
         text = (SRC / relative).read_text()
         found = [token for token in forbidden if token in text]
         if found:

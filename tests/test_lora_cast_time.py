@@ -122,6 +122,146 @@ def test_the_installed_patcher_bakes_stocks_weight_and_unpatches_to_the_file(com
     assert lora_cast_time.uninstall() is False
 
 
+def test_a_quantized_weight_written_out_of_place_records_an_out_of_place_backup(comfy_cpu):
+    """The backup says how the weight was written, so ComfyUI's unpatch puts back the right object.
+
+    A quantized cast-time weight is always stored as a new Parameter. Under a
+    patcher that asks for in-place updates the backup recorded an in-place
+    write, and ComfyUI's unpatch would then copy into the baked wrapper instead
+    of putting the original back. Stock refuses that combination outright.
+    """
+    import comfy.utils
+
+    from dgx_monarch.actor import lora_cast_time
+
+    root, patcher, cpu = _patched(comfy_cpu)
+    pristine = comfy.utils.get_attr(root, KEYS[0])
+    patcher.weight_inplace_update = True
+    assert lora_cast_time.install() is True
+    try:
+        patcher.patch_weight_to_device(KEYS[0], device_to=cpu)
+        assert comfy.utils.get_attr(root, KEYS[0]) is not pristine   # stored out of place
+        assert patcher.backup[KEYS[0]].inplace_update is False
+        patcher.unpatch_model(cpu)
+        assert comfy_cpu.same_weight(comfy.utils.get_attr(root, KEYS[0]), pristine)
+    finally:
+        assert lora_cast_time.uninstall() is True
+
+
+def test_an_in_place_unpatch_restores_the_patched_keys_and_the_next_load_applies_the_new_stack(comfy_cpu):
+    """ComfyUI's own unload and load around the quantized hot swap, with nothing offloaded.
+
+    Stack A patches both keys through a real LoadedModel. The store's in-place
+    unpatch (store_bake.unpatch_in_place) puts both back to the file's weight
+    and leaves the model loaded nowhere; ComfyUI's next load of stack B, which
+    patches only the INT8 key, gives it stock's weight for B and leaves the
+    BF16 key pristine.
+    """
+    import comfy.model_management as mm
+    import comfy.model_patcher
+    import comfy.utils
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time, store_bake
+
+    root, patches = comfy_cpu.tiny_cast_time_model()
+    cpu = torch.device("cpu")
+    base = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+    pristine = {key: comfy.utils.get_attr(root, key) for key in KEYS}
+    stack_a = base.clone()
+    stack_a.add_patches(patches, 0.8)
+    assert lora_cast_time.install() is True
+    try:
+        mm.load_models_gpu([stack_a], force_full_load=True)
+        assert not comfy_cpu.same_weight(comfy.utils.get_attr(root, KEYS[0]), pristine[KEYS[0]])
+        assert store_bake.unpatch_in_place(mm, (base, stack_a)) is True
+        assert all(getattr(entry.model, "model", None) is not root for entry in mm.current_loaded_models)
+        assert (base.offload_device, stack_a.offload_device) == (cpu, cpu)
+        for key in KEYS:
+            assert comfy_cpu.same_weight(comfy.utils.get_attr(root, key), pristine[key]), key
+        stack_b = base.clone()
+        stack_b.add_patches({KEYS[0]: patches[KEYS[0]]}, 0.5)
+        expected = comfy_cpu.stock_cast_time_weight(root, stack_b, KEYS[0])
+        mm.load_models_gpu([stack_b], force_full_load=True)
+        assert comfy_cpu.same_weight(comfy.utils.get_attr(root, KEYS[0]), expected)
+        assert comfy_cpu.same_weight(comfy.utils.get_attr(root, KEYS[1]), pristine[KEYS[1]])
+    finally:
+        mm.unload_all_models()
+        assert lora_cast_time.uninstall() is True
+
+
+_SLAB_LAYOUTS = {
+    "float8_e4m3fn": ("TensorCoreFP8E4M3Layout", {}),
+    "nvfp4": ("TensorCoreNVFP4Layout", {}),
+    "mxfp8": ("TensorCoreMXFP8Layout", {}),
+    "int8_convrot": ("TensorWiseINT8Layout",
+                     {"per_channel": True, "convrot": True, "convrot_groupsize": 256, "is_weight": True}),
+}
+
+
+@pytest.mark.parametrize("fmt", list(_SLAB_LAYOUTS))
+def test_a_real_quantized_weight_goes_back_to_its_slab_regions_with_its_scales(comfy_cpu, tmp_path, fmt):
+    """comfy_kitchen's own wrapper and frozen layout parameters, through the slab's per-key return.
+
+    A LoRA bake leaves a new wrapper whose payload and scales sit outside the
+    slab. The return copies each into its own file component's region (an
+    NVFP4 block scale is a quarter of the payload here), rebuilds the wrapper
+    from the same layout and parameters with only those tensors replaced, and
+    the weight dequantizes to the same values.
+    """
+    import json
+    import struct
+
+    import torch
+    from comfy.quant_ops import QuantizedTensor, get_layout_class
+
+    from dgx_monarch.actor.slab import WeightSlab
+
+    layout, kwargs = _SLAB_LAYOUTS[fmt]
+    gen = torch.Generator().manual_seed(11)
+    pristine = (torch.randn(128, 512, generator=gen) * 0.05).to(torch.bfloat16)
+    file_tensors = get_layout_class(layout).state_dict_tensors(
+        *(lambda qt: (qt._qdata, qt._params))(QuantizedTensor.from_float(pristine, layout, **kwargs)))
+    tags = {torch.bfloat16: "BF16", torch.float32: "F32", torch.float8_e4m3fn: "F8_E4M3",
+            torch.uint8: "U8", torch.int8: "I8", torch.float8_e8m0fnu: "F8_E8M0"}
+    header, blob = {}, b""
+    for suffix, tensor in file_tensors.items():
+        raw = tensor.reshape(-1).contiguous().view(torch.uint8).numpy().tobytes()
+        header[f"q.weight{suffix}"] = {"dtype": tags[tensor.dtype], "shape": list(tensor.shape),
+                                       "data_offsets": [len(blob), len(blob) + len(raw)]}
+        blob += raw
+    path = tmp_path / f"{fmt}.safetensors"
+    encoded = json.dumps(header).encode()
+    path.write_bytes(struct.pack("<Q", len(encoded)) + encoded + blob)
+
+    baked = QuantizedTensor.from_float(
+        pristine + torch.linspace(-0.01, 0.01, pristine.numel()).reshape(pristine.shape).to(torch.bfloat16),
+        layout, **kwargs)
+    expected = baked.dequantize().clone()
+    dm = torch.nn.Module()
+    dm.q = torch.nn.Module()
+    dm.q.weight = torch.nn.Parameter(baked, requires_grad=False)
+    ws = WeightSlab(str(path))
+    try:
+        for name, region in ws.regions.items():      # what the load hook records
+            ws.key_map[name] = region
+        assert ws.baked_payload_fits(dm, "q.weight")   # the layout's storage shape fits the file's region
+        moved = ws.reabsorb_key(dm, "q.weight")
+        live = dm.q.weight
+        held = get_layout_class(layout).state_dict_tensors(live._qdata, live._params)
+        assert set(held) == set(file_tensors)
+        for suffix, tensor in held.items():
+            if tensor.numel():
+                assert ws.region_by_ptr(tensor.data_ptr()) is ws.regions[f"q.weight{suffix}"], suffix
+        assert moved == sum(t.numel() * t.element_size() for t in held.values())
+        assert ws.stray_bytes == 0
+        assert isinstance(live, QuantizedTensor) and live._layout_cls == layout
+        assert torch.equal(live.dequantize(), expected)
+    finally:
+        del dm
+        ws.close()
+
+
 def test_the_lazy_swaps_bake_and_verify_agree_with_stock(comfy_cpu):
     import comfy.utils
 

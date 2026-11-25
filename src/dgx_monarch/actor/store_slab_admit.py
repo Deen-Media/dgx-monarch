@@ -50,13 +50,16 @@ def _floor_phrase(fit: SlabFit, reserve_bytes: int | None) -> str:
         # A reserve the absolute floor charged over is still a figure the
         # operator set, and a card that never mentions it reads as a host that
         # never read the setting. Either the arena cap clipped a large reserve
-        # under the floor or the floor outranked a small one; both name it.
+        # under the floor or the floor outranked a small one; both name it,
+        # each in words true of its own order of the two figures.
         clipped = ""
-        if reserve and reserve != fit.floor_bytes:
-            became = ("which the arena cap clipped under it"
-                      if reserve > fit.floor_bytes else "which it outranks")
-            clipped = (f", above the {capacity_fit.gib(reserve)} GiB this host "
-                       f"reserves (uma_reserve_gb), {became}")
+        reserve_gib = capacity_fit.gib(reserve)
+        if reserve and reserve > fit.floor_bytes:
+            clipped = (f", charged because the arena cap clipped the {reserve_gib} GiB "
+                       "this host reserves (uma_reserve_gb) under it")
+        elif reserve and reserve < fit.floor_bytes:
+            clipped = (f", above the {reserve_gib} GiB this host reserves "
+                       "(uma_reserve_gb), which it outranks")
         return (f"plus a {fit.floor_gib} GiB floor for the rest of the box{clipped}, "
                 "below which ComfyUI stops keeping a model whole and offloads "
                 "part of the weights mid-render")

@@ -221,11 +221,15 @@ def _patch_weight_to_device(stock: Any) -> Any:
             return stock(self, key, device_to=device_to, inplace_update=inplace_update,
                          return_weight=return_weight, force_cast=force_cast)
         inplace_update = self.weight_inplace_update or inplace_update
+        # store() replaces a quantized weight's Parameter whatever the flag says,
+        # so the backup records the write that happens: ComfyUI's unpatch then
+        # puts the original Parameter back instead of copying into the new one.
+        in_place = inplace_update and not _is_quantized(out)
         if key not in self.backup and not return_weight:
-            self.backup[key] = _Backup(weight.to(device=self.offload_device, copy=inplace_update), inplace_update)
+            self.backup[key] = _Backup(weight.to(device=self.offload_device, copy=in_place), in_place)
         if return_weight:
             return out
-        store(self.model, key, out, inplace_update)
+        store(self.model, key, out, in_place)
         return None
 
     marked = cast(Any, patch_weight_to_device)

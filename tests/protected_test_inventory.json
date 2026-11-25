@@ -651,7 +651,7 @@
       "test_the_rdma_guard_sits_at_the_single_constructor_of_that_path": "62b5afc29117dc3f",
       "test_the_spike_dyntrace_hook_is_gone_for_good": "9a6ac6a1fc9b57a6",
       "test_the_submodule_rewire_names_every_capturing_submodule": "c2cad927c923288a",
-      "test_the_swap_machinery_never_learns_about_this_rung": "c927649e5484f6ff",
+      "test_the_swap_machinery_never_learns_about_this_rung": "d91170f31abd5065",
       "test_the_worker_policy_endpoint_runs_the_same_gate": "74e85799f3a0dbf6"
     },
     "tests/test_comfy_managed_footprint.py": {
@@ -1389,7 +1389,11 @@
       "test_worker_runs_one_live_precision_scan_after_preparation": "631aabd4f2736278"
     },
     "tests/test_fsdp_lora.py": {
+      "test_a_checkpoint_replaced_after_its_header_is_read_bakes_nothing": "55b6e55101a342e2",
+      "test_a_checkpoint_rewritten_while_the_bake_reads_it_refuses_after_the_reads": "9fcf01d2234770b7",
       "test_a_key_the_file_holds_under_both_names_binds_the_one_whose_bytes_match": "d21486de80849b8d",
+      "test_a_quantized_setter_refuses_before_a_leaving_key_is_restored": "d568b9bb0bca279d",
+      "test_a_rank_whose_rows_fail_on_one_key_still_meets_its_peers_refusal_on_the_next": "ece8f8ddb4ad8320",
       "test_a_renamed_key_still_has_to_match_the_files_bytes": "94293770af71f641",
       "test_bake_finds_a_key_comfy_renames_at_load_under_its_file_name": "25628240766989c7",
       "test_bake_key_refuses_a_quantized_setter_typed": "71bb0753ed8e141f",
@@ -1401,6 +1405,12 @@
       "test_lora_on_fsdp_needs_low_rss": "138b035b9a75adc3",
       "test_read_full_and_rows_reproduce_the_file": "ec4db1a07005774a",
       "test_shard_rows_match_torch_chunk": "c9194d2cc8775f28",
+      "test_the_bake_drops_the_checkpoint_pages_it_read": "eaa1548be1350fff",
+      "test_the_bake_refuses_a_checkpoint_that_changed_since_the_load_pinned_it": "add6389ddc7a84a9",
+      "test_the_fresh_bake_and_the_lazy_swap_hand_the_load_pin_to_the_bake": "d1996c3c830362cf",
+      "test_two_candidates_that_agree_in_the_sampled_windows_bind_by_every_byte": "92049b4510a36f1b",
+      "test_two_ranks_whose_rows_match_different_names_bind_the_same_tensor": "bdaef5f6f7e2f932",
+      "test_two_spellings_of_a_key_end_alike_on_every_rank_before_any_write": "b96b9405812a9456",
       "test_verify_restores_the_identical_parameter_object": "4ceab8eeb1652782"
     },
     "tests/test_fsdp_lora_admission.py": {
@@ -1413,11 +1423,15 @@
       "test_refuse_unless_fsdp_lora_admits_is_a_noop_when_admitted": "1056a13daabb82bc"
     },
     "tests/test_fsdp_lora_replicated.py": {
+      "test_a_lora_key_on_a_retained_fp32_island_bakes_whole_under_the_real_wrap": "b7eaa6937fef8e44",
       "test_a_norm_weight_comfy_renames_at_load_bakes_under_fsdp_as_the_resident_layer": "205febed75d0f0db",
       "test_a_plain_tensor_outside_the_census_still_raises": "843bcfaf21efec10",
       "test_a_quantized_key_on_a_census_module_still_refuses_class_p": "86fca3c2f858db56",
       "test_a_replicated_key_captures_bakes_verifies_and_restores_whole": "662d22e0264e71bc",
+      "test_a_zero_dimensional_parameter_bakes_verifies_and_restores_whole": "81c36fc2fa59bbd8",
+      "test_an_island_the_load_cast_still_refuses_class_p": "d2fafd2258bc40e4",
       "test_rank_one_of_two_writes_its_rows_and_the_replicated_key_whole": "aa5e6638849b6277",
+      "test_the_bake_reads_the_set_the_wrap_leaves_whole": "72054108105b133d",
       "test_the_census_names_the_token_refiner_and_not_the_block": "2dc14224a71d15ca",
       "test_the_fsdp_bake_of_a_comfy_cast_layer_equals_stocks_cast_time_weight": "631a5596134ac6ce",
       "test_the_replicated_bake_equals_comfys_own_merge": "ca21fd243e03588a"
@@ -2573,19 +2587,19 @@
       "test_the_seam_reads_the_class_forward": "84e59e03d906552e"
     },
     "tests/test_refusal_classes.py": {
-      "test_class_rules_hold_at_every_classified_site": "881a1999616424bc",
-      "test_classified_refusal_sites_match_the_ledger": "d03d34e882230f9f",
-      "test_every_declared_exception_is_classified_as_refusal_or_not": "fe9aa407a4841e15",
+      "test_class_rules_hold_at_every_classified_site": "890b3a7bc8871abe",
+      "test_classified_refusal_sites_match_the_ledger": "0bc79683d204500f",
+      "test_every_declared_exception_is_classified_as_refusal_or_not": "6c617519035c70e1",
       "test_every_waivable_guard_message_names_the_panel_and_the_env_fallback": "28e23825921f635e",
       "test_guard_vocabulary_agrees_with_the_frozen_ledger_vocabulary": "9525b2023313c356",
-      "test_guard_vocabulary_is_claimed_or_explicitly_reserved": "f4e54e2c731766bf",
+      "test_guard_vocabulary_is_claimed_or_explicitly_reserved": "b38437d3afd974c5",
       "test_no_new_refusal_site_is_waiting_for_a_class": "82412ec786e3f2c4",
       "test_only_a_canonical_leading_tag_proves_a_worker_refusal": "eaff670a0563f6f1",
       "test_refusal_refuses_an_inconsistent_declaration": "c937a109121a10ba",
       "test_tag_shaped_literal_text_cannot_mint_an_ownership_tag": "909cf89fd9e2d665",
       "test_tag_survives_the_wire_wrapping": "4861bd618de7118b",
       "test_two_tags_in_one_text_refuse_to_parse": "81c1b836b85aff72",
-      "test_untagged_refusal_sites_never_grow": "161b0fdb439fe913"
+      "test_untagged_refusal_sites_never_grow": "d711dd87cad563ab"
     },
     "tests/test_render_memory_price.py": {
       "test_a_broken_estimator_fails_open": "c39352b9efc9b171",
@@ -2820,9 +2834,15 @@
       "test_the_wire_turns_json_integers_into_floats_and_passes_none": "ddf8037e082aa445"
     },
     "tests/test_slab.py": {
+      "test_a_key_that_strayed_at_the_fresh_load_does_not_send_the_next_change_to_a_reload": "8cd9ed65ffb21e21",
+      "test_a_lora_change_on_a_slab_resident_keeps_one_copy_of_every_weight": "333da6dbfaad2b40",
+      "test_a_payload_that_cannot_fit_its_region_stays_one_counted_copy_across_swaps": "978753fb7fdeaa3f",
+      "test_a_quantized_weight_that_fails_to_move_is_still_counted": "5e1e9c465e5854ab",
       "test_a_reserve_smaller_than_the_absolute_floor_is_named_as_outranked": "b57e038e9811017e",
-      "test_a_reserve_the_absolute_floor_outranks_is_still_named": "356658f54f6aa8d4",
+      "test_a_reserve_the_absolute_floor_outranks_is_still_named": "8864b8a787e7fd0a",
+      "test_a_second_pass_skips_a_stray_the_aligned_annex_cannot_hold": "170903e1fc225ea5",
       "test_a_slab_quote_with_a_stack_under_low_rss_adds_the_lora_term": "c1d5c2ac64a0d20a",
+      "test_a_swap_that_would_leave_an_unpriced_copy_loads_fresh_instead": "e197ca20960de1a6",
       "test_an_empty_stack_leaves_the_slab_price_unchanged": "63349eb0260c0525",
       "test_annex_cache_drain_failure_is_not_hidden": "81b048abe8861fd1",
       "test_annex_cache_drain_leaves_cpu_and_nonannex_paths_alone": "fc53501125729575",
@@ -2836,6 +2856,7 @@
       "test_close_retains_live_export_until_retry": "78a4211717c3c46e",
       "test_constructor_short_read_is_failure_atomic": "57e222fb89642772",
       "test_final_slab_unregister_pop_is_repairable": "ab54600ae493f4af",
+      "test_freeing_a_wrapped_slab_tensor_runs_no_python": "1c96a03fb0f29f0f",
       "test_malformed_dtype_field_is_not_a_capability_error": "75e995edd0332190",
       "test_partial_weight_slab_preserves_primary_and_retains_uncertain_arena": "9fedfe575d13ed34",
       "test_reabsorb": "c3aae84db3171272",
@@ -2862,6 +2883,7 @@
       "test_the_bake_backstop_charges_the_floor_the_slab_price_charged": "c803afe8b8da6161",
       "test_the_bake_backstop_makes_no_claim_on_a_stub_active": "ceb07a6f17965571",
       "test_the_bake_backstop_refuses_typed_before_the_bake_runs": "091201914a101e40",
+      "test_the_fresh_load_pass_leaves_a_weight_already_in_the_slab_alone": "2e3c6346eaf5ed66",
       "test_the_slab_card_names_the_partial_load_regime": "52fbc2ffb0949dba",
       "test_the_slab_price_skips_a_cast_and_names_the_annex": "f6b621f198ddd1c0",
       "test_the_stock_price_carries_the_same_absolute_floor": "34557bd1fad3e8dd",
@@ -2951,6 +2973,9 @@
       "test_workers_report_the_capability_and_the_mesh_retains_it": "4831841e28145f96"
     },
     "tests/test_store_lazy.py": {
+      "test_a_pristine_base_binds_the_empty_record_to_the_file": "a22586a14aae07b5",
+      "test_a_stack_refused_before_any_write_keeps_the_fsdp_resident": "97032e072912277f",
+      "test_a_stack_that_patches_nothing_stays_lazy_across_strength_changes": "b07780f3a9c25916",
       "test_a_stock_hot_swap_names_the_new_patch_uuid": "efeae2c99d8f751b",
       "test_ambient_verify_mismatch_reloads_cleanly": "4a091adfed7f2b54",
       "test_ambient_verify_off_skips_oracle": "b1d434df39100449",

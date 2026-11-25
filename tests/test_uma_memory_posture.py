@@ -5,6 +5,10 @@ The Init node does not pass the whole driver baseline (--disable-pinned-memory
 applies it on UMA by default. These tests fail if that posture regresses or
 stops respecting explicit overrides.
 """
+import sys
+
+import pytest
+
 from dgx_monarch.actor.comfy_bridge import _uma_memory_defaults
 
 
@@ -35,6 +39,37 @@ def test_discrete_gpu_untouched():
     # hides weight-transfer time, so the UMA posture (and pread) must not be
     # forced there.
     assert _uma_memory_defaults({"foo": 1}, integrated=False) == {"foo": 1}
+
+
+@pytest.mark.parametrize("requested", [True, "auto"])
+def test_slab_residency_stays_off_on_a_discrete_gpu(requested, caplog):
+    """A slab wraps host memory as GPU memory, which only unified memory makes true.
+
+    On a discrete GPU an explicit request reached the loader and wrapped a
+    host address as a device tensor. It now turns off with a warning, as a slab
+    request without lora_low_rss does, and the weights load stock.
+    """
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="dgx_monarch.actor.slab_posture"):
+        d = _uma_memory_defaults({"slab_weights": requested, "lora_low_rss": True}, integrated=False)
+    assert d["slab_weights"] is False
+    assert d["lora_low_rss"] is True                  # nothing else changes
+    assert "unified memory" in caplog.text
+
+
+def test_a_failed_probe_keeps_slab_residency_off(monkeypatch):
+    """Unknown hardware is not unified memory: an explicit slab request stays off."""
+    import types
+
+    mm_stub = types.ModuleType("comfy.model_management")
+    mm_stub.get_torch_device = lambda: (_ for _ in ()).throw(RuntimeError("no device"))
+    comfy = types.ModuleType("comfy")
+    comfy.model_management = mm_stub
+    monkeypatch.setitem(sys.modules, "comfy", comfy)
+    monkeypatch.setitem(sys.modules, "comfy.model_management", mm_stub)
+    d = _uma_memory_defaults({"slab_weights": True, "lora_low_rss": False}, integrated=None)
+    assert d["slab_weights"] is False
 
 
 def test_pread_shim_is_idempotent_and_defaults_backend():

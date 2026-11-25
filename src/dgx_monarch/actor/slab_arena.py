@@ -250,6 +250,11 @@ class _Arena:
         slab_lifetime.confirm_prepublished_resource(self, poisoned_before)
         self._provisional_poisoned_before = None
 
+    def fits(self, nbytes: int) -> bool:
+        """Whether ``place(nbytes)`` would succeed, at the aligned offset it would use."""
+        off = (self.cursor + _ALIGN - 1) // _ALIGN * _ALIGN
+        return off + nbytes <= self.capacity
+
     def place(self, nbytes: int) -> int:
         off = (self.cursor + _ALIGN - 1) // _ALIGN * _ALIGN
         if off + nbytes > self.capacity:

@@ -216,3 +216,30 @@ def test_fsdp_reloads_same_fingerprint_when_checkpoint_inode_changes(
     assert store.current.fsdp_checkpoint_pin is not first_pin
     assert store.current.fsdp_checkpoint_pin.file_identity.file_ino == os.stat(path).st_ino
     assert not os.path.exists(first_alias)
+
+
+def test_the_fsdp_lora_bake_of_a_fresh_load_reads_the_file_the_load_pinned(rig, monkeypatch, tmp_path):
+    """The fresh load hands its checkpoint pin to the shard bake, so the bake binds that inode."""
+    from dgx_monarch.actor import fsdp_lora
+
+    store, _calls = rig
+    path = tmp_path / "model.safetensors"
+    _write_one_tensor_safetensors(path, "BF16")
+    monkeypatch.setattr(ms, "resolve_model_path", lambda *_args: str(path))
+    monkeypatch.setattr(ms, "stock_load_preflight", lambda *_args: None)
+    seen = []
+    monkeypatch.setattr(fsdp_lora, "bake_stack",
+                        lambda _store, _active, base_path, pin=None: seen.append((base_path, pin)))
+
+    def shard(base, *_args):
+        base._dgxm_fsdp = True                      # what the FSDP injection marks
+
+    _active, transition = store.ensure("model.safetensors", None, STACK,
+                                       on_base_loaded=shard, fsdp_launch=True)
+    assert transition == TRANSITION_LOAD
+    pin = store.current.fsdp_checkpoint_pin
+    assert seen == [(str(path), pin)]
+    assert pin.file_identity.file_ino == os.stat(path).st_ino
+    alias = pin.loader_path
+    store.unload_all()
+    assert not os.path.exists(alias)
