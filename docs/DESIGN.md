@@ -821,13 +821,17 @@ names (`actor/load_renames.py`), and the rank's rows are byte-verified against
 it like any other key. A config that also builds weights as it renames
 (PixelDiT strips `net.` and splits a modulation weight in two) keeps the map
 for the keys it only moves; a weight built from part of a tensor has no file
-name. A name only proposes a tensor: where a file holds one under the key's
-own name and another under the name ComfyUI loaded it from, each candidate of
-the live dtype and shape is byte-checked and the first that matches is bound.
-That check is the last arbiter and it samples three 4 KiB windows, so a wrong
-binding would take a config that loads two file tensors onto one key, a load
-order other than the header's, and two tensors equal in those windows; no
-registered config does the first. A patched key the file holds under no name refuses
+name. The file alone chooses the tensor a key binds, so every rank chooses
+the same one; a rank's rows differ by rank and never choose. Where the
+config's own rename puts a file tensor under the key, that tensor is the one
+ComfyUI loaded, whatever the file also holds under the key's own name. With
+no rename, one namespace spelling of the live dtype and shape binds; several
+that are equal in every byte serve alike; several that differ refuse class P
+on every rank in `capture_record`, before any shard is written, because the
+file does not say which one ComfyUI loaded. Each rank then byte-checks its
+rows against the bound tensor. A rank-dependent choice let one rank refuse
+and drop its model while its peer baked and waited for it at the first
+collective. A patched key the file holds under no name refuses
 class P in `capture_record`, before any shard is written. With `lora_low_rss` off a sharded model
 refuses the stack, typed. The checkpoint itself must also be admitted for the
 bake, before any load, on every `lora_low_rss` or `auto_gate` setting

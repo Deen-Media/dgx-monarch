@@ -2319,9 +2319,13 @@ sections after them list every change.
   checkpoint header it read and to the file the load pinned, so a checkpoint
   replaced during the bake refuses instead of baking another file's bytes. It
   drops the checkpoint's pages from the page cache when it is done.
-- A key the checkpoint holds under its own name and under the name ComfyUI
-  renames to it binds, under FSDP, by every byte of the rank's rows, not by
-  sampled windows the two tensors can share.
+- Under FSDP the bake chooses the checkpoint tensor a key restores from by the
+  file alone, so every rank chooses the same one. Where ComfyUI's own load
+  function puts a renamed tensor under the key, that tensor binds; where the
+  file holds the key under two spellings whose tensors differ and nothing
+  names one, every rank refuses class P before any weight is written. The
+  choice used to follow each rank's rows, so one rank could refuse and drop
+  its model while its peer baked and waited for it at the first collective.
 - The un-bake record binds the checkpoint's change time as well as its inode,
   size and modification time. A checkpoint rewritten in place with its old
   size and modification time put back no longer restores the patched keys

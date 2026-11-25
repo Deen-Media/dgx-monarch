@@ -67,7 +67,6 @@ from .fsdp_lora_file import (
     _files_identical,
     _identity,
     _shard_bytes_match,
-    _shard_rows_equal,
     _whole,
     local_shard,
     read_full,
@@ -162,19 +161,18 @@ def capture_record(
     # A key ComfyUI renames as it loads the file is found under the file's name;
     # the byte check below still has to pass on it.
     renames = load_time_renames(model, header)
+    bound: list[tuple[str, torch.Tensor, _FileTensor]] = []
     for key in keys:
         param = live_tensor(model, key)
         if _is_quantized(param) or _is_quantized(getattr(param, "_local_tensor", None)):
             _refuse_quantized(key)
-
-        def rows_match(cand: _FileTensor, param: torch.Tensor = param) -> bool:
-            return _shard_bytes_match(fd, cand, param, rank, world, replicated)
-
-        def rows_equal(cand: _FileTensor, param: torch.Tensor = param) -> bool:
-            return _shard_rows_equal(fd, cand, param, rank, world, replicated)
-
-        ft = _file_tensor(header, key, param, renames, matches=rows_match, matches_exactly=rows_equal,
-                          identical=lambda a, b: _files_identical(fd, a, b))
+        bound.append((key, param, _file_tensor(header, key, param, renames,
+                                               identical=lambda a, b: _files_identical(fd, a, b))))
+    # Every refusal above reads the file and the model's structure, the same on
+    # every rank. The rows differ by rank, so they are checked only once every
+    # key is bound: a rank whose rows fail cannot raise ahead of a refusal its
+    # peer meets on a later key.
+    for key, param, ft in bound:
         if not _shard_bytes_match(fd, ft, param, rank, world, replicated):
             raise UnbakeError(
                 f"live shard of {key} does not match the checkpoint bytes on rank "

@@ -16,7 +16,7 @@ from typing import Any
 import torch
 
 from ..refusal import RefusalClass, refusal
-from .load_renames import with_renamed
+from .load_renames import renamed_file_key
 from .unbake import UnbakeError, UnbakeRefused
 from .unbake_file import _ST_TO_TORCH, _candidate_file_keys, _FileTensor, _fingerprint_windows
 
@@ -59,58 +59,49 @@ def shard_geometry(
 def _file_tensor(
     header: dict[str, _FileTensor], key: str, param: torch.Tensor,
     renames: dict[str, str] | None = None,
-    matches: Callable[[_FileTensor], bool] | None = None,
-    matches_exactly: Callable[[_FileTensor], bool] | None = None,
     identical: Callable[[_FileTensor, _FileTensor], bool] | None = None,
 ) -> _FileTensor:
-    """The checkpoint tensor a patcher key restores from.
+    """The checkpoint tensor a patcher key restores from, chosen from the file alone.
 
-    ``renames`` is ``load_time_renames`` for this model and file: a key ComfyUI
-    renames at load (FLUX's ``<...>_norm.scale``, held as ``<...>_norm.weight``)
-    sits under none of the namespace spellings, and is tried last.
-
-    ``matches`` is the byte check against the live rows. A file may hold a
-    tensor under the key's own name and another under the name ComfyUI loaded
-    it from; the first candidate of the live dtype and shape whose bytes match
-    is the one, as in the resident capture (``unbake._map_plain``). When more
-    than one candidate has the live dtype and shape, ``matches_exactly``
-    compares each with every byte of this rank's rows, not the sampled
-    windows: two such tensors can agree in the windows and differ elsewhere,
-    and the bake reads the bound one whole. Where this rank's rows equal two
-    candidates that ``identical`` finds different elsewhere, the rows cannot
-    choose, and the bake refuses rather than guess. With no match the first
-    candidate of the right dtype and shape is returned, and the caller's own
-    check then says the model is not pristine.
+    Every rank holds the same file and makes the same choice; nothing here
+    reads a rank's rows, which differ by rank. ``renames`` is
+    ``load_time_renames`` for this model and file, made by ComfyUI's own load
+    function run over the file's names. Where it puts a renamed file tensor
+    under the key (FLUX's ``<...>_norm.scale``, held as ``<...>_norm.weight``),
+    that tensor is the one the model loaded, whatever else the file holds
+    under the key's own name. Otherwise the candidates are the key's namespace
+    spellings: one of the live dtype and shape is the one; several that
+    ``identical`` finds equal in every byte serve alike; several that differ
+    leave the file silent on which one ComfyUI loaded, and every rank refuses
+    the same way before any weight is written. The caller then checks this
+    rank's rows against the bound tensor.
     """
-    fitting: list[_FileTensor] = []
+    renamed = renamed_file_key(renames, key) if renames else None
+    names = [renamed] if renamed is not None and renamed in header else _candidate_file_keys(key)
+    fitting: list[tuple[str, _FileTensor]] = []
     misfit: tuple[str, _FileTensor] | None = None
-    for cand in with_renamed(_candidate_file_keys(key), renames, key):
+    for cand in names:
         ft = header.get(cand)
         if ft is None:
             continue
         if ft.dtype != param.dtype or ft.shape != tuple(param.shape):
             misfit = misfit or (cand, ft)
             continue
-        fitting.append(ft)
-    if len(fitting) > 1 and matches_exactly is not None:
-        exact = [ft for ft in fitting if matches_exactly(ft)]
-        if len(exact) > 1 and identical is not None and not all(identical(exact[0], ft) for ft in exact[1:]):
-            # This rank's rows equal two tensors that differ elsewhere. The bake
-            # reads the bound tensor whole, and a patch that mixes rows would
-            # then depend on a choice these rows cannot make; another rank's
-            # rows may settle it, but nothing here can know which.
-            raise UnbakeError(
-                f"the checkpoint holds {key} under two names that agree on this rank's rows "
-                "and differ elsewhere, so the bake cannot tell which one ComfyUI loaded; "
-                "reload contract applies")
-        if exact:
-            return exact[0]
-        return fitting[0]
-    for ft in fitting:
-        if matches is None or matches(ft):
-            return ft
+        fitting.append((cand, ft))
+    if len(fitting) > 1 and (identical is None
+                             or not all(identical(fitting[0][1], ft) for _, ft in fitting[1:])):
+        # Every rank reads the same header and the same bytes, so the class P
+        # tag is rank symmetric, and capture_record raises it before any shard
+        # is written (docs/DESIGN.md section 5.4).
+        raise UnbakeRefused(refusal(
+            RefusalClass.PHYSICS,
+            f"the checkpoint holds {key} under {len(fitting)} names "
+            f"({', '.join(name for name, _ in fitting)}) whose tensors differ, and the file does "
+            "not say which one ComfyUI loaded. A LoRA under FSDP bakes from the file and "
+            "restores from it, so it needs to know. Use a resident topology for this stack "
+            "(the same preset without +fsdp), or a checkpoint that holds each weight once."))
     if fitting:
-        return fitting[0]
+        return fitting[0][1]
     if misfit is not None:
         cand, ft = misfit
         # This is the in-bake backstop for an fp32 island cast live, which the
@@ -196,26 +187,6 @@ def _shard_bytes_match(
     except (OSError, RuntimeError):
         return False
     return True
-
-
-def _shard_rows_equal(
-    fd: int, ft: _FileTensor, param: torch.Tensor, rank: int, world: int,
-    replicated: frozenset[int] = frozenset(),
-) -> bool:
-    """Every byte of this rank's rows on disk equals its shard (the sampled check's exact form)."""
-    local = local_shard(param, replicated)
-    rank, world = shard_geometry(param, replicated, rank, world)
-    rows = ft.shape[0] if ft.shape else 1
-    start, stop = shard_rows(rows, world, rank)
-    nbytes = (stop - start) * (ft.nbytes // max(rows, 1))
-    if nbytes != local.numel() * local.element_size():
-        return False
-    try:
-        ours = local.detach().reshape(-1).contiguous().view(torch.uint8).cpu().numpy().tobytes()
-        theirs = os.pread(fd, nbytes, ft.start + start * (ft.nbytes // max(rows, 1)))
-    except (OSError, RuntimeError):
-        return False
-    return theirs == ours
 
 
 _COMPARE_CHUNK = 64 << 20

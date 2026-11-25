@@ -1393,7 +1393,6 @@
       "test_a_checkpoint_rewritten_while_the_bake_reads_it_refuses_after_the_reads": "9fcf01d2234770b7",
       "test_a_key_the_file_holds_under_both_names_binds_the_one_whose_bytes_match": "d21486de80849b8d",
       "test_a_quantized_setter_refuses_before_a_leaving_key_is_restored": "d568b9bb0bca279d",
-      "test_a_rank_whose_rows_cannot_choose_between_two_names_refuses": "594e8190730ea501",
       "test_a_renamed_key_still_has_to_match_the_files_bytes": "94293770af71f641",
       "test_bake_finds_a_key_comfy_renames_at_load_under_its_file_name": "25628240766989c7",
       "test_bake_key_refuses_a_quantized_setter_typed": "71bb0753ed8e141f",
@@ -1409,6 +1408,8 @@
       "test_the_bake_refuses_a_checkpoint_that_changed_since_the_load_pinned_it": "add6389ddc7a84a9",
       "test_the_fresh_bake_and_the_lazy_swap_hand_the_load_pin_to_the_bake": "d1996c3c830362cf",
       "test_two_candidates_that_agree_in_the_sampled_windows_bind_by_every_byte": "92049b4510a36f1b",
+      "test_two_ranks_whose_rows_match_different_names_bind_the_same_tensor": "bdaef5f6f7e2f932",
+      "test_two_spellings_of_a_key_end_alike_on_every_rank_before_any_write": "b96b9405812a9456",
       "test_verify_restores_the_identical_parameter_object": "4ceab8eeb1652782"
     },
     "tests/test_fsdp_lora_admission.py": {

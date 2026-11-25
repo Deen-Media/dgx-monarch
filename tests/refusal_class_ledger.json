@@ -166,6 +166,12 @@
       "waivable": false
     },
     {
+      "site": "actor/fsdp_lora_file.py::_file_tensor::UnbakeRefused#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "actor/guidance_render.py::apply_skip_layer_guidance::UnsupportedModelError#0",
       "class": "P",
       "guard": null,

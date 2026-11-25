@@ -742,30 +742,70 @@ def test_two_candidates_that_agree_in_the_sampled_windows_bind_by_every_byte(tmp
     assert record.mapped[_BIG_KEY] == header["blocks.0.lin_file.weight"]
 
 
-@pytest.mark.parametrize("rank", [0, 1])
-def test_a_rank_whose_rows_cannot_choose_between_two_names_refuses(tmp_path, rank):
+def _rank_of_two(process, weight: torch.Tensor, rank: int) -> _BigRoot:
+    """A model whose patched weight is rank ``rank``'s shard of two, holding ``weight``'s rows."""
+    model = _BigRoot(process)
+    param = torch.nn.Parameter(weight.clone(), requires_grad=False)
+    param._local_tensor = weight[32 * rank:32 * (rank + 1)].clone()
+    model.blocks[0].lin.weight = param
+    return model
+
+
+def test_two_ranks_whose_rows_match_different_names_bind_the_same_tensor(tmp_path):
     """The two tensors differ only in rank 1's rows of 2.
 
-    Rank 1's rows pick the tensor the model loaded. Rank 0's rows equal both,
-    and the bake reads the bound tensor whole, so a patch that mixes rows
-    would depend on a guess; rank 0 refuses instead.
+    Rank 0's rows equal both and rank 1's rows equal one. The binding used to
+    follow each rank's rows, so rank 0 refused and dropped its model while
+    rank 1 baked and went on to wait for it at the first collective. It now
+    reads the file alone: ComfyUI's own load function puts the renamed
+    tensor under the key, and both ranks bind it.
     """
-    model = _BigRoot(_rename_big)
     weight = _big_weight()
     decoy = weight.clone()
     decoy[40, 7] += 1                                   # a row rank 1 holds
-    param = torch.nn.Parameter(weight.clone(), requires_grad=False)
-    param._local_tensor = weight[32 * rank:32 * (rank + 1)].clone()   # a rank-of-2 shard
-    model.blocks[0].lin.weight = param
     path = tmp_path / "m.safetensors"
     _write_safetensors(path, {_BIG_KEY: decoy, "blocks.0.lin_file.weight": weight})
     header = fsdp_lora.read_safetensors_header(str(path))
-    if rank == 0:
-        with pytest.raises(UnbakeError, match="two names that agree on this rank's rows"):
-            fsdp_lora.capture_record(model, [_BIG_KEY], str(path), rank, 2)
+    bound = [fsdp_lora.capture_record(_rank_of_two(_rename_big, weight, rank), [_BIG_KEY],
+                                      str(path), rank, 2).mapped[_BIG_KEY] for rank in (0, 1)]
+    assert bound == [header["blocks.0.lin_file.weight"]] * 2
+
+
+@pytest.mark.parametrize("spellings", ["differ", "agree"])
+def test_two_spellings_of_a_key_end_alike_on_every_rank_before_any_write(tmp_path, monkeypatch, spellings):
+    """With no rename, the file names the key twice; nothing in it says which one ComfyUI loaded.
+
+    Where the two tensors differ (here only in rank 1's rows), every rank
+    refuses with the same typed class P refusal before a weight is written.
+    Where they agree in every byte, either serves and every rank binds.
+    """
+    from dgx_monarch.actor import unbake
+
+    _install_comfy_stub(monkeypatch)
+    weight = _big_weight()
+    other = weight.clone()
+    if spellings == "differ":
+        other[40, 7] += 1                               # a row rank 1 holds
+    path = tmp_path / "m.safetensors"
+    _write_safetensors(path, {f"model.{_BIG_KEY}": other, _BIG_KEY: weight})
+    writes: list[str] = []
+    monkeypatch.setattr(fsdp_lora, "bake_key", lambda _active, key, *_a, **_k: writes.append(key))
+    monkeypatch.setattr(fsdp_lora, "replicated_parameter_ids", lambda _model: frozenset())
+    outcomes = []
+    for rank in (0, 1):
+        monkeypatch.setattr(fsdp_lora, "mesh_rank_world", lambda rank=rank: (rank, 2))
+        active = _Active(_rank_of_two(None, weight, rank), {_BIG_KEY: ["patch"]})
+        try:
+            fsdp_lora.apply_stack(SimpleNamespace(swap_verify=0), active, str(path), None)
+            outcomes.append("bound")
+        except unbake.UnbakeRefused as refused:
+            outcomes.append(str(refused))
+    if spellings == "differ":
+        assert outcomes[0] == outcomes[1] and "[dgxm:P" in outcomes[0]
+        assert "does not say which one ComfyUI loaded" in outcomes[0]
+        assert writes == []
     else:
-        record = fsdp_lora.capture_record(model, [_BIG_KEY], str(path), rank, 2)
-        assert record.mapped[_BIG_KEY] == header["blocks.0.lin_file.weight"]
+        assert outcomes == ["bound", "bound"] and writes == [_BIG_KEY, _BIG_KEY]
 
 
 def test_a_quantized_setter_refuses_before_a_leaving_key_is_restored(tmp_path, monkeypatch):
