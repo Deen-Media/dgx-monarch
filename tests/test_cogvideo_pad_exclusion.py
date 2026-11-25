@@ -156,6 +156,32 @@ def test_pure_ulysses_attends_stock_keys_and_returns_stock_output(
     assert same(outputs[0], expected)
 
 
+def _stock_row_of_each_key(k, stock_k):
+    """For each key row, the stock key row it equals to rounding.
+
+    Each rank runs a block's norm and q, k, v Linears on its own rows, and a
+    CPU BLAS may round another row count apart (x86 does), so the order is read
+    by matching rows, never by bits: every row of the random toy lies far from
+    every other row, and each must match exactly one stock row to rounding.
+    """
+    assert k.shape == stock_k.shape and k.shape[0] == 1
+    distances = (k[0][:, None] - stock_k[0][None]).norm(dim=-1)  # exact near zero
+    nearest = distances.argmin(dim=1)
+    assert sorted(nearest.tolist()) == list(range(k.shape[1]))  # one stock row each
+    assert same(k, stock_k[:, nearest])
+    second = distances.scatter(1, nearest[:, None], float("inf")).min(dim=1).values
+    assert bool((second > 1e3 * distances.min(dim=1).values.clamp_min(1e-12)).all())
+    return nearest
+
+
+def _rank_major(text_rows, image_rows):
+    """Stock's row indices in the order xfuser's gather lays them out."""
+    text, image = torch.arange(text_rows), text_rows + torch.arange(image_rows)
+    halves = [part.chunk(WORLD) for part in (text, image)]
+    return torch.cat([piece for rank in range(WORLD) for piece in (halves[0][rank],
+                                                                   halves[1][rank])])
+
+
 @pytest.mark.parametrize("variant", ["1.5", "1.0"])
 def test_at_an_even_length_the_order_descriptor_restores_stocks_key_order(
     monkeypatch, comfy_cogvideo, variant
@@ -164,23 +190,26 @@ def test_at_an_even_length_the_order_descriptor_restores_stocks_key_order(
     attention would take xfuser's own call, whose gathered keys run rank-major,
     [text 0, image 0, text 1, image 1]: stock's key set in another order, so a
     flash kernel sums each softmax in another order. With it the call goes to
-    the full-axis point, which puts the keys back in stock's order."""
+    the full-axis point, which puts the keys back in stock's order: every
+    block's key row i is stock's key row i, to rounding."""
     from dgx_monarch.adapters import cogvideo
 
     text_rows, latent = SHAPES[variant][0]
     model = _toy(comfy_cogvideo, variant)
     inputs = _inputs(text_rows, latent, 1)
     _expected, stock_calls, kernel = _stock(monkeypatch, comfy_cogvideo, model, inputs)
+    rows = text_rows + _image_rows(variant, latent)
     _outputs, harness = _sharded(monkeypatch, model, inputs, kernel)
     assert {entry for entry, *_ in harness.seen[0]} == {"exact"}
-    assert all(torch.equal(k, stock_k) for (_e, _q, k, _v), (_sq, stock_k, _sv)
-               in zip(harness.seen[0], stock_calls, strict=True))
+    for (_e, _q, k, _v), (_sq, stock_k, _sv) in zip(harness.seen[0], stock_calls, strict=True):
+        assert torch.equal(_stock_row_of_each_key(k, stock_k), torch.arange(rows))
     monkeypatch.setattr(cogvideo, "RankMajorJointOrder", lambda *_args: None)
     _outputs, harness = _sharded(monkeypatch, model, inputs, kernel)
     assert {entry for entry, *_ in harness.seen[0]} == {"xfuser"}
-    k, stock_k = harness.seen[0][0][2], stock_calls[0][1]
-    assert k.shape == stock_k.shape and not torch.equal(k, stock_k)
-    assert torch.equal(k.sort(dim=1).values, stock_k.sort(dim=1).values)  # the same rows
+    order = _rank_major(text_rows, _image_rows(variant, latent))
+    assert not torch.equal(order, torch.arange(rows))
+    for (_e, _q, k, _v), (_sq, stock_k, _sv) in zip(harness.seen[0], stock_calls, strict=True):
+        assert torch.equal(_stock_row_of_each_key(k, stock_k), order)
 
 
 @pytest.mark.parametrize("variant,text_rows,latent", PADDED)
