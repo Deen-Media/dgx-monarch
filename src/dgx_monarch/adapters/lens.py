@@ -30,6 +30,7 @@ from typing import Any
 import torch
 
 from ..log import get_logger
+from . import cfg_pad_rows
 from .base import (
     USP_ATTENTION_OVERRIDE_ATTR,
     Adapter,
@@ -43,7 +44,6 @@ from .base import (
 )
 from .chroma_text import full_row_text_projections
 from .flux_family import _control_span_overlap
-from .krea2 import _trim_trailing_pad
 from .usp_sequence_order import RankMajorJointOrder
 
 log = get_logger(__name__)
@@ -182,10 +182,14 @@ def _usp_text_trim(attention_mask: torch.Tensor, text_seq_len: int) -> int:
     refusal on every topology, pure Ulysses included.
     """
     entries = attention_mask.shape[0]
-    probe = attention_mask.reshape(entries, text_seq_len, 1).to(torch.float32)
-    probe, residual = _trim_trailing_pad(probe)
-    trim = probe.shape[1]
-    if residual is not None or not bool(attention_mask[:, :trim].bool().all()):
+    keep = attention_mask.reshape(entries, text_seq_len) != 0
+    positions = torch.arange(text_seq_len, device=keep.device)
+    last = torch.where(keep, positions, positions.new_full((), -1)).amax(dim=1)
+    # Each entry's kept length runs to its last kept token. An entry that keeps
+    # nothing reads as full length, and the check below refuses it.
+    lengths = torch.where(last < 0, positions.new_full((), text_seq_len), last + 1)
+    trim = int(lengths.amax())
+    if bool((lengths < trim).any()) or not bool(attention_mask[:, :trim].bool().all()):
         raise UnsupportedModelError(
             "lens: this render's text attention mask is not a uniform trailing pad "
             "(ragged real lengths across the batch, or a masked position inside the "
@@ -204,8 +208,10 @@ class LensAdapter(Adapter):
     # Lens expects a text-length boolean keep-mask. The shared joint additive
     # mask has incompatible shape, order, and polarity, so cfg padding supplies
     # zero rows rather than a bias. inject_cfg_pad_forward says how a shipped
-    # keep-mask follows those rows.
+    # keep-mask follows those rows, and how both are cut back to each entry's
+    # own rows, which restores stock's call.
     cfg_cond_padding = "pad"
+    cfg_pad_restores_stock_call = True
 
     def matches(self, base_model) -> bool:
         import comfy.model_base as model_base
@@ -374,21 +380,24 @@ class LensAdapter(Adapter):
 
         The worker equalizer pads text and extends its keep-mask with zeros.
         Lens publishes both as CONDRegular values, so matching shapes let ComfyUI
-        batch them. Pass the resulting ``attention_mask`` to stock, which excludes
-        the added keys from joint attention.
-
-        Without a supplied mask, trim a uniform zero tail or convert residual
-        ragged bias to Lens's boolean keep polarity (``bias == 0``). Unpadded and
-        fully zeroed real conditioning stays intact. Call ``type(self)._forward``
-        to avoid re-entering the instance wrapper.
+        batch them. The pad also stamps each entry's own row count
+        (adapters/cfg_pad_rows.py), and this forward cuts the text and a
+        shipped keep-mask back to it, which is stock's own call for that entry.
+        A ragged batch keeps the rest of the pad out through the keep-mask: the
+        shipped one, or one in Lens's boolean polarity built from the counts.
+        An unstamped call was not padded and goes to stock as it came. Call
+        ``type(self)._forward`` to avoid re-entering the instance wrapper.
         """
 
+        @cfg_pad_rows.reads_rows
         def cfg_pad_forward(self, x, timestep, context, attention_mask=None,
                             transformer_options={}, control=None, **kwargs):
-            if attention_mask is None:
-                context, bias = _trim_trailing_pad(context)
-                if bias is not None:
-                    attention_mask = bias.squeeze(1) == 0
+            context, counts = cfg_pad_rows.trim(
+                context, kwargs.pop(cfg_pad_rows.TEXT_ROWS, None), "lens")
+            if attention_mask is not None:
+                attention_mask = cfg_pad_rows.cut_mask(attention_mask, context.shape[1])
+            elif counts is not None:
+                attention_mask = cfg_pad_rows.residual_keep(counts, context.shape[1])
             return type(self)._forward(
                 self, x, timestep, context, attention_mask=attention_mask,
                 transformer_options=transformer_options, control=control, **kwargs)

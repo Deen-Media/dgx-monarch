@@ -1489,6 +1489,49 @@ sections after them list every change.
 
 ### Rendering
 
+- On cfg2, a zeroed negative shorter than the prompt (the ConditioningZeroOut
+  of an empty prompt) now runs at its own text rows, as stock ComfyUI runs it.
+  To batch the pair the Worker pads the shorter conditioning with zero rows,
+  and the forward of Krea2, Qwen-Image, Mage-Flow, Z-Image, Kandinsky5 and
+  Lens cut those rows off again by looking for trailing zero rows, which a
+  zeroed negative is made of. It kept them: on the pair a Krea2 render read
+  one-step NRMS 0.0357 against one GPU. The pad now stamps each conditioning
+  with its own row count, and the forward cuts to that count; a call with no
+  stamp reaches stock as it came, so a prompt that ends in zero rows of its
+  own keeps them. No cfg2 forward infers anything from zero rows any more:
+  Boogu's cfg forward, which the Worker never pads, no longer trims a call
+  that ships no mask. A stamped call whose forward would not read the stamp
+  refuses, class P, naming the family, and so does a call of a stamped render
+  that arrives with text but no count. Lens's cfg2 forward now cuts the pad
+  and its keep-mask back too, shown equal to stock Lens's own call bit for
+  bit. A zeroed negative as long as the prompt (the shipped graphs' form) was
+  never padded; on cfg2 it still reads apart from one GPU (NRMS 0.0104 on the
+  pair), because one GPU folds an equal pair into one batch-2 call where cfg2
+  makes two batch-1 calls ([MODELS](docs/MODELS.md#model-krea2-raw-turbo)).
+- `auto` no longer picks cfg2 for a prompt and a negative of equal text rows on
+  Krea2 BF16 (1.2 to 2.36 MP) or Qwen-Image FP8 (1.2 to 1.77 MP), as it already
+  did not on Chroma and Boogu: it takes the family's Ulysses row, bytes equal to
+  one GPU there. One GPU folds such a pair into one call of two entries, and
+  cfg2's two calls of one equal stock's own separate calls and read apart from
+  its batched call, one-step NRMS 0.0104 to 0.040 on Krea2 with a zeroed or a
+  real negative ([equal pairs](docs/VALIDATION.md#equal-pairs-krea2-qwen-2026-11-24)).
+  Those renders run about 1.25 times slower than they did on cfg2. Krea2 FP8
+  keeps every pair on cfg2, since its other route is the approximate SAGE one,
+  and on every row that takes only a differing pair (Krea2, Qwen-Image, Chroma
+  and Boogu) so does an MXFP8 or NVFP4 file, which reads as FP8 but has no
+  bytes-equal sharded route, and a full-precision file cast to fp8 at load,
+  which no record has measured. Every cfg2 render of an equal pair now says
+  so, from the KSampler nodes and from Sampler Custom behind a CFG guider: a log
+  line for every render, and a browser notice once per queued prompt when cfg2
+  was chosen by hand (a Pipeline sweep is one prompt).
+- cfg2 with fsdp now refuses, class P, a step whose conditionings carry
+  different conditioning hook groups (a hook LoRA, say) and run on different
+  ranks: the ranks share one set of weight shards, so each patching its own
+  group would have mixed both groups' patches into every rank's weights.
+- The per-cond cfg dispatch now refuses a condition-comparing attention output
+  hook (NAG without `condition_shard_local`) when a slot holds several
+  conditionings, as the batch split already did; with one conditioning a slot
+  each rank runs one of stock's own calls and the hook passes.
 - MiniMax H3 on four Sparks renders on `auto` (issue #188). At world 4 and
   batch 1, `auto` folded the spare ranks into uly2+ring2, where the H3
   adapter refuses every packed total four does not divide, about three

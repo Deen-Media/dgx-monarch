@@ -20,7 +20,7 @@ import torch
 
 import dgx_monarch.adapters.zimage as zimage
 from dgx_monarch.actor.sampling import equalize_cond_lengths
-from dgx_monarch.adapters import base
+from dgx_monarch.adapters import base, cfg_pad_rows
 from dgx_monarch.adapters.base import InjectionContext, UnsupportedModelError
 from dgx_monarch.adapters.zimage import (
     ZImageAdapter,
@@ -29,6 +29,7 @@ from dgx_monarch.adapters.zimage import (
     _pixel_decode,
     _trim_context_or_raise,
 )
+from test_cfg_pad_rows import stub_comfy_conds
 
 
 def _pad32(n: int) -> int:
@@ -243,11 +244,13 @@ def test_unrelated_model_declined(model_base):
 
 
 def test_cfg_trim_uniform_batch_trims_clean():
-    # A batch-1 cfg rank with trailing zero rows trims to its real length and
-    # leaves no residual pad, so nothing raises.
+    # A batch-1 cfg rank cuts to the real length the Worker's pad stamped and
+    # leaves no residual pad, so nothing raises. With no stamp the call was not
+    # padded, and its trailing zero rows are its own.
     ctx = torch.zeros(1, 10, 4)
     ctx[:, :6] = 1.0
-    assert _trim_context_or_raise(ctx).shape[1] == 6
+    assert _trim_context_or_raise(ctx, torch.tensor([6])).shape[1] == 6
+    assert _trim_context_or_raise(ctx).shape[1] == 10
 
 
 def test_cfg_trim_ragged_batch_raises_maskless():
@@ -256,7 +259,7 @@ def test_cfg_trim_ragged_batch_raises_maskless():
     ctx[0, :6] = 1.0
     ctx[1, :9] = 1.0
     with pytest.raises(UnsupportedModelError, match="maskless"):
-        _trim_context_or_raise(ctx)
+        _trim_context_or_raise(ctx, torch.tensor([6, 9]))
 
 
 class _CfgZImageProbe:
@@ -269,7 +272,8 @@ class _CfgZImageProbe:
         return context
 
 
-def test_pure_cfg2_asymmetric_prompt_uses_family_trim_path():
+def test_pure_cfg2_asymmetric_prompt_uses_family_trim_path(monkeypatch):
+    stub_comfy_conds(monkeypatch)
     adapter = ZImageAdapter()
     positive = [[torch.ones(1, 7, 4), {}]]
     negative = [[torch.ones(1, 3, 4), {}]]
@@ -277,11 +281,14 @@ def test_pure_cfg2_asymmetric_prompt_uses_family_trim_path():
         adapter, positive, negative, torch.zeros(1, 4, 8, 8)
     )
     assert padded_negative[0][0].shape[1] == 7
+    # ComfyUI hands the stamped count to the forward as a keyword.
+    stamp = padded_negative[0][1]["model_conds"][cfg_pad_rows.TEXT_ROWS].cond
 
     model = _CfgZImageProbe()
     adapter.inject_cfg_pad_forward(model)
     model._forward(
-        torch.zeros(1, 4, 8, 8), torch.ones(1), padded_negative[0][0], 7
+        torch.zeros(1, 4, 8, 8), torch.ones(1), padded_negative[0][0], 7,
+        **{cfg_pad_rows.TEXT_ROWS: stamp}
     )
     context, num_tokens, attention_mask = model.observed
     assert context.shape[1] == num_tokens == 3

@@ -1,18 +1,18 @@
 """CPU coverage for cfg-parallel: driver cond equalization and the fold fact it
-records, krea2's trailing-pad trim, the wrapper's batch slicing on both split
-seams, the per-cond dispatch, and the nvfp4 shared scale on the two cfg paths."""
+records, the stamped trim of the Worker's pad, the wrapper's batch slicing on
+both split seams, the per-cond dispatch, and the nvfp4 shared scale on the two
+cfg paths."""
 import pytest
 import torch
 
 from dgx_monarch.actor.sampling import equalize_cond_lengths
-from dgx_monarch.adapters import cfg_dispatch
+from dgx_monarch.adapters import cfg_dispatch, cfg_pad_rows
 from dgx_monarch.adapters.base import UnsupportedModelError
 from dgx_monarch.adapters.cfg_parallel import (
     _leading_batch,
     _take_slice,
     make_cfg_parallel_wrapper,
 )
-from dgx_monarch.adapters.krea2 import _trim_trailing_pad
 from dgx_monarch.adapters.pixeldit import Ideogram4Adapter
 
 
@@ -386,11 +386,14 @@ def test_the_measured_trimming_families_declare_it():
     from dgx_monarch.adapters.qwen_image import QwenImageAdapter
     from dgx_monarch.adapters.zimage import ZImageAdapter
 
+    # Lens joined on 2026-11-24: its cfg-pad forward cuts the pad by the stamp
+    # and was shown equal to stock Lens's own call bit for bit
+    # (tests/test_cfg_pad_rows.py).
     for cls in (ChromaAdapter, Krea2Adapter, ZImageAdapter, QwenImageAdapter,
-                BooguAdapter, Kandinsky5Adapter):
+                BooguAdapter, Kandinsky5Adapter, LensAdapter):
         assert cls.cfg_pad_restores_stock_call is True, cls.__name__
         assert hasattr(cls, "inject_cfg_pad_forward"), cls.__name__
-    for cls in (FluxAdapter, Flux2Adapter, LongCatAdapter, LensAdapter):
+    for cls in (FluxAdapter, Flux2Adapter, LongCatAdapter):
         assert cls.cfg_pad_restores_stock_call is False, cls.__name__
 
 
@@ -415,43 +418,49 @@ def test_both_ranks_derive_the_fold_fact_from_the_shipped_conds_alone(monkeypatc
     assert seen == {False}
 
 
-# The forward trims the driver's trailing zero-pad instead of masking it, so the
-# common (uniform / single-entry) case runs mask-free on the flash fast path;
-# only a ragged batch keeps an additive bias over the residual per-entry pad.
+# The forward cuts the Worker's pad by each entry's stamped row count
+# (adapters/cfg_pad_rows.py) instead of masking it, so the common (uniform /
+# single-entry) case runs mask-free on the flash fast path; only a ragged batch
+# keeps an additive bias over the residual per-entry pad. A zero row never
+# decides anything: no stamp means no cut.
 def test_trim_none_without_padding():
     ctx = torch.ones(2, 5, 3, 4)
-    out, mask = _trim_trailing_pad(ctx)
-    assert mask is None
-    assert out.shape[1] == 5
-    assert torch.equal(out, ctx)
+    for rows in (None, torch.tensor([5, 5])):
+        out, counts = cfg_pad_rows.trim(ctx, rows, "krea2")
+        assert counts is None
+        assert out.shape[1] == 5
+        assert torch.equal(out, ctx)
 
 
 def test_trim_uniform_trailing_run_is_maskless():
     ctx = torch.ones(1, 6, 3, 4)
-    ctx[:, 4:] = 0.0  # driver-appended rows
-    out, mask = _trim_trailing_pad(ctx)
-    assert mask is None                     # trimmed away: flash path, no mask
+    ctx[:, 4:] = 0.0  # Worker-appended rows, whose count the pad stamped
+    out, counts = cfg_pad_rows.trim(ctx, torch.tensor([4]), "krea2")
+    assert counts is None                   # trimmed away: flash path, no mask
     assert out.shape[1] == 4                # trimmed to the real length
     assert torch.equal(out, ctx[:, :4])
 
 
 def test_trim_conditioning_zero_out_untouched():
-    # An all-zero conditioning is a real uncond, not padding: never trimmed.
+    # An all-zero conditioning is a real uncond, not padding: never trimmed
+    # unpadded, and cut only to its own rows when the pad stretched it.
     ctx = torch.zeros(1, 6, 3, 4)
-    out, mask = _trim_trailing_pad(ctx)
-    assert mask is None
-    assert out.shape[1] == 6
+    for rows in (None, torch.tensor([6])):
+        out, counts = cfg_pad_rows.trim(ctx, rows, "krea2")
+        assert counts is None
+        assert out.shape[1] == 6
+    out, counts = cfg_pad_rows.trim(torch.zeros(1, 10, 3, 4), torch.tensor([6]), "krea2")
+    assert counts is None and out.shape[1] == 6
 
 
 def test_trim_ragged_batch_masks_residual_after_trim():
     # Different real lengths: trim to the longest (5), mask the shorter entry's
     # residual pad within the trimmed span.
     ctx = torch.ones(2, 8, 3, 4)
-    ctx[0, 5:] = 0.0  # entry 0 real length 5 (the longest)
-    ctx[1, 3:] = 0.0  # entry 1 real length 3
-    out, mask = _trim_trailing_pad(ctx)
+    out, counts = cfg_pad_rows.trim(ctx, torch.tensor([5, 3]), "krea2")
     assert out.shape[1] == 5                           # trimmed to the longest real
-    assert mask is not None                            # ragged: residual masked
+    assert counts is not None                          # ragged: residual masked
+    mask = cfg_pad_rows.residual_bias(counts, out.shape[1], out.dtype).unsqueeze(1)
     assert list(mask.shape) == [2, 1, 5]
     assert float(mask[0, 0, :5].abs().sum()) == 0.0    # entry 0: full within trim
     assert bool((mask[1, 0, 3:5] < 0).all())           # entry 1: 3..4 masked
@@ -461,9 +470,11 @@ def test_trim_ragged_batch_masks_residual_after_trim():
 def test_trim_interior_zero_rows_are_not_padding():
     ctx = torch.ones(1, 6, 3, 4)
     ctx[:, 2] = 0.0  # interior zero row: content follows it
-    out, mask = _trim_trailing_pad(ctx)
-    assert mask is None
-    assert out.shape[1] == 6                # not trimmed (content after the zero)
+    ctx[:, 5] = 0.0  # and a trailing zero row of the prompt's own
+    for rows in (None, torch.tensor([6])):
+        out, counts = cfg_pad_rows.trim(ctx, rows, "krea2")
+        assert counts is None
+        assert out.shape[1] == 6            # not trimmed: the stamp, not a zero, decides
 
 
 def test_leading_batch_finds_tensors_in_containers():

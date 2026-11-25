@@ -23,8 +23,8 @@ from __future__ import annotations
 from typing import Any
 
 from ..log import get_logger
+from . import cfg_pad_rows
 from .base import Adapter, InjectionContext, UnsupportedModelError, shard_seq, sp_gather
-from .krea2 import _trim_trailing_pad
 from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
@@ -34,14 +34,16 @@ log = get_logger(__name__)
 _KANDINSKY5_SUPPORTED_EXACT = ("Kandinsky5", "Kandinsky5Image")
 
 
-def _trim_context_or_raise(context):
-    """Trim a uniform trailing text pad and reject ragged residual padding.
+def _trim_context_or_raise(context, rows=None):
+    """Cut the Worker's cfg pad by its stamped row counts; refuse a ragged rest.
 
-    Kandinsky5 has no mask input for its text blocks or cross-attention. cfg2
-    places cond and uncond on separate ranks, so each local batch normally has
-    one real length; any residual mask requirement receives a typed refusal.
+    ``rows`` is the stamp (adapters/cfg_pad_rows.py); None means the call was
+    not padded and keeps every row, zero rows included. Kandinsky5 has no mask
+    input for its text blocks or cross-attention. cfg2 places cond and uncond
+    on separate ranks, so each local batch normally has one real length; any
+    residual mask requirement receives a typed refusal.
     """
-    context, residual = _trim_trailing_pad(context)
+    context, residual = cfg_pad_rows.trim(context, rows, "kandinsky5")
     if residual is not None:
         raise UnsupportedModelError(
             "kandinsky5: one model call batches conditionings with different real text "
@@ -145,18 +147,20 @@ class Kandinsky5Adapter(Adapter):
     def inject_cfg_pad_forward(self, diffusion_model) -> None:
         """Install exact cfg2 handling for asymmetric prompt lengths.
 
-        Trim the driver's trailing zero rows before biased text embeddings and
-        rebuild 1D RoPE for the real `0..L-1` range. Ragged batches receive a
-        typed refusal. Unpadded inputs, including fully zeroed real conditioning,
-        remain untrimmed and take the stock path.
+        Cut the Worker's pad rows, by each entry's stamped count, before the
+        biased text embeddings, and rebuild 1D RoPE for the real `0..L-1`
+        range. Ragged batches receive a typed refusal. Unpadded inputs,
+        including fully zeroed real conditioning, remain uncut and take the
+        stock path.
         """
 
+        @cfg_pad_rows.reads_rows
         def cfg_pad_forward(self, x, timestep, context, y, time_dim_replace=None,
                             transformer_options={}, **kwargs):
             # Trim before building text RoPE so it uses the real text length.
             import comfy.ldm.common_dit
 
-            context = _trim_context_or_raise(context)
+            context = _trim_context_or_raise(context, kwargs.pop(cfg_pad_rows.TEXT_ROWS, None))
 
             original_dims = x.ndim
             if original_dims == 4:

@@ -917,6 +917,14 @@ def test_kernels_that_resolve_to_one_collapse_to_one_cell(tmp_path):
     assert all(cell["reference"].get("cell", next(iter(ids))) in ids for cell in cells)
 
 
+def _template_pair(graph: dict) -> None:
+    """Wire the template's prompt and negative, two texts of different rows:
+    since 2026-11-24 Krea2's cfg2 row 15 grants no other pair."""
+    graph["8"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "a red fox in snow"}}
+    graph["9"] = {"class_type": "CLIPTextEncode", "inputs": {"text": ""}}
+    graph["4"]["inputs"].update(positive=["8", 0], negative=["9", 0])
+
+
 def _krea2_fp8_square(config: dict, stem: str, graph: dict, side: int = 1536) -> None:
     """Write ``graph`` at ``side`` square beside a krea2 FP8 checkpoint."""
     _checkpoint(config["model_dir"], "krea2_raw_fp8_scaled.safetensors", "krea2",
@@ -965,6 +973,7 @@ def _krea2_bf16_square(config: dict, stem: str, unet: str, merge_record: bool,
     graph = _graph(unet, cfg=1.5)
     graph["3"] = {"class_type": "EmptySD3LatentImage",
                   "inputs": {"width": side, "height": side, "batch_size": 1}}
+    _template_pair(graph)
     (config["out_dir"] / "graphs" / f"{stem}.json").write_text(json.dumps(graph))
 
 

@@ -1067,13 +1067,21 @@ class _FakeZImageCfg:
 
 
 def test_zimage_cfg_trim_rederives_num_tokens():
+    """The cut follows the row count the Worker's pad stamped, and num_tokens
+    follows the cut; an unstamped call keeps its zero rows as its own."""
+    from dgx_monarch.adapters import cfg_pad_rows
+
     model = _FakeZImageCfg()
     ZImageAdapter().inject_cfg_pad_forward(model)
     context = torch.ones(1, 10, 4)
     context[:, 6:] = 0
-    model._forward(torch.zeros(1, 1, 2, 2), torch.zeros(1), context, 10)
+    model._forward(torch.zeros(1, 1, 2, 2), torch.zeros(1), context, 10,
+                   **{cfg_pad_rows.TEXT_ROWS: torch.tensor([6])})
     assert model.recorded["context"].shape[1] == 6
     assert model.recorded["num_tokens"] == 6
+    model._forward(torch.zeros(1, 1, 2, 2), torch.zeros(1), context, 10)
+    assert model.recorded["context"].shape[1] == 10
+    assert model.recorded["num_tokens"] == 10
 
 
 def _run_cfg_patch_probe(monkeypatch, hook, patch):

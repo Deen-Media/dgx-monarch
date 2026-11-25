@@ -315,8 +315,16 @@ def make_cfg_parallel_wrapper(adapter: Adapter):
     assert_cfg_parallel_supported(adapter, 2)
 
     def cfg_parallel_wrapper(executor, *args, **kwargs):
+        from . import cfg_pad_rows
         from .cfg_dispatch import dispatch_in_progress
 
+        if cfg_pad_rows.TEXT_ROWS in kwargs:
+            # Every stamped call, sliced or dispatched, meets a forward that reads it.
+            cfg_pad_rows.assert_read(executor.class_obj, family)
+        else:
+            # And no call of a stamped render arrives with text but without its count.
+            given = inspect.signature(executor.original).bind_partial(*args, **kwargs).arguments
+            cfg_pad_rows.assert_not_lost(given.get("context", given.get("c_crossattn")), family)
         world = cfg_world()
         # A rank inside its own per-cond call owns every row of it.
         if world <= 1 or dispatch_in_progress():

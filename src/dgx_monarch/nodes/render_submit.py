@@ -46,7 +46,15 @@ from ..mesh import MeshHandle, mark_defunct_on_supervision_failure
 from ..old_model import OldModelRefusal
 from ..progress import ProgressReceiver
 from ..transfer import pack_latent
-from . import consent_waiver, model_patch_preflight, old_model_clear, refusal_lead, render_preflight, render_rows
+from . import (
+    cfg_pair_notice,
+    consent_waiver,
+    model_patch_preflight,
+    old_model_clear,
+    refusal_lead,
+    render_preflight,
+    render_rows,
+)
 from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .gate_dual import forced_stock_state
 from .gate_identity import (
@@ -57,6 +65,10 @@ from .gate_identity import (
 from .in_place_bake_permission import IN_PLACE_BAKE_PROVEN
 from .in_place_bake_permission import stamp as stamp_in_place_bake_permission
 from .pending import PendingRender, PendingRenderHandoff
+from .reattach_retry import _REATTACH_FACTS  # noqa: F401  (read inside a retry)
+from .reattach_retry import NO_REATTACH as _NO_REATTACH  # noqa: F401  (the finish record's keys)
+from .reattach_retry import attempt_after_restart as _attempt_after_restart
+from .reattach_retry import reattach_facts as _reattach_facts
 from .render_quarantine import _enforce_persisted_quarantine
 from .render_result import _finish_render
 from .render_session import (
@@ -82,18 +94,6 @@ _UNCLAIMED_ADOPTION_CONTEXT = object()
 # leases would otherwise refuse this dispatch's setup change.
 _COLLECT_BEFORE_SETUP_CHANGE: ContextVar[Callable[[], None] | None] = ContextVar(
     "dgxm_collect_before_setup_change", default=None)
-# Render lifetime: what the finish record says about a re-attach inside this
-# render (restart_reattach.py). Set only around the one retry after it.
-_REATTACH_FACTS: ContextVar[dict | None] = ContextVar("dgxm_reattach_facts", default=None)
-# read-only after import: the same two facts for every other render.
-_NO_REATTACH = {"reattach": None, "reattach_s": None}
-
-
-def _reattach_facts() -> dict:
-    """The finish record's re-attach facts for this render (a ContextVar read)."""
-    return _REATTACH_FACTS.get() or _NO_REATTACH
-
-
 @contextmanager
 def collect_before_setup_change(collect: Callable[[], None]) -> Iterator[None]:
     """Let the submits inside this block collect the caller's earlier results
@@ -155,10 +155,16 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
     # A Pipeline or Gate session is pinned to the mesh it opened on, so only a
     # submit that owns its session may replace that mesh mid-render.
     inherited = active_render_session() is not None
+    # The sampler's equal-pair reading, which each attempt's body pops off the
+    # request so no Worker sees it; held here so a healed retry still has it
+    # (nodes/cfg_pair_notice.py).
+    equal_pair = request.pop(cfg_pair_notice.REQUEST_KEY, None)
 
     def attempt() -> PendingRender:
         guard = _SubmitRenderGuard()
         guards.append(guard)
+        if equal_pair is not None:
+            request[cfg_pair_notice.REQUEST_KEY] = equal_pair
 
         def body() -> PendingRender:
             return _submit_render_guarded(
@@ -204,38 +210,6 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
         return attempt()
 
 
-def _attempt_after_restart(
-        attempt: Callable[[], PendingRender], refused: object,
-        exc: WorkerDeliveryError, model: ModelSpec, request: dict,
-        latent: dict) -> PendingRender:
-    """Attach again inside this render when every Worker loop restarted, then retry once.
-
-    ``restart_reattach.heal`` retires the stale fleet and attaches by the new
-    ids, or raises the refusal that names its remedy. The retry's ``ensure_live``
-    then finds the new mesh. Its finish record carries the re-attach and its wall.
-    """
-    outcome = restart_reattach.heal(refused, exc)
-    # As on every process-stop path: the new fleet holds none of the old weights.
-    from . import recycle_drain
-
-    recycle_drain.drop_residency_memos()
-    # The caller's memory check ran before the restart showed, so it may have
-    # credited the old fleet's weights as resident. Price again on the new mesh
-    # before the retry loads anything: weights and activations that each fit
-    # can still overrun together, and a refusal here is the one a first
-    # attempt without the credit raises. The check reads only the latent and
-    # the request's positive conditioning, which the first attempt left alone.
-    if getattr(model, "mesh", None) is not None and outcome.handle is not None:
-        model = render_preflight._model_with_bound_handle(model, outcome.handle)
-    render_preflight.activation_footprint_preflight_for_request(model, request, latent)
-    token = _REATTACH_FACTS.set(
-        {"reattach": restart_reattach.EVENT, "reattach_s": round(outcome.wall_s, 2)})
-    try:
-        return restart_reattach.retry_after_heal(attempt, exc)
-    finally:
-        _REATTACH_FACTS.reset(token)
-
-
 def _heal_abandoned_wedge_once(model: ModelSpec, exc: BaseException) -> bool:
     """Reset and retry once when abandoned leases are the only dispatch blocker.
 
@@ -277,6 +251,7 @@ def _submit_render_guarded(
     model, bound_handle = _bind_packed_render_model(
         model, latent, cfg_value)
     ref_summary = request.get("_dgxm_krea2_ref_preflight")
+    equal_pair = bool(request.pop(cfg_pair_notice.REQUEST_KEY, False))
     for internal_key in (
         "_dgxm_normal_residency_grant",
         "_dgxm_normal_policy",
@@ -322,6 +297,7 @@ def _submit_render_guarded(
         resolved = _resolve_topology_for_latent(
             model, latent, cfg_value, world)
         topo, sage, reason = resolved
+        cfg_pair_notice.announce(model, topo, equal_pair)
         render_preflight.preflight_krea2_reference_latents(model, ref_summary, topo)
         model_patch_preflight.preflight_moss_image_reference_images(model, ref_summary, topo)
         model_patch_preflight.preflight_moss_image_attention_bias(model, request, topo)

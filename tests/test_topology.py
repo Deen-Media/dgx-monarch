@@ -140,9 +140,14 @@ def test_a_plain_or_unknown_sampler_drops_it(name):
 
 @pytest.mark.parametrize("megapixels", [1.2, 1.5, 1.76])
 def test_qwen_image_fp8_band_takes_row_68(megapixels):
-    decision = choose_auto_topology("qwen_image", "fp8", megapixels, 2, cfg_value=4.0)
+    # For a pair whose text rows differ (2026-11-24); an equal pair takes row 71.
+    decision = choose_auto_topology("qwen_image", "fp8", megapixels, 2, cfg_value=4.0,
+                                    pair_differs=True)
     assert decision.rule.row == 68 and decision.topology.describe() == "cfg2"
     assert decision.sage is False
+    equal = choose_auto_topology("qwen_image", "fp8", megapixels, 2, cfg_value=4.0)
+    assert equal.rule.row == 71 and equal.topology.describe() == "uly2"
+    assert equal.skipped_cfg is not None and equal.skipped_cfg.row == 68
 
 
 def test_sage_gate_fp8_only_high_res():
@@ -467,8 +472,11 @@ def test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy():
     """The digest pins the world-2 auto decision for every family, quant,
     megapixels, cfg and batch value in the _auto_rows grid, so a policy change
     is a reviewed digest edit."""
+    # 2026-11-24: an equal pair leaves cfg2 only where its fallback is bytes
+    # equal, so the four untagged cfg 3.5 cells at 1.5 MP for Krea2 BF16 and
+    # Qwen-Image FP8 moved to rows 12 and 71; Krea2 FP8 stays on row 15.
     digest = hashlib.sha256("\n".join(_auto_rows(2)).encode()).hexdigest()
-    assert digest == "60cf854f88fd114894d53ac3bbc04d8c5bde697b55951aa28560a730767de2f9"
+    assert digest == "ac9224681614321940efd67994a6fdbf2c200336e4af81ad2750675dd419a140"
 
 
 def test_auto_never_resolves_cfg_plus_sequence():

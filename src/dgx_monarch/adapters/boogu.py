@@ -97,22 +97,6 @@ def _keep_mask_caption_lengths(attention_mask, width: int) -> list[int]:
     return [int(value) for value in lengths]
 
 
-def _content_caption_lengths(context) -> list[int]:
-    """Per-row real caption length from trailing all-zero rows.
-
-    The cfg cond equalization appends zero rows to the shorter prompt, and a
-    conditioning whose every token is real ships no mask at all. An entry that
-    is zero throughout stays full length, as krea2._trim_trailing_pad treats it.
-    """
-    entries, seq = context.shape[0], context.shape[1]
-    content = context.reshape(entries, seq, -1).abs().amax(dim=2) > 0
-    positions = torch.arange(seq, device=context.device)
-    last = torch.where(
-        content, positions.expand_as(content), positions.new_full((), -1)).amax(dim=1)
-    cutoff = torch.where(last < 0, positions.new_full((), seq), last + 1)
-    return [int(value) for value in cutoff]
-
-
 def _text_pad_key_bias(cap_lens: list[int], width: int, image_len: int, dtype, device):
     """Additive bias dropping the padded caption columns from every text key.
 
@@ -418,18 +402,21 @@ class BooguAdapter(Adapter):
 
         The rope offset is per sample and known: each row's real caption length
         is the sum of its text keep-mask, the number ComfyUI sums to make
-        ``num_tokens`` (with no mask, ``_content_caption_lengths`` reads it).
-        Where the batch shares one caption length the pad is trimmed away and
-        the stock class forward runs unchanged. Where the lengths differ
-        the per-row forward above carries each row's own offset. Calling the
-        class method avoids re-entering this bound forward.
+        ``num_tokens``. Where the batch shares one caption length the pad is
+        trimmed away and the stock class forward runs unchanged. Where the
+        lengths differ the per-row forward above carries each row's own offset.
+        A call with no mask keeps every row: the Worker never pads this family
+        (it dispatches per cond, ``cfg_batch_constant``), and a zero row is no
+        sign of padding, since a zeroed or concatenated conditioning holds real
+        zero rows. Calling the class method avoids re-entering this bound
+        forward.
         """
 
         def cfg_pad_forward(self, x, timesteps, context, num_tokens, ref_latents=None,
                             attention_mask=None, transformer_options={}, **kwargs):
             width = int(context.shape[1])
             if attention_mask is None:
-                cap_lens = _content_caption_lengths(context)
+                cap_lens = [width] * int(context.shape[0])
             else:
                 cap_lens = _keep_mask_caption_lengths(attention_mask, width)
                 if len(cap_lens) == 1 and context.shape[0] > 1:

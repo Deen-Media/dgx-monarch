@@ -7,6 +7,8 @@ import pytest
 
 from dgx_monarch.topology import AUTO_TABLE, AutoRule, choose_auto_topology
 from dgx_monarch.topology_cfg_evidence import (
+    BLOCK_SCALED_FP8,
+    CAST_FP8,
     CFG2_EVIDENCE,
     KROMA_MERGE_METADATA_KEYS,
     CfgEvidence,
@@ -125,15 +127,29 @@ def test_longcat_still_uses_its_in_band_bf16_cfg_evidence() -> None:
     ],
 )
 def test_campaign_k_rows_grant_their_measured_kinds(family, quant, megapixels, cfg, row) -> None:
-    for pair_differs in (False, True):  # these records grant every prompt pair
-        decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=cfg,
-                                        pair_differs=pair_differs)
-        assert decision.topology.describe() == "cfg2"
-        assert decision.rule.row == row and decision.skipped_cfg is None
-        assert f"table row {row}" in decision.reason
-        assert "bit-identical to one GPU on the shipped prompt pair" in decision.reason
-        assert "Campaign K 2026-10-14" in decision.reason
-        assert "head capped at 2100 MHz" in decision.reason
+    # Since 2026-11-24 an equal pair leaves cfg2 only where its fallback reads
+    # bytes equal to one GPU: one GPU folds an equal pair into one call of two
+    # entries, and cfg2's two calls of one read apart from it (Krea2 1-step NRMS
+    # 0.0104 to 0.040). Krea2 BF16 falls to row 12 and Qwen-Image FP8 to row
+    # 71, both uly2 on the Init kernel and bit-identical; Krea2 FP8 would fall
+    # to row 11's SAGE route (0.030 to 0.058), so it keeps every pair on cfg2.
+    decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=cfg,
+                                    pair_differs=True)
+    assert decision.topology.describe() == "cfg2"
+    assert decision.rule.row == row and decision.skipped_cfg is None
+    assert f"table row {row}" in decision.reason
+    assert "bit-identical to one GPU on the shipped prompt pair" in decision.reason
+    assert "Campaign K 2026-10-14" in decision.reason
+    assert "head capped at 2100 MHz" in decision.reason
+    equal = choose_auto_topology(family, quant, megapixels, 2, cfg_value=cfg,
+                                 pair_differs=False)
+    if (family, quant) == ("krea2", "fp8"):
+        assert equal.topology.describe() == "cfg2" and equal.rule.row == row
+        return
+    assert equal.topology.describe() == "uly2" and not equal.sage
+    assert equal.rule.row == {"krea2": 12, "qwen_image": 71}[family]
+    assert equal.skipped_cfg is not None and equal.skipped_cfg.row == row
+    assert "whose text rows differ, and this pair's rows are equal or unread" in equal.reason
 
 
 # Issue #52, 2026-11-07: row 79 was measured on the template's pair, whose
@@ -151,10 +167,25 @@ CHROMA_BAND = (("chroma", "bf16", 1.5, 19, 22), ("chroma", "fp8", 1.63, 19, 21),
                ("chroma", "int8", 1.5, 19, 22))
 
 
-def test_only_the_boogu_and_chroma_rows_are_scoped_to_pairs_of_different_text_rows() -> None:
+def test_every_campaign_k_row_is_scoped_to_pairs_of_different_text_rows() -> None:
+    # Krea2 row 15 and Qwen-Image row 68 joined on 2026-11-24 (the pair's
+    # equal-row legs); LongCat's row 28 predates the pair scoping.
     scoped = {row for row, record in CFG2_EVIDENCE.items() if record.pairs != "any"}
-    assert scoped == {19, 20, 79}
+    assert scoped == {15, 19, 20, 68, 79}
     assert {CFG2_EVIDENCE[row].pairs for row in scoped} == {"unequal"}
+    # Row 15 scopes BF16 alone: an FP8 equal pair has no bytes-equal fallback.
+    assert CFG2_EVIDENCE[15].pair_quants == ("bf16",)
+    assert CFG2_EVIDENCE[15].scopes_pairs("bf16") and not CFG2_EVIDENCE[15].scopes_pairs("fp8")
+    # Row 68 scopes FP8 storage: a block-scaled file's fallback is not bytes equal.
+    assert CFG2_EVIDENCE[68].pair_quants == ("fp8",)
+    assert CFG2_EVIDENCE[68].scopes_pairs("fp8")
+    # Every scope names its kinds, so a block-scaled or cast file, which no
+    # record measured on a fallback, keeps every pair on cfg2.
+    assert {row: CFG2_EVIDENCE[row].pair_quants for row in scoped - {15, 68}} == {
+        19: ("bf16", "fp8", "int8"), 20: ("bf16", "fp8", "int8"), 79: ("fp8",)}
+    for row in scoped:
+        assert not CFG2_EVIDENCE[row].scopes_pairs(BLOCK_SCALED_FP8)
+        assert not CFG2_EVIDENCE[row].scopes_pairs(CAST_FP8)
 
 
 @pytest.mark.parametrize(("family", "quant", "row", "fallback"), PAIR_SCOPED)
@@ -193,6 +224,19 @@ def test_an_equal_or_unread_pair_takes_the_ulysses_row(family, quant, row, fallb
     rule = next(rule for rule in AUTO_TABLE if rule.row == row)
     assert cfg_row_is_eligible(rule, quant, None, True)
     assert not cfg_row_is_eligible(rule, quant)
+
+
+@pytest.mark.parametrize("kind", [BLOCK_SCALED_FP8, CAST_FP8])
+@pytest.mark.parametrize(("family", "megapixels", "cfg", "row"), [
+    ("krea2", 1.5, 3.5, 15), ("chroma", 1.5, 3.5, 19), ("chroma", 1.05, 3.5, 20),
+    ("qwen_image", 1.5, 4.0, 68), ("boogu", 1.05, 4.0, 79)])
+def test_a_block_scaled_or_cast_equal_pair_keeps_every_cfg2_row(family, megapixels, cfg, row,
+                                                                kind) -> None:
+    """No record measured an MXFP8, NVFP4 or cast file on a fallback, so no
+    scope names those kinds and their equal pair keeps the cfg2 row."""
+    decision = choose_auto_topology(family, "fp8", megapixels, 2, cfg_value=cfg, pair_kind=kind)
+    assert (decision.topology.describe(), decision.rule.row) == ("cfg2", row)
+    assert decision.skipped_cfg is None
 
 
 def test_the_pair_clause_names_only_a_row_the_pair_alone_kept(monkeypatch) -> None:
@@ -274,8 +318,8 @@ def test_kroma_is_measured_off_the_krea2_cfg2_row() -> None:
     # at 1152 and 1536, so row 15's record excludes Kroma and it keeps row 12.
     assert CFG2_EVIDENCE[15].excludes == ("kroma",)
     row15 = next(row for row in AUTO_TABLE if row.row == 15)
-    assert cfg_row_is_eligible(row15, "bf16")
-    assert not cfg_row_is_eligible(row15, "bf16", "kroma")
+    assert cfg_row_is_eligible(row15, "bf16", pair_differs=True)
+    assert not cfg_row_is_eligible(row15, "bf16", "kroma", pair_differs=True)
     for megapixels in (1.2, 1.327, 2.359):
         for cfg_value, keeps_uncond in ((1.5, False), (1.0, True)):
             kroma = choose_auto_topology("krea2", "bf16", megapixels, 2, cfg_value=cfg_value,
@@ -284,7 +328,7 @@ def test_kroma_is_measured_off_the_krea2_cfg2_row() -> None:
             assert kroma.skipped_cfg is not None and kroma.skipped_cfg.row == 15
             assert "was measured on this kroma checkpoint and does not grant it" in kroma.reason
             krea2 = choose_auto_topology("krea2", "bf16", megapixels, 2, cfg_value=cfg_value,
-                                         keeps_uncond=keeps_uncond)
+                                         keeps_uncond=keeps_uncond, pair_differs=True)
             assert krea2.topology.describe() == "cfg2" and krea2.rule.row == 15
 
 

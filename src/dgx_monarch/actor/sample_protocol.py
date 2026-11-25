@@ -362,14 +362,16 @@ def run_sample(
     # under comfy's own repeat rule where it allows; otherwise they take the
     # per-cond dispatch (adapters/cfg_dispatch.py), and they reach the cfg
     # wrapper's typed error only where that dispatch also declines.
-    from ..adapters import adapter_for, cfg_dispatch
+    from ..adapters import adapter_for, cfg_dispatch, cfg_pad_rows
     from ..adapters.cfg_parallel import cfg_dispatches_per_cond
     from ..family_select import override_for_worker
 
-    # Fold is this render's default. Where equalize_cond_lengths runs, it records
-    # the real lengths in its place only for a family whose cfg pad restores the
-    # stock call (cfg_pad_restores_stock_call).
+    # Fold, and no stamp, are this render's defaults. Where equalize_cond_lengths
+    # runs, it records the real lengths in its place only for a family whose cfg
+    # pad restores the stock call (cfg_pad_restores_stock_call), and notes a pair
+    # it stamped.
     cfg_dispatch.record_cfg_pair_lengths([])
+    cfg_pad_rows.record_render(None)
     family_override = override_for_worker(worker)
     sp_degree = int(worker.topology.get("ulysses", 1)) * int(worker.topology.get("ring", 1))
     adapter = (adapter_for(patcher.model, family_override)

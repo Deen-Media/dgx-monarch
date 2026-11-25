@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from ..accuracy_waiver import STAMPED_RESULT_KEY
 from ..adapters.flux_views import conditioning_carries_views, request_carries_views
-from ..cfg_pair import text_rows_differ
+from ..cfg_pair import text_rows_differ, text_rows_equal
 from ..constants import GUIDER_TYPE, MODEL_TYPE, NODE_CATEGORY
 from ..mesh import ensure_live
 from ..sampling_contract import custom_schedule_steps
 from ..topology import topology_from_preset
-from . import expander_prompt, requeue_price
+from . import cfg_pair_notice, expander_prompt, requeue_price
 from .common import (
     ModelSpec,
     RenderPipeline,
@@ -107,6 +107,7 @@ class DGXMonarchKSampler:
             "scheduler": scheduler,
             "denoise": float(denoise),
             "_dgxm_krea2_ref_preflight": krea2_ref_preflight_summary(positive, negative),
+            cfg_pair_notice.REQUEST_KEY: text_rows_equal(positive, negative),
         }
         out = run_render(model, request, sampler_latent(
             latent_image, sampler_name, text_rows_differ(positive, negative),
@@ -232,6 +233,7 @@ class DGXMonarchKSamplerPipeline:
                 "scheduler": scheduler,
                 "denoise": float(denoise),
                 "_dgxm_krea2_ref_preflight": ref_summary,
+                cfg_pair_notice.REQUEST_KEY: text_rows_equal(positive, negative),
             }
 
         # Render the first seed through the normal sequential path when this
@@ -320,6 +322,7 @@ class DGXMonarchKSamplerAdvanced:
                 "return_with_leftover_noise": return_with_leftover_noise == "enable",
             },
             "_dgxm_krea2_ref_preflight": krea2_ref_preflight_summary(positive, negative),
+            cfg_pair_notice.REQUEST_KEY: text_rows_equal(positive, negative),
         }
         out = run_render(model, request, sampler_latent(
             latent_image, sampler_name, text_rows_differ(positive, negative),
@@ -433,6 +436,9 @@ class DGXMonarchSamplerCustom:
             "noise_seed": int(getattr(noise, "seed", 0) or 0),
             "noise_object": wire_noise,
             "_dgxm_krea2_ref_preflight": guider.get("_dgxm_krea2_ref_preflight"),
+            # Read by the CFG guiders from their own pair; a dual-model guider
+            # runs two models, which one GPU never folds into one call.
+            cfg_pair_notice.REQUEST_KEY: bool(guider.get(cfg_pair_notice.REQUEST_KEY)),
         }
         steps_hint = max(schedule_steps, 1)
         out = run_render(model, request, latent, cfg_value=guider.get("cfg"), steps_hint=steps_hint)

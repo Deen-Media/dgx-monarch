@@ -1,7 +1,7 @@
 """Worker application of a model-sampling patch on the per-render clone.
 
 Both kinds run ComfyUI's own node on the clone that
-``actor/sampling.model_sampling_render_clone`` builds: ``sd3`` through
+``model_sampling_render_clone`` builds: ``sd3`` through
 ModelSamplingSD3, and ``minimax_h3`` through ``MiniMaxH3SigmaShift``
 (ModelSamplingMiniMaxH3), which puts the paired video and audio sampling on the
 clone, keeps the stock object's noise scale, and sets the two transformer_options
@@ -95,3 +95,20 @@ def apply_model_sampling(render_patcher: Any, wire: AnyModelSamplingWire | None)
 
     shifted, = ModelSamplingSD3().patch(render_patcher, wire["shift"])
     return shifted
+
+
+def model_sampling_render_clone(model_patcher: Any, value: object | None) -> Any:
+    """Return a per-render patcher with an explicit sampling-object patch.
+
+    Comfy patcher clones share the underlying model and object-patch backup. A
+    shifted render can therefore leave that shared model holding its temporary
+    sampling object until another patcher is loaded. Always patch a fresh clone
+    with the resident patcher's stock object, even when this request asks for no
+    override, so an unshifted render cannot inherit the prior render's shift.
+    The patch is stock's node for the wire's kind (``apply_model_sampling``).
+    """
+    model_sampling = normalize_model_sampling(value)
+    stock_sampling = model_patcher.get_model_object("model_sampling")
+    render_patcher = model_patcher.clone()
+    render_patcher.add_object_patch("model_sampling", stock_sampling)
+    return apply_model_sampling(render_patcher, model_sampling)

@@ -448,6 +448,30 @@
       "waivable": false
     },
     {
+      "site": "adapters/cfg_dispatch.py::_refuse_split_hook_groups::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cfg_pad_rows.py::_refuse::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cfg_pad_rows.py::assert_not_lost::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cfg_pad_rows.py::assert_read::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/cfg_parallel.py::assert_cfg_parallel_supported::UnsupportedModelError#0",
       "class": "P",
       "guard": null,

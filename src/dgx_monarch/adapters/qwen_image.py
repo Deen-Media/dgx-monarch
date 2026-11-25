@@ -20,6 +20,7 @@ from typing import Any
 import torch
 
 from ..log import get_logger
+from . import cfg_pad_rows
 from .base import (
     Adapter,
     InjectionContext,
@@ -32,7 +33,6 @@ from .base import (
 )
 from .chroma_text import full_row_text_projections
 from .flux_family import _control_span_overlap
-from .krea2 import _trim_trailing_pad
 from .usp_sequence_order import RankMajorJointOrder
 
 log = get_logger(__name__)
@@ -301,20 +301,24 @@ class QwenImageAdapter(Adapter):
                  len(diffusion_model.transformer_blocks), ctx.topology_sp)
 
     def inject_cfg_pad_forward(self, diffusion_model) -> None:
-        """Mask cfg padding with Qwen's native text-length mask.
+        """Cut the cfg pad off by each entry's stamped row count.
 
-        A uniform trailing pad is trimmed for mask-free attention. Ragged input
-        keeps a `(B, trim)` additive text bias. Fully zero conditioning remains
-        real input, so it is neither trimmed nor masked. Calling the class method
-        avoids re-entering this instance wrapper.
+        A uniform pad is cut for mask-free attention, and a shipped text mask
+        is cut with it, which is stock's own call. A ragged batch keeps a
+        `(B, trim)` additive text bias where no mask shipped. A call with no
+        stamp was not padded and goes to stock as it came (adapters/cfg_pad_rows.py).
+        Calling the class method avoids re-entering this instance wrapper.
         """
 
+        @cfg_pad_rows.reads_rows
         def cfg_pad_forward(self, x, timesteps, context, attention_mask=None, ref_latents=None,
                             additional_t_cond=None, transformer_options={}, control=None, **kwargs):
-            if attention_mask is None:
-                context, bias = _trim_trailing_pad(context)
-                if bias is not None:
-                    attention_mask = bias.squeeze(1)  # (B, 1, trim) -> (B, trim) text-key
+            context, counts = cfg_pad_rows.trim(
+                context, kwargs.pop(cfg_pad_rows.TEXT_ROWS, None), "qwen_image")
+            if attention_mask is not None:
+                attention_mask = cfg_pad_rows.cut_mask(attention_mask, context.shape[1])
+            elif counts is not None:
+                attention_mask = cfg_pad_rows.residual_bias(counts, context.shape[1], context.dtype)
             return type(self)._forward(
                 self, x, timesteps, context, attention_mask=attention_mask,
                 ref_latents=ref_latents, additional_t_cond=additional_t_cond,

@@ -35,6 +35,11 @@ on:
       - "tests/test_lens_text_projections.py"
       - "tests/test_auto_latent_downscale.py"
       - "tests/test_chroma_cfg_pad_forward.py"
+      - "tests/test_cfg_pad_rows.py"
+      - "tests/test_cfg2_zeroed_negative.py"
+      - "tests/real_comfy_helpers.py"
+      - "tests/test_cfg_pad_stamp_delivery.py"
+      - "tests/test_krea2_comfy_exactness.py"
       - "tests/test_chroma_text_projections.py"
       - "tests/test_dropped_scale_gate.py"
       - "tests/test_upstream_gate_damaged_header.py"
@@ -243,6 +248,15 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_chroma_cfg_pad_forward.py
+      # Real comfy Krea2, Lens and Qwen-Image 2.1 through ComfyUI's cond path
+      # and the cfg split: the stamped pad cut and a zeroed negative, each rank
+      # held to stock's call. They skip in the regular CI job.
+      - name: cfg2 pad stamp and zeroed negative vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: >-
+          pytest -q tests/test_cfg_pad_rows.py tests/test_cfg2_zeroed_negative.py
+          tests/test_cfg_pad_stamp_delivery.py
       # Verify the spatial latent ratio from ComfyUI's checkpoint detection.
       # The real-ComfyUI cases skip in ordinary CI, which has no ComfyUI checkout.
       - name: Auto-topology latent ratio vs comfy master (CPU)
@@ -610,6 +624,9 @@ jobs:
           tests/test_compile_surface.py
           tests/test_int8_gemm_kitchen_version.py
           tests/test_fp8_paths_tool.py
+          tests/test_cfg_pad_rows.py
+          tests/test_cfg2_zeroed_negative.py
+          tests/test_cfg_pad_stamp_delivery.py
           tests/test_cond_batch_agreement.py
           tests/test_anima_cond_branch.py
           tests/test_h3_image_row_check_tool.py

@@ -23,6 +23,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from . import cfg_pad_rows
 from .base import (
     Adapter,
     InjectionContext,
@@ -33,7 +34,6 @@ from .base import (
     sp_world,
     usp_options,
 )
-from .krea2 import _trim_trailing_pad
 from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
@@ -89,13 +89,15 @@ def _assert_concat_divisible(concat_len: int, sp: int) -> None:
         )
 
 
-def _trim_context_or_raise(context):
-    """Trim trailing CFG padding or refuse a ragged caption batch.
+def _trim_context_or_raise(context, rows=None):
+    """Cut the Worker's CFG pad by its stamped row counts, or refuse a ragged batch.
 
-    ``cap_embedder`` maps zero rows to bias-valued keys, and maskless attention
-    has no residual-mask fallback. Batch-1 CFG ranks trim exactly.
+    ``rows`` is the stamp (adapters/cfg_pad_rows.py); None means the call was
+    not padded and keeps every row. ``cap_embedder`` maps zero rows to
+    bias-valued keys, and maskless attention has no residual-mask fallback.
+    Batch-1 CFG ranks trim exactly.
     """
-    context, residual = _trim_trailing_pad(context)
+    context, residual = cfg_pad_rows.trim(context, rows, "zimage")
     if residual is not None:
         raise UnsupportedModelError(
             "zimage: one model call batches captions of different real lengths, but Z-Image "
@@ -301,18 +303,21 @@ class ZImageAdapter(Adapter):
     def inject_cfg_pad_forward(self, diffusion_model) -> None:
         """Install maskless CFG asymmetric-prompt support.
 
-        Trim only driver-added trailing zero rows for batch-1 CFG ranks; refuse
-        ragged batches. CFG ranks have ``sp == 1``, so the stock forward retains
-        omni/edit behavior. Unpadded inputs, including ConditioningZeroOut, are
-        unchanged.
+        Cut only the Worker's pad rows, by each entry's stamped count, for
+        batch-1 CFG ranks; refuse ragged batches. CFG ranks have ``sp == 1``,
+        so the stock forward retains omni/edit behavior. Unpadded inputs,
+        including ConditioningZeroOut, are unchanged.
         """
         stock_forward = type(diffusion_model)._forward  # class fn: idempotent, never the bind
 
+        @cfg_pad_rows.reads_rows
         def cfg_pad_forward(self, x, timesteps, context, num_tokens, attention_mask=None,
                             direct_context=None, ref_frames=[],
                             transformer_options={}, **kwargs):
             _reject_ming_image(x, direct_context, ref_frames)
-            context = _trim_context_or_raise(context)
+            context = _trim_context_or_raise(context, kwargs.pop(cfg_pad_rows.TEXT_ROWS, None))
+            if attention_mask is not None:  # Lumina ignores it; cut as the others do
+                attention_mask = cfg_pad_rows.cut_mask(attention_mask, context.shape[1])
             return stock_forward(self, x, timesteps, context, context.shape[1],
                                  attention_mask=attention_mask,
                                  direct_context=direct_context, ref_frames=ref_frames,

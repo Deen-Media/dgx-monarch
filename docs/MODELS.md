@@ -63,7 +63,8 @@ Chroma (Radiance included) and LongCat have cfg2 rows below 1.2 MP, and
 Chroma has a second one from 1.2 to 1.64 MP. Krea 2 has a cfg2 row from 1.2
 to 2.36 MP and Qwen-Image one from 1.2 to 1.77 MP. Boogu has a cfg2 row below
 1.2 MP. Chroma's and Boogu's cfg2 rows take only a prompt and a negative that
-encode to different text rows; an equal pair takes Ulysses. Anima's cfg2 row
+encode to different text rows; an equal pair takes Ulysses, except on an
+MXFP8, NVFP4 or cast file, which keeps every pair on cfg2. Anima's cfg2 row
 was withdrawn on 2026-11-10, so `auto` keeps Ulysses for Anima at every size.
 Each family's Ulysses rows cover the rest. Auto takes a
 cfg2 row at any CFG other than 1, and at CFG 1 under a CFG++ sampler chosen
@@ -93,7 +94,7 @@ that match the tested configurations in its model details. See
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
 | Krea2 (RAW+Turbo) | ✓ | ★ | ★ | 🔒 | ✓ | **HW** | Auto cfg2 covers FP8 and BF16 from 1.2 to 2.36 MP; padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
 | Kroma | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. cfg2 is measured, not the same math: on the shipped zeroed negative it read one-step NRMS 0.009 to 0.011 against one GPU at 1152 and 1536 and full renders diverged (2026-10-16), so `auto` keeps Ulysses. Padded ring needs a waiver. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
-| Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. Auto cfg2 covers a prompt and a negative of different text rows, as on the shipped graph; an equal pair is measured, not the same math (BF16 NRMS 0.034 on cfg2), so `auto` keeps Ulysses for it. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
+| Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. Auto cfg2 covers a prompt and a negative of different text rows, as on the shipped graph; an equal pair is measured, not the same math (BF16 NRMS 0.034 on cfg2), so `auto` keeps Ulysses for it, except on an MXFP8, NVFP4 or cast file, which stays on cfg2. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
 | Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts, while `auto` takes Chroma's cfg2 rows only for a pair of different text rows, so the shipped zeroed negative takes Ulysses and a pair of different rows under `auto` refuses on cfg2; pick uly2 for it. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
 | Ideogram4 | ✓ | ✓ | ★ | 🔒 | ✓ | **HW** | Explicit cfg2 splits the two checkpoints; sharded attention uses Torch Flash. The fp8_scaled pair is measured, not the same math as the BF16 pair: one-step NRMS 0.161 against it on one GPU, past the 0.10 floor, from the file's quantization, not the parallel method. [Details](#model-ideogram4) · [Workflow](../example_workflows/dgx-monarch-ideogram4-t2i.json) |
 | Flux 1 Dev | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Padded ring is guarded; distilled checkpoints use CFG 1. Use converted LoRAs. [Details](#model-flux-1-dev) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
@@ -117,7 +118,7 @@ that match the tested configurations in its model details. See
 | Lens | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Asymmetric cfg2 is measured; padded ring remains guarded. [Details](#model-lens) · [Workflow](../example_workflows/dgx-monarch-lens-t2i.json) |
 | Omnigen2 | ✓ | 🔒 | ✗ | ★ | ✓ | **HW** | Ulysses is unsupported; ring+FSDP refuses. [Details](#model-omnigen2) · [Workflow](../example_workflows/dgx-monarch-omnigen2-t2i.json) |
 | Anima | ✓ | 🔒 | ★⏳ | ✓ | 🔒 | **HW** | Use the supplied graph for cross-attention and masks. Since 2026-11-10 the Workers prepare the text as stock ComfyUI does, so one GPU folds the prompt and the negative into one call; cfg2 splits that call into two, one per rank, which is not the same math, so `auto` keeps Ulysses at every size. On 2026-11-11, with the first Spark capped at max 2100 MHz, one GPU, DP2, `auto` and Ulysses matched stock ComfyUI exactly and both FSDP presets matched their resident twins; ring2 and a LoRA have no record. The Ulysses mark's grant was withdrawn on 2026-11-10 to await a comparison against stock; that comparison is now recorded, and the mark stays as it is until the grant is restored. [Details](#model-anima) · [Workflow](../example_workflows/dgx-monarch-anima-t2i.json) |
-| Boogu | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers FP8 below 1.2 MP when the prompt and the negative encode to different text rows, as on the shipped graph; such a pair uses per-conditioning cfg2 dispatch. An equal pair is measured, not the same math: one-step NRMS 0.014 to 0.025 against one GPU on cfg2 and full schedules diverging (2026-11-07), so `auto` keeps Ulysses for it. [Details](#model-boogu) · [Workflow](../example_workflows/dgx-monarch-boogu-t2i.json) |
+| Boogu | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers FP8 below 1.2 MP when the prompt and the negative encode to different text rows, as on the shipped graph; such a pair uses per-conditioning cfg2 dispatch. An equal pair is measured, not the same math: one-step NRMS 0.014 to 0.025 against one GPU on cfg2 and full schedules diverging (2026-11-07), so `auto` keeps Ulysses for it, except on an MXFP8, NVFP4 or cast file, which stays on cfg2. [Details](#model-boogu) · [Workflow](../example_workflows/dgx-monarch-boogu-t2i.json) |
 | PixelDiT / PiD | ✓ | ✗ | ★ | ✓ | ✓ | **HW** | Only BF16 was compared; quantized sequence sharding and cfg2 refuse. [Details](#model-pixeldit-pid) · [Workflow](../example_workflows/dgx-monarch-pixeldit-t2i.json) |
 | Kandinsky5-Image | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Use SD3 shift 3; preserve the native 16-channel latent. [Details](#model-kandinsky5-image) · [Workflow](../example_workflows/dgx-monarch-kandinsky5-image.json) |
 
@@ -177,7 +178,16 @@ LoRAs on a resident topology.
 From 1.2 to 2.36 MP auto selects cfg2 for an FP8 or BF16 checkpoint at any
 CFG other than 1, and at CFG 1 under a CFG++ sampler such as the template's
 `euler_cfg_pp`, which keeps the unconditional pass, when a DGX Monarch
-KSampler node names it. Only FP8-scaled was measured among the FP8 files;
+KSampler node names it. A prompt and a negative of equal text rows, a
+ConditioningZeroOut of the positive included, fold into one call of two
+entries on one GPU, which cfg2's two calls of one do not reproduce (one-step
+NRMS 0.0104 to 0.040 on the pair, [equal pairs](VALIDATION.md#equal-pairs-krea2-qwen-2026-11-24)).
+Since 2026-11-24 such a pair leaves cfg2 only where its fallback is bytes
+equal to one GPU: on BF16 auto takes Ulysses (row 12, bytes equal), and on FP8
+it stays on cfg2, because its fallback is the SAGE route (one-step NRMS 0.030
+to 0.058). Every cfg2 render of an equal pair writes a log line; when cfg2 was
+chosen by hand the browser also shows a notice, once per queued prompt. Nothing
+marks the sampler node. Only FP8-scaled was measured among the FP8 files;
 MXFP8 and NVFP4 share its precision class. INT8 renders keep Ulysses: their
 cfg2 read bit-identical but no faster than Ulysses below 1536 (0.97x to
 1.03x) and 1.08x faster at 1536, so choose cfg2 explicitly only where a size
@@ -189,7 +199,19 @@ Ulysses, with SAGE on FP8 from 1.2 MP. A Sampler Custom graph names no
 sampler, so auto treats it the same way at CFG 1. On cfg2,
 asymmetric prompts are padded automatically; combined Ulysses+cfg has no such
 padding and refuses them. A zeroed negative is real conditioning and stays
-unmasked.
+unmasked: its own zero rows are never taken for padding. Correction
+(2026-11-24): before 1.5.0, a zeroed negative shorter than the prompt (the
+ConditioningZeroOut of an empty prompt) ran on cfg2 at the prompt's row count,
+pad rows and all, where stock calls it at its own; on the pair that read
+one-step NRMS 0.0357 against one GPU at 1280 square. The pad now stamps each
+conditioning's own row count and the forward cuts to it. A zeroed negative as
+long as the prompt is not padded; on the pair it read one-step NRMS 0.0104
+against one GPU (2026-11-24). One GPU folds such a pair of equal text rows
+into one batch-2 call where cfg2 makes two batch-1 calls, the difference the
+[equal-pair records](VALIDATION.md#campaign-k-equal-pairs) show on other
+families; each cfg2 rank's call is stock's own call for its conditioning
+(bytes equal on CPU). So on BF16 auto takes Ulysses for an equal
+pair, which read bytes equal to one GPU there.
 
 <a id="model-kroma"></a>
 
@@ -318,7 +340,8 @@ Below 1.64 MP auto selects cfg2 for BF16, FP8 and INT8 checkpoints when the
 prompt and the negative encode to different text rows, at any CFG other than
 1 and at CFG 1 under a CFG++ sampler that a DGX Monarch KSampler node names.
 An equal pair takes Ulysses: the uly2 fallback below 1.2 MP, rows 21 and 22
-from 1.2 MP. Above 1.64 MP it selects Ulysses, with SAGE on FP8,
+from 1.2 MP; on an MXFP8, NVFP4 or cast file it keeps cfg2, which logs a
+notice. Above 1.64 MP it selects Ulysses, with SAGE on FP8,
 which needs sageattention on each worker. The mask and NVFP4
 guards still apply.
 
@@ -1417,7 +1440,7 @@ Detail status (`Qwen-Image`): **HW**.
 
 **Tested configurations.** Base 2512 FP8 Ulysses/cfg2 and the named FSDP presets; Edit-2511 FP8-mixed DP2/cfg2. The base-model FSDP tests do not cover Edit FSDP. Pure-Ulysses one-step renders of the base 2512 FP8 file produced identical tensors to one GPU at 1328 and 1024 with odd and even image and text streams, and at batch 2. Campaign K (2026-10-14) timed base 2512 FP8 cfg2 at 1152, 1216, 1280 and 1328 square, bit-identical to one GPU.
 
-**Known limitations.** Default Edit `index_timestep_zero` refuses sequence sharding. Batch-one DP FSDP is refused; base-model results do not establish accuracy for Edit or other reference methods. On Ulysses, auto keeps the Init node's attention kernel and does not switch base FP8 to SAGE, because SAGE on Ulysses or ring measured over the fidelity limit; an explicit SAGE choice still runs as selected. The LoRA test graph also exceeded the limit on Ulysses with Torch Flash and cuDNN. From 1.2 to 1.77 MP auto selects cfg2 for an FP8 checkpoint; only base 2512 was timed, and an Edit-2511 FP8 file with the same header would take that row too.
+**Known limitations.** Default Edit `index_timestep_zero` refuses sequence sharding. Batch-one DP FSDP is refused; base-model results do not establish accuracy for Edit or other reference methods. On Ulysses, auto keeps the Init node's attention kernel and does not switch base FP8 to SAGE, because SAGE on Ulysses or ring measured over the fidelity limit; an explicit SAGE choice still runs as selected. The LoRA test graph also exceeded the limit on Ulysses with Torch Flash and cuDNN. From 1.2 to 1.77 MP auto selects cfg2 for an FP8 checkpoint when the prompt and the negative encode to different text rows, and Ulysses for an equal pair (since 2026-11-24, [equal pairs](VALIDATION.md#equal-pairs-krea2-qwen-2026-11-24)); only base 2512 was timed, and an Edit-2511 FP8 file with the same header would take that row too. An MXFP8 or NVFP4 file reads as FP8 to auto but has no bytes-equal sharded route, so its equal pair stays on cfg2, which logs a notice; so does a BF16 file cast to fp8 by the loader's `weight_dtype`, which no record has measured.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-qwen-image).
 
@@ -1572,7 +1595,7 @@ Detail status (`Boogu`): **HW**.
 
 **Tested configurations.** FP8 Ulysses, FSDP without changing stored precision, and cfg2 with unequal prompts. Pure-Ulysses one-step renders of the fp8 file produced identical tensors to the dp2 reference at 1024 and 1040, odd and even streams. Campaign K (2026-10-14) timed cfg2 on the shipped unequal pair at 1024 square, bit-identical to one GPU. On 2026-11-07 that pair read bit-identical again, and two pairs of equal text rows read one-step NRMS 0.014 and 0.025 and full-schedule NRMS 0.279 and 0.077 against one GPU ([equal pairs](VALIDATION.md#campaign-k-equal-pairs)).
 
-**Known limitations.** Below 1.2 MP auto selects cfg2 for FP8 when the prompt and the negative encode to different text rows, and Ulysses for an equal pair, which one GPU folds into one batch-2 call that explicit cfg2 does not reproduce. Do not pad a dispatching conditioning pair.
+**Known limitations.** Below 1.2 MP auto selects cfg2 for FP8 when the prompt and the negative encode to different text rows, and Ulysses for an equal pair, which one GPU folds into one batch-2 call that explicit cfg2 does not reproduce; an MXFP8, NVFP4 or cast file keeps every pair on cfg2. Do not pad a dispatching conditioning pair.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-boogu).
 

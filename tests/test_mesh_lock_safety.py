@@ -1153,7 +1153,7 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "ContextVar read, not a monarch future",
     ("nodes/render_submit.py", "_collect_earlier_results_before_setup_change"):
         "ContextVar read, not a monarch future",
-    ("nodes/render_submit.py", "_reattach_facts"):
+    ("nodes/reattach_retry.py", "reattach_facts"):
         "ContextVar read, not a monarch future",
     ("old_model.py", "graph_names"):
         "ContextVar read, not a monarch future",

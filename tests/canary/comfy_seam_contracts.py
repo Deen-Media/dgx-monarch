@@ -243,6 +243,13 @@ before ComfyUI 0.45.0 the MiniMax-H3-Image seams say the model is absent
                               patcher and keeps on its clones, and a loaded
                               entry's size, which tell the loader's held
                               credit a text encoder from any other model
+ 67. cfg pad row stamp        a conditioning's own model_conds kept by
+                              convert_cond and under encode_model_conds, a
+                              one-value CONDRegular repeated and batched with
+                              the text, and an int64 model cond reaching the
+                              diffusion model's forward as a keyword through
+                              calc_cond_batch and BaseModel.apply_model, the
+                              path each entry's pre-pad row count rides on cfg2
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -3615,6 +3622,115 @@ def _assert_copy_free_drop_seam() -> None:
         mm.soft_empty_cache = soft_empty_cache
         if saved[3] is not None:
             os.environ[resident_ledger.COPY_FREE_DROP_DISABLE_ENV] = saved[3]
+
+
+def _assert_cfg_pad_row_stamp_seam() -> None:
+    """The path each cfg2 entry's pre-pad row count rides to the forward.
+
+    ``actor/sampling.equalize_cond_lengths`` stamps every entry of a padded pair
+    with its own row count in the entry's ``model_conds``
+    (``adapters/cfg_pad_rows.stamp``), and the family's cfg-pad forward cuts the
+    pad to it. That needs four stock behaviours: ``convert_cond`` keeps a
+    conditioning's own model_conds, ``encode_model_conds`` merges extra_conds
+    over them rather than replacing them, a one-value ``CONDRegular`` repeats to
+    the latent batch and concatenates across the pair, and ``_apply_model``
+    hands every model cond to the diffusion model as a keyword, keeping an
+    int64 tensor's dtype.
+    """
+    import comfy.conds
+    import comfy.model_base
+    import comfy.sampler_helpers
+    import comfy.samplers
+    import torch
+
+    from dgx_monarch.adapters import cfg_pad_rows
+
+    key = cfg_pad_rows.TEXT_ROWS
+    x_in = torch.zeros(2, 4, 8, 8)
+    pair = [[[torch.randn(1, 10, 6), cfg_pad_rows.stamp({}, 10)]],
+            [[torch.zeros(1, 10, 6), cfg_pad_rows.stamp({}, 6)]]]
+
+    def extra_conds(**params):
+        return {"c_crossattn": comfy.conds.CONDRegular(params["cross_attn"])}
+
+    batched, sides = [], []
+    for side in pair:
+        converted = comfy.sampler_helpers.convert_cond(side)
+        assert key in converted[0]["model_conds"], (
+            "cfg pad row stamp seam: convert_cond no longer keeps a conditioning's own "
+            "model_conds, so the pre-pad row count never reaches the model")
+        encoded = comfy.samplers.encode_model_conds(extra_conds, converted, x_in, "cpu",
+                                                    "positive")
+        assert set(encoded[0]["model_conds"]) == {"c_crossattn", key}, (
+            "cfg pad row stamp seam: encode_model_conds no longer merges extra_conds over "
+            "the conditioning's own model_conds")
+        sides.append(encoded)
+        batched.append(comfy.samplers.get_area_and_mult(encoded[0], x_in, torch.tensor([1.0])))
+    assert comfy.samplers.can_concat_cond(batched[0], batched[1]), (
+        "cfg pad row stamp seam: a stamped, equally padded pair no longer batches")
+    kwargs = comfy.samplers.cond_cat([item.conditioning for item in batched])
+    assert key in kwargs, (
+        "cfg pad row stamp seam: cond_cat no longer keeps a model cond it does not know")
+    assert kwargs[key].tolist() == [10, 10, 6, 6], (
+        f"cfg pad row stamp seam: the batched counts read {kwargs[key].tolist()}, "
+        "not one per latent row in the pair's order")
+    # The cfg split's slice rule (adapters/cfg_parallel._take_slice) then hands
+    # each rank its own rows' counts.
+    from dgx_monarch.adapters.cfg_parallel import _take_slice
+
+    assert [_take_slice(kwargs[key], 4, 2, rank).tolist() for rank in (0, 1)] == [[10, 10], [6, 6]]
+
+    # End to end, as a sampler step runs it: calc_cond_batch batches the pair
+    # (cond_cat) and calls the model's apply_model, here BaseModel's own, whose
+    # executor and _apply_model hand every model cond to the diffusion model as
+    # a keyword. A ComfyUI that drops an unknown model cond in either place
+    # loses the count; the cfg split refuses such a call, and this seam turns
+    # red first.
+    seen: list = []
+
+    class _Sampling:
+        calculate_input = staticmethod(lambda sigma, x: x)
+        timestep = staticmethod(lambda t: t)
+        calculate_denoised = staticmethod(lambda sigma, out, x: out)
+
+    class _Patcher:
+        prepare_state = staticmethod(lambda timestep, model_options: None)
+        get_free_memory = staticmethod(lambda device: 1 << 40)
+        apply_hooks = staticmethod(lambda hooks=None: {})
+        is_dynamic = staticmethod(lambda: False)
+
+    class _Model:
+        model_sampling = _Sampling()
+        current_patcher = _Patcher()
+        apply_model = comfy.model_base.BaseModel.apply_model
+        _apply_model = comfy.model_base.BaseModel._apply_model
+
+        def memory_required(self, input_shape, cond_shapes=None):
+            return 0
+
+        def get_dtype_inference(self):
+            return torch.float16
+
+        def process_timestep(self, t, **_kwargs):
+            return t
+
+        def diffusion_model(self, x, t, context=None, control=None, transformer_options=None,
+                            **model_kwargs):
+            seen.append((list((transformer_options or {}).get("cond_or_uncond", [])),
+                         model_kwargs.get(key)))
+            return x
+
+    comfy.samplers.calc_cond_batch(_Model(), sides, x_in, torch.tensor([1.0]), {})
+    assert len(seen) == 1 and seen[0][1] is not None, (
+        "cfg pad row stamp seam: calc_cond_batch and BaseModel.apply_model no longer hand "
+        f"an unknown model cond to the diffusion model as a keyword (calls: {seen})")
+    order, counts = seen[0]
+    expected = [n for side in order for n in ([10, 10] if side == 0 else [6, 6])]
+    assert counts.dtype == torch.long and counts.tolist() == expected, (
+        f"cfg pad row stamp seam: the counts reached the forward as {counts.dtype} "
+        f"{counts.tolist()} for conditionings {order}, not {expected} as int64")
+    cut, ragged = cfg_pad_rows.trim(torch.zeros(1, 10, 6), torch.tensor([6]), "canary")
+    assert cut.shape[1] == 6 and ragged is None
 
 
 def _assert_held_encoder_mark_seam() -> None:
@@ -7821,6 +7937,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("driver spend wraps", _assert_driver_spend_wraps_seam),
     ("adaptive-step samplers", _assert_adaptive_step_samplers_seam),
     ("held encoder mark", _assert_held_encoder_mark_seam),
+    ("cfg pad row stamp", _assert_cfg_pad_row_stamp_seam),
 )
 
 

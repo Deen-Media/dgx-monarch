@@ -16,6 +16,9 @@ from ..log import get_logger
 from ..sampling_contract import custom_schedule_steps
 from ..transfer_utils import failure_summary, safe_call
 from . import latent_outputs
+from .model_sampling_render import (  # the per-render clone, beside the patch it carries
+    model_sampling_render_clone as model_sampling_render_clone,
+)
 from .sampling_validation import require_known_sampler
 
 log = get_logger(__name__)
@@ -56,8 +59,10 @@ def equalize_cond_lengths(adapter, positive, negative, latent_samples):
     `Adapter.cfg_cond_padding`:
 
       "pad": append zero rows, and extend a shipped text keep-mask with zeros
-                    to match; where none ships, the family's patched forward
-                    re-derives one (krea2: inject_cfg_pad_forward).
+                    to match. A family whose patched forward restores stock's
+                    call (``cfg_pad_restores_stock_call``) gets each entry's
+                    pre-pad row count stamped beside it, and its forward cuts
+                    the pad back off by that count (adapters/cfg_pad_rows.py).
       "pad+mask": append zero rows and attach an additive attention bias to
                     the conditioning dict; the stock forward applies it over
                     the joint [text, image] keys. Chroma instead trims both
@@ -76,7 +81,7 @@ def equalize_cond_lengths(adapter, positive, negative, latent_samples):
     lengths, before any pad, when the family's `cfg_pad_restores_stock_call` is
     true, and otherwise an empty list, which reads as a fold.
     """
-    from ..adapters import cfg_dispatch
+    from ..adapters import cfg_dispatch, cfg_pad_rows
     rule = adapter.cfg_cond_padding
     entries = [*positive, *negative]
     lengths = [t.shape[1] for t in map(_cond_tensor, entries) if t is not None]
@@ -132,6 +137,9 @@ def equalize_cond_lengths(adapter, positive, negative, latent_samples):
     elif rule == "pad+text-mask":
         # Hunyuan builds its own joint mask from (B, text), so align the text extent.
         longest = -(-longest // 8) * 8
+    # Each entry's own row count, for a family whose cfg-pad forward cuts the
+    # pad back off by it; the render is noted as stamped (cfg_pad_rows.stamps_for).
+    stamps = cfg_pad_rows.stamps_for(adapter)
 
     def stretch(cond_list):
         out = []
@@ -176,6 +184,8 @@ def equalize_cond_lengths(adapter, positive, negative, latent_samples):
                 appended = key_pos >= rows
                 bias = appended.to(tensor.dtype) * torch.finfo(tensor.dtype).min
                 extras["attention_mask"] = bias.unsqueeze(0).expand(tensor.shape[0], -1)
+            if stamps and tensor is not None:  # every entry, padded or not
+                extras = cfg_pad_rows.stamp(extras, rows)
             out.append([tensor if tensor is not None else entry[0], extras])
         return out
 
@@ -426,26 +436,6 @@ def make_progress_callback(progress_port, total_steps: int, cancel_event=None):
             safe_call(log.debug, "progress finish signal failed: %s", failure_summary(exc))
 
     return callback, finish
-
-
-def model_sampling_render_clone(model_patcher: Any, value: object | None) -> Any:
-    """Return a per-render patcher with an explicit sampling-object patch.
-
-    Comfy patcher clones share the underlying model and object-patch backup. A
-    shifted render can therefore leave that shared model holding its temporary
-    sampling object until another patcher is loaded. Always patch a fresh clone
-    with the resident patcher's stock object, even when this request asks for no
-    override, so an unshifted render cannot inherit the prior render's shift.
-    The patch is stock's node for the wire's kind (actor/model_sampling_render.py).
-    """
-    from ..model_sampling import normalize_model_sampling
-    from .model_sampling_render import apply_model_sampling
-
-    model_sampling = normalize_model_sampling(value)
-    stock_sampling = model_patcher.get_model_object("model_sampling")
-    render_patcher = model_patcher.clone()
-    render_patcher.add_object_patch("model_sampling", stock_sampling)
-    return apply_model_sampling(render_patcher, model_sampling)
 
 
 def run_ksampler(

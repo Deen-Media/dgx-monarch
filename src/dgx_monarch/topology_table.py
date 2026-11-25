@@ -32,7 +32,10 @@ _INF = float("inf")
 AUTO_TABLE: tuple[AutoRule, ...] = (
     # --- krea2 (wan-family DiT, image) -----------------------------------
     AutoRule(15, "krea2", (), 1.2, 2.36, 2, {"cfg": 2}, False,
-             "cfg2 from 1.2 to 2.36 MP on FP8 and BF16: Campaign K (2026-10-14, ComfyUI "
+             "cfg2 from 1.2 to 2.36 MP on FP8 and BF16; an equal pair leaves cfg2 only where "
+             "its fallback is bytes equal, so on BF16 it takes row 12 (cfg2 read 1-step NRMS "
+             "0.0104 to 0.040 on such pairs on 2026-11-24) and on FP8, whose fallback is "
+             "row 11's SAGE route, it stays here: Campaign K (2026-10-14, ComfyUI "
              "e8665ca8, head capped at 2100 MHz) read Turbo fp8_scaled bit-identical to one "
              "GPU and 1.21x to 1.29x faster than uly2 with SAGE_AUTO at 1152 to 1536 square, "
              "at CFG 1 under euler_cfg_pp and at CFG 4.5 under euler, and RAW BF16 "
@@ -98,10 +101,11 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "2026-08-11)"),
     # --- qwen_image (dual-stream 60-block MMDiT, ~20B; Chroma recipe) ------
     AutoRule(68, "qwen_image", (), 1.2, 1.77, 2, {"cfg": 2}, False,
-             "cfg2 from 1.2 to 1.77 MP on FP8: Campaign K (2026-10-14, ComfyUI e8665ca8, "
-             "head capped at 2100 MHz) read base 2512 FP8 bit-identical to one GPU and "
-             "1.58x to 1.66x faster than uly2 at 1152, 1216, 1280 and 1328 square; "
-             "Edit-2511 was not measured"),
+             "cfg2 from 1.2 to 1.77 MP on FP8 for a prompt pair whose text rows differ "
+             "(an equal pair folds into one call on one GPU and takes row 71): Campaign K "
+             "(2026-10-14, ComfyUI e8665ca8, head capped at 2100 MHz) read base 2512 FP8 "
+             "bit-identical to one GPU and 1.58x to 1.66x faster than uly2 at 1152, 1216, "
+             "1280 and 1328 square; Edit-2511 was not measured"),
     AutoRule(71, "qwen_image", ("fp8",), 1.2, _INF, 2, {"ulysses": 2}, False,
              "sage off since 2026-10-05: on the shipped 1328x1328 base 2512 FP8 "
              "graph, auto with SAGE_AUTO read 1-step NRMS 0.162 against one GPU, "

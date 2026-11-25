@@ -34,7 +34,7 @@ from ..qwen_image21_cache import normalize_qwen_image21_cache
 from ..sampling_contract import latent_size_tags
 from ..skip_layer_guidance import SkipLayerGuidanceSpec, normalize_skip_layer_guidance
 from ..topology import Topology, choose_auto_topology, topology_from_preset
-from ..topology_cfg_evidence import sniffed_checkpoint_variant
+from ..topology_cfg_evidence import file_tags, loaded_quant_kind
 from ..transfer import pack_conditioning
 from ..transfer_utils import (
     prefer_error,
@@ -210,8 +210,6 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     sniffed, quant = sniff_checkpoint_for_topology(path)
     forced = family_select.override_for_model(model)
     family = family_select.effective_family(sniffed, forced)
-    # Read under an override too: naming krea2 must not lift a Kroma exclusion.
-    variant = sniffed_checkpoint_variant(path, family)
     if forced:
         # A forced family must not emit the header-selected advisory. Warn once
         # regardless of promotion status and log the header result for diagnosis.
@@ -233,11 +231,7 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     # it too. Keyed by path, so each unmatched file gets its own hint.
     if not forced and family == "unknown" and _first_impl_warn(f"unknown-family:{path}"):
         _warn_nearest_signature(path)
-    weight_dtype = model.options.get("weight_dtype", "default")
-    # Keep fp32 in this set (the sniff reports it as itself): the loader casts
-    # every full-precision storage kind to fp8, so the fp8 row describes it.
-    if quant in {"bf16", "fp16", "fp32"} and weight_dtype.startswith("fp8"):
-        quant = "fp8"
+    quant = loaded_quant_kind(quant, model.options.get("weight_dtype", "default"))
 
     # Per-frame spatial megapixels of the grid the workers will sample, at the
     # ratio comfy's latent format declares for this checkpoint (the legacy 8x/RGB
@@ -254,8 +248,11 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     # The tags and the variant ride only when set, so an untagged call keeps its shape.
     tags: dict[str, Any] = {name: True for name, on in (
         ("keeps_uncond", keeps_uncond), ("pair_differs", pair_differs), ("views", views)) if on}
-    if variant:
+    found = file_tags(path, family, quant, pair_differs)
+    if variant := found.get("variant"):
         tags["variant"] = variant
+    if kind := found.get("pair_kind"):
+        tags["pair_kind"] = kind
     decision = choose_auto_topology(
         family, quant, megapixels, world, cfg_value=cfg_value, batch_size=shape[0], **tags)
     # Observed by telemetry only.

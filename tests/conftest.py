@@ -189,6 +189,20 @@ def _the_decode_reliefs_note_of_a_fleet_ends_with_the_test():
 
 
 @pytest.fixture(autouse=True)
+def _a_stamped_cfg_pair_ends_with_the_test():
+    """``cfg_pad_rows`` notes the render whose pair the cfg pad stamped: process state.
+
+    A Worker clears it at every render (``actor/sample_protocol.run_sample``);
+    a test that pads a pair leaves it set, and a later test's unstamped call
+    with text would then meet the lost-stamp refusal.
+    """
+    yield
+    pad_rows = sys.modules.get("dgx_monarch.adapters.cfg_pad_rows")
+    if pad_rows is not None:
+        pad_rows.record_render(None)
+
+
+@pytest.fixture(autouse=True)
 def _no_test_takes_the_switches_left_on_this_box(monkeypatch):
     """A Worker reads ``~/.config/dgx-monarch/worker.env`` as it starts (``actor/worker_switches.py``).
 

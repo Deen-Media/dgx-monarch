@@ -116,19 +116,37 @@ them in one batched call (`equalize_cond_lengths`, actor/sampling.py):
 `"pad"` appends zero rows to the shorter text tensor; `"pad+mask"` also
 attaches an additive attention bias. A `"pad"` family whose stock forward cannot
 see the synthetic rows adds `inject_cfg_pad_forward`, a cfg-only forward that
-finds those zero rows and, on a call that arrives without a mask, trims a
-uniform all-pad tail rather than masking it, so the common cfg-split batch=1
-case runs mask-free on the flash SDPA fast path. Lens's shipped template takes
-the masked path instead: its GPT-OSS text encoder always returns a keep-mask,
-which the driver extends over the pad rows and the forward passes to stock.
-A float mask disqualifies flash, and masked SDPA measured about 3x slower
-per attention call on GB10 (14.75 ms against 4.94 ms, VALIDATION.md).
-The trim is exact for the kept image tokens because the
-synthetic rows are removed before attention and never become keys. A ragged
-batch may keep an additive bias over only the residual per-entry pad when the
-stock path can honor it; maskless families reject the ragged case. Flux2 needs
-no pad forward: ComfyUI front-pads its text conds to 512 tokens, so the concat
-is already shape-equal.
+cuts the pad back off, and declares `cfg_pad_restores_stock_call`: Krea2,
+Qwen-Image, Mage-Flow, Z-Image, Kandinsky5 and Lens. The cut goes by count,
+never by looking for zero rows. A zeroed negative (ConditioningZeroOut) is
+nothing but zero rows of real conditioning, and a prompt can end in zero rows
+of its own, so the pad stamps every entry of the pair with its own row count
+from before the pad, as a model cond (`adapters/cfg_pad_rows.py`). ComfyUI
+batches and slices that count with the text and hands it to the forward as a
+keyword; the forward pops it and cuts the text, and a shipped keep-mask with
+it, to that count. A call with no stamp was not padded and reaches stock as it
+came. Each such forward carries the `reads_rows` mark, and the cfg split
+refuses a stamped call whose model forward lacks it, so a stamp never reaches
+a forward that would ignore it. The Worker also notes each render whose pair it
+stamped, and the cfg split refuses, class P, a call of that render that carries
+text but no count, so a count lost on the way never leaves the pad in the
+attention unseen. The stamp lives only in the copies the
+Worker's pad makes of one sample's conditioning. The `cfg pad row stamp` seam
+in `tests/canary/comfy_seam_contracts.py` holds the ComfyUI behaviour the path
+rests on, end to end through `calc_cond_batch` and `BaseModel.apply_model`. With the pad cut away, the common cfg-split batch=1 case runs
+mask-free on the flash SDPA fast path. Lens's shipped template keeps its
+mask: its GPT-OSS text encoder always returns a keep-mask, which the pad
+extends over its rows and the forward cuts back to the entry's own, so stock
+gets the mask it gets on one GPU. A float mask disqualifies flash, and masked
+SDPA measured about 3x slower per attention call on GB10 (14.75 ms against
+4.94 ms, VALIDATION.md). The cut is exact because the synthetic rows are
+removed before attention and never become keys: each rank makes stock's own
+call for its entry. A ragged batch may keep an additive bias over only the
+residual per-entry pad when the stock path can honor it; maskless families
+reject the ragged case. Flux2 needs no pad forward: ComfyUI front-pads its
+text conds to 512 tokens, so the concat is already shape-equal. A family that
+dispatches per cond (`cfg_batch_constant`: Boogu, Omnigen2) is never padded,
+and Boogu's cfg forward trims only by a shipped keep-mask.
 
 A `"pad+mask"` family without its own `inject_cfg_pad_forward` lets its stock
 forward apply the driver-attached bias as-is (Flux 1.x and LongCat, over the
