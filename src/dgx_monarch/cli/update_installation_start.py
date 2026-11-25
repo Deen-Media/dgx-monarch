@@ -68,7 +68,10 @@ def start_restored(request: dict[str, Any], installation: dict[str, Any], genera
         if identity is None:
             time.sleep(0.2)
             continue
-        installation["durable"](journal / "prior-start.json", json.dumps(current, sort_keys=True).encode())
+        if request.get("attempted") is not False:
+            # The record belongs to this host's journal; a host the update never
+            # reached has none, and the restore must not make one.
+            installation["durable"](journal / "prior-start.json", json.dumps(current, sort_keys=True).encode())
         if not generation["write_marker"](request["generation"], *identity):
             raise ValueError("prior generation could not be recorded")
         if generation["active_identity"](pattern, request["proc_table"], request["endpoint"], *identity) != identity:

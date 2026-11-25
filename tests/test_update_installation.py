@@ -183,8 +183,13 @@ def test_cleanup_refuses_live_release_and_preserves_recovery(layout):
     assert (external / "do-not-delete").exists()
 
 
-@pytest.mark.parametrize("fenced", [False, True])
-def test_legacy_rollback_start_records_real_generation_identity(layout, monkeypatch, tmp_path, fenced):
+@pytest.mark.parametrize(("fenced", "attempted"), [(False, True), (True, True), (False, False), (True, False)])
+def test_legacy_rollback_start_records_real_generation_identity(layout, monkeypatch, tmp_path, fenced, attempted):
+    """A started prior Worker is confirmed on every host, one the update never reached included.
+
+    A reached host keeps the start in its journal; an unreached host has no
+    journal, and the restore confirms it without making one.
+    """
     import os
     import socket
     import subprocess
@@ -201,8 +206,9 @@ def test_legacy_rollback_start_records_real_generation_identity(layout, monkeypa
         old += b"ExecStartPre=canonical generation invalidator\n"
         unit.write_bytes(old)
         request["prior"]["unit"] = base64.b64encode(old).decode()
-    remote.main(request)
-    remote.main({**request, "operation": "compensate"})
+    if attempted:
+        remote.main(request)
+        remote.main({**request, "operation": "compensate"})
     home = Path.home()
     for path in (home / ".local", home / ".local/state", home / ".local/state/dgx-monarch"):
         path.mkdir(exist_ok=True)
@@ -240,12 +246,15 @@ def test_legacy_rollback_start_records_real_generation_identity(layout, monkeypa
         return {**request["prior"], "pid": str(process.pid), "birth": generation["birth"](str(process.pid))}
 
     api = {"read": remote.read, "stopped": remote.stopped, "link_state": remote.link_state, "durable": remote.durable, "snapshot": running_snapshot}
-    start_request = {"token": TOKEN, "prior": request["prior"], "python_bin": sys.executable, "address": address, "generation": TOKEN, "pattern": pattern, "proc_table": proc_table, "endpoint": endpoint}
+    start_request = {"token": TOKEN, "prior": request["prior"], "python_bin": sys.executable, "address": address, "generation": TOKEN, "pattern": pattern, "proc_table": proc_table, "endpoint": endpoint, "attempted": attempted}
     try:
         start_restored(start_request, api, generation)
         assert process is not None
         assert generation["marker_identity"](TOKEN) == (str(process.pid), generation["birth"](str(process.pid)))
-        assert (base / "transactions" / TOKEN / "prior-start.json").exists()
+        if attempted:
+            assert (base / "transactions" / TOKEN / "prior-start.json").exists()
+        else:
+            assert not (base / "transactions").exists()
         assert unit.read_bytes() == old
     finally:
         if process is not None:
