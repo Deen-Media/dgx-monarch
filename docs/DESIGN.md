@@ -783,13 +783,17 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   caption masks that mask a row), the sampler tags the latent
   (`nodes/reference_preflight.py`) and the pair keeps cfg2. The tag reads
   each mask as ComfyUI's `extra_conds` hands it on, and a test drives each
-  branch through the real sharded forward (`tests/test_sequence_tag_forwards.py`). Each of these
-  lifts keeps the pair only on a cfg2 row this render can run: at world 4
+  branch through the real sharded forward (`tests/test_sequence_tag_forwards.py`). A file's
+  kind keeps the pair only on a cfg2 row this render can run: at world 4
   with an odd batch the row leaves two data-parallel ranks the batch cannot
   split, where auto refuses it (`topology.cfg_row_strands`), so there the pair
-  takes the row its scope sends it to, as it did before the lift, and the
-  reason names what would run a pair that row's forward refuses. A lift never
-  turns a route into a refusal (`tests/test_pair_scope_grid.py`). A cfg2
+  takes the row its scope sends it to, and the kind never turns a route into
+  a refusal. A pair the sequence forward refuses has no route there, since
+  every preset that tiles world 4 splits the sequence, so it meets that
+  refusal at once, and the refusal names what runs it: a batch the spare
+  ranks divide, world 2, or one GPU. A header the tag cannot read never gets
+  that far, since auto refuses it first. `tests/test_pair_scope_grid.py`
+  names every cell whose outcome changed against the scopes before. A cfg2
   render of an equal pair says so (`nodes/cfg_pair_notice.py`), from every
   KSampler node and from Sampler Custom behind a CFG guider: a log line per
   render, and for a hand-chosen cfg2 a browser notice per queued prompt, never

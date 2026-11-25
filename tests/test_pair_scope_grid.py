@@ -6,7 +6,10 @@ refuses) keeps the pair on the cfg2 row. At world 4 a cfg2 row leaves two
 data-parallel ranks that an odd batch cannot split, where auto refuses rather
 than build a cfg-plus-sequence composite. A lift that kept the pair there
 would turn the scope's route into that refusal, so the walk takes the scope's
-row instead (topology.cfg_row_strands).
+row instead (topology.cfg_row_strands). The one exception is a pair the
+sequence forward refuses: the scope's row is a sequence route that refused it
+in the forward, so it now meets auto's refusal at once, named cell by cell
+below.
 
 The oracle is the walk itself under the scopes this branch started from
 (dev 143acbe): rows 19, 20 and 79 scoped every kind, rows 15 and 68 granted
@@ -42,20 +45,31 @@ _MEGAPIXELS = (0.26, 0.79, 1.05, 1.19, 1.5, 2.4, 8.0)
 
 # Every (world, family, quant, kind) whose cells went from a refusal to a route,
 # each at world 4 with an odd batch and an equal pair; nothing went the other way.
+# Every (world, family, quant, kind, sequence tag) whose cells changed outcome,
+# each at world 4 with an odd batch and an equal pair.
 _NOW_ROUTED = {
     # The scope sends an equal Krea2 BF16 or Qwen-Image FP8 pair to rows 12
     # and 71, which fold the spare ranks into ring2.
-    (4, "krea2", "bf16", None),
-    (4, "qwen_image", "fp8", None),
-    # Rows 15 and 68 keep these kinds by a lift, which does not hold where the
-    # row strands ranks: the pair takes rows 11 and 71 as an equal pair of a
-    # scoped kind does.
-    (4, "krea2", "fp8", None),
-    (4, "krea2", "fp8", BLOCK_SCALED_FP8),
-    (4, "krea2", "fp8", CAST_FP8),
-    (4, "qwen_image", "fp8", BLOCK_SCALED_FP8),
-    (4, "qwen_image", "fp8", CAST_FP8),
+    (4, "krea2", "bf16", None, False),
+    (4, "qwen_image", "fp8", None, False),
+    # Rows 15 and 68 keep these kinds by the file's kind, which does not hold
+    # where the row strands ranks: the pair takes rows 11 and 71 as an equal
+    # pair of a scoped kind does.
+    (4, "krea2", "fp8", None, False),
+    (4, "krea2", "fp8", BLOCK_SCALED_FP8, False),
+    (4, "krea2", "fp8", CAST_FP8, False),
+    (4, "qwen_image", "fp8", BLOCK_SCALED_FP8, False),
+    (4, "qwen_image", "fp8", CAST_FP8, False),
 }
+# A pair the sequence forward refuses (the tag) no longer takes the scope's
+# Ulysses and ring row, which loaded the model and then refused in its
+# forward; it meets auto's refusal at once, which names what runs it. A header
+# the tag cannot read never gets here: auto refuses it itself.
+_NOW_REFUSED_AT_ONCE = {
+    (4, "chroma", quant, kind, True)
+    for quant, kind in (("bf16", None), ("int8", None), ("fp8", None),
+                        ("fp8", BLOCK_SCALED_FP8), ("fp8", CAST_FP8))
+} | {(4, "boogu", "fp8", kind, True) for kind in (None, BLOCK_SCALED_FP8, CAST_FP8)}
 
 
 def _outcome(family, quant, megapixels, world, **tags):
@@ -93,18 +107,16 @@ def test_no_cell_of_the_world_2_3_and_4_grids_turns_a_route_into_a_refusal(monke
         monkeypatch.setitem(topology_cfg_evidence.CFG2_EVIDENCE, row,
                             dataclasses.replace(record, **fields))
     memo: dict = {}
-    worse, routed = [], set()
+    refused, routed = set(), set()
     for key, _tags, tags in cells:
         plain = (key[0], key[1], key[2], *key[4:9])  # before, nothing read the kind or the tag
         if plain not in memo:
             memo[plain] = _outcome(key[1], key[2], key[4], key[0], **tags)
         was, is_now = memo[plain], now[key]
-        if was.startswith("route") and is_now.startswith("raise"):
-            worse.append((key, was, is_now))
-        elif was.startswith("raise") and is_now.startswith("route"):
-            assert key[0] == 4 and key[6] % 2 and not key[8], key
-            routed.add(key[:4])
-    assert worse == []
+        if was.split()[0] != is_now.split()[0]:
+            assert key[0] == 4 and key[6] % 2 and not key[8], (key, was, is_now)
+            (refused if is_now.startswith("raise") else routed).add((*key[:4], key[9]))
+    assert refused == _NOW_REFUSED_AT_ONCE
     assert routed == _NOW_ROUTED
 
 

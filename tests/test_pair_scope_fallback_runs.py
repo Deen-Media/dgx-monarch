@@ -250,18 +250,43 @@ def test_a_lift_keeps_an_equal_pair_on_cfg2_only_where_the_row_runs(files, famil
     assert route == "cfg2+dp2" and f"table row {row2}" in reason
 
 
-def test_a_refused_equal_pair_at_world_4_falls_back_and_says_what_runs_it(files):
-    """The sequence tag lifts too: at world 4, batch 1, the pair takes the
-    scope's row as before, whose forward refuses what it carries. The tag
-    fails closed (an unreadable header answers True), so auto does not refuse
-    on it; the reason names what runs the pair."""
+def test_a_refused_equal_pair_at_world_4_meets_the_refusal_that_names_what_runs_it(files):
+    """At world 4, batch 1, the cfg2 row leaves two spare ranks, and every
+    sequence route refuses the pair's references, so no route runs it: auto
+    refuses at once (where the Ulysses and ring route used to load the model
+    and refuse in its forward) and names what does run it. A header the
+    driver cannot read never gets this far: auto refuses it itself."""
     files("BF16")
     refs = _refs("index_timestep_zero")
-    route, reason = _route(_model("chroma"), *_pair(refs, refs), 1216, cfg=3.5, world=4)
-    assert route == "uly2+ring2" and "table row 22" in reason
-    assert ("that row's sharded forward refuses what the pair carries, so cfg2 runs it at "
-            "world 2 or here with a batch size that is a multiple of 2, and one GPU runs "
-            "it as stock does") in reason
+    with pytest.raises(UnsupportedModelError) as caught:
+        _route(_model("chroma"), *_pair(refs, refs), 1216, cfg=3.5, world=4)
+    message = str(caught.value)
+    assert "auto matched table row 19 for chroma" in message
+    assert ("render at world 2 or on one GPU: every preset that tiles world 4 splits the "
+            "sequence, and chroma's sharded forward refuses what this pair carries") in message
+    assert "a multiple of 2" in message and "uly4, ring4" not in message
+    route, reason = _route(_model("chroma"), *_pair(refs, refs), 1216, cfg=3.5, world=4,
+                           batch=2)
+    assert route == "cfg2+dp2" and "table row 19" in reason
+
+
+def test_a_truncated_header_meets_autos_own_refusal_before_any_row(files):
+    """The tag answers True where it cannot read the header, but auto cannot
+    read it either and refuses before any row, so that answer never keeps a
+    pair from a route it could run."""
+    from dgx_monarch.adapters.detect import CheckpointSniffError
+
+    path = files("F8_E4M3", "__index_timestep_zero__")
+    with open(path, "rb") as handle:
+        head = handle.read(20)
+    with open(path, "wb") as handle:
+        handle.write(head)
+    model = _model("qwen_image")
+    pair = _pair(_refs(), _refs())
+    assert sequence_split_refused(model, *pair) is True
+    for world in (2, 4):
+        with pytest.raises(CheckpointSniffError):
+            _route(model, *pair, 1216, world=world)
 
 
 def test_class_k_names_no_sequence_preset_for_a_refused_pair():

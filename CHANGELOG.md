@@ -1526,12 +1526,16 @@ sections after them list every change.
   index_timestep_zero references (a Qwen-Image-Edit 2511 file's default), and
   a Chroma regional mask that hides a key, or a Boogu caption mask that
   masks a row; a Chroma text keep-mask, which ComfyUI never hands the
-  forward, leaves the pair on Ulysses. None of these keeps a pair on a
-  cfg2 row that this render cannot run: at world 4 with an odd batch, where
-  auto refuses a cfg2 row for its spare ranks, the pair takes the Ulysses and
-  ring row as before, and a pair that meets that refusal with a mask or
-  references the sequence forward refuses is no longer offered presets that
-  split the sequence. Every cfg2 render of an equal pair now says
+  forward, leaves the pair on Ulysses. At world 4 with an odd batch, where
+  auto refuses a cfg2 row for its spare ranks, a file's kind no longer keeps
+  an equal pair on that row: the pair takes the Ulysses and ring row, so
+  Chroma and Boogu equal pairs render there as before, and Krea2 FP8 and
+  Qwen-Image block-scaled or cast files, refused there before, render on rows
+  11 and 71. A pair whose mask or references the sequence forward refuses
+  has no route there: it meets that refusal at once, where its Ulysses and
+  ring route used to load the model and refuse in the forward, and the
+  refusal names what runs it (a batch of 2, world 2, one GPU) rather than
+  presets that split the sequence. Every cfg2 render of an equal pair now says
   so, from the KSampler nodes and from Sampler Custom behind a CFG guider: a log
   line for every render, and a browser notice once per queued prompt when cfg2
   was chosen by hand (a Pipeline sweep is one prompt).

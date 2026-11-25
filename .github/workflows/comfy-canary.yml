@@ -39,6 +39,12 @@ on:
       - "tests/test_cfg2_zeroed_negative.py"
       - "tests/real_comfy_helpers.py"
       - "tests/test_cfg_pad_stamp_delivery.py"
+      - "tests/test_sequence_tag_forwards.py"
+      # What it imports: the tag's fixtures and each family's sharded-forward fakes.
+      - "tests/test_pair_scope_fallback_runs.py"
+      - "tests/test_boogu_adapter.py"
+      - "tests/test_flux_adapter.py"
+      - "tests/test_qwen_image_adapter.py"
       - "tests/test_krea2_comfy_exactness.py"
       - "tests/pad_rows_comfy_helpers.py"
       - "tests/test_cogvideo_pad_exclusion.py"
@@ -265,6 +271,13 @@ jobs:
         run: >-
           pytest -q tests/test_cfg_pad_rows.py tests/test_cfg2_zeroed_negative.py
           tests/test_cfg_pad_stamp_delivery.py
+      # The sequence tag that keeps an equal pair on cfg2 reads each mask as
+      # ComfyUI's extra_conds hands it on; each branch against the real
+      # sharded forward. It skips in the regular CI job.
+      - name: Sequence tag vs comfy's extra_conds and the sharded forwards (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_sequence_tag_forwards.py
       # Real comfy CogVideoX, Wan, Anima and Kandinsky5 against their own
       # unsplit forwards at odd lengths, and every sharded family's Linears
       # under the shared nvfp4 scale with NaN pad rows. They skip in the
@@ -646,6 +659,7 @@ jobs:
           tests/test_cfg_pad_rows.py
           tests/test_cfg2_zeroed_negative.py
           tests/test_cfg_pad_stamp_delivery.py
+          tests/test_sequence_tag_forwards.py
           tests/test_cogvideo_pad_exclusion.py
           tests/test_wan_pad_exclusion.py
           tests/test_anima_pad_exclusion.py

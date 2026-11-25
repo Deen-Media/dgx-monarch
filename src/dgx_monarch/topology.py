@@ -192,17 +192,11 @@ def cfg_row_strands(rule: AutoRule, world: int, batch_size: int) -> int:
     return topo.dp if _strands_ranks(topo, batch_size) else 0
 
 
-def _stranded_clause(rule: AutoRule, world: int, batch_size: int, spare: int,
-                     sequence_refused: bool) -> str:
-    """Why a lift could not keep an equal pair on ``rule``, and the remedies that hold."""
-    text = (f"cfg2 table row {rule.row} would keep this equal pair, but at world {world} it "
+def _stranded_clause(rule: AutoRule, world: int, batch_size: int, spare: int) -> str:
+    """Why the file's kind could not keep an equal pair on ``rule``."""
+    return (f"cfg2 table row {rule.row} would keep this equal pair, but at world {world} it "
             f"leaves {spare} data-parallel ranks that batch {batch_size} cannot split, so "
             "the pair takes the row its scope sends an equal pair to")
-    if sequence_refused:
-        text = (f"{text}; that row's sharded forward refuses what the pair carries, so "
-                f"cfg2 runs it at world 2 or here with a batch size that is a multiple of "
-                f"{spare}, and one GPU runs it as stock does")
-    return text
 
 
 @dataclass(frozen=True)
@@ -264,10 +258,11 @@ def choose_auto_topology(
     caller names none). ``sequence_refused`` says the family's sharded forward
     refuses what this pair carries (reference_preflight.sequence_split_refused),
     so an equal pair keeps the cfg2 row rather than fall to a Ulysses row that
-    would refuse it. Such a lift (a kind the scope leaves out, or
-    ``sequence_refused``) never keeps an equal pair on a row whose spare ranks
-    this batch cannot split (``cfg_row_strands``): the pair falls back as the
-    scope sends it, so a lift never turns a route into a refusal. ``fits_resident=False``
+    would refuse it. A kind the scope leaves out never keeps an equal pair on
+    a row whose spare ranks this batch cannot split (``cfg_row_strands``): the
+    pair falls back as the scope sends it, so the kind never turns a route
+    into a refusal. A ``sequence_refused`` pair has no sequence route to fall
+    to, so it meets that refusal, which names what runs it. ``fits_resident=False``
     adds FSDP for capacity. Spare ranks use data parallel only when the batch
     divides evenly; otherwise a pure sequence-parallel row folds them in, and
     a cfg row raises UnsupportedModelError. ``views`` says the conditioning
@@ -308,12 +303,14 @@ def choose_auto_topology(
             skipped_cfg = rule
             continue
         spare = cfg_row_strands(rule, world, batch_size) if rule.topology.get("cfg", 1) != 1 else 0
-        if (spare and not pair_differs
+        if (spare and not pair_differs and not sequence_refused
                 and getattr(cfg_evidence_for(rule), "pairs", None) == "unequal"):
-            # Only a lift kept this equal pair here, and auto would refuse the
-            # row for its spare ranks, so the pair falls back as the scope sends it.
+            # Only the kind kept this equal pair here, and auto would refuse
+            # the row for its spare ranks, so the pair falls back as the scope
+            # sends it. A pair the sequence forward refuses has no route there
+            # either, so it stays and meets the refusal, which says so.
             skipped_cfg = rule
-            untiled = _stranded_clause(rule, world, batch_size, spare, sequence_refused)
+            untiled = _stranded_clause(rule, world, batch_size, spare)
             continue
         chosen = rule
         break
