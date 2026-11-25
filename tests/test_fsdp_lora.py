@@ -808,6 +808,39 @@ def test_two_spellings_of_a_key_end_alike_on_every_rank_before_any_write(tmp_pat
         assert outcomes == ["bound", "bound"] and writes == [_BIG_KEY, _BIG_KEY]
 
 
+def test_a_rank_whose_rows_fail_on_one_key_still_meets_its_peers_refusal_on_the_next(tmp_path):
+    """Every key binds from the file before any rank's rows are checked.
+
+    Rank 0's rows of the first key do not match the file; the second key sits
+    under two spellings that differ. Checking each key's rows as it bound
+    would end rank 0 on "not pristine" at the first key while rank 1 went on
+    to the second key's refusal. Both ranks must raise the same refusal.
+    """
+    from dgx_monarch.actor import unbake
+
+    norm_key = "blocks.0.norm.weight"
+    weight = _big_weight()
+    norm = torch.linspace(0.5, 1.5, 64).to(torch.bfloat16)
+    other = norm.clone()
+    other[40] += 1
+    path = tmp_path / "m.safetensors"
+    _write_safetensors(path, {_BIG_KEY: weight, norm_key: norm, f"model.{norm_key}": other})
+    outcomes = []
+    for rank in (0, 1):
+        model = _rank_of_two(None, weight, rank)
+        if rank == 0:
+            model.blocks[0].lin.weight._local_tensor.add_(1)   # rank 0's rows left the file
+        param = torch.nn.Parameter(norm.clone(), requires_grad=False)
+        param._local_tensor = norm[32 * rank:32 * (rank + 1)].clone()
+        model.blocks[0].norm = torch.nn.Module()
+        model.blocks[0].norm.weight = param
+        with pytest.raises(UnbakeError) as raised:
+            fsdp_lora.capture_record(model, [_BIG_KEY, norm_key], str(path), rank, 2)
+        outcomes.append((type(raised.value), str(raised.value)))
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0][0] is unbake.UnbakeRefused and "does not say which one" in outcomes[0][1]
+
+
 def test_a_quantized_setter_refuses_before_a_leaving_key_is_restored(tmp_path, monkeypatch):
     """Every refusal the stack can meet runs before the first write.
 
