@@ -3211,7 +3211,7 @@
       "test_selection_records_every_cell_it_cuts": "9938c6a1c14e4e07",
       "test_text_encoder_loader_classes_pin_against_the_artifact_manifest_widgets": "82918dc53a689812",
       "test_the_adapter_refuses_at_the_load_before_the_cfg_one_shortcut": "c72a30ae89650034",
-      "test_the_auto_tagging_samplers_match_the_nodes_that_tag": "5f9b65b4d7187dab",
+      "test_the_auto_tagging_samplers_match_the_nodes_that_tag": "e4aa1bc77d70ed1a",
       "test_the_constant_families_render_an_unequal_pair_by_dispatch": "954e9e4e4b4f2290",
       "test_the_counter_pads_to_the_floor_and_counts_nothing_it_cannot_read": "8120896fb00ec4ad",
       "test_the_counter_reproduces_the_length_the_runtime_named": "98044fadc40c3207",

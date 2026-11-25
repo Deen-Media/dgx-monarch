@@ -774,7 +774,12 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   or NVFP4 file reads fp8 like an FP8 one, but no sharded render of it is bytes
   equal, so its equal pair keeps cfg2 on every pair-scoped row, as does that
   of a full-precision file the loader casts to fp8, which no record measured:
-  each scope names the kinds it covers. A cfg2
+  each scope names the kinds it covers. The Ulysses row must also be one this
+  very render can run: where the family's sharded forward refuses what the
+  pair carries and cfg2's stock forward runs it (Qwen-Image's text masks and
+  index_timestep_zero references, Edit 2511's by default; Chroma's and Boogu's
+  masks that mask a row), the sampler tags the latent
+  (`nodes/reference_preflight.py`) and the pair keeps cfg2. A cfg2
   render of an equal pair says so (`nodes/cfg_pair_notice.py`), from every
   KSampler node and from Sampler Custom behind a CFG guider: a log line per
   render, and for a hand-chosen cfg2 a browser notice per queued prompt, never

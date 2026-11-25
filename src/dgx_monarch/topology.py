@@ -218,6 +218,7 @@ def choose_auto_topology(
     pair_differs: bool = False,
     views: bool = False,
     pair_kind: str | None = None,
+    sequence_refused: bool = False,
 ) -> AutoDecision:
     """Resolve ``auto`` and log the selected row and rationale.
 
@@ -229,7 +230,10 @@ def choose_auto_topology(
     covers only prompt pairs of different text rows when ``pair_differs``
     does not say this render's pair is one (``cfg_pair``), for the kinds that
     record scopes (``pair_kind``, read from the file; the quant kind when the
-    caller names none). ``fits_resident=False``
+    caller names none). ``sequence_refused`` says the family's sharded forward
+    refuses what this pair carries (reference_preflight.sequence_split_refused),
+    so an equal pair keeps the cfg2 row rather than fall to a Ulysses row that
+    would refuse it. ``fits_resident=False``
     adds FSDP for capacity. Spare ranks use data parallel only when the batch
     divides evenly; otherwise a pure sequence-parallel row folds them in, and
     a cfg row raises UnsupportedModelError. ``views`` says the conditioning
@@ -265,7 +269,7 @@ def choose_auto_topology(
             skipped_views = rule
             continue
         if rule.topology.get("cfg", 1) != 1 and not cfg_row_is_eligible(
-                rule, quant_kind, variant, pair_differs, pair_kind):
+                rule, quant_kind, variant, pair_differs or sequence_refused, pair_kind):
             skipped_cfg = rule
             continue
         chosen = rule
@@ -337,6 +341,11 @@ def choose_auto_topology(
             # Only the pair kept the row: say so, as the variant clause does.
             note = (f"{note}; cfg2 table row {excluded.row} was measured on prompt pairs "
                     "whose text rows differ, and this pair's rows are equal or unread")
+        held = cfg_evidence_for(chosen) if chosen.topology.get("cfg", 1) != 1 else None
+        if (held is not None and sequence_refused and not pair_differs
+                and held.scopes_pairs(pair_kind or quant_kind)):
+            note = (f"{note}; this pair's rows are equal or unread, but the family's "
+                    "sequence-parallel forward refuses what the pair carries, so it keeps cfg2")
 
     topo_kwargs = dict(chosen.topology)
     if not fits_resident:

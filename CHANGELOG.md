@@ -1521,7 +1521,10 @@ sections after them list every change.
   and on every row that takes only a differing pair (Krea2, Qwen-Image, Chroma
   and Boogu) so does an MXFP8 or NVFP4 file, which reads as FP8 but has no
   bytes-equal sharded route, and a full-precision file cast to fp8 at load,
-  which no record has measured. Every cfg2 render of an equal pair now says
+  which no record has measured. So does an equal pair whose Ulysses route
+  would refuse what it carries, which cfg2 runs: a Qwen-Image text mask or
+  index_timestep_zero references (a Qwen-Image-Edit 2511 file's default), and
+  a Chroma or Boogu mask that masks a row. Every cfg2 render of an equal pair now says
   so, from the KSampler nodes and from Sampler Custom behind a CFG guider: a log
   line for every render, and a browser notice once per queued prompt when cfg2
   was chosen by hand (a Pipeline sweep is one prompt).

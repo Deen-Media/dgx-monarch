@@ -22,6 +22,10 @@ from ..refusal import RefusalClass, refusal
 from ..sampling_contract import latent_size_tags
 from . import pending_load_relief, recycle_drain
 from .latent_outputs import is_direct_nested_tensor
+from .reference_preflight import (  # noqa: F401  (reached through this module too)
+    krea2_ref_preflight_summary,
+    preflight_krea2_reference_latents,
+)
 from .render_rows import ref_pose_shapes
 from .render_validation import validate_render_topology
 
@@ -32,9 +36,13 @@ CFG_KEEPS_UNCOND_METADATA_KEY = "_dgxm_cfg_keeps_uncond"
 # Set beside it when the prompt pair's text rows differ (cfg_pair); a guider
 # carries the same key for Sampler Custom, which sees no conditioning.
 CFG_PAIR_DIFFERS_METADATA_KEY = "_dgxm_cfg_pair_rows_differ"
+# Set beside them when the family's sharded forward refuses what the pair carries
+# where cfg2 runs it (reference_preflight.sequence_split_refused).
+CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY = "_dgxm_cfg_pair_sequence_refused"
 # Each latent tag and the resolve_topology argument it sets; the third marks UltraTex views.
 TOPOLOGY_TAGS = ((CFG_KEEPS_UNCOND_METADATA_KEY, "keeps_uncond"), (CFG_PAIR_DIFFERS_METADATA_KEY, "pair_differs"),
-                 (VIEWS_METADATA_KEY, "views"))
+                 (VIEWS_METADATA_KEY, "views"),
+                 (CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY, "sequence_refused"))
 RESIDENT_ADOPTION_EVIDENCE_KEY = "_dgxm_adoption_evidence"
 
 
@@ -47,13 +55,14 @@ def validate_latent_downscale(value: object) -> int:
 
 
 def sampler_latent(latent: dict, sampler_name: object, pair_differs: bool = False,
-                   views: bool = False) -> dict:
+                   views: bool = False, sequence_refused: bool = False) -> dict:
     """A copy of a sampler node's input latent, tagged for its sampler and pair.
 
     One tag marks a sampler that keeps the uncond pass at CFG 1.0
     (topology.sampler_keeps_uncond_at_cfg1), one a prompt pair whose text rows
-    differ (cfg_pair.text_rows_differ), and one a pair that carries UltraTex
-    view inputs (adapters/flux_views). Every site that resolves this render's
+    differ (cfg_pair.text_rows_differ), one a pair that carries UltraTex
+    view inputs (adapters/flux_views), and one a pair the family's sharded
+    forward refuses (reference_preflight.sequence_split_refused). Every site that resolves this render's
     topology reads them off the latent, so the Gate token and the render
     agree; inherited tags are dropped first, so a plain sampler never keeps
     one. latent_without_topology_metadata strips them before the wire.
@@ -62,7 +71,8 @@ def sampler_latent(latent: dict, sampler_name: object, pair_differs: bool = Fals
 
     tagged = dict(latent)
     for (key, _name), on in zip(TOPOLOGY_TAGS, (
-            sampler_keeps_uncond_at_cfg1(sampler_name), pair_differs, views), strict=True):
+            sampler_keeps_uncond_at_cfg1(sampler_name), pair_differs, views, sequence_refused),
+            strict=True):
         tagged.pop(key, None)
         if on:
             tagged[key] = True
@@ -155,58 +165,6 @@ def bind_packed_render_model(
 
     handle = ensure_live_fn(handle, mesh_preflight=validate_current_world)
     return _model_with_bound_handle(model, handle), handle
-
-
-def krea2_ref_preflight_summary(positive, negative=None) -> tuple[bool, str | None]:
-    """Combine positive+negative raw CONDITIONING lists into one
-    (has_reference_latents, resolved_method) summary for
-    preflight_krea2_reference_latents. Call before conditioning_for_wire
-    packs either list."""
-    from ..adapters.krea2 import krea2_reference_latents_summary
-
-    has_p, method_p = krea2_reference_latents_summary(positive)
-    has_n, method_n = krea2_reference_latents_summary(negative)
-    return has_p or has_n, method_p if method_p is not None else method_n
-
-
-def preflight_krea2_reference_latents(
-    model: Any, ref_summary: tuple[bool, str | None] | None, topo: Any
-) -> None:
-    """Refuse unsupported Krea2 reference latents before worker dispatch.
-
-    The shared adapter predicate keeps this driver mirror aligned with the
-    worker guard. Sniff failures leave that guard as the backstop. Model option
-    patches remain worker-only because no DGX node serializes them.
-    """
-    if ref_summary is None:
-        return
-    has_refs, method = ref_summary
-    from ..adapters.krea2 import (
-        KREA2_REF_LATENTS_REFUSAL_MESSAGE,
-        krea2_ref_latents_would_reject,
-    )
-
-    if not krea2_ref_latents_would_reject(has_refs, method):
-        return
-    if topo.sequence_parallel <= 1 and topo.cfg <= 1:
-        return
-    try:
-        import folder_paths
-
-        from ..adapters.detect import sniff_checkpoint
-
-        path = folder_paths.get_full_path("diffusion_models", model.unet_name)
-        if path is None:
-            return
-        family = family_select.effective_family(
-            sniff_checkpoint(path)[0], family_select.override_for_model(model))
-    except Exception:
-        return  # fail open: the mid-forward guard is the backstop
-    if family != "krea2":
-        return
-    from ..adapters.base import UnsupportedModelError
-
-    raise UnsupportedModelError(KREA2_REF_LATENTS_REFUSAL_MESSAGE)
 
 
 def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:

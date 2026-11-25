@@ -1036,8 +1036,10 @@ def test_the_auto_tagging_samplers_match_the_nodes_that_tag():
     # The sweep's set must name exactly the node classes whose sample call
     # hands sampler_latent a sampler name. Sampler Custom passes None. Every
     # call also hands it the pair tag (cfg_pair), which the sweep predicts
-    # with auto_pair_differs, and the UltraTex views tag (adapters/flux_views),
-    # which no sweep cell carries.
+    # with auto_pair_differs, the UltraTex views tag (adapters/flux_views), and
+    # the sequence-refused tag (nodes/reference_preflight), which no sweep cell
+    # carries: no shipped template on a family with a pair-scoped cfg2 row has
+    # a text mask or reference latents.
     tagging, untagged, pairless = set(), set(), set()
     for path in sorted((REPO / "src" / "dgx_monarch" / "nodes").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -1048,11 +1050,12 @@ def test_the_auto_tagging_samplers_match_the_nodes_that_tag():
                     named = not (isinstance(call.args[1], ast.Constant)
                                  and call.args[1].value is None)
                     (tagging if named else untagged).add(klass.name)
-                    if len(call.args) != 4:
+                    if len(call.args) != 5:
                         pairless.add(klass.name)
     assert tagging == set(matrix.UNCOND_TAGGING_SAMPLERS)
     assert untagged == {"DGXMonarchSamplerCustom"}
-    assert not pairless, f"sampler_latent called without the pair and views tags in {sorted(pairless)}"
+    assert not pairless, (f"sampler_latent called without the pair, views and sequence tags in "
+                          f"{sorted(pairless)}")
 
 
 def test_the_sweep_predicts_the_pair_tag_from_the_prompt_texts():

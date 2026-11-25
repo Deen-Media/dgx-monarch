@@ -24,8 +24,14 @@ from .common import (
 )
 from .consent_waiver import validate_inherited_stamps
 from .latent_outputs import clone_latent_samples, is_direct_nested_tensor
+from .reference_preflight import sequence_split_refused
 from .refusal_lead import lead_with_refusal
-from .render_preflight import CFG_PAIR_DIFFERS_METADATA_KEY, krea2_ref_preflight_summary, sampler_latent
+from .render_preflight import (
+    CFG_PAIR_DIFFERS_METADATA_KEY,
+    CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY,
+    krea2_ref_preflight_summary,
+    sampler_latent,
+)
 from .sampler_wire import (  # noqa: F401  # Public samplers API.
     _aggregate_render_outputs,
     _canonical_noise_for_wire,
@@ -111,7 +117,8 @@ class DGXMonarchKSampler:
         }
         out = run_render(model, request, sampler_latent(
             latent_image, sampler_name, text_rows_differ(positive, negative),
-            conditioning_carries_views(positive, negative)),
+            conditioning_carries_views(positive, negative),
+            sequence_split_refused(model, positive, negative)),
             cfg_value=float(cfg), steps_hint=int(steps))
         out.pop("_dgxm_denoised", None)
         return _sampler_result(out)
@@ -190,7 +197,8 @@ class DGXMonarchKSamplerPipeline:
         # render resolve the same topology from it.
         latent_image = sampler_latent(
             latent_image, sampler_name, text_rows_differ(positive, negative),
-            conditioning_carries_views(positive, negative))
+            conditioning_carries_views(positive, negative),
+            sequence_split_refused(model, positive, negative))
         from .. import adoption_evidence
 
         adoption_evidence.require_inactive_context("DGXMonarchKSamplerPipeline")
@@ -326,7 +334,8 @@ class DGXMonarchKSamplerAdvanced:
         }
         out = run_render(model, request, sampler_latent(
             latent_image, sampler_name, text_rows_differ(positive, negative),
-            conditioning_carries_views(positive, negative)),
+            conditioning_carries_views(positive, negative),
+            sequence_split_refused(model, positive, negative)),
             cfg_value=float(cfg), steps_hint=int(steps))
         out.pop("_dgxm_denoised", None)
         return _sampler_result(out)
@@ -423,7 +432,8 @@ class DGXMonarchSamplerCustom:
         # A SAMPLER object carries no name, so the cfg++ tag stays off and auto
         # keeps the CFG-1 skip; the pair and views tags come from the guider's own pair.
         latent = sampler_latent(latent_image, None, bool(guider.get(CFG_PAIR_DIFFERS_METADATA_KEY)),
-                                request_carries_views({"guider": guider["spec"]}))
+                                request_carries_views({"guider": guider["spec"]}),
+                                bool(guider.get(CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY)))
         wire_noise = _canonical_noise_for_wire(noise)
         schedule_steps = custom_schedule_steps(sigmas)
 

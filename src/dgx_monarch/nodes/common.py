@@ -176,7 +176,8 @@ def _warn_nearest_signature(path: str) -> None:
 def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
                      world: int | None = None, *, latent_downscale: int | None = None,
                      size_tags: tuple = (None, None), keeps_uncond: bool = False,
-                     pair_differs: bool = False, views: bool = False) -> tuple[Topology, bool, str]:
+                     pair_differs: bool = False, views: bool = False,
+                     sequence_refused: bool = False) -> tuple[Topology, bool, str]:
     """Resolve the mesh's topology preset for this render.
 
     Returns (topology, sage, reason). Explicit presets pass through; "auto"
@@ -247,7 +248,8 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     # it prices a remote worker's pool; capacity runs use the *+fsdp presets.
     # The tags and the variant ride only when set, so an untagged call keeps its shape.
     tags: dict[str, Any] = {name: True for name, on in (
-        ("keeps_uncond", keeps_uncond), ("pair_differs", pair_differs), ("views", views)) if on}
+        ("keeps_uncond", keeps_uncond), ("pair_differs", pair_differs), ("views", views),
+        ("sequence_refused", sequence_refused)) if on}
     found = file_tags(path, family, quant, pair_differs)
     if variant := found.get("variant"):
         tags["variant"] = variant
