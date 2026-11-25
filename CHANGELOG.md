@@ -2620,6 +2620,18 @@ sections after them list every change.
   switched, the one it could not read and those it never reached. Earlier,
   every host was switched before any result was read
   ([INSTALL](docs/INSTALL.md#verified-activation-and-recovery)).
+- Fix: a verified update that finishes on every host now removes the old
+  release slots each host can prove dead, in its own `release_retirement`
+  step that never changes the update's outcome. Under the lifecycle lock it
+  repeats finalize's check, keeps this update's slot and the one it replaced
+  by real path, and removes only a slot whose own transaction is over and
+  that no process of yours still uses; a slot another update is staging, a
+  slot guided setup installed, and anything unreadable stay. A slot is
+  renamed before removal, a host starts no new removal after 120 seconds,
+  and the receipt counts the slots removed, their bytes and the slots kept
+  back. Every update used to leave its slot behind and nothing
+  removed them, so a host that updates often filled its disk with old slots
+  over time ([INSTALL](docs/INSTALL.md#verified-activation-and-recovery)).
 - Fix: a Worker unit write that fails during a verified update, on a full or
   failing disk, no longer leaves a fixed `dgxm-worker.service.next` file that
   made the rollback's own write fail and every later verified update refuse
@@ -2632,21 +2644,37 @@ sections after them list every change.
   `cluster_smoke_cleanup_unconfirmed`, and one whose smoke a signal killed
   ends `cluster_smoke_killed`, where both read `cluster_smoke_failed`. Each
   still restores the prior release once every new Worker's stop is
-  confirmed, and the update's contract now says so. A smoke that lost its
-  evidence in its checks stays `cluster_smoke_unknown` even when its cleanup
-  failed too, where the cleanup's failure took its place and restored the
-  prior release
+  confirmed, and the update's contract now says so. A doctor or smoke whose
+  process ended with no verdict follows the same rule: `doctor_killed`,
+  `doctor_timed_out` (180 seconds) and `cluster_smoke_timed_out` (600
+  seconds) restore the prior release, where they stopped the new Workers and
+  left them for the forward repair. A smoke that lost its evidence in its
+  checks stays `cluster_smoke_unknown` even when its cleanup failed too,
+  where the cleanup's failure took its place and restored the prior release
   ([INSTALL](docs/INSTALL.md#verified-activation-and-recovery)).
+- Fix: every verified update that stops after its Worker stop now ends with a
+  line that says which release each host is on, whether its Worker runs, and
+  the repair, `dgxm up` where that one command repairs it, and says first
+  when a restore of the old release was not confirmed; the lines above it
+  name the hosts compensation restored, the one it could not confirm, and
+  the hosts whose old-release Worker did not start. A failed compensation or
+  a prior start that did not confirm read only "activation failed and
+  compensation was not confirmed" or "definite changes were compensated". The
+  restore now starts the old release on every host, where it stopped at the
+  first host that did not confirm and left every later host stopped.
 - Fix: the cluster smoke's entry point, run by a script of its own, exits 75
   (unknown) for a ProcMesh cleanup it could not confirm, where it exited 1 as
   for a failed check. Guided setup already read those cleanup codes as
   unknown.
 - Fix: `dgxm update --verify --receipt PATH` refuses with exit 2, before the
   update lock and any update step, when PATH already exists or its folder
-  cannot take the receipt (a symlink or file in the path, an unsafe ancestor,
-  another user's folder, a folder it cannot write). It ran the whole update on
-  every host first and then exited 1 with no receipt
-  ([INSTALL](docs/INSTALL.md#operator-receipts)).
+  cannot take the receipt (a symlink or file in the path, a folder it can
+  search but not open, an unsafe ancestor, another user's folder, a folder it
+  cannot write); the check walks the path with the writer's own walk. It ran
+  the whole update on every host first and then exited 1 with no receipt. A
+  receipt folder on a filesystem without hard links, such as a vfat or exFAT
+  stick, now gets its receipt, created exclusively under its final name,
+  where publication failed ([INSTALL](docs/INSTALL.md#operator-receipts)).
 - Fix: a custom `--receipt` path no longer sets a folder that already exists,
   such as a home or a group-shared folder, to owner-only access; only the
   folders the writer creates get `0700`.
@@ -2657,7 +2685,10 @@ sections after them list every change.
   ComfyUI port answers the pack check with an HTTP error other than a missing
   route, such as 401 or 403 from a login layer or a server error, or answers
   from another address after a redirect. It read those as "ComfyUI is not
-  running" and could update and restart the Workers under a live driver
+  running" and could update and restart the Workers under a live driver. The
+  same check gates `dgxm update --verify`'s activity guard and guided setup's
+  activity check, which now refuse `activity_unknown` on such an answer too,
+  where they went on when no ComfyUI process was seen
   ([TROUBLESHOOTING #70](docs/TROUBLESHOOTING.md#70-dgxm-update-gate-or-top-misses-a-comfyui-driver-on-a-custom-port)).
 - Fix: when a verified update's staging fails, its cleanup removes only the
   registration of its own staged checkout, where it pruned every git worktree

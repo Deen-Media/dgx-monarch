@@ -804,8 +804,122 @@ def test_an_unreadable_activation_stops_with_the_later_hosts_unchanged(
     assert calls == [("activate", "one"), ("settle", "one")]
     err = capsys.readouterr().err
     assert "activation on one is unknown" in err
+    assert f"/home/user/.local/share/dgx-monarch/releases/{RELEASE_ID}/site" in err
+    assert "a plain source directory" in err
     assert "never sent an activation, still on the old release: two" in err
-    assert "different releases" in err and "dgxm up" in err
+    # No host switched, so the old release is still reachable by one command.
+    assert "if ~/.local/share/dgx-monarch/src is still a plain directory, `dgxm up`" in err
+
+
+def test_an_unreadable_second_host_after_a_switched_first_names_the_forward_repair_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    harness = _HostHarness()
+    manager, _calls = _activated_pair(tmp_path, monkeypatch, harness)
+    recorded = manager._host_run
+
+    def second_lost(config, host, script, timeout):
+        if _operation(script, "activate") and host.name == "two":
+            raise subprocess.TimeoutExpired([], 60)
+        return recorded(config, host, script, timeout)
+
+    manager._host_run = second_lost
+    assert manager.activate_workers() == OperationResult(
+        Certainty.UNKNOWN, counts={"hosts_switched": 1, "hosts_unknown": 1, "hosts_not_reached": 0})
+    err = capsys.readouterr().err
+    assert "switched to the new release before it: one" in err
+    assert "the hosts run different releases, every Worker stopped: use the forward repair" in err
+    assert "dgxm up" not in err
+
+
+def test_a_compensation_not_confirmed_everywhere_names_each_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    harness = _HostHarness()
+    manager, _calls = _activated_pair(tmp_path, monkeypatch, harness)
+    recorded = manager._host_run
+
+    def second_fails(config, host, script, timeout):
+        if _operation(script, "activate") and host.name == "two":
+            return subprocess.CompletedProcess([], 0, "ACTIVATION_PROBE_PRIOR\n", "")
+        if _operation(script, "compensate") and host.name == "two":
+            raise subprocess.TimeoutExpired([], 60)
+        return recorded(config, host, script, timeout)
+
+    manager._host_run = second_fails
+    assert manager.activate_workers().certainty == Certainty.FAILED
+    capsys.readouterr()
+    assert manager.compensate_workers().certainty == Certainty.UNKNOWN
+    err = capsys.readouterr().err
+    assert "compensation restored the old release on: one" in err
+    assert "compensation could not confirm the old release on: two" in err
+
+
+def test_the_prior_start_tries_every_host_and_names_the_ones_that_did_not_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    harness = _HostHarness()
+    harness.activation = "failed"
+    manager, calls = _activated_pair(tmp_path, monkeypatch, harness)
+    assert manager.activate_workers().certainty == Certainty.FAILED
+    assert manager.compensate_workers().certainty == Certainty.SUCCEEDED
+    recorded = manager._host_run
+
+    def first_start_lost(config, host, script, timeout):
+        if _operation(script, "start_prior") and host.name == "one":
+            calls.append(("start_prior", host.name))
+            raise subprocess.TimeoutExpired([], 90)
+        return recorded(config, host, script, timeout)
+
+    manager._host_run = first_start_lost
+    capsys.readouterr()
+    assert manager.start_prior_workers(RELEASE_ID).certainty == Certainty.UNKNOWN
+    assert [call for call in calls if call[0] == "start_prior"] == [("start_prior", "one"), ("start_prior", "two")]
+    assert "the old release's Worker did not start on: one; `dgxm up` starts it" in capsys.readouterr().err
+
+
+def test_retirement_runs_the_real_shipped_helpers_under_the_lock_and_fence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    installation = _LiveInstallation(tmp_path)
+    manager = installation.manager(monkeypatch, tmp_path)
+    releases = installation.target_site.parent.parent
+    dead = releases / "u-333333333333-4444444444444444"
+    (dead / "site").mkdir(parents=True)
+    (dead / "site" / "payload.bin").write_bytes(b"x" * 64)
+    journal = releases.parent / "transactions" / dead.name
+    journal.mkdir(parents=True)
+    (journal / "finalized").write_bytes(b"FINALIZED\n")
+    (journal / "finalized").chmod(0o600)  # as the helper's own durable writes leave it
+    scripts: list[str] = []
+    no_processes = tmp_path / "proc"
+    no_processes.mkdir()
+    constant = 'RETIRE_PROC = Path("/proc")'
+
+    def recorded(config, host, script, timeout):
+        if _operation(script, "retire"):
+            # The shipped helper scans no process of this machine: only the empty folder.
+            assert script.count(constant) == 1
+            script = script.replace(constant, f'RETIRE_PROC = Path("{no_processes}")')
+        scripts.append(script)
+        return installation.host(config, host, script, timeout)
+
+    manager._host_run = recorded
+    assert manager.activate_workers().certainty == Certainty.SUCCEEDED
+    assert manager.finalize().certainty == Certainty.SUCCEEDED
+    # A Worker start check holds the generation lock: retirement must not wait for it or block it.
+    state = installation.home / ".local" / "state" / "dgx-monarch"
+    state.mkdir(parents=True, exist_ok=True)
+    generation = os.open(state / "worker-generation.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(generation, fcntl.LOCK_EX)
+    try:
+        assert manager.retire_releases() == OperationResult(Certainty.SUCCEEDED, counts={
+            "releases_retired": 1, "bytes_retired": 64, "releases_not_retired": 0, "hosts_retire_unconfirmed": 0})
+    finally:
+        os.close(generation)
+    assert not dead.exists() and installation.prior_site.is_dir() and installation.target_site.is_dir()
+    retire = next(script for script in scripts if _operation(script, "retire"))
+    assert "flock" in retire and "UNKNOWN_GENERATION_FENCE" not in retire
 
 
 def test_the_readback_of_a_lost_reply_runs_the_real_helper_under_the_lock(
@@ -1137,6 +1251,123 @@ def test_finalize_attempts_every_host_and_preserves_cancellation(tmp_path: Path)
     assert raised.value is interrupt
     assert calls == ["one", "two"]
     assert not manager.slot.finalized
+
+
+def _finalized_pair(tmp_path: Path, retire_answer):
+    hosts = (HostConfig("one", "tcp://192.0.2.10:26600"), HostConfig("two", "tcp://192.0.2.11:26600"))
+    calls: list[tuple[str, str, int]] = []
+
+    def host_runner(_config, host, script, timeout):
+        for operation in ("finalize", "retire"):
+            if _operation(script, operation):
+                calls.append((operation, host.name, timeout))
+        if _operation(script, "retire"):
+            return retire_answer(host, script, timeout)
+        return subprocess.CompletedProcess([], 0, "FINALIZED\n", "")
+
+    manager = ReleaseManager(ClusterConfig(hosts=hosts, transport_security="trusted_fabric"), host_runner=host_runner)
+    manager.slot = ReleaseSlot(
+        RELEASE_ID, tmp_path / "slot", tmp_path / "site", ReleaseMetadata("2" * 40, "0.5.0", "0.6.0", SOURCE, DEPS),
+        remote_activated=True, installations=_captured(hosts),
+    )
+    return manager, calls
+
+
+def test_retirement_runs_after_finalize_on_every_host_and_counts_only_what_was_removed(tmp_path: Path, capsys):
+    removed = "REMOVED u-cccccccccccc-dddddddddddddddd 1000\nREMOVED u-dddddddddddd-eeeeeeeeeeeeeeee 2000\n"
+
+    def answer(host, _script, timeout):
+        if host.name == "one":
+            return subprocess.CompletedProcess([], 0, removed + "RETIRED 2 1 0\n", "")
+        # The second host's helper removed one slot before its connection was lost.
+        raise subprocess.TimeoutExpired([], timeout, output="REMOVED u-111111111111-2222222222222222 500\n")
+
+    manager, calls = _finalized_pair(tmp_path, answer)
+    assert manager.finalize() == OperationResult(Certainty.SUCCEEDED)
+    assert [call[:2] for call in calls] == [("finalize", "one"), ("finalize", "two")]
+    capsys.readouterr()
+    result = manager.retire_releases()
+    assert result == OperationResult(Certainty.UNKNOWN, counts={
+        "releases_retired": 3, "bytes_retired": 3500, "releases_not_retired": 1, "hosts_retire_unconfirmed": 1})
+    # The call allows twice the helper's own budget, lock wait included.
+    assert {call[2] for call in calls if call[0] == "retire"} == {240}
+    err = capsys.readouterr().err
+    assert "1 old release slots on one were not removed this time" in err
+    assert "on two was not confirmed after 1 were removed; some may remain" in err
+
+
+@pytest.mark.parametrize(("stdout", "returncode", "confirmed", "not_removed"), [
+    ("REMOVED u-cccccccccccc-dddddddddddddddd 5\nRETIRED 1 1 2\n", 0, True, 3),  # one failed, two held back
+    ("REMOVED u-cccccccccccc-dddddddddddddddd 5\nRETIRED 2 0 0\n", 0, False, 0),  # a removal line went missing
+    ("REMOVED u-cccccccccccc-dddddddddddddddd 5\nRETIRED 1 0 0\n", 1, False, 0),
+    ("REMOVED u-cccccccccccc-dddddddddddddddd 5\n", 0, False, 0),
+])
+def test_a_host_confirms_its_retirement_only_with_a_matching_closing_line(stdout, returncode, confirmed, not_removed):
+    from dgx_monarch.cli.update_retirement import _read
+
+    outcome = _read(stdout, returncode)
+    assert (outcome.confirmed, outcome.removed, outcome.bytes, outcome.not_removed) == (confirmed, 1, 5, not_removed)
+
+
+@pytest.mark.parametrize("unsettled", ["ambiguous", "uncaptured"])
+def test_retirement_runs_on_no_host_after_an_ambiguous_activation_or_without_captures(tmp_path: Path, unsettled):
+    def never(_host, _script, _timeout):
+        raise AssertionError("retirement must not reach a host")
+
+    manager, calls = _finalized_pair(tmp_path, never)
+    assert manager.finalize().certainty == Certainty.SUCCEEDED
+    if unsettled == "ambiguous":
+        manager.slot = replace(manager.slot, activation_ambiguous=True)
+    else:
+        manager.slot = replace(manager.slot, installations={})
+    assert manager.retire_releases() == OperationResult(Certainty.UNKNOWN)
+    assert not [call for call in calls if call[0] == "retire"]
+
+
+def test_retirement_needs_every_host_finalized_and_a_stop_ends_only_it(tmp_path: Path, capsys):
+    def stopped(_host, _script, _timeout):
+        raise KeyboardInterrupt
+
+    manager, calls = _finalized_pair(tmp_path, stopped)
+    assert manager.retire_releases() == OperationResult(Certainty.UNKNOWN)  # finalize has not run
+    assert manager.finalize().certainty == Certainty.SUCCEEDED
+    result = manager.retire_releases()
+    assert result.certainty == Certainty.UNKNOWN and result.counts["hosts_retire_unconfirmed"] == 2
+    assert [call[:2] for call in calls if call[0] == "retire"] == [("retire", "one")]
+    assert "was stopped; some may remain" in capsys.readouterr().err
+
+
+def test_the_activation_report_names_a_linked_prior_release_by_its_full_path(capsys):
+    from dgx_monarch.cli.update_release_report import report_activation
+
+    hosts = (HostConfig("one", "tcp://192.0.2.10:26600"), HostConfig("two", "tcp://192.0.2.11:26600"))
+    slot = SimpleNamespace(token=RELEASE_ID, activation_attempted=1, installations={"one": {
+        "home": "/home/user", "live": {"kind": "symlink", "target": "releases/u-aaaaaaaaaaaa-bbbbbbbbbbbbbbbb/site"}}})
+    report_activation(hosts, slot, Certainty.UNKNOWN)
+    err = capsys.readouterr().err
+    prior = "/home/user/.local/share/dgx-monarch/releases/u-aaaaaaaaaaaa-bbbbbbbbbbbbbbbb/site"
+    assert f"a link to {prior}" in err
+    # The condition quotes the link's own text, which plain readlink prints byte for byte.
+    raw = "releases/u-aaaaaaaaaaaa-bbbbbbbbbbbbbbbb/site"
+    assert f"if `readlink ~/.local/share/dgx-monarch/src` prints {raw}, `dgxm up`" in err
+
+
+def test_the_activation_report_condition_matches_what_readlink_prints(tmp_path: Path, capsys):
+    """The snapshot records os.readlink's text; the report must quote that text, not a resolved path."""
+    from dgx_monarch.cli.update_release_report import report_activation
+
+    home = tmp_path / "home"
+    real = tmp_path / "data" / "releases" / "u-aaaaaaaaaaaa-bbbbbbbbbbbbbbbb" / "site"
+    real.mkdir(parents=True)
+    link = home / ".local" / "share" / "dgx-monarch" / "src"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(tmp_path / "data" / "releases" / ".." / "releases" / real.parent.name / "site")
+    printed = subprocess.run(["readlink", str(link)], capture_output=True, text=True, check=True).stdout.strip()
+    hosts = (HostConfig("one", "tcp://192.0.2.10:26600"),)
+    slot = SimpleNamespace(token=RELEASE_ID, activation_attempted=1, installations={"one": {
+        "home": str(home), "live": {"kind": "symlink", "target": os.readlink(link)}}})
+    report_activation(hosts, slot, Certainty.UNKNOWN)
+    assert f"prints {printed}, `dgxm up`" in capsys.readouterr().err
 
 
 def _captured(hosts) -> dict[str, dict]:

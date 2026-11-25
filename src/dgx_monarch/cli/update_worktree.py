@@ -41,13 +41,15 @@ def remove_worktree(
         except OSError:
             return OperationResult(Certainty.FAILED)
         if not checkout.exists():
+            # git records the real path, so a symlinked root lists another
+            # spelling: ask for the one registration whatever the listing says,
+            # then accept no spelling of it in the listing.
+            spellings = {f"worktree {checkout}\n", f"worktree {checkout.resolve()}\n"}
             try:
+                git("worktree", "remove", "--force", str(checkout), timeout=60)
                 listed = git("worktree", "list", "--porcelain")
-                if listed.returncode == 0 and f"worktree {checkout}\n" in listed.stdout + "\n":
-                    git("worktree", "remove", "--force", str(checkout), timeout=60)
-                    listed = git("worktree", "list", "--porcelain")
             except (OSError, subprocess.TimeoutExpired):
                 return OperationResult(Certainty.UNKNOWN)
-            if listed.returncode == 0 and f"worktree {checkout}\n" not in listed.stdout + "\n":
+            if listed.returncode == 0 and not any(spelling in listed.stdout + "\n" for spelling in spellings):
                 return OperationResult(Certainty.SUCCEEDED)
     return OperationResult(Certainty.FAILED)

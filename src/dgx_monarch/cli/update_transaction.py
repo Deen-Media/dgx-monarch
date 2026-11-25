@@ -20,7 +20,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from .update_end_state import end_sentence
 from .update_receipt import UpdateReceipt, attach_interrupted_receipt
+from .update_retirement import retire_after_finalize, retirement_status
 from .update_stage_failure import StageFailure, interrupted_stage_cleanup
 from .update_types import (
     DEFAULT_TARGET as DEFAULT_TARGET,
@@ -52,6 +54,7 @@ GATE_NOTE = (
 FAILURE_CAUSES = {
     "cleanup_unconfirmed": "passed its checks but could not confirm the stop of its own ProcMesh",
     "killed": "was killed by a signal before it reported",
+    "timed_out": "did not report within its time limit and was stopped",
 }
 
 
@@ -63,7 +66,7 @@ def _failure_cause(result: OperationResult) -> str:
 def _result_counts(result: OperationResult) -> Mapping[str, int] | None:
     counts = getattr(result, "counts", None)
     if not isinstance(counts, Mapping) or not all(
-        isinstance(name, str) and _COUNT_NAME.fullmatch(name) and type(value) is int and 0 <= value < 2**31
+        isinstance(name, str) and _COUNT_NAME.fullmatch(name) and type(value) is int and 0 <= value < 2**63
         for name, value in counts.items()
     ):
         return None
@@ -273,9 +276,8 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
             steps.append(_Step("activation", "unknown", counts=activation_counts))
             raise _Abort(
                 "activation_unknown",
-                "activation could not be read back on one host and no later host was switched, "
-                "so the hosts may run different releases; the update did not roll back or start workers. "
-                "Read each host's link as TROUBLESHOOTING entry 118 says for activation_unknown",
+                "activation could not be read back on one host and no later host was switched; "
+                "the update did not roll back or start workers",
             )
         if activation.certainty == Certainty.FAILED:
             steps.append(_Step("activation", "failed", counts=activation_counts))
@@ -289,12 +291,9 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
                 if restored.certainty == Certainty.FAILED:
                     stopped_again = _attempt(lambda: ops.stop_started_workers(staged))
                     steps.append(_Step("fail_closed_stop", _operation_status(stopped_again)))
-            compensation_note = (
-                "activation failed; definite changes were compensated"
-                if compensation.certainty == Certainty.SUCCEEDED
-                else "activation failed and compensation was not confirmed"
-            )
-            raise _Abort("activation_failed", compensation_note)
+            raise _Abort("activation_failed", "activation failed" + (
+                "; the hosts it reached were compensated" if compensation.certainty == Certainty.SUCCEEDED
+                else " and compensation was not confirmed"))
         steps.append(_Step("activation", "succeeded", counts=activation_counts))
 
         started = ops.start_target_workers(staged)
@@ -384,6 +383,8 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
         steps.append(_Step("finalize", "succeeded"))
         cleanup_allowed = True
         code, message, exit_code, terminal = "updated", "verified update completed", 0, "succeeded"
+        retired = retire_after_finalize(ops, staged)  # housekeeping: it never changes the outcome
+        steps.append(_Step("release_retirement", retirement_status(retired), counts=_result_counts(retired)))
     except _Abort as exc:
         code, message, exit_code = exc.code, exc.message, exc.exit_code
         terminal = "planned" if exc.code == "cancelled" else (
@@ -469,6 +470,8 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
             "succeeded",
             notes=("recovery artifacts retained for inspection",),
         ))
+    # Where the hosts were left: its own receipt note, so neither note is cut short.
+    ending = (end_sentence(steps),) if mutation_started and code != "updated" else ()
 
     source = (
         staged.source_manifest
@@ -482,7 +485,7 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
     try:
         receipt = receipt_builder.finish(
             steps, terminal, target=target, source=source,
-            notes=((code if code == "driver_pin_drift" else message), GATE_NOTE) + (
+            notes=((code if code == "driver_pin_drift" else message), *ending, GATE_NOTE) + (
                 ("Privileged process inspection was required for activity guards.",)
                 if getattr(ops, "privileged_process_inspection", False) is True else ())
         )
@@ -493,4 +496,4 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
     if pending_base is not None:
         attach_interrupted_receipt(pending_base, receipt)
         raise pending_base
-    return UpdateResult(exit_code=exit_code, code=code, message=message, receipt=receipt)
+    return UpdateResult(exit_code=exit_code, code=code, message=". ".join((message, *ending)), receipt=receipt)

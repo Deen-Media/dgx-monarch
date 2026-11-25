@@ -1854,7 +1854,38 @@ starts Workers without syncing, runs target-code doctor and the client-owned
 cluster smoke, and checks release, dependency and all-rank source agreement.
 Only after those checks pass does it promote the verified driver pin,
 fast-forward and read back the driver checkout, then finalize the transaction.
-Prior release slots, source backups and installation journals are retained.
+Source backups and installation journals are retained.
+
+Once every host is finalized, the update has succeeded, and a separate
+`release_retirement` step removes old release slots under
+`~/.local/share/dgx-monarch/releases`. On each host it holds the lifecycle
+lock, which every update, setup and lifecycle command takes, and first repeats
+finalize's own check: the journal, the unit bytes and the source link must
+still name this update's slot, and a running Worker must import from it. It
+leaves the Worker generation lock free, so a Worker that restarts meanwhile
+starts from the kept slot. It then removes only a slot it can prove dead:
+
+- named like a release slot, owned by you, and not a symlink;
+- neither this update's slot nor the slot it replaced, compared by real path,
+  so a rollback still has the old release;
+- its own transaction is over: an update's journal holds `finalized` or
+  `compensated`, or a failed guided setup's `closed.json`. A slot that guided
+  setup installed has no such mark and stays;
+- no process of yours that it can read works in it, runs or maps a file from
+  it, holds a file open in it, or names it in `PYTHONPATH`. A process it
+  cannot read, such as one that blocks inspection of itself, is not checked.
+
+Every other folder stays, including a slot another update is still staging.
+Each slot is renamed to `.retiring-<name>` before removal, so a stop halfway
+leaves nothing that looks like a slot, and the next update removes that
+leftover first. A host starts no new removal after 120 seconds, or once the
+updater stops reading its output, and the updater waits up to 240 seconds for
+it, the wait for the lifecycle lock included. The receipt step counts the slots
+removed, their bytes, the slots kept back for now and the hosts that did not
+confirm. Its status is `partial` when slots were kept back and `unknown` when
+a host did not confirm or you stopped the step; some slots may then remain,
+and the next update tries again. This step never changes the update's
+outcome. Earlier releases kept every slot.
 
 Migrated units include the canonical generation-invalidating `ExecStartPre`.
 Compensation restores the captured unit bytes, mode and source layout before
@@ -1871,17 +1902,26 @@ release on every host without syncing; a host it never reached still holds
 its prior unit and link, which the prior start reads back first. A failed start, doctor, smoke, readback, or driver commit first confirms the new
 services stopped (for a driver commit, also that the driver still reads back at
 its prior commit and pin), then compensates the slots and starts the prior
-release; each recovery step runs only after the one before it succeeded, and a
-prior start that definitely fails gets one more stop. Two smoke outcomes that
-decide no check count as a failed smoke here, each under its own code: checks
-that all passed while the smoke could not confirm the stop of the ProcMesh it
-started (`cluster_smoke_cleanup_unconfirmed`), and a smoke killed by a signal
-before it reported (`cluster_smoke_killed`). The restore is safe for both: it
+release; each recovery step runs only after the one before it succeeded. The
+prior start is tried on every host, so one host that does not confirm leaves
+no later host stopped, and a prior start that definitely fails gets one more
+stop. A doctor or smoke whose process ended with no verdict also counts as a
+failed check here, each under its own code: killed by a signal
+(`doctor_killed`, `cluster_smoke_killed`) or stopped at its time limit, 180
+seconds for doctor and 600 for the smoke (`doctor_timed_out`,
+`cluster_smoke_timed_out`); so does a smoke whose checks all passed while it
+could not confirm the stop of the ProcMesh it started
+(`cluster_smoke_cleanup_unconfirmed`). The restore is safe for all of them: it
 waits for the confirmed stop of every new Worker, the Worker unit stops its
-whole control group, so that stop ends every actor the smoke left on a Worker
-host, and the smoke process has already exited. It leaves the pair working on
-the old release, where an unknown result would leave the new Workers stopped
-for the forward repair. If a stop, activation,
+whole control group, so that stop ends every actor a check left on a Worker
+host, and the check's process has already exited or was stopped and reaped.
+It leaves the pair working on the old release, where an unknown result would
+leave the new Workers stopped for the forward repair. A doctor that reports
+unknown (exit 75) and a smoke that lost its evidence stay unknown. Whatever
+the end, the update's last line says which release each host is on, whether
+its Worker runs, and the repair: `dgxm up` where that one command repairs it,
+otherwise the case in TROUBLESHOOTING entry 118 for its code; the lines above
+it name the hosts. If a stop, activation,
 target start, compensation, or prior restart is unknown or throws, the command
 performs no later mutation; the one exception is the readback of an
 unanswered switch above, which writes only its cancel mark and runs the
@@ -2046,15 +2086,19 @@ or group-shared directory leaves that directory as it was; the receipt file
 itself is `0600`. Never change permissions on a shared or unrelated directory
 to make receipt publication pass. An optional dry-run receipt has the same
 path requirements. `dgxm update --verify` checks its `--receipt` before the
-update lock and any update step: a path that already exists, a parent that
-is a symlink or a file, an unsafe ancestor, a final directory of another
+update lock and any update step, walking the path as publication does: a
+path that already exists, a parent that is a symlink or a file, a parent it
+can search but not open, an unsafe ancestor, a final directory of another
 user, or a directory it cannot write refuses with exit 2 and changes nothing.
 A path taken by something else after that check is still never overwritten:
-the update then reports that its receipt could not be published.
+the update then reports that its receipt could not be published. A receipt
+directory on a filesystem without hard links, such as a vfat or exFAT stick,
+gets its receipt created exclusively under its final name instead of linked
+into place, still never over an existing file.
 
 ## Uninstalling
 
-Uninstall in two steps, and start the second only after the first finished.
+Uninstall in two steps, and start the second only after the first exits 0.
 
 1. Remove the Worker services and units. Run this line on its own, since it
    asks before it removes the config file:
@@ -2063,13 +2107,16 @@ Uninstall in two steps, and start the second only after the first finished.
    dgxm uninstall
    ```
 
-   It finished when its last line reads `worker services and units removed`,
-   or `no cluster config was found`, and it exits 0. Anything else is a
-   refusal: it removed nothing it could not prove safe, and the services it
-   found are still installed. A refusal that names `dgxm-studio.service`
-   asks you to run `dgxm studio down` first. Keep the checkout after a
-   refusal, since the `dgxm` command runs from it; clear the cause the
-   refusal names and run `dgxm uninstall` again.
+   Go by its exit status, which `echo $?` prints right after it: `0` means
+   it finished. On success it prints `worker services and units removed`
+   and then asks you to remove the checkout, or, with nothing to remove, it
+   prints `no cluster config was found`. Any other status is a refusal or an
+   incomplete removal, and the lines above it name the cause; one that names
+   `dgxm-studio.service` asks you to run `dgxm studio down` first. Keep the
+   checkout until it succeeds, since the `dgxm` command runs from it: clear
+   the cause and run `dgxm uninstall` again. Step 2 checks again on its own
+   and removes nothing while a dgx-monarch service unit is still installed on
+   this machine.
 
 2. Remove the node pack. It deletes any local work in the checkout, so look
    first with `git -C "$COMFY_DIR/custom_nodes/dgx-monarch" status --short`.
@@ -2078,7 +2125,8 @@ Uninstall in two steps, and start the second only after the first finished.
    is removed alone and the folder it names stays:
 
    ```bash
-   if [ -e ~/.config/systemd/user/dgxm-studio.service ] || [ -e ~/.config/systemd/user/dgxm-worker.service ]; then
+   if [ -e "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/dgxm-studio.service" ] \
+     || [ -e ~/.config/systemd/user/dgxm-studio.service ] || [ -e ~/.config/systemd/user/dgxm-worker.service ]; then
      echo "a dgx-monarch service unit is still installed: finish step 1 first"; false
    else
      rm -rf -- "${COMFY_DIR:?set COMFY_DIR to your ComfyUI folder}/custom_nodes/dgx-monarch"

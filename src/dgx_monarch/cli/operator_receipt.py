@@ -9,13 +9,17 @@ import math
 import os
 import re
 import secrets
-import stat
 import time
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Literal, TypeAlias, cast
 
+from .receipt_files import NO_HARD_LINKS, publish_exclusive
+from .receipt_files import entry_matches as _entry_matches
+from .receipt_files import private_parent as _private_parent
+from .receipt_files import same_parent_fd as _same_parent_fd
+from .receipt_files import unlink_owned as _unlink_owned
 from .receipt_sanitize import sanitize_note
 
 ReceiptOperation: TypeAlias = Literal["setup", "doctor_repair", "update", "cluster_smoke"]
@@ -307,81 +311,6 @@ def default_receipt_path(receipt: Mapping[str, object], *,
     return _state_root(state_home) / "dgx-monarch" / "receipts" / f"{stamp}-{operation}-{suffix}.json"
 
 
-def _private_parent(path: Path) -> int:
-    """Open the receipt's folder, creating any missing part at 0700.
-
-    A folder that already exists keeps its mode: a custom receipt path may sit
-    in a home or a group-shared folder that the receipt must not tighten.
-    """
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    directory_fd = os.open(path.anchor, flags)
-    pending_fd = -1
-    created = False
-    try:
-        for index, name in enumerate(path.parts[1:]):
-            created = False
-            try:
-                child_fd = os.open(name, flags, dir_fd=directory_fd)
-            except FileNotFoundError:
-                os.mkdir(name, 0o700, dir_fd=directory_fd)
-                created = True
-                os.fsync(directory_fd)
-                child_fd = os.open(name, flags, dir_fd=directory_fd)
-            except OSError as exc:
-                raise OSError("operator receipt parent must be a real directory, not a symlink") from exc
-            pending_fd = child_fd
-            opened = os.fstat(child_fd)
-            final = index == len(path.parts[1:]) - 1
-            writable = bool(opened.st_mode & 0o022)
-            if (
-                not stat.S_ISDIR(opened.st_mode)
-                or (created and (opened.st_uid != os.geteuid() or opened.st_mode & 0o077))
-                or (final and opened.st_uid != os.geteuid())
-                or (not final and writable and not opened.st_mode & stat.S_ISVTX)
-            ):
-                raise OSError("operator receipt parent chain is unsafe")
-            # Hand the parent over before closing it: a failed close must not
-            # leave its number for the handler below to close a second time.
-            previous, directory_fd, pending_fd = directory_fd, child_fd, -1
-            os.close(previous)
-        if created:
-            os.fchmod(directory_fd, 0o700)
-    except BaseException:
-        for descriptor in (pending_fd, directory_fd):
-            if descriptor >= 0:
-                try:
-                    os.close(descriptor)
-                except BaseException:
-                    pass
-        raise
-    return directory_fd
-
-
-def _entry_matches(directory_fd: int, name: str, identity: tuple[int, int]) -> bool:
-    try:
-        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return False
-    return (current.st_dev, current.st_ino) == identity
-
-
-def _unlink_owned(directory_fd: int, name: str, identity: tuple[int, int]) -> bool:
-    if not _entry_matches(directory_fd, name, identity):
-        return False
-    os.unlink(name, dir_fd=directory_fd)
-    return True
-
-
-def _same_parent_fd(path: Path, identity: tuple[int, int]) -> int:
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
-    opened = os.fstat(descriptor)
-    if (opened.st_dev, opened.st_ino) == identity:
-        return descriptor
-    os.close(descriptor)
-    raise OSError("operator receipt directory identity changed")
-
-
 def receipt_destination(path: str | os.PathLike[str]) -> Path:
     """Refuse a relative or nameless receipt path; it needs no receipt to check."""
     destination = Path(path).expanduser()
@@ -404,6 +333,7 @@ def write_receipt(receipt: Mapping[str, object], path: str | os.PathLike[str] | 
     temporary_name: str | None = None
     file_identity: tuple[int, int] | None = None
     link_attempted = False
+    published: list[tuple[int, int]] = []  # a final file created where link(2) is refused
     try:
         for _attempt in range(16):
             candidate = f".{destination.name}.tmp-{os.getpid()}-{secrets.token_hex(8)}"
@@ -441,8 +371,13 @@ def write_receipt(receipt: Mapping[str, object], path: str | os.PathLike[str] | 
         else:
             raise FileExistsError("operator receipt destination already exists")
         link_attempted = True
-        os.link(temporary_name, destination.name, src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd, follow_symlinks=False)
+        try:
+            os.link(temporary_name, destination.name, src_dir_fd=directory_fd,
+                    dst_dir_fd=directory_fd, follow_symlinks=False)
+        except OSError as exc:
+            if exc.errno not in NO_HARD_LINKS:
+                raise
+            publish_exclusive(directory_fd, destination.name, payload, published)
         if not _unlink_owned(directory_fd, temporary_name, file_identity):
             raise OSError("operator receipt temporary identity changed")
         temporary_name = None
@@ -460,10 +395,12 @@ def write_receipt(receipt: Mapping[str, object], path: str | os.PathLike[str] | 
                 pass
         if cleanup_fd >= 0 and file_identity is not None:
             removed = False
-            for name in ((destination.name,) if link_attempted else ()) + (
-                () if temporary_name is None else (temporary_name,)):
+            owned = [(destination.name, identity) for identity in (file_identity, *published) if link_attempted]
+            if temporary_name is not None:
+                owned.append((temporary_name, file_identity))
+            for name, identity in owned:
                 try:
-                    removed = _unlink_owned(cleanup_fd, name, file_identity) or removed
+                    removed = _unlink_owned(cleanup_fd, name, identity) or removed
                 except BaseException:
                     pass
             if removed:

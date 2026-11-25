@@ -13,9 +13,10 @@ from typing import cast
 
 from ..config import ClusterConfig
 from . import comfy_ports
-from .cluster_smoke import CLEANUP_CODES, exact_pass_evidence
+from .cluster_smoke import exact_pass_evidence
 from .update_activity import activity_snapshot, privileged_actor_count
 from .update_cancellation import run_finalizer_pair
+from .update_check_outcome import TIMED_OUT, doctor_outcome, smoke_outcome
 from .update_dependency_contract import require_candidate_dependencies
 from .update_doctor_diagnostics import report_doctor_result
 from .update_driver_pin import DriverPinError, DriverPinTransition
@@ -47,7 +48,6 @@ from .update_transaction import (
     UpdateRequest,
 )
 from .update_worker_lifecycle import (
-    LIFECYCLE_UNKNOWN_EXIT,
     active_generation,
     operation_from_exit,
     prior_generation,
@@ -61,27 +61,6 @@ _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _OK = OperationResult(Certainty.SUCCEEDED)
 _FAILED = OperationResult(Certainty.FAILED)
 _UNKNOWN = OperationResult(Certainty.UNKNOWN)
-
-
-def _unknown_smoke(stdout: str) -> OperationResult:
-    """Read the smoke's unknown exit: lost evidence, or a cleanup it could not confirm.
-
-    A transport loss or RPC timeout in the checks stays UNKNOWN, so the update
-    makes its one containment stop and nothing more. A smoke whose checks all
-    passed but whose own ProcMesh stop went unconfirmed is a named failure, and
-    so is a smoke killed by a signal: the update then restores the prior
-    release, which leaves the pair working. That restore runs only once the stop
-    of every new Worker is confirmed; the Worker unit stops its whole control
-    group, so that stop ends every actor the smoke left on a Worker host, and
-    the smoke process itself has already exited.
-    """
-    try:
-        payload = json.loads(stdout.splitlines()[-1])
-    except (IndexError, json.JSONDecodeError):
-        return _UNKNOWN
-    if isinstance(payload, dict) and payload.get("error") in CLEANUP_CODES:
-        return OperationResult(Certainty.FAILED, "cleanup_unconfirmed")
-    return _UNKNOWN
 
 
 class SystemUpdateOps(UpdateOps):
@@ -308,12 +287,14 @@ class SystemUpdateOps(UpdateOps):
                 args, cwd=self.repo, capture_output=True, text=True, timeout=180,
                 env=_runtime_env(site),
             )
-        except (OSError, ReleaseLayoutError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            return TIMED_OUT
+        except (OSError, ReleaseLayoutError):
             return _UNKNOWN
         # Doctor exits 75 when no row failed but a critical probe never answered.
         # That is no reason to restore the prior release over a started target.
         report_doctor_result(result.returncode, result.stdout, tuple(host.name for host in self.config.hosts))
-        return operation_from_exit(result.returncode)
+        return doctor_outcome(result.returncode)
 
     def cluster_smoke(self, staged: StagedRelease) -> OperationResult:
         if not self._config_current():
@@ -328,17 +309,16 @@ class SystemUpdateOps(UpdateOps):
                 [sys.executable, "-c", script, str(self._config_path)], cwd=self.repo,
                 capture_output=True, text=True, timeout=600, env=_runtime_env(site),
             )
-            if result.returncode == LIFECYCLE_UNKNOWN_EXIT:
-                return _unknown_smoke(result.stdout)
-            if result.returncode < 0:
-                # A signal killed the smoke before it reported. See _unknown_smoke
-                # for why the restore that a failure starts is safe here.
-                return OperationResult(Certainty.FAILED, "killed")
-            if result.returncode != 0:
-                return _FAILED
+        except subprocess.TimeoutExpired:
+            return TIMED_OUT
+        except (OSError, ReleaseLayoutError):
+            return _UNKNOWN
+        ended = smoke_outcome(result.returncode, result.stdout)
+        if ended is not None:
+            return ended
+        try:
             payload = json.loads(result.stdout.splitlines()[-1])
-        except (IndexError, json.JSONDecodeError, OSError, ReleaseLayoutError,
-                subprocess.TimeoutExpired):
+        except (IndexError, json.JSONDecodeError):
             return _UNKNOWN
         if not isinstance(payload, dict) or payload.get("result") != "PASS":
             return _FAILED
@@ -412,6 +392,9 @@ class SystemUpdateOps(UpdateOps):
         if not self._driver_target_matches(staged):
             return _UNKNOWN
         return self._releases.finalize()
+
+    def retire_releases(self, staged: StagedRelease) -> OperationResult:
+        return self._releases.retire_releases()
 
     def prior_driver_readback(self, staged: StagedRelease) -> OperationResult:
         return _OK if self._driver_prior_matches(staged) else _UNKNOWN

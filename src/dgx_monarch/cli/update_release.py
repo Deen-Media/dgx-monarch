@@ -25,6 +25,7 @@ from .update_installation import (
     stop_installation,
 )
 from .update_pin_diagnostic import PinDiagnostic
+from .update_release_report import report_activation, report_compensation, report_prior_start
 from .update_release_types import (  # noqa: F401  # Public update_release API.
     _DIGEST,
     _REMOTE_BASE,
@@ -41,6 +42,7 @@ from .update_release_types import (  # noqa: F401  # Public update_release API.
     _result,
     _validate_metadata,
 )
+from .update_retirement import retire_slots
 from .update_transaction import Certainty, OperationResult
 from .update_worker_attestation import (
     WorkerReleaseIdentity,
@@ -243,19 +245,32 @@ class ReleaseManager:
 
         A host after the one where activation stopped was never sent an
         activation, so its prior start expects no journal of this transaction.
+        Every host is tried, so one that does not confirm leaves no later host
+        stopped; the hosts whose Worker did not start are named on stderr.
         """
         slot = self._require_slot()
         if slot.activation_ambiguous or slot.remote_activated or not slot.installations:
             return _result(Certainty.UNKNOWN)
+        results: list[tuple[HostConfig, Certainty]] = []
+        pending: BaseException | None = None
         for index, host in enumerate(self.config.hosts):
-            certainty = start_prior_installation(
-                self.config, host, slot.token, slot.installations[host.name], self._host_run,
-                self._prior_attestation_script(host, slot), generation,
-                attempted=index < slot.activation_attempted,
-            )
-            if certainty != Certainty.SUCCEEDED:
-                return _result(certainty)
-        return _result(Certainty.SUCCEEDED)
+            try:
+                results.append((host, start_prior_installation(
+                    self.config, host, slot.token, slot.installations[host.name], self._host_run,
+                    self._prior_attestation_script(host, slot), generation,
+                    attempted=index < slot.activation_attempted,
+                )))
+            except BaseException as error:
+                results.append((host, Certainty.UNKNOWN))
+                if not isinstance(error, Exception):
+                    pending = stronger_cancellation(pending, error)
+        report_prior_start(results)
+        if pending is not None:
+            raise pending
+        certainties = [certainty for _host, certainty in results]
+        if all(value == Certainty.SUCCEEDED for value in certainties):
+            return _result(Certainty.SUCCEEDED)
+        return _result(Certainty.UNKNOWN if Certainty.UNKNOWN in certainties else Certainty.FAILED)
 
     def activate_workers(self) -> OperationResult:
         """Switch one host at a time and stop at the first switch that does not confirm.
@@ -297,7 +312,7 @@ class ReleaseManager:
         if certainty == Certainty.SUCCEEDED:
             slot.remote_activated = True
             return OperationResult(Certainty.SUCCEEDED, counts={"hosts_switched": hosts})
-        self._report_activation(slot, certainty)
+        report_activation(self.config.hosts, slot, certainty)
         counts = {
             "hosts_switched": slot.activation_attempted - 1,
             "hosts_unknown" if certainty == Certainty.UNKNOWN else "hosts_failed": 1,
@@ -308,54 +323,33 @@ class ReleaseManager:
             return OperationResult(Certainty.UNKNOWN, counts=counts)
         return OperationResult(Certainty.FAILED, counts=counts)
 
-    def _report_activation(self, slot: ReleaseSlot, certainty: Certainty) -> None:
-        """Name each host's release after a switch that stopped short, on stderr only."""
-        hosts = self.config.hosts
-        stopped_at = slot.activation_attempted - 1
-        host = hosts[stopped_at].name
-        switched = ", ".join(item.name for item in hosts[:stopped_at])
-        untouched = ", ".join(item.name for item in hosts[stopped_at + 1:])
-        if certainty == Certainty.UNKNOWN:
-            print(f"activation on {host} is unknown: its source link and unit can name either release", file=sys.stderr)
-        else:
-            print(f"activation on {host} failed and left a state the update can restore", file=sys.stderr)
-        if switched:
-            print(f"switched to the new release before it: {switched}", file=sys.stderr)
-        if untouched:
-            print(f"never sent an activation, still on the old release: {untouched}", file=sys.stderr)
-        if certainty == Certainty.UNKNOWN:
-            print(
-                "the hosts may now run different releases, all stopped. Read each host's link "
-                "(readlink -f ~/.local/share/dgx-monarch/src): when every link names the old "
-                "release, `dgxm up` starts the Workers again on it; when any names the new one, "
-                "follow the forward repair in TROUBLESHOOTING entry 118",
-                file=sys.stderr,
-            )
-
     def compensate_workers(self) -> OperationResult:
         """Restore every host activation reached; the hosts after them were never changed."""
         slot = self._require_slot()
         if slot.activation_ambiguous or not slot.installations:
             return _result(Certainty.UNKNOWN)
-        certainties: list[Certainty] = []
+        results: list[tuple[HostConfig, Certainty]] = []
         pending: BaseException | None = None
         for host in self.config.hosts[:slot.activation_attempted]:
             try:
-                certainties.append(change_installation(
+                results.append((host, change_installation(
                     self.config, host, slot.token, slot.installations[host.name], self._host_run,
                     compensate=True,
-                ))
+                )))
             except BaseException as error:
-                certainties.append(Certainty.UNKNOWN)
+                results.append((host, Certainty.UNKNOWN))
                 pending = stronger_cancellation(pending, error)
+        certainties = [certainty for _host, certainty in results]
         if pending is not None:
             slot.activation_ambiguous = True
+            report_compensation(results, prior_matches=True)
             raise pending
         try:
             prior_matches = not all(value == Certainty.SUCCEEDED for value in certainties) or self._prior_hosts_match(slot)
         except BaseException:
             slot.activation_ambiguous = True
             raise
+        report_compensation(results, prior_matches)
         if all(value == Certainty.SUCCEEDED for value in certainties):
             if not prior_matches:
                 slot.activation_ambiguous = True
@@ -409,6 +403,13 @@ class ReleaseManager:
         certainty = Certainty.SUCCEEDED if all(value == Certainty.SUCCEEDED for value in certainties) else Certainty.UNKNOWN
         slot.finalized = certainty == Certainty.SUCCEEDED
         return _result(certainty)
+
+    def retire_releases(self) -> OperationResult:
+        """Once every host is finalized, retire the release slots no host needs (housekeeping only)."""
+        slot = self._require_slot()
+        if not slot.finalized or slot.activation_ambiguous or not slot.installations:
+            return _result(Certainty.UNKNOWN)
+        return retire_slots(self.config, slot.token, slot.installations, self._host_run)
 
     def cleanup(self) -> OperationResult:
         slot = self._require_slot()

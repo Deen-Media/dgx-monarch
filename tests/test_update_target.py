@@ -29,6 +29,50 @@ def _git_runner(repo: Path, *, fail_first_remove: bool = False):
     return run
 
 
+def test_update_cleanup_removes_its_registration_under_a_symlinked_root(tmp_path: Path):
+    """git lists the real path; the cleanup still removes its own registration and nothing else."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-q", "--allow-empty", "-m", "base")
+    (tmp_path / "real-root").mkdir()
+    root = tmp_path / "update-worktrees"
+    root.symlink_to(tmp_path / "real-root", target_is_directory=True)
+    checkout = Path(tempfile.mkdtemp(prefix="update-", dir=root))
+    git(repo, "worktree", "add", "-q", "--detach", str(checkout), "HEAD")
+    assert f"worktree {checkout.resolve()}" in git(repo, "worktree", "list", "--porcelain")
+
+    result = remove_worktree(checkout, root, _git_runner(repo, fail_first_remove=True))
+
+    assert result.certainty == Certainty.SUCCEEDED
+    listed = git(repo, "worktree", "list", "--porcelain")
+    assert f"worktree {checkout.resolve()}" not in listed and f"worktree {checkout}" not in listed
+    assert [line for line in listed.splitlines() if line.startswith("worktree ")] == [f"worktree {repo}"]
+
+
+def test_a_registration_left_under_its_real_path_is_never_read_as_removed(tmp_path: Path):
+    """Both removes fail, so only the listing decides: it names the real path, not the symlinked one."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-q", "--allow-empty", "-m", "base")
+    (tmp_path / "real-root").mkdir()
+    root = tmp_path / "update-worktrees"
+    root.symlink_to(tmp_path / "real-root", target_is_directory=True)
+    checkout = Path(tempfile.mkdtemp(prefix="update-", dir=root))
+    git(repo, "worktree", "add", "-q", "--detach", str(checkout), "HEAD")
+    real = _git_runner(repo)
+
+    def removes_fail(*args: str, timeout: float = 60) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ("worktree", "remove"):
+            return subprocess.CompletedProcess(list(args), 128, "", "fatal: cannot remove")
+        return real(*args, timeout=timeout)
+
+    assert remove_worktree(checkout, root, removes_fail).certainty == Certainty.FAILED
+    assert not checkout.exists()
+    assert f"worktree {checkout.resolve()}" in git(repo, "worktree", "list", "--porcelain")
+
+
 @pytest.mark.parametrize("registered", [False, True])
 def test_update_cleanup_never_prunes_another_worktree(tmp_path: Path, registered: bool):
     """A worktree on a disk that is not mounted keeps its registration through an update's cleanup."""

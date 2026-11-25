@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import ClusterConfig, HostConfig
-from . import lifecycle, update_installation_remote, update_installation_start
+from . import lifecycle, update_installation_remote, update_installation_start, update_retire_remote
 from .lifecycle_generation import (
     _GENERATION_LIBRARY,
     SYSTEM_PYTHON,
@@ -130,6 +130,21 @@ def settle_installation(config: ClusterConfig, host: HostConfig, token: str, sna
     if result.returncode == 0 and "ACTIVATION_PROBE_PRIOR" in lines:
         return Certainty.FAILED
     return Certainty.UNKNOWN
+
+
+def retire_script(config: ClusterConfig, host: HostConfig, token: str, snapshot: dict[str, Any]) -> str:
+    """The host's retire run: the helper's text, then the retire module's in the same globals.
+
+    It holds the lifecycle lock, like finalize, and not the generation fence,
+    so a Worker restart meanwhile still passes its start check.
+    """
+    request = _change_request(config, host, token, snapshot, "retire")
+    source = Path(update_installation_remote.__file__).read_text(encoding="utf-8")
+    retire_source = Path(update_retire_remote.__file__).read_text(encoding="utf-8")
+    payload = base64.b64encode(json.dumps(request).encode()).decode()
+    script = source + "\nexec(compile(" + repr(retire_source) + ", 'update_retire_remote', 'exec'), globals())\nretire_installation(json.loads(base64.b64decode(" + repr(payload) + ")))\n"
+    shell = "# DGXM_INSTALLATION_OPERATION=retire\n" + SYSTEM_PYTHON + " -I -S -B - <<'DGXM_RETIRE'\n" + script + "DGXM_RETIRE\n"
+    return locked_script(config.python_bin, shell)
 
 
 def change_installation(config: ClusterConfig, host: HostConfig, token: str, snapshot: dict[str, Any], run: HostRunner, *, compensate: bool = False, finalize: bool = False, preflight_script: str = "") -> Certainty:

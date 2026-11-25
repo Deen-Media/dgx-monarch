@@ -74,6 +74,22 @@ def test_repo_snapshot_detects_dirty_and_hidden_index_state(tmp_path: Path):
     assert ops.repo_snapshot(sha).clean is False
 
 
+def test_the_real_ops_and_the_studio_wrapper_both_reach_the_release_retirement(tmp_path: Path):
+    """The transaction calls retire_releases on what the CLI and Studio pass it; both reach the release manager."""
+    from dgx_monarch.cli.update_retirement import retire_after_finalize
+    from dgx_monarch.studio.management_update import ReviewedUpdate
+
+    retired = OperationResult(Certainty.SUCCEEDED, counts={"releases_retired": 2})
+    calls: list[str] = []
+    manager = SimpleNamespace(retire_releases=lambda: calls.append("retire") or retired)
+    config = ClusterConfig(source=str(tmp_path / "cluster.toml"))
+    ops = update_command.SystemUpdateOps(tmp_path, config, release_manager=manager)
+    staged = SimpleNamespace()
+    assert retire_after_finalize(ops, staged) == retired
+    assert retire_after_finalize(ReviewedUpdate(ops, {}), staged) == retired
+    assert calls == ["retire", "retire"]
+
+
 def test_repo_snapshot_rechecks_exact_cluster_config_bytes(tmp_path: Path):
     repo, sha = _checkout(tmp_path)
     config_path = tmp_path / "cluster.toml"
@@ -680,6 +696,27 @@ def test_command_refuses_an_unusable_receipt_path_before_any_operation(
     assert err.startswith("error: --receipt: ") and refusal in err
 
 
+def test_command_refuses_a_receipt_under_an_unreadable_folder_before_any_operation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+):
+    """Publication opens every folder of the path, so a folder it can search but not read refuses first."""
+    gate = tmp_path / "gate"
+    (gate / "receipts").mkdir(parents=True, mode=0o700)
+    ops = _RecordingOps()
+    lock_root = tmp_path / "locks"
+    monkeypatch.setattr(update_entrypoint, "UpdateLock", lambda repo: UpdateLock(repo, state_root=lock_root))
+    gate.chmod(0o311)
+    try:
+        rc = update_command.run_verified_update(
+            ClusterConfig(), repo=tmp_path, assume_yes=True,
+            receipt_path=gate / "receipts" / "update.json", ops=ops,
+        )
+    finally:
+        gate.chmod(0o700)
+    assert rc == 2 and ops.calls == [] and not lock_root.exists()
+    assert "cannot be opened" in capsys.readouterr().err
+
+
 def test_command_refuses_concurrent_verified_update_before_any_operation(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ):
@@ -802,11 +839,10 @@ def test_a_smoke_that_lost_its_transport_is_unknown_not_failed(
 ):
     """A smoke child that lost its transport reads UNKNOWN; a definite refusal reads FAILED.
 
-    The two other FAILED readings, a cleanup the smoke could not confirm and a
-    smoke a signal killed, have their own test below.
-
-    The child's 60 s status timeout and the parent's 600 s timeout are one class of
-    evidence; if they read differently, rollback depends on which clock fires first.
+    The child's own 60 s status timeout is the smoke reporting that it lost its
+    evidence. A smoke that never reports (killed, or stopped at the parent's
+    600 s limit) and one that could not confirm its own cleanup are named
+    failures that restore the prior release; they have their own test below.
     """
     repo, _sha = _checkout(tmp_path)
     config_path = tmp_path / "cluster.toml"
@@ -857,21 +893,32 @@ def test_an_unconfirmed_smoke_cleanup_or_a_killed_smoke_is_a_named_failure(
     release = SimpleNamespace(ensure_supported=lambda: None,
                               slot=SimpleNamespace(site=target_site, remote_activated=True))
 
-    def smoke_exiting(returncode: int, stdout: str) -> OperationResult:
+    def ops_running(runner):
         ops = update_command.SystemUpdateOps(
-            repo, ClusterConfig(source=str(config_path)), release_manager=release,
-            command_runner=lambda argv, **_kwargs: subprocess.CompletedProcess(list(argv), returncode, stdout, ""),
+            repo, ClusterConfig(source=str(config_path)), release_manager=release, command_runner=runner,
         )
         monkeypatch.setattr(ops, "_target_site", lambda: target_site)
-        return ops.cluster_smoke(stage)
+        return ops
+
+    def smoke_exiting(returncode: int, stdout: str) -> OperationResult:
+        return ops_running(lambda argv, **_kwargs: subprocess.CompletedProcess(
+            list(argv), returncode, stdout, "")).cluster_smoke(stage)
+
+    def stopped_at_the_limit(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
 
     for code in ("cleanup_not_confirmed", "cleanup_recycle_failed"):
         unconfirmed = json.dumps({"error": code, "result": "FAIL"}) + "\n"
         assert smoke_exiting(75, unconfirmed) == OperationResult(Certainty.FAILED, "cleanup_unconfirmed")
     assert smoke_exiting(-9, "") == OperationResult(Certainty.FAILED, "killed")
     assert smoke_exiting(-15, '{"result": "PASS"}\n') == OperationResult(Certainty.FAILED, "killed")
+    assert ops_running(stopped_at_the_limit).cluster_smoke(stage) == OperationResult(Certainty.FAILED, "timed_out")
     assert smoke_exiting(75, "a line that is not JSON\n") == OperationResult(Certainty.UNKNOWN)
     assert smoke_exiting(75, "") == OperationResult(Certainty.UNKNOWN)
+    # Doctor follows the same rule: no verdict at all is a named failure, its own unknown stays unknown.
+    doctor = ops_running(lambda argv, **_kwargs: subprocess.CompletedProcess(list(argv), -9, "", ""))
+    assert doctor.doctor() == OperationResult(Certainty.FAILED, "killed")
+    assert ops_running(stopped_at_the_limit).doctor() == OperationResult(Certainty.FAILED, "timed_out")
 
 
 def test_the_update_unit_stops_its_whole_control_group():

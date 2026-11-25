@@ -534,7 +534,7 @@ def test_a_same_target_verified_update_runs_the_whole_transaction():
     assert ops.events == [
         'resolve:HEAD', f'repo:{TARGET}', 'activity', f'stage:{TARGET}', f'repo:{TARGET}', 'activity',
         'stop', 'activate', 'start_no_sync', 'doctor', 'cluster_smoke', 'readback', 'commit_driver',
-        'finalize', 'cleanup',
+        'finalize', 'retire', 'cleanup',
     ]
 
 

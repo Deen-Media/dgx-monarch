@@ -379,6 +379,22 @@ def test_the_pack_check_reads_a_real_loopback_server(monkeypatch):
         thread.join(5)
 
 
+def test_the_verified_update_refuses_activity_unknown_when_a_port_answers_401(monkeypatch):
+    """The same pack check gates the verified update's activity guard, even with no ComfyUI process seen."""
+    import urllib.error
+    import urllib.request
+
+    from dgx_monarch.cli import comfy_ports, update_activity
+
+    def denied(url, timeout=None):
+        raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", denied)
+    monkeypatch.setattr(comfy_ports, "find_comfy_ports", lambda: {8188: None, 8191: None})
+    snapshot = update_activity.activity_snapshot(None, 0, comfy_ports, lambda: 0)
+    assert snapshot.blockers() == ("activity_unknown",)
+
+
 def test_legacy_update_refuses_a_server_error_even_when_every_other_port_is_closed(
     monkeypatch, tmp_path, capsys
 ):
