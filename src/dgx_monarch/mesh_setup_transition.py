@@ -121,18 +121,18 @@ def drops_residents(previous: dict | None, new: dict, *, fsdp: bool = False) -> 
     binds at model load (``actor/worker_env.apply_worker_args_impl``), and it
     drops some on a residency change (``_store_drops``). So the driver reads the
     policy it last published (``previous``) and the new one by the Worker's own
-    rule: a ``shared_act_scale`` the last policy carried and this one drops
-    returns to on. Cases it cannot read it marks: a policy that adds that key
-    (the Worker's own environment held the setting before), an unknown last
-    policy (``None``: a failed or torn apply), and a residency change that may
-    leave the resident in place. Such a mark may charge a model a Worker still
-    holds; an unmarked drop would credit one it lost.
+    rule: ``shared_act_scale`` is read from the worker args alone, an absent key
+    reading on (``adapters/shared_scale_switch.env_from_worker_args``), so the
+    switch changes only where that reading does. Cases it cannot read it marks:
+    an unknown last policy (``None``: a failed or torn apply), and a residency
+    change that may leave the resident in place. Such a mark may charge a model
+    a Worker still holds; an unmarked drop would credit one it lost.
     """
     from .adapters.quant_activation_scale import ENABLE_ARG
     from .family_select import override_from_worker_args
     from .fp8_compute import setting as fp8_setting
 
-    if previous is None or (ENABLE_ARG in new and ENABLE_ARG not in previous):
+    if previous is None:
         return True
 
     def scale_on(args: dict) -> bool:

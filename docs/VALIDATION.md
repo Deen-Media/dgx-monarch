@@ -797,6 +797,11 @@ and 0.011 with it. A separate 512-square CFG-1 native control measured
 0.018844. Padding can still raise a shared scale relative to an unpadded
 one-GPU tensor. No hook-cost or non-Krea/non-Chroma NVFP4 control was measured.
 
+**Addition, 2026-11-24.** The 0.014 reading was taken on 2026-09-03 and the
+0.011 reading on 2026-09-05, both on the shipped template at 1536 square, CFG
+1, euler_cfg_pp, one step, read on the decoded image. Since 1.5.0 only real
+rows enter the shared scale, so a shared scale is no longer raised by padding.
+
 Auto has no small-image cfg2 rule; cfg2 is explicit. Plain samplers at CFG 1
 have no unconditional batch to split, while cfg++ samplers retain it. Unequal
 cfg2 prompts use padding and a key mask; combined sequence/CFG topologies
@@ -2734,6 +2739,15 @@ an 832x480, five-latent-frame render completed. BF16
 world-2 auto/Ulysses completed 48-frame renders and read decoded probe
 NRMS 0.042457 against a local reference. Conditioning has 226 tokens.
 The tested 1.0-layout LoRA skipped all 1,344 keys on 1.5, so it did not modify the model.
+
+**Addition, 2026-11-24.** The readings above, and the I2V one below, predate
+1.5.0's CogVideoX order descriptor: on pure Ulysses its attention now runs at
+the full-axis point with stock's key order and the pad rows left out, where
+before it ran xfuser's own call with the keys in rank-major order, at even
+lengths too. Every uly2 render of CogVideoX changes; the descriptor is proved
+on CPU against the unsplit forward at even and odd lengths
+(`tests/test_cogvideo_pad_exclusion.py`), and no reading on the pair has been
+taken since.
 
 <a id="evidence-cogvideox-1-5-i2v"></a>
 

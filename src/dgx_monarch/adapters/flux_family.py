@@ -23,6 +23,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from . import scale_rows
 from .adaln_parity_blocks import bind_blocks, bind_flux_norm_parity, with_norm_rows
 from .attention_patches import assert_usp_attention_patches_safe
 from .base import (
@@ -34,6 +35,7 @@ from .base import (
     sp_rank,
     usp_options,
 )
+from .chroma_cfg_pad import _chroma_cfg_pad_trim
 from .chroma_text import full_row_text_projections
 from .flux_shared import (  # Other adapters import _control_span_overlap from here.
     PAD_FIDELITY_PROBE,
@@ -46,58 +48,14 @@ from .usp_sequence_order import joint_double_options
 
 log = get_logger(__name__)
 
-
-def _chroma_cfg_pad_trim(context: torch.Tensor, attention_mask):
-    """Undo the cfg2 equalizer's trailing text pad and joint-key bias.
-
-    `equalize_cond_lengths` (actor/sampling.py, rule "pad+mask") zero-pads
-    each prompt's context to one length (the longest, aligned so the joint key
-    count is a multiple of 8) and attaches an additive bias over the joint
-    [text, image] keys: 0 on real text rows and every image key, the dtype
-    minimum on pad rows. Each row's bias is a real-then-pad prefix, so its zero
-    count is the row's real length. Trimming context to that length and
-    dropping the bias hands stock's forward exactly the unpadded, maskless
-    tensors a one-GPU call for that cond builds.
-
-    Pad is a hard sentinel, at or below float16's minimum: ComfyUI casts the
-    equalizer's cond-dtype minimum to the model dtype (-inf from float32 in
-    bfloat16), and attention gives any such key exactly zero weight, so the
-    trim is the same math. A finite bias such as a custom producer's soft
-    mask attenuates real tokens and is no pad. Such a mask, a nonzero image
-    column, or a text zone that is not zeros then pad is not this construction
-    (a conditioning that ships its own attention_mask skips the equalizer,
-    sampling.py "already ships its own") and is returned unchanged. A batch
-    whose rows disagree on the real length cannot be trimmed and is refused.
-    """
-    if attention_mask is None:
-        return context, None
-    text_len = context.shape[1]
-    bias = attention_mask.reshape(attention_mask.shape[0], -1)
-    if bias.shape[-1] < text_len:
-        return context, attention_mask
-    text_zone, image_zone = bias[:, :text_len], bias[:, text_len:]
-    real = text_zone == 0
-    if (image_zone.numel() and bool((image_zone != 0).any())) or not bool(
-            (real | (text_zone <= torch.finfo(torch.float16).min)).all()):
-        return context, attention_mask
-    lengths = real.sum(dim=1)
-    is_prefix = real == (
-        torch.arange(text_len, device=real.device).unsqueeze(0) < lengths.unsqueeze(1)
-    )
-    if not bool(is_prefix.all()):
-        return context, attention_mask
-    rows = int(lengths[0])
-    if bool((lengths != rows).any()):
-        raise UnsupportedModelError(refusal(
-            RefusalClass.PHYSICS,
-            "chroma: this cfg-parallel rank's batch holds more than one real text "
-            "length after the trailing pad is removed, so no single trim reproduces "
-            "stock's unpadded call for every row. Use one prompt length across the "
-            "image batch, or a non-cfg topology.",
-        ))
-    if rows == text_len:
-        return context, None
-    return context[:, :rows], None
+# Which flux-layout block Linears read which sharded stream (Chroma, Flux,
+# Flux2, LongCat, and Hunyuan's identically named blocks). The img_mod,
+# txt_mod and single-block modulation Linears read the per-batch vector.
+FLUX_SCALE_ROLES = scale_rows.by_pattern([
+    (r"double_blocks\.\d+\.(img_attn\.(qkv|proj)|img_mlp\.\d+)", "image"),
+    (r"double_blocks\.\d+\.(txt_attn\.(qkv|proj)|txt_mlp\.\d+)", "text"),
+    (r"single_blocks\.\d+\.(linear1|linear2)", "joint"),
+])
 
 
 class ChromaAdapter(Adapter):
@@ -166,6 +124,9 @@ class ChromaAdapter(Adapter):
             blocks_replace = patches_replace.get("dit", {})
             usp_opts["total_blocks"] = len(self.double_blocks)
             usp_opts["block_type"] = "double"
+            # The same pad rows stay out of the shared nvfp4 activation scale.
+            double_streams = {"text": scale_rows.stream((txt_orig_len, txt.shape[1])),
+                              "image": scale_rows.stream((img_orig_len, img.shape[1]))}
             for i, block in enumerate(self.double_blocks):
                 usp_opts["block_index"] = i
                 if i in self.skip_mmdit:
@@ -174,7 +135,9 @@ class ChromaAdapter(Adapter):
                     self.get_modulations(mod_vectors, "double_img", idx=i),
                     self.get_modulations(mod_vectors, "double_txt", idx=i),
                 )
-                with full_row_text_projections(block, txt_orig_len, img_orig_len, pure_ulysses=pure_ulysses):
+                with full_row_text_projections(block, txt_orig_len, img_orig_len,
+                                               pure_ulysses=pure_ulysses), \
+                        scale_rows.real_rows(FLUX_SCALE_ROLES, double_streams):
                     if ("double_block", i) in blocks_replace:
                         def block_wrap(args, block=block):
                             out_img, out_txt = block(img=args["img"], txt=args["txt"], vec=args["vec"],
@@ -223,25 +186,27 @@ class ChromaAdapter(Adapter):
             single_opts["img_slice"] = [txt_len_full, joint_orig_len]
             single_opts["total_blocks"] = len(self.single_blocks)
             single_opts["block_type"] = "single"
+            joint = scale_rows.stream((joint_orig_len, img.shape[1]))
             for i, block in enumerate(self.single_blocks):
                 single_opts["block_index"] = i
                 if i in self.skip_dit:
                     continue
                 single_mod = self.get_modulations(mod_vectors, "single", idx=i)
-                if ("single_block", i) in blocks_replace:
-                    def block_wrap(args, block=block):
-                        return {"img": block(args["img"], vec=args["vec"], pe=args["pe"],
-                                             attn_mask=args.get("attn_mask"),
-                                             transformer_options=args.get("transformer_options"))}
+                with scale_rows.real_rows(FLUX_SCALE_ROLES, {"joint": joint}):
+                    if ("single_block", i) in blocks_replace:
+                        def block_wrap(args, block=block):
+                            return {"img": block(args["img"], vec=args["vec"], pe=args["pe"],
+                                                 attn_mask=args.get("attn_mask"),
+                                                 transformer_options=args.get("transformer_options"))}
 
-                    out = blocks_replace[("single_block", i)](
-                        {"img": img, "vec": single_mod, "pe": pe_single,
-                         "attn_mask": attn_mask, "transformer_options": single_opts},
-                        {"original_block": block_wrap})
-                    img = out["img"]
-                else:
-                    img = block(img, vec=single_mod, pe=pe_single, attn_mask=attn_mask,
-                                transformer_options=single_opts)
+                        out = blocks_replace[("single_block", i)](
+                            {"img": img, "vec": single_mod, "pe": pe_single,
+                             "attn_mask": attn_mask, "transformer_options": single_opts},
+                            {"original_block": block_wrap})
+                        img = out["img"]
+                    else:
+                        img = block(img, vec=single_mod, pe=pe_single, attn_mask=attn_mask,
+                                    transformer_options=single_opts)
 
                 if control is not None:
                     control_o = control.get("output")
@@ -427,23 +392,27 @@ class FluxAdapter(Adapter):
             usp_opts["block_type"] = "double"
             rows = img.shape[1]
             row0 = sp_rank() * rows
+            # The same pad rows stay out of the shared nvfp4 activation scale.
+            double_streams = {"text": scale_rows.stream((txt_orig_len, txt.shape[1])),
+                              "image": scale_rows.stream((img_orig_len, rows))}
             for i, block in enumerate(self.double_blocks):
                 usp_opts["block_index"] = i
-                if ("double_block", i) in blocks_replace:
-                    def block_wrap(args, block=block):
-                        out_img, out_txt = block(img=args["img"], txt=args["txt"], vec=args["vec"],
-                                                 pe=args["pe"], attn_mask=args.get("attn_mask"),
-                                                 transformer_options=args.get("transformer_options"))
-                        return {"img": out_img, "txt": out_txt}
+                with scale_rows.real_rows(FLUX_SCALE_ROLES, double_streams):
+                    if ("double_block", i) in blocks_replace:
+                        def block_wrap(args, block=block):
+                            out_img, out_txt = block(img=args["img"], txt=args["txt"], vec=args["vec"],
+                                                     pe=args["pe"], attn_mask=args.get("attn_mask"),
+                                                     transformer_options=args.get("transformer_options"))
+                            return {"img": out_img, "txt": out_txt}
 
-                    out = blocks_replace[("double_block", i)](
-                        {"img": img, "txt": txt, "vec": vec, "pe": pe_double,
-                         "attn_mask": attn_mask, "transformer_options": usp_opts},
-                        {"original_block": block_wrap})
-                    img, txt = out["img"], out["txt"]
-                else:
-                    img, txt = block(img=img, txt=txt, vec=vec, pe=pe_double,
-                                     attn_mask=attn_mask, transformer_options=usp_opts)
+                        out = blocks_replace[("double_block", i)](
+                            {"img": img, "txt": txt, "vec": vec, "pe": pe_double,
+                             "attn_mask": attn_mask, "transformer_options": usp_opts},
+                            {"original_block": block_wrap})
+                        img, txt = out["img"], out["txt"]
+                    else:
+                        img, txt = block(img=img, txt=txt, vec=vec, pe=pe_double,
+                                         attn_mask=attn_mask, transformer_options=usp_opts)
 
                 if control is not None:  # ControlNet
                     control_i = control.get("input")
@@ -493,22 +462,24 @@ class FluxAdapter(Adapter):
             single_opts["block_type"] = "single"
             rows = img.shape[1]
             row0 = sp_rank() * rows
+            joint = scale_rows.stream((joint_orig_len, rows))
             for i, block in enumerate(self.single_blocks):
                 single_opts["block_index"] = i
-                if ("single_block", i) in blocks_replace:
-                    def block_wrap(args, block=block):
-                        return {"img": block(args["img"], vec=args["vec"], pe=args["pe"],
-                                             attn_mask=args.get("attn_mask"),
-                                             transformer_options=args.get("transformer_options"))}
+                with scale_rows.real_rows(FLUX_SCALE_ROLES, {"joint": joint}):
+                    if ("single_block", i) in blocks_replace:
+                        def block_wrap(args, block=block):
+                            return {"img": block(args["img"], vec=args["vec"], pe=args["pe"],
+                                                 attn_mask=args.get("attn_mask"),
+                                                 transformer_options=args.get("transformer_options"))}
 
-                    out = blocks_replace[("single_block", i)](
-                        {"img": img, "vec": single_vec, "pe": pe_single,
-                         "attn_mask": attn_mask, "transformer_options": single_opts},
-                        {"original_block": block_wrap})
-                    img = out["img"]
-                else:
-                    img = block(img, vec=single_vec, pe=pe_single, attn_mask=attn_mask,
-                                transformer_options=single_opts)
+                        out = blocks_replace[("single_block", i)](
+                            {"img": img, "vec": single_vec, "pe": pe_single,
+                             "attn_mask": attn_mask, "transformer_options": single_opts},
+                            {"original_block": block_wrap})
+                        img = out["img"]
+                    else:
+                        img = block(img, vec=single_vec, pe=pe_single, attn_mask=attn_mask,
+                                    transformer_options=single_opts)
 
                 if control is not None:  # ControlNet
                     control_o = control.get("output")

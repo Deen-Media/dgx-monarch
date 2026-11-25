@@ -6,8 +6,9 @@ order with no reordering. A stream the sequence-parallel degree does not divide
 ends in zero pad rows. Ideogram4's modulation only scales and RMSNorm keeps a
 zero row at zero, but a pad row is still a key: its logit of 0 takes softmax
 weight in the first block, and from the second block on it carries the mean of
-the values. Under pure Ulysses the forward names the pad rows as `drop_rows`; ring
-and hybrid name nothing.
+the values. The forward names the pad rows as `drop_rows` on every topology:
+pure Ulysses drops them, and ring and hybrid refuse class K unless the
+ring_pad waiver is granted.
 
 This drives the real bound forward through the real `base.make_usp_attention`
 dispatch with the harness in tests/test_flux_pad_exclusion.py: only the
@@ -30,6 +31,7 @@ from dgx_monarch.adapters import base
 from dgx_monarch.adapters.base import InjectionContext
 from dgx_monarch.adapters.pixeldit import Ideogram4Adapter
 from dgx_monarch.topology import PRESETS
+from pad_rows_comfy_helpers import assert_ring_pad_refusal, grant_ring_pad_waiver
 from test_flux_pad_exclusion import (
     _LOCAL,
     _TAG,
@@ -181,12 +183,12 @@ def _streams(text_rows, grid, batch=1):
     return text, image
 
 
-def _run(monkeypatch, text, image, grid, *, world, pure_ulysses, strict=True):
+def _run(monkeypatch, text, image, grid, *, world, pure_ulysses, strict=True, ring_world=1):
     """Run the bound forward once per rank thread; return outputs and harness."""
     harness = _Harness(world, strict=strict)
     rows = image.shape[1] + (0 if text is None else text.shape[1])
     harness.expected_tags = [float(tag) for tag in range(1, rows + 1)]
-    _install_stubs(monkeypatch, harness)
+    _install_stubs(monkeypatch, harness, ring_world=ring_world)
     kernel = base.make_usp_attention("TORCH_FLASH")
     drops: list = []
 
@@ -255,17 +257,25 @@ def test_keys_arrive_in_stock_order_without_the_pad_row(
 
 
 @pytest.mark.parametrize("text_rows,grid", SHAPES)
-def test_ring_and_hybrid_keep_attended_pads_and_never_refuse(
+def test_ring_and_hybrid_name_the_pad_row_and_refuse_unless_waived(
     monkeypatch, comfy_stub, text_rows, grid
 ):
-    """Without pure Ulysses no drop rows are named, so the ring pad guard
-    cannot fire and the kernel still attends any pad row."""
+    """Ring and hybrid name the same pad row as pure Ulysses but cannot drop
+    it, so a padded render refuses class K by default; under the ring_pad
+    waiver the kernel attends the pad row, and an even stream names no row."""
     text, image = _streams(text_rows, grid)
-    _outputs, harness = _run(monkeypatch, text, image, grid, world=2,
-                             pure_ulysses=False, strict=False)
     rows = image.shape[1] + (text_rows or 0)
+    if rows % 2:
+        with pytest.raises(base.UnsupportedModelError) as caught:
+            _run(monkeypatch, text, image, grid, world=2, pure_ulysses=False, strict=False,
+                 ring_world=2)
+        assert_ring_pad_refusal(caught.value)
+        grant_ring_pad_waiver(monkeypatch)
+    _outputs, harness = _run(monkeypatch, text, image, grid, world=2,
+                             pure_ulysses=False, strict=False, ring_world=2)
     expected = [float(tag) for tag in range(1, rows + 1)] + [0.0] * (rows % 2)
-    assert harness.drops and all(drops is None for drops in harness.drops)
+    assert harness.drops and all(drops == list(range(rows, _padded_total(rows, 2)))
+                                 for drops in harness.drops)
     assert all(entry == "xfuser" and tags == expected
                for entry, _kind, _index, tags in harness.calls)
 
@@ -274,11 +284,13 @@ def test_ring_and_hybrid_keep_attended_pads_and_never_refuse(
 def test_an_attended_pad_row_changes_the_answer(monkeypatch, comfy_stub, text_rows, grid):
     """The negative control: without it this file would pass on a toy whose
     pad key wins no softmax weight. The attended pad must move the real rows
-    materially, not in the last bit."""
+    materially, not in the last bit. A waived ring render is the one path that
+    still attends it."""
     text, image = _streams(text_rows, grid)
     reference, _ = _run(monkeypatch, text, image, grid, world=1, pure_ulysses=False)
+    grant_ring_pad_waiver(monkeypatch)
     outputs, harness = _run(monkeypatch, text, image, grid, world=2,
-                            pure_ulysses=False, strict=False)
+                            pure_ulysses=False, strict=False, ring_world=2)
     assert any(0.0 in tags for *_head, tags in harness.calls)
     assert (outputs[0] - reference[0]).norm() / reference[0].norm() > 1e-4
 
@@ -307,18 +319,11 @@ def test_embeddings_run_on_every_row_before_the_shard(
             assert model.llm_cond_proj.seen == [(text_rows, True)]
 
 
-def test_the_ring_pad_guard_the_gate_avoids_still_refuses():
-    """Pins the ring pad guard in base.py, which gating `drop_rows` on pure
-    Ulysses keeps clear of; the forward-level proof is the ring test above."""
-    with pytest.raises(base.UnsupportedModelError):
-        base.assert_ulysses_only_padding(2, 1)
-
-
 @pytest.mark.parametrize("preset,pure", [("uly2+fsdp", True), ("ring2+fsdp", False)])
 def test_fsdp_presets_follow_their_sequence_topology(preset, pure):
-    """FSDP shards weights, not the sequence, so the gate reads only the
+    """FSDP shards weights, not the sequence, so the context reads only the
     Ulysses and ring degrees: uly2+fsdp drops the pad row as uly2 does, and
-    ring2+fsdp attends it as ring2 does (docs/ADAPTERS.md says both)."""
+    ring2+fsdp refuses it as ring2 does (docs/ADAPTERS.md says both)."""
     topology = dict(PRESETS[preset])
     context = injection_context(topology, 2, object())
     assert context.pure_ulysses is pure

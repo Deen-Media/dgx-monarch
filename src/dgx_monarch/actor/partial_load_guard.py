@@ -194,6 +194,18 @@ def all_ranks_true(local_flag: bool) -> bool:
     return _all_ranks_full(local_flag)
 
 
+def all_ranks_min(values: list[int]) -> list[int]:
+    """MIN-reduce a few integers over the default group in one collective.
+
+    Off-group (world 1, no process group) it returns the local values. Every
+    rank must send the same count; ``rank_readiness`` crosses the shared-scale
+    count this way.
+    """
+    if _distributed_world() <= 1:
+        return [int(value) for value in values]
+    return _all_ranks_min(values)
+
+
 def _rank() -> int:
     try:
         import torch.distributed as dist

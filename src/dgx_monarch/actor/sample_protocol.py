@@ -321,7 +321,10 @@ def run_sample(
         readiness.not_ready(exc)
     if readiness is not None:
         # This rank loaded and matched; release the fleet or refuse if a peer did
-        # not. Outside the try so its own refusal is never re-caught above.
+        # not. Outside the try so its own refusal is never re-caught above. The
+        # same exchange crosses each rank's count of shared-scale Linears.
+        rank_readiness.note_shared_scale(
+            quant_activation_scale.wrapped_linears(patcher, uncond_patcher))
         readiness.ready_or_raise()
     raise_if_sample_cancelled(cancel_event)
     # Class P on the resident the load guard read (#135). Every rank holds the

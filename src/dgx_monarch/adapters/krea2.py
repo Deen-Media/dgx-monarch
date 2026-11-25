@@ -12,7 +12,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
-from . import cfg_pad_rows
+from . import cfg_pad_rows, scale_rows
 from .base import (
     Adapter,
     InjectionContext,
@@ -26,6 +26,9 @@ from .stock_attention import stock_attention_options
 from .usp_sequence_order import RankMajorJointOrder
 
 log = get_logger(__name__)
+
+# The joint block Linears; their modulation comes from tproj, outside the loop.
+_SCALE_ROLES = scale_rows.by_pattern([(r"blocks\.\d+\.(attn|mlp)\.\w+", "joint")])
 
 
 def krea2_reference_latents_summary(cond_list) -> tuple[bool, str | None]:
@@ -197,8 +200,12 @@ class Krea2Adapter(Adapter):
                               if ctx.pure_ulysses else None)
             joint_opts = usp_options(transformer_options, attn, drop_rows=joint_drop,
                                      sequence_order=sequence_order)
-            for block in self.blocks:
-                combined = block(combined, tvec, freqs, None, transformer_options=joint_opts)
+            # Every block Linear reads the joint rows; the same pad rows stay
+            # out of the shared nvfp4 activation scale.
+            joint = scale_rows.stream((txt_orig_len, txtlen), (img_orig_len, imglen))
+            with scale_rows.real_rows(_SCALE_ROLES, {"joint": joint}):
+                for block in self.blocks:
+                    combined = block(combined, tvec, freqs, None, transformer_options=joint_opts)
 
             if ctx.pure_ulysses:
                 # The narrow output Linear can choose a different BF16 GEMM at

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import types
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -28,20 +28,16 @@ from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from . import cfg_dispatch
 from .base import UnsupportedModelError
+from .shared_scale_switch import (  # noqa: F401  (the switch, reached here too)
+    ENABLE_ARG,
+    ENABLE_ENV,
+    LOG_ARG,
+    LOG_ENV,
+    enabled_now,
+    env_from_worker_args,
+)
 
 log = get_logger(__name__)
-# Off switch and first-step trace, both read once per install and both failing
-# open, like the env-gated compile in actor/worker_compile.py. The worker arg
-# beside each variable reaches every rank, as it must: the off switch decides
-# whether a rank issues a collective. The bare variable is a single-box aid. Set
-# on one box of a pair, it refuses on both only for an unwaived chroma render
-# (the class-K bar is read in the load guard, and the readiness exchange carries
-# a refusing rank's not-ready flag). Any other render that runs a reducer stalls
-# at the first one: one rank waits in a max all-reduce its peer never issues.
-ENABLE_ENV = "DGXM_SHARED_ACT_SCALE"
-LOG_ENV = "DGXM_LOG_ACT_SCALE"
-ENABLE_ARG = "shared_act_scale"
-LOG_ARG = "log_act_scale"
 # The private marks, so a reader tells this build's writer from comfy's own
 # state (the shape of USP_ATTENTION_OVERRIDE_ATTR in adapters/base.py).
 WRAPPED_ATTR = "_dgxm_shared_activation_scale"
@@ -72,27 +68,19 @@ SHARD_QUANT_GUARDS: Mapping[str, str] = MappingProxyType({
 })
 
 
-def enabled_now() -> bool:
-    """Whether the shared scale is on for the install about to run."""
-    return os.environ.get(ENABLE_ENV, "1") != "0"
+def wrapped_linears(*patchers: Any) -> int:
+    """How many Linears carry the shared scale on the models these patchers hold.
 
-
-def env_from_worker_args(worker_args: Mapping[str, Any],
-                         previous: Mapping[str, Any] | None = None) -> bool:
-    """Write both variables from the worker args; report an enable change.
-
-    A key the last call carried and this one drops pops its variable, so
-    removing the key restores the default. A key neither call carried is left
-    alone, because the bare variable is also a single-box aid. The hook wraps
-    forwards at load, so a caller holding residents evicts on a True return.
+    The readiness exchange crosses it (actor/rank_readiness.py): two ranks that
+    disagree would issue different max all-reduces, and the one that issues
+    more would wait for a peer that never joins.
     """
-    was = enabled_now()
-    for key, name in ((ENABLE_ARG, ENABLE_ENV), (LOG_ARG, LOG_ENV)):
-        if key in worker_args:
-            os.environ[name] = "1" if worker_args.get(key) else "0"
-        elif previous is not None and key in previous:
-            os.environ.pop(name, None)
-    return was is not enabled_now()
+    total = 0
+    for patcher in patchers:
+        model = getattr(getattr(patcher, "model", None), "diffusion_model", None)
+        coverage = getattr(model, COVERAGE_ATTR, None) if model is not None else None
+        total += int(getattr(coverage, "wrapped", 0) or 0)
+    return total
 
 
 def _nvfp4_divisor() -> float:
@@ -204,6 +192,7 @@ def plan_for_call(plan: SharedScalePlan) -> SharedScalePlan:
 def shared_activation_scale(
     input: torch.Tensor, plan: SharedScalePlan, divisor: float,
     trace: list[torch.Tensor] | None = None,
+    spans: Sequence[torch.Tensor] | None = None,
 ) -> torch.Tensor:
     """The scale a single GPU would have taken over the whole tensor.
 
@@ -214,10 +203,15 @@ def shared_activation_scale(
     instead lands one bfloat16 ulp away. The scale stays a device tensor, and an
     all-reduce with async_op False blocks the stream rather than the host, so
     only `trace` ever syncs the host, and it adds no second collective.
+
+    ``spans`` are the views of ``input`` holding real rows
+    (adapters/scale_rows.py); the default is the whole input. A rank with no
+    real row contributes zero, which leaves the group's max alone.
     """
-    flat = input.reshape(-1, input.shape[-1])
-    local = (torch.zeros(1, device=input.device, dtype=torch.float32)
-             if flat.numel() == 0 else flat.abs().amax().to(torch.float32).reshape(1))
+    views = [view for view in ((input,) if spans is None else spans) if view.numel()]
+    local = torch.zeros(1, device=input.device, dtype=torch.float32)
+    for view in views:
+        local = torch.maximum(local, view.abs().amax().to(torch.float32).reshape(1))
     # Cloned because xfuser's all_reduce returns its own input and its docstring
     # says to assume it modifies it: without the copy the trace would print the
     # reduced amax under both labels. One element, so the copy is free.
@@ -295,7 +289,7 @@ def _original_forward(module: Any):
 
 
 def _wrap(module: Any, path: str, plan: SharedScalePlan, divisor: float,
-          trace: bool) -> None:
+          trace: bool, model_paths: frozenset[str] = frozenset()) -> None:
     original = _original_forward(module)
     logged = [not trace]
 
@@ -304,8 +298,11 @@ def _wrap(module: Any, path: str, plan: SharedScalePlan, divisor: float,
             return original(input, *args, **kwargs)
         record: list[torch.Tensor] | None = None if logged[0] else []
         active = plan_for_call(plan)  # per call, so the trace names what ran
-        from . import mage_nvfp4_scale
-        scale = shared_activation_scale(mage_nvfp4_scale.real_input(path, input), active, divisor, record)
+        from . import mage_nvfp4_scale, scale_rows
+        scale_rows.check_streams_read(model_paths)  # a renamed module refuses here
+        real = mage_nvfp4_scale.real_input(path, input)
+        scale = shared_activation_scale(real, active, divisor, record,
+                                        spans=scale_rows.spans(path, real))
         if record is not None:
             logged[0] = True
             _trace(path, record, scale, active)
@@ -366,7 +363,11 @@ def install(
     shard_dependent = wrapped = declined = 0
     # No module tree means no quantized Linear, so nothing to scan.
     walk = getattr(diffusion_model, "named_modules", None)
-    for path, module in (walk() if callable(walk) else ()):
+    modules = list(walk()) if callable(walk) else []
+    # Every module path, handed to each wrapper so a block loop's streams are
+    # checked against the model that runs (scale_rows.check_streams_read).
+    paths = frozenset(path for path, _module in modules)
+    for path, module in modules:
         if getattr(module, "layout_type", None) not in SHARD_DEPENDENT_LAYOUTS:
             continue
         shard_dependent += 1
@@ -376,12 +377,17 @@ def install(
         if mark is not None:
             # A second install rebinds nothing; report what the first one did,
             # so a repeated load callback reads the same coverage.
-            wrapped += 1 if mark else 0
-            declined += 0 if mark else 1
+            if plan:
+                wrapped += 1 if mark else 0
+                declined += 0 if mark else 1
             continue
         if not plan:
             # Unsharded: every rank sees the whole tensor, so nothing is missing
-            # and nothing is declined.
+            # and nothing is declined. Under the trace knob it still wraps, with
+            # an empty plan that issues no collective, so a one-GPU leg prints
+            # comfy's own amax for the layers a sharded leg traces.
+            if trace and _takes_an_input_scale(module):
+                _wrap(module, path, SharedScalePlan(()), divisor, trace)
             continue
         if not _takes_an_input_scale(module):
             declined += 1
@@ -391,7 +397,7 @@ def install(
                 _wrap(module, path, SharedScalePlan(()), divisor, trace)
             declined += 1
             continue
-        _wrap(module, path, plan, divisor, trace)
+        _wrap(module, path, plan, divisor, trace, paths)
         wrapped += 1
     coverage = ScaleCoverage(family=str(family), reducers=plan.names, wrapped=wrapped,
                              declined=declined, shard_dependent=shard_dependent,
@@ -443,7 +449,7 @@ def _refusal_text(coverage: ScaleCoverage) -> str:
     # set it would go hunting for it, and nobody can edit a layer out of a
     # checkpoint.
     first = (f"Turn the shared scale back on ({ENABLE_ARG} = true in "
-             f"worker_args, or {ENABLE_ENV} unset on every worker), or use"
+             "worker_args, or the key removed), or use"
              if not coverage.enabled else "Use")
     return (f"{coverage.declined} nvfp4 layer(s) of this {family} render would "
             "quantize their activations against a scale each rank computes from "

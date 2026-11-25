@@ -296,6 +296,44 @@ def test_a_cross_attention_drops_its_own_rows_on_each_side():
     assert (one_set[:, :video] - out[:, :video]).abs().max() > 1e-3
 
 
+def test_a_segment_attends_only_itself_in_a_call_of_its_own():
+    """Ideogram4's masked text tokens: stock's block-diagonal mask keeps the
+    real rows off them and them off the real rows. The real rows' call drops
+    them, and one more call over them alone gives each its segment's answer,
+    stock's masked attention row for row; the divisibility pad stays zero."""
+    real, pads = 9, 1
+    q, k, v = _tokens(real, seed=23)
+    padded = [_zero_pad(t, pads) for t in (q, k, v)]
+    segment = [1, 4, 5]
+    drop = sorted(segment + list(range(real, real + pads)))
+
+    out = attend_without_pads(*padded, drop_rows=drop, kv_drop_rows=drop, groups=None,
+                              attend=_attend, segment_rows=segment)
+
+    ids = torch.tensor([1 if row in segment else 0 for row in range(real)])
+    blocked = (ids.view(-1, 1) != ids.view(1, -1)).to(torch.float64) * -1e300
+    scores = torch.einsum("blhd,bmhd->bhlm", q, k) / q.shape[-1] ** 0.5 + blocked
+    stock = torch.einsum("bhlm,bmhd->blhd", torch.softmax(scores, dim=-1), v)
+    assert torch.allclose(out[:, :real], stock, atol=1e-12)
+    assert torch.equal(out[:, real:], torch.zeros_like(out[:, real:]))
+    without = attend_without_pads(*padded, drop_rows=drop, kv_drop_rows=drop,
+                                  groups=None, attend=_attend)
+    assert torch.equal(without[:, segment], torch.zeros_like(without[:, segment]))
+
+
+def test_a_segment_outside_one_streams_dropped_rows_refuses():
+    """A segment row the call does not drop, or a cross attention, cannot run
+    as a segment of its own; the leaf refuses class P instead of guessing."""
+    from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
+
+    q, k, v = _tokens(6, seed=29)
+    for drop, kv_drop in (([5], [5]), ([2, 5], [5])):
+        with pytest.raises(base.UnsupportedModelError) as caught:
+            attend_without_pads(q, k, v, drop_rows=drop, kv_drop_rows=kv_drop,
+                                groups=None, attend=_attend, segment_rows=[2])
+        assert parse_refusal_tag(str(caught.value)).refusal_class is RefusalClass.PHYSICS
+
+
 def test_the_query_side_and_the_key_side_are_read_separately():
     """A key stream can pad while its query stream does not."""
     video, audio = 6, 5

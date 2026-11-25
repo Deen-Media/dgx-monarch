@@ -31,6 +31,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from . import scale_rows
 from .attention_patches import assert_usp_attention_patches_safe
 from .base import Adapter, InjectionContext, UnsupportedModelError, sp_gather, usp_options
 from .flux3_adaln_parity import bind_adaln_parity, loads_norm_global
@@ -45,6 +46,13 @@ from .flux3_packing import (
 from .stock_attention import bind_stock_attention
 
 log = get_logger(__name__)
+
+# The sharded blocks' Linears: the image blocks on the image window, the single
+# blocks on the joint window. Their modulation runs before the loops.
+_SCALE_ROLES = scale_rows.by_pattern([
+    (r"content_mode_blocks\.image\.\d+\.\w+", "image"),
+    (r"single_blocks\.\d+\.\w+", "joint"),
+])
 
 # Exact ComfyUI model class; detect.py owns checkpoint discrimination.
 _FLUX3_EXACT = ("Flux3",)
@@ -211,10 +219,13 @@ class Flux3Adapter(Adapter):
             # Stock's image blocks get the options before the block keys are set.
             opts = usp_options(transformer_options, attn, drop_rows=image.drop_rows)
             h = image.tokens
-            for block in self.content_mode_blocks["image"]:
-                comfy.model_prefetch.prefetch_queue_pop(queue, device, block, dtype,
-                                                        malloc_scope="block")
-                h = block(h, image.spans, image.pe, opts, stock_norm_rows=image.norm_rows)
+            # Each window's pad rows stay out of the shared nvfp4 activation scale.
+            with scale_rows.real_rows(_SCALE_ROLES, {
+                    "image": scale_rows.stream((image.orig, h.shape[1]))}):
+                for block in self.content_mode_blocks["image"]:
+                    comfy.model_prefetch.prefetch_queue_pop(queue, device, block, dtype,
+                                                            malloc_scope="block")
+                    h = block(h, image.spans, image.pe, opts, stock_norm_rows=image.norm_rows)
             img = sp_gather(h, image.orig, dim=1)
             # C. The single blocks on a contiguous window of the joint stream.
             joint = shard_stream(torch.cat([img] + [t for t, _m, _i in parts[1:]], dim=1),
@@ -223,11 +234,13 @@ class Flux3Adapter(Adapter):
             opts = usp_options(transformer_options, attn, drop_rows=joint.drop_rows)
             opts["total_blocks"], opts["block_type"] = len(self.single_blocks), "single"
             h = joint.tokens
-            for index, block in enumerate(self.single_blocks):
-                comfy.model_prefetch.prefetch_queue_pop(queue, device, block, dtype,
-                                                        malloc_scope="block")
-                opts["block_index"] = index
-                h = block(h, joint.spans, joint.pe, opts, stock_norm_rows=joint.norm_rows)
+            with scale_rows.real_rows(_SCALE_ROLES, {
+                    "joint": scale_rows.stream((joint.orig, h.shape[1]))}):
+                for index, block in enumerate(self.single_blocks):
+                    comfy.model_prefetch.prefetch_queue_pop(queue, device, block, dtype,
+                                                            malloc_scope="block")
+                    opts["block_index"] = index
+                    h = block(h, joint.spans, joint.pe, opts, stock_norm_rows=joint.norm_rows)
             comfy.model_prefetch.prefetch_queue_pop(queue, device, None, malloc_scope="block")
             # D. Stock's final layer on the gathered image rows.
             h = sp_gather(h, joint.orig, dim=1)

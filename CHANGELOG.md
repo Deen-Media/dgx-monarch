@@ -1524,6 +1524,46 @@ sections after them list every change.
   so, from the KSampler nodes and from Sampler Custom behind a CFG guider: a log
   line for every render, and a browser notice once per queued prompt when cfg2
   was chosen by hand (a Pipeline sweep is one prompt).
+- Every split layout is now exact about padding rows, or refuses. When a
+  sequence does not divide across the ranks the pack pads it with zero rows,
+  and after a block's norm a zero row is a real key. CogVideoX, the Wan family
+  (Wan 2.1 and 2.2, SCAIL, SCAIL-2, WanDancer), Anima and Kandinsky5 now name
+  those rows, so pure Ulysses leaves them out of every softmax exactly; before,
+  they were attended with no notice on the uly2 that `auto` picks on a pair (a
+  Wan video at 81 frames and 624 square, a CogVideoX one at 720x496 and 49
+  frames). Qwen-Image, Hunyuan, Boogu, Ernie-Image and Ideogram4 now name them
+  on ring and hybrid too, where they cannot be left out, so a padded render
+  there refuses class K with the `ring_pad` waiver as every other family's
+  does, where before ring attended them silently. A padded Wan-family video on
+  ring2 refuses before its block loop and names the nearest frame counts that
+  divide. CogVideoX on pure Ulysses now also restores stock's key order at the
+  full-axis point, so every uly2 render of it changes, an even-length one too:
+  before, its attention ran xfuser's own call with the keys in rank-major
+  order. Ideogram4 no longer drops a padded text mask with a log line: pure
+  Ulysses leaves the masked text rows out of the real rows' attention, and where
+  the shared NVFP4 scale wraps a Linear it runs them as a segment of their own,
+  as stock does, in one more attention call per block, so their values in that
+  scale are stock's too; ring,
+  hybrid or a batch whose prompts mask different positions refuses class P
+  naming uly2. Lens on ring or hybrid, which trims a trailing text pad stock
+  computes, refuses class P naming uly2 when NVFP4 Linears share one
+  activation scale, since those rows belong in it. Each exclusion
+  is proved on CPU against the family's own unsplit forward at an odd length;
+  none of the newly wired families has been compared on the pair yet.
+- The shared NVFP4 activation scale now counts only real rows. Each rank's pad
+  rows could raise the maximum the group quantizes against after a block's norm
+  made them nonzero; every sharded forward now names which of its Linears read
+  which stream and how many of the rows are real, and the scale takes the
+  maximum over those alone. Every Worker now sets `DGXM_SHARED_ACT_SCALE` from
+  the worker_args the driver sent it, an absent key reading on, so a variable
+  exported by hand on one Worker host no longer has any effect; before, a
+  Worker kept its own variable when the key was absent, which could make one rank
+  issue a collective its peer never issued and stall the render for ten
+  minutes. The readiness exchange before sampling also checks that every rank
+  wrapped the same number of layers and refuses, class P, if not.
+- WanDancer refuses, class P, a video whose image tokens the audio
+  conditioning's frame groups do not divide, as stock ComfyUI does; before,
+  the sharded forward clamped the group size and rendered.
 - cfg2 with fsdp now refuses, class P, a step whose conditionings carry
   different conditioning hook groups (a hook LoRA, say) and run on different
   ranks: the ranks share one set of weight shards, so each patching its own

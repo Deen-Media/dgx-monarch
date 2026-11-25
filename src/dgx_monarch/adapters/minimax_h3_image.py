@@ -25,6 +25,7 @@ from typing import Any
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from . import scale_rows
 from .base import (
     Adapter,
     InjectionContext,
@@ -35,6 +36,7 @@ from .base import (
     sp_world,
     usp_options,
 )
+from .minimax_h3 import H3_SCALE_ROLES
 from .minimax_h3_packing import (
     assert_image_grid,
     h3_image_modulation_plan,
@@ -198,13 +200,16 @@ class MiniMaxH3ImageAdapter(Adapter):
 
             prefetch_queue = comfy.model_prefetch.make_prefetch_queue(
                 list(self.blocks), device, transformer_options)
+            # The pad tail stays out of the shared nvfp4 activation scale.
+            packed = scale_rows.stream((seq_orig, h.shape[0]), world=world)
             for index, block in enumerate(self.blocks):
                 comfy.model_prefetch.prefetch_queue_pop(
                     prefetch_queue, device, block, malloc_scope="block")
                 # Stock sets the index on the options its blocks receive.
                 transformer_options["block_index"] = index
                 usp_opts["block_index"] = index
-                h = block(h, t_emb, local_mod, rope_freqs, transformer_options=usp_opts)
+                with scale_rows.real_rows(H3_SCALE_ROLES, {"packed": packed}):
+                    h = block(h, t_emb, local_mod, rope_freqs, transformer_options=usp_opts)
             comfy.model_prefetch.prefetch_queue_pop(
                 prefetch_queue, device, None, malloc_scope="block")
 

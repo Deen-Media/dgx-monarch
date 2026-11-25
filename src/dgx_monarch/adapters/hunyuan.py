@@ -17,6 +17,7 @@ from typing import Any
 import torch
 
 from ..log import get_logger
+from . import scale_rows
 from .attention_patches import assert_usp_attention_patches_safe
 from .base import (
     Adapter,
@@ -29,6 +30,7 @@ from .base import (
     usp_options,
 )
 from .chroma_text import full_row_text_projections
+from .flux_family import FLUX_SCALE_ROLES as _SCALE_ROLES
 from .flux_family import _control_span_overlap  # Remap control spans in both loops.
 from .stock_attention import stock_attention_options
 from .usp_sequence_order import RankMajorJointOrder
@@ -222,14 +224,14 @@ class HunyuanAdapter(Adapter):
             # rounding depends on key order. Pure Ulysses restores stock order at
             # its full-axis point; with no text rows the order is already stock's.
             # The zero row each odd stream took to divide the shard is a real key
-            # after modulation, so the same point drops it. Ring and hybrid keep
-            # their path: they cannot exclude pads, and naming them would refuse.
-            sequence_order = drop_rows = None
-            if ctx.pure_ulysses:
-                if txt.shape[1]:
-                    sequence_order = RankMajorJointOrder(txt.shape[1], img.shape[1])
-                drop_rows = padded_row_indices(
-                    [(txt_orig_len, txt.shape[1]), (img_orig_len, img.shape[1])])
+            # after modulation, so it is named on every topology: the same point
+            # drops it, and ring or hybrid, which cannot exclude it, refuses
+            # (class K, ring_pad waiver).
+            sequence_order = None
+            if ctx.pure_ulysses and txt.shape[1]:
+                sequence_order = RankMajorJointOrder(txt.shape[1], img.shape[1])
+            drop_rows = padded_row_indices(
+                [(txt_orig_len, txt.shape[1]), (img_orig_len, img.shape[1])])
             usp_opts = usp_options(transformer_options, attn, drop_rows=drop_rows,
                                    sequence_order=sequence_order)
 
@@ -238,6 +240,9 @@ class HunyuanAdapter(Adapter):
             usp_opts["block_type"] = "double"
             rows = img.shape[1]
             row0 = sp_rank() * rows
+            # The same pad rows stay out of the shared nvfp4 activation scale.
+            double_streams = {"text": scale_rows.stream((txt_orig_len, txt.shape[1])),
+                              "image": scale_rows.stream((img_orig_len, rows))}
             for i, block in enumerate(self.double_blocks):
                 usp_opts["block_index"] = i
                 # A shard would run the text Linears on half the text rows, and a
@@ -245,7 +250,8 @@ class HunyuanAdapter(Adapter):
                 # Ulysses each runs on all text rows in stock's layout.
                 with full_row_text_projections(
                         block, txt_orig_len, img_orig_len,
-                        pure_ulysses=ctx.pure_ulysses, select=_text_modules):
+                        pure_ulysses=ctx.pure_ulysses, select=_text_modules), \
+                        scale_rows.real_rows(_SCALE_ROLES, double_streams):
                     if ("double_block", i) in blocks_replace:
                         def block_wrap(args, block=block):
                             out = {}
@@ -280,12 +286,11 @@ class HunyuanAdapter(Adapter):
             img, joint_orig_len = shard_seq(img, dim=1)
 
             # Contiguous chunks of one joined stream gather in stock order, so
-            # the single loop takes no order, and its pad is the stream's tail.
-            # Copying the double-loop options keeps what stock's one shared dict
-            # carries between the loops.
-            single_drop = None
-            if ctx.pure_ulysses:
-                single_drop = padded_row_indices([(joint_orig_len, img.shape[1])])
+            # the single loop takes no order, and its pad is the stream's tail,
+            # named on every topology as in the double loop. Copying the
+            # double-loop options keeps what stock's one shared dict carries
+            # between the loops.
+            single_drop = padded_row_indices([(joint_orig_len, img.shape[1])])
             single_opts = usp_options(usp_opts, attn, drop_rows=single_drop)
             single_opts["total_blocks"] = len(self.single_blocks)
             single_opts["block_type"] = "single"
@@ -294,18 +299,20 @@ class HunyuanAdapter(Adapter):
 
             rows = img.shape[1]
             row0 = sp_rank() * rows
+            joint = scale_rows.stream((joint_orig_len, rows))
             for i, block in enumerate(self.single_blocks):
                 single_opts["block_index"] = i
-                if ("single_block", i) in blocks_replace:
-                    def block_wrap(args, block=block):
-                        out = {}
-                        out["img"] = block(args["img"], vec=args["vec"], pe=args["pe"], attn_mask=args["attention_mask"], modulation_dims=args["modulation_dims"], transformer_options=args["transformer_options"])
-                        return out
+                with scale_rows.real_rows(_SCALE_ROLES, {"joint": joint}):
+                    if ("single_block", i) in blocks_replace:
+                        def block_wrap(args, block=block):
+                            out = {}
+                            out["img"] = block(args["img"], vec=args["vec"], pe=args["pe"], attn_mask=args["attention_mask"], modulation_dims=args["modulation_dims"], transformer_options=args["transformer_options"])
+                            return out
 
-                    out = blocks_replace[("single_block", i)]({"img": img, "vec": vec, "pe": pe_single, "attention_mask": None, 'modulation_dims': None, 'transformer_options': single_opts}, {"original_block": block_wrap})
-                    img = out["img"]
-                else:
-                    img = block(img, vec=vec, pe=pe_single, attn_mask=None, modulation_dims=None, transformer_options=single_opts)
+                        out = blocks_replace[("single_block", i)]({"img": img, "vec": vec, "pe": pe_single, "attention_mask": None, 'modulation_dims': None, 'transformer_options': single_opts}, {"original_block": block_wrap})
+                        img = out["img"]
+                    else:
+                        img = block(img, vec=vec, pe=pe_single, attn_mask=None, modulation_dims=None, transformer_options=single_opts)
 
                 if control is not None:  # ControlNet targets joint-stream image rows.
                     control_o = control.get("output")

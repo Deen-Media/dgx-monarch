@@ -4,9 +4,10 @@ Four attention regimes run in sequence. The masked text refiner remains
 replicated. Noise and reference-image refiners shard their separate streams.
 Double-stream blocks keep instruction and image shards separate, with matching
 local RoPE for joint and image-only attention. Both streams are then gathered,
-joined, and reshared for the maskless single-stream blocks. Under pure Ulysses
-every sharded loop drops its pad rows, the joint attention keeps stock's key
-order, and the instruct Linears run on every instruct row
+joined, and reshared for the maskless single-stream blocks. Every sharded loop
+names its pad rows: pure Ulysses drops them, and ring or hybrid refuses them
+(class K, ring_pad waiver). Under pure Ulysses the joint attention also keeps
+stock's key order, and the instruct Linears run on every instruct row
 (adapters/boogu_ulysses.py).
 
 Caption length sets the image RoPE offset. The sharded loops still need one
@@ -20,6 +21,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from . import scale_rows
 from .base import (
     Adapter,
     InjectionContext,
@@ -32,6 +34,23 @@ from .chroma_text import full_row_text_projections
 from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
+
+# Which sharded loop's Linears read which stream. The refiners and the single
+# layers see one stream each; a double layer splits its joint attention's q, k
+# and v and its two output projections by stream, and its final projection
+# reads the joint [instruct, image] rows. The norm Linears read the per-batch
+# time embedding, and the caption refiner runs replicated.
+_SCALE_ROLES = scale_rows.by_pattern([
+    (r"noise_refiner\.\d+\.(attn\.(to_q|to_k|to_v|to_out\.\d+)|feed_forward\.\w+)", "noise"),
+    (r"ref_image_refiner\.\d+\.(attn\.(to_q|to_k|to_v|to_out\.\d+)|feed_forward\.\w+)", "ref"),
+    (r"double_stream_layers\.\d+\.(img_instruct_attn\.processor\.(img_to_q|img_to_k|img_to_v"
+     r"|img_out)|img_self_attn\.(to_q|to_k|to_v|to_out\.\d+)|img_feed_forward\.\w+)", "image"),
+    (r"double_stream_layers\.\d+\.(img_instruct_attn\.processor\.(instruct_to_q|instruct_to_k"
+     r"|instruct_to_v|instruct_out)|instruct_feed_forward\.\w+)", "instruct"),
+    (r"double_stream_layers\.\d+\.img_instruct_attn\.to_out\.\d+", "joint"),
+    (r"single_stream_layers\.\d+\.(attn\.(to_q|to_k|to_v|to_out\.\d+)|feed_forward\.\w+)",
+     "single"),
+])
 
 # USP expands 7 K/V heads to 28 before Ulysses partitions the head axis.
 _Q_HEADS = 28
@@ -281,9 +300,10 @@ class BooguAdapter(Adapter):
             # Maskless sharded loops require a uniform batch length.
             _assert_uniform_seq_lengths(seq_lengths)
 
-            # Under pure Ulysses each sharded loop names its own pad rows and the
-            # joint attention its key order (adapters/boogu_ulysses.py). Ring and
-            # hybrid get the plain override and keep their path.
+            # Each sharded loop names its own pad rows on every topology, and
+            # under pure Ulysses the joint attention its key order
+            # (adapters/boogu_ulysses.py). Ring and hybrid refuse a named pad row
+            # (class K, ring_pad waiver).
             pure = ctx.pure_ulysses
 
             # Stage 1: replicated text refinement preserves its attention mask.
@@ -309,9 +329,13 @@ class BooguAdapter(Adapter):
             noise_rope_local, _ = shard_seq(noise_rotary_emb, dim=1)
             noise_opts = stream_options(transformer_options, attn,
                                         (noise_orig, noise_local.shape[1]), pure_ulysses=pure)
-            for layer in self.noise_refiner:
-                noise_local = layer(noise_local, None, noise_rope_local, temb,
-                                    transformer_options=noise_opts)
+            # Each sharded loop keeps its pad rows out of the shared nvfp4
+            # activation scale too.
+            with scale_rows.real_rows(_SCALE_ROLES, {
+                    "noise": scale_rows.stream((noise_orig, noise_local.shape[1]))}):
+                for layer in self.noise_refiner:
+                    noise_local = layer(noise_local, None, noise_rope_local, temb,
+                                        transformer_options=noise_opts)
             noise_full = sp_gather(noise_local, noise_orig, dim=1)
 
             if flat_ref_img_hidden_states is not None:
@@ -334,9 +358,11 @@ class BooguAdapter(Adapter):
                 ref_rope_local, _ = shard_seq(ref_img_rotary_emb, dim=1)
                 ref_opts = stream_options(transformer_options, attn,
                                           (ref_orig, ref_local.shape[1]), pure_ulysses=pure)
-                for layer in self.ref_image_refiner:
-                    ref_local = layer(ref_local, None, ref_rope_local, temb,
-                                      transformer_options=ref_opts)
+                with scale_rows.real_rows(_SCALE_ROLES, {
+                        "ref": scale_rows.stream((ref_orig, ref_local.shape[1]))}):
+                    for layer in self.ref_image_refiner:
+                        ref_local = layer(ref_local, None, ref_rope_local, temb,
+                                          transformer_options=ref_opts)
                 ref_full = sp_gather(ref_local, ref_orig, dim=1)
                 combined_img_full = torch.cat([ref_full, noise_full], dim=1)
             else:
@@ -354,13 +380,19 @@ class BooguAdapter(Adapter):
             double_opts = double_block_options(
                 transformer_options, attn, (instruct_orig, instruct_local.shape[1]),
                 (img_orig, img_local.shape[1]), pure_ulysses=pure)
+            instruct_seg = (instruct_orig, instruct_local.shape[1])
+            img_seg = (img_orig, img_local.shape[1])
+            double_streams = {"instruct": scale_rows.stream(instruct_seg),
+                              "image": scale_rows.stream(img_seg),
+                              "joint": scale_rows.stream(instruct_seg, img_seg)}
 
             for layer in self.double_stream_layers:
                 # Pure Ulysses runs the instruct Linears on every instruct row
                 # in stock's layout and re-shards their output.
                 with full_row_text_projections(
                         layer, instruct_orig, img_orig, pure_ulysses=pure,
-                        select=instruct_projections):
+                        select=instruct_projections), \
+                        scale_rows.real_rows(_SCALE_ROLES, double_streams):
                     img_local, instruct_local = layer(
                         img_local, instruct_local,
                         joint_rope_local, img_rope_local, temb,
@@ -376,9 +408,11 @@ class BooguAdapter(Adapter):
             rotary_local, _ = shard_seq(rotary_emb, dim=1)
             single_opts = stream_options(transformer_options, attn,
                                          (joint_orig, hidden_local.shape[1]), pure_ulysses=pure)
-            for layer in self.single_stream_layers:
-                hidden_local = layer(hidden_local, None, rotary_local, temb,
-                                     transformer_options=single_opts)
+            with scale_rows.real_rows(_SCALE_ROLES, {
+                    "single": scale_rows.stream((joint_orig, hidden_local.shape[1]))}):
+                for layer in self.single_stream_layers:
+                    hidden_local = layer(hidden_local, None, rotary_local, temb,
+                                         transformer_options=single_opts)
             hidden_states = sp_gather(hidden_local, joint_orig, dim=1)
 
             # The image-tail slice requires the complete gathered sequence.

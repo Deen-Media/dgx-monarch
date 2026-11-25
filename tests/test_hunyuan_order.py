@@ -27,6 +27,7 @@ import torch
 from dgx_monarch.adapters import base, chroma_text, hunyuan
 from dgx_monarch.adapters.base import InjectionContext
 from dgx_monarch.adapters.hunyuan import HunyuanAdapter
+from pad_rows_comfy_helpers import assert_ring_pad_refusal, grant_ring_pad_waiver
 from test_flux_pad_exclusion import (
     _CONTEXT,
     _LOCAL,
@@ -188,13 +189,14 @@ def _drive(harness, inputs, *, pure_ulysses, double_cls=_HunyuanDouble):
     return outputs
 
 
-def _run(monkeypatch, inputs, total_rows, *, world, pure_ulysses, strict=False, **drive):
+def _run(monkeypatch, inputs, total_rows, *, world, pure_ulysses, strict=False, ring_world=1,
+         **drive):
     monkeypatch.setattr(hunyuan, "sp_rank", _rank)
     monkeypatch.setattr(chroma_text, "sp_rank", _rank)
     monkeypatch.setattr(chroma_text, "sp_world", lambda: world)
     harness = _Harness(world, strict=strict)
     harness.expected_tags = [float(tag) for tag in range(1, total_rows + 1)]
-    _install_stubs(monkeypatch, harness)
+    _install_stubs(monkeypatch, harness, ring_world=ring_world)
     return _drive(harness, inputs, pure_ulysses=pure_ulysses, **drive), harness
 
 
@@ -269,15 +271,28 @@ def test_an_unpadded_render_matches_one_rank(monkeypatch, qwen_rows, byt5_rows, 
 
 
 @pytest.mark.parametrize("qwen_rows,byt5_rows,grid", SHAPES)
-def test_without_pure_ulysses_nothing_changes(monkeypatch, qwen_rows, byt5_rows, grid):
-    """Ring and hybrid name no order and no drop rows, so the ring pad guard
-    cannot fire and the kernel gets the rank-major keys, pads included."""
+def test_without_pure_ulysses_the_pad_rows_refuse_unless_waived(
+    monkeypatch, qwen_rows, byt5_rows, grid
+):
+    """Ring and hybrid name no order, but they name both loops' pad rows as pure
+    Ulysses does, and cannot drop them: a padded render refuses class K by
+    default. Under the ring_pad waiver the kernel gets the rank-major keys,
+    pads included; with nothing padded no row is named and no waiver is asked."""
     inputs = _inputs(qwen_rows, byt5_rows, grid)
     text_rows, image_rows = qwen_rows + byt5_rows, grid[0] * grid[1]
+    _u, ulysses = _run(monkeypatch, inputs, text_rows + image_rows, world=WORLD,
+                       pure_ulysses=True)
+    named = [drop for _kind, drop in ulysses.drops]
+    if any(named):
+        with pytest.raises(base.UnsupportedModelError) as caught:
+            _run(monkeypatch, inputs, text_rows + image_rows, world=WORLD,
+                 pure_ulysses=False, ring_world=2)
+        assert_ring_pad_refusal(caught.value)
+        grant_ring_pad_waiver(monkeypatch)
     _outputs, harness = _run(monkeypatch, inputs, text_rows + image_rows, world=WORLD,
-                             pure_ulysses=False)
+                             pure_ulysses=False, ring_world=2)
     assert all(order is None for _kind, order in harness.orders)
-    assert all(drop is None for _kind, drop in harness.drops)
+    assert [drop for _kind, drop in harness.drops] == named
     double = _rank_major(text_rows, image_rows)
     single = _padded_tail(text_rows + image_rows)
     for entry, kind, _index, tags in harness.calls:

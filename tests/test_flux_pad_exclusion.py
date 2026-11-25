@@ -148,12 +148,15 @@ class _Harness:
         return (torch.softmax(scores, dim=-1) @ v_h).transpose(1, 2)
 
 
-def _install_stubs(monkeypatch, harness: _Harness) -> None:
+def _install_stubs(monkeypatch, harness: _Harness, *, ring_world: int = 1) -> None:
     """Rank accessors and the xfuser/yunchang leaves, bound to this harness.
 
     The real xfuser probes for an accelerator at import, so it is stubbed in
     sys.modules. Only three leaves are fake: the all-to-all, the sequence-parallel
     all-gather, and the kernel. Everything between them is the shipped code.
+    ``ring_world`` is what the ring-degree accessor answers. At 2 the same
+    fabric stands in for pure ring2: xfuser's own call attends this rank's
+    queries against every rank's keys, the pads included.
     """
     global _ACTIVE
     _ACTIVE = harness
@@ -196,7 +199,7 @@ def _install_stubs(monkeypatch, harness: _Harness) -> None:
         "xfuser", "xfuser.core", "xfuser.core.distributed",
         "xfuser.core.long_ctx_attention", "yunchang", "yunchang.kernels",
         "yunchang.comm", "yunchang.comm.all_to_all")}
-    modules["xfuser.core.distributed"].get_ring_parallel_world_size = lambda: 1
+    modules["xfuser.core.distributed"].get_ring_parallel_world_size = lambda: ring_world
     modules["xfuser.core.distributed"].get_sp_group = lambda: _StubSpGroup()
     modules["xfuser.core.long_ctx_attention"].xFuserLongContextAttention = _StubUSP
     modules["yunchang.kernels"].AttnType = {"TORCH_FLASH": "TORCH_FLASH"}

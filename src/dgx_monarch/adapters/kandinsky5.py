@@ -23,8 +23,15 @@ from __future__ import annotations
 from typing import Any
 
 from ..log import get_logger
-from . import cfg_pad_rows
-from .base import Adapter, InjectionContext, UnsupportedModelError, shard_seq, sp_gather
+from . import cfg_pad_rows, scale_rows
+from .base import (
+    Adapter,
+    InjectionContext,
+    UnsupportedModelError,
+    padded_row_indices,
+    shard_seq,
+    sp_gather,
+)
 from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
@@ -32,6 +39,14 @@ log = get_logger(__name__)
 # Only these exact model-base forwards have been validated. The image class
 # subclasses Kandinsky5 and shares its forward.
 _KANDINSKY5_SUPPORTED_EXACT = ("Kandinsky5", "Kandinsky5Image")
+
+# The visual block Linears that see the sharded visual stream. The
+# cross-attention keys and values read the replicated text, and the
+# modulation reads the per-batch time embedding.
+_SCALE_ROLES = scale_rows.by_pattern([
+    (r"visual_transformer_blocks\.\d+\.(self_attention\.\w+|cross_attention\.(to_query|out_layer)"
+     r"|feed_forward\.\w+)", "visual"),
+])
 
 
 def _trim_context_or_raise(context, rows=None):
@@ -80,6 +95,9 @@ class Kandinsky5Adapter(Adapter):
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         attn: Any = ctx.usp_attention
+        # The visual loop's pad rows, set around it and read by the rebound
+        # visual self-attention (one cell per bound model).
+        pads: list[list[int] | None] = [None]
 
         def usp_self_attention(self, x, freqs, transformer_options={}):
             # q/k use already-sharded per-token RoPE frequencies.
@@ -90,7 +108,8 @@ class Kandinsky5Adapter(Adapter):
             q = apply_rope1(self.query_norm(self.to_query(x).view(b, s, n, d)), freqs)
             k = apply_rope1(self.key_norm(self.to_key(x).view(b, s, n, d)), freqs)
             v = self.to_value(x).view(b, s, n * d)
-            out = attn(q.view(b, s, n * d), k.view(b, s, n * d), v, heads=n)
+            out = attn(q.view(b, s, n * d), k.view(b, s, n * d), v, heads=n,
+                       drop_rows=pads[0])
             return self.out_layer(out)
 
         def usp_forward_orig(self, x, timestep, context, y, freqs, freqs_text,
@@ -116,22 +135,35 @@ class Kandinsky5Adapter(Adapter):
             blocks_replace = patches_replace.get("dit", {})
             transformer_options["total_blocks"] = len(self.visual_transformer_blocks)
             transformer_options["block_type"] = "double"
-            for i, block in enumerate(self.visual_transformer_blocks):
-                transformer_options["block_index"] = i
-                if ("double_block", i) in blocks_replace:
-                    # The block parameters are positional visual/text embeddings.
-                    def block_wrap(args, block=block):
-                        return block(args["x"], args["context"], args["time_embed"],
-                                     freqs=args["freqs"],
-                                     transformer_options=args.get("transformer_options"))
+            # The zero rows an odd visual stream took to divide the shard get
+            # zero RoPE, so each is a zero key: logit 0 still takes softmax
+            # weight. Named on every topology, pure Ulysses drops them and ring
+            # or hybrid refuses them (class K, ring_pad waiver). The same rows
+            # stay out of the shared nvfp4 activation scale.
+            # Restored after, so a forward re-entered from a patch keeps this one's rows named.
+            saved_pads = pads[0]
+            pads[0] = padded_row_indices([(orig_len, visual_embed.shape[1])]) or None
+            visual = scale_rows.stream((orig_len, visual_embed.shape[1]))
+            try:
+                with scale_rows.real_rows(_SCALE_ROLES, {"visual": visual}):
+                    for i, block in enumerate(self.visual_transformer_blocks):
+                        transformer_options["block_index"] = i
+                        if ("double_block", i) in blocks_replace:
+                            # The block parameters are positional visual/text embeddings.
+                            def block_wrap(args, block=block):
+                                return block(args["x"], args["context"], args["time_embed"],
+                                             freqs=args["freqs"],
+                                             transformer_options=args.get("transformer_options"))
 
-                    visual_embed = blocks_replace[("double_block", i)](
-                        {"x": visual_embed, "context": context, "time_embed": time_embed,
-                         "freqs": freqs, "transformer_options": transformer_options},
-                        {"original_block": block_wrap})["x"]
-                else:
-                    visual_embed = block(visual_embed, context, time_embed, freqs=freqs,
-                                         transformer_options=transformer_options)
+                            visual_embed = blocks_replace[("double_block", i)](
+                                {"x": visual_embed, "context": context, "time_embed": time_embed,
+                                 "freqs": freqs, "transformer_options": transformer_options},
+                                {"original_block": block_wrap})["x"]
+                        else:
+                            visual_embed = block(visual_embed, context, time_embed, freqs=freqs,
+                                                 transformer_options=transformer_options)
+            finally:
+                pads[0] = saved_pads
 
             visual_embed = sp_gather(visual_embed, orig_len, dim=1)
 

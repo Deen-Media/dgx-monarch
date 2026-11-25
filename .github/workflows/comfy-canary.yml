@@ -40,6 +40,14 @@ on:
       - "tests/real_comfy_helpers.py"
       - "tests/test_cfg_pad_stamp_delivery.py"
       - "tests/test_krea2_comfy_exactness.py"
+      - "tests/pad_rows_comfy_helpers.py"
+      - "tests/test_cogvideo_pad_exclusion.py"
+      - "tests/test_wan_pad_exclusion.py"
+      - "tests/test_anima_pad_exclusion.py"
+      - "tests/test_kandinsky5_pad_exclusion.py"
+      - "tests/test_scale_rows_families.py"
+      - "tests/test_boogu_comfy_exactness.py"
+      - "tests/test_boogu_ulysses_order.py"
       - "tests/test_chroma_text_projections.py"
       - "tests/test_dropped_scale_gate.py"
       - "tests/test_upstream_gate_damaged_header.py"
@@ -257,6 +265,17 @@ jobs:
         run: >-
           pytest -q tests/test_cfg_pad_rows.py tests/test_cfg2_zeroed_negative.py
           tests/test_cfg_pad_stamp_delivery.py
+      # Real comfy CogVideoX, Wan, Anima and Kandinsky5 against their own
+      # unsplit forwards at odd lengths, and every sharded family's Linears
+      # under the shared nvfp4 scale with NaN pad rows. They skip in the
+      # regular CI job.
+      - name: Pad rows and the shared nvfp4 scale vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: >-
+          pytest -q tests/test_cogvideo_pad_exclusion.py tests/test_wan_pad_exclusion.py
+          tests/test_anima_pad_exclusion.py tests/test_kandinsky5_pad_exclusion.py
+          tests/test_scale_rows_families.py
       # Verify the spatial latent ratio from ComfyUI's checkpoint detection.
       # The real-ComfyUI cases skip in ordinary CI, which has no ComfyUI checkout.
       - name: Auto-topology latent ratio vs comfy master (CPU)
@@ -627,6 +646,11 @@ jobs:
           tests/test_cfg_pad_rows.py
           tests/test_cfg2_zeroed_negative.py
           tests/test_cfg_pad_stamp_delivery.py
+          tests/test_cogvideo_pad_exclusion.py
+          tests/test_wan_pad_exclusion.py
+          tests/test_anima_pad_exclusion.py
+          tests/test_kandinsky5_pad_exclusion.py
+          tests/test_scale_rows_families.py
           tests/test_cond_batch_agreement.py
           tests/test_anima_cond_branch.py
           tests/test_h3_image_row_check_tool.py

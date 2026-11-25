@@ -268,7 +268,10 @@ class _FakeBoogu:
 @pytest.fixture
 def comfy_stubs(monkeypatch):
     """Stub the two comfy leaves the forward imports (pad_to_patch_size,
-    cast_to), plus identity shard/gather so the sp=1 structure is observable."""
+    cast_to), plus identity shard/gather so the sp=1 structure is observable.
+
+    The pad rows are named on every topology, which reads the sequence-parallel
+    degree; it answers 1 here, so the identity shards pad nothing."""
     comfy = types.ModuleType("comfy")
     ldm = types.ModuleType("comfy.ldm")
     common_dit = types.ModuleType("comfy.ldm.common_dit")
@@ -284,6 +287,7 @@ def comfy_stubs(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
     monkeypatch.setattr(bg, "shard_seq", lambda t, dim=1: (t, t.shape[dim]))
     monkeypatch.setattr(bg, "sp_gather", lambda t, orig, dim=1: t)
+    monkeypatch.setattr(base, "sp_world", lambda: 1)
 
 
 def _run_forward(with_ref):

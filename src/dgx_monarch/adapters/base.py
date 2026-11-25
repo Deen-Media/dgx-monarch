@@ -13,9 +13,13 @@ from typing import overload
 
 import torch
 
-from .. import accuracy_waiver
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from .ring_refusals import (  # noqa: F401  (the adapters reach them here)
+    RING_PAD_GUARD,
+    assert_ulysses_only_padding,
+    assert_ulysses_only_query_bias,
+)
 
 log = get_logger(__name__)
 
@@ -195,7 +199,8 @@ def _make_usp_attention_callable(
 ):
 
     @torch.compiler.disable
-    def _ulysses_full(q_l, k_l, v_l, drop_rows, kv_drop_rows, groups, sequence_order):
+    def _ulysses_full(q_l, k_l, v_l, drop_rows, kv_drop_rows, groups, sequence_order,
+                      segment_rows):
         """Attend at Ulysses' full-sequence point, past the divisibility pads.
 
         The head scatter hands every rank the whole token axis in rank order,
@@ -204,7 +209,9 @@ def _make_usp_attention_callable(
         modulation a zero embedding is not a zero key and can corrupt the output. Per-query-group biases apply there for the same
         reason: the groups and the key axis are both complete and the weights do
         not vary by head (adapters/usp_query_bias.py). A padded stream whose
-        keys come from a different padded stream passes both row sets.
+        keys come from a different padded stream passes both row sets. Dropped
+        rows stock attends as a segment of their own run in a call of their own
+        (``segment_rows``, adapters/usp_pad_exclusion.py).
         """
         from .usp_full_axis import run_full_axis
         from .usp_query_bias import query_group_attention
@@ -212,14 +219,15 @@ def _make_usp_attention_callable(
         if sequence_order is not None:
             return run_full_axis(usp_attn, q_l, k_l, v_l, drop_rows,
                                  kv_drop_rows, groups, sequence_order,
-                                 query_group_attention)
+                                 query_group_attention, segment_rows or ())
         return run_full_axis(usp_attn, q_l, k_l, v_l, drop_rows, kv_drop_rows,
-                             groups, None, query_group_attention)
+                             groups, None, query_group_attention, segment_rows or ())
 
     def usp_attention(q, k, v, heads, mask=None, attn_precision=None,
                       skip_reshape=False, skip_output_reshape=False,
                       enable_gqa=False, drop_rows=None, kv_drop_rows=None,
-                      query_bias_groups=None, sequence_order=None, **kwargs):
+                      query_bias_groups=None, sequence_order=None, segment_rows=None,
+                      **kwargs):
         if surface_validator is not None:
             surface_validator(
                 q, k, v, heads, mask, attn_precision, skip_reshape,
@@ -316,7 +324,7 @@ def _make_usp_attention_callable(
             # queries do; a cross attention between two padded streams does not.
             out = _ulysses_full(q_l, k_l, v_l, drop_rows,
                                 drop_rows if kv_drop_rows is None else kv_drop_rows,
-                                query_bias_groups, sequence_order)
+                                query_bias_groups, sequence_order, segment_rows)
         else:
             # A ring waiver permits attended pads; full-sequence indices cannot
             # be applied exactly to rank-local ring slices.
@@ -329,64 +337,6 @@ def _make_usp_attention_callable(
         return out.reshape(b, -1, h * d)
 
     return usp_attention
-
-
-RING_PAD_GUARD = "ring_pad"
-
-
-@torch.compiler.disable
-def assert_ulysses_only_padding(ring_world: int, n_pad_rows: int) -> None:
-    """Refuse pad rows that ring or hybrid attention cannot exclude.
-
-    Ring has no full-sequence exclusion point, and attended pads produced
-    measured left-edge corruption. A default-off class-K waiver is checked on
-    every call so grants and revocations apply per render; compilation is
-    disabled so one decision cannot persist into another render.
-    """
-    if ring_world > 1 and n_pad_rows:
-        if accuracy_waiver.waived(RING_PAD_GUARD):
-            return
-        raise UnsupportedModelError(refusal(
-            RefusalClass.KNOWN_WRONG,
-            "this sequence length needs divisibility padding, and the exact "
-            "pad exclusion is ulysses-only; ring/hybrid attention would "
-            "attend the synthetic pad rows (left-edge corruption, "
-            "measured 2026-07-10). Use a uly* or single topology, or a resolution "
-            "and prompt lengths whose token counts divide the SP degree "
-            "(docs/ADAPTERS.md).",
-            guard=RING_PAD_GUARD,
-            waivable=True,
-            panel_action=accuracy_waiver.panel_action(RING_PAD_GUARD),
-            troubleshooting=21,
-        ) + accuracy_waiver.card_tail(RING_PAD_GUARD))
-
-
-@torch.compiler.disable
-def assert_ulysses_only_query_bias(ring_world: int) -> None:
-    """Refuse a query-group bias that ring or hybrid attention cannot apply.
-
-    Ulysses hands each rank the whole key axis, so a bias over that axis applies
-    exactly. Ring never does: its ranks see the keys one block at a time, and
-    the kernel that walks those blocks takes no bias argument (yunchang
-    ring_flash_attn_func). There is nothing to waive, because no ring rank can
-    be handed the weights.
-
-    Divisibility padding is allowed with a bias. A biased stream shards alone,
-    which puts its pads at the tail of the token axis, past every group
-    boundary, so dropping them leaves each group biasing the tokens it named
-    (adapters/usp_pad_exclusion.assert_pads_are_a_tail holds that layout).
-    """
-    if ring_world == 1:
-        return
-    raise UnsupportedModelError(refusal(
-        RefusalClass.PHYSICS,
-        "this render biases attention between token groups, and ring or hybrid "
-        "attention shards the key axis, so the weights cannot be applied where "
-        "the kernel reads them. Use a pure-ulysses topology (uly2 on a two-rank "
-        "fleet), or topology 'single' (mode=local with gpus_per_host=1) for a "
-        "stock one-GPU run.",
-        troubleshooting=80,
-    ))
 
 
 # The private mark on the override this build installs. Comfy exposes the same
@@ -404,10 +354,11 @@ class InjectionContext:
 
 
 def usp_options(transformer_options: dict, usp_attention, drop_rows=None,
-                sequence_order=None) -> dict:
+                sequence_order=None, segment_rows=None) -> dict:
     """Copy options with a block-loop-scoped attention override.
 
-    `drop_rows` carries gathered-sequence pad indices into each scoped call.
+    `drop_rows` carries gathered-sequence pad indices into each scoped call, and
+    `segment_rows` those of them stock attends as a segment of their own.
     """
     options = dict(transformer_options)
 
@@ -416,6 +367,8 @@ def usp_options(transformer_options: dict, usp_attention, drop_rows=None,
         kwargs.pop("transformer_options", None)
         if sequence_order is not None:
             kwargs["sequence_order"] = sequence_order
+        if segment_rows:
+            kwargs["segment_rows"] = segment_rows
         return usp_attention(*args, drop_rows=drop_rows, **kwargs)
 
     setattr(override, USP_ATTENTION_OVERRIDE_ATTR, True)

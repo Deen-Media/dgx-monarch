@@ -10,8 +10,11 @@ there is no cond/uncond batch to split.
 
 Blocks are pure packed-sequence self-attention, so USP rides the attention
 override. The distributed forward assembles packed [text, image] tokens with
-per-rank position ids. Under pure Ulysses the forward leaves the divisibility
-pad row of an odd packed stream out of attention, because stock has no such key.
+per-rank position ids. It names the divisibility pad row of an odd packed
+stream, and any text token a prompt's attention mask pads, on every topology:
+pure Ulysses leaves them out of the real rows' attention, because stock
+attends no such key, runs the masked tokens as a segment of their own, as
+stock does, and ring or hybrid refuses.
 """
 from __future__ import annotations
 
@@ -19,10 +22,12 @@ import torch
 import torch.nn.functional as F
 
 from ..log import get_logger
+from ..refusal import RefusalClass, refusal
+from . import scale_rows
 from .base import (
     Adapter,
     InjectionContext,
-    ThrottledWarning,
+    UnsupportedModelError,
     padded_row_indices,
     shard_seq,
     sp_gather,
@@ -32,24 +37,59 @@ from .flux3_packing import refuse_indivisible_heads, ulysses_degree
 
 log = get_logger(__name__)
 
+# The layer Linears read the packed [text, image] rows; each layer's adaLN
+# modulation reads the per-batch time conditioning.
+_SCALE_ROLES = scale_rows.by_pattern([
+    (r"layers\.\d+\.(attention|feed_forward)\.\w+", "packed"),
+])
 
-_segment_mask_dropped = ThrottledWarning()
 
+def masked_text_rows(indicator, attention_mask, l_text: int, *, pure_ulysses: bool) -> list[int]:
+    """Zero the masked text tokens' indicators and return their positions.
 
-def _drop_padded_text_segment_mask(indicator, attention_mask, l_text: int) -> None:
-    """Zero Ideogram text-pad indicators and warn that USP drops the segment mask."""
+    Stock gives masked text tokens a segment of their own: real rows never
+    attend them, they attend only each other, and only image rows reach the
+    output, so nothing they compute reaches a real row. Pure Ulysses leaves
+    them out of the real rows' call at its full-axis point, with one row set
+    for the whole call. Where the shared nvfp4 scale wraps a Linear, it also
+    runs their segment in a call of its own, so their values, which then
+    enter each wrapped Linear's whole-tensor statistic, are stock's. A batch
+    whose prompts mask different positions has no one row
+    set, and ring and hybrid have no point to drop them at, so both refuse,
+    class P: no kernel there carries the mask.
+    """
     if attention_mask is None:
-        return
+        return []
     pad = attention_mask == 0
     indicator[:, :l_text][pad] = 0
-    if bool(pad.any()):
-        _segment_mask_dropped.warn(
-            "ideogram4 USP: padded text tokens are present. The USP attention "
-            "kernels cannot apply the block-diagonal segment mask, so this render "
-            "drops it (pad rows are still zeroed out of the content path). For "
-            "exact mask semantics run topology 'single' (mode=local with "
-            "gpus_per_host=1)."
-        )
+    if not bool(pad.any()):
+        return []
+    if not pure_ulysses:
+        raise UnsupportedModelError(refusal(
+            RefusalClass.PHYSICS,
+            "ideogram4: this prompt carries a text attention mask with padded "
+            "tokens, and ring or hybrid attention has no point at which to leave "
+            "them out, so it would attend them where stock never does. Use a "
+            "uly* topology (uly2 on a two-rank fleet), or topology 'single' "
+            "(mode=local with gpus_per_host=1).",
+        ))
+    if not bool((pad == pad[:1]).all()):
+        raise UnsupportedModelError(refusal(
+            RefusalClass.PHYSICS,
+            "ideogram4: the prompts of this batch mask different text positions, "
+            "and the sharded attention leaves one set of rows out for the whole "
+            "call, so it cannot apply both masks. Use separate batches for the "
+            "prompts, or topology 'single' (mode=local with gpus_per_host=1).",
+        ))
+    return [int(row) for row in torch.nonzero(pad[0]).flatten().tolist()]
+
+
+def _scale_wraps_a_linear(model) -> bool:
+    """Whether the shared nvfp4 activation scale wraps a Linear of ``model``."""
+    from .quant_activation_scale import coverage_of
+
+    coverage = coverage_of(model)
+    return coverage is not None and coverage.wrapped > 0
 
 
 # comfy's Ideogram4Transformer2DModel builds 18 attention heads; Ulysses hands
@@ -106,6 +146,7 @@ class Ideogram4Adapter(Adapter):
             img_tokens = self._img_to_tokens(x)
             l_img = img_tokens.shape[1]
 
+            masked: list[int] = []
             if context is None:
                 # Image-only pass: the unconditional model of dual-model CFG.
                 position_ids = self._image_position_ids(gh, gw, device).unsqueeze(0).expand(bs, l_img, 3)
@@ -127,7 +168,8 @@ class Ideogram4Adapter(Adapter):
                 indicator = torch.empty(bs, seq_len, dtype=torch.long, device=device)
                 indicator[:, :l_text] = LLM_TOKEN_INDICATOR
                 indicator[:, l_text:] = OUTPUT_IMAGE_INDICATOR
-                _drop_padded_text_segment_mask(indicator, attention_mask, l_text)
+                masked = masked_text_rows(indicator, attention_mask, l_text,
+                                          pure_ulysses=ctx.pure_ulysses)
 
                 image_row = (indicator == OUTPUT_IMAGE_INDICATOR)
                 h = self.input_proj(x_full * image_row.to(x_full.dtype).unsqueeze(-1))
@@ -161,16 +203,28 @@ class Ideogram4Adapter(Adapter):
             # It stays zero through the first block's norm and scale-only
             # modulation, yet it is still a key: logit 0 takes softmax weight,
             # and its zero query averages the values, so from the second block
-            # on it carries content. Pure Ulysses drops it at the full-axis
-            # point so the kernel sees stock's key set. Ring and hybrid keep
-            # attending it: they cannot exclude pads, and naming drop rows
-            # there would refuse.
-            drop_rows: list[int] | None = None
-            if ctx.pure_ulysses:
-                drop_rows = padded_row_indices([(orig_len, h.shape[1])])
-            usp_opts = usp_options(transformer_options, attn, drop_rows=drop_rows)
-            for layer in self.layers:
-                h = layer(h, None, freqs_cis, adaln_input, transformer_options=usp_opts)
+            # on it carries content. It is named on every topology: pure
+            # Ulysses drops it, with any masked text rows, at the full-axis
+            # point so the kernel sees stock's key set, and ring or hybrid,
+            # which cannot exclude it, refuses (class K, ring_pad waiver). Where
+            # the shared nvfp4 scale wraps a Linear of this model, the masked
+            # rows then attend each other in one more call per block, as stock's
+            # segment does, written back into their places: those Linears read
+            # the rows' values into their statistic. With none wrapped no real
+            # row reads them, so the call would only cost time. The coverage
+            # record is set at install and crossed between the ranks before
+            # sampling, so every rank makes the same calls.
+            drop_rows = sorted(masked + padded_row_indices([(orig_len, h.shape[1])]))
+            usp_opts = usp_options(transformer_options, attn, drop_rows=drop_rows,
+                                   segment_rows=masked if _scale_wraps_a_linear(self) else None)
+            # The divisibility pad stays out of the shared nvfp4 activation
+            # scale. Masked text tokens are real rows to stock's quantizer, which
+            # sees the whole packed stream, and the segment call gives them
+            # stock's values, so they stay in it.
+            packed = scale_rows.stream((orig_len, h.shape[1]))
+            with scale_rows.real_rows(_SCALE_ROLES, {"packed": packed}):
+                for layer in self.layers:
+                    h = layer(h, None, freqs_cis, adaln_input, transformer_options=usp_opts)
 
             h = sp_gather(h, orig_len, dim=1)
             out = self.final_layer(h, adaln_input)

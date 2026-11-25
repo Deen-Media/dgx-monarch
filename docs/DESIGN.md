@@ -516,11 +516,14 @@ RoPE (0,0,0) produces left-edge artifacts. `adapters/usp_pad_exclusion.py`
 removes those rows: a family that declares its padded row indices has them
 dropped inside the ulysses path exactly (same all-to-all, same inner kernel,
 zero rows re-inserted), and a padded sequence on ring or hybrid is a typed
-class-K refusal (waivable per render) rather than known-wrong math. Families
-that have not been wired and probed keep the measured-tradeoff contract;
-[MODELS.md](MODELS.md) records which is which per family. Adapters may
-require exact divisibility only as an explicit, independently validated
-exception.
+class-K refusal (waivable per render) rather than known-wrong math. Since
+1.5.0 every family that pads a sharded stream declares its rows on every
+topology, each proved exact on CPU against its own unsplit forward at an odd
+length; a family whose attention gathers the keys itself and trims the pad in
+the gather never meets a pad key. Adapters may require exact divisibility
+only as an explicit, independently validated exception (Omnigen2, Z-Image).
+The same rows stay out of the shared nvfp4 activation scale
+(`adapters/scale_rows.py`).
 
 A row-local op is not always row-count-invariant. Measured on 2026-10-16,
 comfy-kitchen 0.2.37's fused AdaLN took one CUDA kernel for calls of 1024

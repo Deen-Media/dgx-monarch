@@ -154,5 +154,9 @@ def test_the_driver_marks_what_the_real_worker_apply_reports(worker, last, resid
     render_preflight.note_successful_render("model.safetensors")
     replies = handle.apply_worker_args(new, merge_config=False)
     assert sent == [new]
+    # A residency grant names the driver's published policy, and each Worker
+    # compares it with the policy it recorded (mesh_residency.py), so the
+    # payload must be that policy, the shared-scale key left absent included.
+    assert [rig._active_worker_args for rig in ranks] == [handle.active_worker_args] * 2
     assert [reply[DROPPED] for reply in replies] == ([["cond"]] * 2 if marked else [[]] * 2)
     assert pending_load_relief.dit_resident("model.safetensors", charged=True) is not marked

@@ -277,13 +277,15 @@ def test_a_shared_activation_scale_change_evicts_every_resident(monkeypatch):
     # Removing the key restores the default, which is a change and evicts.
     store.events.clear()
     worker_env.apply_worker_args_impl(worker, {})
-    assert "DGXM_SHARED_ACT_SCALE" not in os.environ
+    assert os.environ["DGXM_SHARED_ACT_SCALE"] == "1"
     assert store.events == ["unload_all"]
 
 
-def test_an_absent_shared_activation_scale_key_leaves_a_hand_set_variable(
+def test_an_absent_shared_activation_scale_key_overrides_a_hand_set_variable(
         monkeypatch):
-    """The bare variable is a single-box aid; an omitted key must not pop it."""
+    """The switch decides whether a rank issues a collective, so a Worker never
+    reads its own environment for it: an omitted key reads on, whatever one box
+    exported by hand, and the change evicts the resident built under it."""
     from dgx_monarch.actor import comfy_bridge
 
     monkeypatch.setattr(comfy_bridge, "_CUSTOM_NODES_DISABLED", None, raising=False)
@@ -296,8 +298,8 @@ def test_an_absent_shared_activation_scale_key_leaves_a_hand_set_variable(
 
     worker_env.apply_worker_args_impl(worker, {"lora_low_rss": False})
 
-    assert os.environ["DGXM_SHARED_ACT_SCALE"] == "0"
-    assert store.events == ["release"]
+    assert os.environ["DGXM_SHARED_ACT_SCALE"] == "1"
+    assert store.events == ["unload_all"]
 
 
 def test_a_family_override_change_evicts_every_resident(monkeypatch):

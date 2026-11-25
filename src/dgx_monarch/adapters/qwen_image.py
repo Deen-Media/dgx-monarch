@@ -20,7 +20,7 @@ from typing import Any
 import torch
 
 from ..log import get_logger
-from . import cfg_pad_rows
+from . import cfg_pad_rows, scale_rows
 from .base import (
     Adapter,
     InjectionContext,
@@ -49,6 +49,15 @@ _TEXT_PATHS = (
     ("txt_mlp.net.2", False),
 )
 _warned_paths: set[str] = set()  # process lifetime: one warning per path
+
+# Which double-block Linears read which sharded stream: the add_* projections,
+# to_add_out and txt_mlp the text, the to_* projections and img_mlp the image.
+# img_mod and txt_mod read the per-batch time embedding.
+DUAL_STREAM_SCALE_ROLES = scale_rows.by_pattern([
+    (r"transformer_blocks\.\d+\.(attn\.(add_q_proj|add_k_proj|add_v_proj|to_add_out)"
+     r"|txt_mlp\.[\w.]+)", "text"),
+    (r"transformer_blocks\.\d+\.(attn\.(to_q|to_k|to_v|to_out\.\d+)|img_mlp\.[\w.]+)", "image"),
+])
 
 
 def _resolve(block, path: str) -> Any:
@@ -221,26 +230,33 @@ class QwenImageAdapter(Adapter):
             # pairs rank-major, but stock attends [all text, all image] and
             # flash rounding depends on key order. Restore stock's order at
             # pure Ulysses' full-axis point. The zero pad each stream took to
-            # divide the shard is a real key after modulation, so the same
-            # point drops those rows. Ring and hybrid keep their path: they
-            # cannot exclude pads, and naming drop rows there would refuse.
-            sequence_order = drop_rows = None
+            # divide the shard is a real key after modulation, so it is named
+            # on every topology: the same point drops those rows, and ring or
+            # hybrid, which cannot exclude them, refuses (class K, ring_pad
+            # waiver).
+            sequence_order = None
             if ctx.pure_ulysses:
                 sequence_order = RankMajorJointOrder(encoder_hidden_states.shape[1], rows)
-                drop_rows = padded_row_indices([
-                    (txt_orig_len, encoder_hidden_states.shape[1]),
-                    (img_orig_len, rows),
-                ])
+            drop_rows = padded_row_indices([
+                (txt_orig_len, encoder_hidden_states.shape[1]),
+                (img_orig_len, rows),
+            ])
             usp_opts = usp_options(transformer_options, attn, drop_rows=drop_rows,
                                    sequence_order=sequence_order)
             usp_opts["total_blocks"] = len(self.transformer_blocks)
             usp_opts["block_type"] = "double"
             row0 = sp_rank() * rows
+            # The same pad rows stay out of the shared nvfp4 activation scale.
+            streams = {
+                "text": scale_rows.stream((txt_orig_len, encoder_hidden_states.shape[1])),
+                "image": scale_rows.stream((img_orig_len, rows)),
+            }
             for i, block in enumerate(self.transformer_blocks):
                 usp_opts["block_index"] = i
                 with full_row_text_projections(
                         block, txt_orig_len, img_orig_len,
-                        pure_ulysses=ctx.pure_ulysses, select=_text_modules):
+                        pure_ulysses=ctx.pure_ulysses, select=_text_modules), \
+                        scale_rows.real_rows(DUAL_STREAM_SCALE_ROLES, streams):
                     if ("double_block", i) in blocks_replace:
                         def block_wrap(args, block=block):
                             out = {}

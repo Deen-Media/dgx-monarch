@@ -192,19 +192,42 @@ than stacks on a repeat call.
    `padded_row_indices(segments)` as `drop_rows`, through `usp_options` for a
    joint sequence or straight to a patched attention, and the Ulysses path
    then excludes exactly those rows. Ring and hybrid have no full-sequence
-   point to drop them at, so each family names its rows on one of two scopes:
-
-   * every topology, so a padded sequence on ring or hybrid raises a typed
-     refusal instead of rendering known-wrong math: Krea2, Lens, MiniMax H3,
-     LTX, Mage Flow, FLUX.3, MOSS-Image and the flux family (Chroma, Flux,
-     Flux2, LongCat);
-   * pure Ulysses only, so ring and hybrid attend the pad and never refuse:
-     Qwen-Image, Hunyuan, Boogu, Ernie-Image and Ideogram4 (each in its own
-     paragraph below).
+   point to drop them at, so every family names its rows on every topology,
+   and a padded sequence on ring or hybrid raises a typed class K refusal
+   instead of rendering known-wrong math: Krea2, Lens, MiniMax H3, LTX, Mage
+   Flow, FLUX.3, MOSS-Image, the flux family (Chroma, Flux, Flux2, LongCat),
+   Qwen-Image, Hunyuan, Boogu, Ernie-Image, Ideogram4, CogVideoX, the Wan
+   family (Wan 2.1 and 2.2, SCAIL, SCAIL-2, WanDancer), Anima and Kandinsky5
+   (CogVideoX's text and video streams, Kandinsky5's video stream, whose text
+   is replicated and never sharded, and SCAIL's pose stream are named with the
+   video's own rows). The Wan family's refusal comes before the
+   block loop and names pure Ulysses where the heads divide the world, and
+   the nearest frame counts whose whole stream divides. Qwen-Image, Hunyuan,
+   Boogu, Ernie-Image and Ideogram4 named their rows under pure Ulysses only
+   before 1.5.0, so ring and hybrid attended the pad there without a word;
+   since 1.5.0 DESIGN's class K rule governs them as every other family. A family whose
+   attention gathers each rank's keys itself and trims the pad in the gather
+   (Qwen Image 2.1's target, PixelDiT) never meets a pad key and names none.
+   Every exclusion is proved on CPU against the family's own unsplit comfy
+   forward at an odd length (the `*_pad_exclusion.py` and
+   `*_stock_equivalence.py` tests), with the pad rows filled with NaN so an
+   attended one cannot hide.
 
    The listed families outside the flux-family forward wire the exclusion
    into their own forward and declare no `usp_pad_exclusion_probe`; that
    attribute applies to the flux family alone (below).
+
+   The same pad rows stay out of the shared NVFP4 activation scale
+   (adapters/quant_activation_scale.py), which reduces each rank's amax over
+   the group. Around its block loop a sharded forward names, by module path,
+   which Linears read which sharded stream and how many of that stream's
+   local rows are real on this rank (`scale_rows.real_rows`), and the scale
+   takes the amax over those rows alone; a Linear named for a stream whose
+   input has other rows refuses as a dgx-monarch fault. Mage Flow keeps its
+   own row scope (`mage_nvfp4_scale.py`). `tests/test_scale_rows_coverage.py`
+   holds every sharding adapter to a scope and a test, or to a written reason
+   it needs neither, and `tests/test_scale_rows_families.py` runs each
+   family's Linears under the shared scale with NaN pad rows against one GPU.
 
    That ring/hybrid refusal
    carries an expert class K waiver: default off, never automatic, output
@@ -677,7 +700,10 @@ than stacks on a repeat call.
    group over every real row, and the full-axis call runs comfy's own SDPA
    wrapper with it (`usp_query_bias`). A uniform trailing text pad stays in
    the sequence, its keys under stock's float32 minimum, because the kernel's
-   bits depend on how many keys it reduces over; ring and hybrid trim it.
+   bits depend on how many keys it reduces over; ring and hybrid trim it,
+   except where NVFP4 Linears share one activation scale: stock computes the
+   trimmed rows and they enter its statistic, so there every rank refuses,
+   class P, before any Linear runs, naming uly2.
    Each block's `txt_qkv`, `to_add_out` and SwiGLU `txt_mlp` run on
    all text rows in stock's layout through the `chroma_text.py` helper;
    `txt_mlp` is wrapped whole, so its three Linears share one gather, and
@@ -732,8 +758,9 @@ than stacks on a repeat call.
    `drop_rows`, so the zero rows that padding adds are not attended and the
    kernel sees stock's key set. The image stream's length counts reference
    tokens, so an Edit render's pad follows image plus references. Ring and
-   hybrid topologies get neither: they keep their existing order and attend
-   the pad rows. Every pure-Ulysses render, padded or not, names an order, so
+   hybrid topologies keep their existing order and get the same pad rows,
+   which they cannot drop, so a padded render there refuses class K (the
+   ring_pad waiver). Every pure-Ulysses render, padded or not, names an order, so
    it takes the full-axis call and never reaches xfuser's own. A shard also
    runs the text-stream Linears on half the text rows, and the BLAS can pick
    another kernel for another row count, so the bits can differ. Under pure
@@ -799,7 +826,12 @@ than stacks on a repeat call.
    the stream as `drop_rows`, so the full-axis call drops that row and the
    kernel sees stock's key set. The unconditional model's image-only call
    takes the same path when its grid is odd. An even stream names an empty
-   set and keeps xfuser's own call. Ring and hybrid name nothing and attend
+   set and keeps xfuser's own call. A padded text mask adds the masked text
+   rows to that set. Where the shared NVFP4 scale wraps a Linear of the model,
+   they then attend each other in one more call per block (`segment_rows`),
+   as stock's segment mask has them do, so the values they carry into the
+   next Linear's statistic are stock's; with none wrapped no real row reads
+   them and the call is skipped. Ring and hybrid name nothing and attend
    the pad row. For this family ring2 stays an explicit diagnostic that auto
    never picks: the tested FP8 pair's ring2 one-step comparison read
    NRMS 0.102 against the 0.100 limit (DESIGN.md Appendix A). FSDP shards
@@ -902,14 +934,15 @@ than stacks on a repeat call.
    order, since its gathered order is already stock's. The single loop shards
    one joined stream in contiguous chunks, which gather in stock order, so it
    takes options without the descriptor. Those are a copy of the double-loop
-   options, as stock carries one dict through both loops. Under pure Ulysses
+   options, as stock carries one dict through both loops. On every topology
    each loop also names its own pad rows as `drop_rows`: the double loop the
    pads of the text and image streams, the single loop the tail pad of the
    joined stream. Qwen text has no length floor, so about half of all prompts
    pad; the shipped image template's prompt is 169 text rows (149 Qwen and 20
    byt5, counted with comfy's tokenizer), which pads both loops
-   at 2048 by 2048. Ring and hybrid topologies get neither treatment: they keep
-   their existing order and attend the pad rows. A shard also runs the four
+   at 2048 by 2048. Ring and hybrid topologies keep their existing order and
+   refuse a padded render class K, since they cannot drop the named rows. A
+   shard also runs the four
    text-stream Linears of each double block (`txt_attn.qkv`, `txt_attn.proj`,
    `txt_mlp[0]` and `txt_mlp[2]`) on half the text rows, and a BLAS may pick
    another kernel for another row count. Under pure Ulysses each gathers the
@@ -967,10 +1000,11 @@ than stacks on a repeat call.
    double block makes two attention calls on one `transformer_options`: the
    joint `[instruct, image]` attention, which Ulysses gathers rank-major as it
    does Qwen-Image's, and the image self-attention, which it gathers in stock
-   order. Under pure Ulysses the double loop's override picks each call's
-   options by its local query length (`adapters/boogu_ulysses.py`): the joint
-   call gets a `RankMajorJointOrder` and both streams' pad rows, and the image
-   call gets the image stream's pad rows alone. A joint pad coordinate can
+   order. The double loop's override picks each call's options by its local
+   query length (`adapters/boogu_ulysses.py`): the joint call gets both
+   streams' pad rows, and under pure Ulysses a `RankMajorJointOrder`, and the
+   image call gets the image stream's pad rows alone. The pad rows are named on
+   every topology, so ring and hybrid refuse a padded render class K. A joint pad coordinate can
    fall inside the image axis, where it would drop a real image row, so the
    two calls never share a set. The noise, reference and single loops name
    their own tail pad rows. The seven instruct Linears of each double block
@@ -1046,8 +1080,8 @@ than stacks on a repeat call.
    before the final norm: at batch 2 the shard's chunk and an odd stream's trim
    are strided views where stock's norms read contiguous rows. On CPU the
    strided reads give the same bits; on CUDA nothing has measured them. Ring
-   and hybrid get none of these: they attend the pad row and keep the unfused
-   branch and the strided views. No Linear is wrapped: every block Linear runs
+   and hybrid keep the unfused branch and the strided views, and a padded
+   render there refuses class K, since they cannot drop the named pad row. No Linear is wrapped: every block Linear runs
    on the joint shard, and none reads a short text stream.
 
    Hardware results: under pure Ulysses the BF16 file matched

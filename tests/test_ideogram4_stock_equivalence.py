@@ -10,9 +10,10 @@ latent must equal stock's with a largest difference of exactly zero.
 
 It covers odd and even text and image row counts, batch 1 and 2, and the
 unconditional model's image-only call. Ideogram4 takes no reference latents
-and no guidance, and the shipped template feeds no attention mask, so none is
-covered here; a padded multi-prompt mask stays an open departure (pixeldit.py
-drops it with a warning).
+and no guidance. The shipped template feeds no attention mask; a padded text
+mask, which only a custom encoder makes, is covered at the end: pure Ulysses
+leaves the masked tokens out of attention as stock's segment mask does, and
+ring or a batch of differently masked prompts refuses.
 
 The zero bound holds only where this CPU's GEMM gives a row the same bits at
 the shard's row count as at stock's. The per-block Linears are not treated for
@@ -37,6 +38,7 @@ from dgx_monarch.adapters import base
 from dgx_monarch.adapters.base import InjectionContext
 from dgx_monarch.adapters.pixeldit import Ideogram4Adapter
 from module_location_helpers import from_checkout
+from pad_rows_comfy_helpers import assert_ring_pad_refusal, grant_ring_pad_waiver
 from test_flux_pad_exclusion import _LOCAL, _Fabric, _install_stubs, _rank
 
 WORLD = 2
@@ -164,10 +166,31 @@ def _stock(model, x, timesteps, context):
     return out, calls
 
 
-def _sharded(monkeypatch, model, x, timesteps, context, *, pure_ulysses=True):
+def _stock_masked(model, x, timesteps, context, attention_mask):
+    """Comfy's own `_forward` with a text mask: its block-diagonal segment mask
+    reaches the attention, which applies it as -inf before the softmax."""
+
+    def override(_func, q, k, v, heads, mask=None, **kwargs):
+        q, k, v = (t.transpose(1, 2) for t in (q, k, v))  # (B, H, L, D) -> (B, L, H, D)
+        q_h, k_h, v_h = (t.transpose(1, 2).to(torch.float64) for t in (q, k, v))
+        scores = (q_h.unsqueeze(-2) * k_h.unsqueeze(-3)).sum(-1) / q_h.shape[-1] ** 0.5
+        if mask is not None:
+            # Boolean keep-mask, or the additive form comfy may hand an override.
+            scores = (scores.masked_fill(~mask, float("-inf")) if mask.dtype == torch.bool
+                      else scores + mask.to(torch.float64))
+        weights = torch.softmax(scores, dim=-1)
+        out = (weights.unsqueeze(-1) * v_h.unsqueeze(-3)).sum(-2).transpose(1, 2).to(q.dtype)
+        return out.reshape(out.shape[0], out.shape[1], -1)
+
+    return model._forward(x, timesteps, context, attention_mask=attention_mask,
+                          transformer_options={"optimized_attention_override": override})
+
+
+def _sharded(monkeypatch, model, x, timesteps, context, *, pure_ulysses=True, ring_world=1,
+             attention_mask=None):
     """The adapter's bound forward, one thread and one model copy per rank."""
     kernel = _Kernel(WORLD)
-    _install_stubs(monkeypatch, kernel)
+    _install_stubs(monkeypatch, kernel, ring_world=ring_world)
     dispatch = base.make_usp_attention("TORCH_FLASH")
     drops: list = []
 
@@ -186,7 +209,7 @@ def _sharded(monkeypatch, model, x, timesteps, context, *, pure_ulysses=True):
         try:
             _LOCAL.rank = rank
             outputs[rank] = models[rank]._forward(
-                x, timesteps, context, attention_mask=None, transformer_options={})
+                x, timesteps, context, attention_mask=attention_mask, transformer_options={})
         except BaseException as exc:  # re-raised in the test body
             errors[rank] = exc
             kernel.fabric.barrier.abort()
@@ -260,11 +283,13 @@ def test_every_kernel_sees_stock_operands_and_the_latent_is_stock(
 
 
 @pytest.mark.parametrize("text_rows,grid", [(5, (2, 4)), (None, (3, 3))])
-def test_without_pure_ulysses_the_pad_row_still_reaches_the_kernel(
+def test_a_waived_ring_render_still_attends_the_pad_row(
     monkeypatch, comfy_ideogram4, text_rows, grid
 ):
-    """The negative control on the real model, and ring's path: no drop rows
-    are named, the kernel sees one key more than stock, and the latent moves.
+    """The negative control on the real model, and ring's path: the pad row
+    is named, so a padded ring render refuses class K by default; under the
+    ring_pad waiver the kernel sees one key more than stock, and the latent
+    moves.
 
     It also pins how the pad row acts on this model. Its modulation only
     scales and RMSNorm keeps zero at zero, so the first block's pad key and
@@ -276,10 +301,14 @@ def test_without_pure_ulysses_the_pad_row_still_reaches_the_kernel(
     model = _model(ops, ideogram)
     x, timesteps, context = _inputs(text_rows, grid, 1)
     expected, stock_calls = _stock(model, x, timesteps, context)
+    with pytest.raises(base.UnsupportedModelError) as caught:
+        _sharded(monkeypatch, model, x, timesteps, context, pure_ulysses=False, ring_world=2)
+    assert_ring_pad_refusal(caught.value)
+    grant_ring_pad_waiver(monkeypatch)
     outputs, kernel, drops = _sharded(monkeypatch, model, x, timesteps, context,
-                                      pure_ulysses=False)
+                                      pure_ulysses=False, ring_world=2)
     rows = grid[0] * grid[1] + (text_rows or 0)
-    assert drops and all(drop is None for drop in drops)
+    assert drops and all(drop == [rows] for drop in drops)
     assert all(call[3].shape[1] == rows + 1 for call in kernel.calls)
     assert stock_calls[0][1].shape[1] == rows
     assert (outputs[0] - expected).abs().max().item() > 0.0
@@ -287,3 +316,59 @@ def test_without_pure_ulysses_the_pad_row_still_reaches_the_kernel(
     assert torch.count_nonzero(first[3][:, rows]) == 0
     assert torch.count_nonzero(first[4][:, rows]) == 0
     assert torch.count_nonzero(second[3][:, rows]) > 0
+
+
+# (text mask, image grid): masked tail and a masked token mid-prompt, on a
+# packed total that also pads (5 + 8) and one that does not (5 + 9).
+MASKS = [([1, 1, 1, 0, 0], (2, 4)), ([1, 0, 1, 1, 0], (3, 3)), ([1, 0, 1, 1, 1], (2, 4))]
+
+
+@pytest.mark.parametrize("batch", [1, 2])
+@pytest.mark.parametrize("mask,grid", MASKS)
+def test_a_padded_text_mask_is_applied_exactly_under_pure_ulysses(
+    monkeypatch, comfy_ideogram4, mask, grid, batch
+):
+    """Stock's segment mask keeps real rows off the masked text tokens, which
+    attend only each other and never reach the output. Leaving them out of the
+    real rows' attention is the same math, so the latent is stock's to float32
+    rounding (the masked keys add only zero terms to each real row's sums), and
+    every kernel call sees exactly stock's unmasked keys. With no Linear under
+    the shared nvfp4 scale, no real row reads the masked tokens, so no block
+    runs their segment: one call per block (test_scale_rows_families pins the
+    segment call where the scale wraps a Linear)."""
+    ops, ideogram = comfy_ideogram4
+    model = _model(ops, ideogram)
+    x, timesteps, context = _inputs(len(mask), grid, batch)
+    attention_mask = torch.tensor([mask] * batch)
+    expected = _stock_masked(model, x, timesteps, context, attention_mask)
+    outputs, kernel, drops = _sharded(monkeypatch, model, x, timesteps, context,
+                                      attention_mask=attention_mask)
+    rows = grid[0] * grid[1] + len(mask)
+    masked = [index for index, keep in enumerate(mask) if not keep]
+    tail = list(range(rows, -(-rows // WORLD) * WORLD))
+    assert all(drop == masked + tail for drop in drops)
+    for rank in range(WORLD):  # each block: the real rows' call alone
+        keys = [call[3].shape[1] for call in kernel.calls if call[0] == rank]
+        assert keys == [rows - len(masked)] * len(model.layers), rank
+    assert torch.equal(outputs[0], outputs[1])
+    assert (outputs[0] - expected).abs().max().item() <= 1e-6
+    # Dropping the mask instead (the behaviour this replaced) moves the latent.
+    unmasked = _stock_masked(model, x, timesteps, context, None)
+    assert (unmasked - expected).abs().max().item() > 1e-3
+
+
+def test_a_padded_text_mask_refuses_on_ring_and_for_mixed_prompts(monkeypatch, comfy_ideogram4):
+    """No row set can carry the mask on ring or hybrid, nor two prompts' masks
+    in one call, so both refuse class P on every rank, with no kernel call."""
+    from dgx_monarch.refusal import RefusalClass, parse_refusal_tag
+
+    ops, ideogram = comfy_ideogram4
+    model = _model(ops, ideogram)
+    for batch, mask, pure, ring in ((1, [[1, 1, 0, 0]], False, 2),
+                                    (2, [[1, 1, 0, 0], [1, 1, 1, 0]], True, 1)):
+        x, timesteps, context = _inputs(4, (3, 3), batch)
+        with pytest.raises(base.UnsupportedModelError) as caught:
+            _sharded(monkeypatch, model, x, timesteps, context, pure_ulysses=pure,
+                     ring_world=ring, attention_mask=torch.tensor(mask))
+        tag = parse_refusal_tag(str(caught.value))
+        assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS

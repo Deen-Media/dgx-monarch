@@ -100,7 +100,7 @@ that match the tested configurations in its model details. See
 | Flux 1 Dev | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Padded ring is guarded; distilled checkpoints use CFG 1. Use converted LoRAs. [Details](#model-flux-1-dev) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux 1 Schnell | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | CFG 1; Schnell-specific padded inputs remain unmeasured. [Details](#model-flux-1-schnell) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux2 | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | FP8-mixed Ulysses and BF16 `uly2+fsdp` were compared with references. LoRA/FSDP rendered, but its reference ran out of memory. [Details](#model-flux2) · [Workflow](../example_workflows/dgx-monarch-flux2-t2i.json) |
-| FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Step-distilled; CFG 1, euler, 16 steps or fewer. BF16 and NVFP4 uly2 text to image up to 1536 square is bit-identical to one GPU, and at one step to stock. ring2 is measured, one-step NRMS 0.026 to 0.183 against one GPU, so use uly2; padded ring needs a waiver. INT8 files pin an approximate attention kernel: a world of one GPU renders with it as stock does and asks nothing, cfg2, dp2 and a two-rank `single` (which resolves to dp2) ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. NVFP4 refuses FSDP. Before the fused-norm parity change, uly2 edits and uly2 text to image at 704 square or below differed from one GPU, up to one-step NRMS 0.117 for the NVFP4 edit; after it they are bit-identical in BF16 and NVFP4, confirmed on hardware on 2026-10-16. Edits scale each reference to 1 MP. Public LoRA: none; mechanism tested with a synthetic LoRA. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
+| FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Step-distilled; CFG 1, euler, 16 steps or fewer. BF16 and NVFP4 uly2 text to image up to 1536 square is bit-identical to one GPU, and at one step to stock. The NVFP4 files ship a static input scale on each of their 198 NVFP4 layers, so no shared activation scale is involved; uly2 read bytes equal to one GPU again at 1008, 1040 and 1024 square on 2026-11-24. ring2 is measured, one-step NRMS 0.026 to 0.183 against one GPU, so use uly2; padded ring needs a waiver. INT8 files pin an approximate attention kernel: a world of one GPU renders with it as stock does and asks nothing, cfg2, dp2 and a two-rank `single` (which resolves to dp2) ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. NVFP4 refuses FSDP. Before the fused-norm parity change, uly2 edits and uly2 text to image at 704 square or below differed from one GPU, up to one-step NRMS 0.117 for the NVFP4 edit; after it they are bit-identical in BF16 and NVFP4, confirmed on hardware on 2026-10-16. Edits scale each reference to 1 MP. Public LoRA: none; mechanism tested with a synthetic LoRA. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
 | FLUX.3 Klein Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3.5, 25 steps, euler. cfg2 is measured, not the same math: bit-identical when the prompt encodes past one 80-row block; on a shorter prompt it stays within the one-step floor but full renders diverge, and auto never picks it. ring2 is measured, one-step NRMS 0.011 to 0.057, and padded ring needs a waiver. Edits use uly2 or single in BF16 and NVFP4: the NVFP4 edit read one-step NRMS 0.019 on uly2 before the fused-norm parity change, and uly2 edits are bit-identical to one GPU after it, confirmed on hardware on 2026-10-16. Same uly2, INT8, FSDP and LoRA notes as FLUX.3 Klein. [Details](#model-flux-3-klein-base) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json) |
 | MOSS-Image SFT | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with Skip Layer Guidance (DGX Monarch) skipping layer 22 on the negative pass. BF16 uly2 is bit-identical to one GPU from 1024 to 2048 square, one step and full schedule, and at one step to stock from 512 to 2048 square. INT8 files pin an approximate attention kernel: a world of one GPU renders with it as stock does and asks nothing, cfg2, dp2 and a two-rank `single` (which resolves to dp2) ask for the Sol-Attn waiver, and uly2 drops the pin; since the INT8 dispatch fix, confirmed on hardware on 2026-10-21, INT8 uly2 is bit-identical to a pin-stripped one-GPU render, where it read one-step NRMS 0.027 to 0.036 earlier that day. cfg2 refuses while the skip is on; with it off, a prompt and a negative of different lengths split on cfg2 bit-identical to one GPU, and an equal-length pair is measured, one-step NRMS 0.023 to 0.026, so auto never picks cfg2. ring2 is measured, one-step NRMS 0.0025 to 0.031 without a LoRA, so use uly2; padded ring needs a waiver, and ring2 with a LoRA is not supported. `uly2+fsdp` is bit-identical to resident uly2. NVFP4, an fp8 `weight_dtype` cast and a grouped INT8 (`w4a8`) or ConvRot W4A4 (`w4a4`) file refuse on uly2, ring and cfg2; no MOSS-Image file of the last two kinds is known. A LoRA on the INT8 files refuses class P on every topology, and so does one on a grouped INT8 or ConvRot W4A4 file, which no render has measured ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-grouped-int8-or-convrot-w4a4-render-with-a-lora-refuses-on-every-topology)); BF16 with a LoRA renders. Reference-image edits for edit LoRAs run on one GPU only and refuse class P on every cluster topology ([TROUBLESHOOTING #130](TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)). An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch, as a hardware run observed on uly2 and ring2 on 2026-10-27; on single, cfg2 and dp2 row 0 it was bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). The loader preflight prices the 19.31 GB BF16 encoder beside the DiT. [Details](#model-moss-image-sft) · [Workflow](../example_workflows/dgx-monarch-moss-image-t2i.json) |
 | MOSS-Image Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with the same layer-22 skip. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule; its FSDP reading comes from the scoped sweep. Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-moss-image-base) · [Workflow](../example_workflows/dgx-monarch-moss-image-base-t2i.json) |
@@ -2781,6 +2781,38 @@ The explicit presets that fill world 4, `uly4`, `ring4` and `uly2+cfg2`, are
 the operator's choice there, within each model's constraints. This project
 has verified none of them at world 4.
 
+### Padding rows on split layouts
+
+When a sequence does not divide across the ranks, the pack pads it with zero
+rows. After a block's norm and modulation a zero row is a real key, so since
+1.5.0 every family that pads a sharded stream names those rows, and each
+exclusion was proved exact on CPU against the family's own unsplit forward at
+an odd length. On a pure Ulysses layout (uly2, uly4) the attention leaves them
+out of every softmax exactly, and the shared NVFP4 activation scale leaves them
+out of its maximum. Ring and hybrid layouts have no point where the whole
+sequence meets, so they cannot leave them out: a padded render there refuses,
+class K, unless you accept the `ring_pad` waiver, and a render under it is
+stamped ([TROUBLESHOOTING #21](TROUBLESHOOTING.md#21-sequence-length-needs-divisibility-padding--ulysses-only-on-ringhybrid)). An unpadded render needs
+neither. Before 1.5.0, CogVideoX, the Wan family (Wan 2.1 and 2.2, SCAIL,
+SCAIL-2, WanDancer), Anima and Kandinsky5 attended the pad even on Ulysses, and
+Qwen-Image, Hunyuan, Boogu, Ernie-Image and Ideogram4 attended it on ring, all
+without a word; for the first group `auto` picks uly2 on a pair, so a Wan video
+at 81 frames and 624 square or a CogVideoX one at 720x496 and 49 frames
+rendered with a pad key in every softmax. None of the newly wired families has
+been compared on the pair yet.
+
+Wan and SCAIL-2 on ring2 refuse a padded render: the exclusion is not yet
+wired there. Their TORCH_FLASH ring2 path gathers the whole K and V onto each
+rank and makes one flash call, so the exclusion would be a narrowing of those
+keys to the real rows; that path runs on CUDA only, with no CPU proof yet, so
+it stays a refusal until it has one on the pair. The refusal names pure
+Ulysses at the same world where the heads divide it (uly2 on two ranks, which
+renders the same video exactly) and the nearest video frame counts whose whole
+stream divides the ranks, reference and pose rows counted (77 or 85 frames for
+Wan at 81 frames and 624 square on two ranks). Ideogram4's text mask cannot
+ride a ring layout at all, so a masked prompt on ring or hybrid refuses class P
+and names uly2. Omnigen2 and Z-Image refuse any sequence that does not divide.
+
 ### FSDP, precision and residency
 
 FSDP is a capacity preset, not a speed setting, and `auto` never selects it.
@@ -2814,9 +2846,23 @@ legend explains.
 
 The shared NVFP4 activation scale follows the conditioning calls stock
 ComfyUI makes, and it does not lift a family's accuracy refusal
-([docs/TROUBLESHOOTING.md #95](TROUBLESHOOTING.md#95-a-sharded-nvfp4-render-refuses-with-a-waiver-card-about-activation-scales)). Set `shared_act_scale` the same on every
-worker, because it decides whether a rank issues a collective;
-`log_act_scale` only logs. The [quant catalog](#model-adoption-quant-artifact-catalog)
+([docs/TROUBLESHOOTING.md #95](TROUBLESHOOTING.md#95-a-sharded-nvfp4-render-refuses-with-a-waiver-card-about-activation-scales)). Set `shared_act_scale` in cluster.toml
+`[worker_args]` or on the Init node; every Worker reads it from the worker args
+the driver sends, an absent key reading on, because it decides whether a rank
+issues a collective, and since 1.5.0
+only the real rows of a sharded stream enter the scale, never the rows padded
+on to divide it; `log_act_scale` only logs. What is proven, and where: on CPU,
+with ComfyUI's own model classes, each family's test shows every rank's scale
+equals the amax a one-GPU forward takes for the same layer; on the pair, the
+logs show only that the ranks agree, which the reduction guarantees. The render
+can still differ from one GPU: Krea2 RAW NVFP4 on uly2 read one-step latent
+NRMS 0.025 to 0.034 against one GPU on 2026-11-24 at 1008, 1024 and 1040
+square (CFG 3.5, euler), and 1024 pads nothing. That difference is not
+explained yet. In September one GPU gave the same rows from the bf16, fp8 and
+nvfp4 GEMMs in a full call and in a half call, which ruled out the GEMM's row
+count on that build. A one-GPU render now logs comfy's own amax too
+([TROUBLESHOOTING #95](TROUBLESHOOTING.md#95-a-sharded-nvfp4-render-refuses-with-a-waiver-card-about-activation-scales)),
+and no leg has yet compared it with the pair's. The [quant catalog](#model-adoption-quant-artifact-catalog)
 identifies the separately measured new-model encodings.
 
 ### Video workflow boundaries

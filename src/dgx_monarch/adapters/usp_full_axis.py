@@ -7,7 +7,7 @@ from .usp_pad_exclusion import attend_without_pads
 
 
 def run_full_axis(usp_attn, q_l, k_l, v_l, drop_rows, kv_drop_rows, groups,
-                  sequence_order, query_group_attention):
+                  sequence_order, query_group_attention, segment_rows=()):
     """Gather sequence, optionally canonicalize it, attend, then restore."""
     from yunchang.comm.all_to_all import SeqAllToAll4D
 
@@ -24,6 +24,10 @@ def run_full_axis(usp_attn, q_l, k_l, v_l, drop_rows, kv_drop_rows, groups,
             k_descale=usp_attn.k_descale, v_descale=usp_attn.v_descale)
         return out[0] if isinstance(out, tuple) else out
 
+    if segment_rows and sequence_order is not None:
+        # A segment's rows are named in the gathered order; no family that
+        # names one reorders its stream, so the two never meet.
+        raise ValueError("segment rows cannot ride a joint-order descriptor")
     q_r, k_r, v_r = (
         SeqAllToAll4D.apply(usp_attn.ulysses_pg, value, 2, 1)
         for value in (q_l, k_l, v_l))
@@ -32,7 +36,8 @@ def run_full_axis(usp_attn, q_l, k_l, v_l, drop_rows, kv_drop_rows, groups,
         q_r, k_r, v_r, drop_rows, kv_drop_rows, permutation = (
             sequence_order.canonicalize(q_r, k_r, v_r, drop_rows, kv_drop_rows, groups))
     out = attend_without_pads(q_r, k_r, v_r, drop_rows=drop_rows,
-                              kv_drop_rows=kv_drop_rows, groups=groups, attend=attend)
+                              kv_drop_rows=kv_drop_rows, groups=groups, attend=attend,
+                              segment_rows=segment_rows)
     if permutation is not None:
         out = sequence_order.restore(out, permutation)
     if not isinstance(out, torch.Tensor):

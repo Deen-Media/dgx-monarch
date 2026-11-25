@@ -477,8 +477,8 @@ copied from historical evidence.
    views cannot hide behind distinct storage objects; zero-length
    shared-storage detection uses public storage-object identity. The boundary is
    [`latent_outputs.py:115-135`](../src/dgx_monarch/nodes/latent_outputs.py#L115-L135 "anchor:_shares_storage"), covered for flat and packed outputs by
-   [`test_adapter_remediation.py:876-905`](../tests/test_adapter_remediation.py#L876-L905 "anchor:test_shifted_distinct_storages_are_detected_as_aliases"),
-   [`test_adapter_remediation.py:908-945`](../tests/test_adapter_remediation.py#L908-L945 "anchor:test_packed_empty_views_detect_shared_storage_without_false_positive"),
+   [`test_adapter_remediation.py:889-918`](../tests/test_adapter_remediation.py#L889-L918 "anchor:test_shifted_distinct_storages_are_detected_as_aliases"),
+   [`test_adapter_remediation.py:921-958`](../tests/test_adapter_remediation.py#L921-L958 "anchor:test_packed_empty_views_detect_shared_storage_without_false_positive"),
    [`test_sampling_dp.py:554-580`](../tests/test_sampling_dp.py#L554-L580 "anchor:test_sampler_leader_paths_reject_tensor_subclass_outputs"), and
    [`test_pipeline.py:975-985`](../tests/test_pipeline.py#L975-L985 "anchor:test_pipeline_rejects_tensor_subclass_outputs").
    Auto-active, policy-mismatch, failed-flip, fresh-load-ordering, and divergence

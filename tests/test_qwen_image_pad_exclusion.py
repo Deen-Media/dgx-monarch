@@ -1,11 +1,13 @@
-"""Qwen-Image divisibility pad rows are not attended (pure Ulysses).
+"""Qwen-Image divisibility pad rows: not attended (pure Ulysses), refused on ring.
 
 `shard_seq` zero-pads each stream, and after LayerNorm and the modulation shift a
 zero row is a real key at RoPE (0, 0, 0). Stock one-GPU attention has no such
-key. The forward names those rows as `drop_rows`, and the full-axis path removes
-them after it restores stock order. The harness is the one in
-tests/test_qwen_image_order.py; in strict mode its recording kernel fails the
-test if a pad row (tag 0) reaches attention or a real row goes missing.
+key. The forward names those rows as `drop_rows` on every topology, and the
+full-axis path removes them after it restores stock order; ring and hybrid,
+which cannot remove them, refuse class K unless the ring_pad waiver is granted.
+The harness is the one in tests/test_qwen_image_order.py; in strict mode its
+recording kernel fails the test if a pad row (tag 0) reaches attention or a
+real row goes missing.
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ import pytest
 import torch
 
 from dgx_monarch.adapters import base
+from pad_rows_comfy_helpers import assert_ring_pad_refusal, grant_ring_pad_waiver
 from test_qwen_image_order import (
     SHAPES,
     WORLD,
@@ -77,12 +80,24 @@ def test_drop_rows_name_the_rank_major_pad_coordinates(
 
 
 @pytest.mark.parametrize("text_rows,grid", SHAPES)
-def test_ring_and_hybrid_keep_attended_pads_and_never_refuse(monkeypatch, text_rows, grid):
-    """Without pure Ulysses no drop rows are named, so the ring pad guard, which
-    refuses named rows, cannot fire, and the rank-major path attends the pads."""
+def test_ring_and_hybrid_name_the_pad_rows_and_refuse_unless_waived(monkeypatch, text_rows, grid):
+    """Ring and hybrid name the same pad rows as pure Ulysses but cannot drop
+    them, so a padded render refuses class K by default (docs/DESIGN.md, class
+    K). Under the ring_pad waiver it renders with the pads attended in
+    rank-major order, which is the known-wrong math the card names; an even
+    render names no row and needs no waiver."""
     text, image = _streams(text_rows, grid)
-    _outputs, harness = _run(monkeypatch, text, image, grid, world=WORLD, pure_ulysses=False)
-    assert all(drops is None for drops in harness.drops)
+    padded = text_rows % WORLD or image.shape[1] % WORLD
+    if padded:
+        with pytest.raises(base.UnsupportedModelError) as caught:
+            _run(monkeypatch, text, image, grid, world=WORLD, pure_ulysses=False, ring_world=2)
+        assert_ring_pad_refusal(caught.value)
+        grant_ring_pad_waiver(monkeypatch)
+    _outputs, harness = _run(monkeypatch, text, image, grid, world=WORLD, pure_ulysses=False,
+                             ring_world=2)
+    _ulysses_outputs, ulysses = _run(monkeypatch, text, image, grid, world=WORLD,
+                                     pure_ulysses=True)
+    assert harness.drops and harness.drops == ulysses.drops
     assert all(order is None for order in harness.orders)
     expected = _rank_major_tags(text_rows, image.shape[1])
     assert all(tags == expected for _e, kind, _i, tags in harness.calls if kind == "double")
@@ -122,14 +137,3 @@ def test_reference_tokens_count_as_image_rows_for_the_pad(
     *_head, canonical, _kv, _perm = order.canonicalize(probe, probe, probe, rank_major, None, None)
     assert canonical == (list(range(text_rows, padded_text))
                          + list(range(padded_text + image_total, gathered)))
-
-
-def test_the_ring_pad_guard_the_gate_avoids_still_refuses(monkeypatch):
-    """The ring pad guard still refuses named pad rows; gating `drop_rows` on pure
-    Ulysses keeps the forward clear of it.
-
-    This exercises `base` only. The forward-level proof that ring and hybrid
-    name no drop rows is test_ring_and_hybrid_keep_attended_pads_and_never_refuse.
-    """
-    with pytest.raises(base.UnsupportedModelError):
-        base.assert_ulysses_only_padding(2, 1)

@@ -34,8 +34,9 @@ import torch
 
 import test_flux_pad_exclusion as flux_harness
 from dgx_monarch.adapters import boogu_ulysses, chroma_text
-from dgx_monarch.adapters.base import InjectionContext, make_usp_attention
+from dgx_monarch.adapters.base import InjectionContext, UnsupportedModelError, make_usp_attention
 from dgx_monarch.adapters.boogu import BooguAdapter
+from pad_rows_comfy_helpers import assert_ring_pad_refusal, grant_ring_pad_waiver
 from test_boogu_ulysses_order import SHAPES
 from test_flux_pad_exclusion import _LOCAL, _Harness, _install_stubs, _rank
 
@@ -170,7 +171,8 @@ def _inputs(text_rows, grid, refs, batch):
     return x, timesteps, context, ref_latents
 
 
-def _run(monkeypatch, comfy, text_rows, grid, refs, batch, *, pure_ulysses=True, prepare=None):
+def _run(monkeypatch, comfy, text_rows, grid, refs, batch, *, pure_ulysses=True, prepare=None,
+         ring_world=1):
     sdpa = _sdpa(comfy)
     stock = _model(comfy)
     x, timesteps, context, ref_latents = _inputs(text_rows, grid, refs, batch)
@@ -180,7 +182,7 @@ def _run(monkeypatch, comfy, text_rows, grid, refs, batch, *, pure_ulysses=True,
                                                   _recorder(sdpa, stock_calls)})
 
     harness = _ComfyHarness(WORLD, sdpa)
-    _install_stubs(monkeypatch, harness)
+    _install_stubs(monkeypatch, harness, ring_world=ring_world)
     monkeypatch.setattr(sys.modules["xfuser.core.long_ctx_attention"],
                         "xFuserLongContextAttention", _WholeAxisUSP)
     monkeypatch.setattr(chroma_text, "sp_rank", _rank)
@@ -284,10 +286,15 @@ def test_real_instruct_linears_see_every_instruct_row(
 @pytest.mark.usefixtures("one_thread")
 @pytest.mark.parametrize("text_rows,grid,refs", [(5, (3, 3), ()), (4, (3, 3), (2,))])
 def test_ring_and_hybrid_contexts_keep_the_rank_major_path(monkeypatch, comfy, text_rows, grid, refs):
-    """Without pure Ulysses the forward names no order and no pad rows, so the
-    joint keys arrive rank-major and the pad rows are attended."""
+    """Without pure Ulysses the forward names no order, so the joint keys arrive
+    rank-major. It names the pad rows, so a padded ring render refuses class K
+    by default; under the ring_pad waiver the pad rows are attended."""
+    with pytest.raises(UnsupportedModelError) as caught:
+        _run(monkeypatch, comfy, text_rows, grid, refs, 1, pure_ulysses=False, ring_world=2)
+    assert_ring_pad_refusal(caught.value)
+    grant_ring_pad_waiver(monkeypatch)
     _expected, outputs, stock_calls, calls, _stock = _run(
-        monkeypatch, comfy, text_rows, grid, refs, 1, pure_ulysses=False)
+        monkeypatch, comfy, text_rows, grid, refs, 1, pure_ulysses=False, ring_world=2)
     assert torch.equal(outputs[0], outputs[1])
     joint = 1 + 1 + (1 if refs else 0)   # caption, noise, reference, then the first joint call
     assert calls[0][joint][2].shape[2] > stock_calls[joint][2].shape[2]   # a pad row attended
