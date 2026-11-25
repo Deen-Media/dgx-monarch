@@ -13,7 +13,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
-from . import mage_nvfp4_scale
+from . import cfg_pad_rows, mage_nvfp4_scale
 from .base import (
     Adapter,
     InjectionContext,
@@ -27,7 +27,6 @@ from .base import (
 )
 from .chroma_text import full_row_text_projections
 from .flux_family import _control_span_overlap
-from .krea2 import _trim_trailing_pad
 from .usp_sequence_order import RankMajorJointOrder
 
 log = get_logger(__name__)
@@ -253,13 +252,22 @@ class MageFlowAdapter(Adapter):
         log.info("mage_flow USP injected: %d blocks, sp=%d", len(diffusion_model.transformer_blocks), ctx.topology_sp)
 
     def inject_cfg_pad_forward(self, diffusion_model) -> None:
-        """Restore Mage's stock text call after cfg2 right-padding."""
+        """Restore Mage's stock text call after cfg2 right-padding.
+
+        The pad is cut by each entry's stamped row count, a shipped text mask
+        with it; a ragged batch with no mask keeps a `(B, trim)` additive text
+        bias, and an unstamped call goes to stock as it came
+        (adapters/cfg_pad_rows.py).
+        """
+        @cfg_pad_rows.reads_rows
         def cfg_pad_forward(self, x, timestep, context, attention_mask=None, ref_latents=None,
                             transformer_options={}, control=None, **kwargs):
-            if attention_mask is None:
-                context, bias = _trim_trailing_pad(context)
-                if bias is not None:
-                    attention_mask = bias.squeeze(1)
+            context, counts = cfg_pad_rows.trim(
+                context, kwargs.pop(cfg_pad_rows.TEXT_ROWS, None), "mage_flow")
+            if attention_mask is not None:
+                attention_mask = cfg_pad_rows.cut_mask(attention_mask, context.shape[1])
+            elif counts is not None:
+                attention_mask = cfg_pad_rows.residual_bias(counts, context.shape[1], context.dtype)
             return type(self)._forward(
                 self, x, timestep, context, attention_mask=attention_mask,
                 ref_latents=ref_latents, transformer_options=transformer_options,

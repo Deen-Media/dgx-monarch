@@ -4,7 +4,8 @@
 returns a ``ResolvedTopology``, which unpacks to the same three values and
 also carries ``facts``: the table row, the family, quant kind and latent
 megapixels auto matched on, the CFG and cfg++ flag it read, the cfg evidence
-row that admitted cfg2 or the cfg row skipped for missing evidence, the
+row that admitted cfg2 or the cfg row auto passed over (for missing evidence,
+or for an equal pair where it leaves ranks the batch cannot split), the
 batch, and whether the prompt pair's text rows differ. The render's progress record keeps them, so a reader of
 /dgxm/telemetry can audit the table against measured times. Nothing decides
 on them. A preset reads no checkpoint header, so it carries no facts,
@@ -27,7 +28,7 @@ class TopologyFacts:
     cfg: float | None = None
     keeps_uncond: bool | None = None  # the cfg++ tag the latent carried
     evidence_row: int | None = None  # the record that admitted cfg-parallel
-    skipped_cfg_row: int | None = None  # a cfg row passed over for its evidence
+    skipped_cfg_row: int | None = None  # a cfg row passed over (AutoDecision.skipped_cfg)
     batch: int | None = None
     pair_differs: bool | None = None  # the pair tag the latent carried (cfg_pair)
 

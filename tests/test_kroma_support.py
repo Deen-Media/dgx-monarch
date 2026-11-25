@@ -101,7 +101,10 @@ def _resolve_auto(monkeypatch, path, px, cfg_value, family_adapter=None):
         mesh=MeshSpec(handle=SimpleNamespace(world=2), topology_preset="auto",
                       attention="TORCH_FLASH", sync_ulysses=True, worker_args=worker_args),
         unet_name=path.name, options={"weight_dtype": "default"})
-    return common.resolve_topology(model, torch.zeros(1, 4, px // 8, px // 8), cfg_value)
+    # A prompt and a negative of different text rows, as the sampler tags them:
+    # since 2026-11-24 row 15 grants no other pair.
+    return common.resolve_topology(model, torch.zeros(1, 4, px // 8, px // 8), cfg_value,
+                                   pair_differs=True)
 
 
 @pytest.mark.parametrize("px", [1152, 1536])

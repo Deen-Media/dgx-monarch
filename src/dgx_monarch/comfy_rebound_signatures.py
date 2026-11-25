@@ -302,6 +302,27 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         ("wan", "wan_scail", "wan_dancer"), ("usp-self-attention",),
         "self x freqs transformer_options", 3,
     ),
+    # The video's own latent frame count is read where _forward receives the
+    # latent, before time_dim_concat joins it (adapters/wan_family.video_frames).
+    _rebound(
+        "comfy.ldm.wan.model", "WanModel._forward", ("wan",), ("usp:video-frames",),
+        "self x timestep context clip_fea time_dim_concat transformer_options", 4,
+        variadic_keyword="kwargs",
+    ),
+    _rebound(
+        "comfy.ldm.wan.model", "SCAILWanModel._forward", ("wan_scail",),
+        ("usp:video-frames",),
+        "self x timestep context clip_fea time_dim_concat transformer_options pose_latents "
+        "ref_mask_latents sam_latents",
+        4, variadic_keyword="kwargs",
+    ),
+    _rebound(
+        "comfy.ldm.wan.model", "SCAIL2WanModel._forward", ("wan_scail",),
+        ("usp:video-frames-inherited",),
+        "self x timestep context clip_fea time_dim_concat transformer_options pose_latents "
+        "ref_mask_latents sam_latents",
+        4, variadic_keyword="kwargs",
+    ),
     _rebound(
         "comfy.ldm.wan.model", "SCAILWanModel.forward_orig", ("wan_scail",),
         ("usp:scail",),

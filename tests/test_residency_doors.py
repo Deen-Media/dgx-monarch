@@ -448,7 +448,7 @@ _LAST = {"slab_weights": True, "lora_low_rss": True}
     (_LAST, {**_LAST, "family_override": "krea2"}, True),
     (_LAST, {**_LAST, "fp8_matrix_mult": "on"}, True),
     ({**_LAST, "shared_act_scale": False}, _LAST, True),  # dropped: back to on
-    (_LAST, {**_LAST, "shared_act_scale": True}, True),   # added: the Worker's environment held it
+    (_LAST, {**_LAST, "shared_act_scale": True}, False),  # added: absent already read on
     (None, {"slab_weights": True}, True),                 # the last apply did not publish
     (_LAST, {**_LAST, "slab_weights": False}, True),      # the store may drop a slab resident
     (_LAST, {**_LAST, "lora_low_rss": False}, True),      # or one with unbaked LoRA patches

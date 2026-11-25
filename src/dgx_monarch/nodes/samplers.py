@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from ..accuracy_waiver import STAMPED_RESULT_KEY
 from ..adapters.flux_views import conditioning_carries_views, request_carries_views
-from ..cfg_pair import text_rows_differ
+from ..cfg_pair import text_rows_differ, text_rows_equal
 from ..constants import GUIDER_TYPE, MODEL_TYPE, NODE_CATEGORY
 from ..mesh import ensure_live
 from ..sampling_contract import custom_schedule_steps
 from ..topology import topology_from_preset
-from . import expander_prompt, requeue_price
+from . import cfg_pair_notice, expander_prompt, requeue_price
 from .common import (
     ModelSpec,
     RenderPipeline,
@@ -24,8 +24,14 @@ from .common import (
 )
 from .consent_waiver import validate_inherited_stamps
 from .latent_outputs import clone_latent_samples, is_direct_nested_tensor
+from .reference_preflight import sequence_split_refused
 from .refusal_lead import lead_with_refusal
-from .render_preflight import CFG_PAIR_DIFFERS_METADATA_KEY, krea2_ref_preflight_summary, sampler_latent
+from .render_preflight import (
+    CFG_PAIR_DIFFERS_METADATA_KEY,
+    CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY,
+    krea2_ref_preflight_summary,
+    sampler_latent,
+)
 from .sampler_wire import (  # noqa: F401  # Public samplers API.
     _aggregate_render_outputs,
     _canonical_noise_for_wire,
@@ -107,10 +113,12 @@ class DGXMonarchKSampler:
             "scheduler": scheduler,
             "denoise": float(denoise),
             "_dgxm_krea2_ref_preflight": krea2_ref_preflight_summary(positive, negative),
+            cfg_pair_notice.REQUEST_KEY: text_rows_equal(positive, negative),
         }
         out = run_render(model, request, sampler_latent(
             latent_image, sampler_name, text_rows_differ(positive, negative),
-            conditioning_carries_views(positive, negative)),
+            conditioning_carries_views(positive, negative),
+            sequence_split_refused(model, positive, negative)),
             cfg_value=float(cfg), steps_hint=int(steps))
         out.pop("_dgxm_denoised", None)
         return _sampler_result(out)
@@ -189,7 +197,8 @@ class DGXMonarchKSamplerPipeline:
         # render resolve the same topology from it.
         latent_image = sampler_latent(
             latent_image, sampler_name, text_rows_differ(positive, negative),
-            conditioning_carries_views(positive, negative))
+            conditioning_carries_views(positive, negative),
+            sequence_split_refused(model, positive, negative))
         from .. import adoption_evidence
 
         adoption_evidence.require_inactive_context("DGXMonarchKSamplerPipeline")
@@ -232,6 +241,7 @@ class DGXMonarchKSamplerPipeline:
                 "scheduler": scheduler,
                 "denoise": float(denoise),
                 "_dgxm_krea2_ref_preflight": ref_summary,
+                cfg_pair_notice.REQUEST_KEY: text_rows_equal(positive, negative),
             }
 
         # Render the first seed through the normal sequential path when this
@@ -320,10 +330,12 @@ class DGXMonarchKSamplerAdvanced:
                 "return_with_leftover_noise": return_with_leftover_noise == "enable",
             },
             "_dgxm_krea2_ref_preflight": krea2_ref_preflight_summary(positive, negative),
+            cfg_pair_notice.REQUEST_KEY: text_rows_equal(positive, negative),
         }
         out = run_render(model, request, sampler_latent(
             latent_image, sampler_name, text_rows_differ(positive, negative),
-            conditioning_carries_views(positive, negative)),
+            conditioning_carries_views(positive, negative),
+            sequence_split_refused(model, positive, negative)),
             cfg_value=float(cfg), steps_hint=int(steps))
         out.pop("_dgxm_denoised", None)
         return _sampler_result(out)
@@ -420,7 +432,8 @@ class DGXMonarchSamplerCustom:
         # A SAMPLER object carries no name, so the cfg++ tag stays off and auto
         # keeps the CFG-1 skip; the pair and views tags come from the guider's own pair.
         latent = sampler_latent(latent_image, None, bool(guider.get(CFG_PAIR_DIFFERS_METADATA_KEY)),
-                                request_carries_views({"guider": guider["spec"]}))
+                                request_carries_views({"guider": guider["spec"]}),
+                                bool(guider.get(CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY)))
         wire_noise = _canonical_noise_for_wire(noise)
         schedule_steps = custom_schedule_steps(sigmas)
 
@@ -433,6 +446,9 @@ class DGXMonarchSamplerCustom:
             "noise_seed": int(getattr(noise, "seed", 0) or 0),
             "noise_object": wire_noise,
             "_dgxm_krea2_ref_preflight": guider.get("_dgxm_krea2_ref_preflight"),
+            # Read by the CFG guiders from their own pair; a dual-model guider
+            # runs two models, which one GPU never folds into one call.
+            cfg_pair_notice.REQUEST_KEY: bool(guider.get(cfg_pair_notice.REQUEST_KEY)),
         }
         steps_hint = max(schedule_steps, 1)
         out = run_render(model, request, latent, cfg_value=guider.get("cfg"), steps_hint=steps_hint)

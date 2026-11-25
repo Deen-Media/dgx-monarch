@@ -122,9 +122,12 @@ test results are listed in
 versions of every step. cfg2 places each on a separate GPU and targets small
 to medium images. One GPU batches the two into one call when they encode to
 the same length, and cfg2's two calls can round differently from that one, so
-on Boogu and Chroma `auto` takes cfg2 only for a prompt and negative of
-different lengths. Anima pads every prompt to one length first, so one GPU
-always batches its pair and `auto` keeps Ulysses for it.
+on Boogu, Chroma, Krea 2 BF16 and Qwen-Image FP8 `auto` takes cfg2 only for a
+prompt and negative of different lengths, and gives a pair of equal lengths to
+Ulysses, which matches one GPU there. Where Ulysses would not, as on Krea 2 FP8
+or Chroma FP8 from 1.2 to 1.64 MP, such a pair stays on cfg2 and the render
+logs a notice. Anima pads every prompt to one length first, so one GPU always
+batches its pair and `auto` keeps Ulysses for it.
 
 **Ulysses and ring (sequence parallelism, "USP").** The image is split across
 GPUs. Each GPU holds a token slice and exchanges attention data each step.

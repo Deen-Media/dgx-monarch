@@ -25,6 +25,7 @@ from dgx_monarch.adapters.base import InjectionContext
 from dgx_monarch.adapters.boogu import BooguAdapter
 from dgx_monarch.adapters.boogu_ulysses import double_block_options
 from dgx_monarch.adapters.stock_attention import default_attention_override
+from pad_rows_comfy_helpers import grant_ring_pad_waiver
 from test_flux_pad_exclusion import (
     _CONTEXT,
     _LOCAL,
@@ -199,11 +200,11 @@ def comfy_leaves(monkeypatch):
 
 
 def drive(monkeypatch, text_rows, grid, refs=(), *, world, pure_ulysses, batch=1,
-          strict=True, double_cls=_ToyDouble):
+          strict=True, double_cls=_ToyDouble, ring_world=1):
     """Run the real bound forward once per rank thread, each on its own model."""
     stages = stage_tags(text_rows, grid[0] * grid[1], refs)
     harness = StageHarness(world, stages, strict=strict)
-    _install_stubs(monkeypatch, harness)
+    _install_stubs(monkeypatch, harness, ring_world=ring_world)
     monkeypatch.setattr(chroma_text, "sp_rank", _rank)
     monkeypatch.setattr(chroma_text, "sp_world", lambda: world)
     kernel = base.make_usp_attention("TORCH_FLASH")
@@ -306,11 +307,16 @@ def test_an_unpadded_render_matches_one_rank_in_every_stage(
 def test_without_pure_ulysses_every_stage_keeps_the_old_path(
     monkeypatch, comfy_leaves, text_rows, grid, refs
 ):
-    """Ring and hybrid contexts get no descriptor and no drop rows anywhere."""
+    """Ring and hybrid contexts get no descriptor anywhere.
+
+    A padded ring render refuses by default (tests/test_boogu_pad_exclusion.py);
+    the ring_pad waiver is granted here so the padded shapes render too, as an
+    accepted waiver lets them, with their pad rows attended.
+    """
+    grant_ring_pad_waiver(monkeypatch)
     _outputs, harness = drive(monkeypatch, text_rows, grid, refs, world=WORLD,
-                              pure_ulysses=False, strict=False)
-    assert harness.records and all(
-        order is None and drops is None for _stage, order, drops in harness.records)
+                              pure_ulysses=False, strict=False, ring_world=2)
+    assert harness.records and all(order is None for _stage, order, _drops in harness.records)
     expected = rank_major_tags(text_rows, harness.stages["image"])
     # The negative control: rank-major differs from stock, so the test above
     # would fail on a forward that never reordered.

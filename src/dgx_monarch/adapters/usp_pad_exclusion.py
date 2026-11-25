@@ -109,14 +109,53 @@ def assert_pads_are_a_tail(drop_rows, rows: int) -> None:
         ))
 
 
-def attend_without_pads(q, k, v, *, drop_rows, kv_drop_rows, groups, attend):
+def _segment_index(rows: int, segment_rows, device) -> torch.Tensor:
+    """Ascending indices of ``segment_rows``, built and cached as ``keep_index`` is."""
+    device = device_key(device)
+    key = ("segment", rows, tuple(segment_rows), device)
+    cached = _KEEP_INDEX.get(key)
+    if cached is not None:
+        return cached
+    runs, ordered = [], sorted(set(segment_rows))
+    start = previous = ordered[0]
+    for row in [*ordered[1:], None]:
+        if row is not None and row == previous + 1:
+            previous = row
+            continue
+        runs.append((start, previous + 1))
+        if row is not None:
+            start = previous = row
+    with torch.inference_mode(False):
+        parts = [torch.arange(lo, hi, dtype=torch.long, device=device) for lo, hi in runs]
+        index = parts[0] if len(parts) == 1 else torch.cat(parts)
+    return _KEEP_INDEX.put(key, index)
+
+
+def attend_without_pads(q, k, v, *, drop_rows, kv_drop_rows, groups, attend,
+                        segment_rows=()):
     """Run ``attend`` over the real rows and restore zeros where the pads sat.
 
     ``q``/``k``/``v`` arrive as (B, L, H, D) over the whole token axis, which is
     what the Ulysses head scatter hands each rank. ``attend(q, k, v, groups)``
     is the caller's kernel. The result keeps the query layout it was given, so
     ``sp_gather`` still trims the pad rows the caller sharded in.
+
+    ``segment_rows`` names dropped rows of a self-attention that stock attends
+    as a segment of their own (Ideogram4's masked text tokens): the real rows
+    never see them, and they see only each other. One more call over those rows
+    alone gives them stock's values, written back into their places, so the
+    next Linear quantizes against stock's statistic.
     """
+    if segment_rows and (k.shape[1] != q.shape[1] or kv_drop_rows is not drop_rows
+                         or not set(segment_rows) <= set(drop_rows)):
+        raise UnsupportedModelError(refusal(
+            RefusalClass.PHYSICS,
+            f"a segment of {len(segment_rows)} row(s) reached an attention that does "
+            "not drop them on both sides of one stream, so it cannot run them as a "
+            "segment of their own. This is a dgx-monarch fault, not a workflow "
+            "setting: report the shapes. Use topology 'single' (mode=local with "
+            "gpus_per_host=1) until it is fixed.",
+        ))
     if groups:
         assert_pads_are_a_tail(drop_rows, q.shape[1])
     query_index = keep_index(q.shape[1], drop_rows, q.device)
@@ -134,4 +173,8 @@ def attend_without_pads(q, k, v, *, drop_rows, kv_drop_rows, groups, attend):
         return out
     full = q.new_zeros(*q.shape)
     full[:, query_index] = out
+    if segment_rows:
+        index = _segment_index(q.shape[1], segment_rows, q.device)
+        full[:, index] = attend(q.index_select(1, index), k.index_select(1, index),
+                                v.index_select(1, index), None)
     return full

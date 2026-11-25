@@ -516,11 +516,14 @@ RoPE (0,0,0) produces left-edge artifacts. `adapters/usp_pad_exclusion.py`
 removes those rows: a family that declares its padded row indices has them
 dropped inside the ulysses path exactly (same all-to-all, same inner kernel,
 zero rows re-inserted), and a padded sequence on ring or hybrid is a typed
-class-K refusal (waivable per render) rather than known-wrong math. Families
-that have not been wired and probed keep the measured-tradeoff contract;
-[MODELS.md](MODELS.md) records which is which per family. Adapters may
-require exact divisibility only as an explicit, independently validated
-exception.
+class-K refusal (waivable per render) rather than known-wrong math. Since
+1.5.0 every family that pads a sharded stream declares its rows on every
+topology, each proved exact on CPU against its own unsplit forward at an odd
+length; a family whose attention gathers the keys itself and trims the pad in
+the gather never meets a pad key. Adapters may require exact divisibility
+only as an explicit, independently validated exception (Omnigen2, Z-Image).
+The same rows stay out of the shared nvfp4 activation scale
+(`adapters/scale_rows.py`).
 
 A row-local op is not always row-count-invariant. Measured on 2026-10-16,
 comfy-kitchen 0.2.37's fused AdaLN took one CUDA kernel for calls of 1024
@@ -754,7 +757,48 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   and the row was withdrawn (TROUBLESHOOTING #151). Chroma rows 20 and 19
   take the same scope: their pair was the shipped one, whose rows differ, and
   a BF16 pair of
-  equal rows read NRMS 0.034 on cfg2. The tag (`cfg_pair.text_rows_differ`)
+  equal rows read NRMS 0.034 on cfg2. Krea2 row 15 and Qwen-Image row 68 took
+  it on 2026-11-24, when equal pairs on the pair read one-step NRMS 0.0104 to
+  0.040 (Krea2) and 0.0004 to 0.0019 (Qwen-Image 2.1, forced cfg2), and one
+  GPU running each entry alone matched cfg2 to about 1e-7: at equal rows cfg2
+  equals stock's own separate calls, not its batched one. The scope applies
+  only where the row an equal pair falls to reads bytes equal to one GPU
+  (`CfgEvidence.pair_quants`): Krea2 BF16 falls to row 12, Qwen-Image FP8 to
+  row 71, Chroma BF16 and INT8 from 1.2 MP to row 22 and Boogu FP8 to row 78,
+  all uly2 on the Init kernel, while Krea2 FP8 would fall to row 11's SAGE
+  route and Chroma FP8 from 1.2 to 1.64 MP to row 21's, both further from the
+  one-GPU reference than cfg2, and keep every pair. A reading against row 0 of
+  a same-build dp2 render counts as a reading against one GPU: each dp2 rank
+  renders its latent alone, with one GPU's cond and uncond batching. The scope
+  reads a finer kind than the row (`topology_cfg_evidence.pair_kind`): an MXFP8
+  or NVFP4 file reads fp8 like an FP8 one, but no sharded render of it is bytes
+  equal, so its equal pair keeps cfg2 on every pair-scoped row, as does that
+  of a full-precision file the loader casts to fp8, which no record measured:
+  each scope names the kinds it covers. The Ulysses row must also be one this
+  very render can run: where the family's sharded forward refuses what the
+  pair carries and cfg2's stock forward runs it (Qwen-Image's text masks and
+  index_timestep_zero references, Edit 2511's by default; a regional mask
+  that hides a key on Chroma, which ComfyUI hands the flux family only beside
+  `attention_mask_img_shape`, so a text keep-mask never reaches it; Boogu's
+  caption masks that mask a row), the sampler tags the latent
+  (`nodes/reference_preflight.py`) and the pair keeps cfg2. The tag reads
+  each mask as ComfyUI's `extra_conds` hands it on, and a test drives each
+  branch through the real sharded forward (`tests/test_sequence_tag_forwards.py`). A file's
+  kind keeps the pair only on a cfg2 row this render can run: at world 4
+  with an odd batch the row leaves two data-parallel ranks the batch cannot
+  split, where auto refuses it (`topology.cfg_row_strands`), so there the pair
+  takes the row its scope sends it to, and the kind never turns a route into
+  a refusal. A pair the sequence forward refuses has no route there, since
+  every preset that tiles world 4 splits the sequence, so it meets that
+  refusal at once, and the refusal names what runs it: a batch the spare
+  ranks divide, world 2, or one GPU. A header the tag cannot read never gets
+  that far, since auto refuses it first. `tests/test_pair_scope_grid.py`
+  names every cell whose outcome changed against the scopes before. A cfg2
+  render of an equal pair says so (`nodes/cfg_pair_notice.py`), from every
+  KSampler node and from Sampler Custom behind a CFG guider: a log line per
+  render, and for a hand-chosen cfg2 a browser notice per queued prompt, never
+  a mark on the node. The Gate node's proof render gives none: its verdict
+  reports how far the render reads from one GPU itself. The tag (`cfg_pair.text_rows_differ`)
   needs one plain conditioning entry a side whose text tensors differ in rows.
   It rides on the latent beside the cfg++ tag, so every site that resolves
   the render's topology, the Gate capability context included, reads the
@@ -786,7 +830,8 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
 - every auto decision logs its row and reason, for example
   `auto: uly2; krea2 fp8 at 1.05 MP, world 2, table row 99 (...)`. Krea 2 lost
   its cfg2 row below 1.2 MP (crossover table row 10) and gained one for FP8
-  and BF16 from 1.2 to 2.36 MP (row 15, Campaign K, 2026-10-14).
+  and BF16 from 1.2 to 2.36 MP (row 15, Campaign K, 2026-10-14), scoped on
+  BF16 since 2026-11-24 to a pair whose text rows differ.
 
 Users can always override; auto is the default widget value.
 

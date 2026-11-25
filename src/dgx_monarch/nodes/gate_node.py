@@ -8,6 +8,7 @@ from ..adapters.flux_views import conditioning_carries_views
 from ..cfg_pair import text_rows_differ
 from ..constants import MODEL_TYPE, NODE_CATEGORY
 from . import adaptive_steps, h3_ring_pad
+from .reference_preflight import sequence_split_refused
 from .refusal_lead import lead_with_refusal
 from .render_preflight import sampler_latent
 from .samplers import _sampler_names, _scheduler_names
@@ -134,7 +135,8 @@ class DGXMonarchIdentityGate:
         # Tagged as the samplers tag it, so this proof binds the topology a
         # later render of the same sampler resolves.
         tagged = sampler_latent(latent_image, sampler_name, text_rows_differ(positive, negative),
-                                conditioning_carries_views(positive, negative))
+                                conditioning_carries_views(positive, negative),
+                                sequence_split_refused(model, positive, negative))
         # As before a sampler's gate: a padded MiniMax H3 ring, or a Wan SCAIL
         # ring above two, refuses here on the driver, before any proof render.
         h3_ring_pad.preflight_for_render(model, request, tagged, float(cfg))

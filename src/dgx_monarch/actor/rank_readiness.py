@@ -24,6 +24,7 @@ may wait for the group timeout. See docs/TROUBLESHOOTING.md #86.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any, NoReturn
 
 from ..log import get_logger
@@ -32,15 +33,62 @@ from . import partial_load_guard
 
 log = get_logger(__name__)
 
+# This rank's count of Linears under the shared NVFP4 activation scale, noted
+# by the sample path just before the exchange and consumed by it: render
+# lifetime, per thread.
+_NOTED = threading.local()
+
+
+class SharedScaleDisagreementError(RuntimeError):
+    """Typed cross-rank refusal: the ranks wrap different counts of NVFP4 Linears."""
+
+
+def note_shared_scale(wrapped: int) -> None:
+    """Note this rank's count of Linears under the shared scale for the next exchange.
+
+    Each wrapped Linear issues one max all-reduce per call
+    (adapters/quant_activation_scale.py), so two ranks with different counts
+    would issue different collectives and the render would stall at the first
+    one the other never issues. The driver sends every rank the same switch;
+    this check is the second line behind it.
+    """
+    _NOTED.wrapped = int(wrapped)
+
+
+def _agree_on_shared_scale(wrapped: int) -> None:
+    """Refuse, class P, on every rank alike when the ranks' counts differ."""
+    low, negative_high = partial_load_guard.all_ranks_min([wrapped, -wrapped])
+    if low == -negative_high:
+        return
+    raise SharedScaleDisagreementError(refusal(
+        RefusalClass.PHYSICS,
+        f"the ranks hold different counts of nvfp4 Linears under the shared activation "
+        f"scale ({low} on one rank, {-negative_high} on another), so they would issue "
+        "different max all-reduces and the render would stall at the first. This is a "
+        "dgx-monarch fault, not a workflow setting: the driver sends every Worker the same "
+        "shared_act_scale. Reset the attached mesh so the model loads again and report both "
+        "Workers' journals. Use topology 'single' (mode=local with gpus_per_host=1) until "
+        "it is fixed.",
+    ))
+
 
 def exchange_ready(local_ready: bool) -> bool:
     """Cross this rank's post-load readiness, and answer whether every rank is.
 
     One primitive for every topology's exchange, so the two shapes cannot drift
-    into two different collectives. Off-group (world 1, no process group) it
-    answers the local flag and issues nothing.
+    into two different collectives. When every rank is ready, every rank then
+    crosses its shared-scale count (``note_shared_scale``) in one more small
+    exchange and refuses on disagreement; a rank that was not ready issues
+    neither, and neither does any peer, since all read the same flag.
+    Off-group (world 1, no process group) it answers the local flag and issues
+    nothing.
     """
-    return partial_load_guard.all_ranks_true(local_ready)
+    wrapped = int(getattr(_NOTED, "wrapped", 0))
+    _NOTED.wrapped = 0
+    ready = partial_load_guard.all_ranks_true(local_ready)
+    if ready:
+        _agree_on_shared_scale(wrapped)
+    return ready
 
 
 def whole_model_topology(worker: Any) -> bool:

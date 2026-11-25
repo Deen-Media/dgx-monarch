@@ -268,6 +268,11 @@ class _FakeWan(torch.nn.Module):
 _WAN_X = _seeded(1, DIM, 1, 2, 3, seed=5)
 _WAN_CONTEXT = _seeded(1, 5, DIM, seed=6)
 _WAN_FREQS = torch.zeros(1, 6, 2)
+# WanDancer's audio covers eight frame groups per latent frame, which must
+# divide the image tokens, as stock's audio injector requires: one frame of
+# 2 x 4 tokens.
+_DANCER_X = _seeded(1, DIM, 1, 2, 4, seed=5)
+_DANCER_FREQS = torch.zeros(1, 8, 2)
 
 
 @pytest.mark.parametrize("adapter_cls, module", [
@@ -295,8 +300,8 @@ def test_wandancer_music_encoder_drops_the_pin(stubs):
         pins = []
         model = _FakeWan(pins, pinned, music=True)
         wan_variants.WanDancerAdapter().inject_usp(model, _ctx())
-        return model.forward_orig(_WAN_X, torch.tensor([0.5]), _WAN_CONTEXT,
-                                  freqs=_WAN_FREQS, audio_embed=audio,
+        return model.forward_orig(_DANCER_X, torch.tensor([0.5]), _WAN_CONTEXT,
+                                  freqs=_DANCER_FREQS, audio_embed=audio,
                                   transformer_options={}), pins
 
     def stock_music_forward(patch):
@@ -316,7 +321,7 @@ def test_wandancer_music_encoder_notes_that_the_default_backend_runs_it(stubs):
     model = _FakeWan([], True, music=True)
     wan_variants.WanDancerAdapter().inject_usp(model, _ctx())
     for _ in range(2):
-        model.forward_orig(_WAN_X, torch.tensor([0.5]), _WAN_CONTEXT, freqs=_WAN_FREQS,
+        model.forward_orig(_DANCER_X, torch.tensor([0.5]), _WAN_CONTEXT, freqs=_DANCER_FREQS,
                            audio_embed=_seeded(1, 3, DIM, seed=7), transformer_options={})
     music = [line for line in lines if line[1] == wan_variants._MUSIC_ATTENTION_SITE]
     assert len(music) == 1 and music[0][3] is True

@@ -797,6 +797,11 @@ and 0.011 with it. A separate 512-square CFG-1 native control measured
 0.018844. Padding can still raise a shared scale relative to an unpadded
 one-GPU tensor. No hook-cost or non-Krea/non-Chroma NVFP4 control was measured.
 
+**Addition, 2026-11-24.** The 0.014 reading was taken on 2026-09-03 and the
+0.011 reading on 2026-09-05, both on the shipped template at 1536 square, CFG
+1, euler_cfg_pp, one step, read on the decoded image. Since 1.5.0 only real
+rows enter the shared scale, so a shared scale is no longer raised by padding.
+
 Auto has no small-image cfg2 rule; cfg2 is explicit. Plain samplers at CFG 1
 have no unconditional batch to split, while cfg++ samplers retain it. Unequal
 cfg2 prompts use padding and a key mask; combined sequence/CFG topologies
@@ -804,6 +809,13 @@ refuse that asymmetric pair. ConditioningZeroOut is real conditioning, not
 padding. Reference-image workflows refuse sequence or CFG splitting and
 must use `single`. Padded ring/hybrid requests refuse unless an explicit
 accuracy waiver is recorded. INT8 LoRA swaps measured 10.9/9.7/9.7 seconds.
+
+**Addition, 2026-11-24.** That ConditioningZeroOut is real conditioning holds
+for the zeroed rows themselves, but before 1.5.0 a zeroed negative shorter than
+the prompt kept the pad's rows too and ran at the prompt's row count on cfg2;
+the pad now stamps each conditioning's own count and the forward cuts to it
+([MODELS](MODELS.md#model-krea2-raw-turbo),
+[equal pairs](#equal-pairs-krea2-qwen-2026-11-24)).
 
 <a id="evidence-kroma"></a>
 
@@ -1030,6 +1042,10 @@ its original unmasked call. Equal-length prompts take a different path:
 BF16 cfg2 read NRMS 0.034 because stock batches both conditions together.
 Since 2026-11-07 rows 20 and 19 grant only a pair whose text rows differ, so
 auto keeps Ulysses for an equal pair ([equal pairs](#campaign-k-equal-pairs)).
+
+**Addition, 2026-11-24.** On FP8 from 1.2 to 1.64 MP, and on an MXFP8, NVFP4
+or cast file at any size, an equal pair now keeps cfg2
+([equal pairs](#campaign-k-equal-pairs)).
 
 BF16 pure Ulysses matched same-build local references at 1024 and
 1536 for 100/28 and 44/44 prompts, and across 26-step controls including
@@ -2728,6 +2744,15 @@ world-2 auto/Ulysses completed 48-frame renders and read decoded probe
 NRMS 0.042457 against a local reference. Conditioning has 226 tokens.
 The tested 1.0-layout LoRA skipped all 1,344 keys on 1.5, so it did not modify the model.
 
+**Addition, 2026-11-24.** The readings above, and the I2V one below, predate
+1.5.0's CogVideoX order descriptor: on pure Ulysses its attention now runs at
+the full-axis point with stock's key order and the pad rows left out, where
+before it ran xfuser's own call with the keys in rank-major order, at even
+lengths too. Every uly2 render of CogVideoX changes; the descriptor is proved
+on CPU against the unsplit forward at even and odd lengths
+(`tests/test_cogvideo_pad_exclusion.py`), and no reading on the pair has been
+taken since.
+
 <a id="evidence-cogvideox-1-5-i2v"></a>
 
 ### CogVideoX 1.5 I2V
@@ -3169,6 +3194,70 @@ has no CFG field, so the Krea2 record covers every CFG other than 1, and CFG 1
 under a CFG++ sampler that a DGX Monarch KSampler node names, on the strength
 of the two regimes measured. A Sampler Custom graph names no sampler, so at
 CFG 1 it keeps Ulysses.
+
+**Addition, 2026-11-24.** By the rule the Krea2 and Qwen-Image record below
+sets, an equal pair leaves cfg2 only where the row it falls to reads bytes
+equal to one GPU; a reading against row 0 of a same-build dp2 render, the
+one-GPU reference, counts. Chroma FP8 from 1.2 to 1.64 MP would fall to row
+21's SAGE route, which Campaign K read at one-step NRMS 0.057 to 0.078 against
+row 0 of a same-build dp2 render, the one-GPU reference, further than cfg2's
+equal pair (0.034 on BF16), so row 19 keeps every FP8 pair, block-scaled and
+cast files included. Chroma BF16 still falls to row 22, which read Chroma1-HD
+BF16 in exact decoded pixels against a same-build one-GPU render at 1024 and
+1536 on 2026-10-02, on a pair of 44 and 44 text rows as well as the shipped
+one, with tensor bytes equal in the instrumented 1024 run. Chroma INT8 still
+falls to row 22, which Campaign K read bit-identical against row 0 of a
+same-build dp2 render, the one-GPU reference. Boogu FP8 still falls to row 78,
+read bit-identical on 2026-10-06 against row 0 of a same-build dp2 render, the
+one-GPU reference. Below 1.2 MP row 20 sends a BF16, FP8 or INT8 equal pair to
+the uly2 fallback as before; on every scoped row an MXFP8, NVFP4 or cast
+file's equal pair keeps cfg2.
+
+<a id="equal-pairs-krea2-qwen-2026-11-24"></a>
+
+**Equal prompt pairs on Krea2 and Qwen-Image 2.1, 2026-11-24, dgx-monarch
+`c5d9084`.** One step, seed 4242, both Sparks, latents compared by number; no
+quantizing attention kernel on either side (pytorch attention on one GPU,
+TORCH_FLASH on the Workers). The pack's one-GPU render and stock nodes were
+bytes equal in every row. Krea2 RAW BF16 at 1280 square and CFG 3.5, cfg2
+against one GPU: a ConditioningZeroOut of the positive (104 rows against 104)
+NRMS 0.010426; a real negative of the same 104 rows with its clauses reordered
+0.038992, and with its last word changed 0.040491; a real negative of 101 rows
+against 104, which the Workers pad, bytes equal. The zeroed positive read
+0.015840 at 1024 square and CFG 3.5, 0.010405 at 1280 and CFG 2.0, and
+0.013879 at 1024 and CFG 2.0, so the figure does not follow CFG. uly2 against
+one GPU was bytes equal for both zeroed forms. Qwen-Image 2.1 BF16 at 1024
+square and CFG 4.0 on a forced cfg2: two real negatives of equal rows on the
+slice path 0.001711 and 0.001858, the zeroed positive 0.000438; a real negative
+of other rows on the dispatch path, and the zeroed empty prompt, bytes equal.
+Under `auto`, which takes uly2 for Qwen-Image 2.1, the zeroed positive was
+bytes equal to one GPU.
+Each entry was then rendered alone on one GPU (CFG 1.0) and the CFG step done
+by number: at equal rows the two separate one-GPU calls agree with cfg2 to
+about 1e-7 and differ from stock's one batched call by exactly the cfg2 figure;
+at unequal rows all three agree. So at equal rows cfg2 equals stock's own
+separate calls and differs from stock's batched call, zeros or not. The zeroed
+empty prompt (5 rows against 104) agreed with stock's separate calls on one GPU
+and differed on cfg2 by 0.0358: that one was cfg2's own pad fault, which 1.5.0
+fixes by stamping each conditioning's row count. The rule since this reading:
+an equal pair leaves cfg2 only where the row it falls to reads bytes equal to
+one GPU. Krea2 BF16 falls to row 12, uly2 on the Init node's Torch Flash
+kernel, bytes equal on the pair that day, so row 15 grants BF16 only a pair
+whose rows differ. Krea2 FP8 would fall to row 11's SAGE route, which Campaign
+K read at one-step NRMS 0.030 to 0.058 against row 0 of a same-build dp2
+render, the one-GPU reference, further than cfg2's 0.0104 to 0.040, so row 15
+keeps every FP8 pair on cfg2. Qwen-Image FP8 falls
+to row 71, uly2 on the Init kernel, bit-identical to one GPU on 2026-10-06, so
+row 68 grants an FP8 file only a pair whose rows differ, as rows 19, 20 and 79
+already did. Row 71's reading was taken on the base 2512 fp8_e4m3fn file; an
+MXFP8 or NVFP4 file reads fp8 to auto as well, but no sharded render of one is
+bytes equal (Krea2 NVFP4 uly2 reads 0.025 to 0.034), so on every row that
+takes only a differing pair (Chroma's and Boogu's too) such a file keeps every
+pair on cfg2. So does a full-precision file the loader casts to fp8, which no
+record measured. A render that runs cfg2 on an equal pair now
+says so: every render in the log, and a hand-chosen cfg2 also in a browser
+notice once per queued prompt; one `auto` kept (Krea2 FP8, an MXFP8 or NVFP4
+file, or a cast file) only in the log.
 
 <a id="fused-adaln-switch-other-families"></a>
 

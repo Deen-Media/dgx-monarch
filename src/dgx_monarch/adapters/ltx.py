@@ -54,6 +54,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from . import scale_rows
 from .attention_patches import assert_no_foreign_attention_override
 from .base import (
     Adapter,
@@ -75,6 +76,19 @@ log = get_logger(__name__)
 # transformer_options to every attention in a block (BasicAVTransformerBlock.forward).
 _PAD_ROWS_KEY = "_dgxm_ltx_pad_rows"
 VIDEO, AUDIO = _VIDEO_STREAM, _AUDIO_STREAM
+
+# Which block Linears read which sharded stream. A cross attention's queries,
+# gate and output follow its query stream and its keys and values its context:
+# the text context (attn2, audio_attn2) is replicated, and the two modality
+# cross attentions read the other stream.
+_SCALE_ROLES = scale_rows.by_pattern([
+    (r"transformer_blocks\.\d+\.(attn1\.[\w.]+|attn2\.(to_q|to_gate_logits|to_out\.\d+)"
+     r"|audio_to_video_attn\.(to_q|to_gate_logits|to_out\.\d+)|video_to_audio_attn\.(to_k|to_v)"
+     r"|ff\.net\.[\w.]+)", VIDEO),
+    (r"transformer_blocks\.\d+\.(audio_attn1\.[\w.]+|audio_attn2\.(to_q|to_gate_logits"
+     r"|to_out\.\d+)|video_to_audio_attn\.(to_q|to_gate_logits|to_out\.\d+)"
+     r"|audio_to_video_attn\.(to_k|to_v)|audio_ff\.net\.[\w.]+)", AUDIO),
+])
 
 # The two comfy.model_base classes this adapter binds, matched exactly: an
 # unvetted LTXV/LTXAV subclass raises typed instead of binding.
@@ -324,7 +338,9 @@ class LTXAdapter(Adapter):
             if timestep is not None and torch.is_tensor(timestep) and timestep.ndim == 3 and timestep.shape[1] > 1:
                 timestep, _ = shard_seq(timestep, dim=1)
 
-            with rows.sharded({VIDEO: _stream(orig_len, x)}):
+            # The pad rows stay out of the shared nvfp4 activation scale too.
+            with rows.sharded({VIDEO: _stream(orig_len, x)}), scale_rows.real_rows(
+                    _SCALE_ROLES, {VIDEO: scale_rows.stream((orig_len, x.shape[1]))}):
                 x = stock_process_blocks(
                     self, x, context, attention_mask, timestep, pe,
                     transformer_options=stock_attention_options(
@@ -426,9 +442,12 @@ class LTXAdapter(Adapter):
             timestep = [v_ts, a_ts, cross_ts, timestep[3], timestep[4]]
 
             streams = {VIDEO: _stream(v_orig, vx)}
+            scale_streams = {VIDEO: scale_rows.stream((v_orig, vx.shape[1]))}
             if has_audio:
                 streams[AUDIO] = _stream(a_orig, ax)
-            with rows.sharded(streams):
+                scale_streams[AUDIO] = scale_rows.stream((a_orig, ax.shape[1]))
+            # The pad rows stay out of the shared nvfp4 activation scale too.
+            with rows.sharded(streams), scale_rows.real_rows(_SCALE_ROLES, scale_streams):
                 out = stock_process_blocks(
                     self, [vx, ax], context, attention_mask, timestep,
                     [(v_pe, av_cross_v), (a_pe, av_cross_a)],

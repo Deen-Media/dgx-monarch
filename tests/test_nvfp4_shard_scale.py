@@ -336,6 +336,46 @@ def test_the_off_switch_under_the_trace_knob_keeps_the_before_leg_readable(
     assert calls[0] == 0
 
 
+@pytest.mark.parametrize("sharded", [True, False])
+def test_the_trace_changes_no_result_where_a_pad_row_holds_the_largest_value(
+        monkeypatch, caplog, sharded):
+    """The trace with the shared scale off (sharded) or on one GPU reads comfy's
+    whole input and sets nothing: inside a block loop whose stream pads this
+    rank, with a pad row holding the largest value, the layer quantizes as it
+    does with the trace off, input scale and output bit for bit."""
+    from dgx_monarch.adapters import scale_rows
+
+    x = torch.randn(1, 4, 4, dtype=torch.bfloat16)
+    x[0, 3] *= 50.0  # the pad row: 7 real rows over 2 ranks of 4, rank 1's last
+    seen: list = []
+
+    class _Seeing(_Linear):
+        def forward(self, value):
+            seen.append(getattr(self, "input_scale", None))
+            return super().forward(value)
+
+    def run(trace):
+        monkeypatch.setenv(qas.ENABLE_ENV, "0" if sharded else "1")
+        if trace:
+            monkeypatch.setenv(qas.LOG_ENV, "1")
+        else:
+            monkeypatch.delenv(qas.LOG_ENV, raising=False)
+        tree = _Tree(nvfp4=_Seeing(NVFP4))
+        qas.install(tree, {"ulysses": 2} if sharded else {}, family="test")
+        role = scale_rows.by_pattern([(r"nvfp4", "x")])
+        with caplog.at_level("INFO", logger="dgx_monarch.adapters.quant_activation_scale"), \
+                scale_rows.real_rows(role, {"x": scale_rows.stream((7, 4), rank=1, world=2)}):
+            return tree.nvfp4(x)
+
+    stock = run(trace=False)
+    traced = run(trace=True)
+    assert seen == [None, None]  # neither run handed comfy a scale
+    assert torch.equal(traced, stock)
+    assert torch.equal(stock, _Linear(NVFP4)(x))
+    line = next(r.getMessage() for r in caplog.records if "local_amax" in r.getMessage())
+    assert f"local_amax={float(x.abs().amax()):.6g}" in line  # the pad row's value
+
+
 def test_an_unsharded_install_declines_nothing_because_nothing_was_needed():
     tree = _mixed_tree()
     coverage = qas.install(tree, {}, family="chroma")
@@ -384,6 +424,31 @@ def test_the_trace_reads_the_local_amax_when_the_collective_reduces_in_place(
     assert "reduced_amax=9" in line
 
 
+def test_one_gpu_under_the_trace_knob_prints_comfys_own_amax_and_issues_no_collective(
+        monkeypatch, caplog):
+    """The one-GPU leg a sharded trace is read against: with no plan (a world of
+    one) the knob still wraps each NVFP4 Linear, with an empty plan, so it prints
+    the amax comfy itself takes, runs stock math and reduces across nothing; the
+    coverage counts nothing wrapped and nothing declined, on a second walk too."""
+    monkeypatch.setenv(qas.LOG_ENV, "1")
+    torch.manual_seed(5)
+    tree = _mixed_tree()
+    reduce, calls = _counting_reducer()
+    coverage = qas.install(tree, {}, family="krea2", reducers={"sp": reduce})
+    assert (coverage.wrapped, coverage.declined) == (0, 0)
+    assert getattr(tree.nvfp4, qas.WRAPPED_ATTR, None) == ()
+    again = qas.install(tree, {}, family="krea2", reducers={"sp": reduce})
+    assert (again.wrapped, again.declined) == (0, 0)
+    x = torch.randn(8, 4, dtype=torch.bfloat16)
+    with caplog.at_level("INFO", logger="dgx_monarch.adapters.quant_activation_scale"):
+        assert torch.equal(tree.nvfp4(x), _Linear()(x))
+    line = next(record.getMessage() for record in caplog.records
+                if "local_amax" in record.getMessage())
+    amax = f"{float(x.abs().amax()):.6g}"
+    assert f"local_amax={amax}" in line and f"reduced_amax={amax}" in line
+    assert "reducers=none" in line and calls[0] == 0
+
+
 def test_the_off_switch_still_traces_each_ranks_own_amax(monkeypatch, caplog):
     """The hardware "before" leg runs with the hook off and reads this line to
     size how far the ranks' amax disagree."""
@@ -420,9 +485,14 @@ def test_the_worker_args_write_both_variables_and_report_an_enable_change(
 
     os.environ.pop(qas.ENABLE_ENV, None)
     os.environ.pop(qas.LOG_ENV, None)
-    # Absent keys leave a hand-set variable alone.
+    # An absent switch reads on, written from the payload; the trace switch's
+    # absent key leaves its variable alone.
     assert qas.env_from_worker_args({}) is False
-    assert qas.ENABLE_ENV not in os.environ
+    assert os.environ[qas.ENABLE_ENV] == "1" and qas.LOG_ENV not in os.environ
+    # A hand-set off on this box alone cannot hold: the payload decides.
+    os.environ[qas.ENABLE_ENV] = "0"
+    assert qas.env_from_worker_args({}) is True
+    assert qas.enabled_now() is True
 
     assert qas.env_from_worker_args({qas.ENABLE_ARG: False}) is True
     assert os.environ[qas.ENABLE_ENV] == "0"
@@ -440,7 +510,7 @@ def test_the_worker_args_write_both_variables_and_report_an_enable_change(
     qas.env_from_worker_args(previous)
     assert os.environ[qas.ENABLE_ENV] == "0"
     assert qas.env_from_worker_args({}, previous) is True
-    assert qas.ENABLE_ENV not in os.environ and qas.LOG_ENV not in os.environ
+    assert os.environ[qas.ENABLE_ENV] == "1" and qas.LOG_ENV not in os.environ
     assert qas.enabled_now() is True
 
 
@@ -812,7 +882,7 @@ def test_the_off_switch_is_named_only_when_the_off_switch_is_the_cause(monkeypat
         qas.assert_shard_quant_scale_covered(tree)
     message = str(raised.value)
     assert f"{qas.ENABLE_ARG} = true in worker_args" in message
-    assert f"{qas.ENABLE_ENV} unset on every worker" in message
+    assert "or the key removed" in message and qas.ENABLE_ENV not in message
     assert "0.131" in message and "fp8, mxfp8 or int8" in message
 
 

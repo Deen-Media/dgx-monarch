@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 import torch
 
+from dgx_monarch.adapters.cfg_pad_rows import TEXT_ROWS
 from module_location_helpers import from_checkout
 
 
@@ -326,8 +327,13 @@ def test_real_comfy_cfg_equalizer_restores_each_unpadded_call():
     positive, negative = equalize_cond_lengths(
         MageFlowAdapter(), [[long, {}]], [[short, {}]], torch.zeros(1, 4, 3, 5),
     )
-    got_long = padded._forward(x, timestep, positive[0][0], ref_latents=refs)
-    got_short = padded._forward(x, timestep, negative[0][0], ref_latents=refs)
+    # The pad stamps each entry's own row count; ComfyUI hands it to the forward
+    # as this keyword, and the forward cuts the pad back off by it.
+    got_long = padded._forward(x, timestep, positive[0][0], ref_latents=refs,
+                               **{TEXT_ROWS: positive[0][1]["model_conds"][TEXT_ROWS].cond})
+    got_short = padded._forward(x, timestep, negative[0][0], ref_latents=refs,
+                                **{TEXT_ROWS: negative[0][1]["model_conds"][TEXT_ROWS].cond})
+    assert negative[0][0].shape[1] == 5
     assert torch.allclose(got_long, stock._forward(x, timestep, long, ref_latents=refs), atol=2e-5, rtol=2e-5)
     assert torch.allclose(got_short, stock._forward(x, timestep, short, ref_latents=refs), atol=2e-5, rtol=2e-5)
 
@@ -343,7 +349,9 @@ def test_real_comfy_cfg_padding_handles_ragged_batch_and_preserves_real_mask():
     x, timestep, refs = _cfg_inputs()
     first, second = torch.randn(1, 5, 16), torch.randn(1, 3, 16)
     ragged = torch.cat((first, torch.cat((second, torch.zeros(1, 2, 16)), dim=1)), dim=0)
-    got = padded._forward(x, timestep, ragged, ref_latents=refs)
+    # Stamped 5 and 3: the second entry keeps its two pad rows masked out.
+    got = padded._forward(x, timestep, ragged, ref_latents=refs,
+                          **{TEXT_ROWS: torch.tensor([5, 3])})
     expected = torch.cat((
         stock._forward(x[:1], timestep[:1], first, ref_latents=[ref[:1] for ref in refs]),
         stock._forward(x[1:], timestep[1:], second, ref_latents=[ref[1:] for ref in refs]),
@@ -377,6 +385,11 @@ def test_real_comfy_cfg_uniform_trailing_pad_is_stock_equivalent():
     x, timestep, refs = _cfg_inputs()
     context = torch.randn(2, 3, 16)
     padded_context = torch.cat((context, torch.zeros(2, 2, 16)), dim=1)
-    got = padded._forward(x, timestep, padded_context, ref_latents=refs)
+    got = padded._forward(x, timestep, padded_context, ref_latents=refs,
+                          **{TEXT_ROWS: torch.tensor([3, 3])})
     expected = stock._forward(x, timestep, context, ref_latents=refs)
     assert torch.allclose(got, expected, atol=2e-5, rtol=2e-5)
+    # With no stamp the call was not padded: it reaches stock as it came, and
+    # trailing zero rows are real conditioning there (a zeroed negative's are).
+    unstamped = padded._forward(x, timestep, padded_context, ref_latents=refs)
+    assert torch.equal(unstamped, stock._forward(x, timestep, padded_context, ref_latents=refs))

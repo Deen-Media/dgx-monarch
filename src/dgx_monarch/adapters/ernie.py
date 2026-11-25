@@ -14,10 +14,10 @@ the full sequence.
 transformer_options kwarg, so the usp_options override never fires here; USP
 is routed by binding each block's attention module forward instead (the
 WanAdapter self-attention pattern). Divisibility padding is zero-pad + trim.
-After modulation the zero pad row is a real key, so under pure Ulysses the
-forward names it as a drop row and the full-axis call attends without it, as
-stock attends no such key. Ring and hybrid keep attending it and do not
-refuse, because they have no full-sequence point to drop it. Under pure
+After modulation the zero pad row is a real key, so the forward names it as a
+drop row on every topology: under pure Ulysses the full-axis call attends
+without it, as stock attends no such key, and ring and hybrid, which have no
+full-sequence point to drop it, refuse (class K, ring_pad waiver). Under pure
 Ulysses the bound attention builds q and k on stock's own branch (the fused
 norm-and-rope kernel at inference), and the first block norm and the final
 norm read contiguous rows, as stock's do; ring and hybrid keep RMSNorm then
@@ -31,6 +31,7 @@ from typing import Any
 import torch
 
 from ..log import get_logger
+from . import scale_rows
 from .base import (
     Adapter,
     InjectionContext,
@@ -41,6 +42,10 @@ from .base import (
 )
 
 log = get_logger(__name__)
+
+# The layer Linears read the joint [image, text] rows; the adaLN modulation is
+# per batch and runs before the loop.
+_SCALE_ROLES = scale_rows.by_pattern([(r"layers\.\d+\.(self_attention|mlp)\.[\w.]+", "joint")])
 
 
 def _joint_rope_ids(bs: int, hp: int, wp: int, tmax: int, rope_options: dict | None, device) -> torch.Tensor:
@@ -222,15 +227,20 @@ class ErnieAdapter(Adapter):
             ]
 
             temb = [shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp]
-            # Only pure Ulysses names the pad: ring and hybrid would refuse a
-            # named row, and an even stream yields none and keeps xfuser's call.
-            pads[0] = (padded_row_indices([(orig_len, hidden_states.shape[1])])
-                       if ctx.pure_ulysses else None)
+            # The pad is named on every topology: pure Ulysses drops it, ring and
+            # hybrid refuse it (class K, ring_pad waiver), and an even stream
+            # yields none and keeps xfuser's call.
+            # The same pad stays out of the shared nvfp4 activation scale.
+            # Restored after, so a forward re-entered from a patch keeps this one's rows named.
+            saved_pads = pads[0]
+            pads[0] = padded_row_indices([(orig_len, hidden_states.shape[1])])
+            joint = scale_rows.stream((orig_len, hidden_states.shape[1]))
             try:
-                for layer in self.layers:
-                    hidden_states = layer(hidden_states, rotary_pos_emb, temb)
+                with scale_rows.real_rows(_SCALE_ROLES, {"joint": joint}):
+                    for layer in self.layers:
+                        hidden_states = layer(hidden_states, rotary_pos_emb, temb)
             finally:
-                pads[0] = None
+                pads[0] = saved_pads
 
             hidden_states = sp_gather(hidden_states, orig_len, dim=1)
             if ctx.pure_ulysses:

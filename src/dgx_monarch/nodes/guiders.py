@@ -11,10 +11,16 @@ With no second model wired it is a plain CFG guider on one model.
 """
 from __future__ import annotations
 
-from ..cfg_pair import text_rows_differ
+from ..cfg_pair import text_rows_differ, text_rows_equal
 from ..constants import GUIDER_TYPE, MODEL_TYPE, NODE_CATEGORY
+from . import cfg_pair_notice
 from .common import ModelSpec, conditioning_for_wire
-from .render_preflight import CFG_PAIR_DIFFERS_METADATA_KEY, krea2_ref_preflight_summary
+from .reference_preflight import sequence_split_refused
+from .render_preflight import (
+    CFG_PAIR_DIFFERS_METADATA_KEY,
+    CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY,
+    krea2_ref_preflight_summary,
+)
 
 
 class DGXMonarchBasicGuider:
@@ -66,7 +72,10 @@ class DGXMonarchCFGGuider:
         ref_summary = krea2_ref_preflight_summary(positive, negative)
         return ({"model": model, "spec": spec, "cfg": float(cfg), "uncond_model": None,
                  "_dgxm_krea2_ref_preflight": ref_summary,
-                 CFG_PAIR_DIFFERS_METADATA_KEY: text_rows_differ(positive, negative)},)
+                 CFG_PAIR_DIFFERS_METADATA_KEY: text_rows_differ(positive, negative),
+                 CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY: sequence_split_refused(
+                     model, positive, negative),
+                 cfg_pair_notice.REQUEST_KEY: text_rows_equal(positive, negative)},)
 
 
 class DGXMonarchDualModelGuider:
@@ -109,7 +118,11 @@ class DGXMonarchDualModelGuider:
             }
             return ({"model": model, "spec": spec, "cfg": float(cfg), "uncond_model": None,
                      "_dgxm_krea2_ref_preflight": ref_summary,
-                     CFG_PAIR_DIFFERS_METADATA_KEY: text_rows_differ(positive, negative)},)
+                     CFG_PAIR_DIFFERS_METADATA_KEY: text_rows_differ(positive, negative),
+                     CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY: sequence_split_refused(
+                         model, positive, negative),
+                     cfg_pair_notice.REQUEST_KEY: (negative is not None
+                                                   and text_rows_equal(positive, negative))},)
 
         spec = {
             "kind": "dual_model",

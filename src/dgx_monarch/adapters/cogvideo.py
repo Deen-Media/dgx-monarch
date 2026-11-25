@@ -8,13 +8,36 @@ separately, and each block derives its text split from the local stream.
 For 5B/1.5 models, precomputed image RoPE rows take the identical pad and chunk
 as image tokens. T2V, I2V, and inpaint differ only through channel conditioning
 and per-batch offsets, so they share this sequence contract.
+
+Each stream pads at its own tail, and the joint attention names both pads as
+``drop_rows`` on every topology: pure Ulysses leaves them out exactly, and ring
+or hybrid refuses a padded render (class K, the ring_pad waiver). Under pure
+Ulysses a ``RankMajorJointOrder`` also puts the gathered keys back in stock's
+[text, image] order, padded or not. The same pad rows stay out of the shared
+nvfp4 activation scale.
 """
 from __future__ import annotations
 
 from ..log import get_logger
-from .base import Adapter, InjectionContext, UnsupportedModelError, shard_seq, sp_gather, usp_options
+from . import scale_rows
+from .base import (
+    Adapter,
+    InjectionContext,
+    UnsupportedModelError,
+    padded_row_indices,
+    shard_seq,
+    sp_gather,
+    usp_options,
+)
+from .usp_sequence_order import RankMajorJointOrder
 
 log = get_logger(__name__)
+
+# A block's projections and feed-forward run on the joint [text, image] rows;
+# its LayerNormZero Linears read the per-batch time embedding.
+_SCALE_ROLES = scale_rows.by_pattern([
+    (r"blocks\.\d+\.(q|k|v|attn_out|ff_proj|ff_out)", "joint"),
+])
 
 
 def _shard_rope(rope):
@@ -96,18 +119,33 @@ class CogVideoXAdapter(Adapter):
                     height // self.patch_size, width // self.patch_size, post_time, device=x.device))
 
             # Local blocks see [text_local, image_local], aligned with local RoPE.
-            encoder_hidden_states, _ = shard_seq(encoder_hidden_states, dim=1)
+            encoder_hidden_states, txt_orig_len = shard_seq(encoder_hidden_states, dim=1)
             hidden_states, img_orig_len = shard_seq(hidden_states, dim=1)
 
-            usp_opts = usp_options(transformer_options, attn)
-            for block in self.blocks:
-                hidden_states, encoder_hidden_states = block(
-                    hidden_states=hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    temb=emb,
-                    image_rotary_emb=image_rotary_emb,
-                    transformer_options=usp_opts,
-                )
+            # A stream that does not divide the shard takes zero rows at its
+            # tail, and after the block's LayerNormZero a zero row is a real
+            # key that stock never attends. The rows are named on every
+            # topology: pure Ulysses drops them at its full-axis point, and
+            # ring or hybrid refuses them (class K, ring_pad waiver). Pure
+            # Ulysses also restores stock's [all text, all image] key order
+            # there, since flash rounding depends on key order.
+            txt_local, img_local = encoder_hidden_states.shape[1], hidden_states.shape[1]
+            drop_rows = padded_row_indices([(txt_orig_len, txt_local), (img_orig_len, img_local)])
+            sequence_order = (RankMajorJointOrder(txt_local, img_local)
+                              if ctx.pure_ulysses else None)
+            usp_opts = usp_options(transformer_options, attn, drop_rows=drop_rows or None,
+                                   sequence_order=sequence_order)
+            # The same pad rows stay out of the shared nvfp4 activation scale.
+            joint = scale_rows.stream((txt_orig_len, txt_local), (img_orig_len, img_local))
+            with scale_rows.real_rows(_SCALE_ROLES, {"joint": joint}):
+                for block in self.blocks:
+                    hidden_states, encoder_hidden_states = block(
+                        hidden_states=hidden_states,
+                        encoder_hidden_states=encoder_hidden_states,
+                        temb=emb,
+                        image_rotary_emb=image_rotary_emb,
+                        transformer_options=usp_opts,
+                    )
 
             # Only image rows reach the output head.
             hidden_states = sp_gather(hidden_states, img_orig_len, dim=1)

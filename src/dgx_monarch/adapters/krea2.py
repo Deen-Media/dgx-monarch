@@ -12,6 +12,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from . import cfg_pad_rows, scale_rows
 from .base import (
     Adapter,
     InjectionContext,
@@ -25,6 +26,9 @@ from .stock_attention import stock_attention_options
 from .usp_sequence_order import RankMajorJointOrder
 
 log = get_logger(__name__)
+
+# The joint block Linears; their modulation comes from tproj, outside the loop.
+_SCALE_ROLES = scale_rows.by_pattern([(r"blocks\.\d+\.(attn|mlp)\.\w+", "joint")])
 
 
 def krea2_reference_latents_summary(cond_list) -> tuple[bool, str | None]:
@@ -62,29 +66,6 @@ KREA2_REF_LATENTS_REFUSAL_MESSAGE = refusal(
     "sharding or cfg-parallel padding. Run reference-image renders on topology 'single' "
     "(docs/MODELS.md).",
 )
-
-
-def _trim_trailing_pad(context):
-    """Trim common trailing padding and return any residual ragged bias.
-
-    Trimming is exact because pad keys have negative-infinity bias, their query
-    outputs are discarded, and text RoPE is constant. Uniform input returns no
-    mask for the flash path; ragged input keeps an additive bias. Fully zero
-    conditioning remains real input and is not trimmed.
-    """
-    entries, seq = context.shape[0], context.shape[1]
-    content = context.reshape(entries, seq, -1).abs().amax(dim=2) > 0  # (B, seq)
-    positions = torch.arange(seq, device=context.device)
-    last = torch.where(content, positions.expand_as(content), positions.new_full((), -1)).amax(dim=1)
-    cutoff = torch.where(last < 0, positions.new_full((), seq), last + 1)  # (B,) real len (seq if fully-zero)
-    trim = int(cutoff.amax())  # longest real length across the batch
-    if trim < seq:
-        context = context[:, :trim]
-        positions = positions[:trim]
-    if bool((cutoff >= trim).all()):
-        return context, None  # every entry is full after the trim: maskless flash path
-    trailing = positions.unsqueeze(0) >= cutoff.unsqueeze(1)  # (B, trim)
-    return context, trailing.unsqueeze(1).to(context.dtype) * torch.finfo(context.dtype).min
 
 
 def _krea2_reject_global_span_features(model, ref_latents, transformer_options,
@@ -219,8 +200,12 @@ class Krea2Adapter(Adapter):
                               if ctx.pure_ulysses else None)
             joint_opts = usp_options(transformer_options, attn, drop_rows=joint_drop,
                                      sequence_order=sequence_order)
-            for block in self.blocks:
-                combined = block(combined, tvec, freqs, None, transformer_options=joint_opts)
+            # Every block Linear reads the joint rows; the same pad rows stay
+            # out of the shared nvfp4 activation scale.
+            joint = scale_rows.stream((txt_orig_len, txtlen), (img_orig_len, imglen))
+            with scale_rows.real_rows(_SCALE_ROLES, {"joint": joint}):
+                for block in self.blocks:
+                    combined = block(combined, tvec, freqs, None, transformer_options=joint_opts)
 
             if ctx.pure_ulysses:
                 # The narrow output Linear can choose a different BF16 GEMM at
@@ -248,12 +233,16 @@ class Krea2Adapter(Adapter):
     def inject_cfg_pad_forward(self, diffusion_model) -> None:
         """Support asymmetric cfg prompts without attending zero-row padding.
 
-        `_trim_trailing_pad` decides trim or bias; a ragged batch's text-key
-        bias reaches the refiner and joint blocks.
+        The Worker's pad stamps each entry's own row count
+        (adapters/cfg_pad_rows.py); the forward cuts to it, and a ragged
+        batch's text-key bias reaches the refiner and joint blocks. An
+        unstamped call was not padded and runs as stock.
         """
 
+        @cfg_pad_rows.reads_rows
         def cfg_pad_forward(self, x, timesteps, context, attention_mask=None,
                             ref_latents=None, transformer_options={}, **kwargs):
+            rows = kwargs.pop(cfg_pad_rows.TEXT_ROWS, None)
             _krea2_reject_global_span_features(self, ref_latents, transformer_options,
                                                kwargs, "cfg-pad")
 
@@ -272,7 +261,9 @@ class Krea2Adapter(Adapter):
             h_, w_ = H // patch, W // patch
 
             context = self._unpack_context(context)
-            context, text_bias = _trim_trailing_pad(context)
+            context, counts = cfg_pad_rows.trim(context, rows, "krea2")
+            text_bias = (None if counts is None else cfg_pad_rows.residual_bias(
+                counts, context.shape[1], context.dtype).unsqueeze(1))
 
             img = rearrange(x, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=patch, pw=patch)
             img = self.first(img)

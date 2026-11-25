@@ -35,6 +35,25 @@ on:
       - "tests/test_lens_text_projections.py"
       - "tests/test_auto_latent_downscale.py"
       - "tests/test_chroma_cfg_pad_forward.py"
+      - "tests/test_cfg_pad_rows.py"
+      - "tests/test_cfg2_zeroed_negative.py"
+      - "tests/real_comfy_helpers.py"
+      - "tests/test_cfg_pad_stamp_delivery.py"
+      - "tests/test_sequence_tag_forwards.py"
+      # What it imports: the tag's fixtures and each family's sharded-forward fakes.
+      - "tests/test_pair_scope_fallback_runs.py"
+      - "tests/test_boogu_adapter.py"
+      - "tests/test_flux_adapter.py"
+      - "tests/test_qwen_image_adapter.py"
+      - "tests/test_krea2_comfy_exactness.py"
+      - "tests/pad_rows_comfy_helpers.py"
+      - "tests/test_cogvideo_pad_exclusion.py"
+      - "tests/test_wan_pad_exclusion.py"
+      - "tests/test_anima_pad_exclusion.py"
+      - "tests/test_kandinsky5_pad_exclusion.py"
+      - "tests/test_scale_rows_families.py"
+      - "tests/test_boogu_comfy_exactness.py"
+      - "tests/test_boogu_ulysses_order.py"
       - "tests/test_chroma_text_projections.py"
       - "tests/test_dropped_scale_gate.py"
       - "tests/test_upstream_gate_damaged_header.py"
@@ -243,6 +262,33 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_chroma_cfg_pad_forward.py
+      # Real comfy Krea2, Lens and Qwen-Image 2.1 through ComfyUI's cond path
+      # and the cfg split: the stamped pad cut and a zeroed negative, each rank
+      # held to stock's call. They skip in the regular CI job.
+      - name: cfg2 pad stamp and zeroed negative vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: >-
+          pytest -q tests/test_cfg_pad_rows.py tests/test_cfg2_zeroed_negative.py
+          tests/test_cfg_pad_stamp_delivery.py
+      # The sequence tag that keeps an equal pair on cfg2 reads each mask as
+      # ComfyUI's extra_conds hands it on; each branch against the real
+      # sharded forward. It skips in the regular CI job.
+      - name: Sequence tag vs comfy's extra_conds and the sharded forwards (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_sequence_tag_forwards.py
+      # Real comfy CogVideoX, Wan, Anima and Kandinsky5 against their own
+      # unsplit forwards at odd lengths, and every sharded family's Linears
+      # under the shared nvfp4 scale with NaN pad rows. They skip in the
+      # regular CI job.
+      - name: Pad rows and the shared nvfp4 scale vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: >-
+          pytest -q tests/test_cogvideo_pad_exclusion.py tests/test_wan_pad_exclusion.py
+          tests/test_anima_pad_exclusion.py tests/test_kandinsky5_pad_exclusion.py
+          tests/test_scale_rows_families.py
       # Verify the spatial latent ratio from ComfyUI's checkpoint detection.
       # The real-ComfyUI cases skip in ordinary CI, which has no ComfyUI checkout.
       - name: Auto-topology latent ratio vs comfy master (CPU)
@@ -610,6 +656,15 @@ jobs:
           tests/test_compile_surface.py
           tests/test_int8_gemm_kitchen_version.py
           tests/test_fp8_paths_tool.py
+          tests/test_cfg_pad_rows.py
+          tests/test_cfg2_zeroed_negative.py
+          tests/test_cfg_pad_stamp_delivery.py
+          tests/test_sequence_tag_forwards.py
+          tests/test_cogvideo_pad_exclusion.py
+          tests/test_wan_pad_exclusion.py
+          tests/test_anima_pad_exclusion.py
+          tests/test_kandinsky5_pad_exclusion.py
+          tests/test_scale_rows_families.py
           tests/test_cond_batch_agreement.py
           tests/test_anima_cond_branch.py
           tests/test_h3_image_row_check_tool.py

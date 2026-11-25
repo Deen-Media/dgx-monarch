@@ -83,6 +83,11 @@ REFUSAL_CLASSES = frozenset({
     # cannot know the peer's cause and no consent offered here would change
     # the answer. The rank that failed keeps its own class.
     "PeerLoadFailureError",
+    # The same exchange crosses each rank's count of Linears under the shared
+    # nvfp4 scale (actor/rank_readiness.py). Class P on every rank: the counts
+    # differ only by a dgx-monarch fault, since the driver sends every rank the
+    # same switch, and no consent would make the collectives meet.
+    "SharedScaleDisagreementError",
     # The debug load fault (actor/load_fault.py), which fails one rank on
     # purpose so the readiness exchange above can run on hardware. Class P on
     # the rank it names: that box was told to fail, so no consent could change

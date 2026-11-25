@@ -252,7 +252,8 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Va
             # concatenate and there is no batched call to slice. A render
             # whose conds do fold passes through to the slice untouched.
             cfg_dispatch.install_cond_dispatch_wrapper(
-                adapter, base_patcher.model_options)
+                adapter, base_patcher.model_options,
+                sharded_weights=bool(self.topology.get("fsdp")))
 
         if self.topology.get("fsdp"):
             apply_fsdp_capacity_mode(

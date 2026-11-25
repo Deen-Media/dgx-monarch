@@ -392,12 +392,15 @@ The UMA guidance behind these values is in docs/VALIDATION.md.
 `shared_act_scale` and `log_act_scale` cover the one activation scale a sharded
 group shares for nvfp4 (docs/MODELS.md, [docs/TROUBLESHOOTING.md #95](TROUBLESHOOTING.md#95-a-sharded-nvfp4-render-refuses-with-a-waiver-card-about-activation-scales)). The hook
 is on by default, so `shared_act_scale = false` is the only setting worth
-writing, and it belongs here rather than in a shell export because it decides
-whether a rank issues a collective and every rank must agree. `log_act_scale =
-true` traces one line per wrapped layer per rank for the first step. They set
-`DGXM_SHARED_ACT_SCALE` and `DGXM_LOG_ACT_SCALE` in the worker.
-Removing a key restores its default. If the key was never set, an environment
-variable set by hand on a host stays in effect until you unset it. Changing
+writing. It decides whether a rank issues a collective, so every rank must
+agree: every Worker gets the same worker_args from the driver and sets
+`DGXM_SHARED_ACT_SCALE` from them alone (an absent key reads on), so a
+variable exported by hand on a Worker host has no effect since 1.5.0. The
+readiness exchange before sampling also checks that every rank wrapped the same
+number of layers and refuses if not. `log_act_scale = true` traces one line per
+wrapped layer per rank for the first step and sets `DGXM_LOG_ACT_SCALE` in the
+worker; removing it restores its default, and if it was never set, a variable
+set by hand on a host stays in effect until you unset it. Changing
 `shared_act_scale` during a live session unloads every resident model because
 the scale hook is installed when the model loads.
 

@@ -49,15 +49,15 @@ def double_block_options(transformer_options: dict, attention, text: tuple[int, 
     """Options for the double-stream loop.
 
     ``text`` and ``image`` are each stream's ``(original, local)`` row counts,
-    the image stream counting reference tokens. Without pure Ulysses this is
-    the plain override with no order and no pad rows, so ring and hybrid keep
-    their path.
+    the image stream counting reference tokens. The pad rows are named on
+    every topology: ring and hybrid cannot exclude them, so the shared guard
+    refuses a padded call there (class K, ring_pad waiver). Only pure Ulysses
+    takes the order descriptor.
     """
-    if not pure_ulysses:
-        return usp_options(transformer_options, attention)
     text_local, image_local = text[1], image[1]
+    order = RankMajorJointOrder(text_local, image_local) if pure_ulysses else None
     joint = usp_options(transformer_options, attention, padded_row_indices([text, image]),
-                        RankMajorJointOrder(text_local, image_local))
+                        order)
     alone = usp_options(transformer_options, attention, padded_row_indices([image]))
     calls = {text_local + image_local: joint[_OVERRIDE], image_local: alone[_OVERRIDE]}
 
@@ -85,12 +85,12 @@ def stream_options(transformer_options: dict, attention, stream: tuple[int, int]
                    pure_ulysses: bool) -> dict:
     """Options for a loop over one sharded stream, ``(original, local)`` rows.
 
-    Under pure Ulysses its tail pad rows are named so attention drops them.
-    Elsewhere none are named: the ring and hybrid guard refuses a named pad
-    row, and those topologies attend their pads.
+    Its tail pad rows are named on every topology: pure Ulysses drops them,
+    and ring or hybrid, which cannot exclude them, refuses (class K, ring_pad
+    waiver). ``pure_ulysses`` is kept so every loop builder takes the same
+    arguments.
     """
-    drop_rows = padded_row_indices([stream]) if pure_ulysses else None
-    return usp_options(transformer_options, attention, drop_rows)
+    return usp_options(transformer_options, attention, padded_row_indices([stream]))
 
 
 def _row_independent(module) -> bool:

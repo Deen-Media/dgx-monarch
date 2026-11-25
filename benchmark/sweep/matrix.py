@@ -86,7 +86,10 @@ from dgx_monarch.topology import (  # noqa: E402
     sampler_keeps_uncond_at_cfg1,
     topology_from_preset,
 )
-from dgx_monarch.topology_cfg_evidence import sniffed_checkpoint_variant  # noqa: E402
+from dgx_monarch.topology_cfg_evidence import (  # noqa: E402
+    BLOCK_SCALED_FP8,
+    sniffed_checkpoint_variant,
+)
 
 from .convert import probe_support  # noqa: E402
 
@@ -479,13 +482,25 @@ def auto_pair_differs(facts: dict, cell: dict | None = None) -> bool:
     reads, the counts decide, so two texts of equal rows read as equal.
     Otherwise two different texts stand in for different rows, which holds on
     every shipped template; two texts of equal rows would then read true here
-    and false at render time, where the pair-scoped cfg rows (Boogu 79,
-    Chroma 20 and 19) give way to Ulysses.
+    and false at render time, where the pair-scoped cfg rows (Krea2 15 on
+    BF16, Chroma 20, Chroma 19 on BF16 and INT8, Qwen-Image 68 and Boogu 79 on
+    FP8 storage) give way to Ulysses.
     """
     counts = (cell or {}).get("text_tokens") or {}
     if len(counts) > 1 and (cell or {}).get("family") not in _COUNT_IS_NOT_THE_TAGGED_ROWS:
         return len(set(counts.values())) > 1
     return len(set(facts.get("prompts", {}).values())) > 1
+
+
+def auto_pair_kind(cell: dict) -> str | None:
+    """The runtime's pair-scope kind for this cell (topology_cfg_evidence.pair_kind).
+
+    The runtime reads it from the header: an MXFP8 or NVFP4 file, mixed or
+    uniform, reads apart from an FP8 one there, so a pair-scoped cfg row keeps
+    its equal pair. The cell names the artifact's format from its file name.
+    """
+    artifact = cell.get("artifact_quant") or ""
+    return BLOCK_SCALED_FP8 if any(kind in artifact for kind in BLOCK_SCALED) else None
 
 
 def text_token_counts(prompts: dict[str, str], family: str, count_tokens) -> dict[str, int]:
@@ -952,7 +967,8 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
                                      batch_size=cell["batch"],
                                      keeps_uncond=bool(facts.get("auto_keeps_uncond")),
                                      variant=cell.get("variant"),
-                                     pair_differs=auto_pair_differs(facts, cell)).topology
+                                     pair_differs=auto_pair_differs(facts, cell),
+                                     pair_kind=auto_pair_kind(cell)).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception as exc:
         return _label_from(exc), "guard", False, []
@@ -1304,7 +1320,8 @@ def resolved_kernel(cell: dict, facts: dict, world: int) -> str:
                                        batch_size=cell["batch"],
                                        keeps_uncond=bool(facts.get("auto_keeps_uncond")),
                                        variant=cell.get("variant"),
-                                       pair_differs=auto_pair_differs(facts, cell))
+                                       pair_differs=auto_pair_differs(facts, cell),
+                                       pair_kind=auto_pair_kind(cell))
             sage, topo = row.sage, row.topology
         else:
             topo = topology_from_preset(cell["preset"], world)
@@ -1331,7 +1348,8 @@ def resolved_cfg_degree(cell: dict, facts: dict, world: int) -> int:
                                      batch_size=cell["batch"],
                                      keeps_uncond=bool(facts.get("auto_keeps_uncond")),
                                      variant=cell.get("variant"),
-                                     pair_differs=auto_pair_differs(facts, cell)).topology
+                                     pair_differs=auto_pair_differs(facts, cell),
+                                     pair_kind=auto_pair_kind(cell)).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception:
         return 1

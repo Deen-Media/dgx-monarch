@@ -10,7 +10,9 @@ xFuser's USP kernels take no key mask. An absent or all-ones text mask is
 equivalent to no mask in real arithmetic, though not in bits: stock still
 passes its all-zero bias, which moves torch's SDPA off flash. Ring and hybrid
 trim a uniform trailing text pad, which is exact in real arithmetic because
-text outputs are discarded and image RoPE does not depend on text length.
+text outputs are discarded and image RoPE does not depend on text length, but
+not where NVFP4 Linears share one activation scale, whose statistic stock
+takes over those rows too: there it refuses, class P.
 Ragged lengths or masked positions inside the kept text receive a typed
 cfg2/single refusal on every topology. Divisibility pad rows are excluded in
 `[image, text]` order through `drop_rows`; ring and hybrid padding retain the
@@ -30,6 +32,8 @@ from typing import Any
 import torch
 
 from ..log import get_logger
+from ..refusal import RefusalClass, refusal
+from . import cfg_pad_rows, scale_rows
 from .base import (
     USP_ATTENTION_OVERRIDE_ATTR,
     Adapter,
@@ -43,10 +47,16 @@ from .base import (
 )
 from .chroma_text import full_row_text_projections
 from .flux_family import _control_span_overlap
-from .krea2 import _trim_trailing_pad
 from .usp_sequence_order import RankMajorJointOrder
 
 log = get_logger(__name__)
+
+# Which block Linears read which sharded stream; img_mod and txt_mod read the
+# per-batch time embedding.
+_SCALE_ROLES = scale_rows.by_pattern([
+    (r"transformer_blocks\.\d+\.(attn\.(img_qkv|to_out\.\d+)|img_mlp\.\w+)", "image"),
+    (r"transformer_blocks\.\d+\.(attn\.(txt_qkv|to_add_out)|txt_mlp\.\w+)", "text"),
+])
 
 
 def _text_modules(block) -> tuple[tuple[Any, bool], ...]:
@@ -174,6 +184,33 @@ def _local_pe_ids(img_ids: torch.Tensor, txt_ids: torch.Tensor) -> torch.Tensor:
     return torch.cat((img_local, txt_local), dim=1)
 
 
+def _refuse_trim_under_shared_scale(model) -> None:
+    """Refuse, class P, a trimmed text pad when NVFP4 Linears share one scale.
+
+    Off pure Ulysses the forward trims a uniform trailing text pad that stock
+    keeps and computes under its key bias. Those rows never reach the output,
+    but on one GPU they enter each text Linear's whole-tensor statistic, so a
+    render whose NVFP4 Linears share one activation scale would quantize
+    against another. The coverage record is set at install and its count
+    crossed between the ranks before sampling (actor/rank_readiness.py), so
+    every rank refuses here alike, before its first collective.
+    """
+    from .quant_activation_scale import coverage_of
+
+    coverage = coverage_of(model)
+    if coverage is None or coverage.wrapped == 0:
+        return
+    raise UnsupportedModelError(refusal(
+        RefusalClass.PHYSICS,
+        f"lens: this prompt's text mask pads trailing tokens, which ring and hybrid "
+        f"attention trim where stock keeps and computes them, and {coverage.wrapped} "
+        "nvfp4 Linears here quantize against one activation scale shared by the ranks, "
+        "which would then miss those rows. Use a uly* topology (uly2 on a two-rank "
+        "fleet), which keeps them as stock does, or topology 'single' (mode=local "
+        "with gpus_per_host=1).",
+    ))
+
+
 def _usp_text_trim(attention_mask: torch.Tensor, text_seq_len: int) -> int:
     """Return the uniform real text length for maskless sharded blocks.
 
@@ -182,10 +219,14 @@ def _usp_text_trim(attention_mask: torch.Tensor, text_seq_len: int) -> int:
     refusal on every topology, pure Ulysses included.
     """
     entries = attention_mask.shape[0]
-    probe = attention_mask.reshape(entries, text_seq_len, 1).to(torch.float32)
-    probe, residual = _trim_trailing_pad(probe)
-    trim = probe.shape[1]
-    if residual is not None or not bool(attention_mask[:, :trim].bool().all()):
+    keep = attention_mask.reshape(entries, text_seq_len) != 0
+    positions = torch.arange(text_seq_len, device=keep.device)
+    last = torch.where(keep, positions, positions.new_full((), -1)).amax(dim=1)
+    # Each entry's kept length runs to its last kept token. An entry that keeps
+    # nothing reads as full length, and the check below refuses it.
+    lengths = torch.where(last < 0, positions.new_full((), text_seq_len), last + 1)
+    trim = int(lengths.amax())
+    if bool((lengths < trim).any()) or not bool(attention_mask[:, :trim].bool().all()):
         raise UnsupportedModelError(
             "lens: this render's text attention mask is not a uniform trailing pad "
             "(ragged real lengths across the batch, or a masked position inside the "
@@ -204,8 +245,10 @@ class LensAdapter(Adapter):
     # Lens expects a text-length boolean keep-mask. The shared joint additive
     # mask has incompatible shape, order, and polarity, so cfg padding supplies
     # zero rows rather than a bias. inject_cfg_pad_forward says how a shipped
-    # keep-mask follows those rows.
+    # keep-mask follows those rows, and how both are cut back to each entry's
+    # own rows, which restores stock's call.
     cfg_cond_padding = "pad"
+    cfg_pad_restores_stock_call = True
 
     def matches(self, base_model) -> bool:
         import comfy.model_base as model_base
@@ -248,6 +291,18 @@ class LensAdapter(Adapter):
                 encoder_hidden_states = context
                 text_seq_len = context.shape[1]
 
+            # Refuse mask semantics no topology here can carry, before any
+            # Linear runs, since a shared-scale Linear's reduce is a collective.
+            # Pure Ulysses keeps a uniform trailing pad, because stock attends
+            # those keys under its bias and their count changes the kernel's
+            # bits; ring and hybrid have no bias to carry, so they trim it below,
+            # unless the trimmed rows belong in a shared nvfp4 scale.
+            trim = text_seq_len
+            if attention_mask is not None:
+                trim = _usp_text_trim(attention_mask, text_seq_len)
+                if trim < text_seq_len and not pure_ulysses:
+                    _refuse_trim_under_shared_scale(self)
+
             hidden_states = self.img_in(hidden_states)
             timestep = timestep.to(hidden_states.dtype)
 
@@ -266,15 +321,9 @@ class LensAdapter(Adapter):
                     hidden_states = out["img"]
                     encoder_hidden_states = out["txt"]
 
-            # Refuse mask semantics no topology here can carry. Pure Ulysses
-            # keeps a uniform trailing pad, because stock attends those keys
-            # under its bias and their count changes the kernel's bits; ring
-            # and hybrid have no bias to carry, so they trim it.
-            if attention_mask is not None:
-                trim = _usp_text_trim(attention_mask, text_seq_len)
-                if trim < text_seq_len and not pure_ulysses:
-                    encoder_hidden_states = encoder_hidden_states[:, :trim]
-                    text_seq_len = trim
+            if trim < text_seq_len and not pure_ulysses:
+                encoder_hidden_states = encoder_hidden_states[:, :trim]
+                text_seq_len = trim
 
             temb = self.time_text_embed(timestep, hidden_states)  # per-batch
 
@@ -313,11 +362,14 @@ class LensAdapter(Adapter):
             usp_opts["block_type"] = "double"
             rows = hidden_states.shape[1]
             row0 = sp_rank() * rows
+            # The same pad rows stay out of the shared nvfp4 activation scale.
+            streams = {"image": scale_rows.stream(img_seg), "text": scale_rows.stream(txt_seg)}
             for i, block in enumerate(self.transformer_blocks):
                 usp_opts["block_index"] = i
                 with full_row_text_projections(
                         block, txt_orig_len, img_orig_len,
-                        pure_ulysses=pure_ulysses, select=_text_modules):
+                        pure_ulysses=pure_ulysses, select=_text_modules), \
+                        scale_rows.real_rows(_SCALE_ROLES, streams):
                     if ("double_block", i) in blocks_replace:
                         def block_wrap(args, block=block):
                             out = {}
@@ -374,21 +426,24 @@ class LensAdapter(Adapter):
 
         The worker equalizer pads text and extends its keep-mask with zeros.
         Lens publishes both as CONDRegular values, so matching shapes let ComfyUI
-        batch them. Pass the resulting ``attention_mask`` to stock, which excludes
-        the added keys from joint attention.
-
-        Without a supplied mask, trim a uniform zero tail or convert residual
-        ragged bias to Lens's boolean keep polarity (``bias == 0``). Unpadded and
-        fully zeroed real conditioning stays intact. Call ``type(self)._forward``
-        to avoid re-entering the instance wrapper.
+        batch them. The pad also stamps each entry's own row count
+        (adapters/cfg_pad_rows.py), and this forward cuts the text and a
+        shipped keep-mask back to it, which is stock's own call for that entry.
+        A ragged batch keeps the rest of the pad out through the keep-mask: the
+        shipped one, or one in Lens's boolean polarity built from the counts.
+        An unstamped call was not padded and goes to stock as it came. Call
+        ``type(self)._forward`` to avoid re-entering the instance wrapper.
         """
 
+        @cfg_pad_rows.reads_rows
         def cfg_pad_forward(self, x, timestep, context, attention_mask=None,
                             transformer_options={}, control=None, **kwargs):
-            if attention_mask is None:
-                context, bias = _trim_trailing_pad(context)
-                if bias is not None:
-                    attention_mask = bias.squeeze(1) == 0
+            context, counts = cfg_pad_rows.trim(
+                context, kwargs.pop(cfg_pad_rows.TEXT_ROWS, None), "lens")
+            if attention_mask is not None:
+                attention_mask = cfg_pad_rows.cut_mask(attention_mask, context.shape[1])
+            elif counts is not None:
+                attention_mask = cfg_pad_rows.residual_keep(counts, context.shape[1])
             return type(self)._forward(
                 self, x, timestep, context, attention_mask=attention_mask,
                 transformer_options=transformer_options, control=control, **kwargs)

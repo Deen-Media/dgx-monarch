@@ -9,6 +9,8 @@ way and lives in wan_animate2.py; this module re-exports it.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 
 from ..log import get_logger
@@ -23,6 +25,8 @@ from .base import (
 )
 from .stock_attention import stock_attention_options
 from .wan_animate2 import WanAnimate2Adapter  # noqa: F401
+from .wan_family import named_pads as _named_pads
+from .wan_family import video_frames
 
 log = get_logger(__name__)
 
@@ -74,12 +78,37 @@ def assert_scail_ring_degree(ring: int, sp_world: int) -> None:
         troubleshooting=SCAIL_TROUBLESHOOTING,
     ))
 
+def refuse_ungrouped_audio_tokens(seq_len: int, num_frames: int) -> None:
+    """Refuse image tokens that WanDancer's audio frame groups do not divide.
+
+    Stock's audio injector reshapes the image tokens into ``num_frames`` equal
+    groups (``rearrange(x, "b (t n) c -> (b t) n c", t=num_frames)`` in comfy's
+    AudioInjector_WAN), which raises on a remainder. The sharded forward
+    indexes each token's group instead, so without this check it would render
+    a geometry stock stops on, with the remainder folded into the last group.
+    """
+    if num_frames > 0 and seq_len % num_frames == 0:
+        return
+    raise UnsupportedModelError(refusal(
+        RefusalClass.PHYSICS,
+        f"wan_dancer: the video has {seq_len} image tokens and the audio "
+        f"conditioning {num_frames} frame groups, which do not divide them, and "
+        "stock ComfyUI refuses this pair too (its audio injector needs equal "
+        "groups). Use an audio embedding whose frame count matches the latent "
+        "length the WanDancer workflow builds.",
+    ))
+
+
 # The site gets one debug line from note_preferred_attention.
 _MUSIC_ATTENTION_SITE = "wan_dancer music encoder attention"
 
 
-def _bind_usp_self_attention(diffusion_model, attn) -> None:
-    """Route each variant's Wan self-attention through USP."""
+def _bind_usp_self_attention(diffusion_model, attn, pads: list) -> None:
+    """Route each variant's Wan self-attention through USP.
+
+    ``pads[0]`` holds the running forward's pad rows (``_named_pads``), so the
+    attention excludes them under pure Ulysses and refuses them on ring.
+    """
 
     def usp_self_attention(self, x, freqs, transformer_options={}):
         from comfy.ldm.flux.math import apply_rope1
@@ -89,7 +118,8 @@ def _bind_usp_self_attention(diffusion_model, attn) -> None:
         q = apply_rope1(self.norm_q(self.q(x)).view(b, s, n, d), freqs)
         k = apply_rope1(self.norm_k(self.k(x)).view(b, s, n, d), freqs)
         v = self.v(x).view(b, s, n * d)
-        out = attn(q.view(b, s, n * d), k.view(b, s, n * d), v, heads=n)
+        out = attn(q.view(b, s, n * d), k.view(b, s, n * d), v, heads=n,
+                   drop_rows=pads[0])
 
         patches = transformer_options.get("patches", {})
         for p in patches.get("attn1_patch", []):
@@ -162,6 +192,16 @@ class SCAILAdapter(Adapter):
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         assert_scail_ring_degree(_requested_ring_degree(), ctx.topology_sp)
         attn = ctx.usp_attention
+        pads: list[list[int] | None] = [None]
+        # The video's own latent frames, read where _forward receives the latent.
+        frames: list[int | None] = [None]
+        family = self.family
+        # A model whose class has no _forward of its own names no frame count.
+        stock_forward: Any = getattr(type(diffusion_model), "_forward", None)  # class fn
+
+        def frames_forward(self, x, *args, **kwargs):
+            with video_frames(frames, x.shape[2]):
+                return stock_forward(self, x, *args, **kwargs)
 
         def usp_forward_orig(self, x, t, context, clip_fea=None, freqs=None,
                              transformer_options={}, pose_latents=None,
@@ -185,14 +225,20 @@ class SCAILAdapter(Adapter):
             transformer_options["grid_sizes"] = grid_sizes
             x = x.flatten(2).transpose(1, 2)
 
+            # Each further video frame adds its own grid rows and, where the pose
+            # runs the video's length, its pose rows; reference frames stay fixed.
+            per_frame = int(grid_sizes[1]) * int(grid_sizes[2])
             scail_pose_seq_len = 0
             if pose_latents is not None:
                 scail_x = self.patch_embedding_pose(pose_latents.float()).to(x.dtype)
                 if sam_latents is not None:  # SCAIL-2 pose-token mask embedding.
                     scail_x = scail_x + self.patch_embedding_mask(sam_latents.float()).to(x.dtype)
+                pose_frames = int(scail_x.shape[2])
                 scail_x = scail_x.flatten(2).transpose(1, 2)
                 scail_pose_seq_len = scail_x.shape[1]
                 x = torch.cat([x, scail_x], dim=1)
+                if frames[0] is not None and pose_frames == frames[0]:
+                    per_frame += scail_pose_seq_len // pose_frames
 
             e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t.flatten()).to(dtype=x[0].dtype))
             e = e.reshape(t.shape[0], -1, e.shape[-1])
@@ -222,22 +268,25 @@ class SCAILAdapter(Adapter):
             blocks_replace = transformer_options.get("patches_replace", {}).get("dit", {})
             transformer_options["total_blocks"] = len(self.blocks)
             transformer_options["block_type"] = "double"
-            for i, block in enumerate(self.blocks):
-                transformer_options["block_index"] = i
-                if ("double_block", i) in blocks_replace:
-                    def block_wrap(args, block=block):
-                        return {"img": block(args["img"], context=args["txt"], e=args["vec"],
-                                             freqs=args["pe"], context_img_len=context_img_len,
-                                             transformer_options=args["transformer_options"])}
+            with _named_pads(pads, orig_len, x.shape[1], family, getattr(self, "num_heads", 0),
+                             frames[0], per_frame):
+                for i, block in enumerate(self.blocks):
+                    transformer_options["block_index"] = i
+                    if ("double_block", i) in blocks_replace:
+                        def block_wrap(args, block=block):
+                            return {"img": block(args["img"], context=args["txt"], e=args["vec"],
+                                                 freqs=args["pe"], context_img_len=context_img_len,
+                                                 transformer_options=args["transformer_options"])}
 
-                    out = blocks_replace[("double_block", i)](
-                        {"img": x, "txt": context, "vec": e0, "pe": freqs,
-                         "transformer_options": transformer_options},
-                        {"original_block": block_wrap})
-                    x = out["img"]
-                else:
-                    x = block(x, e=e0, freqs=freqs, context=context,
-                              context_img_len=context_img_len, transformer_options=transformer_options)
+                        out = blocks_replace[("double_block", i)](
+                            {"img": x, "txt": context, "vec": e0, "pe": freqs,
+                             "transformer_options": transformer_options},
+                            {"original_block": block_wrap})
+                        x = out["img"]
+                    else:
+                        x = block(x, e=e0, freqs=freqs, context=context,
+                                  context_img_len=context_img_len,
+                                  transformer_options=transformer_options)
 
             x = sp_gather(x, orig_len, dim=1)
 
@@ -251,8 +300,10 @@ class SCAILAdapter(Adapter):
                 x = x[:, :, reference_latent.shape[2]:]
             return x
 
-        _bind_usp_self_attention(diffusion_model, attn)
+        _bind_usp_self_attention(diffusion_model, attn, pads)
         self.bind(diffusion_model, "forward_orig", usp_forward_orig)
+        if stock_forward is not None:
+            self.bind(diffusion_model, "_forward", frames_forward)
         log.info("%s USP injected: %d blocks, sp=%d", self.family,
                  len(diffusion_model.blocks), ctx.topology_sp)
 
@@ -303,6 +354,8 @@ class WanDancerAdapter(Adapter):
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         attn = ctx.usp_attention
+        pads: list[list[int] | None] = [None]
+        family = self.family
 
         def usp_forward_orig(self, x, t, context, clip_fea=None, clip_fea_ref=None,
                              freqs=None, audio_embed=None, fps=30,
@@ -375,7 +428,8 @@ class WanDancerAdapter(Adapter):
             num_frames = 0
             if audio_emb is not None:
                 num_frames = audio_emb.shape[1]
-                tokens_per_group = max(seq_len // num_frames, 1)
+                refuse_ungrouped_audio_tokens(seq_len, num_frames)
+                tokens_per_group = seq_len // num_frames
                 group_full = (torch.arange(seq_len, device=x.device) // tokens_per_group).view(1, -1, 1)
                 group_local, _ = shard_seq(group_full, dim=1)
                 group_local = group_local.reshape(-1).clamp_(max=num_frames - 1).long()
@@ -385,30 +439,34 @@ class WanDancerAdapter(Adapter):
             blocks_replace = transformer_options.get("patches_replace", {}).get("dit", {})
             transformer_options["total_blocks"] = len(self.blocks)
             transformer_options["block_type"] = "double"
-            for i, block in enumerate(self.blocks):
-                transformer_options["block_index"] = i
-                if ("double_block", i) in blocks_replace:
-                    def block_wrap(args, block=block):
-                        return {"img": block(args["img"], context=args["txt"], e=args["vec"],
-                                             freqs=args["pe"], context_img_len=context_img_len,
-                                             transformer_options=args["transformer_options"])}
+            # WanDancer's audio embedding fixes its length (149 frames), so the
+            # refusal names no other frame count.
+            with _named_pads(pads, orig_len, x.shape[1], family, getattr(self, "num_heads", 0)):
+                for i, block in enumerate(self.blocks):
+                    transformer_options["block_index"] = i
+                    if ("double_block", i) in blocks_replace:
+                        def block_wrap(args, block=block):
+                            return {"img": block(args["img"], context=args["txt"], e=args["vec"],
+                                                 freqs=args["pe"], context_img_len=context_img_len,
+                                                 transformer_options=args["transformer_options"])}
 
-                    out = blocks_replace[("double_block", i)](
-                        {"img": x, "txt": context, "vec": e0, "pe": freqs,
-                         "transformer_options": transformer_options},
-                        {"original_block": block_wrap})
-                    x = out["img"]
-                else:
-                    x = block(x, e=e0, freqs=freqs, context=context,
-                              context_img_len=context_img_len, transformer_options=transformer_options)
-                if audio_emb is not None:
-                    audio_attn_id = self.music_injector.injected_block_id.get(i)
-                    if audio_attn_id is not None:
-                        inj = self.music_injector.injector[audio_attn_id]
-                        # One key makes softmax equal one, so q/k drop out. Index
-                        # o(v(audio)) by each local token's frame group.
-                        residual = inj.o(inj.v(audio_emb))          # (B, num_frames, dim)
-                        x = x + residual[:, group_local, :] * valid_local * audio_inject_scale
+                        out = blocks_replace[("double_block", i)](
+                            {"img": x, "txt": context, "vec": e0, "pe": freqs,
+                             "transformer_options": transformer_options},
+                            {"original_block": block_wrap})
+                        x = out["img"]
+                    else:
+                        x = block(x, e=e0, freqs=freqs, context=context,
+                                  context_img_len=context_img_len,
+                                  transformer_options=transformer_options)
+                    if audio_emb is not None:
+                        audio_attn_id = self.music_injector.injected_block_id.get(i)
+                        if audio_attn_id is not None:
+                            inj = self.music_injector.injector[audio_attn_id]
+                            # One key makes softmax equal one, so q/k drop out.
+                            # Index o(v(audio)) by each local token's frame group.
+                            residual = inj.o(inj.v(audio_emb))      # (B, num_frames, dim)
+                            x = x + residual[:, group_local, :] * valid_local * audio_inject_scale
 
             x = sp_gather(x, orig_len, dim=1)
 
@@ -416,7 +474,7 @@ class WanDancerAdapter(Adapter):
             x = self.unpatchify(x, grid_sizes)
             return x
 
-        _bind_usp_self_attention(diffusion_model, attn)
+        _bind_usp_self_attention(diffusion_model, attn, pads)
         for layer in diffusion_model.music_encoder:
             self.bind(layer.self_attn, "forward", music_self_attention)
         self.bind(diffusion_model, "forward_orig", usp_forward_orig)

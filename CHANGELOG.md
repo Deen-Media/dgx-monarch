@@ -197,7 +197,8 @@ sections after them list every change.
   ([TROUBLESHOOTING #151](docs/TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
 - `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP only
   when the prompt and the negative encode to different text rows, and Ulysses
-  for an equal pair
+  for an equal pair, except on Chroma FP8 from 1.2 to 1.64 MP, where every
+  pair keeps cfg2
   ([VALIDATION](docs/VALIDATION.md#campaign-k-equal-pairs)).
 - uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1, and LTX
   renders under sequence parallelism, now run comfy-kitchen's fused AdaLN, and
@@ -1489,6 +1490,103 @@ sections after them list every change.
 
 ### Rendering
 
+- On cfg2, a zeroed negative shorter than the prompt (the ConditioningZeroOut
+  of an empty prompt) now runs at its own text rows, as stock ComfyUI runs it.
+  To batch the pair the Worker pads the shorter conditioning with zero rows,
+  and the forward of Krea2, Qwen-Image, Mage-Flow, Z-Image, Kandinsky5 and
+  Lens cut those rows off again by looking for trailing zero rows, which a
+  zeroed negative is made of. It kept them: on the pair a Krea2 render read
+  one-step NRMS 0.0357 against one GPU. The pad now stamps each conditioning
+  with its own row count, and the forward cuts to that count; a call with no
+  stamp reaches stock as it came, so a prompt that ends in zero rows of its
+  own keeps them. No cfg2 forward infers anything from zero rows any more:
+  Boogu's cfg forward, which the Worker never pads, no longer trims a call
+  that ships no mask. A stamped call whose forward would not read the stamp
+  refuses, class P, naming the family, and so does a call of a stamped render
+  that arrives with text but no count. Lens's cfg2 forward now cuts the pad
+  and its keep-mask back too, shown equal to stock Lens's own call bit for
+  bit. A zeroed negative as long as the prompt (the shipped graphs' form) was
+  never padded; on cfg2 it still reads apart from one GPU (NRMS 0.0104 on the
+  pair), because one GPU folds an equal pair into one batch-2 call where cfg2
+  makes two batch-1 calls ([MODELS](docs/MODELS.md#model-krea2-raw-turbo)).
+- `auto` no longer picks cfg2 for a prompt and a negative of equal text rows on
+  Krea2 BF16 (1.2 to 2.36 MP) or Qwen-Image FP8 (1.2 to 1.77 MP), as it already
+  did not on Chroma and Boogu: it takes the family's Ulysses row, bytes equal to
+  one GPU there. One GPU folds such a pair into one call of two entries, and
+  cfg2's two calls of one equal stock's own separate calls and read apart from
+  its batched call, one-step NRMS 0.0104 to 0.040 on Krea2 with a zeroed or a
+  real negative ([equal pairs](docs/VALIDATION.md#equal-pairs-krea2-qwen-2026-11-24)).
+  Those renders run about 1.25 times slower than they did on cfg2. Krea2 FP8
+  keeps every pair on cfg2, since its other route is the approximate SAGE one,
+  and on every row that takes only a differing pair (Krea2, Qwen-Image, Chroma
+  and Boogu) so does an MXFP8 or NVFP4 file, which reads as FP8 but has no
+  bytes-equal sharded route, and a full-precision file cast to fp8 at load,
+  which no record has measured. So does an equal pair whose Ulysses route
+  would refuse what it carries, which cfg2 runs: a Qwen-Image text mask or
+  index_timestep_zero references (a Qwen-Image-Edit 2511 file's default), and
+  a Chroma regional mask that hides a key, or a Boogu caption mask that
+  masks a row; a Chroma text keep-mask, which ComfyUI never hands the
+  forward, leaves the pair on Ulysses. At world 4 with an odd batch, where
+  auto refuses a cfg2 row for its spare ranks, a file's kind no longer keeps
+  an equal pair on that row: the pair takes the Ulysses and ring row, so
+  Chroma and Boogu equal pairs render there as before, and Krea2 FP8 and
+  Qwen-Image block-scaled or cast files, refused there before, render on rows
+  11 and 71. A pair whose mask or references the sequence forward refuses
+  has no route there: it meets that refusal at once, where its Ulysses and
+  ring route used to load the model and refuse in the forward, and the
+  refusal names what runs it (a batch of 2, world 2, one GPU) rather than
+  presets that split the sequence. Every cfg2 render of an equal pair now says
+  so, from the KSampler nodes and from Sampler Custom behind a CFG guider: a log
+  line for every render, and a browser notice once per queued prompt when cfg2
+  was chosen by hand (a Pipeline sweep is one prompt).
+- Every split layout is now exact about padding rows, or refuses. When a
+  sequence does not divide across the ranks the pack pads it with zero rows,
+  and after a block's norm a zero row is a real key. CogVideoX, the Wan family
+  (Wan 2.1 and 2.2, SCAIL, SCAIL-2, WanDancer), Anima and Kandinsky5 now name
+  those rows, so pure Ulysses leaves them out of every softmax exactly; before,
+  they were attended with no notice on the uly2 that `auto` picks on a pair (a
+  Wan video at 81 frames and 624 square, a CogVideoX one at 720x496 and 49
+  frames). Qwen-Image, Hunyuan, Boogu, Ernie-Image and Ideogram4 now name them
+  on ring and hybrid too, where they cannot be left out, so a padded render
+  there refuses class K with the `ring_pad` waiver as every other family's
+  does, where before ring attended them silently. A padded Wan-family video on
+  ring2 refuses before its block loop and names the nearest frame counts that
+  divide. CogVideoX on pure Ulysses now also restores stock's key order at the
+  full-axis point, so every uly2 render of it changes, an even-length one too:
+  before, its attention ran xfuser's own call with the keys in rank-major
+  order. Ideogram4 no longer drops a padded text mask with a log line: pure
+  Ulysses leaves the masked text rows out of the real rows' attention, and where
+  the shared NVFP4 scale wraps a Linear it runs them as a segment of their own,
+  as stock does, in one more attention call per block, so their values in that
+  scale are stock's too; ring,
+  hybrid or a batch whose prompts mask different positions refuses class P
+  naming uly2. Lens on ring or hybrid, which trims a trailing text pad stock
+  computes, refuses class P naming uly2 when NVFP4 Linears share one
+  activation scale, since those rows belong in it. Each exclusion
+  is proved on CPU against the family's own unsplit forward at an odd length;
+  none of the newly wired families has been compared on the pair yet.
+- The shared NVFP4 activation scale now counts only real rows. Each rank's pad
+  rows could raise the maximum the group quantizes against after a block's norm
+  made them nonzero; every sharded forward now names which of its Linears read
+  which stream and how many of the rows are real, and the scale takes the
+  maximum over those alone. Every Worker now sets `DGXM_SHARED_ACT_SCALE` from
+  the worker_args the driver sent it, an absent key reading on, so a variable
+  exported by hand on one Worker host no longer has any effect; before, a
+  Worker kept its own variable when the key was absent, which could make one rank
+  issue a collective its peer never issued and stall the render for ten
+  minutes. The readiness exchange before sampling also checks that every rank
+  wrapped the same number of layers and refuses, class P, if not.
+- WanDancer refuses, class P, a video whose image tokens the audio
+  conditioning's frame groups do not divide, as stock ComfyUI does; before,
+  the sharded forward clamped the group size and rendered.
+- cfg2 with fsdp now refuses, class P, a step whose conditionings carry
+  different conditioning hook groups (a hook LoRA, say) and run on different
+  ranks: the ranks share one set of weight shards, so each patching its own
+  group would have mixed both groups' patches into every rank's weights.
+- The per-cond cfg dispatch now refuses a condition-comparing attention output
+  hook (NAG without `condition_shard_local`) when a slot holds several
+  conditionings, as the batch split already did; with one conditioning a slot
+  each rank runs one of stock's own calls and the hook passes.
 - MiniMax H3 on four Sparks renders on `auto` (issue #188). At world 4 and
   batch 1, `auto` folded the spare ranks into uly2+ring2, where the H3
   adapter refuses every packed total four does not divide, about three
@@ -1945,8 +2043,12 @@ sections after them list every change.
   ([VALIDATION](docs/VALIDATION.md#ltx-2-3-latent-reread)).
 - `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP
   only when the prompt and the negative encode to different text rows, as on
-  the shipped graphs, and Ulysses for an equal pair; Anima's row had the same
-  scope until its withdrawal (the Anima entry above). One GPU folds
+  the shipped graphs, and Ulysses for an equal pair, except on Chroma FP8 from
+  1.2 to 1.64 MP, where Ulysses runs SAGE and reads further from the one-GPU
+  reference than cfg2 (one-step NRMS 0.057 to 0.078 against row 0 of a
+  same-build dp2 render, the one-GPU reference), so every pair keeps cfg2
+  there; Anima's row had the same scope until its withdrawal (the Anima entry
+  above). One GPU folds
   an equal pair into one batch-2 call, which cfg2's two calls do not
   reproduce: on 2026-11-07 such pairs read one-step NRMS 0.014 to 0.042
   against one GPU on Anima and Boogu, and no full schedule matched, while the

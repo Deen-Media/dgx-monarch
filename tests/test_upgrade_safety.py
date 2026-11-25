@@ -290,11 +290,13 @@ def test_kroma_bf16_is_measured_off_the_krea2_cfg2_row_and_the_matrix_says_so():
         _support_matrix_rows,
     )
 
-    # The vendor card allows CFG up to 1.5. A Krea2 BF16 file takes row 15 there;
-    # the Kroma variant read off one GPU on 2026-10-16 and keeps row 12.
-    assert choose_auto_topology("krea2", "bf16", 1.5, 2, cfg_value=1.5).topology.cfg == 2
+    # The vendor card allows CFG up to 1.5. A Krea2 BF16 file takes row 15 there
+    # for a pair whose text rows differ (since 2026-11-24 no other pair); the
+    # Kroma variant read off one GPU on 2026-10-16 and keeps row 12.
+    assert choose_auto_topology("krea2", "bf16", 1.5, 2, cfg_value=1.5,
+                                pair_differs=True).topology.cfg == 2
     kroma = choose_auto_topology("krea2", "bf16", 1.5, 2, cfg_value=1.5,
-                                 variant=_ROW_VARIANT["Kroma"])
+                                 variant=_ROW_VARIANT["Kroma"], pair_differs=True)
     assert kroma.topology.describe() == "uly2" and kroma.rule.row == 12
     assert "Kroma" not in _DISTILLED_CFG1_ROWS
     assert ("Kroma", "cfg2") not in _STARRED_MODE_GRANT

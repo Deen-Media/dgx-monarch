@@ -1522,11 +1522,14 @@ A render's token count does not divide the sequence-parallel degree, so
 topologies. Ring attention would attend the synthetic pad rows (measured
 left-edge corruption), so the render refuses instead. The count is the joint
 image and text count for Krea2 or Lens, the packed audio, video and text total
-for MiniMax H3 (see [#49](#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence)), and either of the two streams for LTX. Mage Flow and
-the flux family refuse here too. [ADAPTERS.md](ADAPTERS.md) names the
-families that pass their pad rows as `drop_rows` on every topology, and so
-refuse here, and those that pass them under pure Ulysses only and attend them
-on ring without refusing; other families keep their own measured contracts.
+for MiniMax H3 (see [#49](#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence)), and either of the two streams for LTX. Since
+1.5.0 every family that pads names its pad rows on every topology and refuses
+here, Qwen-Image, Hunyuan, Boogu, Ernie-Image, Ideogram4, CogVideoX, the Wan
+family, Anima and Kandinsky5 included; before, the first five attended the pad
+on ring without a word ([ADAPTERS.md](ADAPTERS.md)). A Wan, SCAIL, SCAIL-2 or
+WanDancer video refuses before its block loop and names the nearest frame
+counts whose patched count divides the ranks (Wan at 81 frames and 624 square
+pads; 77 or 85 frames do not).
 The text side counts too: the Krea2 TE strips its chat template, and Lens's
 GPT-OSS TE also produces small, prompt-dependent context lengths, so either
 family's text stream can need padding on its own; cfg_pp samplers evaluate the
@@ -6390,24 +6393,36 @@ rank takes from its own shard.
 **Cause:** ComfyUI quantizes each activation with the module's `input_scale`,
 and this checkpoint ships none. With no scale, nvfp4 alone falls back to a
 statistic over the whole activation tensor, so the answer depends on which rows
-the rank holds. dgx-monarch hands every rank one shared scale, which makes each
-rank's rows identical to a one-GPU render's rows. That hook is on by
-default and it is exact.
+the rank holds. dgx-monarch hands every rank one shared scale, the maximum over
+every rank's real rows; since 1.5.0 the rows a rank holds only to divide the
+stream never enter it. That hook is on by default. What is proven, and where:
+on CPU, with ComfyUI's own model classes, a test per family shows each rank's
+scale equals the amax a one-GPU forward takes for the same layer. On the pair,
+the logs show only that the ranks agree, which the reduction guarantees and
+which says nothing about one GPU. The render can still differ from one GPU:
+Krea2 RAW NVFP4 on uly2 read one-step latent NRMS 0.025 to 0.034 against one
+GPU on 2026-11-24 at 1008, 1024 and 1040 square (CFG 3.5, euler), and 1024
+pads nothing ([MODELS](MODELS.md#fsdp-precision-and-residency)).
+The FLUX.3 Klein NVFP4 files ship a static input scale on every NVFP4 layer, so
+the hook wraps none of their 198 layers, and their uly2 renders read bytes equal
+to one GPU at the same three sizes.
 
-**It is not enough on chroma.** With the hook on, both ranks agreeing and 256
-of 256 nvfp4 linears wrapped, a chroma nvfp4 uly2 render read 0.120 and cfg2
-0.129 against 0.131 and 0.134 with the hook off. The rest of that gap has no
-explanation yet, and it is not the kernel: bf16, fp8 and nvfp4 kernels return
-identical rows whether a row is computed inside a full call or a half call. So
-chroma nvfp4 refuses on every sharded topology, hook on or hook off, and only
-the message changes. Krea2 read 0.011 with the hook on, under the floor, and is
-not refused.
+**It is not enough on chroma.** On 2026-09-05, at 1536 square with the hook on
+and 256 of 256 nvfp4 linears wrapped, a chroma nvfp4 uly2 render read one-step
+NRMS 0.120 and cfg2 0.129 against 0.131 and 0.134 with the hook off. The rest
+of that gap has no explanation yet. That month one GPU gave the same rows from
+the bf16, fp8 and nvfp4 GEMMs whether a row was computed inside a full call or
+a half call, which ruled out the GEMM's row count on that build. So chroma
+nvfp4 refuses on every sharded topology, hook on or hook off, and only the
+message changes. Krea2 RAW NVFP4 read 0.011 with the hook on the same day,
+under the floor, on the shipped template (1536 square, CFG 1, euler_cfg_pp,
+read on the decoded image), and is not refused. The 2026-11-24 readings above
+differ from it in size, CFG, sampler and measure, so the two do not compare.
 
 The second text means the hook declined a layer it would otherwise wrap. Two
 ways in:
 
-* `shared_act_scale = false` is set in worker_args, or `DGXM_SHARED_ACT_SCALE=0`
-  on the workers, which is the off switch;
+* `shared_act_scale = false` is set in worker_args, which is the off switch;
 * the checkpoint carries `pre_quant_scale` on a layer with no `input_scale`, or
   it carries an expert bank. ComfyUI applies the AWQ smoothing before it takes
   the amax, so on a smoothed layer the statistic belongs to a product the hook
@@ -6439,25 +6454,24 @@ an unclassified layout before a render meets it.
    `shared_act_scale = true` in worker_args, or remove the key, and reload the
    model. The log line `shared activation scale: N/M nvfp4 linears wrapped`
    says whether the hook ran. On chroma this changes the message, not the
-   outcome, but the hook removes a real term. A bare `DGXM_SHARED_ACT_SCALE=0`
-   exported on a worker host is not removed by dropping the key; unset it on
-   that host and restart the mesh.
+   outcome, but the hook removes a real term.
 
-**Setting the off switch on one box only.** `shared_act_scale` is a worker arg
-so that one setting reaches every worker; the bare `DGXM_SHARED_ACT_SCALE` is a
-single-box aid and an absent worker arg leaves it alone. The switch decides
-whether a rank issues the shared-scale collective, so set it on every worker or
-on none. With the variable set on one box of a pair, a chroma render with no
-waiver refuses on both boxes, each with its own class K text: that box counts
-the layers it declined and its peer names the shared scale. Read the journal on
-both boxes. Under a waiver, or on a family the bar does not refuse, nothing
-refuses here and the two boxes issue different collectives.
+**The off switch reaches every box.** `shared_act_scale` decides whether a rank
+issues the shared-scale collective, so since 1.5.0 every Worker sets
+`DGXM_SHARED_ACT_SCALE` from the worker_args the driver sent it (an absent key
+reads on), never from its own environment; a variable exported by hand on one
+Worker host no longer has any effect. Before sampling, the ranks also cross how many layers each wrapped; if
+they differ, every rank refuses, class P, naming both counts, where before one
+box would have waited in a collective its peer never issued.
 
 **Measuring it.** Set `log_act_scale = true` (or `DGXM_LOG_ACT_SCALE=1`) and read
 one step: each rank prints its own local amax, the reduced amax and the scale per
 wrapped layer. With the hook on, both ranks print the same reduced amax. With the
 hook off the line still prints, with `reducers=none` and the rank's own amax in
-both fields, which is how the before and after legs are compared. That trace showed the two ranks disagreeing in 338 of 548 sp-reduced layers, by
+both fields, which is how the before and after legs are compared. Since 1.5.0 a
+one-GPU render prints the same line with comfy's own amax and issues no
+collective, so the pair's reduced amax can be set beside one GPU's layer by
+layer; no leg has made that comparison yet. That trace showed the two ranks disagreeing in 338 of 548 sp-reduced layers, by
 up to 6.2x, which is the term the shared scale removes. On chroma both legs need
 `DGXM_WAIVE_KNOWN_WRONG=shard_quant_scale` to reach the render at all.
 

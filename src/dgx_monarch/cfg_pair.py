@@ -9,12 +9,17 @@ did not match (docs/VALIDATION.md, Campaign K). A pair that cannot fold runs as
 two batch-1 calls on one GPU too, and cfg2's per-cond dispatch
 (adapters/cfg_dispatch.py) reproduces them.
 
-Chroma and Boogu, the families whose records carry the scope, wrap the text
-as ``CONDRegular``, which concatenates only at equal shape: Chroma's T5 rows
+The records that carry the scope, as the table stands, each for the kinds in
+its ``pair_quants``: Chroma row 20 (BF16, FP8 storage and INT8), Chroma row 19
+(BF16 and INT8), Krea2 row 15 (BF16), Qwen-Image row 68 (FP8 storage) and Boogu
+row 79 (FP8 storage). Each of those families wraps its text as
+``CONDRegular``, which concatenates only at equal shape: Chroma's T5 rows
 through Flux's ``extra_conds`` (its cfg2 pads the pair to one length and trims
-each row back to stock's unpadded call), and Boogu's Qwen3-VL rows beside its
-``num_tokens`` constant. Different row counts therefore never fold, and that is
-the one fact read here. Anima is not one of them: stock pads its text to 512
+each row back to stock's unpadded call), Krea2's and Qwen-Image's rows through
+their own ``extra_conds`` (their cfg2 pads the pair and cuts each entry back by
+its stamped count, adapters/cfg_pad_rows.py), and Boogu's Qwen3-VL rows beside
+its ``num_tokens`` constant. Different row counts therefore never fold, and
+that is the one fact read here. Anima is not one of them: stock pads its text to 512
 rows in ``extra_conds``, which every Worker runs as stock does since
 2026-11-10, so its Qwen3 rows decide nothing about the fold, and its cfg2 row
 was withdrawn. Equal rows may fold or may not, and anything this cannot read
@@ -56,3 +61,14 @@ def text_rows_differ(positive: object, negative: object) -> bool:
     """True only when each side is one plain entry and their text rows differ."""
     pos, neg = _text_rows(positive), _text_rows(negative)
     return pos is not None and neg is not None and pos != neg
+
+
+def text_rows_equal(positive: object, negative: object) -> bool:
+    """True only when each side is one plain entry and their text rows are equal.
+
+    Such a pair can fold into one call on one GPU, where cfg2 makes two
+    (nodes/cfg_pair_notice.py tells the user). Unread is neither equal nor
+    different.
+    """
+    pos, neg = _text_rows(positive), _text_rows(negative)
+    return pos is not None and pos == neg

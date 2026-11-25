@@ -7,6 +7,7 @@ from typing import Any
 
 import torch
 
+from . import scale_rows
 from .base import pad_seq_to_multiple, sp_gather, sp_rank, sp_world
 
 
@@ -78,7 +79,10 @@ def full_row_text_projections(
                     (batch, rows, hidden), ((rows + image_rows) * hidden, hidden, 1),
                     dtype=gathered.dtype, device=gathered.device)
                 linear_input.copy_(gathered)
-            output = original(linear_input)
+            # Gathered and trimmed, the input holds no pad row: the shared
+            # nvfp4 scale reads all of it (adapters/scale_rows.py).
+            with scale_rows.whole_rows():
+                output = original(linear_input)
             padded, _ = pad_seq_to_multiple(output, sp_world(), dim=1)
             return torch.chunk(padded, sp_world(), dim=1)[sp_rank()].contiguous()
         return forward

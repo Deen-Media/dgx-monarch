@@ -1127,6 +1127,10 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "the dedicated dgxm-metrics daemon body, bounded stdlib queue.Queue.get",
     ("adapters/mage_nvfp4_scale.py", "real_input"):
         "ContextVar read, not a monarch future",
+    ("adapters/scale_rows.py", "spans"):
+        "ContextVar read, not a monarch future",
+    ("adapters/scale_rows.py", "check_streams_read"):
+        "ContextVar read, not a monarch future",
     ("adoption_evidence.py", "active_context_wire"):
         "ContextVar read, not a monarch future",
     ("execution_events.py", "native_ack"):
@@ -1153,7 +1157,7 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "ContextVar read, not a monarch future",
     ("nodes/render_submit.py", "_collect_earlier_results_before_setup_change"):
         "ContextVar read, not a monarch future",
-    ("nodes/render_submit.py", "_reattach_facts"):
+    ("nodes/reattach_retry.py", "reattach_facts"):
         "ContextVar read, not a monarch future",
     ("old_model.py", "graph_names"):
         "ContextVar read, not a monarch future",

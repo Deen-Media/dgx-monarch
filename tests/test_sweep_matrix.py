@@ -917,6 +917,14 @@ def test_kernels_that_resolve_to_one_collapse_to_one_cell(tmp_path):
     assert all(cell["reference"].get("cell", next(iter(ids))) in ids for cell in cells)
 
 
+def _template_pair(graph: dict) -> None:
+    """Wire the template's prompt and negative, two texts of different rows:
+    since 2026-11-24 Krea2's cfg2 row 15 grants no other pair."""
+    graph["8"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "a red fox in snow"}}
+    graph["9"] = {"class_type": "CLIPTextEncode", "inputs": {"text": ""}}
+    graph["4"]["inputs"].update(positive=["8", 0], negative=["9", 0])
+
+
 def _krea2_fp8_square(config: dict, stem: str, graph: dict, side: int = 1536) -> None:
     """Write ``graph`` at ``side`` square beside a krea2 FP8 checkpoint."""
     _checkpoint(config["model_dir"], "krea2_raw_fp8_scaled.safetensors", "krea2",
@@ -965,6 +973,7 @@ def _krea2_bf16_square(config: dict, stem: str, unet: str, merge_record: bool,
     graph = _graph(unet, cfg=1.5)
     graph["3"] = {"class_type": "EmptySD3LatentImage",
                   "inputs": {"width": side, "height": side, "batch_size": 1}}
+    _template_pair(graph)
     (config["out_dir"] / "graphs" / f"{stem}.json").write_text(json.dumps(graph))
 
 
@@ -1027,8 +1036,10 @@ def test_the_auto_tagging_samplers_match_the_nodes_that_tag():
     # The sweep's set must name exactly the node classes whose sample call
     # hands sampler_latent a sampler name. Sampler Custom passes None. Every
     # call also hands it the pair tag (cfg_pair), which the sweep predicts
-    # with auto_pair_differs, and the UltraTex views tag (adapters/flux_views),
-    # which no sweep cell carries.
+    # with auto_pair_differs, the UltraTex views tag (adapters/flux_views), and
+    # the sequence-refused tag (nodes/reference_preflight), which no sweep cell
+    # carries: no shipped template on a family with a pair-scoped cfg2 row has
+    # a text mask or reference latents.
     tagging, untagged, pairless = set(), set(), set()
     for path in sorted((REPO / "src" / "dgx_monarch" / "nodes").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -1039,11 +1050,12 @@ def test_the_auto_tagging_samplers_match_the_nodes_that_tag():
                     named = not (isinstance(call.args[1], ast.Constant)
                                  and call.args[1].value is None)
                     (tagging if named else untagged).add(klass.name)
-                    if len(call.args) != 4:
+                    if len(call.args) != 5:
                         pairless.add(klass.name)
     assert tagging == set(matrix.UNCOND_TAGGING_SAMPLERS)
     assert untagged == {"DGXMonarchSamplerCustom"}
-    assert not pairless, f"sampler_latent called without the pair and views tags in {sorted(pairless)}"
+    assert not pairless, (f"sampler_latent called without the pair, views and sequence tags in "
+                          f"{sorted(pairless)}")
 
 
 def test_the_sweep_predicts_the_pair_tag_from_the_prompt_texts():

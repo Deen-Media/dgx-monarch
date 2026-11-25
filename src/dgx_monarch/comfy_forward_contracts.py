@@ -133,6 +133,10 @@ HELPER_LEAF_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.ldm.moss_image.model", "attention",
           positional=("q", "k", "v", "q_norm", "k_norm", "pe", "heads", "comfy_attention",
                       "transformer_options")),
+    # The cfg2 pad stamps each entry's pre-pad row count as a model cond of this
+    # class (adapters/cfg_pad_rows.py); the seam suite's "cfg pad row stamp"
+    # holds how comfy carries it to the forward.
+    _call("comfy.conds", "CONDRegular", positional=("cond",)),
 )
 
 REBOUND_FORWARD_TOUCHPOINTS: tuple[Touchpoint, ...] = tuple(
