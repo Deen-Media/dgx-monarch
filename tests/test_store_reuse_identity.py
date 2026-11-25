@@ -181,6 +181,7 @@ def test_a_quantized_swap_between_stacks_that_patch_nothing_keeps_the_gpu_weight
     """
     store, _calls = rig
     store.lora_low_rss = False
+    monkeypatch.setattr("dgx_monarch.mesh_safety.gpu_is_integrated", lambda: False)
     monkeypatch.setattr(ms, "_detect_checkpoint_kind", lambda _path, _kind: "fp8")
     monkeypatch.setattr(
         ms, "_detect_live_precision",
@@ -231,9 +232,16 @@ def test_a_quantized_change_on_a_whole_stock_resident_unpatches_without_a_host_c
 
 
 def _classic_fp8(store, monkeypatch):
-    """A quantized stock resident in classic mode on unified memory, held whole by a ComfyUI entry."""
+    """A quantized stock resident in classic mode on unified memory, held whole by a ComfyUI entry.
+
+    Unified memory turns on the load's capacity wall, so the reading it takes is
+    faked too: the test must not depend on the memory of the host it runs on.
+    The rig's checkpoint path does not exist, so the wall charges the classic
+    bake of an unreadable header (``UNREADABLE_STACK_WEIGHTS``), about 19 GiB.
+    """
     store.lora_low_rss = False
     monkeypatch.setattr("dgx_monarch.mesh_safety.gpu_is_integrated", lambda: True)
+    monkeypatch.setattr("dgx_monarch.mesh_safety.mem_available_bytes", lambda: 100 << 30)
     monkeypatch.setattr(ms, "_detect_checkpoint_kind", lambda _path, _kind: "fp8")
     monkeypatch.setattr(
         ms, "_detect_live_precision",
