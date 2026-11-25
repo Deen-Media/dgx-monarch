@@ -3340,6 +3340,28 @@ def _assert_offload_pin_seam() -> None:
     assert moved == [pinned], (
         f"offload pin seam: detach no longer moves the model to the clone's offload_device ({moved}); "
         "a discarded stock resident may be copied to the host again")
+    # The quantized hot swap's in-place unpatch (actor/store_bake.py
+    # unpatch_in_place) pins a loaded clone's offload device to its load device
+    # and runs ComfyUI's own model_unload on a model it keeps: the detach must
+    # first put every backed-up key back, so the model comes back pristine with
+    # its patch uuid cleared, and ComfyUI's next load applies the new stack.
+    import comfy.model_management as mm
+
+    kept = torch.nn.Linear(8, 8, bias=False)
+    kept.device = cpu
+    pristine = kept.weight.detach().clone()
+    stack = ModelPatcher(kept, cpu, cpu, kept.weight.numel() * kept.weight.element_size()).clone()
+    stack.add_patches({"weight": (torch.ones(8, 8),)}, 1.0)
+    loaded = mm.LoadedModel(stack)
+    loaded.model_load()
+    assert not torch.equal(kept.weight, pristine), (
+        "offload pin seam: a real LoadedModel no longer patches the weight at load")
+    stack.offload_device = stack.load_device
+    loaded.model_unload()
+    assert torch.equal(kept.weight, pristine) and kept.current_weight_patches_uuid is None, (
+        "offload pin seam: a detach with the offload device pinned to the load device no longer "
+        "restores the backed-up keys and clears the patch uuid; the quantized hot swap's in-place "
+        "unpatch (actor/store_bake.py unpatch_in_place) would keep the old stack's weights")
 
 
 def _assert_resident_ledger_seam() -> None:

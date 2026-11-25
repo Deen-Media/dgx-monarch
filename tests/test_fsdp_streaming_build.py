@@ -113,6 +113,43 @@ def test_recast_reports_count_and_bytes():
     assert dm.patch_embedding.weight.dtype == torch.float32
 
 
+class _SharedBuffer(torch.nn.Module):
+    """One fp32 buffer registered under two names, the way a model can share a table."""
+
+    def __init__(self):
+        super().__init__()
+        shared = torch.zeros(8, dtype=torch.float32)
+        self.register_buffer("a", shared)
+        self.register_buffer("b", shared)
+
+
+@pytest.mark.parametrize("one_file_tensor", [False, True])
+def test_a_buffer_under_two_names_takes_its_constructed_dtype_under_both(one_file_tensor):
+    """The copying load keeps both names fp32; the assigned load must too.
+
+    The default walks name a shared buffer once, so the second name kept the
+    file's bf16 whether the file gave each name its own tensor or one tensor
+    under both. One tensor under both names also stays one tensor.
+    """
+    module = _SharedBuffer()
+    constructed = fsdp_streaming.constructed_dtypes(module)
+    loaded = torch.ones(8, dtype=torch.bfloat16)
+    state = {"a": loaded, "b": loaded if one_file_tensor else loaded.clone()}
+    module.load_state_dict(state, assign=True)
+    count, nbytes = fsdp_streaming.recast_to_constructed(module, constructed)
+    assert (module.a.dtype, module.b.dtype) == (torch.float32, torch.float32)
+    assert (module.a is module.b) == one_file_tensor
+    assert (count, nbytes) == ((1, 32) if one_file_tensor else (2, 64))
+
+
+def test_the_recast_log_counts_a_buffer_at_its_new_dtype():
+    module = torch.nn.Module()
+    module.register_buffer("only", torch.zeros(8, dtype=torch.float32))
+    constructed = fsdp_streaming.constructed_dtypes(module)
+    module.load_state_dict({"only": torch.ones(8, dtype=torch.bfloat16)}, assign=True)
+    assert fsdp_streaming.recast_to_constructed(module, constructed) == (1, 8 * 4)
+
+
 @pytest.mark.parametrize(("world", "expected"), [
     (None, adapters_fsdp.FSDP_MATERIALIZE_FACTOR),
     (0, adapters_fsdp.FSDP_MATERIALIZE_FACTOR),

@@ -76,13 +76,15 @@ def residency_modes(args: dict, *, integrated: bool, fsdp: bool) -> tuple[bool |
     The Worker's own chain, read on the driver: comfy-managed turns low-RSS and
     slab off (``actor/comfy_dynamic.apply_policy``); on unified memory an absent
     ``lora_low_rss`` is on, an absent ``slab_weights`` is ``auto``, and slab is
-    off where low-RSS is (``actor/comfy_bridge._uma_memory_defaults``); FSDP
-    turns slab off (``actor/worker_env.slab_mode_effective``).
+    off where low-RSS is (``actor/comfy_bridge._uma_memory_defaults``); off
+    unified memory slab is off whatever was asked
+    (``actor/slab_posture.without_slab``); FSDP turns slab off
+    (``actor/worker_env.slab_mode_effective``).
     """
     managed = args.get("comfy_managed") is True
     lora = False if managed else args.get("lora_low_rss", True if integrated else None)
     slab = False if managed else args.get("slab_weights", "auto" if integrated else None)
-    if integrated and slab and not lora:
+    if not integrated or (slab and not lora):
         slab = False
     mode: bool | str = False if not slab or fsdp else ("auto" if slab == "auto" else True)
     return mode, bool(lora), managed

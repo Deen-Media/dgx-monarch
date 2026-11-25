@@ -2274,6 +2274,76 @@ sections after them list every change.
   ComfyUI's block no longer reads the norm global the parity route binds; it
   used to warn and render with a possible bf16 difference. A topology
   without sequence parallelism, such as `single`, still renders ([TROUBLESHOOTING #121](docs/TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)).
+- A LoRA change on a quantized model with slab residency keeps one copy of the
+  weights. ComfyUI bakes a quantized weight into a new tensor, and the swap
+  left every patched weight in cudaMalloc beside its idle slab region, up to
+  twice the patched bytes in unified memory while the slab figures counted one
+  copy. Each key now goes back to its own slab region, its scales included, as
+  the swap finishes with it, and the allocator cache is released after the
+  swap. The fresh load no longer copies weights that are already in the slab
+  onto themselves, and it moves every quantized layer's scales into their own
+  slab regions: ComfyUI's loader leaves a copy of each scale in cudaMalloc
+  beside the slab, an eighth of the payload on NVFP4. The quantized stray
+  figure counts the payload and scales a weight still holds outside the slab.
+  A stack change whose newly patched key would bake to a payload larger than
+  its slab region loads fresh, where the bake is priced, instead of leaving an
+  unpriced copy in cudaMalloc.
+- A LoRA whose keys match no weight of the model (one that carries only
+  attention settings, a text-encoder LoRA, or one built for another family)
+  stays a lazy swap across strength changes. It used to leave no un-bake
+  record, so the next change reloaded from disk and the first-use Gate ended
+  inconclusive and turned `lora_low_rss` and `slab_weights` off for the
+  session. With both levers off, a quantized model on stock residency no
+  longer unloads every model for such a change, which copied the whole model
+  to the host (93 s on the pair for a change that alters no weight).
+- With `lora_low_rss` off, a LoRA change on a quantized model on stock
+  residency takes ComfyUI's patches off in place on unified memory: the
+  patched weights come back from ComfyUI's host backup and no other weight
+  moves. It used to unload every model, copying the whole model to the host
+  and back, 83 to 100 s per Worker on the pair for 40 patched weights of a
+  12 GiB model, and the other slot's model went to the host with it. The swap
+  itself no longer unloads the other slot. That is the state a session is in
+  after an automatic Gate that does not pass. The hot-swap line now shows its
+  build and unpatch times.
+- Under any `+fsdp` preset a LoRA that patches a parameter the FSDP wrap keeps
+  whole, an fp32 island such as ChromaRadiance's nerf embedder or a
+  zero-dimensional parameter, bakes and restores whole on each rank. It
+  failed with an untyped "parameter is not FSDP-sharded". An island the load
+  cast to another dtype still refuses class P.
+- Under FSDP a LoRA stack the bake refuses class P (a quantized key, a key the
+  file holds under no name, a live dtype the file lacks) refuses before any
+  weight is written, and the Worker keeps the model and the stack it was
+  rendering. It used to drop the model and load it again, only to meet the
+  same refusal.
+- The FSDP LoRA bake reads every tensor through one descriptor bound to the
+  checkpoint header it read and to the file the load pinned, so a checkpoint
+  replaced during the bake refuses instead of baking another file's bytes. It
+  drops the checkpoint's pages from the page cache when it is done.
+- Under FSDP the bake chooses the checkpoint tensor a key restores from by the
+  file alone, so every rank chooses the same one. Where ComfyUI's own load
+  function puts a renamed tensor under the key, that tensor binds; where the
+  file holds the key under two spellings whose tensors differ and nothing
+  names one, every rank refuses class P before any weight is written. The
+  choice used to follow each rank's rows, so one rank could refuse and drop
+  its model while its peer baked and waited for it at the first collective.
+- The un-bake record binds the checkpoint's change time as well as its inode,
+  size and modification time. A checkpoint rewritten in place with its old
+  size and modification time put back no longer restores the patched keys
+  from the new bytes beside the old rest of the model; the swap reloads. A
+  metadata-only change (chmod, chown) now costs one reload instead of a lazy
+  swap.
+- An FSDP load gives a buffer registered under two names its constructed dtype
+  under both, as the copying load does, and keeps one tensor under two names
+  one tensor. No stock model class on ComfyUI today shares a buffer this way.
+  The load's log line counts a recast buffer at its new size.
+- A LoRA capture on a quantized checkpoint parses the embedded quantization
+  map once, not once per patched key, which cost seconds on a broad LoRA.
+- On a discrete GPU, or where the unified-memory probe fails, `slab_weights`
+  stays off with a warning, an explicit `on` or a configured `"auto"`
+  included. A slab wraps host memory as GPU memory, which only unified memory
+  makes true.
+- The slab capacity card no longer calls its 5.0 GiB floor "above" a larger
+  `uma_reserve_gb` that the arena cap clipped under it.
 
 ### Operations
 

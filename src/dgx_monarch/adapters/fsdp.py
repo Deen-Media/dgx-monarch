@@ -58,6 +58,7 @@ from .fsdp_islands import (
     auxiliary_module_parameters,
     classify_fp32_islands,
     island_parameters,
+    replicated_parameters,
     resolve_module_path,
 )
 from .fsdp_wrap_trace import _allocator_pool_trim, _log_wrap_memory
@@ -425,11 +426,12 @@ def apply_fsdp_capacity_mode(
     # (fsdp_islands.py), and every zero-dimensional parameter. FSDP2 refuses a
     # scalar outright: it has no dim 0 to chunk, and replicating it costs
     # only a few bytes (for example, PiD's `log_alpha`). Build this set after
-    # the quantized wrappers so it holds the objects the wrap will see.
+    # the quantized wrappers so it holds the objects the wrap will see. The
+    # LoRA bake reads the same set; the three parts below feed the log line.
+    ignored = replicated_parameters(dm, patcher.model)
     islands = island_parameters(dm)
     auxiliary = auxiliary_module_parameters(dm, patcher.model)
     scalars = {p for p in dm.parameters() if p.ndim == 0}
-    ignored = islands | auxiliary | scalars
     wrap_kwargs: dict[str, Any] = {"ignored_params": ignored} if ignored else {}
 
     trim_pool = _allocator_pool_trim()

@@ -4,12 +4,14 @@ Covers the safetensors header checks a slab relies on, slab layout and byte
 fidelity, failure-atomic construction and close, reabsorb of strayed
 parameters, the comfy_bridge.slab_load hook against a stubbed comfy, and the
 slab and stock prices in capacity_fit and actor/store_slab_admit."""
+import dataclasses
 import json
 import os
 import struct
 import sys
 import types
 import weakref
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -667,6 +669,437 @@ def test_reabsorb_annex_short_still_takes_region_strays(ckpt):
     ws.close()
 
 
+def test_freeing_a_wrapped_slab_tensor_runs_no_python(tmp_path):
+    """The DLPack deleter is NULL, so PyTorch frees a wrapped storage without the GIL.
+
+    A Python callback behind ctypes took the GIL inside a C++ destructor every
+    time a wrapped tensor was freed, from whatever thread freed it. Nothing
+    owns the slab's bytes through DLPack, so there is nothing to call. The
+    stress run frees wraps on eight threads and keeps some to interpreter exit.
+    """
+    import subprocess
+    import textwrap
+
+    from dgx_monarch.actor import slab_wrap
+
+    assert not slab_wrap._SHARED_MT.deleter
+    script = tmp_path / "wrap_stress.py"
+    script.write_text(textwrap.dedent("""
+        import ctypes, threading
+        from dgx_monarch.actor import slab_wrap
+        buf = (ctypes.c_uint8 * 4096)()
+        base = ctypes.addressof(buf)
+        def churn():
+            for i in range(5000):
+                t = slab_wrap.wrap_u8(base + (i % 64) * 64, 64, cuda=False)
+                t[0] = i % 251
+                del t
+        threads = [threading.Thread(target=churn) for _ in range(8)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        kept = [slab_wrap.wrap_u8(base + i * 64, 64, cuda=False) for i in range(64)]
+        print("done", len(kept))
+    """))
+    done = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
+                          timeout=120, env={**os.environ, "CUDA_VISIBLE_DEVICES": ""})
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert done.stdout.strip() == "done 64"
+
+
+def test_a_second_pass_skips_a_stray_the_aligned_annex_cannot_hold(ckpt):
+    """The annex guard checks the aligned offset `place` will use, not the raw cursor.
+
+    A first pass leaves the annex cursor off the 256-byte grid. A second pass
+    whose stray fits the raw cursor but not the aligned one must keep that
+    stray in its own allocation, as the guard intends, not raise an overflow.
+    """
+    path, _ = ckpt
+    ws = WeightSlab(path)
+    sd = ws.state_dict()
+    module = nn.Module()
+    first = sd["small"].clone().to(torch.float32)          # 40 bytes, no region of its dtype
+    module.register_parameter("c0", nn.Parameter(first, requires_grad=False))
+    try:
+        assert ws.reabsorb(module)["reabsorbed"] == 1
+        annex = ws.annex
+        assert annex is not None and annex.cursor % _ALIGN
+        room = annex.capacity - annex.cursor
+        aligned_room = annex.capacity - (annex.cursor + _ALIGN - 1) // _ALIGN * _ALIGN
+        size = (aligned_room // 4 + 1) * 4                  # fits the raw cursor only
+        assert size <= room
+        second = torch.zeros(size // 4, dtype=torch.float32)
+        module.register_parameter("c1", nn.Parameter(second, requires_grad=False))
+        stats = ws.reabsorb(module)
+        assert stats["skipped"] == 1 and stats["reabsorbed"] == 0
+        assert not ws.contains(module.c1.data_ptr())
+    finally:
+        del sd, first, module
+        ws.close()
+
+
+# A LoRA change on a slab resident: the store's lazy swap restores and re-bakes
+# each patched key. ComfyUI bakes a quantized weight out of place (a new
+# wrapper with a new payload and new scales), so each such key must go back to
+# its own slab region as the swap passes it, or the model sits twice in unified
+# memory while every capacity figure counts the slab once.
+
+@dataclasses.dataclass(frozen=True)
+class _LayoutParams:
+    """The shape of comfy_kitchen's frozen layout parameters for a per-tensor scale."""
+
+    scale: torch.Tensor
+    orig_dtype: torch.dtype
+    orig_shape: tuple
+
+    def _tensor_fields(self):
+        return ["scale"]
+
+
+class _SwapQT(torch.Tensor):
+    """A QuantizedTensor stand-in whose attributes survive nn.Parameter, as the real one's do.
+
+    The payload is the tensor's own storage, so a pointer check sees where the
+    weight lives.
+    """
+
+    @staticmethod
+    def __new__(cls, qdata, layout_cls, params):
+        return torch.Tensor._make_subclass(cls, qdata)
+
+    def __init__(self, qdata, layout_cls, params):
+        self._qdata = qdata
+        self._layout_cls = layout_cls
+        self._params = params
+
+    @property
+    def layout_cls(self):
+        return self._layout_cls
+
+    @property
+    def params(self):
+        return self._params
+
+    def detach(self):
+        return _SwapQT(self._qdata, self._layout_cls, self._params)
+
+
+class _SwapLayout:
+    Params = _LayoutParams
+
+    @staticmethod
+    def state_dict_tensors(qdata, params):
+        return {"": qdata, "_scale": params.scale}
+
+
+class _SwapQuantLinear(nn.Module):
+    """The attributes the un-bake capture and restore read on a ComfyUI quantized layer."""
+
+    def __init__(self, qdata, scale):
+        super().__init__()
+        self.quant_format = "float8_e4m3fn"
+        self._full_precision_mm_config = False
+        self.factory_kwargs = {"device": None, "dtype": torch.bfloat16}
+        self._orig_shape = tuple(qdata.shape)
+        self.weight = nn.Parameter(_SwapQT(qdata, "SwapLayout", _LayoutParams(
+            scale, torch.bfloat16, self._orig_shape)), requires_grad=False)
+
+    def state_dict(self, *args, **kwargs):
+        marker = torch.tensor(list(json.dumps({"format": "float8_e4m3fn"}).encode()),
+                              dtype=torch.uint8)
+        return {"weight": self.weight._qdata, "weight_scale": self.weight._params.scale,
+                "comfy_quant": marker}
+
+
+def _swap_delta(shape):
+    """A LoRA delta that differs across the weight, so a wrong key or strength shows."""
+    return torch.linspace(-0.05, 0.05, shape[0] * shape[1]).reshape(shape)
+
+
+def _swap_bake(model, key, strength):
+    """ComfyUI's quantized bake: dequantize, add the delta, requantize into new tensors."""
+    module = unbake_module.live_tensor(model, key.rpartition(".")[0])
+    live = module.weight
+    value = live._qdata.float() * live._params.scale + strength * _swap_delta(live._qdata.shape)
+    scale = (value.abs().amax() / 64).reshape(()).clone()
+    qdata = (value / scale).to(torch.float8_e4m3fn)
+    module.weight = nn.Parameter(_SwapQT(qdata, live._layout_cls, _LayoutParams(
+        scale, torch.bfloat16, tuple(qdata.shape))), requires_grad=False)
+
+
+@pytest.fixture
+def slab_swap_rig(tmp_path, monkeypatch):
+    torch.manual_seed(11)
+    names = ("blk0", "blk1", "blk2")
+    tensors, layers = {}, {}
+    for name in names:
+        tensors[f"{name}.weight"] = (torch.randn(16, 32) * 0.1).to(torch.float8_e4m3fn)
+        tensors[f"{name}.weight_scale"] = torch.tensor(0.02 + len(layers) * 0.01)
+        layers[name] = {"format": "float8_e4m3fn"}
+    tensors["norm.weight"] = torch.randn(32).to(torch.bfloat16)
+    path = str(tmp_path / "quant-slab.safetensors")
+    write_safetensors(path, tensors, metadata={"_quantization_metadata": json.dumps({"layers": layers})})
+
+    quant_ops = types.ModuleType("comfy.quant_ops")
+    quant_ops.QUANT_ALGOS = {"float8_e4m3fn": {"storage_t": torch.float8_e4m3fn,
+                                               "comfy_tensor_layout": "SwapLayout"}}
+    quant_ops.get_layout_class = lambda name: _SwapLayout
+    quant_ops.QuantizedTensor = _SwapQT
+    flushes: list[str] = []
+    model_management = types.ModuleType("comfy.model_management")
+    model_management.soft_empty_cache = lambda *a, **k: flushes.append("flush")
+    comfy = types.ModuleType("comfy")
+    comfy.quant_ops, comfy.model_management = quant_ops, model_management
+    for name, mod in (("comfy", comfy), ("comfy.quant_ops", quant_ops),
+                      ("comfy.model_management", model_management)):
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    ws = WeightSlab(path)
+    sd = ws.state_dict()
+    dm = nn.Module()
+    for name in names:
+        setattr(dm, name, _SwapQuantLinear(sd[f"{name}.weight"], sd[f"{name}.weight_scale"]))
+    dm.norm = nn.Module()
+    dm.norm.register_parameter("weight", nn.Parameter(sd["norm.weight"], requires_grad=False))
+    for name, region in ws.regions.items():      # what the load hook records
+        ws.key_map[name] = region
+    model = nn.Module()
+    model.diffusion_model = dm
+    del sd
+    yield SimpleNamespace(ws=ws, model=model, path=path, tensors=tensors, flushes=flushes)
+    model.diffusion_model = None
+    ws.close()
+
+
+class _SwapStore:
+    swap_verify = 0
+    verify_failures = 0
+
+    def __init__(self, strengths):
+        self.strengths = strengths
+
+    def _bake_key(self, active, key):
+        _swap_bake(active.model, key, self.strengths[key])
+
+    def _verify_key(self, active, key):
+        self._bake_key(active, key)
+
+    _audit_swap_dtypes = staticmethod(lambda *args, **kwargs: None)
+
+
+def _expected(tensors, name, strength):
+    """The swap's bake of the file's own bytes, computed apart from the model."""
+    value = (tensors[f"{name}.weight"].float() * tensors[f"{name}.weight_scale"]
+             + strength * _swap_delta(tensors[f"{name}.weight"].shape))
+    scale = (value.abs().amax() / 64).reshape(())
+    return (value / scale).to(torch.float8_e4m3fn), scale
+
+
+def _slab_holds_one_copy(rig, strengths):
+    """Every quantized weight's payload and scale sit in the slab and hold this stack's bytes."""
+    for name in ("blk0", "blk1", "blk2"):
+        weight = getattr(rig.model.diffusion_model, name).weight
+        assert rig.ws.region_by_ptr(weight._qdata.data_ptr()) is rig.ws.regions[f"{name}.weight"], name
+        assert rig.ws.region_by_ptr(weight._params.scale.data_ptr()) is rig.ws.regions[
+            f"{name}.weight_scale"], name
+        key = f"diffusion_model.{name}.weight"
+        if key in strengths:
+            qdata, scale = _expected(rig.tensors, name, strengths[key])
+        else:
+            qdata, scale = rig.tensors[f"{name}.weight"], rig.tensors[f"{name}.weight_scale"]
+        assert _to_bytes(weight._qdata) == _to_bytes(qdata), name
+        assert _to_bytes(weight._params.scale) == _to_bytes(scale), name
+    assert rig.ws.stray_bytes == 0
+
+
+def test_a_lora_change_on_a_slab_resident_keeps_one_copy_of_every_weight(slab_swap_rig):
+    """Strength changes and a key that leaves the stack: every weight stays in its slab region.
+
+    The first stack is baked and reabsorbed as a fresh load does it. Each swap
+    after that restores the patched keys from the file and re-bakes the new
+    stack; the payload and scale of each quantized key it touches go back to
+    the key's own region, a key that leaves the stack goes back pristine, an
+    untouched weight keeps its own Parameter object, and the allocator cache
+    is flushed once per swap.
+    """
+    from dgx_monarch.actor import store_bake
+    from dgx_monarch.actor.unbake import capture_unbake_record
+
+    rig = slab_swap_rig
+    keys = ["diffusion_model.blk0.weight", "diffusion_model.blk1.weight"]
+    record = capture_unbake_record(rig.model, keys, rig.path)
+    first = dict.fromkeys(keys, 1.0)
+    for key in keys:
+        _swap_bake(rig.model, key, first[key])
+    stats = rig.ws.reabsorb(rig.model.diffusion_model)
+    assert stats["quant_reabsorbed_gib"] == 0.0 and stats["quant_stray_gib"] == 0.0
+    _slab_holds_one_copy(rig, first)
+
+    untouched = rig.model.diffusion_model.blk2.weight
+    norm = rig.model.diffusion_model.norm.weight
+    stored = SimpleNamespace(unbake=record, slab=rig.ws,
+                             base_patcher=SimpleNamespace(model=rig.model))
+    for strengths in (dict.fromkeys(keys, 0.5),
+                      {"diffusion_model.blk0.weight": 0.25}):
+        active = SimpleNamespace(model=rig.model, patches={k: ["delta"] for k in strengths})
+        flushed = len(rig.flushes)
+        stored.unbake = store_bake.lazy_swap(_SwapStore(strengths), stored, active, "m.safetensors")
+        assert stored.unbake is not None
+        _slab_holds_one_copy(rig, strengths)
+        assert rig.model.diffusion_model.blk2.weight is untouched
+        assert rig.model.diffusion_model.norm.weight is norm
+        assert len(rig.flushes) == flushed + 1
+
+
+class _PaddingStore(_SwapStore):
+    """A bake whose payload for one key does not fit the key's region (storage padded on requantize)."""
+
+    padded = "diffusion_model.blk0.weight"
+
+    def _bake_key(self, active, key):
+        super()._bake_key(active, key)
+        if key == self.padded:
+            module = active.model.diffusion_model.blk0
+            live = module.weight
+            qdata = torch.cat([live._qdata, torch.zeros(1, 32, dtype=live._qdata.dtype)])
+            module.weight = nn.Parameter(_SwapQT(qdata, live._layout_cls, live._params), requires_grad=False)
+
+
+def test_a_payload_that_cannot_fit_its_region_stays_one_counted_copy_across_swaps(slab_swap_rig):
+    """The bounded exception to one copy: a baked payload larger than its region.
+
+    It stays in cudaMalloc beside its idle region while the key stays in the
+    stack, counted in stray_bytes. Each swap frees the earlier copy, so the
+    figure holds at one copy of that key, and when the key leaves the stack its
+    pristine payload goes back to its region.
+    """
+    import weakref
+
+    from dgx_monarch.actor import store_bake
+    from dgx_monarch.actor.unbake import capture_unbake_record
+
+    rig = slab_swap_rig
+    key = _PaddingStore.padded
+    stored = SimpleNamespace(unbake=capture_unbake_record(rig.model, [key], rig.path), slab=rig.ws,
+                             base_patcher=SimpleNamespace(model=rig.model))
+    _PaddingStore({key: 1.0})._bake_key(SimpleNamespace(model=rig.model), key)
+    rig.ws.reabsorb(rig.model.diffusion_model)            # the fresh load's pass
+    one_copy = 17 * 32                                    # the padded payload, one byte an element
+    assert rig.ws.stray_bytes == one_copy
+    earlier = weakref.ref(rig.model.diffusion_model.blk0.weight._qdata)
+    for strength in (0.5, 0.25):
+        active = SimpleNamespace(model=rig.model, patches={key: ["delta"]})
+        stored.unbake = store_bake.lazy_swap(_PaddingStore({key: strength}), stored, active, "m.safetensors")
+        assert rig.ws.stray_bytes == one_copy
+        assert earlier() is None                          # the swap freed the earlier copy
+        earlier = weakref.ref(rig.model.diffusion_model.blk0.weight._qdata)
+        assert not rig.ws.contains(earlier().data_ptr())
+    other = "diffusion_model.blk1.weight"
+    active = SimpleNamespace(model=rig.model, patches={other: ["delta"]})
+    stored.unbake = store_bake.lazy_swap(_PaddingStore({other: 0.5}), stored, active, "m.safetensors")
+    assert rig.ws.stray_bytes == 0
+    assert rig.ws.region_by_ptr(rig.model.diffusion_model.blk0.weight._qdata.data_ptr()) is rig.ws.regions[
+        "blk0.weight"]
+    assert _to_bytes(rig.model.diffusion_model.blk0.weight._qdata) == _to_bytes(rig.tensors["blk0.weight"])
+
+
+def test_a_swap_that_would_leave_an_unpriced_copy_loads_fresh_instead(slab_swap_rig, monkeypatch):
+    """A newly patched key whose baked payload no region can take back stops the swap before any write.
+
+    The layout's storage shape (padded on NVFP4 and MXFP8) is larger than the
+    region the file gave the key, so the bake would leave a second copy that
+    nothing priced. The transition returns no result, so the store loads fresh
+    and the load's walls price the bake; the resident is untouched. A stack
+    whose keys fit swaps as before.
+    """
+    import logging
+
+    from dgx_monarch.actor import store_bake
+    from dgx_monarch.actor.unbake import capture_unbake_record
+
+    rig = slab_swap_rig
+    dm = rig.model.diffusion_model
+    stored = SimpleNamespace(unbake=capture_unbake_record(rig.model, [], rig.path), slab=rig.ws,
+                             base_patcher=SimpleNamespace(model=rig.model), quant_kind="fp8")
+    swaps = []
+    store = SimpleNamespace(
+        _stored=lambda slot: stored, _drop_failed=set(),
+        _build_active=lambda base, stack: SimpleNamespace(
+            model=rig.model, patches={f"diffusion_model.{e['name']}.weight": ["delta"] for e in stack}),
+        _lazy_swap=lambda *args: swaps.append(args) or None)
+    before = {name: getattr(dm, name).weight for name in ("blk0", "blk1", "blk2")}
+
+    def transition(names):
+        return store_bake.lazy_swap_transition(
+            store, "cond", "m.safetensors", [{"name": name, "strength": 1.0} for name in names],
+            ("m.safetensors", ()), {}, request_artifact_identity=lambda *a: {},
+            logger=logging.getLogger("test"))
+
+    monkeypatch.setattr(_SwapLayout, "get_storage_shape",
+                        staticmethod(lambda shape: (shape[0] + 16, shape[1])), raising=False)
+    assert transition(["blk0"]) is None
+    assert swaps == [] and store._drop_failed == set()
+    assert all(getattr(dm, name).weight is weight for name, weight in before.items())
+    monkeypatch.setattr(_SwapLayout, "get_storage_shape", staticmethod(lambda shape: tuple(shape)))
+    transition(["blk0"])
+    assert len(swaps) == 1                                # it fits: the lazy swap runs
+
+
+def test_a_key_that_strayed_at_the_fresh_load_does_not_send_the_next_change_to_a_reload(
+        slab_swap_rig, monkeypatch):
+    """The reload route runs once, not at every later change.
+
+    A newly patched key that cannot fit its region sends the swap to a fresh
+    load; that load's bake leaves the key as a counted stray, which the load
+    priced. The next strength change must then take the lazy swap: a key that
+    already strays is not new, and each swap replaces its copy with one of the
+    same size. Without that exception every later change would reload from disk.
+    """
+    from dgx_monarch.actor import store_bake
+
+    rig = slab_swap_rig
+    key = _PaddingStore.padded
+    monkeypatch.setattr(_SwapLayout, "get_storage_shape",
+                        staticmethod(lambda shape: (shape[0] + 1, shape[1])), raising=False)
+    stored = SimpleNamespace(slab=rig.ws, base_patcher=SimpleNamespace(model=rig.model))
+    active = SimpleNamespace(model=rig.model, patches={key: ["delta"]})
+    assert store_bake.slab_misfits(stored, active) == [key]      # this change reloads
+    # The fresh load that follows: ComfyUI's bake pads the payload, then the slab's pass.
+    _PaddingStore({key: 1.0})._bake_key(SimpleNamespace(model=rig.model), key)
+    rig.ws.reabsorb(rig.model.diffusion_model)
+    assert rig.ws.strays(key[len("diffusion_model."):])
+    assert store_bake.slab_misfits(stored, active) == []         # the next change stays lazy
+
+
+def test_the_fresh_load_pass_leaves_a_weight_already_in_the_slab_alone(slab_swap_rig):
+    """A quantized weight whose payload is in the slab is neither copied nor counted as moved.
+
+    The fresh load's pass meets every quantized Parameter, most of them never
+    baked. Copying such a payload onto itself costs a pass over the model and
+    replaces the Parameter for nothing.
+    """
+    rig = slab_swap_rig
+    before = {name: getattr(rig.model.diffusion_model, name).weight for name in ("blk0", "blk1", "blk2")}
+    stats = rig.ws.reabsorb(rig.model.diffusion_model)
+    assert stats["quant_reabsorbed_gib"] == 0.0 and rig.ws.stray_bytes == 0
+    for name, weight in before.items():
+        assert getattr(rig.model.diffusion_model, name).weight is weight
+
+
+def test_a_quantized_weight_that_fails_to_move_is_still_counted(slab_swap_rig, monkeypatch):
+    """A payload the pass could not move stays in cudaMalloc, and the stray figure says so."""
+    rig = slab_swap_rig
+    _swap_bake(rig.model, "diffusion_model.blk0.weight", 1.0)
+    weight = rig.model.diffusion_model.blk0.weight
+    nbytes = weight._qdata.numel() * weight._qdata.element_size() + weight._params.scale.element_size()
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("copy failed")
+
+    monkeypatch.setattr(slab_module, "_wrap_u8", refuse)
+    rig.ws.reabsorb(rig.model.diffusion_model)
+    assert rig.ws.stray_bytes == nbytes
+    assert rig.model.diffusion_model.blk0.weight is weight
+
 def test_close_retains_live_export_until_retry(ckpt):
     path, _ = ckpt
     ws = WeightSlab(path)
@@ -1174,8 +1607,10 @@ def test_a_reserve_the_absolute_floor_outranks_is_still_named(monkeypatch):
     assert fit.floor_bytes == capacity_fit.ABSOLUTE_HOST_FLOOR_BYTES
     text = store_slab_admit.card(fit, "small.safetensors",
                                  reserve_bytes=10 * gib)
-    assert "plus a 5.0 GiB floor for the rest of the box, above the 10.0 GiB" in text
-    assert "which the arena cap clipped" in text
+    # The floor is the smaller figure here, so the card never calls it "above" the reserve.
+    assert ("plus a 5.0 GiB floor for the rest of the box, charged because the arena cap "
+            "clipped the 10.0 GiB this host reserves (uma_reserve_gb) under it") in text
+    assert "above the 10.0 GiB" not in text
     # A host with no reserve set says nothing about one.
     plain = _price_against(monkeypatch, 4 * gib, 6 * gib)
     assert "uma_reserve_gb" not in store_slab_admit.card(
