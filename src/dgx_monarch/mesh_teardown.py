@@ -5,70 +5,39 @@ import time
 from contextlib import nullcontext
 from typing import Any
 
-from . import mesh_safety
+from . import driver_exit, mesh_safety, reconcile_running
 from .error_utils import failure_summary, safe_note
 from .log import get_logger
 from .mesh_runtime import mesh_creation_timeout_s
+from .mesh_setup_state import LifecycleBusyError, SampleResultBusyError
+from .mesh_stop import ACTOR_STOP_S as ACTOR_STOP_S  # re-exported for the teardown callers
+from .mesh_stop import PROC_STOP_DEFAULT_S as PROC_STOP_DEFAULT_S
+from .mesh_stop import RECONCILE_GROUP_S, proc_stop_bound_s, stop_with_reason
+from .mesh_stop import reconcile_join_s as reconcile_join_s
+from .mesh_stop import shutdown_envelope_s as shutdown_envelope_s
+from .mesh_stop import shutdown_phases as shutdown_phases
+from .reconcile_running import caller_waits as caller_waits
+from .reconcile_running import cleanup_running as cleanup_running  # re-exported for the refusals' callers
+from .reconcile_running import cleanup_running_sentence as cleanup_running_sentence
+from .reconcile_running import unresolved_refusal as unresolved_refusal
+from .stop_causes import TAG_CREATION_CLEANUP_UNCONFIRMED as TAG_CREATION_CLEANUP_UNCONFIRMED  # re-exported causes
+from .stop_causes import TAG_NO_STOP_ISSUED as TAG_NO_STOP_ISSUED
+from .stop_causes import TAG_SETUP_ROLLBACK_INTERRUPTED as TAG_SETUP_ROLLBACK_INTERRUPTED
+from .stop_causes import TAG_STOP_INTERRUPTED as TAG_STOP_INTERRUPTED
+from .stop_causes import TAG_STOP_REPORTED_FAILURE as TAG_STOP_REPORTED_FAILURE
+from .stop_causes import TAG_STOP_TIMEOUT_AFTER_DEATH as TAG_STOP_TIMEOUT_AFTER_DEATH
+from .stop_causes import TAG_STOP_TIMEOUT_DELIBERATE as TAG_STOP_TIMEOUT_DELIBERATE
+from .stop_causes import block_cause as block_cause
+from .stop_causes import label_for_cause as label_for_cause
+from .stop_causes import latch_no_stop_locked
+from .stop_causes import sentence_for_cause as sentence_for_cause
 
 log = get_logger("dgx_monarch.mesh")
-
-# Blocked-handle causes select distinct remedies. ``block_cause`` reads the
-# dynamic attribute with a None default, which grants no recovery authority.
-TAG_NO_STOP_ISSUED = "no_stop_issued"
-TAG_STOP_REPORTED_FAILURE = "stop_reported_failure"
-TAG_STOP_TIMEOUT_AFTER_DEATH = "stop_timeout_after_death"
-TAG_STOP_TIMEOUT_DELIBERATE = "stop_timeout_deliberate"
-TAG_SETUP_ROLLBACK_INTERRUPTED = "setup_rollback_interrupted"
-TAG_STOP_INTERRUPTED = "stop_interrupted"
-TAG_CREATION_CLEANUP_UNCONFIRMED = "creation_cleanup_unconfirmed"
 
 # A liveness proof older than this is not a proof. The retire re-reads it under
 # the handle lock, so a gone recorded while a live lease blocked the release can
 # never authorize one minutes later.
 EVIDENCE_MAX_AGE_S = 30.0
-
-_CONFIRM_GONE = "restart ComfyUI after confirming the worker processes are gone"
-
-# One sentence per cause, each naming the action that clears that cause. Only
-# the after-death timeout promises a self-heal: it is the one cause a liveness
-# proof can release (``retire_after_liveness_proof``).
-_BLOCK_CAUSE_SENTENCES: dict[str | None, str] = {
-    None: ("Reset the Attached mesh; restart ComfyUI only after confirming the "
-           "worker processes are gone."),
-    TAG_NO_STOP_ISSUED: (
-        "No stop was issued, so the fleet can still be stopped: reset the "
-        "Attached mesh."),
-    TAG_STOP_REPORTED_FAILURE: (
-        "The stop reported a failure: reset the Attached mesh, and restart "
-        "ComfyUI if that reset cannot confirm the stop."),
-    TAG_STOP_TIMEOUT_AFTER_DEATH: (
-        "The driver checks the worker processes on the next attach; it "
-        "replaces the fleet by itself if they are gone."),
-    TAG_STOP_TIMEOUT_DELIBERATE: (
-        f"A stop timed out with no worker death reported, so no second stop "
-        f"will be issued: {_CONFIRM_GONE}."),
-    TAG_SETUP_ROLLBACK_INTERRUPTED: (
-        f"The setup rollback stop was interrupted: {_CONFIRM_GONE}."),
-    TAG_STOP_INTERRUPTED: (
-        f"The stop was interrupted before it reported an outcome: "
-        f"{_CONFIRM_GONE}."),
-    TAG_CREATION_CLEANUP_UNCONFIRMED: (
-        f"Cleanup of the processes the failed bring-up spawned is unconfirmed: "
-        f"{_CONFIRM_GONE}."),
-}
-
-# The same causes as a short phrase, for a panel row that names the cause and
-# leaves the action to the remedy beside it.
-_BLOCK_CAUSE_LABELS: dict[str | None, str] = {
-    None: "",
-    TAG_NO_STOP_ISSUED: "no stop was issued",
-    TAG_STOP_REPORTED_FAILURE: "the stop reported a failure",
-    TAG_STOP_TIMEOUT_AFTER_DEATH: "the stop timed out after a worker death",
-    TAG_STOP_TIMEOUT_DELIBERATE: "the stop timed out with no worker death reported",
-    TAG_SETUP_ROLLBACK_INTERRUPTED: "the setup rollback stop was interrupted",
-    TAG_STOP_INTERRUPTED: "the stop was interrupted",
-    TAG_CREATION_CLEANUP_UNCONFIRMED: "cleanup of the new processes is unconfirmed",
-}
 
 GET_MESH_DOOR = "get_mesh"
 ENSURE_LIVE_DOOR = "ensure_live"
@@ -78,9 +47,10 @@ _LIVENESS_RELEASE_NOTE = (
     "worker processes were gone)")
 # The instant of the last release, or None. The next creation block consumes
 # it: that bring-up is the one the release authorized, and its poison text is
-# where the operator needs to see it. Time bounded as well as one shot, because
-# the ordinary path is a release whose replacement then succeeds and consumes
-# nothing, and an unrelated failure hours later must not claim the release.
+# where the operator needs to see it. The replacement's attach clears it when
+# it succeeds (mesh_attach._attach_and_retry), so a later attach keeps its
+# retry and a later, unrelated failure carries no release note. Time bounded as
+# well, for a release whose replacement never reaches an attach.
 _RELEASED_PREDECESSOR: float | None = None
 # The released fleet's host addresses; the attach fail-fast applies only to them.
 _RELEASED_ADDRESSES: frozenset[str] | None = None
@@ -96,33 +66,20 @@ def _release_note_window_s() -> float:
     return mesh_creation_timeout_s()
 
 
-def sentence_for_cause(tag: str | None) -> str:
-    """Return the recovery action for this cause, for CLI, panel, and log callers."""
-    return _BLOCK_CAUSE_SENTENCES.get(tag, _BLOCK_CAUSE_SENTENCES[None])
-
-
-def label_for_cause(tag: str | None) -> str:
-    """This cause as a short phrase, or empty when the cause is unrecorded."""
-    return _BLOCK_CAUSE_LABELS.get(tag, "")
-
-
-def block_cause(handle: Any) -> str | None:
-    """The recorded cause for a blocked handle, or None when it carries none."""
-    tag = getattr(handle, "_block_cause", None)
-    return tag if tag in _BLOCK_CAUSE_SENTENCES and tag is not None else None
-
-
 def block_cause_sentence(handle: Any) -> str:
     return sentence_for_cause(block_cause(handle))
 
 
 def blocked_refusal(handle: Any, door: str) -> str:
     """Format a lifecycle refusal with the recovery action for its cause."""
+    if cleanup_running(handle):
+        return f"the cached mesh cannot be used yet: {cleanup_running_sentence()}"
     sentence = block_cause_sentence(handle)
     if door == GET_MESH_DOOR:
         blocked = getattr(handle, "replacement_blocked", None)
-        return ("the previous worker fleet could not be stopped safely; "
-                f"replacement is blocked ({blocked}). {sentence}")
+        head = ("has not been stopped yet" if block_cause(handle) == TAG_NO_STOP_ISSUED
+                else "could not be stopped safely")
+        return f"the previous worker fleet {head}; replacement is blocked ({blocked}). {sentence}"
     return ("the cached mesh cannot be used or replaced: group cleanup is "
             "dirty, a prior proc stop failed, or a teardown outcome was lost "
             f"or is unknown. {sentence}")
@@ -135,14 +92,23 @@ def note_liveness_release(now: float | None = None, addresses: Any = None) -> No
     _RELEASED_ADDRESSES = None if addresses is None else frozenset(addresses)
 
 
+def clear_liveness_release(addresses: Any) -> None:
+    """Disarm the note once the attach it authorized for ``addresses`` succeeded."""
+    global _RELEASED_PREDECESSOR, _RELEASED_ADDRESSES
+    if _RELEASED_ADDRESSES is None or frozenset(addresses) == _RELEASED_ADDRESSES:
+        _RELEASED_PREDECESSOR = None
+        _RELEASED_ADDRESSES = None
+
+
 def released_predecessor_recently(now: float | None = None, addresses: Any = None) -> bool:
     """Check whether fresh liveness evidence released the predecessor fleet.
 
     This read does not consume the note; ``publish_creation_block`` does that
-    when recording the replacement failure. The attach path uses it to give
+    when recording the replacement failure, and ``clear_liveness_release`` when
+    the replacement attached. The attach path uses it to give
     the replacement one attempt unless a loop moved to a new id during it: a
-    second dial with the same ids cannot win, and after an outage longer than
-    the delivery timeout the fallback is a ComfyUI restart
+    second dial with the same ids cannot win, and the fallback is a ComfyUI
+    restart
     (``mesh_attach._attach_and_retry``, docs/TROUBLESHOOTING.md #2). Other
     attach failures retain a second attempt.
     """
@@ -157,20 +123,26 @@ def released_predecessor_recently(now: float | None = None, addresses: Any = Non
     return 0.0 <= current - stamp <= _release_note_window_s()
 
 
-def publish_creation_block(handle: Any, blocked_text: str) -> None:
-    """Poison a handle whose bring-up failed with owned processes left over."""
+def publish_creation_block(handle: Any, blocked_text: str) -> str:
+    """Poison a handle whose bring-up failed with owned processes left over.
+
+    Return the text with the release note when a liveness release authorized
+    this bring-up, for the transport poison too: every later attach prints the
+    poison, with or without a handle to carry the block.
+    """
     global _RELEASED_PREDECESSOR
-    if handle is None or getattr(handle, "teardown_complete", False):
-        return
     stamp = _RELEASED_PREDECESSOR
     released = (getattr(handle, "_liveness_released_predecessor", False)
                 or (stamp is not None
                     and time.monotonic() - stamp <= _release_note_window_s()))
     _RELEASED_PREDECESSOR = None
+    text = f"{blocked_text}{_LIVENESS_RELEASE_NOTE}" if released else blocked_text
+    if handle is None or getattr(handle, "teardown_complete", False):
+        return text
     handle._replacement_retryable = False
-    handle.replacement_blocked = (
-        f"{blocked_text}{_LIVENESS_RELEASE_NOTE}" if released else blocked_text)
+    handle.replacement_blocked = text
     handle._block_cause = TAG_CREATION_CLEANUP_UNCONFIRMED
+    return text
 
 
 def prepare_stop_attempt(handle: Any, action: str) -> bool:
@@ -255,6 +227,15 @@ def publish_setup_rollback_outcome(
     if confirmed:
         publish_stop_outcome(handle, True, attempted, "")
         return
+    if attempted and isinstance(stop_error, Exception):
+        # The stop ran and answered, so its own cause decides the remedy, as for
+        # every other stop: a timeout after a Worker died heals by itself once
+        # the driver proves the processes gone, and a reported failure retries.
+        verb = "timed out" if isinstance(stop_error, TimeoutError) else "failed"
+        publish_stop_failure(
+            handle, f"failed setup rollback proc stop {verb} ({failure_summary(stop_error)}); "
+            "process state unknown", stop_error)
+        return
     suffix = type(stop_error).__name__ if stop_error is not None else "interrupted"
     phase = "during" if attempted else "before"
     publish_stop_failure(
@@ -278,8 +259,7 @@ def stop_failed_setup_procs(handle: Any, run_off_loop: Any) -> BaseException | N
             mesh_safety.begin_deliberate_teardown(id(handle))
             attempted = True
             enter_stop_boundary(handle, retrying)
-            handle.procs.stop(
-                "dgx-monarch failed setup rollback").get(timeout=60)
+            stop_with_reason(handle, "dgx-monarch failed setup rollback", proc_stop_bound_s())
             confirmed = True
         except BaseException as exc:
             stop_error = exc
@@ -302,7 +282,7 @@ def stop_failed_setup_procs(handle: Any, run_off_loop: Any) -> BaseException | N
         return stop_error
 
     try:
-        return run_off_loop(stop_once, 90, "dgxm-setup-rollback")
+        return run_off_loop(stop_once, proc_stop_bound_s() + ACTOR_STOP_S + 30, "dgxm-setup-rollback")
     except TimeoutError as exc:
         # The scratch owner still publishes the eventual outcome.
         return exc
@@ -329,6 +309,7 @@ def retire_retryable_reconcile(handle: Any) -> None:
 
 
 def reconcile_thread_main(handle: Any, exc: BaseException, token: object) -> None:
+    reconcile_running.note_started(handle)  # bounds how long a refusal says the stop is running
     try:
         reconcile_stop(handle, exc, token)
     except BaseException as reconcile_exc:
@@ -347,17 +328,65 @@ def reconcile_thread_main(handle: Any, exc: BaseException, token: object) -> Non
 def latch_reconcile_launch_failure(handle: Any, detail: str) -> None:
     lock = getattr(handle, "lock", None)
     with lock if lock is not None else nullcontext():
-        if not getattr(handle, "teardown_complete", False):
-            # No ProcMesh stop was issued; the still-owned resource may be tried.
-            handle._replacement_retryable = True
-            handle.replacement_blocked = detail
-            handle._block_cause = TAG_NO_STOP_ISSUED
+        latch_no_stop_locked(handle, detail)
+
+
+def _nothing_published(handle: Any) -> bool:
+    """No outcome, no block and no stop in flight. Waits for the handle lock, without a bound."""
+    lock = getattr(handle, "lock", None)
+    with lock if lock is not None else nullcontext():
+        return (not getattr(handle, "teardown_complete", False)
+                and not getattr(handle, "replacement_blocked", None)
+                and not mesh_safety.token_present(id(handle)))
+
+
+def _settle_refused_reconcile(handle: Any, shut_exc: BaseException) -> str | None:
+    """Publish what a reconcile shutdown that raised leaves behind; how it ended, or None.
+
+    Read under the handle lock. A shutdown refused before its stop (a busy
+    lock, a rooted read job, a live lease) leaves no block and no token: no stop
+    was issued, so the fleet can still be stopped, and a Reset may stop it. A
+    token with no block is a stop still in flight, which publishes its own
+    outcome. A block is the outcome of a stop: this shutdown's, whose error
+    text then becomes the evidence, or another's, which a refusal leaves alone.
+    """
+    lock = getattr(handle, "lock", None)
+    with lock if lock is not None else nullcontext():
+        if getattr(handle, "teardown_complete", False):
+            return None
+        if getattr(handle, "replacement_blocked", None):
+            if not isinstance(shut_exc, LifecycleBusyError):
+                handle.replacement_blocked = failure_summary(shut_exc)
+            return "teardown failed and replacement remains blocked"
+        if mesh_safety.token_present(id(handle)):
+            return "in_flight"
+        latch_no_stop_locked(handle, failure_summary(shut_exc))
+        return "the cleanup was refused before it sent a stop"
 
 
 def reconcile_stop(handle: Any, exc: BaseException, token: object) -> None:
-    """Best-effort bounded stop outside the failing caller."""
+    """Best-effort bounded stop outside the failing caller.
+
+    A transition that holds the lifecycle lock past the shutdown's lock wait
+    (a setup rollback, a policy apply) is waited out; if it published nothing,
+    this cleanup still owns the stop and sends it then.
+    """
+    def stop_fleet() -> None:
+        handle.shutdown(timeout_s=RECONCILE_GROUP_S, stop_timeout_s=proc_stop_bound_s(),
+                        _reconcile_token=token)
+
     try:
-        handle.shutdown(timeout_s=30, _reconcile_token=token)
+        try:
+            stop_fleet()
+        except LifecycleBusyError as busy:
+            if ((isinstance(busy, SampleResultBusyError) and not reconcile_running.reads_drained(handle))
+                    or not _nothing_published(handle)
+                    or driver_exit.exiting()):  # read after the wait: an exit sends nothing
+                raise
+            log.info("the defunct mesh's cleanup waited for another lifecycle transition "
+                     "to end; it stops the fleet now")
+            reconcile_running.note_started(handle)  # the refusals' figure counts from this stop
+            stop_fleet()
     except mesh_safety.PriorTeardownUnknownError as shut_exc:
         # Fault evidence does not prove that an outcome-less stop failed.
         safe_note(exc, "supervision cleanup found a prior stop with no known outcome", shut_exc)
@@ -365,13 +394,13 @@ def reconcile_stop(handle: Any, exc: BaseException, token: object) -> None:
                   "no second stop was issued")
         return
     except BaseException as shut_exc:  # never mask the original failure
-        lock = getattr(handle, "lock", None)
-        with lock if lock is not None else nullcontext():
-            if getattr(handle, "teardown_complete", False):
-                return
-            # The cause the stop itself published stands: this text replaces the
-            # evidence, not the reason the handle is blocked.
-            handle.replacement_blocked = failure_summary(shut_exc)
+        ended = _settle_refused_reconcile(handle, shut_exc)
+        if ended is None:
+            return
+        if ended == "in_flight":
+            log.error("the defunct mesh's cleanup was refused (%r) while another stop of it "
+                      "is in flight; that stop publishes the outcome", shut_exc)
+            return
         log.error("the defunct mesh did not shut down; replacement is blocked: %r", shut_exc)
     else:
         lock = getattr(handle, "lock", None)
@@ -381,9 +410,8 @@ def reconcile_stop(handle: Any, exc: BaseException, token: object) -> None:
             handle._replacement_retryable = False
             handle._block_cause = None
         return
-    log.error(
-        "worker fleet failure (%s): teardown failed and replacement remains blocked; "
-        "restart ComfyUI after confirming the worker processes are gone", failure_summary(exc))
+    log.error("worker fleet failure (%s): %s. %s",
+              failure_summary(exc), ended, block_cause_sentence(handle))
 
 
 def _lease_total(handle: Any, attribute: str) -> int:

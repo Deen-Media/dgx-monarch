@@ -25,6 +25,7 @@ from .lens import LensAdapter
 from .ltx import LTXAdapter
 from .mage_flow import MageFlowAdapter
 from .minimax_h3 import MiniMaxH3Adapter
+from .minimax_h3_image import MiniMaxH3ImageAdapter
 from .moss_image import MOSSImageAdapter
 from .omnigen2 import Omnigen2Adapter
 from .pixeldit import Ideogram4Adapter
@@ -61,7 +62,8 @@ ADAPTERS: tuple[Adapter, ...] = (
     ZImageAdapter(),
     LTXAdapter(),
     # MiniMaxH3's matches() raises on any MiniMaxH3 subclass, so an adapter for
-    # one must be registered before this entry.
+    # one must be registered before this entry: MiniMaxH3Image is one.
+    MiniMaxH3ImageAdapter(),
     MiniMaxH3Adapter(),
     # Boogu subclasses Omnigen2, whose exact-type matches() raises on a Boogu
     # instance. The Wan variants subclass WAN21 and precede WanAdapter; SCAIL2
@@ -105,7 +107,7 @@ def get_adapter(base_model) -> Adapter:
         f"model class {type(base_model).__name__} has no dgx-monarch adapter. "
         f"Supported families: krea2, mage_flow, qwen_image21, qwen_image, lens, chroma, flux, "
         f"flux2, longcat, hunyuan, zimage, ideogram4, pixeldit_comfy, ltx, flux3, moss_image, "
-        f"minimax_h3, "
+        f"minimax_h3, minimax_h3_image, "
         f"boogu, omnigen2, wan_scail, wan_animate2, wan_dancer, wan, ernie, cogvideo, "
         f"kandinsky5, anima "
         "(docs/MODELS.md)."
@@ -135,15 +137,45 @@ def _ancestry_owner(base_model) -> Adapter | None:
     return None
 
 
-def _forced_adapter(base_model, family: str) -> Adapter:
-    """Bind `family`'s adapter to `base_model` by Comfy-class ancestry.
+FORCED_FAMILY_TROUBLESHOOTING = 154
 
-    It never calls ``matches()``: the exact-type adapters raise there on a
-    subclass (see the Omnigen2/Boogu and MiniMaxH3 notes on ADAPTERS), and an
-    override is meant to admit a derivative subclass such as a finetune. The
-    adapter re-expresses the forward of the module tree Comfy built, so binding
-    is safe only when that tree is an instance of a class this family owns and
-    no more specific family owns it.
+
+def _nearest_comfy_class(base_model, model_base) -> type | None:
+    """The first class in the model's ancestry that ComfyUI itself defines.
+
+    For a model ComfyUI built that is its own class. For a derivative (a
+    finetune's or a custom node's subclass, which ``comfy.model_base`` does not
+    hold) it is the upstream class the derivative extends.
+    """
+    defined = {value for value in vars(model_base).values() if isinstance(value, type)}
+    return next((cls for cls in type(base_model).__mro__ if cls in defined), None)
+
+
+def _seen_as(base_model, cls):
+    """``base_model`` itself when ``cls`` is its type, else a bare ``cls``
+    instance sharing its attributes, so an adapter's exact-type and instance
+    tests (Z-Image reads the diffusion model) answer for the upstream class."""
+    if type(base_model) is cls:
+        return base_model
+    view = object.__new__(cls)
+    attributes = getattr(base_model, "__dict__", None)
+    if attributes is not None:
+        object.__setattr__(view, "__dict__", attributes)
+    return view
+
+
+def _forced_adapter(base_model, family: str) -> Adapter:
+    """Bind `family`'s adapter to `base_model`, or refuse class P.
+
+    The adapter re-expresses the forward of the module tree Comfy built, so a
+    forced family binds only where that is still true: the tree is an instance
+    of a class this family owns, no more specific family owns it, and the
+    owner's own ``matches()`` takes the model's nearest ComfyUI class. Forcing
+    therefore admits what ``auto`` admits plus a derivative of a vetted class
+    (the override's purpose: detection's exact-type adapters raise on the
+    derivative itself). It does not admit another upstream model: a subclass
+    ComfyUI defines and the adapter refuses under ``auto``, such as a Wan
+    variant with its own diffusion model, refuses here too.
 
     Registry order resolves a family named by more than one adapter, so
     ``wan_scail`` keeps SCAIL2 ahead of SCAIL as detection does.
@@ -181,6 +213,31 @@ def _forced_adapter(base_model, family: str) -> Adapter:
             "the wrong math. Use "
             f"{owner.family!r}, or set family_adapter back to 'auto' so "
             "detection chooses (docs/MODELS.md).",
+        ))
+    import comfy.model_base as model_base
+
+    upstream = _nearest_comfy_class(base_model, model_base)
+    own_answer = ""
+    try:
+        vetted = upstream is not None and owner.matches(_seen_as(base_model, upstream))
+    except UnsupportedModelError as exc:
+        vetted, own_answer = False, f" The adapter's own answer: {str(exc)[:600]}"
+    if not vetted:
+        built = type(base_model).__name__
+        named = getattr(upstream, "__name__", built)
+        if named != built:
+            built = f"{built}, a derivative of {named}"
+        raise UnsupportedModelError(refusal(
+            RefusalClass.PHYSICS,
+            f"family_adapter={family!r} does not fit this checkpoint. ComfyUI built a "
+            f"{built}, and "
+            f"the {family} adapter does not take this {named} model under 'auto' either: "
+            "it is another upstream model, with a forward this adapter does not "
+            "re-express. The override admits a derivative of a class the adapter has "
+            "vetted, such as a finetune's own class, not another model; binding it here "
+            f"could render wrong with no error.{own_answer} Render this checkpoint in "
+            "plain ComfyUI without the DGX Monarch nodes instead (docs/MODELS.md).",
+            troubleshooting=FORCED_FAMILY_TROUBLESHOOTING,
         ))
     return owner
 

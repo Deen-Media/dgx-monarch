@@ -30,6 +30,7 @@ from dgx_monarch import (
     mesh_lease,
     mesh_runtime,
     mesh_safety,
+    mesh_stop,
     mesh_teardown,
 )
 from dgx_monarch.adapters.base import UnsupportedModelError
@@ -102,6 +103,8 @@ def test_reconcile_thread_launch_retries_one_shot_start_failure(monkeypatch):
 
     def flaky_thread(*args, **kwargs):
         thread = real_thread(*args, **kwargs)
+        if kwargs.get("name") != "dgxm-reconcile-stop":
+            return thread  # e.g. the proc stop's own wait thread
         actual_start = thread.start
 
         def start():
@@ -150,8 +153,9 @@ def test_supervision_publication_repairs_token_before_defunct_interruption():
     handle._supervision_reconcile_token = None
     handle.interrupt_defunct = True
 
-    def shutdown(*, timeout_s, _reconcile_token):
-        assert timeout_s == 30
+    def shutdown(*, timeout_s, stop_timeout_s, _reconcile_token):
+        # The group teardown keeps its 30 s; the proc stop can follow a host's death.
+        assert (timeout_s, stop_timeout_s) == (mesh_stop.RECONCILE_GROUP_S, mesh_stop.proc_stop_bound_s())
         assert _reconcile_token is handle._supervision_reconcile_token
         handle.teardown_complete = True
 
@@ -440,6 +444,24 @@ def test_local_post_transport_failure_still_poisons(transport_state, monkeypatch
         mesh_mod.get_mesh(mode="local", gpus_per_host=1)
     assert mesh_mod._TRANSPORT_POISON is not None       # native state touched
     assert mesh_mod._TRANSPORT_MODE == "local"          # claim stays committed
+    with pytest.raises(MeshAttachError, match="not reusable"):
+        mesh_mod.get_mesh(mode="local", gpus_per_host=1)
+
+
+def test_a_local_failure_after_transport_init_poisons_even_with_its_rollback_confirmed(
+        transport_state, monkeypatch):
+    """Only a cluster rollback Monarch confirmed lifts without a restart (TROUBLESHOOTING entry 69)."""
+    _attach_fakes(monkeypatch)
+
+    def spawn(config, use_cluster, gph, attach, bootstrap, handoff):
+        handoff.failure_latched = True
+        raise WorkerSpawnError(RuntimeError("actor spawn exploded"), None,
+                               local_transport_initialized=True, rollback_confirmed=True)
+
+    monkeypatch.setattr(mesh_mod, "spawn_worker_fleet", spawn)
+    with pytest.raises(MeshAttachError, match="rolled back"):
+        mesh_mod.get_mesh(mode="local", gpus_per_host=1)
+    assert mesh_mod._TRANSPORT_POISON.startswith("actor spawn failed: actor spawn exploded")
     with pytest.raises(MeshAttachError, match="not reusable"):
         mesh_mod.get_mesh(mode="local", gpus_per_host=1)
 
@@ -792,11 +814,13 @@ def test_cluster_native_baseexception_preserves_identity_without_extra_work(
                         lambda **_k: False)
     # Each loop's id reading, which the attach dials; no ssh runs.
     from dgx_monarch.cli import listener_generation
+    from dgx_monarch.monarch_capabilities import loaded_version
 
     monkeypatch.setattr(
         listener_generation, "fleet",
         lambda config, **_kwargs: {host.address: {"gen": "aaaaaaaaaaaa",
-                                                  "proc_id": "aaaaaaaaaaaa0001"}
+                                                  "proc_id": "aaaaaaaaaaaa0001",
+                                                  "monarch": loaded_version()}
                                    for host in config.hosts})
 
     class NativeAbort(BaseException):
@@ -1058,7 +1082,7 @@ def test_partial_bring_up_rollback_stop_runs_off_the_loop():
     assert error.original is spawn_failure
     assert error.cleanup is None           # the rollback stop completed
     assert procs.reasons == ["dgx-monarch partial bring-up rollback"]
-    assert stop_future.timeouts == [60]
+    assert stop_future.timeouts == [mesh_stop.cleanup_stop_s()]
     assert stop_future.thread_names == ["dgxm-bringup-rollback"]
 
 
@@ -1075,18 +1099,22 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "reached only through _await_or_evict, already off-loop",
     ("mesh_runtime.py", "get_off_loop"):
         "the seam itself: this get IS the scratch-thread body",
-    ("mesh_teardown.py", "stop_failed_setup_procs.stop_once"):
-        "inside the dgxm-setup-rollback scratch thread",
+    ("mesh_stop.py", "stop_with_reason"):
+        "called only inside the dgxm-recycle, dgxm-shutdown and dgxm-setup-rollback scratch threads",
+    ("mesh_stop.py", "stop_procs.wait"):
+        "the dgxm-proc-stop-wait thread body, started from stop_with_reason inside those threads",
     ("monarch_surface.py", "_probe_future_get_asyncio.probe"):
         "deliberate on-loop pin of monarch's own semantics",
     ("progress.py", "ProgressReceiver.__enter__.pump"):
         "the dedicated dgxm-progress thread",
-    ("transfer.py", "_release_rdma_parts"):
-        "inside the dgxm-latent-read scratch thread",
+    ("transfer_utils.py", "drop_rdma_buffer"):
+        "called only from transfer._release_rdma_parts, inside the dgxm-latent-read scratch thread",
     ("transfer_utils.py", "read_parts_concurrent.read_one"):
         "pool thread under dgxm-latent-read",
     ("rdma_receiver.py", "_read_and_release_owned.drive"):
         "the dgxm-latent-read scratch-thread body",
+    ("actor/in_place_fallback.py", "permitted"):
+        "contextvars.ContextVar.get, not a monarch future",
     ("actor/unbake.py", "restore_pristine"):
         "stdlib queue.Queue.get, not a monarch future",
     ("actor/unbake.py", "restore_pristine._take"):
@@ -1098,6 +1126,10 @@ _OFF_LOOP_BY_CONSTRUCTION = {
     ("monarch_diagnostics.py", "_MetricExporter._run"):
         "the dedicated dgxm-metrics daemon body, bounded stdlib queue.Queue.get",
     ("adapters/mage_nvfp4_scale.py", "real_input"):
+        "ContextVar read, not a monarch future",
+    ("adapters/scale_rows.py", "spans"):
+        "ContextVar read, not a monarch future",
+    ("adapters/scale_rows.py", "check_streams_read"):
         "ContextVar read, not a monarch future",
     ("adoption_evidence.py", "active_context_wire"):
         "ContextVar read, not a monarch future",
@@ -1125,7 +1157,15 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "ContextVar read, not a monarch future",
     ("nodes/render_submit.py", "_collect_earlier_results_before_setup_change"):
         "ContextVar read, not a monarch future",
-    ("nodes/render_submit.py", "_reattach_facts"):
+    ("nodes/reattach_retry.py", "reattach_facts"):
+        "ContextVar read, not a monarch future",
+    ("old_model.py", "graph_names"):
+        "ContextVar read, not a monarch future",
+    ("swap_credit.py", "credited"):
+        "ContextVar read, not a monarch future",
+    ("vae_decode_route.py", "_entry_wrapper.decode"):
+        "ContextVar read, not a monarch future",
+    ("vae_decode_route.py", "_tiled_wrapper.tiled_scale_multidim"):
         "ContextVar read, not a monarch future",
 }
 
@@ -1196,3 +1236,28 @@ def test_every_direct_future_get_is_off_the_event_loop_by_construction():
         f"Queue, mapping) a ledger line. unlisted={sorted(actual - listed)}, "
         f"stale={sorted(listed - actual)}"
     )
+
+
+def test_the_rdma_drop_helper_has_only_the_callers_its_ledger_line_names():
+    """The ledger pins the blocking get inside ``transfer_utils.drop_rdma_buffer``
+    by the helper's own scope, so a new caller of the helper from the event loop
+    would not show there. Its line says the helper is called only from
+    ``transfer._release_rdma_parts``, inside the dgxm-latent-read scratch thread;
+    this row holds every reference to the helper to those two calls."""
+    package_root = pathlib.Path(__file__).resolve().parents[1] / "src" / "dgx_monarch"
+    found: list[tuple[str, str]] = []
+
+    def walk(node: ast.AST, relative: str, scope: tuple[str, ...]) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = (*scope, node.name)
+        name = (node.attr if isinstance(node, ast.Attribute)
+                else node.id if isinstance(node, ast.Name) else None)
+        if name == "drop_rdma_buffer":
+            found.append((relative, ".".join(scope)))
+        for child in ast.iter_child_nodes(node):
+            walk(child, relative, scope)
+
+    for path in sorted(package_root.rglob("*.py")):
+        walk(ast.parse(path.read_text()), path.relative_to(package_root).as_posix(), ())
+    assert found == [("transfer.py", "_release_rdma_parts")] * 2, found
+    assert "transfer._release_rdma_parts" in _OFF_LOOP_BY_CONSTRUCTION[("transfer_utils.py", "drop_rdma_buffer")]

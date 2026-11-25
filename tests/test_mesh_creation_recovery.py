@@ -11,7 +11,10 @@ import types
 import pytest
 
 from dgx_monarch import client_lease, mesh, mesh_creation, mesh_factory
+from dgx_monarch.mesh_stop import PROC_STOP_DEFAULT_S, cleanup_stop_s
 from dgx_monarch.monarch_policy import MonarchPolicy
+
+STOP_S = cleanup_stop_s()  # the creation cleanup's stop: 65 s at Monarch's defaults
 
 
 class _Interrupt(BaseException):
@@ -200,6 +203,84 @@ def test_local_mesh_is_replaced_when_worker_args_change(
     assert mesh.get_mesh(mode="local", gpus_per_host=1) is not first
 
 
+def test_a_driver_only_key_keeps_a_live_local_mesh_and_reaches_the_decode_route(
+    isolated_mesh_runtime, monkeypatch, tmp_path,
+):
+    """`[worker_args] worker_vae_decode` is read on the driver alone.
+
+    Toggling it keeps the live local fleet and every model it holds, and the
+    Init node, which gets the same handle back, arms the value the file holds
+    now. The handle and its config are not changed.
+    """
+    from dgx_monarch import config as config_module
+    from dgx_monarch import vae_decode_route
+    from dgx_monarch.nodes import init as init_module
+
+    proc_mesh = _ProcMesh()
+    monkeypatch.setattr(mesh, "spawn_worker_fleet", _spawn_returning(proc_mesh))
+    monkeypatch.setattr(mesh.mesh_helpers, "start_client_lease", lambda: True)
+    monkeypatch.setattr(mesh, "find_config_path", config_module.find_config_path)
+    monkeypatch.setattr(mesh, "local_config", config_module.local_config)
+    monkeypatch.setattr(vae_decode_route, "install", lambda: None)
+    monkeypatch.setattr(vae_decode_route, "_ARMED", None)
+    path = tmp_path / "cluster.toml"
+
+    tokens = []
+
+    def init(table: str):  # the Init node, run as a Queue runs it after the file changed
+        path.write_text(f"[worker_args]\n{table}\n", encoding="utf-8")
+        # ComfyUI runs the node again only when IS_CHANGED moves, so a toggle that left it
+        # alone would never reach the route.
+        token = init_module.DGXMonarchInit.IS_CHANGED(topology="auto", mode="local", config_path=str(path))
+        assert token not in tokens, table
+        tokens.append(token)
+        (spec,) = init_module.DGXMonarchInit().init(
+            topology="auto", mode="local", config_path=str(path), gpus_per_host=1)
+        return spec.handle
+
+    first = init("swap_verify = 2")
+    held = dict(first.config.worker_args)
+    assert vae_decode_route.armed_handle() is None
+    assert init('swap_verify = 2\nworker_vae_decode = "auto"') is first
+    assert vae_decode_route.armed_handle() is first
+    assert init('swap_verify = 2\nworker_vae_decode = "off"') is first
+    assert vae_decode_route.armed_handle() is None
+    assert proc_mesh.stop_reasons == []
+    assert dict(first.config.worker_args) == held
+    # A key the actors read still replaces the fleet.
+    assert init("swap_verify = 7") is not first
+
+
+@pytest.mark.parametrize("edit", ["swap_verify = 7", 'swap_verify = 2\nworker_vae_decode = "auto"'])
+def test_a_cluster_file_edit_still_replaces_the_fleet(isolated_mesh_runtime, monkeypatch, tmp_path, edit):
+    """Cluster mode digests the file's bytes (docs/CLUSTER.md), so the local rule for
+    driver-only keys changes nothing there: an actor key or worker_vae_decode both recycle."""
+    path = tmp_path / "cluster.toml"
+    path.write_text("[worker_args]\nswap_verify = 2\n", encoding="utf-8")
+    config = types.SimpleNamespace(source=str(path), hosts=(types.SimpleNamespace(gpus=1),), comfy_dir="")
+    key = mesh._mesh_cache_key(str(path), "/fake/comfy", True)
+    stopped = []
+    handle = types.SimpleNamespace(
+        defunct=False, config_mtime=0.0, config_fingerprint=mesh.config_fingerprint(path),
+        n_hosts=1, gpus_per_host=1, comfy_dir="/fake/comfy",
+        shutdown=lambda timeout_s, stop_timeout_s=None, _refuse_at_exit=False: stopped.append(
+            (timeout_s, stop_timeout_s)))
+
+    def replacement_reached(_config, _handoff):
+        raise RuntimeError("replacement attach reached")
+
+    monkeypatch.setattr(mesh, "find_config_path", lambda _path=None: path)
+    monkeypatch.setattr(mesh, "load_cluster_config", lambda _path: config)
+    monkeypatch.setattr(mesh, "_attach_cluster", replacement_reached)
+    monkeypatch.setattr(mesh, "_MESHES", {key: handle})
+    monkeypatch.setattr(mesh, "_TRANSPORT_MODE", "cluster")
+    assert mesh.get_mesh(config_path=str(path), mode="cluster") is handle
+    path.write_text(f"[worker_args]\n{edit}\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="replacement attach reached"):
+        mesh.get_mesh(config_path=str(path), mode="cluster")
+    assert stopped == [(30, PROC_STOP_DEFAULT_S)]  # the config-change stop keeps the bound
+
+
 def test_local_worker_args_fingerprint_tracks_values_not_order():
     fingerprint = mesh.mesh_helpers.local_worker_args_fingerprint
     assert fingerprint({"a": True, "b": 2}) == fingerprint({"b": 2, "a": True})
@@ -298,7 +379,7 @@ def test_late_transport_poison_refuses_ready_and_cleans_private_handle(
     assert len(pending) == 1
     assert pending[0].teardown_complete is True
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert mesh._MESHES == {}
     assert mesh._MESH_PENDING == {}
     assert mesh._MESH_CREATING == {}
@@ -436,7 +517,7 @@ def test_failure_latch_store_interruption_cleans_returned_fleet_and_wins(
     assert failure.value is interrupted
     assert failure.value is not ordinary
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert mesh._MESHES == {}
     assert mesh._MESH_PENDING == {}
     assert mesh._MESH_CREATING == {}
@@ -642,7 +723,7 @@ def test_next_get_mesh_terminally_reconciles_an_exited_creator_frame(
     handle = mesh.get_mesh(mode="local", gpus_per_host=1)
 
     assert stale_proc.stop_reasons == ["dgx-monarch client detach"]
-    assert stale_proc.stop_timeouts == [30]
+    assert stale_proc.stop_timeouts == [STOP_S]
     assert fresh_proc.stop_reasons == []
     assert mesh_factory.creation_cleanup_registered(cleanup_claim) is False
     assert mesh._MESH_CREATING == {}

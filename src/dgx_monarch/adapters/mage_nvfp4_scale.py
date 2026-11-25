@@ -7,8 +7,9 @@ dense run on full rows through mage_flow._text_modules instead.
 """
 from __future__ import annotations
 
+import contextlib
 import contextvars
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import torch
@@ -36,6 +37,16 @@ def real_input(path: str, value: torch.Tensor) -> torch.Tensor:
     # The adapter's shard_seq padding is a stream-local trailing tail. Empty
     # real spans contribute zero to the max reduction, never a padded outlier.
     return value[:, :count] if count > 0 else value[:, :0]
+
+
+@contextlib.contextmanager
+def whole_rows() -> Iterator[None]:
+    """Count every row while a projection runs on gathered, unpadded rows."""
+    token = _ROWS.set(None)
+    try:
+        yield
+    finally:
+        _ROWS.reset(token)
 
 
 def call(block: Callable[..., Any], *, text_original: int, text_local: int,

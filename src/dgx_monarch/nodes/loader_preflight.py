@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .. import (
@@ -33,16 +33,16 @@ from .. import (
 from ..adapters.base import UnsupportedModelError
 from ..log import get_logger
 from ..refusal import PanelAction, RefusalClass, refusal
-from . import consent_projection, consent_rescue
+from . import consent_projection, consent_rescue, graph_load_price, loader_relief, old_model_clear
+from .graph_load_price import WINDOW_SETTLED, WINDOW_TRANSIENT, fits_box, loader_refusal
 from .loader_graph import (
     DriverStackTerms,
     activation_sp_degree,
     clear_memos,
-    credited_terms,
     driver_stack_terms,
-    note_stack_charged,
     remember,
     reset_charged_artifacts,
+    unet_names,
 )
 
 log = get_logger(__name__)
@@ -54,9 +54,9 @@ _GIB = 2 ** 30
 LOADER_GUARD = "loader_footprint_preflight"
 RESCUE_KIND = "rescue-slab"
 
-# Named windows distinguish a load spike from an oversized resident set.
-WINDOW_TRANSIENT = "load"
-WINDOW_SETTLED = "resident"
+# Named windows distinguish a load spike from an oversized resident set. They
+# and ``loader_refusal`` live with the refusal's words (graph_load_price) and
+# are read through this module too.
 
 # Session lifetime, keyed by the artifact and the world it was priced under,
 # FIFO-evicted at loader_graph._MEMO_LIMIT. A stale entry can omit a charge but
@@ -113,23 +113,9 @@ def _slab_capable_path(path: str) -> bool:
     return path.lower().endswith((".safetensors", ".sft"))
 
 
-def effective_worker_args(mesh: Any) -> dict[str, Any]:
-    """The worker args every driver-side residency check must read.
-
-    The graph's own overrides merged with configured cluster policy, which is
-    what the worker will run with. The read is safe before the mesh is live and
-    advisory: a handle that cannot answer leaves the graph's args in place. Both
-    loader checks in this module read this one merge: a quarantine can turn a
-    residency lever off between two separate merges, and the checks would disagree.
-    """
-    worker_args = dict(getattr(mesh, "worker_args", None) or {})
-    handle = getattr(mesh, "handle", None)
-    if handle is None:
-        return worker_args
-    try:
-        return dict(handle.effective_worker_args(worker_args))
-    except Exception:  # advisory merge only
-        return worker_args
+# The one merge both loader checks and every consent read use
+# (consent_rescue.mesh_worker_args says why there is only one).
+effective_worker_args = consent_rescue.mesh_worker_args
 
 
 def preflight_upstream_gated_artifact(unet_name: str) -> None:
@@ -249,15 +235,6 @@ def _combo_identity(unet_name: str, options: Mapping[str, Any] | None,
     return consent_rescue.combo_identity(unet_name, options, path)
 
 
-def _unstable_identity_clause(names: tuple[str, ...]) -> str:
-    """Why a refused load with no readable artifact identity gets no rescue."""
-    return (f"Slab residency cannot be offered here either: this host cannot read a "
-            f"stable identity for {', '.join(names)}, so no identity-gate row and no "
-            "consent can be tied to these bytes. A checkpoint still being copied in, "
-            "or rewritten while it was read, has no fingerprint to bind. Wait for the "
-            "copy to finish, then queue the render again.")
-
-
 def memo_context(unet_name: str, options: Mapping[str, Any] | None) -> dict[str, str]:
     """Return the LoRA-free loader consent context.
 
@@ -266,81 +243,29 @@ def memo_context(unet_name: str, options: Mapping[str, Any] | None) -> dict[str,
     return consent_rescue.memo_context(unet_name, options)
 
 
-def _rescue_clause(estimate: driver_footprint.DriverFootprintEstimate) -> str:
-    """Return the rescue evidence and projected footprint.
-
-    ``refusal()`` appends the registry-owned panel and headless instructions.
-    """
-    spec = consent_pending.KIND_SPECS.get(RESCUE_KIND)
-    evidence = getattr(spec, "evidence", None) or (
-        "Slab residency maps the weights from the file instead of copying them.")
-    return f"{evidence} It fits this graph at {_gib(estimate.projected)} GiB."
-
-
-def loader_refusal(
-    estimate: driver_footprint.DriverFootprintEstimate,
-    terms: DriverStackTerms,
-    *,
-    unet_name: str,
-    profile: driver_footprint.DriverStackProfile,
-    floor_reserve: int,
-    rescue: driver_footprint.DriverFootprintEstimate | None,
-    window: str = WINDOW_SETTLED,
-    bypass: bool = True,
-) -> str:
-    """Build a capacity refusal with charged terms and available remedies.
-
-    Budget numbers lead because first-use Gate output may truncate at 200
-    characters and artifact paths can be long.
-    """
-    notes = estimate.notes
-    ref_note = (f"{terms.video_refs} reference video block(s), single-shape "
-                f"calibration 2026-08-04, not extrapolated"
-                if terms.ref_bytes else
-                ("no reference video in this graph" if terms.resolved
-                 else "no graph available at the loader node"))
-    budget_note = (
-        "the driver stack is not in this window: the eager load peaks before "
-        "the text encoder, the VAEs and the reference encodes are built"
-        if window == WINDOW_TRANSIENT else terms.budget_clause)
-    return (
-        f"driver-side footprint preflight at the loader node: "
-        f"{_gib(estimate.projected)} GiB to place on the driver host, "
-        f"{_gib(estimate.usable)} GiB usable ({_gib(estimate.mem_available)} GiB "
-        f"MemAvailable minus a {_gib(floor_reserve)} GiB reserve and "
-        f"{budget_note}). Refuses {unet_name} at the {window} window. Charged: DiT weights "
-        f"{_gib(estimate.weight_bytes)} GiB ({notes.get('weights', 'not charged')}); "
-        f"stock host copy {_gib(estimate.arena_bytes)} GiB "
-        f"({notes.get('arena', 'not charged')}); text encoder "
-        f"{_gib(terms.te_bytes)} GiB ({', '.join(terms.te_artifacts) or 'none named'}, "
-        f"at the 1.15 resident ratio, rounded up from the 1.144 measured on 2026-08-05); "
-        f"VAEs {_gib(terms.vae_bytes)} GiB "
-        f"({', '.join(terms.vae_artifacts) or 'none named'}); reference encode "
-        f"{_gib(terms.ref_bytes)} GiB ({ref_note}); guide encode "
-        f"{_gib(terms.guide_bytes)} GiB ({terms.guide_note}); render activations "
-        f"{_gib(terms.activation_bytes)} GiB ({terms.activation_note}). "
-        f"{driver_footprint.what_would_fit(estimate, profile)}"
-        f"Options: {'; '.join(profile.fitting_options)}. "
-        # Name the kill switch only when no rescue card or stronger quarantine
-        # applies. refusal() appends panel and per-kind headless instructions.
-        + (_rescue_clause(rescue) if rescue is not None else
-           f"Set {driver_footprint.DRIVER_PREFLIGHT_DISABLE_ENV}=1 to turn this "
-           f"preflight off for every render (docs/TROUBLESHOOTING.md #52)." if bypass else ""))
-
-
 def _estimate(
     profile: driver_footprint.DriverStackProfile, *, mem_available: int,
     weight_bytes: int, weights_resident: bool, co_resident: bool,
-    slab_weights: bool | str | None, reserve: int, fsdp_world: int = 0,
+    slab_weights: bool | str | None, reserve: int, fsdp_world: int = 0, cast_bytes: int = 0,
 ) -> driver_footprint.DriverFootprintEstimate:
     """Estimate with the pending driver stack folded into the reserve.
 
-    This keeps ``usable``, ``shortfall``, and ``dit_ceiling`` in one budget.
+    This keeps ``usable``, ``shortfall``, and ``dit_ceiling`` in one budget. A
+    loader cast's copy takes the file's place and its host copy keeps the file's
+    width, as ``capacity_fit.stock_required_bytes`` prices it on the Worker.
     """
-    return driver_footprint.estimate_driver_footprint(
-        profile=profile, mem_available=mem_available, weight_bytes=weight_bytes,
+    estimate = driver_footprint.estimate_driver_footprint(
+        profile=profile, mem_available=mem_available, weight_bytes=cast_bytes or weight_bytes,
         weights_resident=weights_resident, co_resident=co_resident,
         slab_weights=slab_weights, reserve=reserve, fsdp_world=fsdp_world)
+    if not cast_bytes or not estimate.weight_bytes:
+        return estimate
+    notes = {**estimate.notes, "weights": f"{estimate.notes.get('weights')}, cast to a "
+             f"{_gib(cast_bytes)} GiB copy of the {_gib(weight_bytes)} GiB file"}
+    if estimate.arena_bytes:
+        notes["arena"] = "the host copy at the file's own width, read before the cast"
+    arena = int(capacity_fit.STOCK_PLACEMENT_RATIO * weight_bytes) if estimate.arena_bytes else 0
+    return replace(estimate, arena_bytes=arena, notes=notes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,6 +280,10 @@ class _Shape:
     floor_reserve: int
     stack_bytes: int
     fsdp_world: int = 0
+    # The driver models a deferred load finds already loaded; 0 for an eager load.
+    load_stack_bytes: int = 0
+    # The copy a loader dtype cast builds (capacity_fit.cast_resident_bytes); 0 is no cast.
+    cast_bytes: int = 0
 
 
 def _windows(shape: _Shape, *, slab: bool | str) -> tuple[
@@ -376,26 +305,52 @@ def _windows(shape: _Shape, *, slab: bool | str) -> tuple[
     transient = _estimate(
         shape.profile, mem_available=shape.mem_available, weight_bytes=shape.weight_bytes,
         weights_resident=shape.weights_resident, co_resident=shape.co_resident,
-        slab_weights=slab, reserve=shape.floor_reserve,
-        fsdp_world=shape.fsdp_world)
+        slab_weights=slab, reserve=shape.floor_reserve + shape.load_stack_bytes,
+        fsdp_world=shape.fsdp_world, cast_bytes=shape.cast_bytes)
     settled = _estimate(
         shape.profile, mem_available=shape.mem_available, weight_bytes=shape.weight_bytes,
         weights_resident=shape.weights_resident, co_resident=shape.co_resident,
         slab_weights=True, reserve=shape.floor_reserve + shape.stack_bytes,
-        fsdp_world=shape.fsdp_world)
+        fsdp_world=shape.fsdp_world, cast_bytes=shape.cast_bytes)
     return transient, settled
+
+
+def _lead(binding: driver_footprint.DriverFootprintEstimate, window: str, shape: _Shape, *,
+          unet_name: str, family: str, quant_kind: str, terms: DriverStackTerms,
+          deferred: bool, prompt: object, slab: bool | str, mesh: Any,
+          worker_args: Mapping[str, Any], site: str) -> dict[str, str]:
+    """The plain sentence, and what would fit, each alternative priced in both windows."""
+    def fits(alt: _Shape) -> bool:
+        return all(map(fits_box, _windows(alt, slab=slab)))
+
+    def stack_for(graph: object) -> DriverStackTerms:
+        return graph_load_price.site_terms(driver_stack_terms(
+            graph, family=family, sp_degree=activation_sp_degree(mesh, family)), site)
+
+    lead = graph_load_price.plain_lead(
+        binding, window=window, unet_name=unet_name, deferred=deferred,
+        models=graph_load_price.load_window_models(terms, site)[1] if shape.load_stack_bytes else (),
+        box=graph_load_price.driver_box(mesh), site=site)
+    return {"lead": lead, "fits": graph_load_price.alternatives(
+        shape, fits=fits, unet_name=unet_name, family=family, quant_kind=quant_kind,
+        terms=terms, deferred=deferred, prompt=prompt, stack_for=stack_for,
+        pair=not residency_mode.requested(worker_args), mesh=mesh, site=site)}
 
 
 def preflight_loader_footprint(
     mesh: Any, unet_name: str, options: Mapping[str, Any] | None,
-    prompt: object = None,
+    prompt: object = None, site: str = graph_load_price.SITE_LOADER, slot: str = "", unloaded: Any = None,
 ) -> consent_rescue.RescueLoad | None:
     """Refuse an unaffordable eager load or apply an allowed slab rescue.
 
     This must run above ``ensure_live`` so refusal precedes fleet healing and
     rank mutation. It fails open except for a completed over-budget estimate
-    and a forced family this checkpoint cannot carry.
+    and a forced family this checkpoint cannot carry. ``site`` is the sampler
+    when ComfyUI kept the loader's output from an earlier queue (requeue_price).
+    ``slot`` is the slot the load goes into; a price that does not fit counts what the Worker there
+    drops first, then unloads ComfyUI's models and prices again (``loader_relief``), before any card.
     """
+    graph_load_price.note_priced(unet_name)
     try:
         import folder_paths
 
@@ -425,10 +380,7 @@ def preflight_loader_footprint(
         family_select.warn_auto_admits_checkpoint(family, path)
         profile = driver_footprint.DRIVER_STACK_FAMILIES.get(family)
         if (profile is None or driver_footprint.preflight_disabled()
-                or not mesh_safety.gpu_is_integrated()
-                or driver_footprint.dtype_cast_requested(options)):
-            # A cast's resident size differs from file size, so this estimate
-            # cannot refuse safely.
+                or not mesh_safety.gpu_is_integrated()):
             return None
         avail = mesh_safety.mem_available_bytes()
         if avail is None:
@@ -439,9 +391,9 @@ def preflight_loader_footprint(
         # reserve and the same residency levers.
         worker_args = effective_worker_args(mesh)
 
-        terms = credited_terms(driver_stack_terms(
+        terms = graph_load_price.site_terms(driver_stack_terms(
             prompt, family=family,
-            sp_degree=activation_sp_degree(mesh, family)))
+            sp_degree=activation_sp_degree(mesh, family)), site)
         if not terms.resolved and _first_unpriced_stack_warn(family):
             # A direct node call carries no hidden prompt, so the estimator priced
             # only the weights. Say so once per family, so a post-mortem does
@@ -459,17 +411,38 @@ def preflight_loader_footprint(
         # A declared FSDP topology shards the checkpoint, so the whole file is
         # the price of a stock load this build never makes.
         fsdp_world = _fsdp_shard_world(mesh, worker_args, quant_kind)
-        memo_key = _memo_key(unet_name, fsdp_world)
+        effective_slab = _effective_slab(worker_args, family)
+        # A cast is priced at its copy where the load runs stock, as the
+        # Worker's stock rung prices it; elsewhere no price claims it.
+        cast_bytes = graph_load_price.cast_copy_bytes(path, options, mesh=mesh,
+                                                      slab=effective_slab)
+        if cast_bytes is None:
+            return None
+        memo_key = _memo_key(unet_name, fsdp_world) + (
+            f"\x00{(options or {}).get('weight_dtype')}" if cast_bytes else "")
+        # Under auto the load waits for the first render, by which time the
+        # driver holds every model this graph loads (graph_load_price).
+        deferred = graph_load_price.load_is_deferred(mesh)
         shape = _Shape(
             profile=profile, mem_available=avail, weight_bytes=weight_bytes,
             weights_resident=memo_key in _CLEARED_UNETS, co_resident=co_resident,
             floor_reserve=floor_reserve, stack_bytes=stack_bytes,
-            fsdp_world=fsdp_world)
-        effective_slab = _effective_slab(worker_args, family)
+            fsdp_world=fsdp_world,
+            load_stack_bytes=graph_load_price.load_window_models(terms, site)[0] if deferred else 0,
+            cast_bytes=cast_bytes)
         transient, settled = _windows(shape, slab=effective_slab)
-        if transient.fits and settled.fits:
+        relief = loader_relief.NONE
+        if not (fits_box(transient) and fits_box(settled)):
+            relief = loader_relief.relieve(shape, lambda priced: _windows(priced, slab=effective_slab),
+                                           mesh=mesh, unet_name=unet_name, options=options, slot=slot,
+                                           tried=unloaded, prompt=prompt,
+                                           stack=graph_load_price.load_window_models(terms, site)[0])
+            if relief.unloaded is not None:  # ComfyUI's models are gone: price it all again
+                return preflight_loader_footprint(mesh, unet_name, options, prompt, site, slot, relief.unloaded)
+        if relief.fits or (fits_box(transient) and fits_box(settled)):
+            loader_relief.admitted(relief, _CLEARED_UNETS, unet_name, avail, unloaded)
             remember(_CLEARED_UNETS, memo_key)
-            note_stack_charged(terms)
+            graph_load_price.note_admitted(terms, site, prompt)
             if fsdp_world:
                 # The admitting path prints no card, so without this line the
                 # shard price leaves no evidence in the journal.
@@ -480,14 +453,28 @@ def preflight_loader_footprint(
                     "MemAvailable %.1f GiB", unet_name, fsdp_world,
                     settled.weight_share, settled.weight_bytes / _GIB,
                     transient.usable / _GIB, settled.usable / _GIB, avail / _GIB)
+            if terms.guide_bytes and terms.activation_bytes:  # the rule that ran; as alternatives, the sum's verdict
+                graph_load_price.log_alternatives(terms, unet_name, avail, not terms.guide_first or all(map(
+                    fits_box, _windows(replace(shape, stack_bytes=shape.stack_bytes + min(
+                        terms.guide_bytes, terms.activation_bytes)), slab=effective_slab))))
             return None
 
-        binding, window = ((settled, WINDOW_SETTLED) if not settled.fits
-                           else (transient, WINDOW_TRANSIENT))
+        # The window short by the most, the one the Old model card prices too.
+        binding, window = max(((settled, WINDOW_SETTLED), (transient, WINDOW_TRANSIENT)),
+                              key=lambda pair: (not fits_box(pair[0]), pair[0].shortfall))
+        words: dict[str, Any] = {
+            "profile": profile, "floor_reserve": floor_reserve, "window": window,
+            "load_models": shape.load_stack_bytes if deferred else None,
+            "windows": (transient, settled), "cast": bool(cast_bytes), "site": site,
+            **_lead(binding, window, shape, unet_name=unet_name, family=family,
+                    quant_kind=quant_kind, terms=terms, deferred=deferred, prompt=prompt,
+                    slab=effective_slab, mesh=mesh, worker_args=worker_args, site=site)}
+        words["lead"] += relief.sentence(unet_name, unloaded)
         blocked = consent_projection.projection_blocker(worker_args)
         rescue_transient, rescue_settled = _windows(shape, slab=True)
-        rescue = (rescue_settled if rescue_transient.fits and rescue_settled.fits
-                  and effective_slab is not True and not blocked else None)
+        # A slab under a cast keeps the cast copy beside the file and saves nothing.
+        rescue = (rescue_settled if fits_box(rescue_transient) and fits_box(rescue_settled)
+                  and effective_slab is not True and not cast_bytes and not blocked else None)
         try:
             combo, artifacts = _combo_identity(unet_name, options, path)
         except gate_artifacts.UnresolvedArtifactIdentityError as exc:
@@ -495,30 +482,30 @@ def preflight_loader_footprint(
             # the outer estimator-error handler would otherwise admit it unpriced.
             raise driver_footprint.DriverFootprintCapacityError(refusal(
                 RefusalClass.CAPACITY,
-                loader_refusal(binding, terms, unet_name=unet_name,
-                               profile=profile, floor_reserve=floor_reserve,
-                               rescue=None, window=window)
-                + _unstable_identity_clause(exc.names),
+                graph_load_price.bounded(
+                    loader_refusal(binding, terms, unet_name=unet_name, rescue=None, **words)
+                    + " " + graph_load_price.unstable_identity_clause(exc.names)),
                 guard=LOADER_GUARD, waivable=False)) from exc
         scope = consent_rescue.load_capability_context(worker_args)
         quarantine = consent_rescue.quarantine_decision_for_load(
             combo, artifacts, scope)
         if quarantine.state != "clear":
             quarantine_message = (
-                loader_refusal(settled, terms, unet_name=unet_name, profile=profile,
-                               floor_reserve=floor_reserve, rescue=None, bypass=False)
-                + f"Slab residency cannot be offered here either: {quarantine.reason}. ")
+                loader_refusal(binding, terms, unet_name=unet_name, rescue=None, bypass=False,
+                               **words)
+                + f" Slab residency cannot be offered here either: {quarantine.reason}. ")
             if quarantine.state == "fail":
                 raise driver_footprint.DriverFootprintCapacityError(refusal(
                     RefusalClass.KNOWN_WRONG,
-                    quarantine_message + "There is no waiver for this refusal."))
+                    graph_load_price.bounded(
+                        quarantine_message + "There is no waiver for this refusal.")))
             suffix = (
                 "No slab-residency consent can be granted until the identity-gate "
                 "evidence is readable." if quarantine.state == "unknown" else
                 "There is no waiver for this refusal.")
             raise driver_footprint.DriverFootprintCapacityError(refusal(
                 RefusalClass.CAPACITY,
-                quarantine_message + suffix,
+                graph_load_price.bounded(quarantine_message + suffix),
                 guard=LOADER_GUARD, waivable=False))
         grant = consent_rescue.live_grant(
             path=path, unet_name=unet_name, options=options,
@@ -530,7 +517,7 @@ def preflight_loader_footprint(
                 grant, combo_key=combo, artifacts=artifacts, unet_name=unet_name,
                 path=path, context=memo_context(unet_name, options))
             remember(_CLEARED_UNETS, memo_key)
-            note_stack_charged(terms)
+            graph_load_price.note_admitted(terms, site, prompt)
             log.info("loader footprint preflight: consent %r present for %s, "
                      "loading slab-resident", RESCUE_KIND, unet_name)
             return consent_rescue.RescueLoad(
@@ -546,17 +533,31 @@ def preflight_loader_footprint(
                     "headroom_bytes": int(rescue_settled.usable - rescue_settled.projected),
                 })
 
-        message = loader_refusal(
-            binding, terms, unet_name=unet_name, profile=profile,
-            floor_reserve=floor_reserve, rescue=rescue, window=window)
+        # The head's Worker shares this box: an old model it holds may be in the way.
+        clear = old_model_clear.loader_offer(mesh, unet_name, options, windows=(transient, settled),
+                                             keep=unet_names(prompt), window=window,
+                                             asked=relief.asked, credit=relief.credit)
+        if clear is not None and clear.helps:
+            old_model_clear.refuse_at_loader(clear, graph_load_price.bounded(loader_refusal(
+                binding, terms, unet_name=unet_name, rescue=None, **words), limit=3200))
+        message = loader_refusal(binding, terms, unet_name=unet_name, rescue=rescue, **words)
+        if clear is not None:
+            message = f"{message} {old_model_clear.held_text(clear)}"
         if blocked:
             # Report the existing residency constraint without offering override.
-            message = (f"{message} Slab residency is not offered here: {blocked}, so this "
+            # The merged copy above cannot name a session quarantine; the graph's
+            # own dict can (gate_quarantine_scope.session_blocker).
+            from .gate_quarantine_scope import session_blocker
+
+            message = (f"{message} Slab residency is not offered here: "
+                       f"{session_blocker(live_args) or blocked}, so this "
                        "refusal is about the setting on the graph, not about a consent.")
         elif grant is not None:
             # Consent cannot disable the guard when slab also exceeds capacity.
             message = (f"{message} A slab-residency consent is on file for this "
                        "checkpoint, but slab residency does not fit this graph either.")
+        # refusal() raises past 4,000 characters, which the handler below would admit.
+        message = graph_load_price.bounded(message)
         if rescue is None or grant is not None:
             # No applicable rescue remains, so omit the panel action.
             raise driver_footprint.DriverFootprintCapacityError(refusal(
@@ -570,9 +571,11 @@ def preflight_loader_footprint(
                 "artifacts_legacy": artifacts.legacy,
                 "artifacts_legacy_complete": artifacts.legacy_complete,
                 "artifact": os.path.basename(unet_name), "unet_name": unet_name,
-                "target_guard": LOADER_GUARD, "loras": 0,
-                "numbers": (f"needs {_gib(binding.projected)} GiB, "
-                            f"{_gib(binding.usable)} GiB usable"),
+                "target_guard": LOADER_GUARD, "loras": 0, "scope": scope,
+                # The lead's gross figures, as the Old model in the way card prints them.
+                "numbers": (f"needs {_gib(binding.projected + binding.reserve)} GiB, "
+                            f"{_gib(binding.mem_available)} GiB available on "
+                            f"{graph_load_price.driver_box(mesh)}"),
             })
         except Exception as exc:  # the card is best effort, the refusal is not
             log.warning("consent card not built for %s (%r)", unet_name, exc)

@@ -1,7 +1,8 @@
 """Build capacity rescue descriptors shared by pricing and load decisions.
 
 ``store_residency`` raises the offer; ``capacity_quote`` returns it as data.
-Both use the same descriptor, blocker pair, and local hostname.
+Both use the same descriptor and blocker pair, and the descriptor's machine
+field carries the local hostname; no sentence a user reads prints it.
 
 The driver compares only rank-invariant fields: ``consent_id``, ``kind``,
 ``file_identity``, ``context_fingerprint``, ``memo_context``, and ``family_hint``.
@@ -13,11 +14,12 @@ from __future__ import annotations
 import socket
 from collections.abc import Callable
 
-from .. import consent_descriptor
+from .. import capacity_fit, consent_descriptor
 from ..capacity_fit import SlabFit, StockFit
 from ..consent_descriptor import ConsentDescriptor
 from ..consent_kinds import KIND_SPECS
 from ..log import get_logger
+from ..old_model import display_name
 from ..transfer_utils import failure_summary, safe_call
 from . import store_slab_admit
 
@@ -30,6 +32,20 @@ _GENERIC_OPTIONS = (
     "use a pruned or quantized artifact, or free unified memory on this host"
 )
 
+# A cast under slab: the cast copy sits beside the file in the slab's annex, so
+# slab saves nothing, and the slab probe does not price that copy. The stock
+# rungs name it as a blocker; explicit slab refuses with the sentence below,
+# which the fleet card prints whole (under capacity_agreement's 320 characters).
+_CAST_WHY = ("a slab load under a cast keeps the cast copy beside the file, so slab "
+             "residency would not save memory")
+_CAST_OPTIONS = ("set the loader's weight_dtype to default where the cast makes the copy "
+                 "larger than the file, or " + _GENERIC_OPTIONS)
+CAST_SLAB_REFUSAL = (
+    "slab_weights=on cannot load a checkpoint the loader casts to another weight dtype: "
+    "the cast copy sits beside the file in a second arena the slab price does not "
+    "measure, so the load cannot be priced and saves nothing. What would fit: set "
+    "slab_weights to off, or the loader's weight_dtype to default")
+
 # The clause a cold box's rescue card carries, set only where the memo was
 # read and came back empty. It goes in ``reason`` rather than a seventeenth
 # wire field, which every reader of a quote row would have to learn.
@@ -41,7 +57,11 @@ COLD_MEMO_CLAUSE = (
 
 
 def host_name() -> str:
-    """This box's own name. No rank ever composes a sentence about a peer."""
+    """This box's own name, for machine fields only.
+
+    No rank composes a sentence about a peer, and none names its own host in
+    one either: a wall says "here" and the driver names the box (worker_box.py).
+    """
     try:
         return socket.gethostname()
     except OSError:
@@ -85,16 +105,22 @@ def rescue_blocker(
     every policy answer: a rescue no policy allows is refused for that reason
     and not for a price nobody would have paid.
     """
+    cast = slab_fit is not None and slab_fit.skipped_reason == capacity_fit.SKIP_SLAB_DTYPE_CAST
     if explicit_stock:
-        return (blocked_reason or
-                "slab residency is off for this render: the Init node's slab_weights=off "
-                "or an identity-gate quarantine turned it off",
-                "clear the quarantine with an identity ceremony, or set slab_weights=on when "
+        why = (blocked_reason or
+               "slab residency is off for this render: the Init node's slab_weights=off "
+               "or an identity-gate quarantine turned it off")
+        if cast:
+            # Never name slab_weights=on for a cast: the slab would not help.
+            return (f"{why}, and {_CAST_WHY}", _CAST_OPTIONS)
+        return (why, "clear the quarantine with an identity ceremony, or set slab_weights=on when "
                 "the combination is not quarantined, or " + _GENERIC_OPTIONS)
     if not slab_capable_path:
         return ("the checkpoint is not a .safetensors or .sft file, which the zero-copy "
                 "slab loader requires",
                 "convert or re-stage the checkpoint as safetensors, or " + _GENERIC_OPTIONS)
+    if cast:
+        return (f"the loader casts this checkpoint's weight dtype, and {_CAST_WHY}", _CAST_OPTIONS)
     if fsdp_launch:
         return ("FSDP is active and reshards weights into DTensors, so a slab would be "
                 "an unused extra copy",
@@ -110,6 +136,16 @@ def rescue_blocker(
     if slab_fit is not None and slab_fit.applies and not slab_fit.fits:
         return store_slab_admit.rescue_blocker(slab_fit)
     return None
+
+
+def _stock_words(fit: StockFit) -> str:
+    """What the card's stock price charges. A swap credit names the model the
+    Worker drops first; an in-place LoRA change keeps the hot-swap words."""
+    if fit.dropped and fit.credit_bytes > 0:
+        return (f"{capacity_fit.stock_terms(fit.size_gib)}, after the Worker drops "
+                f"{display_name(fit.dropped)}, which frees at least "
+                f"{capacity_fit.gib(fit.credit_bytes)} GiB,")
+    return capacity_fit.stock_terms(fit.size_gib, fit.credit_bytes, fit.backup_bytes, fit.stack_bytes)
 
 
 def build_descriptor(
@@ -160,7 +196,7 @@ def build_descriptor(
         measured=measured,
         human_reason=(
             f"{name} needs {fit.required_gib} GiB of unified memory under stock residency "
-            f"(a {fit.size_gib} GiB file plus the host copy it is placed from) and only "
+            f"{_stock_words(fit)} and only "
             f"{fit.avail_gib} GiB is available. Zero-copy slab residency fits it. Image "
             "identity on the slab path is not proven for this family yet, so this load is "
             "availability-only evidence, never an accuracy verdict."

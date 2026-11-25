@@ -13,7 +13,8 @@
   import { experimentDefinition } from '../experimentRecords';
   import { submissionRefused } from '../submissionRefusal';
   import type { Artifact, RecordData, ReuseArtifact } from '../contracts';
-  import { exportJSON } from '../files';
+  import { exportText } from '../files';
+  import { readExactJSON, writeExactJSON } from '../exactJson';
   import { dispatchAbsent, GridPassivePoll } from '../gridPassivePoll';
   import * as gridState from '../gridState';
   import type { Grid, GridFields } from '../gridState';
@@ -122,6 +123,8 @@
       requested = $state.snapshot(fields),
       requestedKey = gridState.reviewIdentity($state.snapshot(draft), requested);
     try {
+      const refused = gridState.validateBlocker(true, requested);
+      if (refused) throw new Error(refused);
       const { axisA, axisB, valuesA, valuesB, seedPolicy, seedBinding, baseSeed } = requested;
       const axes = [{ name: axisA, values: JSON.parse(valuesA) }];
       if (axisB) axes.push({ name: axisB, values: JSON.parse(valuesB) });
@@ -265,10 +268,12 @@
       busy = false;
     }
   }
+  /** The full record, read and written with every digit of each whole number, such as a seed. */
   async function exportGrid(value: Grid, isPreview = false) {
     try {
       const path = isPreview ? `/grids/previews/${value.id}` : `/grids/${value.id}`;
-      exportJSON(await client.request(path), isPreview ? 'grid-preview.json' : 'grid-results.json');
+      const text = writeExactJSON(await client.request(path, undefined, 'GET', readExactJSON));
+      exportText(text, isPreview ? 'grid-preview.json' : 'grid-results.json');
     } catch (cause) {
       fail(cause);
     }

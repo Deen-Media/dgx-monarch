@@ -43,15 +43,18 @@ SKIP = "Skip Layer Guidance (DGX Monarch) refuses on cfg2"
 SHAPE = "A LoRA that changes a weight's shape refuses before any bake"
 SHIFT = "Model Sampling SD3 (DGX Monarch) refuses on a family whose ComfyUI sampling multiplier is 1.0"
 FLOOR = "A MOSS-Image checkpoint fails to load on ComfyUI older than 0.42.0"
-LORA_QUANT = "A MOSS-Image INT8 render with a LoRA refuses on every topology"
+LORA_QUANT = ("A MOSS-Image INT8, grouped INT8 or ConvRot W4A4 render with a LoRA refuses on "
+              "every topology")
 REFERENCES = "A MOSS-Image render with reference images refuses on every topology but one GPU"
 WRITABLE_CACHE = "A Qwen Image 2.1 Ulysses render with the cache device auto refuses on ComfyUI 503d785f0"
 TEXT_BIAS = "A MOSS-Image edit with an image strength other than 1.0 refuses under sequence parallelism"
 
 
 def _headings() -> dict[int, str]:
-    return {int(number): title for number, title in
-            re.findall(r"^## (\d+)\. (.+)$", TROUBLESHOOTING.read_text(), re.MULTILINE)}
+    found = re.findall(r"^## (\d+)\. (.+)$", TROUBLESHOOTING.read_text(), re.MULTILINE)
+    numbers = [int(number) for number, _title in found]
+    assert len(numbers) == len(set(numbers)), "TROUBLESHOOTING numbers repeat"
+    return {int(number): title for number, title in found}
 
 
 def _slug(number: int, title: str) -> str:

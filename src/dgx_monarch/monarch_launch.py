@@ -1,4 +1,4 @@
-"""Explicit 0.7 process launch policy without controller environment leakage."""
+"""Explicit Monarch process launch policy without controller environment leakage."""
 from __future__ import annotations
 
 import os
@@ -6,11 +6,22 @@ import sys
 from dataclasses import replace
 from typing import Any
 
-from .cli.worker_process_env import worker_environment_key_allowed
-from .monarch_policy import MonarchPolicy, encode_policy, policy_environment
+from .cli.worker_process_env import (
+    HOST_ALLOCATOR_PURGE_DEFAULT,
+    HOST_ALLOCATOR_PURGE_ENV,
+    worker_environment_key_allowed,
+)
+from .monarch_policy import (
+    AMBIENT_TROUBLESHOOTING,
+    SIGNAL_OTLP_ENV,
+    MonarchPolicy,
+    encode_policy,
+    policy_environment,
+)
 from .runtime_provenance import SOURCE_ONLY_PYCACHE_PREFIX
 
 NATIVE_ENV = "DGXM_MONARCH_NATIVE_ENABLED"
+LEGACY_NCCL_ENV = {"TORCH_DIST_USE_NCCL2": "0"}
 # Resolve only the configured interpreter's leading ~/ on the destination host.
 # All values travel as argv; none are evaluated as shell source.
 _REMOTE_EXEC = 'py=$1; shift; case "$py" in "~/"*) py="$HOME/${py#??}";; esac; exec "$py" "$@"'
@@ -26,21 +37,35 @@ def worker_policy_args(config: Any, host: Any) -> list[str]:
     return args
 
 
+def actor_environment(config: Any, host: str) -> dict[str, str | None]:
+    """The explicit variables every actor starts with, local or remote; None unsets one."""
+    environment: dict[str, str | None] = dict(policy_environment(config.monarch, host))
+    if not config.monarch.diagnostics.otlp_endpoint:
+        # An older coordinator may export logs. Remove its endpoint before
+        # native child startup when this actor policy disables export.
+        environment["OTEL_EXPORTER_OTLP_ENDPOINT"] = None
+    # Each of these starts its own export on 0.8.0; the policy owns only the base variable.
+    environment.update(dict.fromkeys(SIGNAL_OTLP_ENV))
+    environment[NATIVE_ENV] = "1" if config.rdma_latent_return else "0"
+    environment["DGXM_DRIVER"] = os.environ.get("DGXM_DRIVER")
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHONPYCACHEPREFIX"] = SOURCE_ONLY_PYCACHE_PREFIX
+    # torch 2.15 maps "nccl" to its nccl2 backend, whose allocator hook takes a
+    # caching-allocator snapshot that cudaMallocAsync refuses, so the first
+    # process group aborts the actor (TROUBLESHOOTING #143). torch reads this
+    # at import, so only the start environment can pin the legacy backend that
+    # 2.12 ships; older torch ignores it.
+    environment.update(LEGACY_NCCL_ENV)
+    return environment
+
+
 def actor_bootstrap_command(config: Any, use_cluster: bool):
     """Return a per-Point command; remote source/executable stay host-owned."""
     def command(point: Any):
         from monarch._rust_bindings.monarch_hyperactor.host_mesh import BootstrapCommand
 
         host = config.hosts[point["hosts"]].name if use_cluster else ""
-        environment: dict[str, str | None] = dict(policy_environment(config.monarch, host))
-        if not config.monarch.diagnostics.otlp_endpoint:
-            # An older coordinator may export logs. Remove its endpoint before
-            # native child startup when this actor policy disables export.
-            environment["OTEL_EXPORTER_OTLP_ENDPOINT"] = None
-        environment[NATIVE_ENV] = "1" if config.rdma_latent_return else "0"
-        environment["DGXM_DRIVER"] = os.environ.get("DGXM_DRIVER")
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        environment["PYTHONPYCACHEPREFIX"] = SOURCE_ONLY_PYCACHE_PREFIX
+        environment = actor_environment(config, host)
         if use_cluster:
             # Worker startup already filters its environment. Inherit its managed
             # source and private runtime directories, never the controller's.
@@ -51,6 +76,9 @@ def actor_bootstrap_command(config: Any, use_cluster: bool):
 
         local: dict[str, str | None] = {name: os.environ[name] for name in os.environ
                  if worker_environment_key_allowed(name)}
+        # The worker loop gives cluster actors the host allocator's purge delay;
+        # a local actor takes the driver's value, or the same default.
+        local.setdefault(HOST_ALLOCATOR_PURGE_ENV, HOST_ALLOCATOR_PURGE_DEFAULT)
         local.update(environment)
         from importlib.metadata import distribution
 
@@ -101,6 +129,9 @@ _DIAGNOSTICS_HINTS = {
     "ambient_otlp_endpoint_conflict": "OTEL_EXPORTER_OTLP_ENDPOINT in the ComfyUI environment names "
                                       "another endpoint; make otlp_endpoint match it, or unset it and "
                                       "restart ComfyUI",
+    "ambient_otlp_signal_endpoint": "an OTEL_EXPORTER_OTLP_LOGS_, METRICS_ or TRACES_ENDPOINT in the "
+                                    "ComfyUI environment would export Monarch telemetry by itself; "
+                                    f"unset it and restart ComfyUI ({AMBIENT_TROUBLESHOOTING})",
 }
 
 
@@ -117,6 +148,19 @@ def _refuse_export(reason: str | None) -> None:
             + _DIAGNOSTICS_HINTS.get(reason, 'set metrics = false and otlp_endpoint = "", or restart ComfyUI'))
 
 
+def _refuse_stop_limits() -> None:
+    """Refuse effective stop idle limits the teardown budgets cannot hold (mesh_stop)."""
+    import monarch.config  # noqa: F401 - loaded with the runtime; the check must never skip
+
+    from .mesh_stop import stop_limits_refusal
+
+    reason = stop_limits_refusal()
+    if reason:
+        from .config_schema import ClusterConfigError
+
+        raise ClusterConfigError(reason)
+
+
 def prepare_driver(config: Any) -> Admission | None:
     """Admit every participant's policy, apply it before native import, admit the runtime.
 
@@ -129,16 +173,22 @@ def prepare_driver(config: Any) -> Admission | None:
     build, for the caller to restore if the fleet it admitted stays registered.
     """
     from .mesh import install_fault_hook
-    from .monarch_capabilities import assert_supported_runtime
+    from .monarch_capabilities import assert_supported_runtime, note_loaded_version
     from .monarch_diagnostics import configure_policy, requested_refusal, start_refusal
     from .monarch_policy import activate_native_policy, admit_native_targets, admitted, apply_policy
     from .monarch_policy_io import driver_host
 
     host, native = driver_host(config), config.rdma_latent_return
-    if native:
-        admit_native_targets(config.monarch, (host, *(entry.name for entry in config.hosts)))
     diagnostics = config.monarch.diagnostics
-    _refuse_export(start_refusal(diagnostics))
+    try:
+        if native:
+            admit_native_targets(config.monarch, (host, *(entry.name for entry in config.hosts)))
+        _refuse_export(start_refusal(diagnostics))
+    except BaseException:
+        # Nothing is written yet, but another import may have loaded monarch:
+        # keep what was loaded, as the refusals inside the admission do.
+        note_loaded_version()
+        raise
     previous = admitted()
     try:
         apply_policy(config.monarch, host, role="driver", native_enabled=native)
@@ -148,7 +198,11 @@ def prepare_driver(config: Any) -> Admission | None:
         install_fault_hook()
         assert_supported_runtime()
         activate_native_policy()
+        _refuse_stop_limits()
     except BaseException:
+        # configure_policy can import monarch for its meter and a refusal can
+        # follow before the admission reads the version: keep what was loaded.
+        note_loaded_version()
         restore_driver(previous)
         raise
     return previous

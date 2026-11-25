@@ -50,8 +50,18 @@ def test_endpoint_error_does_not_evict():
 def test_marker_in_message_also_evicts():
     # Some monarch failures surface as a generic type with the marker in the text.
     handle = _FakeHandle()
-    mark_defunct_on_supervision_failure(handle, RuntimeError("connection lost to worker"))
+    mark_defunct_on_supervision_failure(
+        handle, RuntimeError("peer closed connection without sending TLS close_notify"))
     assert handle.defunct
+
+
+def test_quic_connection_lost_text_alone_does_not_evict():
+    # "connection lost" is only the QUIC library's text in the 0.7.0 and 0.8.0
+    # bindings, and the pack never runs QUIC: it no longer marks a fleet dead.
+    handle = _FakeHandle()
+    mark_defunct_on_supervision_failure(handle, RuntimeError("connection lost to worker"))
+    assert not handle.defunct
+    assert not handle.shutdown_called
 
 
 def test_eviction_shutdown_is_best_effort():

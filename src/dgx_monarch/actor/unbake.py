@@ -14,29 +14,34 @@ CPU-only tests.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 
 from ..log import get_logger
+from .load_renames import load_time_renames, with_renamed
 from .unbake_file import (
     _ST_TO_TORCH as _ST_TO_TORCH,
 )
 from .unbake_file import (
+    QuantLayerMap,
     _bytes_match,
     _candidate_file_bindings,
     _candidate_file_keys,
     _cast_match,
-    _decode_live_quant_conf,
-    _direct_quant_conf_reason,
-    _direct_quant_module_supported,
     _FileTensor,
     _InvalidQuantConfError,
-    _quant_conf_matches_live,
     _quant_layer_conf,
     read_safetensors_header,
 )
+from .unbake_quant_live import (
+    _decode_live_quant_conf,
+    _direct_quant_conf_reason,
+    _direct_quant_module_supported,
+    _quant_conf_matches_live,
+)
+from .unbake_record import QuantSpec as QuantSpec
+from .unbake_record import UnbakeRecord as UnbakeRecord
 
 log = get_logger(__name__)
 
@@ -57,6 +62,15 @@ class UnbakeError(RuntimeError):
     """
 
 
+class UnbakeRefused(UnbakeError):
+    """A typed refusal of a LoRA stack, raised before any weight was written.
+
+    The resident and the stack it holds are exactly as they were, so the store
+    keeps the model and passes the refusal on: dropping it and loading again
+    would only meet the same refusal (``store_bake.lazy_swap_transition``).
+    """
+
+
 class CaptureAborted(RuntimeError):
     """Capture discarded the record: the checkpoint changed, a quantized layer cannot be rebuilt
     exactly from one checkpoint binding and its live contract, or the resident set went over the cap."""
@@ -72,77 +86,6 @@ def drop_file_cache(path: str) -> None:
             os.close(fd)
     except OSError:
         pass
-
-
-@dataclass
-class QuantSpec:
-    """Restore recipe for one quantized weight wrapper.
-
-    module_key: attribute path of the owning op ("" allowed);
-    layer_conf: this layer's entry from the file's _quantization_metadata;
-    components: state-dict suffix ("weight", "weight_scale", ...) -> file
-    slice; resident: components that failed byte-verify, kept as snapshots."""
-    module_key: str
-    layer_conf: dict
-    components: dict[str, _FileTensor] = field(default_factory=dict)
-    resident: dict[str, torch.Tensor] = field(default_factory=dict)
-    full_precision_mm_config: bool | None = None
-
-
-@dataclass
-class UnbakeRecord:
-    """Where every patched key's pristine bytes live.
-
-    mapped:   plain-tensor patcher key -> checkpoint slice (byte-verified)
-    quant:    quantized patcher key -> QuantSpec (per-component slices)
-    resident: plain patcher key -> pristine tensor snapshot (mapping failed)
-    """
-    path: str
-    file_size: int
-    file_mtime_ns: int
-    file_dev: int | None = None
-    file_ino: int | None = None
-    file_ctime_ns: int | None = None
-    mapped: dict[str, _FileTensor] = field(default_factory=dict)
-    quant: dict[str, QuantSpec] = field(default_factory=dict)
-    resident: dict[str, torch.Tensor] = field(default_factory=dict)
-
-    @property
-    def mapped_bytes(self) -> int:
-        return (sum(ft.nbytes for ft in self.mapped.values())
-                + sum(ft.nbytes for spec in self.quant.values()
-                      for ft in spec.components.values()))
-
-    @property
-    def resident_bytes(self) -> int:
-        tensors = list(self.resident.values())
-        tensors += [t for spec in self.quant.values() for t in spec.resident.values()]
-        return sum(t.numel() * t.element_size() for t in tensors)
-
-    @property
-    def resident_count(self) -> int:
-        return len(self.resident) + sum(len(s.resident) for s in self.quant.values())
-
-    def matches_stat(self, st: os.stat_result) -> bool:
-        basic = st.st_size == self.file_size and st.st_mtime_ns == self.file_mtime_ns
-        if not basic:
-            return False
-        # Captures pin filesystem identity as well as timestamp and size.
-        # Optional fields permit synthetic records used by callers and tests.
-        if self.file_dev is not None and st.st_dev != self.file_dev:
-            return False
-        if self.file_ino is not None and st.st_ino != self.file_ino:
-            return False
-        # ctime is not compared: metadata-only changes move it without changing
-        # contents. Size and mtime catch mutation; device and inode catch replacement.
-        return True
-
-    def stat_ok(self) -> bool:
-        try:
-            st = os.stat(self.path)
-        except OSError:
-            return False
-        return self.matches_stat(st)
 
 
 def live_tensor(model: Any, key: str) -> torch.Tensor:
@@ -164,7 +107,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
     Plain keys map when shape and sampled bytes match, at the file's dtype or
     after a cast to the live one. Quantized keys need one checkpoint binding
     whose quantization metadata matches the live layer. Unmatched tensors and
-    components stay as CPU snapshots; excess resident memory aborts capture.
+    components stay as CPU snapshots; a copy past the resident cap aborts capture.
     """
     header, metadata, parsed = read_safetensors_header(
         base_path, want_metadata=True, want_identity=True
@@ -178,8 +121,17 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
         file_ctime_ns=parsed.file_ctime_ns,
     )
 
-    def _keep(tensor: torch.Tensor) -> torch.Tensor:
-        return tensor.detach().to("cpu").clone()
+    held = [0, 0]  # bytes and tensors kept so far, so each copy checks the cap in constant time
+
+    def _keep(tensor: torch.Tensor) -> torch.Tensor:  # the cap bounds copies, not only the record
+        nbytes = tensor.numel() * tensor.element_size()
+        if held[0] + nbytes > _RESIDENT_CAP_BYTES:
+            raise CaptureAborted(
+                f"{held[1] + 1} keys ({(held[0] + nbytes) / 2**30:.2f} GiB, over the resident cap) failed "
+                "byte-verify against the checkpoint; record discarded, reload contract applies")
+        copy = tensor.detach().to("cpu").clone()
+        held[0], held[1] = held[0] + nbytes, held[1] + 1
+        return copy
 
     def _capture_identity_matches(st: os.stat_result) -> bool:
         return record.matches_stat(st)
@@ -190,9 +142,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
             try:
                 path_before = os.stat(base_path)
             except OSError as exc:
-                raise CaptureAborted(
-                    "checkpoint path changed after its header was validated"
-                ) from exc
+                raise CaptureAborted("checkpoint path changed after its header was validated") from exc
             if not _capture_identity_matches(os.fstat(fd)) or not _capture_identity_matches(
                 path_before
             ):
@@ -200,19 +150,19 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                     "checkpoint changed after its header was validated"
                 )
 
+            renames = load_time_renames(model, header)  # a key ComfyUI renames at load: the file's name
+            layer_map = QuantLayerMap(metadata)  # the embedded quantization map: one parse per capture
+
             def _map_plain(key: str, tensor: torch.Tensor) -> bool:
-                for cand in _candidate_file_keys(key):
+                candidates = with_renamed(_candidate_file_keys(key), renames, key)
+                for cand in candidates:
                     ft = header.get(cand)
-                    if (
-                        ft is None
-                        or ft.dtype != tensor.dtype
-                        or ft.shape != tuple(tensor.shape)
-                    ):
+                    if ft is None or ft.dtype != tensor.dtype or ft.shape != tuple(tensor.shape):
                         continue
                     if _bytes_match(fd, ft, tensor):
                         record.mapped[key] = ft
                         return True
-                for cand in _candidate_file_keys(key):
+                for cand in candidates:
                     ft = header.get(cand)
                     if ft is None:
                         continue
@@ -237,7 +187,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                     file_layer = candidate[:-len(".weight")]
                     try:
                         conf, conf_source = _quant_layer_conf(
-                            metadata, header, file_layer, model_prefix, fd
+                            metadata, header, file_layer, model_prefix, fd, layer_map
                         )
                     except _InvalidQuantConfError as exc:
                         raise CaptureAborted(
@@ -342,6 +292,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                     layer_conf=conf,
                     full_precision_mm_config=recorded_full_precision,
                 )
+                record.quant[key] = spec  # before its copies, so the cap counts them
                 for comp_name, comp in comps.items():
                     if comp_name == "comfy_quant" or comp is None:
                         continue
@@ -359,7 +310,6 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                         spec.components[comp_name] = ft
                     else:
                         spec.resident[comp_name] = _keep(comp)
-                record.quant[key] = spec
 
             for key in keys:
                 tensor = live_tensor(model, key)
@@ -371,9 +321,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
             try:
                 path_after = os.stat(base_path)
             except OSError as exc:
-                raise CaptureAborted(
-                    "checkpoint path changed while capturing the un-bake record"
-                ) from exc
+                raise CaptureAborted("checkpoint path changed while capturing the un-bake record") from exc
             if not _capture_identity_matches(os.fstat(fd)) or not _capture_identity_matches(
                 path_after
             ):
@@ -382,11 +330,6 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                 )
     finally:
         drop_file_cache(base_path)
-    if record.resident_bytes > _RESIDENT_CAP_BYTES:
-        raise CaptureAborted(
-            f"{record.resident_count} keys ({record.resident_bytes / 2**30:.2f} GiB, over the resident "
-            "cap) failed byte-verify against the checkpoint; record discarded, reload contract applies"
-        )
     if record.resident_count:
         names = list(record.resident)
         names += [f"{k}::{c}" for k, spec in record.quant.items() for c in spec.resident]

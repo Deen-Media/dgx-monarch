@@ -19,7 +19,8 @@ these row counts (checked 2026-10-06), so there "equal" means bit equality.
 The canary runs on x86, whose BLAS may pick another kernel for the halved row
 count, the GEMM-shape departure the adapter leaves open; there "equal" means
 agreement to float32 rounding (allclose, rtol and atol 2e-5), which the pad
-row's effect exceeds by orders of magnitude. The ring control asserts that an
+row's effect exceeds by orders of magnitude. The ring control (a padded ring
+render, refused by default, run under the ring_pad waiver) asserts that an
 attended pad row breaks that agreement: on this rig's ARM cores it asserts
 unequal bits, and on x86 an error past the tolerance. The kernel names,
 scales, eps, rotary rows and layouts carry no GEMM and stay exact everywhere,
@@ -42,6 +43,7 @@ from dgx_monarch.adapters import base
 from dgx_monarch.adapters.base import InjectionContext
 from dgx_monarch.adapters.ernie import ErnieAdapter
 from module_location_helpers import from_checkout
+from pad_rows_comfy_helpers import assert_ring_pad_refusal, grant_ring_pad_waiver
 from test_flux_pad_exclusion import _LOCAL, _Harness, _install_stubs, _rank
 
 WORLD = 2
@@ -170,9 +172,9 @@ def _stock(monkeypatch, comfy_ernie, model, inputs, options):
     return out, calls, kernel
 
 
-def _sharded(monkeypatch, model, inputs, options, kernel, *, pure_ulysses=True):
+def _sharded(monkeypatch, model, inputs, options, kernel, *, pure_ulysses=True, ring_world=1):
     harness = _StockKernelHarness(WORLD, kernel)
-    _install_stubs(monkeypatch, harness)
+    _install_stubs(monkeypatch, harness, ring_world=ring_world)
     dispatch = base.make_usp_attention("TORCH_FLASH")
     models = [copy.deepcopy(model) for _ in range(WORLD)]
     for rank_model in models:
@@ -228,17 +230,22 @@ def test_pure_ulysses_hands_every_kernel_stock_operands_and_returns_stock_bits(
 
 
 @pytest.mark.parametrize("grid,text_rows", [((3, 4), 5), ((3, 3), 4)])
-def test_ring_and_hybrid_still_attend_the_pad_and_differ_from_stock(
+def test_a_waived_ring_render_attends_the_pad_and_differs_from_stock(
     monkeypatch, comfy_ernie, grid, text_rows
 ):
-    """The negative control on the real model: without pure Ulysses the odd
-    joint stream's pad row reaches the kernel and the output moves, so the
-    exact match above comes from the exclusion."""
+    """The negative control on the real model. A padded ring render refuses
+    class K by default; under the ring_pad waiver the odd joint stream's pad
+    row reaches the kernel and the output moves, so the exact match above
+    comes from the exclusion."""
     model = _tiny_ernie(comfy_ernie)
     inputs = _inputs(grid, text_rows, 1)
     expected, stock_calls, kernel = _stock(monkeypatch, comfy_ernie, model, inputs, {})
+    with pytest.raises(base.UnsupportedModelError) as caught:
+        _sharded(monkeypatch, model, inputs, {}, kernel, pure_ulysses=False, ring_world=2)
+    assert_ring_pad_refusal(caught.value)
+    grant_ring_pad_waiver(monkeypatch)
     outputs, harness, _models = _sharded(monkeypatch, model, inputs, {}, kernel,
-                                         pure_ulysses=False)
+                                         pure_ulysses=False, ring_world=2)
     for rank in range(WORLD):
         for (_entry, _q, k, _v), (_sq, stock_k, _sv) in zip(
                 harness.seen[rank], stock_calls, strict=True):
@@ -340,5 +347,8 @@ def test_batch_2_norms_read_stocks_contiguous_rows_under_pure_ulysses_only(
     _expected, _calls, kernel = _stock(monkeypatch, comfy_ernie, model, inputs, {})
     assert sorted(seen) == [("final", True), ("first", True)]
     seen.clear()
-    _sharded(monkeypatch, model, inputs, {}, kernel, pure_ulysses=pure_ulysses)
+    if not pure_ulysses:
+        grant_ring_pad_waiver(monkeypatch)   # a padded ring render needs the waiver
+    _sharded(monkeypatch, model, inputs, {}, kernel, pure_ulysses=pure_ulysses,
+             ring_world=1 if pure_ulysses else 2)
     assert sorted(seen) == sorted([("final", pure_ulysses), ("first", pure_ulysses)] * WORLD)

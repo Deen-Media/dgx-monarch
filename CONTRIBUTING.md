@@ -6,10 +6,10 @@ the [setup skill](skills/dgx-monarch/SKILL.md) for installation.
 
 ## Set up a development environment
 
-Follow the verified xFuser wheel and Torch-constraint procedure in
+Follow the Torch-constraint procedure in
 [docs/INSTALL.md](docs/INSTALL.md). Use `-e "$REPO_DIR[dev]"` in both the
-reviewed dry run and the install command. Keep the temporary wheel directory
-until installation finishes. The dev tools are listed in `pyproject.toml`.
+reviewed dry run and the install command. Keep the temporary constraint
+directory until installation finishes. The dev tools are listed in `pyproject.toml`.
 
 Use the Python environment you selected throughout. Preserve ComfyUI's working
 CUDA Torch build and the repository's exact Monarch pin; an older Monarch can
@@ -34,6 +34,12 @@ mypy -p dgx_monarch
 bash scripts/test_cpu.sh
 ```
 
+The wrapper runs ruff, mypy and the other CI gate checks that can run on
+your box before the suite
+([scripts/README.md](scripts/README.md#cpu-test-wrapper)); the two commands
+above it also run alone. A green run covers those gates and the suite, not
+all of CI: `tests/test_cpu_gates.py` names the steps only CI runs, and CI's
+tools can be other versions than yours.
 `DGXM_TEST_PYTHON` selects the interpreter. The wrapper uses this checkout's
 source, defaults OMP/MKL to one thread and reports the 25 slowest tests; its
 120-second warning is advisory. `HYPOTHESIS_PROFILE=ci` uses deterministic
@@ -95,10 +101,12 @@ the same tool; see the [verified upstream exception](docs/TROUBLESHOOTING.md#109
 if it prints a known platform-tag failure. CI also checks the refusal ledger
 and builds and inspects both package artifacts on x64. The hosted ARM64 job
 `lint-and-unit-arm64` uses Ubuntu 24.04 and Python 3.12 for dependency,
-Torch/CUDA-build and full CPU checks; x64 covers the wheel build. To check the ledger locally, regenerate it with
-`PYTHONPATH=src python tests/test_refusal_classes.py --write` and review any
-diff in `tests/refusal_class_ledger.json`. An unexpected diff must be resolved,
-not committed just to make the check pass.
+Torch/CUDA-build and full CPU checks; x64 covers the wheel build. To check the ledger locally, run
+`PYTHONPATH=src python tests/test_refusal_classes.py --check`, the command CI
+and `scripts/test_cpu.sh` run: it prints any difference and writes nothing.
+After a reviewed change, regenerate the ledger with `--write` in place of
+`--check` and review the diff in `tests/refusal_class_ledger.json`. An
+unexpected diff must be resolved, not committed just to make the check pass.
 
 ### Test and citation maintenance
 
@@ -114,7 +122,14 @@ marks and tables they use. After reviewing a deliberate change, run
 `python tools/check_protected_tests.py --write`, include the inventory diff,
 and list added, removed or changed protected tests in the PR. A digest detects
 change; it does not prove equivalent coverage or track imported helpers,
-conftest fixtures or runtime code.
+conftest fixtures or runtime code. It counts the common ways a skip runs as the
+module imports, as a tripwire and not a proof. These import-time skips are not
+seen: one through `getattr(pytest, "skip")(...)`; one reached through an
+attribute call on a module the test module imports, such as
+`helpers.require()`; one reached through a class of the module, by its
+constructor or a method called at import, that method used as a decorator, or
+the class given as a metaclass; and one in a function or lambda that a module
+function defines and calls itself.
 
 For moved source or test citations, run
 `python tools/repin_trust_citations.py --base <rev>` and review the
@@ -135,10 +150,11 @@ See [versioning policy](docs/DESIGN.md#63-versioning-and-compatibility-policy).
 Submit original work or material you have the right to contribute. Identify
 external specifications, APIs or behavior that informed the change. Do not
 copy or vendor dependency implementations; the compiled Studio bundle is build
-output, listed in [LICENSE-NOTES.md](LICENSE-NOTES.md#studio-frontend-bundle).
-xFuser remains external: its
-compatibility wheel is built locally from the verified official wheel, and
-neither the wheel nor dependency source belongs in the repository.
+output, listed in [LICENSE-NOTES.md](LICENSE-NOTES.md#studio-frontend-bundle),
+and the one vendored source file, the MIT INT8 GEMM kernel, is listed under
+[Vendored INT8 GEMM kernel](LICENSE-NOTES.md#vendored-int8-gemm-kernel).
+xFuser remains external: it comes from the package index, and neither a
+wheel nor dependency source belongs in the repository.
 
 External contributions require a DCO sign-off on each commit with
 `git commit -s`. There is no Contributor License Agreement. See
@@ -185,6 +201,62 @@ return path. [Selected-rail qualification](docs/VALIDATION.md#native-rdma)
 covers only its recorded scope, not untested cancellation or fabric-failure
 recovery. Do not generalize one passing configuration to another workload.
 
+### Reports from clusters larger than ours
+
+The project runs two DGX Sparks. A cluster of three to eight Sparks, and any
+other hardware DESIGN 2.2 lists in that tier, sits in the "designed for, needs community
+validation" tier of [DESIGN section 2.2](docs/DESIGN.md#22-hardware-targets),
+and it stays there whatever a report shows. Use the
+[larger-cluster report form](.github/ISSUE_TEMPLATE/larger-cluster-report.yml)
+to send one.
+
+For the project to act on a report, it must carry:
+
+- the versions: dgx-monarch, ComfyUI, torch, NCCL, torchmonarch and xFuser;
+- the graph's shape: the family, quantization, canvas, frame count, steps,
+  cfg, the LoRA count and strengths, and every Init node switch that differs
+  from its default;
+- the driver's own topology line, `render topology: ... (preset|auto: ...)`,
+  and the full text of the refusal if there was one;
+- the latent's sha256 from the rank stats, both on the layout under report
+  and on a layout this project has validated, for the same graph and seed: a
+  two-Spark pair on its `auto` layout, or one GPU with `mode=local`;
+- the rank identity line (`cross-rank latent identity: ...`);
+- at least two shapes or lengths, one of which needs a divisibility pad row
+  where the family has that guard.
+
+Timings are welcome, with the box's clock state and whether the render was
+cold or warm.
+
+What the project does with a report:
+
+1. A crash, a stall, or a refusal that should not happen is fixed where a
+   reading of the code finds the fault, and the fix is held by CPU tests.
+2. An `auto` row or fold changes only where the layout is exact by
+   construction, which means it computes what a validated layout computes
+   (for example a higher Ulysses degree whose heads tile and whose pad
+   exclusion is the same), and at least two independent reports show a latent
+   identical to a validated layout's. Such a row says in its note and in the
+   docs that it rests on community runs and was not run on the project's own
+   hardware.
+3. Speed figures are recorded as reported, never as validated, and no
+   default is chosen on speed alone.
+4. A layout that changes the arithmetic, such as a cfg composite no row
+   names, ring or hybrid attention on a padded sequence, or data parallelism
+   on a packed family, never becomes a default on reports alone.
+
+One row does not meet rule 2: MiniMax H3 folds into
+`uly4` at four Sparks (issue #188) on one report of a latent identical to a
+pair's `uly2` and one report of one-step checks within 0.10 of one GPU, which
+is closeness, not an identical latent. The maintainer allowed it as an
+exception for that case, and its note and the docs say so.
+
+Reports name nobody: the docs say "community four-Spark users" and state what
+was read. A person is named only to credit an enhancement in the code. The
+identity gate's first-use check compares renders on the reader's own mesh and
+layout only; it never tests a layout against a validated one, so a report's
+two hashes are the only check of that kind.
+
 ### Changelog entries
 
 Give each change a user can see one bullet under `## [Unreleased]` in
@@ -217,7 +289,11 @@ Release maintainers must complete these checks on the intended release commit:
    both ComfyUI master and the newest release tag.
    The canary checks node-pack import, schemas, adapters, bake/slab behavior,
    every committed template and the stock API contracts in
-   `tests/canary/comfy_seam_contracts.py` on CPU.
+   `tests/canary/comfy_seam_contracts.py` on CPU. Run the full consent
+   enumeration too, which CI leaves out:
+   `DGXM_CONSENT_ENUMERATION_FULL=1 python -m pytest -q tests/test_no_material_consent_enumeration.py`
+   reads every gate-ledger sequence of up to three events (about two
+   minutes on one core).
 2. `python -m build` succeeds. Inspect both artifacts and install them only in
    disposable validation environments. The wheel contains the package and CLI;
    the source checkout provides the complete ComfyUI node pack. This project

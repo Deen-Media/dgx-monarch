@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Resolve exact repository pin
@@ -50,7 +50,7 @@ jobs:
           "$py" -m pip install --upgrade pip > "$ARTIFACTS/pin-install.log" 2>&1
           pip_rc=$?
           if [ "$pip_rc" -eq 0 ]; then
-            "$py" -m pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132 >> "$ARTIFACTS/pin-install.log" 2>&1
+            "$py" -m pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cu132 >> "$ARTIFACTS/pin-install.log" 2>&1
             pip_rc=$?
           fi
           if [ "$pip_rc" -eq 0 ]; then
@@ -77,7 +77,7 @@ jobs:
           set +e
           PYTHONPATH="$GITHUB_WORKSPACE/src" "$VENV/bin/python" \
             tests/canary/monarch_surface_canary.py compare \
-            --baseline tests/fixtures/torchmonarch_pin_0_7_0.json \
+            --baseline tests/fixtures/torchmonarch_pin_0_8_0.json \
             --candidate "$ARTIFACTS/pin.json" \
             --diff-json "$ARTIFACTS/checked-pin-diff.json" \
             --report "$ARTIFACTS/checked-pin-report.md"

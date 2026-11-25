@@ -2310,3 +2310,33 @@ def test_carried_names_are_quoted_and_a_table_that_cannot_round_trip_is_refused(
     assert carried.refused == ('fabric."bad\u007fname"',)
     assert carried.blockers == ("existing_config_fabric_invalid",)
     assert setup_config_carry.kept_counts(carried.kept) == {"fabric": 1, "monarch": 1, "studio": 0, "worker_args": 0}
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_a_repeated_artifact_survives_the_cli_build_then_supplied_plan_path(
+    tmp_path: Path, monkeypatch, capsys, apply: bool,
+):
+    """The CLI builds one plan and hands it back to run_setup, which validates it.
+
+    Plan building deduplicated a repeated --artifact while validation counted the
+    raw paths, so a plan-only run with the same artifact twice refused as invalid input.
+    """
+    from dgx_monarch.cli import setup_cli
+    from test_setup_cli import _args
+
+    artifact = {"ordinal": 1, "exists": True, "regular": True, "size": 1, "sha256": "a" * 64}
+    runner, calls = _runner([{**_payload(), "artifacts": [artifact]}])
+    ops = _ops(runner)
+    monkeypatch.setattr(setup_command, "SetupOps", lambda: ops)
+    args = _args(
+        host=["spark-a,10.0.0.2,1"], setup_config_path=str(tmp_path / "cluster.toml"),
+        fabric_profile="single-node", comfy_dir="", artifact=["models/a.safetensors"] * 2,
+        apply=apply, yes=apply,
+    )
+
+    assert setup_cli.run(args) == 0, capsys.readouterr()
+    # One host: the plan's probe, then on apply the live recheck before mutation.
+    assert len(calls) == (2 if apply else 1)
+    assert (tmp_path / "cluster.toml").exists() is apply
+    request = setup_cli.request_from_args(args)
+    assert request.artifacts == ("models/a.safetensors",)

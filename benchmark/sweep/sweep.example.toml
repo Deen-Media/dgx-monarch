@@ -140,6 +140,9 @@ auto_gate = ["uly2+fsdp"]
 "dgx-monarch-test-kromoss-turbo-dmd" = ["your_first_lora.safetensors"]
 "dgx-monarch-test-moss-image-base-turbo" = ["your_first_lora.safetensors"]
 "dgx-monarch-test-moss-image-lora" = ["your_first_lora.safetensors"]
+# ComfyUI's p-h3-image route ships the vendor's LoRA on MiniMax H3's pruned
+# INT8 DiT; map it to the p-h3-image_lora_bf16.safetensors on your rig.
+"dgx-monarch-test-p-h3-image-lora" = ["your_first_lora.safetensors"]
 # Two loaders: the high-noise model first, then the low-noise one.
 "dgx-monarch-test-wan22-i2v-lora" = ["your_first_lora.safetensors",
                                      "your_second_lora.safetensors"]
@@ -164,6 +167,20 @@ auto_gate = ["uly2+fsdp"]
 # MOSS-Image needs none either: moss_image_sft_*, moss_image_base_* and
 # kromoss_* split into the stems mossimagesft, mossimagebase and kromoss,
 # so each CFG 3 graph meets its own INT8 ConvRot sibling and no other.
+#
+# p-h3-image needs none: p-h3-image_{bf16,int8_convrot,w4a8} share the stem
+# ph3image, so the graph meets all three of the vendor's DiT files. Its text
+# encoder and VAE stay as the graph names them; the int8 and w4a8 testing
+# graphs carry the matching sets.
+#
+# MiniMax-H3-Image needs none: minimax_h3_image_pruned_{bf16,int8_convrot,w4a8}
+# share the stem minimaxh3imagepruned, so each of its three graphs meets all
+# three DiT files. The text encoder, the VAE and the prompt expander stay as
+# the graph names them. All three graphs ship with the expander off and send
+# the request as written; the two shipped graphs hold this project's expander
+# texts, the testing graph none. A cell whose graph has the expander switch on
+# renders text a language model wrote on the driver and is not an identity
+# row (docs/SWEEP.md section 3).
 [artifact_groups."dgx-monarch-ideogram4-t2i"]
 "ideogram4_fp8_scaled.safetensors" = []
 "ideogram4_unconditional_fp8_scaled.safetensors" = []

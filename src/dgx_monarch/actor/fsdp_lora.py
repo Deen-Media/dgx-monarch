@@ -10,9 +10,10 @@ the full patched weight and slice it afterwards. Each rank therefore:
 
 1. reads the pristine full weight from the checkpoint file with one pread (a
    fresh CPU tensor, freed after the key),
-2. runs comfy's own math on it (``comfy.lora.calculate_weight`` in the LoRA
-   compute dtype on ``load_device``, then the key-seeded rounding to the
-   storage dtype, as ``store_bake.bake_key`` does),
+2. runs the bake ``store_bake.bake_key`` runs on it, on ``load_device``:
+   stock's cast-time math where stock has one weight for the key
+   (``actor/lora_cast_time.py``), else comfy's classic merge in the LoRA
+   compute dtype with the key-seeded rounding to the storage dtype,
 3. takes ``torch.chunk(out, world, dim=0)[rank]``, the chunking FSDP2 used at
    wrap time, and copies it into the local shard.
 
@@ -39,78 +40,65 @@ other plain tensor still raises.
 
 LoRA on quantized shards is not admitted: a quantized key refuses before any
 write.
+
+A key ComfyUI renames as it loads the file (FLUX stores a q/k norm weight as
+``<...>_norm.scale``; the model and a LoRA call it ``<...>_norm.weight``) is
+read under the file's name, taken from ComfyUI's own rename
+(``actor/load_renames.py``) and byte-verified like any other key. A key the
+file holds under no name refuses class P before any write.
 """
 from __future__ import annotations
 
-import math
+import contextlib
 import os
-from typing import Any
+from collections.abc import Iterator
+from typing import Any, NoReturn
 
 import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from ..transfer_utils import failure_summary, safe_call
-from .unbake import UnbakeError, UnbakeRecord, _is_quantized, live_tensor
-from .unbake_file import (
-    _ST_TO_TORCH,
-    _candidate_file_keys,
-    _FileTensor,
-    _fingerprint_windows,
-    read_safetensors_header,
+from . import lora_cast_time
+from .fsdp_lora_file import (
+    _bound_to,
+    _BoundCheckpoint,
+    _file_tensor,
+    _files_identical,
+    _identity,
+    _shard_bytes_match,
+    _whole,
+    local_shard,
+    read_full,
+    read_rows,
+    shard_geometry,
+    shard_rows,
 )
+from .load_renames import load_time_renames
+from .unbake import UnbakeError, UnbakeRecord, UnbakeRefused, _is_quantized, live_tensor
+from .unbake_file import _FileTensor, read_safetensors_header
+
+__all__ = ["apply_stack", "bake_key", "bake_stack", "capture_record", "lazy_swap", "local_shard",
+           "mesh_rank_world", "read_full", "read_rows", "replicated_parameter_ids", "shard_geometry",
+           "shard_rows", "verify_key", "write_shard"]
 
 log = get_logger(__name__)
 
 
-def shard_rows(rows: int, world: int, rank: int) -> tuple[int, int]:
-    """[start, stop) rows this rank holds, with torch.chunk's dim-0 semantics."""
-    if rows <= 0 or world <= 0:
-        return 0, 0
-    chunk = math.ceil(rows / world)
-    start = min(rank * chunk, rows)
-    stop = min(start + chunk, rows)
-    return start, stop
-
-
 def replicated_parameter_ids(model: Any) -> frozenset[int]:
-    """Ids of the census parameters the FSDP wrap left whole, for this model.
+    """Ids of the parameters the FSDP wrap left whole, for this model.
 
     ``model`` is the comfy ``model_base`` the patcher holds; the wrap reads
-    the same ``auxiliary_module_parameters(diffusion_model, model)``
-    (``adapters/fsdp.py``). Ids, because a tensor's ``==`` is elementwise.
+    the same ``replicated_parameters(diffusion_model, model)``
+    (``adapters/fsdp.py``): the census modules, the fp32 islands and every
+    zero-dimensional parameter. Ids, because a tensor's ``==`` is elementwise.
     """
-    from ..adapters.fsdp_islands import auxiliary_module_parameters
+    from ..adapters.fsdp_islands import replicated_parameters
 
     diffusion_model = getattr(model, "diffusion_model", None)
     if diffusion_model is None:
         return frozenset()
-    return frozenset(id(p) for p in auxiliary_module_parameters(diffusion_model, model))
-
-
-def _whole(param: torch.Tensor, replicated: frozenset[int]) -> bool:
-    return getattr(param, "_local_tensor", None) is None and id(param) in replicated
-
-
-def local_shard(param: torch.Tensor, replicated: frozenset[int] = frozenset()) -> torch.Tensor:
-    """The rank's unpadded local chunk of a sharded parameter.
-
-    A census-replicated parameter is its own whole local view; any other
-    parameter with no local tensor raises.
-    """
-    local = getattr(param, "_local_tensor", None)
-    if local is not None:
-        return local
-    if id(param) in replicated:
-        return param
-    raise UnbakeError("parameter is not FSDP-sharded (no local tensor)")
-
-
-def shard_geometry(
-    param: torch.Tensor, replicated: frozenset[int], rank: int, world: int,
-) -> tuple[int, int]:
-    """(rank, world) for this parameter's rows: a replicated one is a world-1 shard."""
-    return (0, 1) if _whole(param, replicated) else (rank, world)
+    return frozenset(id(p) for p in replicated_parameters(diffusion_model, model))
 
 
 def mesh_rank_world() -> tuple[int, int]:
@@ -130,7 +118,8 @@ def write_shard(
     local = local_shard(param, replicated)
     rank, world = shard_geometry(param, replicated, rank, world)
     start, stop = shard_rows(int(full.shape[0]) if full.ndim else 0, world, rank)
-    chunk = full[start:stop]
+    # A whole parameter takes the whole tensor; a zero-dimensional one has no rows to slice.
+    chunk = full if world == 1 else full[start:stop]
     if tuple(chunk.shape) != tuple(local.shape):
         raise UnbakeError(
             f"shard geometry drift: rank {rank}/{world} expects local shape "
@@ -140,116 +129,97 @@ def write_shard(
         local.copy_(chunk.to(device=local.device, dtype=local.dtype))
 
 
-def _file_tensor(header: dict[str, _FileTensor], key: str, param: torch.Tensor) -> _FileTensor:
-    for cand in _candidate_file_keys(key):
-        ft = header.get(cand)
-        if ft is None:
-            continue
-        if ft.dtype != param.dtype or ft.shape != tuple(param.shape):
-            # This is the in-bake backstop for an fp32 island cast live, which the
-            # header check (adapters.detect.fsdp_lora_admission_property) cannot
-            # predict. Every rank loads the same file and casts it the same way, so
-            # the class P tag is rank symmetric (docs/DESIGN.md section 5.4).
-            raise UnbakeError(refusal(
-                RefusalClass.PHYSICS,
-                f"checkpoint tensor {cand} is {ft.dtype}/{ft.shape} but the live "
-                f"parameter is {param.dtype}/{tuple(param.shape)}; a LoRA under FSDP "
-                "needs the file's own dtype (no live cast). Use a resident topology "
-                "for this file, or a bf16 artifact with no fp32 islands."
-            ))
-        return ft
-    raise UnbakeError(f"no checkpoint tensor for key {key}")
-
-
-def _torch_dtype(ft: _FileTensor) -> torch.dtype:
-    dtype = _ST_TO_TORCH.get(ft.dtype) if isinstance(ft.dtype, str) else ft.dtype
-    if not isinstance(dtype, torch.dtype):
-        raise UnbakeError(f"unsupported checkpoint dtype {ft.dtype!r}")
-    return dtype
-
-
-def read_full(fd: int, ft: _FileTensor) -> torch.Tensor:
-    """The whole pristine tensor, as a fresh CPU tensor."""
-    raw = os.pread(fd, ft.nbytes, ft.start)
-    if len(raw) != ft.nbytes:
-        raise UnbakeError("short read of a checkpoint tensor")
-    dtype = _torch_dtype(ft)
-    return torch.frombuffer(bytearray(raw), dtype=dtype).reshape(ft.shape)
-
-
-def read_rows(fd: int, ft: _FileTensor, start: int, stop: int) -> torch.Tensor:
-    """Rows [start, stop) of a row-major tensor: one contiguous pread."""
-    rows = ft.shape[0] if ft.shape else 1
-    row_bytes = ft.nbytes // max(rows, 1)
-    length = max(stop - start, 0) * row_bytes
-    dtype = _torch_dtype(ft)
-    tail = tuple(ft.shape[1:])
-    if length == 0:
-        return torch.empty((0, *tail), dtype=dtype)
-    raw = os.pread(fd, length, ft.start + start * row_bytes)
-    if len(raw) != length:
-        raise UnbakeError("short read of a checkpoint shard")
-    return torch.frombuffer(bytearray(raw), dtype=dtype).reshape((stop - start, *tail))
-
-
-def _shard_bytes_match(
-    fd: int, ft: _FileTensor, param: torch.Tensor, rank: int, world: int,
-    replicated: frozenset[int] = frozenset(),
-) -> bool:
-    """Sampled byte equality between this rank's rows on disk and its shard."""
-    local = local_shard(param, replicated)
-    rank, world = shard_geometry(param, replicated, rank, world)
-    rows = ft.shape[0] if ft.shape else 1
-    start, stop = shard_rows(rows, world, rank)
-    row_bytes = ft.nbytes // max(rows, 1)
-    nbytes = (stop - start) * row_bytes
-    if nbytes != local.numel() * local.element_size():
-        return False
-    if nbytes == 0:
-        return True
-    flat = local.detach().reshape(-1).contiguous().view(torch.uint8)
-    base = ft.start + start * row_bytes
-    try:
-        for offset, length in _fingerprint_windows(nbytes):
-            ours = bytes(flat[offset:offset + length].cpu().numpy().tobytes())
-            if os.pread(fd, length, base + offset) != ours:
-                return False
-    except (OSError, RuntimeError):
-        return False
-    return True
+def _refuse_quantized(key: str) -> NoReturn:
+    # This is the backstop for a quantized checkpoint the header preflight
+    # (adapters.detect.fsdp_lora_admission_property) misses. Every rank sees
+    # the same wrapper on the same key, so the class P tag is rank symmetric
+    # (docs/DESIGN.md section 5.4).
+    raise UnbakeRefused(refusal(
+        RefusalClass.PHYSICS,
+        f"quantized key {key} under FSDP: LoRA on quantized shards is "
+        "not admitted. Use a resident topology for this file, or a "
+        "bf16, fp16, or plain-dtype fp8 checkpoint under FSDP."))
 
 
 def capture_record(
     model: Any, keys, base_path: str, rank: int, world: int,
     replicated: frozenset[int] = frozenset(),
+    checkpoint: _BoundCheckpoint | None = None,
 ) -> UnbakeRecord:
-    """An UnbakeRecord whose mapped keys are byte-verified against this rank's rows."""
-    header, _metadata, parsed = read_safetensors_header(
-        base_path, want_metadata=True, want_identity=True)
+    """An UnbakeRecord whose mapped keys are byte-verified against this rank's rows.
+
+    ``checkpoint`` is the descriptor ``apply_stack`` opened and bound to the
+    header it read; without one the capture binds its own.
+    """
+    if checkpoint is None:
+        with _bound_checkpoint(base_path) as own:
+            return capture_record(model, keys, base_path, rank, world, replicated, own)
+    header, parsed, fd = checkpoint.header, checkpoint.parsed, checkpoint.fd
     record = UnbakeRecord(
         path=base_path, file_size=parsed.file_size, file_mtime_ns=parsed.file_mtime_ns,
         file_dev=parsed.file_dev, file_ino=parsed.file_ino, file_ctime_ns=parsed.file_ctime_ns)
-    with open(base_path, "rb") as f:
-        fd = f.fileno()
-        for key in keys:
-            param = live_tensor(model, key)
-            if _is_quantized(param) or _is_quantized(getattr(param, "_local_tensor", None)):
-                # This is the backstop for a quantized checkpoint the header preflight
-                # (adapters.detect.fsdp_lora_admission_property) misses. Every rank sees
-                # the same wrapper on the same key, so the class P tag is rank symmetric
-                # (docs/DESIGN.md section 5.4).
-                raise UnbakeError(refusal(
-                    RefusalClass.PHYSICS,
-                    f"quantized key {key} under FSDP: LoRA on quantized shards is "
-                    "not admitted. Use a resident topology for this file, or a "
-                    "bf16, fp16, or plain-dtype fp8 checkpoint under FSDP."))
-            ft = _file_tensor(header, key, param)
-            if not _shard_bytes_match(fd, ft, param, rank, world, replicated):
-                raise UnbakeError(
-                    f"live shard of {key} does not match the checkpoint bytes on rank "
-                    f"{rank}; the model is not pristine, reload contract applies")
-            record.mapped[key] = ft
+    # A key ComfyUI renames as it loads the file is found under the file's name;
+    # the byte check below still has to pass on it.
+    renames = load_time_renames(model, header)
+    bound: list[tuple[str, torch.Tensor, _FileTensor]] = []
+    for key in keys:
+        param = live_tensor(model, key)
+        if _is_quantized(param) or _is_quantized(getattr(param, "_local_tensor", None)):
+            _refuse_quantized(key)
+        bound.append((key, param, _file_tensor(header, key, param, renames,
+                                               identical=lambda a, b: _files_identical(fd, a, b))))
+    # Every refusal above reads the file and the model's structure, the same on
+    # every rank. The rows differ by rank, so they are checked only once every
+    # key is bound: a rank whose rows fail cannot raise ahead of a refusal its
+    # peer meets on a later key.
+    for key, param, ft in bound:
+        if not _shard_bytes_match(fd, ft, param, rank, world, replicated):
+            raise UnbakeError(
+                f"live shard of {key} does not match the checkpoint bytes on rank "
+                f"{rank}; the model is not pristine, reload contract applies")
+        record.mapped[key] = ft
     return record
+
+
+@contextlib.contextmanager
+def _bound_checkpoint(base_path: str, expected: Any = None) -> Iterator[_BoundCheckpoint]:
+    """Read the header, open the file once, and bind every read to that descriptor.
+
+    The descriptor and the path must both name the inode, size and times the
+    header read reported, before the first read and again after the last, as
+    ``unbake.restore_pristine`` checks its own reads; an atomic replacement or
+    an in-place rewrite in between refuses instead of baking another file's
+    bytes at the old offsets. ``expected``, when given, is the identity of the
+    file the model was loaded from (its FSDP checkpoint pin). On the way out
+    the checkpoint's clean pages are dropped from the page cache: the bake
+    reads each patched key whole, and on unified memory those pages sit beside
+    the shards until the kernel reclaims them.
+    """
+    header, _metadata, parsed = read_safetensors_header(
+        base_path, want_metadata=True, want_identity=True)
+    want = _identity(parsed)
+    fd = os.open(base_path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if not _bound_to(fd, base_path, want):
+            raise UnbakeError(
+                f"checkpoint {base_path} changed after its header was read; "
+                "reload contract applies")
+        if expected is not None and _identity(expected) != want:
+            raise UnbakeError(
+                f"checkpoint {base_path} changed since this model was loaded from it (its "
+                "device, inode, size, modification time or change time differ); reload "
+                "contract applies")
+        yield _BoundCheckpoint(fd, header, parsed)
+        if not _bound_to(fd, base_path, want):
+            raise UnbakeError(
+                f"checkpoint {base_path} changed while LoRA bake reads were in progress; "
+                "reload contract applies")
+    finally:
+        try:
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+        except OSError:
+            pass
+        os.close(fd)
 
 
 def bake_key(
@@ -274,13 +244,20 @@ def bake_key(
             "not admitted. Use a resident topology for this file, or a bf16, "
             "fp16, or plain-dtype fp8 checkpoint under FSDP."))
     bake_device = getattr(active, "load_device", None) or local_shard(weight, replicated).device
-    temp = mm.cast_to_device(
-        pristine_full, bake_device, mm.lora_compute_dtype(bake_device), copy=True)
-    out = comfy.lora.calculate_weight(patches, temp, key)
-    out = comfy.float.stochastic_rounding(
-        out, weight.dtype, seed=comfy.utils.string_to_seed(key))
+    # The resident weight is the file tensor cast to the live dtype, as a
+    # restore writes it; both bakes start there, and so does verify_key.
+    pristine = pristine_full.to(dtype=local_shard(weight, replicated).dtype)
+    # Stock's cast-time weight where it has one (#145), else the classic bake.
+    out = lora_cast_time.cast_time_weight(active, key, bake_device, source=pristine)
+    if out is None:
+        temp = mm.cast_to_device(
+            pristine, bake_device, mm.lora_compute_dtype(bake_device), copy=True)
+        out = comfy.lora.calculate_weight(patches, temp, key)
+        out = comfy.float.stochastic_rounding(
+            out, weight.dtype, seed=comfy.utils.string_to_seed(key))
+        del temp
     write_shard(weight, out, rank, world, replicated)
-    del temp, out
+    del out
 
 
 def verify_key(
@@ -296,8 +273,8 @@ def verify_key(
     if not isinstance(sharded, torch.nn.Parameter):
         raise UnbakeError(f"key {key} is not a parameter")
     device = getattr(active, "load_device", None) or local_shard(sharded, replicated).device
-    reference_param = torch.nn.Parameter(
-        pristine_full.to(device=device), requires_grad=False)
+    reference_param = torch.nn.Parameter(pristine_full.to(
+        device=device, dtype=local_shard(sharded, replicated).dtype), requires_grad=False)
     # Park the pristine full weight on the module for comfy's reference
     # computation; the identical DTensor Parameter object goes back afterwards.
     module._parameters[attr] = reference_param
@@ -310,7 +287,7 @@ def verify_key(
     rank, world = shard_geometry(sharded, replicated, rank, world)
     start, stop = shard_rows(int(ref.shape[0]) if ref.ndim else 0, world, rank)
     ours = local_shard(sharded, replicated)
-    ref_chunk = ref[start:stop].to(device=ours.device)
+    ref_chunk = (ref if world == 1 else ref[start:stop]).to(device=ours.device)
     if ref.dtype != ours.dtype or not torch.equal(ref_chunk, ours):
         raise UnbakeError(
             f"ambient bake verify MISMATCH on {key} (FSDP shard): this bake does not "
@@ -330,48 +307,68 @@ def _touched_keys(*records: UnbakeRecord | None) -> set[str]:
     return out
 
 
-def apply_stack(store, active, base_path: str, previous: UnbakeRecord | None) -> UnbakeRecord:
+def _refuse_quantized_setters(active, patch_keys) -> None:
+    """``bake_key``'s quantized-setter refusal, raised for every key before the first write."""
+    if not patch_keys:
+        return
+    import comfy.model_patcher as comfy_mp
+
+    for key in patch_keys:
+        _weight, set_func, convert_func = comfy_mp.get_key_weight(active.model, key)
+        if set_func is not None or convert_func is not None:
+            _refuse_quantized(key)
+
+
+def apply_stack(store, active, base_path: str, previous: UnbakeRecord | None,
+                expected: Any = None) -> UnbakeRecord:
     """Restore keys that left the stack, bake the keys in it, verify a sample.
 
-    Returns the record for the keys now baked. Raises ``UnbakeError`` on any
-    inconsistency, after which the caller discards the slot and reloads.
+    Every check that can refuse the stack runs before the first write, so a
+    refusal (``UnbakeRefused``) leaves the resident and its stack as they
+    were. Every read goes through one descriptor bound to the header
+    (``_bound_checkpoint``); ``expected`` is the identity of the file the model
+    was loaded from, when the store holds one. Returns the record for the
+    keys now baked. Raises ``UnbakeError`` on any other inconsistency, after
+    which the caller discards the slot and reloads.
     """
     import random
 
     rank, world = mesh_rank_world()
     replicated = replicated_parameter_ids(active.model)
     patch_keys = list(active.patches)
-    _header, _metadata, parsed = read_safetensors_header(
-        base_path, want_metadata=True, want_identity=True)
     if previous is not None and not previous.stat_ok():
         raise UnbakeError(f"checkpoint {base_path} changed since capture")
-    # Keys the new stack does not touch must go back to pristine first.
-    leaving = sorted(_touched_keys(previous) - set(patch_keys))
-    novel = [k for k in patch_keys if previous is None or k not in previous.mapped]
-    fresh = (capture_record(active.model, novel, base_path, rank, world, replicated)
-             if novel else None)
-    record = UnbakeRecord(
-        path=base_path, file_size=parsed.file_size, file_mtime_ns=parsed.file_mtime_ns,
-        file_dev=parsed.file_dev, file_ino=parsed.file_ino, file_ctime_ns=parsed.file_ctime_ns)
-    for key in patch_keys:
-        for source in (previous, fresh):
-            if source is not None and key in source.mapped:
-                record.mapped[key] = source.mapped[key]
-                break
-        else:
-            raise UnbakeError(f"patched key {key} has no checkpoint binding")
-    n_verify = (len(patch_keys) if store.swap_verify < 0
-                else min(store.swap_verify, len(patch_keys)))
-    verify_keys = set(random.sample(patch_keys, n_verify)) if n_verify else set()
-    with open(base_path, "rb") as f:
-        fd = f.fileno()
+    with _bound_checkpoint(base_path, expected) as checkpoint:
+        parsed, fd = checkpoint.parsed, checkpoint.fd
+        # Keys the new stack does not touch must go back to pristine first.
+        leaving = sorted(_touched_keys(previous) - set(patch_keys))
+        novel = [k for k in patch_keys if previous is None or k not in previous.mapped]
+        fresh = (capture_record(active.model, novel, base_path, rank, world, replicated, checkpoint)
+                 if novel else None)
+        record = UnbakeRecord(
+            path=base_path, file_size=parsed.file_size, file_mtime_ns=parsed.file_mtime_ns,
+            file_dev=parsed.file_dev, file_ino=parsed.file_ino, file_ctime_ns=parsed.file_ctime_ns)
+        for key in patch_keys:
+            for source in (previous, fresh):
+                if source is not None and key in source.mapped:
+                    record.mapped[key] = source.mapped[key]
+                    break
+            else:
+                raise UnbakeError(f"patched key {key} has no checkpoint binding")
+        _refuse_quantized_setters(active, patch_keys)
+        n_verify = (len(patch_keys) if store.swap_verify < 0
+                    else min(store.swap_verify, len(patch_keys)))
+        verify_keys = set(random.sample(patch_keys, n_verify)) if n_verify else set()
+        # The first write is below this line.
         for key in leaving:
             ft = previous.mapped[key]  # type: ignore[union-attr]
             param = live_tensor(active.model, key)
-            rows = ft.shape[0] if ft.shape else 1
             key_rank, key_world = shard_geometry(param, replicated, rank, world)
-            start, stop = shard_rows(rows, key_world, key_rank)
-            chunk = read_rows(fd, ft, start, stop)
+            if key_world == 1:
+                chunk = read_full(fd, ft)  # a whole parameter, a zero-dimensional one included
+            else:
+                start, stop = shard_rows(ft.shape[0] if ft.shape else 1, key_world, key_rank)
+                chunk = read_rows(fd, ft, start, stop)
             local = local_shard(param, replicated)
             with torch.no_grad():
                 local.copy_(chunk.to(device=local.device, dtype=local.dtype))
@@ -396,10 +393,19 @@ def apply_stack(store, active, base_path: str, previous: UnbakeRecord | None) ->
     return record
 
 
-def bake_stack(store, active, base_path: str) -> UnbakeRecord | None:
-    """First bake of a stack onto a freshly sharded base (replaces merge-and-free)."""
+def _pinned_identity(pin: Any) -> Any:
+    """The identity of the file an FSDP load pinned, or None."""
+    return getattr(pin, "file_identity", None) if pin is not None else None
+
+
+def bake_stack(store, active, base_path: str, pin: Any = None) -> UnbakeRecord | None:
+    """First bake of a stack onto a freshly sharded base (replaces merge-and-free).
+
+    ``pin`` is the load's checkpoint pin: the bake reads only the file the
+    model was built from.
+    """
     try:
-        return apply_stack(store, active, base_path, None)
+        return apply_stack(store, active, base_path, None, _pinned_identity(pin))
     except UnbakeError:
         raise
     except Exception as exc:
@@ -412,5 +418,6 @@ def lazy_swap(store, stored, active, unet_name: str) -> UnbakeRecord | None:
     from . import model_store as _ms
 
     base_path = _ms.resolve_model_path("diffusion_models", unet_name)
-    record = apply_stack(store, active, base_path, stored.unbake)
+    record = apply_stack(store, active, base_path, stored.unbake,
+                         _pinned_identity(getattr(stored, "fsdp_checkpoint_pin", None)))
     return record if record.mapped else None

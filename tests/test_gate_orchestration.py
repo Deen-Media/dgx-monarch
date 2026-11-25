@@ -15,6 +15,7 @@ import dgx_monarch.nodes.render_submit as submit_mod
 import dgx_monarch.nodes.samplers as samplers
 import dgx_monarch.runtime_provenance as runtime_provenance
 from dgx_monarch.actor import model_store as model_store_mod
+from dgx_monarch.gate_runtime import runtime_build_identity
 from dgx_monarch.mesh import MeshHandle
 from dgx_monarch.mesh_setup import SetupToken
 from dgx_monarch.nodes import gate_process_state
@@ -119,6 +120,26 @@ def test_normal_render_authority_obeys_durable_and_session_precedence(
     if expected_mode == "stock":
         assert authorization.worker_args["slab_weights"] is False
         assert authorization.worker_args["lora_low_rss"] is False
+
+
+def test_a_capacity_stop_row_authorizes_a_stock_dispatch(monkeypatch, tmp_path):
+    """The ceremony's capacity stop (nodes/gate_capacity_stop) writes one
+    INCONCLUSIVE row and caches no verdict. That row grants nothing, so the
+    render behind the stop dispatches with both levers off, for this dispatch
+    only."""
+    entry = {
+        "verdict": "INCONCLUSIVE", "cross_mode": "CAPACITY", "measured": None,
+        "quarantine_levers": [],
+        "capacity_detail": "StockLoadCapacityError/class-C guard=activation_footprint_preflight",
+    }
+    model, _handle, authorization = _normal_authorization_rig(
+        monkeypatch, tmp_path, lambda _context: ("inconclusive", entry))
+
+    assert authorization.residency_mode == "stock"
+    assert authorization.residency_grant is None
+    assert authorization.worker_args["slab_weights"] is False
+    assert authorization.worker_args["lora_low_rss"] is False
+    assert model.mesh.worker_args == {"slab_weights": True, "lora_low_rss": True}
 
 
 def test_normal_render_pass_is_scoped_to_concrete_topology(
@@ -271,16 +292,37 @@ def test_manual_gate_delegates_to_canonical_engine_and_enforces_strict(monkeypat
         )
 
 
-def test_identity_ceremony_rejects_dual_model_without_recording_a_pass():
-    model = SimpleNamespace(mesh=SimpleNamespace(worker_args={
-        "lora_low_rss": True, "slab_weights": True}))
-    with pytest.raises(ValueError, match="proves one model only"):
+@pytest.mark.parametrize(("topology", "comfy_managed", "reason"), [
+    ({"cfg": 2, "world": 2}, False, "cfg-parallel"),
+    ({"ulysses": 2, "fsdp": True, "world": 2}, False, "reloads one model slot"),
+    ({"ulysses": 2, "world": 2}, True, "no comfy-managed proof covers two models"),
+])
+def test_identity_ceremony_refuses_a_dual_model_render_it_cannot_prove(
+    monkeypatch, topology, comfy_managed, reason,
+):
+    """A dual proof runs only where every rank holds both models under classic residency."""
+    from dgx_monarch.topology import Topology
+
+    worker_args = {"lora_low_rss": True, "slab_weights": True}
+    if comfy_managed:
+        worker_args["comfy_managed"] = True
+    handle = SimpleNamespace(world=2)
+    model = SimpleNamespace(mesh=SimpleNamespace(
+        handle=handle, worker_args=dict(worker_args), topology_preset="auto"))
+    monkeypatch.setattr(common, "_bind_packed_render_model",
+                        lambda subject, *_args, **_kwargs: (subject, None))
+    monkeypatch.setattr(gate_mod, "ensure_live", lambda value: value)
+    monkeypatch.setattr(common, "_resolve_topology_for_latent",
+                        lambda *_args: (Topology(**topology), False, "test"))
+    monkeypatch.setattr(gate_mod, "RenderSession",
+                        lambda: pytest.fail("a refused dual proof claims no session"))
+    with pytest.raises(ValueError, match=reason):
         gate_mod.run_identity_ceremony(
             model,
             {"uncond_model": {"unet_name": "negative.sft", "loras": []}},
             {"samples": torch.zeros(1)}, 1.0, 2, "explicit",
         )
-    assert model.mesh.worker_args == {"lora_low_rss": True, "slab_weights": True}
+    assert model.mesh.worker_args == worker_args
 
 
 def test_identity_ceremony_owns_session_across_bound_helper(monkeypatch):
@@ -330,6 +372,7 @@ def test_canonical_failure_quarantines_and_persists(monkeypatch, tmp_path):
                     "source_manifest_sha256": (
                         runtime_provenance.cached_dgx_source_manifest_sha256()
                     ),
+                    "runtime": runtime_build_identity(),
                 }]
             if method == "gate_swap_cycle":
                 return [{"rank": 0, "world": 1, "setup_generation": 4,
@@ -421,6 +464,7 @@ def test_ceremony_freezes_nested_request_and_latent_for_every_render(
                     "source_manifest_sha256": (
                         runtime_provenance.cached_dgx_source_manifest_sha256()
                     ),
+                    "runtime": runtime_build_identity(),
                 }]
             if method == "gate_swap_cycle":
                 return [{"rank": 0, "world": 1, "setup_generation": 4,
@@ -793,10 +837,14 @@ def test_dual_model_render_never_reuses_primary_only_pass(monkeypatch):
         "lora_low_rss": True, "slab_weights": True}))
     common._AUTO_GATE_SESSION.clear()
     common._AUTO_GATE_SESSION[("primary-pass",)] = "PASS"
-    monkeypatch.setattr(
-        common, "_auto_gate_context",
-        lambda *_args: pytest.fail("dual-model request consulted primary-only ledger"),
-    )
+    consulted = []
+
+    def dual_context_only(*args):
+        # A dual render reads only its own dual context, named by its second slot.
+        assert len(args) == 5 and args[4] == request["uncond_model"], args
+        consulted.append(args[4])
+
+    monkeypatch.setattr(common, "_auto_gate_context", dual_context_only)
 
     class Pending:
         def result(self):
@@ -820,6 +868,7 @@ def test_dual_model_render_never_reuses_primary_only_pass(monkeypatch):
     }
 
     common.run_render(model, request, {}, 1.0, 2)
+    assert consulted == [request["uncond_model"]]
     assert model.mesh.worker_args == {"lora_low_rss": True, "slab_weights": True}
     assert common._AUTO_GATE_SESSION == {("primary-pass",): "PASS"}
     common._AUTO_GATE_SESSION.clear()
@@ -2781,6 +2830,115 @@ def test_generic_oom_in_reference_render_stays_inconclusive(monkeypatch, tmp_pat
     assert [a["slab_weights"] for a in applies] == [False, True]  # restored
 
 
+@pytest.mark.parametrize(
+    "case", ["refused_at_exit", "cut_at_exit", "leg_fails_not_exiting", "abort_not_exiting"])
+def test_an_exit_during_the_stock_reference_leg_writes_no_verdict_row(monkeypatch, tmp_path, case):
+    """The driver begins to exit while the identity gate's stock reference leg
+    renders: the leg's send is refused (driver_exit.DriverExitingError), or
+    Monarch's exit step cuts it. That leg proves nothing, so the ceremony aborts
+    on its error. On the real ledger in this folder that leaves exactly the
+    ceremony's open RETESTING row, written before its first side effect, as a
+    killed ceremony leaves it: no verdict row. No residency setting goes off,
+    and no "identity gate aborted ... forcing stock residency" line prints. The
+    rig's all-rank calls have no exit check, so this row holds the leg's own
+    check (nodes/gate_cross_mode.py), not the refusal of the provenance call
+    after it. Not exiting, the failed leg ends INCONCLUSIVE with its verdict
+    rows; and the same ceremony aborting on another failure (its post-leg
+    provenance read) logs that line, turns the levers off and leaves the open
+    RETESTING row."""
+    import logging
+
+    from dgx_monarch import driver_exit
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    wa = {"lora_low_rss": True, "slab_weights": True}
+    handle, _fake_ledger, model = _cross_mode_rig(
+        monkeypatch, tmp_path, [torch.zeros(1), torch.zeros(1), torch.zeros(1)], wa)
+    monkeypatch.setattr(gate_mod, "GateLedger", ledger_mod.GateLedger)  # the real ledger, on tmp_path
+    lines: list[str] = []
+    keep = logging.Handler()
+    keep.emit = lambda record: lines.append(record.getMessage())  # type: ignore[method-assign]
+    gate_log = logging.getLogger(gate_mod.log.name)
+    monkeypatch.setattr(gate_log, "handlers", [*gate_log.handlers, keep])
+    failure = (driver_exit.DriverExitingError(driver_exit.SENT_NOTHING) if case == "refused_at_exit"
+               else RuntimeError("the stock reference render was cut"))
+    staged = gate_mod.run_render
+    renders: list[int] = []
+
+    def render(*args, **kwargs):
+        renders.append(1)
+        if len(renders) < 3 or case == "abort_not_exiting":
+            return staged(*args, **kwargs)
+        if case.endswith("_at_exit"):
+            flag.set()  # the exit begins during the stock reference leg
+        raise failure
+
+    def provenance(call: int, generation: int) -> list[dict]:
+        if call == 2:
+            raise RuntimeError("the post-leg provenance read failed")
+        return [{"rank": 0, "world": 1, "setup_generation": generation,
+                 "source_manifest_sha256": handle.provenance_source,
+                 "runtime": runtime_build_identity()}]
+
+    monkeypatch.setattr(gate_mod, "run_render", render)
+    if case == "abort_not_exiting":
+        handle.provenance_response = provenance
+
+    def on_disk() -> list[str]:
+        return [entry["verdict"] for entry in ledger_mod.GateLedger(str(tmp_path)).entries()]
+
+    if case == "leg_fails_not_exiting":
+        result = _run(model)
+        assert result["cross_mode"]["verdict"] == "ERROR"
+        assert on_disk() == ["RETESTING", "INCONCLUSIVE", "INCONCLUSIVE"]
+        return
+    with pytest.raises(BaseException) as raised:
+        _run(model)
+    aborted = [line for line in lines if line.startswith("identity gate aborted")]
+    assert on_disk() == ["RETESTING"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == [ledger_mod.LEDGER_NAME]
+    if case == "abort_not_exiting":
+        assert len(aborted) == 1 and "forcing stock residency" in aborted[0]
+        assert model.mesh.worker_args == {"lora_low_rss": False, "slab_weights": False}
+        return
+    assert failure in (raised.value, raised.value.__cause__), raised.value
+    assert len(renders) == 3 and aborted == []
+    assert model.mesh.worker_args == {"lora_low_rss": True, "slab_weights": True}
+
+
+@pytest.mark.parametrize("abort", ["refused_at_exit", "cut_at_exit", "not_exiting", "settled_at_exit"])
+def test_an_fsdp_proof_the_exit_cuts_logs_no_abort(monkeypatch, abort):
+    """The FSDP clean-reload proof's untyped abort line ("FSDP clean-reload Gate
+    aborted ...") stands down once the driver is exiting, for the exit's
+    refusal and for a call Monarch's exit step cut alike: the abort is the
+    exit's. Not exiting it prints, and a settled refusal the proof met is still
+    reported at exit, since that answer is the guard's, not the exit's."""
+    from dgx_monarch import driver_exit, refusal
+    from dgx_monarch.nodes import gate_abort
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    if abort != "not_exiting":
+        flag.set()
+    cause = (driver_exit.DriverExitingError(driver_exit.SENT_NOTHING) if abort == "refused_at_exit"
+             else RuntimeError("the reload cycle was cut"))
+    tag = None
+    if abort == "settled_at_exit":
+        tag = refusal.parse_refusal_tag(refusal.refusal(
+            refusal.RefusalClass.CAPACITY, "the reload does not fit", guard="cross_rank_capacity",
+            waivable=False, troubleshooting=2))
+    lines: list[str] = []
+    logger = SimpleNamespace(error=lambda message, *args: lines.append(message % args))
+    gate_abort.log_aborted_proof(logger, tag, False, cause)
+    if abort in ("refused_at_exit", "cut_at_exit"):
+        assert lines == []
+    elif abort == "not_exiting":
+        assert len(lines) == 1 and lines[0].startswith("FSDP clean-reload Gate aborted")
+    else:
+        assert len(lines) == 1 and "settled class C refusal" in lines[0]
+
+
 def test_oom_during_stock_policy_apply_stays_inconclusive(monkeypatch, tmp_path):
     """An OOM while applying the stock policy never reaches the reference load,
     so the leg reads ERROR, not a CAPACITY refusal."""
@@ -3272,22 +3430,43 @@ def test_dual_model_authorization_never_mints_primary_only_grant(
     assert first.residency_mode == "required"
     assert len(ledger_reads) == 1
     primary_request = model.request_dict()
+    primary_key = first.residency_grant["combo_key"]
+    uncond = {
+        "unet_name": "negative.safetensors",
+        "options": {"dtype": "bf16"},
+        "loras": [{"name": "negative-style.safetensors", "strength": 0.5}],
+    }
+    keys_read = []
+
+    class Ledger:
+        """The primary combination holds a PASS; the dual combination holds nothing."""
+
+        def __init__(self, _directory):
+            pass
+
+        def lookup_with_integrity(self, key, _artifacts, _commit, context):
+            keys_read.append(key)
+            ledger_reads.append(context)
+            state = "pass" if key == primary_key else "unknown"
+            return ledger_mod.GateLedgerLookup(
+                state, {"verdict": "PASS"} if state == "pass" else None, True)
+
+    monkeypatch.setattr(ledger_mod, "GateLedger", Ledger)
 
     authorization = gate_identity.authorize_normal_render(
         model,
         handle,
-        uncond_model_request={
-            "unet_name": "negative.safetensors",
-            "options": {"dtype": "bf16"},
-            "loras": [{"name": "negative-style.safetensors", "strength": 0.5}],
-        },
+        uncond_model_request=uncond,
         gate_active=False,
-        session_verdict=lambda _token: "PASS",
+        # The process cache holds the primary PASS too, under the primary token only.
+        session_verdict=lambda token: "PASS" if token[0] == primary_key else None,
         resolved_topology=Topology(world=1),
         resolved_attention="TORCH_FLASH",
     )
 
-    assert len(ledger_reads) == 1
+    from dgx_monarch.gate_dual_identity import dual_combo_key
+
+    assert keys_read == [dual_combo_key(primary_request, uncond)] != [primary_key]
     assert authorization.model_request == primary_request
     assert authorization.residency_mode == "stock"
     assert authorization.residency_grant is None
@@ -3502,6 +3681,7 @@ def test_default_provenance_attestor_rejects_incomplete_or_mixed_cohort_preproof
                 "world": 2,
                 "setup_generation": 4,
                 "source_manifest_sha256": handle.provenance_source,
+                "runtime": runtime_build_identity(),
             }
             for rank in range(2)
         ]
@@ -3552,6 +3732,7 @@ def test_default_provenance_rpc_failure_never_publishes_a_terminal_row(
             "world": 1,
             "setup_generation": generation,
             "source_manifest_sha256": handle.provenance_source,
+            "runtime": runtime_build_identity(),
         }]
 
     handle.provenance_response = provenance
@@ -3587,6 +3768,7 @@ def test_post_provenance_source_mismatch_cannot_publish_a_terminal_row(
             "source_manifest_sha256": (
                 handle.provenance_source if call == 1 else "0" * 64
             ),
+            "runtime": runtime_build_identity(),
         }]
 
     handle.provenance_response = provenance
@@ -3616,6 +3798,7 @@ def test_post_provenance_rejects_setup_generation_drift_before_publication(
             "world": 1,
             "setup_generation": generation,
             "source_manifest_sha256": handle.provenance_source,
+            "runtime": runtime_build_identity(),
         }]
 
     handle.provenance_response = provenance
@@ -3706,6 +3889,7 @@ def test_post_provenance_malformed_row_cannot_publish_a_terminal_row(
             "world": 1,
             "setup_generation": generation,
             "source_manifest_sha256": handle.provenance_source,
+            "runtime": runtime_build_identity(),
         }]
 
     handle.provenance_response = provenance

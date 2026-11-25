@@ -105,9 +105,11 @@ def test_rdma_qualifier_admission_rejects_wrong_gate_scope(field, value):
 
 
 def test_rdma_qualifier_source_does_not_invent_managed_copy_git_evidence():
+    from dgx_monarch import TORCHMONARCH_PIN
+
     module = _load_rdmabench()
     facts = {"source_manifest_sha256": "b" * 64, "source_sha": None,
-             "source_mode": "managed_copy", "torchmonarch": "0.7.0"}
+             "source_mode": "managed_copy", "torchmonarch": TORCHMONARCH_PIN}
     result = module.check_source(facts, "a" * 40, "b" * 64)
     assert result["source_sha"] is None
     assert result["commit_binding"] == "manifest_to_driver"

@@ -6,11 +6,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any
 
+from .. import driver_exit
 from ..fsdp_proof_scope import topology_resolves_fsdp
 from ..gate_ledger import ArtifactSetSignature, gate_verdict_token
 from ..log import get_logger
 from ..mesh_safety import FLEET_RESIDENCY_CAPABILITY, physical_capability_context
 from ..transfer_utils import safe_call
+from ..worker_runtime import WorkerRuntimeMismatch
 
 # Both re-exported for nodes/gate_verdict, which reads them at call time as
 # runtime["_gate_identity"].<name> through the nodes/gate namespace.
@@ -162,6 +164,7 @@ def gate_capability_context(
         "world": physical["physical_world"],
         "hosts": physical["hosts"],
         "gpus_per_host": physical["gpus_per_host"],
+        "runtime": physical["runtime"],
         "topology_preset": str(getattr(model.mesh, "topology_preset", "unknown")),
         "attention": str(getattr(model.mesh, "attention", "unknown")),
         "sync_ulysses": bool(getattr(model.mesh, "sync_ulysses", True)),
@@ -202,7 +205,7 @@ def fleet_residency_capability_context(
     }
 
 
-def quarantine_unproven_paths(model, cause: BaseException | None = None) -> None:
+def quarantine_unproven_paths(model, cause: BaseException | None = None, uncond: dict | None = None) -> None:
     """Disable residency optimizations that lack a completed identity proof.
 
     ``unproven_quarantine_levers`` preserves two supported exceptions: a LoRA-free
@@ -213,15 +216,18 @@ def quarantine_unproven_paths(model, cause: BaseException | None = None) -> None
 
     ``gate_quarantine_scope`` interprets ``cause``: a class-K accuracy refusal
     changes no residency setting; other aborts affect only their own combination.
+    Once the driver is exiting nothing is quarantined: its exit proves nothing (driver_exit).
     """
+    if driver_exit.exiting():
+        return
     from .consent_rescue import unproven_quarantine_levers
     from .gate_quarantine_scope import write_scoped_quarantine
 
-    write_scoped_quarantine(model, unproven_quarantine_levers(model), cause)
+    write_scoped_quarantine(model, unproven_quarantine_levers(model), cause, uncond)
 
 
 def force_stock_quarantine(model, handle, timeout_s: float = 600.0,
-                           cause: BaseException | None = None) -> list:
+                           cause: BaseException | None = None, uncond: dict | None = None) -> list:
     """Publish both graph levers off and push that complete policy fail-closed.
 
     A measured class K abort keeps every lever the graph asked for, so there
@@ -229,10 +235,12 @@ def force_stock_quarantine(model, handle, timeout_s: float = 600.0,
     failure (#47) writes the quarantine but pushes nothing: the actors are
     gone, and a stale mesh refuses every price until it is replaced.
     """
+    if driver_exit.exiting():  # nothing written or pushed (quarantine_unproven_paths)
+        return []
     from ..delivery_faults import WorkerDeliveryError
     from .gate_quarantine_scope import measured_abort_guard
 
-    quarantine_unproven_paths(model, cause)
+    quarantine_unproven_paths(model, cause, uncond)
     if measured_abort_guard(cause) is not None or isinstance(cause, WorkerDeliveryError):
         return []
     from ..mesh import MeshHandle
@@ -246,9 +254,7 @@ def force_stock_quarantine(model, handle, timeout_s: float = 600.0,
             handle.active_worker_args = {}
         return []
     try:
-        return apply_worker_policy(
-            handle, resolve_effective_worker_args(model, handle),
-            timeout_s=timeout_s)
+        return apply_worker_policy(handle, resolve_effective_worker_args(model, handle), timeout_s=timeout_s)
     except BaseException as exc:
         # A failed or interrupted quarantine push must never release the
         # ceremony owner with risky worker residency still authorized.
@@ -278,16 +284,19 @@ def model_with_worker_overrides(
 
 
 def model_for_request(model, request: dict):
-    """Use a stock-policy clone for dual-model requests, without graph mutation."""
-    if model is None or request.get("uncond_model") is None:
+    """Use a stock-policy clone for a dual-model request with auto_gate off.
+
+    Under first_use, authorization decides: a dual PASS, stock, or the FSDP refusal.
+    """
+    if (model is None or request.get("uncond_model") is None
+            or getattr(model.mesh, "auto_gate", "off") == "first_use"):
         return model
     worker_args = model.mesh.worker_args
     if (worker_args.get("lora_low_rss") is False
             and worker_args.get("slab_weights") is False):
         return model
     log.warning("dual-model request: forcing stock residency for both model slots")
-    return model_with_worker_overrides(
-        model, {"lora_low_rss": False, "slab_weights": False})
+    return model_with_worker_overrides(model, {"lora_low_rss": False, "slab_weights": False})
 
 
 def capture(model, uncond_model_request: dict | None = None) -> tuple[
@@ -304,15 +313,13 @@ def capture(model, uncond_model_request: dict | None = None) -> tuple[
         "loras": [dict(entry) for entry in model.loras],
     }
     model_request = copy.deepcopy(raw_request)
-    identity = request_artifact_identity(
-        model_request["unet_name"], model_request.get("loras"))
+    identity = request_artifact_identity(model_request["unet_name"], model_request.get("loras"))
     uncond_request = copy.deepcopy(uncond_model_request)
     artifact_sets = [identity]
     if uncond_request is not None:
         artifact_sets.append(request_artifact_identity(
             uncond_request["unet_name"], uncond_request.get("loras")))
-    artifacts = artifact_set_signature(
-        item["signature"] for item in identity["artifacts"])
+    artifacts = artifact_set_signature(item["signature"] for item in identity["artifacts"])
     if artifacts.current != identity["digest"]:
         raise RuntimeError("identity-gate artifact snapshot is inconsistent")
     key = request_combo_key(model_request)
@@ -322,6 +329,11 @@ def capture(model, uncond_model_request: dict | None = None) -> tuple[
         "uncond_model_request": copy.deepcopy(uncond_request),
         "artifact_sets": copy.deepcopy(artifact_sets),
     }
+    if uncond_request is not None:  # a dual proof's rows bind both slots
+        from ..gate_dual_identity import dual_artifact_signature, dual_combo_key
+
+        key = dual_combo_key(model_request, uncond_request)
+        artifacts = dual_artifact_signature(artifact_sets)
     return model_request, key, identity, artifacts, binding
 
 
@@ -354,25 +366,16 @@ def authorize_normal_render(
     fsdp_proof_required = topology_requires_fsdp_proof(resolved_topology, model_request.get("loras"))
     fsdp_lora = topology_resolves_fsdp(resolved_topology) and not fsdp_proof_required
 
-    # A Gate ceremony proves exactly one model, so a dual-model render dispatches with
-    # both residency levers off, or refuses under automatic FSDP. Never let a primary-only
-    # PASS grant its second slot, even when the caller skipped model_for_request.
+    # Only a dual PASS, keyed on both slots, can grant a dual-model render its
+    # residency (nodes/gate_dual.py); a primary-only PASS never reaches it.
     if uncond_model_request is not None:
-        if (
-            (fsdp_proof_required or fsdp_lora)
-            and not gate_active
-            and getattr(model.mesh, "auto_gate", "off") == "first_use"
-        ):
-            raise FsdpGateProofError(
-                "automatic FSDP execution is unavailable for a dual-model "
-                "request because the clean-reload Gate proves one model only"
-            )
-        return NormalRenderAuthorization(
-            {**requested, "slab_weights": False, "lora_low_rss": False},
-            model_request,
-            None,
-            "stock",
-        )
+        from .gate_dual import authorize_dual
+
+        return authorize_dual(
+            model, handle, uncond_model_request, requested=requested,
+            model_request=model_request, effective=effective, gate_active=gate_active,
+            session_verdict=session_verdict, resolved_topology=resolved_topology,
+            resolved_attention=resolved_attention)
 
     if ((not fleet_policy_is_risky(model_request, effective)
             and not fsdp_proof_required)
@@ -459,7 +462,7 @@ def authorize_normal_render(
             model, requested, model_request, identity, key, context, lookup, token, process_verdict)
         if consented is not None:
             return consented
-    except FsdpGateProofError:
+    except (FsdpGateProofError, WorkerRuntimeMismatch):
         raise
     except Exception as exc:
         if fsdp_proof_required or fsdp_lora:

@@ -369,6 +369,34 @@ def test_promote_refuses_non_prior_or_tampered_staging_without_mutation(
     assert runner.live_installs == 0
 
 
+@pytest.mark.parametrize("action", ["normal", "unchanged_error", "timeout"])
+def test_an_unchanged_pin_is_staged_once_and_never_reinstalled_live(tmp_path: Path, action: str) -> None:
+    """With the prior and target pin equal, the live install already is the target.
+
+    A second download costs time and a reinstall of the same wheel changes
+    nothing that the exact match has not already proved. A failed reinstall used
+    to read unknown, which stopped the update where nothing had changed.
+    """
+    wheel_dir = tmp_path / "wheels"
+    wheel_dir.mkdir()
+    wheel = _make_wheel(wheel_dir, "0.6.0")
+    live_site = tmp_path / "live"
+    _extract_wheel(wheel, live_site)
+    runner = FakeRunner({"0.6.0": wheel}, live_site)
+    runner.live_actions.append(action)
+    transition = DriverPinTransition(python_bin="/venv/bin/python", command_runner=runner)
+    transition.prepare(tmp_path / "release", "0.6.0", "0.6.0")
+
+    downloads = [args for args, _cwd, _env in runner.calls if "download" in args]
+    staged = [args for args, _cwd, _env in runner.calls if "install" in args and "--target" in args]
+    assert len(downloads) == len(staged) == 1
+    assert transition.matches_prior() and transition.matches_target()
+    assert transition.target_site is not None and transition.target_matches_site(transition.target_site)
+    assert transition.promote().certainty == Certainty.SUCCEEDED
+    assert transition.restore_prior().certainty == Certainty.SUCCEEDED
+    assert runner.live_installs == 0
+
+
 def test_restore_prior_is_offline_and_requires_exact_target_precondition(
     transition_fixture: tuple[DriverPinTransition, FakeRunner, Path, Path, Path],
 ) -> None:

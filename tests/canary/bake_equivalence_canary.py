@@ -1,10 +1,32 @@
 """Compare dgx-monarch's per-key bake with ComfyUI's bake on CPU.
 
-ModelStore._bake_key follows patch_weight_to_device. Changes to dtype handling,
-rounding or adapter math can make them diverge; runtime byte verification checks
-pristine weights, so it cannot detect a bake mismatch. Ambient verification
-checks baked results only for the keys sampled at each lazy swap (swap_verify,
-default 2), after the user runs the changed ComfyUI.
+A key stock patches at cast time bakes to stock's cast-time weight
+(actor/lora_cast_time.py, #145); any other key follows ComfyUI's classic
+patch_weight_to_device. Changes to dtype handling, rounding, seeds or adapter
+math can make them diverge; runtime byte verification checks pristine weights,
+so it cannot detect a bake mismatch. Ambient verification checks baked results
+only for the keys sampled at each lazy swap (swap_verify, default 2), after the
+user runs the changed ComfyUI.
+
+The cast-time cases build ComfyUI's own MixedPrecisionOps Linear layers, one
+holding a synthetic INT8 ConvRot weight and one a plain BF16 weight, and
+compute stock's weight with comfy.ops' own post_cast: the transfer buffer
+filled by cast_to_gathered, as aimdo fills it, then
+resolve_cast_module_with_vbar with the arguments the layer's forward passes.
+The bake, the classic load through the installed patch_weight_to_device, and
+an unpatch back to the pristine weight must all match it bit for bit.
+
+Which keys get a cast-time patch is stock's own choice, made in
+ModelPatcherDynamic.load. The choice cases run that load on CPU (aimdo's host
+buffer stood in, since no pinned memory is needed to choose) over BF16 and
+INT8 ConvRot layers on both sides of its 16 KiB cut-off, a bias patch and a
+LoRA that resizes its weight, and require the bake to choose the same keys.
+
+ComfyUI's other weight-only formats get the same two checks by name: a layer
+of each grouped INT8 width and of ConvRot W4A4, packed by comfy-kitchen at the
+format's own width and loaded by ComfyUI's loader, baked on the same five
+paths against stock's post_cast weight, and stock's load choice on both sides
+of the cut-off. A format runs wherever this ComfyUI lists it.
 
 For each dtype and adapter format, twin patchers bake the same key through both
 paths and must produce identical bits. The slice cases route LoRA units into
@@ -84,6 +106,10 @@ def main() -> None:
             print(f"equivalent: dtype={dtype} format={fmt}")
 
     checked += _check_slice_tuples(dim, rank)
+    checked += _check_cast_time()
+    checked += check_stock_choice()
+    checked += check_weight_only_cast_time()
+    checked += check_weight_only_stock_choice()
     if checked == 0:
         raise SystemExit("no combinations checked; canary is vacuous")
     print(f"bake equivalence green ({checked} combinations)")
@@ -144,6 +170,473 @@ def _check_slice_tuples(dim: int, rank: int) -> int:
                 assert torch.equal(ours[rows], base[rows]), (dtype, case, third)
             checked += 1
             print(f"equivalent: dtype={dtype} slice={case}")
+    return checked
+
+
+def tiny_cast_time_model(out_features: int = 64, in_features: int = 512, rank: int = 4):
+    """A root with one INT8 ConvRot layer ``q`` and one BF16 layer ``p``, and LoRA patches for both.
+
+    Both are ComfyUI's MixedPrecisionOps Linear at a BF16 compute dtype, loaded
+    from a state dict as a checkpoint loads them. Returns (root, patches).
+    """
+    import json
+
+    import comfy.lora
+    import comfy.ops
+    import torch
+    from comfy.quant_ops import QuantizedTensor
+
+    ops = comfy.ops.mixed_precision_ops({}, compute_dtype=torch.bfloat16)
+
+    class _Block(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.q = ops.Linear(in_features, out_features, bias=True)
+            self.p = ops.Linear(in_features, out_features, bias=False)
+
+    class _Root(torch.nn.Module):
+        manual_cast_dtype = torch.bfloat16
+
+        def __init__(self):
+            super().__init__()
+            self.diffusion_model = _Block()
+
+        def get_dtype_inference(self):
+            return torch.bfloat16
+
+    gen = torch.Generator().manual_seed(7)
+    w = (torch.randn(out_features, in_features, generator=gen) * 0.05).to(torch.bfloat16)
+    qt = QuantizedTensor.from_float(w, "TensorWiseINT8Layout", per_channel=True, convrot=True,
+                                    convrot_groupsize=256, is_weight=True)
+    layer = json.dumps({"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 256})
+    root = _Root()
+    root.load_state_dict({
+        "diffusion_model.q.weight": qt._qdata,
+        "diffusion_model.q.weight_scale": qt._params.scale,
+        "diffusion_model.q.comfy_quant": torch.tensor(list(layer.encode()), dtype=torch.uint8),
+        "diffusion_model.q.bias": torch.randn(out_features, generator=gen).to(torch.bfloat16),
+        "diffusion_model.p.weight": (torch.randn(out_features, in_features, generator=gen) * 0.05).to(torch.bfloat16),
+    }, strict=True)
+    lora, key_map = {}, {}
+    for name in ("q", "p"):
+        unit = f"diffusion_model.{name}"
+        lora[f"{unit}.lora_up.weight"] = torch.randn(out_features, rank, generator=gen) * 0.01
+        lora[f"{unit}.lora_down.weight"] = torch.randn(rank, in_features, generator=gen) * 0.01
+        lora[f"{unit}.alpha"] = torch.tensor(float(rank))
+        key_map[unit] = f"{unit}.weight"
+    return root, comfy.lora.load_lora(lora, key_map)
+
+
+def stock_cast_time_weight(root, patcher, key: str):
+    """The weight stock's DynamicVRAM cast gives ``key``'s layer, from comfy.ops' own post_cast."""
+    import comfy.memory_management as cmm
+    import comfy.model_management as mm
+    import comfy.model_patcher
+    import comfy.ops
+    import comfy.utils
+    import torch
+    from comfy.quant_ops import QuantizedTensor
+
+    module_key = key.rpartition(".")[0]
+    s = comfy.utils.get_attr(root, module_key)
+    cpu = torch.device("cpu")
+    s.seed_key = module_key
+    s.weight_lowvram_function = comfy.model_patcher.LowVramPatch(key, patcher.patches)
+    s.bias_lowvram_function = None
+    s.weight_function, s.bias_function = [], []
+    geometries = cmm.tensors_to_geometries([s.weight, s.bias])
+    buffer = torch.empty((cmm.vram_aligned_size([s.weight, s.bias]),), dtype=torch.uint8)
+    mm.cast_to_gathered([s.weight, s.bias], buffer)
+    s._prefetch = {"signature": None, "resident": False, "xfer_dest": buffer, "cast_dest": None,
+                   "cast_geometry": geometries, "needs_cast": False}
+    try:
+        if isinstance(s.weight, QuantizedTensor):
+            # The weight-only INT8 branch of MixedPrecisionOps.Linear.forward_comfy_cast_weights.
+            weight, _bias = comfy.ops.resolve_cast_module_with_vbar(
+                s, s.weight.dtype, cpu, torch.bfloat16, torch.bfloat16, True)
+        else:
+            # A plain layer: the input dtype, no quantized input.
+            weight, _bias = comfy.ops.resolve_cast_module_with_vbar(
+                s, torch.bfloat16, cpu, torch.bfloat16, torch.bfloat16, False)
+    finally:
+        for attr in ("seed_key", "weight_lowvram_function", "bias_lowvram_function", "_prefetch"):
+            if attr in vars(s):
+                delattr(s, attr)
+        s.weight_function, s.bias_function = [], []
+    return weight
+
+
+def same_weight(a, b) -> bool:
+    """Bit equality of two weights, a quantized one by its data, its scale and the
+    channel scale, codebook and correction a grouped layout carries beside them."""
+    import torch
+    from comfy.quant_ops import QuantizedTensor
+
+    if isinstance(a, QuantizedTensor) or isinstance(b, QuantizedTensor):
+        if not (isinstance(a, QuantizedTensor) and isinstance(b, QuantizedTensor)):
+            return False
+        if a._layout_cls != b._layout_cls or not torch.equal(a._qdata, b._qdata):
+            return False
+        for field in ("scale", "s_channel", "codebook", "correction"):
+            x, y = getattr(a._params, field, None), getattr(b._params, field, None)
+            if (x is None) != (y is None) or (x is not None and not torch.equal(x, y)):
+                return False
+        return True
+    return a.dtype == b.dtype and torch.equal(a, b)
+
+
+def _check_cast_time() -> int:
+    """INT8 ConvRot and BF16 keys bake to stock's cast-time weight on every path."""
+    import comfy.model_patcher
+    import comfy.utils
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+    from dgx_monarch.actor.model_store import ModelStore
+
+    cpu = torch.device("cpu")
+    checked = 0
+    for key in ("diffusion_model.q.weight", "diffusion_model.p.weight"):
+        root, patches = tiny_cast_time_model()
+        patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+        patcher.add_patches(patches, 0.8)
+        pristine = comfy.utils.get_attr(root, key)
+        stock = stock_cast_time_weight(root, patcher, key)
+        assert comfy.utils.get_attr(root, key) is pristine, f"stock's cast touched {key}"
+        ours = lora_cast_time.cast_time_weight(patcher, key, cpu)
+        assert ours is not None and same_weight(ours, stock), (
+            f"BAKE DIVERGENCE: {key}; the cast-time bake no longer bit-matches stock's "
+            "DynamicVRAM cast (comfy.ops post_cast)")
+        installed = lora_cast_time.install()
+        try:
+            via = patcher.patch_weight_to_device(key, device_to=cpu, return_weight=True)
+            assert same_weight(via, stock), f"BAKE DIVERGENCE: {key} through patch_weight_to_device"
+            patcher.load(cpu, full_load=True)
+            assert same_weight(comfy.utils.get_attr(root, key), stock), (
+                f"BAKE DIVERGENCE: {key} through ComfyUI's classic load")
+            patcher.unpatch_model(cpu)
+            assert same_weight(comfy.utils.get_attr(root, key), pristine), f"unpatch left {key} baked"
+        finally:
+            if installed:
+                lora_cast_time.uninstall()
+        ModelStore._bake_key(patcher, key)
+        assert same_weight(comfy.utils.get_attr(root, key), stock), (
+            f"BAKE DIVERGENCE: {key} through the lazy swap's per-key bake")
+        checked += 1
+        print(f"equivalent: cast time {key}")
+    return checked
+
+
+def _choice_model():
+    """Layers on both sides of stock's 16 KiB cut-off, and patches for every one.
+
+    BF16 rows ``p62`` to ``p66`` over 128 inputs (15872 to 16896 bytes), a BF16
+    layer ``pb`` whose bias carries it past the cut-off and gets its own bias
+    patch, INT8 ConvRot rows ``q58`` to ``q66`` over 256 inputs (the scale and the
+    layer record add to the INT8 bytes), and a 32 KiB layer ``r`` whose LoRA
+    resizes it. Returns (root, patches).
+    """
+    import json
+
+    import comfy.lora
+    import comfy.ops
+    import torch
+    from comfy.quant_ops import QuantizedTensor
+
+    ops = comfy.ops.mixed_precision_ops({}, compute_dtype=torch.bfloat16)
+    gen = torch.Generator().manual_seed(11)
+
+    class _Root(torch.nn.Module):
+        def get_dtype_inference(self):
+            return torch.bfloat16
+
+    root = _Root()
+    layout = json.dumps({"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 256})
+    shapes = {f"p{rows}": (rows, 128, False) for rows in range(62, 67)}
+    shapes.update({f"q{rows}": (rows, 256, False) for rows in range(58, 67)}, pb=(64, 128, True), r=(128, 128, False))
+    for name, (rows, inputs, bias) in shapes.items():
+        layer = ops.Linear(inputs, rows, bias=bias)
+        root.add_module(name, layer)
+        w = (torch.randn(rows, inputs, generator=gen) * 0.05).to(torch.bfloat16)
+        sd = {"weight": w}
+        if name.startswith("q"):
+            qt = QuantizedTensor.from_float(w, "TensorWiseINT8Layout", per_channel=True, convrot=True,
+                                            convrot_groupsize=256, is_weight=True)
+            sd = {"weight": qt._qdata, "weight_scale": qt._params.scale,
+                  "comfy_quant": torch.tensor(list(layout.encode()), dtype=torch.uint8)}
+        if bias:
+            sd["bias"] = torch.randn(rows, generator=gen).to(torch.bfloat16)
+        layer.load_state_dict(sd, strict=True)
+    lora, key_map = {}, {}
+    for name, (rows, inputs, _bias) in shapes.items():
+        lora[f"{name}.lora_up.weight"] = torch.randn(rows, 2, generator=gen) * 0.01
+        lora[f"{name}.lora_down.weight"] = torch.randn(2, inputs, generator=gen) * 0.01
+        key_map[name] = f"{name}.weight"
+    lora["pb.diff_b"] = torch.randn(64, generator=gen).to(torch.bfloat16) * 0.01
+    patches = comfy.lora.load_lora(lora, key_map)
+    patches["r.weight"] = ("diff", ((torch.randn(160, 128, generator=gen) * 0.01).to(torch.bfloat16),
+                                    {"pad_weight": True}))
+    return root, patches
+
+
+def stock_load_choice(root, patches) -> dict:
+    """Run stock's ModelPatcherDynamic.load on CPU; return each patched key's path.
+
+    "cast" is a key the load gave a cast-time LowVramPatch, "classic" one it
+    force-loaded through patch_weight_to_device. aimdo's host buffer is stood
+    in for the call: on CPU the load makes no vbar and pins nothing.
+    """
+    import comfy.model_patcher
+    import comfy.utils
+    import comfy_aimdo.host_buffer
+    import torch
+
+    class _HostBuffer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    cpu = torch.device("cpu")
+    real_buffer = comfy_aimdo.host_buffer.HostBuffer
+    comfy_aimdo.host_buffer.HostBuffer = _HostBuffer
+    dynamic = object.__new__(comfy.model_patcher.ModelPatcherDynamic)  # its __new__ reroutes a CPU device
+    forced = []
+    try:
+        dynamic.__init__(root, cpu, cpu)
+        dynamic.add_patches(patches, 1.0)
+        assert set(dynamic.patches) == set(patches), "add_patches dropped a key"
+        stock_bake = dynamic.patch_weight_to_device
+
+        def recording(key, *args, **kwargs):
+            forced.append(key)
+            return stock_bake(key, *args, **kwargs)
+
+        dynamic.patch_weight_to_device = recording
+        dynamic.load(cpu)
+    finally:
+        comfy_aimdo.host_buffer.HostBuffer = real_buffer
+        getattr(root, "dynamic_patchers", set()).discard(id(dynamic))  # no unpin at collection
+    choice = {}
+    for key in patches:
+        module_key, _, param = key.rpartition(".")
+        patch = getattr(comfy.utils.get_attr(root, module_key), f"{param}_lowvram_function", None)
+        if isinstance(patch, comfy.model_patcher.LowVramPatch):
+            choice[key] = "cast"
+        elif key in forced:
+            choice[key] = "classic"
+    return choice
+
+
+def check_stock_choice() -> int:
+    """The bake gives a cast-time weight to exactly the keys stock's own load does."""
+    import comfy.model_management as mm
+    import comfy.model_patcher
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+
+    stock_root, stock_patches = _choice_model()
+    stock = stock_load_choice(stock_root, stock_patches)
+    root, patches = _choice_model()
+    cpu = torch.device("cpu")
+    patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+    patcher.add_patches(patches, 1.0)
+    assert set(stock) == set(patches), f"stock's load chose no path for {set(patches) - set(stock)}"
+    for key in patches:
+        ours = "cast" if lora_cast_time.stock_patches_at_cast_time(patcher, key) else "classic"
+        assert ours == stock[key], (
+            f"BAKE CHOICE DIVERGENCE: {key}; stock's load takes the {stock[key]} path and the "
+            f"bake takes {ours}")
+        baked = lora_cast_time.cast_time_weight(patcher, key, cpu)
+        assert (baked is not None) == (ours == "cast"), key
+    # The matrix straddles the cut-off in both kinds, so a moved cut-off shows.
+    for prefix in ("p", "q"):
+        sizes: dict[str, list[int]] = {}
+        for name, layer in root.named_children():
+            if name[0] == prefix and name[1:].isdigit():
+                sizes.setdefault(stock[f"{name}.weight"], []).append(mm.module_size(layer))
+        assert set(sizes) == {"cast", "classic"}, (prefix, sizes)
+        assert max(sizes["classic"]) <= lora_cast_time.SMALL_MODULE_BYTES < min(sizes["cast"]), (prefix, sizes)
+        print(f"stock's cut-off ({prefix}): classic up to {max(sizes['classic'])} bytes, "
+              f"cast time from {min(sizes['cast'])}")
+    assert stock["pb.bias"] == "cast" and stock["r.weight"] == "classic", stock
+    print(f"equivalent: stock's cast-time choice on {len(patches)} keys across the 16 KiB cut-off")
+    return len(patches)
+
+
+# ComfyUI's other weight-only formats, with the code width of the grouped ones.
+# A LoRA on a layer of any of them is requantized as an INT8 ConvRot layer's
+# is, but at its own width, codebook and scales, so each is held by name.
+_WEIGHT_ONLY_LORA_FORMATS = {"asym_w4a8_int8": 4, "convrot_w4a4": None, "w3a8_int8": 3,
+                             "w5a8_int8": 5, "w6a8_int8": 6}
+# Every ComfyUI the canary meets lists these two; the others only where ComfyUI has them.
+_ALWAYS_LISTED = ("asym_w4a8_int8", "convrot_w4a4")
+
+
+def weight_only_lora_model(fmt: str, out_features: int = 64, in_features: int = 1024, rank: int = 4):
+    """A root with one layer ``q`` of a grouped INT8 format or ConvRot W4A4, and a LoRA patch for it.
+
+    comfy-kitchen packs the weight at the format's own width and ComfyUI's
+    MixedPrecisionOps Linear loads it under the format's name, as a checkpoint
+    loads it. 1024 inputs keep every width above stock's 16 KiB cut-off (a
+    64 x 512 layer of 3-bit codes is under it). Returns (root, patches).
+    """
+    import json
+
+    import comfy.lora
+    import comfy.ops
+    import torch
+    from comfy.quant_ops import QuantizedTensor
+
+    ops = comfy.ops.mixed_precision_ops({}, compute_dtype=torch.bfloat16)
+
+    class _Block(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.q = ops.Linear(in_features, out_features, bias=True)
+
+    class _Root(torch.nn.Module):
+        manual_cast_dtype = torch.bfloat16
+
+        def __init__(self):
+            super().__init__()
+            self.diffusion_model = _Block()
+
+        def get_dtype_inference(self):
+            return torch.bfloat16
+
+    gen = torch.Generator().manual_seed(7)
+    w = (torch.randn(out_features, in_features, generator=gen) * 0.05).to(torch.bfloat16)
+    bits = _WEIGHT_ONLY_LORA_FORMATS[fmt]
+    record = {"format": fmt}
+    if bits is None:
+        qt = QuantizedTensor.from_float(w, "TensorCoreConvRotW4A4Layout")
+        state = {"weight": qt._qdata, "weight_scale": qt._params.scale}
+    else:
+        qt = QuantizedTensor.from_float(w, "AsymW4A8Int8Layout", bits=bits)
+        params = qt._params
+        record["group_size"] = params.group_size
+        state = {"weight": qt._qdata, "weight_s_rel": params.scale, "weight_s_channel": params.s_channel}
+        if params.codebook is not None:
+            state["weight_codebook"] = params.codebook
+    state["comfy_quant"] = torch.tensor(list(json.dumps(record).encode()), dtype=torch.uint8)
+    state["bias"] = torch.randn(out_features, generator=gen).to(torch.bfloat16)
+    root = _Root()
+    root.load_state_dict({f"diffusion_model.q.{name}": value for name, value in state.items()}, strict=True)
+    layer = root.diffusion_model.q
+    assert layer.quant_format == fmt and isinstance(layer.weight, QuantizedTensor), (
+        f"{fmt}: ComfyUI's loader no longer gives a quantized weight under this format's name")
+    unit = "diffusion_model.q"
+    lora = {f"{unit}.lora_up.weight": torch.randn(out_features, rank, generator=gen) * 0.01,
+            f"{unit}.lora_down.weight": torch.randn(rank, in_features, generator=gen) * 0.01,
+            f"{unit}.alpha": torch.tensor(float(rank))}
+    return root, comfy.lora.load_lora(lora, {unit: f"{unit}.weight"})
+
+
+def _listed_weight_only_lora_formats() -> list[str]:
+    """The formats this ComfyUI lists, each one that it does not named in the output."""
+    from comfy.quant_ops import QUANT_ALGOS
+
+    for fmt in _ALWAYS_LISTED:
+        assert fmt in QUANT_ALGOS, f"{fmt}: ComfyUI no longer lists this format, so its LoRA rows cannot run"
+    listed = []
+    for fmt in _WEIGHT_ONLY_LORA_FORMATS:
+        if fmt in QUANT_ALGOS:
+            listed.append(fmt)
+        else:
+            print(f"not run: {fmt} LoRA rows, this ComfyUI does not list the format")
+    return listed
+
+
+def check_weight_only_cast_time() -> int:
+    """A LoRA on a grouped INT8 or ConvRot W4A4 layer bakes to stock's cast-time weight on every path.
+
+    The five paths of ``_check_cast_time``: the bake itself, the installed
+    patch_weight_to_device, ComfyUI's classic load, the unpatch back to the
+    pristine weight and the lazy swap's per-key bake. Every failure names the
+    format.
+    """
+    import comfy.model_patcher
+    import comfy.utils
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+    from dgx_monarch.actor.model_store import ModelStore
+
+    cpu = torch.device("cpu")
+    key = "diffusion_model.q.weight"
+    checked = 0
+    for fmt in _listed_weight_only_lora_formats():
+        root, patches = weight_only_lora_model(fmt)
+        patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+        patcher.add_patches(patches, 0.8)
+        pristine = comfy.utils.get_attr(root, key)
+        stock = stock_cast_time_weight(root, patcher, key)
+        assert comfy.utils.get_attr(root, key) is pristine, f"{fmt}: stock's cast touched the layer"
+        assert not same_weight(stock, pristine), (
+            f"{fmt}: the LoRA did not change stock's cast-time weight, so the row proves nothing")
+        ours = lora_cast_time.cast_time_weight(patcher, key, cpu)
+        assert ours is not None, (
+            f"BAKE DIVERGENCE: {fmt}; the bake gives this layer no cast-time weight where stock "
+            "patches it at cast time")
+        assert same_weight(ours, stock), (
+            f"BAKE DIVERGENCE: {fmt}; the cast-time bake no longer bit-matches stock's "
+            "DynamicVRAM cast (comfy.ops post_cast)")
+        installed = lora_cast_time.install()
+        try:
+            via = patcher.patch_weight_to_device(key, device_to=cpu, return_weight=True)
+            assert same_weight(via, stock), f"BAKE DIVERGENCE: {fmt} through patch_weight_to_device"
+            patcher.load(cpu, full_load=True)
+            assert same_weight(comfy.utils.get_attr(root, key), stock), (
+                f"BAKE DIVERGENCE: {fmt} through ComfyUI's classic load")
+            patcher.unpatch_model(cpu)
+            assert same_weight(comfy.utils.get_attr(root, key), pristine), f"{fmt}: unpatch left the layer baked"
+        finally:
+            if installed:
+                lora_cast_time.uninstall()
+        ModelStore._bake_key(patcher, key)
+        assert same_weight(comfy.utils.get_attr(root, key), stock), (
+            f"BAKE DIVERGENCE: {fmt} through the lazy swap's per-key bake")
+        checked += 1
+        print(f"equivalent: cast time {fmt} on five paths")
+    return checked
+
+
+def check_weight_only_stock_choice() -> int:
+    """Stock's own load and the bake choose the same path for each format, on both sides of the cut-off.
+
+    Three layers a format: 16 x 256, under stock's 16 KiB cut-off at every
+    width, 64 x 512, where only the 3-bit codes are still under it, and
+    64 x 1024, above it at every width.
+    """
+    import comfy.model_patcher
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time
+
+    cpu = torch.device("cpu")
+    key = "diffusion_model.q.weight"
+    checked = 0
+    for fmt in _listed_weight_only_lora_formats():
+        seen = {}
+        for rows, inputs in ((16, 256), (64, 512), (64, 1024)):
+            stock_root, stock_patches = weight_only_lora_model(fmt, rows, inputs)
+            stock = stock_load_choice(stock_root, stock_patches).get(key)
+            root, patches = weight_only_lora_model(fmt, rows, inputs)
+            patcher = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+            patcher.add_patches(patches, 1.0)
+            ours = "cast" if lora_cast_time.stock_patches_at_cast_time(patcher, key) else "classic"
+            assert stock in ("cast", "classic"), f"{fmt} {rows}x{inputs}: stock's load chose no path"
+            assert ours == stock, (
+                f"BAKE CHOICE DIVERGENCE: {fmt} {rows}x{inputs}; stock's load takes the {stock} "
+                f"path and the bake takes {ours}")
+            baked = lora_cast_time.cast_time_weight(patcher, key, cpu)
+            assert (baked is not None) == (ours == "cast"), f"{fmt} {rows}x{inputs}"
+            seen[(rows, inputs)] = stock
+            checked += 1
+        assert seen[(16, 256)] == "classic" and seen[(64, 1024)] == "cast", (fmt, seen)
+        assert seen[(64, 512)] == ("classic" if fmt == "w3a8_int8" else "cast"), (fmt, seen)
+        print(f"equivalent: stock's cast-time choice for {fmt}: "
+              + ", ".join(f"{rows}x{inputs} {path}" for (rows, inputs), path in seen.items()))
     return checked
 
 

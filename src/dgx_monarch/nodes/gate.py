@@ -25,6 +25,7 @@ from ..gate_ledger import (
 from ..log import get_logger
 from ..mesh import ensure_live as ensure_live
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call  # noqa: F401
+from . import gate_capacity_stop  # noqa: F401  # ceremony runtime seam
 from . import gate_identity as _gate_identity
 from . import gate_inconclusive as _gate_inconclusive  # noqa: F401
 from .common import ModelSpec, run_render  # noqa: F401
@@ -101,19 +102,36 @@ def _combo_of(model: ModelSpec) -> tuple[str, ArtifactSetSignature]:
     A sentinel identity is refused before it can reach the digest: an
     unidentified artifact must not compose a key that reads as "no verdict".
     """
-    import folder_paths
-
     from ..gate_artifacts import refuse_unresolved
+
+    pairs = _signed_pairs(model.unet_name, model.loras)
+    refuse_unresolved(pairs)
+    key = combo_key(model.unet_name, model.options, [e["name"] for e in model.loras])
+    return key, artifact_set_signature(signature for _name, signature in pairs)
+
+
+def _signed_pairs(unet_name: str, loras) -> list[tuple[str, str]]:
+    """(folder/name, signature) for one checkpoint and its LoRA stack, in stack order."""
+    import folder_paths
 
     def signed(kind: str, name: str) -> tuple[str, str]:
         path = folder_paths.get_full_path(kind, name)
         return f"{kind}/{name}", (artifact_signature(path) if path else "missing")
 
-    pairs = [signed("diffusion_models", model.unet_name)]
-    pairs.extend(signed("loras", entry["name"]) for entry in model.loras)
+    return [signed("diffusion_models", unet_name),
+            *(signed("loras", entry["name"]) for entry in loras or ())]
+
+
+def _dual_combo_of(model: ModelSpec, uncond: dict) -> tuple[str, ArtifactSetSignature]:
+    """(dual combination key, signature over both slots) for a dual-model render."""
+    from ..gate_artifacts import refuse_unresolved
+    from ..gate_dual_identity import dual_combo_key
+
+    pairs = [*_signed_pairs(model.unet_name, model.loras),
+             *_signed_pairs(uncond["unet_name"], uncond.get("loras"))]
     refuse_unresolved(pairs)
-    key = combo_key(model.unet_name, model.options, [e["name"] for e in model.loras])
-    return key, artifact_set_signature(signature for _name, signature in pairs)
+    spec = {"unet_name": model.unet_name, "options": model.options, "loras": model.loras}
+    return dual_combo_key(spec, uncond), artifact_set_signature(sig for _name, sig in pairs)
 
 
 def run_identity_ceremony(model: ModelSpec, request: dict, latent: dict,
@@ -198,15 +216,20 @@ def _run_identity_ceremony_bound(model: ModelSpec, request: dict, latent: dict,
     for an in-mode one, both when both hold; an FSDP FAIL takes no lever.
     ["latent"] holds the stock-lineage latent, or the stock-residency leg on a
     cross-residency FAIL."""
-    if request.get("uncond_model") is not None:
-        raise ValueError(
-            "the Identity Gate proves one model only; a dual-model request renders "
-            "with slab_weights and lora_low_rss forced off, or refuses under automatic FSDP")
     # Both halves read this namespace at call time, which is why the imports
     # above stay bound here even where nothing in this file calls them.
     from .gate_ceremony import gather_ceremony_evidence
+    from .gate_nothing_to_gate import record_if_provable
     from .gate_verdict import publish_ceremony_verdict
 
+    # The automatic path only: where the driver reads nothing to compare, the
+    # Workers' empty-stack cycle settles it with no proof render (gate_nothing_to_gate).
+    skipped = record_if_provable(
+        runtime=globals(), model=model, request=request, latent=latent,
+        cfg_value=cfg_value, origin=origin, run_id=run_id, handle=handle,
+        fsdp_scope_state=fsdp_scope_state)
+    if skipped is not None:
+        return skipped
     evidence = gather_ceremony_evidence(
         runtime=globals(),
         model=model,

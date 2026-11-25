@@ -31,7 +31,7 @@ from slab_lifetime_helpers import reset_slab_lifetime
 
 FITS = StockFit(True, True, 20 * 2**30, 90 * 2**30)
 DOES_NOT_FIT = StockFit(False, True, 62 * 2**30, 47 * 2**30)
-SKIPPED = StockFit(True, False, 0, None, "a loader dtype cast changes the resident size")
+SKIPPED = StockFit(True, False, 0, None, "the CUDA device is not integrated (host memory does not bound capacity)")
 
 STACK = [{"name": "a.safetensors", "strength": 1.0}]
 
@@ -316,8 +316,10 @@ def test_stock_load_fit_mirrors_the_preflight_skips(tmp_path, monkeypatch):
     tight = capacity_fit.stock_load_fit(str(path), {})
     assert (tight.applies, tight.fits) == (True, False)
 
+    # A cast is priced, not skipped. This file has no safetensors header, so
+    # the cast is charged the widest copy it could build: the file times two.
     cast = capacity_fit.stock_load_fit(str(path), {"dtype": torch.bfloat16})
-    assert (cast.applies, cast.fits) == (False, True)
+    assert (cast.applies, cast.fits, cast.cast_bytes) == (True, False, 2 * 4096)
 
     monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: False)
     discrete = capacity_fit.stock_load_fit(str(path), {})
@@ -924,7 +926,7 @@ def test_an_operator_reserve_above_the_floor_is_what_the_card_quotes(tmp_path, m
     reserved = capacity_fit.slab_load_fit(str(path), {}, reserve_bytes=10 * gib)
     assert reserved.floor_bytes == 10 * gib and not reserved.fits
 
-    card = store_slab_admit.card(reserved, "w.safetensors", "this host",
+    card = store_slab_admit.card(reserved, "w.safetensors",
                                 reserve_bytes=10 * gib)
     assert "plus the 10.0 GiB this host reserves (uma_reserve_gb)" in card
     assert "above the default floor" in card
@@ -949,7 +951,7 @@ def test_a_reserve_the_arena_cap_clips_is_still_named_on_the_card(tmp_path, monk
 
     clipped = capacity_fit.slab_load_fit(str(path), {}, reserve_bytes=20 * gib)
     assert clipped.floor_bytes == int(capacity_fit.LEGACY_ARENA_RATIO * 10 * gib)
-    card = store_slab_admit.card(clipped, "w.safetensors", "this host",
+    card = store_slab_admit.card(clipped, "w.safetensors",
                                  reserve_bytes=20 * gib)
     assert "8.5 GiB floor" in card
     assert "20.0 GiB this host reserves (uma_reserve_gb)" in card
@@ -1035,10 +1037,10 @@ def test_the_card_names_no_lever_it_cannot_prove_exists(monkeypatch):
     and no caller sets it today."""
     from dgx_monarch.actor import store_slab_admit
 
-    plain = store_slab_admit.card(SLAB_SHORT, "m.safetensors", "this host")
+    plain = store_slab_admit.card(SLAB_SHORT, "m.safetensors")
     assert "fsdp" not in plain
     assert "fsdp preset on world 2" in store_slab_admit.card(
-        SLAB_SHORT, "m.safetensors", "this host", fsdp_lever=True)
+        SLAB_SHORT, "m.safetensors", fsdp_lever=True)
     assert "fsdp" not in store_slab_admit.rescue_blocker(SLAB_SHORT)[1]
 
 
@@ -1077,7 +1079,7 @@ def test_the_stock_fits_rung_names_whether_it_actually_priced(monkeypatch):
     assert "reason=stock residency fits this checkpoint" in priced
     assert "rung=stock_skipped" in skipped
     assert " unpriced" in skipped
-    assert "reason=a loader dtype cast changes the resident size" in skipped
+    assert "reason=the CUDA device is not integrated (host memory does not bound capacity)" in skipped
 
 
 def test_a_slab_rung_records_the_slab_probes_figure(monkeypatch):

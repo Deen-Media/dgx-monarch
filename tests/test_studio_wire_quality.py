@@ -10,7 +10,7 @@ from dgx_monarch.studio.contracts import StudioError, canonical
 from dgx_monarch.studio.history import page_artifacts, page_jobs
 from dgx_monarch.studio.jobs import Jobs
 from dgx_monarch.studio.store import Store
-from dgx_monarch.studio.wire_records import PAGE_BYTES, snapshot_rows
+from dgx_monarch.studio.wire_records import PAGE_BYTES, WORKFLOW_NAME_CHARS, snapshot_rows
 
 
 @pytest.fixture
@@ -118,6 +118,28 @@ def test_job_summary_carries_the_recorded_seeds_alone(store):
     rows, _ = snapshot_rows(store)
     assert {row["id"]: row["submission"]["effective"] for row in rows["jobs"]} == {
         identity: submission["effective"] for identity, submission in summaries.items()}
+
+
+def test_job_summary_carries_the_drafts_workflow_name(store):
+    """The viewer names a running job's workflow from its summary row; a long name is cut."""
+    def named(identity, name):
+        value = job(identity, prompt_id=identity)
+        value["submission"]["requested"]["workflowName"] = name
+        return value
+    store.create("jobs", named("named", "minimax_h3_mp4_sound"))
+    store.create("jobs", named("long", "\u2603" * 500))
+    store.create("jobs", named("odd", {"not": "text"}))
+    store.create("jobs", job("unnamed", prompt_id="unnamed"))
+    store.create("jobs", job("external", prompt_id="other", external=True, submission={"prompt": {}}))
+    listed = {item["id"]: item["submission"]["requested"] for item in page_jobs(store, {})["items"]}
+    rows, _ = snapshot_rows(store)
+    assert listed == {row["id"]: row["submission"]["requested"] for row in rows["jobs"]}
+    assert listed["named"] == {"operation": "fleet", "project_id": "p", "workflowName": "minimax_h3_mp4_sound"}
+    assert listed["long"]["workflowName"] == "\u2603" * WORKFLOW_NAME_CHARS
+    assert listed["odd"]["workflowName"] is None and listed["unnamed"]["workflowName"] is None
+    # An imported job has no request; the row says so rather than borrowing a name.
+    assert listed["external"] == {"operation": None, "project_id": None, "workflowName": None}
+    assert store.get("jobs", "long")["submission"]["requested"]["workflowName"] == "\u2603" * 500
 
 
 def test_a_seed_a_browser_cannot_hold_exactly_travels_as_its_digits(store):

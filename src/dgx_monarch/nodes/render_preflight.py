@@ -8,22 +8,41 @@ from typing import Any
 from .. import (
     accuracy_waiver,
     driver_footprint,
+    driver_unload,
     family_select,
     h3_activation,
     latent_scale,
     mesh_safety,
     residency_mode,
+    swap_credit,
 )
 from ..adapters.detect import CheckpointSniffError, sniff_checkpoint
+from ..adapters.flux_views import VIEWS_METADATA_KEY
 from ..refusal import RefusalClass, refusal
 from ..sampling_contract import latent_size_tags
+from . import pending_load_relief, recycle_drain
 from .latent_outputs import is_direct_nested_tensor
+from .reference_preflight import (  # noqa: F401  (reached through this module too)
+    krea2_ref_preflight_summary,
+    preflight_krea2_reference_latents,
+)
+from .render_rows import ref_pose_shapes
 from .render_validation import validate_render_topology
 
 LATENT_DOWNSCALE_METADATA_KEY = "_dgxm_latent_downscale"
 # Set by the sampler nodes when the sampler keeps the uncond pass at CFG 1.0,
 # so every site that resolves the topology from this latent reads the same.
 CFG_KEEPS_UNCOND_METADATA_KEY = "_dgxm_cfg_keeps_uncond"
+# Set beside it when the prompt pair's text rows differ (cfg_pair); a guider
+# carries the same key for Sampler Custom, which sees no conditioning.
+CFG_PAIR_DIFFERS_METADATA_KEY = "_dgxm_cfg_pair_rows_differ"
+# Set beside them when the family's sharded forward refuses what the pair carries
+# where cfg2 runs it (reference_preflight.sequence_split_refused).
+CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY = "_dgxm_cfg_pair_sequence_refused"
+# Each latent tag and the resolve_topology argument it sets; the third marks UltraTex views.
+TOPOLOGY_TAGS = ((CFG_KEEPS_UNCOND_METADATA_KEY, "keeps_uncond"), (CFG_PAIR_DIFFERS_METADATA_KEY, "pair_differs"),
+                 (VIEWS_METADATA_KEY, "views"),
+                 (CFG_PAIR_SEQUENCE_REFUSED_METADATA_KEY, "sequence_refused"))
 RESIDENT_ADOPTION_EVIDENCE_KEY = "_dgxm_adoption_evidence"
 
 
@@ -35,21 +54,28 @@ def validate_latent_downscale(value: object) -> int:
     return value
 
 
-def sampler_latent(latent: dict, sampler_name: object) -> dict:
-    """A copy of a sampler node's input latent, tagged for its sampler.
+def sampler_latent(latent: dict, sampler_name: object, pair_differs: bool = False,
+                   views: bool = False, sequence_refused: bool = False) -> dict:
+    """A copy of a sampler node's input latent, tagged for its sampler and pair.
 
-    The tag marks a sampler that keeps the uncond pass at CFG 1.0
-    (topology.sampler_keeps_uncond_at_cfg1). Every site that resolves this
-    render's topology reads it off the latent, so the Gate token and the
-    render agree; an inherited tag is dropped first, so a plain sampler never
-    keeps one. latent_without_topology_metadata strips it before the wire.
+    One tag marks a sampler that keeps the uncond pass at CFG 1.0
+    (topology.sampler_keeps_uncond_at_cfg1), one a prompt pair whose text rows
+    differ (cfg_pair.text_rows_differ), one a pair that carries UltraTex
+    view inputs (adapters/flux_views), and one a pair the family's sharded
+    forward refuses (reference_preflight.sequence_split_refused). Every site that resolves this render's
+    topology reads them off the latent, so the Gate token and the render
+    agree; inherited tags are dropped first, so a plain sampler never keeps
+    one. latent_without_topology_metadata strips them before the wire.
     """
     from ..topology import sampler_keeps_uncond_at_cfg1
 
     tagged = dict(latent)
-    tagged.pop(CFG_KEEPS_UNCOND_METADATA_KEY, None)
-    if sampler_keeps_uncond_at_cfg1(sampler_name):
-        tagged[CFG_KEEPS_UNCOND_METADATA_KEY] = True
+    for (key, _name), on in zip(TOPOLOGY_TAGS, (
+            sampler_keeps_uncond_at_cfg1(sampler_name), pair_differs, views, sequence_refused),
+            strict=True):
+        tagged.pop(key, None)
+        if on:
+            tagged[key] = True
     return tagged
 
 
@@ -62,7 +88,8 @@ def latent_without_topology_metadata(latent: dict) -> dict:
     """
     clean = dict(latent)
     clean.pop(LATENT_DOWNSCALE_METADATA_KEY, None)
-    clean.pop(CFG_KEEPS_UNCOND_METADATA_KEY, None)
+    for key, _name in TOPOLOGY_TAGS:
+        clean.pop(key, None)
     clean.pop(RESIDENT_ADOPTION_EVIDENCE_KEY, None)
     clean.pop(accuracy_waiver.STAMPED_RESULT_KEY, None)
     return clean
@@ -140,70 +167,17 @@ def bind_packed_render_model(
     return _model_with_bound_handle(model, handle), handle
 
 
-def krea2_ref_preflight_summary(positive, negative=None) -> tuple[bool, str | None]:
-    """Combine positive+negative raw CONDITIONING lists into one
-    (has_reference_latents, resolved_method) summary for
-    preflight_krea2_reference_latents. Call before conditioning_for_wire
-    packs either list."""
-    from ..adapters.krea2 import krea2_reference_latents_summary
-
-    has_p, method_p = krea2_reference_latents_summary(positive)
-    has_n, method_n = krea2_reference_latents_summary(negative)
-    return has_p or has_n, method_p if method_p is not None else method_n
-
-
-def preflight_krea2_reference_latents(
-    model: Any, ref_summary: tuple[bool, str | None] | None, topo: Any
-) -> None:
-    """Refuse unsupported Krea2 reference latents before worker dispatch.
-
-    The shared adapter predicate keeps this driver mirror aligned with the
-    worker guard. Sniff failures leave that guard as the backstop. Model option
-    patches remain worker-only because no DGX node serializes them.
-    """
-    if ref_summary is None:
-        return
-    has_refs, method = ref_summary
-    from ..adapters.krea2 import (
-        KREA2_REF_LATENTS_REFUSAL_MESSAGE,
-        krea2_ref_latents_would_reject,
-    )
-
-    if not krea2_ref_latents_would_reject(has_refs, method):
-        return
-    if topo.sequence_parallel <= 1 and topo.cfg <= 1:
-        return
-    try:
-        import folder_paths
-
-        from ..adapters.detect import sniff_checkpoint
-
-        path = folder_paths.get_full_path("diffusion_models", model.unet_name)
-        if path is None:
-            return
-        family = family_select.effective_family(
-            sniff_checkpoint(path)[0], family_select.override_for_model(model))
-    except Exception:
-        return  # fail open: the mid-forward guard is the backstop
-    if family != "krea2":
-        return
-    from ..adapters.base import UnsupportedModelError
-
-    raise UnsupportedModelError(KREA2_REF_LATENTS_REFUSAL_MESSAGE)
-
-
 def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
-    """Refuse H3 cfg/dp topology before mesh setup or worker RPC.
+    """Refuse H3 and MiniMax-H3-Image cfg/dp topology before mesh setup or worker RPC.
 
     H3 conditionings remain separate batch-1 calls, so cfg parallel has no
     batch to split. Packed data parallel is refused earlier; this predicate is
     its backstop. Sniff failures leave the earlier and worker-side guards in
     place. ``sniff_checkpoint`` is memoized by path metadata.
     """
-    from ..adapters.minimax_h3 import (
-        MINIMAX_H3_BATCH_CAPPED_MESSAGE,
-        minimax_h3_topology_would_reject,
-    )
+    from ..adapters.minimax_h3 import MINIMAX_H3_BATCH_CAPPED_MESSAGE, minimax_h3_topology_would_reject
+    from ..adapters.minimax_h3_image import FAMILY as H3_IMAGE
+    from ..adapters.minimax_h3_image import MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE
 
     if not minimax_h3_topology_would_reject(
             int(getattr(topo, "cfg", 1)), int(getattr(topo, "dp", 1))):
@@ -220,22 +194,23 @@ def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
             sniff_checkpoint(path)[0], family_select.override_for_model(model))
     except Exception:
         return  # fail open: the packed-DP guard and the stock batch cap remain
-    if family != "minimax_h3":
-        return
     from ..adapters.base import UnsupportedModelError
 
-    raise UnsupportedModelError(MINIMAX_H3_BATCH_CAPPED_MESSAGE)
+    if family == H3_IMAGE:
+        raise UnsupportedModelError(MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE)
+    if family == "minimax_h3":
+        raise UnsupportedModelError(MINIMAX_H3_BATCH_CAPPED_MESSAGE)
 
 
 def _driver_footprint_preflight_for_request(
-    model: Any, request: dict, family: str, path: str,
+    model: Any, request: dict, family: str, path: str, weights_loaded: bool | None = None,
 ) -> None:
     """Check a pending driver-host DiT load (docs/TROUBLESHOOTING.md #52).
 
     Packed conditioning proves the driver stack is already in ``MemAvailable``,
     so this site reports but does not charge it. An explicit topology counts
-    the weights as resident (the loader site priced its eager load), and a
-    dtype cast skips the check. A cleared estimate is memoized (see
+    the weights as resident until an operator's drop (``recycle_drain.preset_placed``:
+    the loader site priced its eager load), and a dtype cast skips the check. A cleared estimate is memoized (see
     ``_LAST_DRIVER_CHARGED_UNET``); only a complete over-budget one refuses.
     """
     try:
@@ -259,15 +234,15 @@ def _driver_footprint_preflight_for_request(
             worker_args = resolve_effective_worker_args(
                 model, handle, requested_worker_args=worker_args)
         weights_resident = (
-            str(getattr(mesh, "topology_preset", "auto") or "auto") != "auto"
-            or unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET,
-                             _LAST_DRIVER_CHARGED_UNET)
+            recycle_drain.preset_placed(model)
+            or (pending_load_relief.dit_resident(unet_name, charged=True)
+                if weights_loaded is None else weights_loaded)
             or driver_footprint.weights_owned_by_activation_preflight(family))
         pixels, blocks, frames = driver_footprint.ref_pixel_volume_from_latents(
             request, profile)
         estimate = driver_footprint.estimate_driver_footprint(
             profile=profile,
-            mem_available=avail,
+            mem_available=avail if weights_resident else swap_credit.credited(avail),
             weight_bytes=driver_footprint.file_size_bytes(path),
             weights_resident=weights_resident,
             co_resident=driver_footprint.rank0_co_resident(mesh),
@@ -285,16 +260,17 @@ def _driver_footprint_preflight_for_request(
 
 
 def activation_footprint_preflight_for_request(
-    model: Any, request: dict, latent: dict,
+    model: Any, request: dict, latent: dict, *, weights_loaded: bool | None = None,
 ) -> None:
     """Run family-scoped capacity checks before worker RPC.
 
-    Shared family/path resolution feeds the render-memory price and the
-    driver-load, H3 render-fit and reference/pose activation checks
-    (docs/TROUBLESHOOTING.md #52, #56 and #47). A missing shape, an unsupported
-    file type, or an unreadable header with no forced family fails open, so
-    unrelated render paths keep their behavior.
-    """
+    Shared family/path resolution feeds the render-memory price and the driver-load,
+    H3 render-fit and reference/pose activation checks (docs/TROUBLESHOOTING.md #52, #56,
+    #47); a missing shape, file type or header with no forced family fails
+    open. Before a check refuses, ``driver_unload`` frees what it can and runs
+    it again; once all pass, ``pending_load_relief`` frees the driver for a load
+    still to come that will not fit, refusing nothing. ``weights_loaded``
+    stands in for the load memos (nodes/gate_capacity_stop)."""
     unet_name = getattr(model, "unet_name", None)
     if not isinstance(unet_name, str):
         return
@@ -323,66 +299,58 @@ def activation_footprint_preflight_for_request(
     if forced_family is not None:
         family_select.assert_override_admits_checkpoint(forced_family, path)
     family_select.warn_auto_admits_checkpoint(family, path)
-    # Run family-disjoint driver/H3 checks before the activation registry
-    # return. Sample memo credit first so this render cannot credit its own
-    # newly cleared pending load.
-    memo_credit = unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET,
-                                _LAST_DRIVER_CHARGED_UNET)
+    # Sampled before any check, so this render cannot credit its own newly cleared pending load.
+    resident, preset = pending_load_relief.dit_resident, recycle_drain.preset_placed(model)
+    memo_credit = (resident(unet_name, charged=True) if weights_loaded is None else weights_loaded) or preset
+    placed = resident(unet_name) if weights_loaded is None else weights_loaded
     from ..render_memory_price import preflight_render_memory
 
     # The grid the workers will sample, size tags applied, computed once for
     # every estimate below (the latent's own shape when comfy names no config).
     video_shape = latent_scale.rendered_latent_shape(
         path, samples, *latent_size_tags(latent))
-    preflight_render_memory(path, unet_name, video_shape)
-    _driver_footprint_preflight_for_request(model, request, family, path)
-    h3_activation.preflight_h3_activation_for_request(
-        model, request, latent, family=family, path=path,
-        unet_name=unet_name, memo_credit=memo_credit, latent_shape=video_shape)
-    if family not in mesh_safety.REF_POSE_TOKEN_FAMILIES:
-        return
-    # Scan every positive cond entry's extras dict, not only the first:
-    # conditioning_set_values_with_timestep_range (the pose path in comfy's
-    # SCAIL node) can land its values on a later entry, and reference_latents
-    # append. Malformed (None/tensor) extras slots degrade to shape-only
-    # estimation, never abort the render. The negative mirrors the positive per
-    # the node, and cond/uncond run as separate model calls, so scanning the
-    # positive bounds the peak.
-    positive = request.get("positive") if isinstance(request, dict) else None
-    ref_latents: list = []
-    pose_latent = None
-    for entry in positive if isinstance(positive, (list, tuple)) else ():
-        extra = entry[1] if isinstance(entry, (list, tuple)) and len(entry) > 1 else None
-        if not isinstance(extra, dict):
-            continue
-        ref_latents.extend(extra.get("reference_latents") or ())
-        if pose_latent is None:
-            pose_latent = extra.get("pose_video_latent")
-    ref_shapes = [
-        shape for t in ref_latents
-        if (shape := getattr(t, "shape", None)) is not None
+    # In order: after an unload the run restarts at the check that refused.
+    steps = [
+        lambda: preflight_render_memory(path, unet_name, video_shape),
+        lambda: _driver_footprint_preflight_for_request(model, request, family, path, weights_loaded),
+        lambda: h3_activation.preflight_h3_activation_for_request(
+            model, request, latent, family=family, path=path,
+            unet_name=unet_name, memo_credit=memo_credit, latent_shape=video_shape),
     ]
+    if family in mesh_safety.REF_POSE_TOKEN_FAMILIES:
+        steps.append(lambda: _ref_pose_activation_preflight(
+            family, path, unet_name, request, video_shape, placed))
+    driver_unload.check_with_unload(steps, subject=unet_name, swap=(model, request), handle=getattr(
+        getattr(model, "mesh", None), "handle", None))
+    pending_load_relief.relieve(model, request, family=family, path=path, weights_loaded=weights_loaded)
+
+
+def _ref_pose_activation_preflight(family: str, path: str, unet_name: str,
+                                   request: dict, video_shape: Any, placed: bool) -> None:
+    """The reference/pose check (#47) over every positive entry's extras, as
+    ``render_rows.ref_pose_shapes`` reads them; the sample deadline counts the
+    same rows. ``placed``: the residency rule's word, an eager load included."""
+    ref_shapes, pose_shape = ref_pose_shapes(request)
     mesh_safety.activation_footprint_preflight(
         family, path, unet_name,
         video_shape=video_shape,
         ref_shapes=ref_shapes,
-        pose_shape=getattr(pose_latent, "shape", None) if pose_latent is not None else None,
-        sp_degree=1,  # ignores sequence-parallel sharding, which only shrinks
-                      # the true footprint: never a false pass, at worst an
-                      # over-eager refusal.
-        weights_resident=(unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET)),
+        pose_shape=pose_shape,
+        sp_degree=1,  # sharding only shrinks the true footprint: never a
+                      # false pass, at worst an over-eager refusal.
+        weights_resident=placed,
     )
 
 
-# Session lifetime, as are the two memos below; nodes/recycle_drain drains all
-# three with the loader-site memos. A stale value in any of them can omit a
-# charge but never causes a false refusal. A successful render proves its
-# checkpoint is already in ``MemAvailable``.
+# Session lifetime, as are the two memos below; every unload of every rank
+# drains all three (pending_load_relief.note_unloaded, which recycle_drain runs
+# too). A stale value can omit a charge but never causes a false refusal. A
+# successful render proves its checkpoint is already in ``MemAvailable``.
 _LAST_RENDERED_UNET: str | None = None
 
-# Session lifetime. Stamped when preflight clears a pending load, before either
-# submission path: a render can fail after loading but before the submitted or
-# success memo is set, and this keeps a retry from charging that resident file.
+# Session lifetime. Stamped when preflight clears a pending load: a render can fail after
+# loading, before its submitted or success memo is set, and this keeps a retry from charging
+# that file, unless a door marked the load still to come since (a residency change included).
 _LAST_DRIVER_CHARGED_UNET: str | None = None
 
 # Session lifetime. Do not charge a checkpoint already loading in a pipeline.
@@ -399,12 +367,11 @@ def note_successful_render(unet_name: object) -> None:
     """Record the checkpoint a successful render left resident (common.py, pipeline.py)."""
     global _LAST_RENDERED_UNET
     _LAST_RENDERED_UNET = unet_name if isinstance(unet_name, str) else None
+    pending_load_relief.note_placed(_LAST_RENDERED_UNET)  # the load it marked is done
 
 
 def note_driver_charged_render(unet_name: object) -> None:
-    """Record the checkpoint whose pending load the driver preflight just
-    cleared, so a retry after a failed render is not charged for weights the
-    worker still holds."""
+    """Record the checkpoint the driver preflight cleared, so a failed render's retry is not charged again."""
     global _LAST_DRIVER_CHARGED_UNET
     _LAST_DRIVER_CHARGED_UNET = unet_name if isinstance(unet_name, str) else None
 

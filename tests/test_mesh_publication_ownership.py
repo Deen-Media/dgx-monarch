@@ -11,6 +11,9 @@ from types import SimpleNamespace
 import pytest
 
 from dgx_monarch import client_lease
+from dgx_monarch.mesh_stop import cleanup_stop_s
+
+STOP_S = cleanup_stop_s()  # the creation rollback's stop: 65 s at Monarch's defaults
 
 
 class _PublishedProcMesh:
@@ -127,7 +130,7 @@ def test_mesh_publication_waiters_never_reuse_a_handle_whose_lease_start_failed(
     assert errors == [startup_error]
     assert len(proc_meshes) == 2 and starts == 2
     assert proc_meshes[0].stop_reasons == ["dgx-monarch client detach"]
-    assert proc_meshes[0].stop_timeouts == [30]
+    assert proc_meshes[0].stop_timeouts == [STOP_S]
     assert proc_meshes[1].stop_reasons == []
     assert results == [handles_at_start[1]]
     assert results[0] is not handles_at_start[0]
@@ -172,7 +175,7 @@ def test_publication_boundary_baseexception_retires_the_unleased_handle(monkeypa
     assert failure.value is interrupted
     assert starts == 0
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert mesh._MESHES == {}
     assert mesh._MESH_PENDING == {}
     assert mesh._MESH_CREATING == {}
@@ -297,7 +300,7 @@ def test_prepublication_baseexception_stops_the_owned_proc_mesh(monkeypatch, bou
     assert failure.value is interrupted
     assert starts == 0
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert mesh._MESHES == {}
     assert mesh._MESH_CREATING == {}
     assert mesh._TRANSPORT_CLAIMS == set()
@@ -371,7 +374,7 @@ def test_creation_instruction_handoffs_stop_the_owned_proc_mesh(monkeypatch, bou
     assert failure.value is interrupted
     assert starts == (1 if boundary == "lease" else 0)
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert mesh._MESHES == {}
     assert mesh._MESH_CREATING == {}
     assert mesh._TRANSPORT_CLAIMS == set()
@@ -410,7 +413,7 @@ def test_proc_only_factory_handoff_is_reconciled_once(monkeypatch, cleanup):
                        if cleanup in {"not_started", "callback_unconfirmed"}
                        else "dgx-monarch partial bring-up rollback")
     assert proc_mesh.stop_reasons == [expected_reason]
-    assert proc_mesh.stop_timeouts == ([30]
+    assert proc_mesh.stop_timeouts == ([STOP_S]
                                        if cleanup in {"not_started", "callback_unconfirmed"} else
                                        [60] if cleanup == "confirmed" else [])
     assert mesh._MESHES == {} and mesh._MESH_CREATING == {}
@@ -449,8 +452,12 @@ def test_outer_proc_stop_instruction_publishes_ambiguity_before_the_call_returns
         raise primary
 
     monkeypatch.setattr(mesh, "MeshHandle", fail_handle)
-    instructions = list(dis.get_instructions(
-        mesh_factory.reconcile_creation_cleanup))
+    # The creation cleanup issues its stop inside mesh_stop.stop_procs, the registered wait.
+    from dgx_monarch import mesh_stop
+
+    assert "stop_procs" in mesh_factory.reconcile_creation_cleanup.__code__.co_names
+    stop_code = mesh_stop.stop_procs.__code__
+    instructions = list(dis.get_instructions(mesh_stop.stop_procs))
     load_index = next(
         index for index, instruction in enumerate(instructions)
         if instruction.opname == "LOAD_ATTR" and instruction.argval == "stop"
@@ -467,22 +474,18 @@ def test_outer_proc_stop_instruction_publishes_ambiguity_before_the_call_returns
 
     def interrupt(_code, instruction_offset):
         if instruction_offset == target.offset:
-            monitoring.set_local_events(
-                tool_id, mesh_factory.reconcile_creation_cleanup.__code__, 0)
+            monitoring.set_local_events(tool_id, stop_code, 0)
             raise interrupted
 
     monitoring.use_tool_id(tool_id, "dgxm-outer-proc-stop-handoff-test")
     monitoring.register_callback(
         tool_id, monitoring.events.INSTRUCTION, interrupt)
-    monitoring.set_local_events(
-        tool_id, mesh_factory.reconcile_creation_cleanup.__code__,
-        monitoring.events.INSTRUCTION)
+    monitoring.set_local_events(tool_id, stop_code, monitoring.events.INSTRUCTION)
     with pytest.raises(RuntimeError, match="handle construction failed") as failure:
         try:
             mesh.get_mesh(mode="local", gpus_per_host=1)
         finally:
-            monitoring.set_local_events(
-                tool_id, mesh_factory.reconcile_creation_cleanup.__code__, 0)
+            monitoring.set_local_events(tool_id, stop_code, 0)
             monitoring.register_callback(
                 tool_id, monitoring.events.INSTRUCTION, None)
             monitoring.free_tool_id(tool_id)
@@ -541,7 +544,7 @@ def test_outer_proc_cleanup_diagnostics_are_best_effort(monkeypatch, broken):
     assert handoffs[0].cleanup_started is True
     assert handoffs[0].cleanup_confirmed is False
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert "owned ProcMesh cleanup unconfirmed" in mesh._TRANSPORT_POISON
     if broken == "cleanup_repr":
         assert "<BrokenCleanup>" in mesh._TRANSPORT_POISON
@@ -682,7 +685,7 @@ def test_active_creation_claim_serializes_an_unrelated_key(
     assert all(
         proc_mesh.stop_reasons == ["dgx-monarch client detach"]
         for proc_mesh in proc_meshes)
-    assert all(proc_mesh.stop_timeouts == [30] for proc_mesh in proc_meshes)
+    assert all(proc_mesh.stop_timeouts == [STOP_S] for proc_mesh in proc_meshes)
     assert mesh_factory.creation_cleanup_pending() is False
     assert mesh._TRANSPORT_POISON is None
 
@@ -986,7 +989,7 @@ def test_new_cleanup_claim_between_confirm_and_poison_clear_still_blocks(
     assert raced_claims and mesh_factory.creation_cleanup_pending() is True
     assert mesh._TRANSPORT_POISON is None
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     with pytest.raises(mesh.MeshAttachError, match="not reusable"):
         mesh.get_mesh(mode="local", gpus_per_host=1)
     assert spawn_calls == 1
@@ -1112,7 +1115,7 @@ def test_lease_start_failure_with_unconfirmed_proc_cleanup_blocks_every_retry(mo
     assert len(pending) == 1
     retained = pending[0]
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert retained.teardown_complete is False
     assert "proc stop was not confirmed" in retained.replacement_blocked
     assert mesh_factory.creation_cleanup_pending() is True
@@ -1124,6 +1127,144 @@ def test_lease_start_failure_with_unconfirmed_proc_cleanup_blocks_every_retry(mo
         mesh.get_mesh(mode="local", gpus_per_host=1)
     assert spawn_calls == 1 and start_calls == 1
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
+
+
+def _blocked_fleet(**fields):
+    import threading
+
+    return SimpleNamespace(
+        lock=threading.RLock(), teardown_complete=False, defunct=True, setup_cleanup_state=None,
+        sample_leases={}, abandoned_sample_leases={}, _replacement_retryable=False,
+        replacement_blocked="TimeoutError('proc stop did not finish within 100 s')",
+        _block_cause="stop_timeout_deliberate", **fields)
+
+
+@pytest.mark.parametrize("where", ["stranded", "published"])
+def test_no_creation_under_another_key_beside_a_fleet_whose_stop_is_unknown(monkeypatch, where):
+    """Another Init folder in the same session is another cache key, on the same machine."""
+    spawned: list = []
+
+    def spawn(*args):
+        spawned.append(args)
+        return SimpleNamespace(), _PublishedProcMesh(), SimpleNamespace(), False
+
+    mesh = _mesh_publication_fakes(monkeypatch, spawn, lambda: True)
+    monkeypatch.setattr(mesh, "_detect_comfy_dir", lambda path: path)
+    monkeypatch.setattr(mesh, "_mesh_cache_key", lambda _source, comfy, _cluster: ("test", comfy))
+    registry = mesh._MESH_PENDING if where == "stranded" else mesh._MESHES
+    registry[("test", "/first")] = _blocked_fleet(owns_hosts=False)
+
+    with pytest.raises(mesh.MeshAttachError) as refused:
+        mesh.get_mesh(mode="local", gpus_per_host=1, comfy_dir="/second")
+
+    text = str(refused.value)
+    assert spawned == [] and "under another configuration in this session" in text
+    assert ("restart ComfyUI" in text) if where == "stranded" else ("did not finish within 100 s" in text)
+
+
+def _host(address):
+    return SimpleNamespace(address=address, name=address)
+
+
+@pytest.mark.parametrize(("theirs", "verdict", "refused"), [
+    (("box-a", "box-b"), "blocked", True),       # the same hosts under a second cluster.toml path
+    (("box-b", "box-c"), "unresolved", True),    # one machine in common
+    (("box-c", "box-d"), "blocked", True),       # other names: still possibly the same machines
+    (("box-a", "box-b"), "completed", False),    # a confirmed stop
+    (("box-a", "box-b"), "live", False),         # a live fleet of another key, as before
+], ids=["same_hosts", "one_shared", "other_names", "completed", "live"])
+def test_another_keys_cluster_fleet_whose_stop_is_unknown_refuses_whatever_hosts_it_names(
+        theirs, verdict, refused):
+    """A machine's several addresses and its hostname cannot be told apart, so no host list
+    shows two fleets of one session on different machines; the refusal says so."""
+    from dgx_monarch import mesh_creation
+
+    other = _blocked_fleet(owns_hosts=True, config=SimpleNamespace(hosts=tuple(map(_host, theirs))))
+    runtime = {"_MESHES": {("cluster", "/a.toml"): other}, "_MESH_PENDING": {},
+               "_coherent_lifecycle_verdict": lambda _handle: verdict, "MeshAttachError": RuntimeError}
+
+    if refused:
+        with pytest.raises(RuntimeError) as refusal:
+            mesh_creation.admission_occupant(runtime, ("cluster", "/b.toml"))
+        text = str(refusal.value)
+        assert "under another configuration in this session" in text
+        assert "a machine's several addresses cannot be told apart" in text
+        assert "separate cluster waits too until that stop is confirmed or ComfyUI restarts" in text
+    else:
+        assert mesh_creation.admission_occupant(runtime, ("cluster", "/b.toml")) is None
+
+
+def test_a_local_fleet_of_another_key_refuses_only_while_its_stop_is_unknown():
+    """Two local fleets share this machine, as before: a stopped or live one admits."""
+    from dgx_monarch import mesh_creation
+
+    for verdict, refused in (("blocked", True), ("completed", False), ("live", False)):
+        runtime = {"_MESHES": {("local", "/first"): _blocked_fleet(owns_hosts=False)}, "_MESH_PENDING": {},
+                   "_coherent_lifecycle_verdict": lambda _handle, v=verdict: v,
+                   "MeshAttachError": RuntimeError}
+        if refused:
+            with pytest.raises(RuntimeError, match="under another configuration in this session"):
+                mesh_creation.admission_occupant(runtime, ("local", "/second"))
+        else:
+            assert mesh_creation.admission_occupant(runtime, ("local", "/second")) is None
+
+
+def test_the_next_render_after_a_failed_bring_up_proven_gone_builds_a_fresh_fleet(monkeypatch):
+    """A Worker lost during a cluster bring-up: once every host shows its processes gone."""
+    import time
+
+    from dgx_monarch import failed_bring_up, mesh_factory, mesh_liveness
+
+    proc_mesh = _PublishedProcMesh()
+
+    def spawn(_config, _cluster, _gph, _attach, _bootstrap, handoff):
+        handoff.fleet = SimpleNamespace(), proc_mesh, SimpleNamespace(), False
+        return handoff.fleet
+
+    mesh = _mesh_publication_fakes(monkeypatch, spawn, lambda: True)
+    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", None)
+    failed = mesh_factory.FleetHandoff()
+    failed.config = SimpleNamespace(hosts=(SimpleNamespace(address="box-b"),))
+    failed.failure_latched = failed.spawn_in_progress = failed.cleanup_started = True
+    mesh_factory.begin_creation_cleanup(object(), failed)
+    poison = ("mesh creation failed (MeshAttachError('worker actor bring-up failed')); owned "
+              "ProcMesh cleanup unconfirmed (worker spawn rollback outcome is unconfirmed)")
+    monkeypatch.setattr(mesh, "_TRANSPORT_POISON", poison)
+    answers = [mesh_liveness.ALIVE, mesh_liveness.GONE]
+    monkeypatch.setattr(mesh_liveness, "probe_fleet", lambda _handle, **_kwargs: (
+        mesh_liveness.LivenessEvidence(
+            answers[0], (("box-b", answers[0]),), time.monotonic())))
+
+    with pytest.raises(mesh.MeshAttachError, match="cannot yet prove gone"):
+        mesh.get_mesh(mode="local", gpus_per_host=1)
+    answers.pop(0)
+    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", None)  # the alive answer's interval passed
+    fresh = mesh.get_mesh(mode="local", gpus_per_host=1)
+
+    assert fresh.procs is proc_mesh and mesh._TRANSPORT_POISON is None
+
+
+def test_the_transport_poison_after_a_released_fleets_failed_replacement_names_the_release(
+        monkeypatch):
+    from dgx_monarch import mesh_teardown
+
+    proc_mesh = _PublishedProcMesh(RuntimeError("proc stop was not confirmed"))
+
+    def spawn(*_args):
+        return SimpleNamespace(), proc_mesh, SimpleNamespace(), False
+
+    def start():
+        raise RuntimeError("client lease thread did not start")
+
+    mesh = _mesh_publication_fakes(monkeypatch, spawn, start)
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_PREDECESSOR", None)
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_ADDRESSES", None)
+    mesh_teardown.note_liveness_release()
+    with pytest.raises(RuntimeError, match="client lease thread did not start"):
+        mesh.get_mesh(mode="local", gpus_per_host=1)
+
+    assert "owned ProcMesh cleanup unconfirmed" in mesh._TRANSPORT_POISON
+    assert "proved its worker processes were gone" in mesh._TRANSPORT_POISON
 
 
 def test_confirmed_stop_outranks_an_interrupted_cache_eviction(monkeypatch):
@@ -1159,9 +1300,78 @@ def test_confirmed_stop_outranks_an_interrupted_cache_eviction(monkeypatch):
     assert failure.value is startup_error
     assert retire_calls == 2
     assert proc_mesh.stop_reasons == ["dgx-monarch client detach"]
-    assert proc_mesh.stop_timeouts == [30]
+    assert proc_mesh.stop_timeouts == [STOP_S]
     assert published[0].teardown_complete is True
     assert published[0].replacement_blocked is None
     assert mesh._MESHES == {}
     assert mesh._TRANSPORT_POISON is None
     assert getattr(failure.value, "__notes__", ()) == ()
+
+
+def _strand(mesh, **fields):
+    """Leave a READY handle in the pending registry, as an interrupted publication does."""
+    import threading
+
+    handle = SimpleNamespace(
+        lock=threading.RLock(), teardown_complete=False, defunct=True,
+        setup_cleanup_state=None, sample_leases={}, abandoned_sample_leases={},
+        _replacement_retryable=False, **fields)
+    key = mesh._mesh_cache_key(mesh.local_config(None).source, "/comfy", False)
+    mesh._MESH_PENDING[key] = handle
+    return handle
+
+
+def test_the_next_render_over_a_stranded_fleet_whose_stop_is_unknown_refuses_at_once(monkeypatch):
+    """No second fleet beside processes whose stop is unknown, and no wait for a creation."""
+    import time
+
+    from dgx_monarch import mesh_teardown
+
+    spawned: list[object] = []
+    mesh = _mesh_publication_fakes(
+        monkeypatch, lambda *args: spawned.append(args) or pytest.fail("spawned a second fleet"),
+        lambda: True)
+    _strand(mesh, replacement_blocked="TimeoutError('proc stop did not finish within 100 s')",
+            _block_cause=mesh_teardown.TAG_STOP_TIMEOUT_DELIBERATE)
+
+    started = time.monotonic()
+    with pytest.raises(mesh.MeshAttachError) as refused:
+        mesh.get_mesh(mode="local", gpus_per_host=1)
+
+    assert time.monotonic() - started < 5.0
+    assert spawned == []
+    text = str(refused.value)
+    assert "never published" in text and "Reset cannot reach" in text
+    assert mesh_teardown.label_for_cause(mesh_teardown.TAG_STOP_TIMEOUT_DELIBERATE) in text
+    assert mesh._MESH_CREATING == {} and mesh._TRANSPORT_CLAIMS == set()
+
+
+def test_a_stranded_fleet_proven_gone_after_a_worker_death_is_replaced_by_the_next_render(
+        monkeypatch):
+    """The liveness release reaches a handle the cache never held, as it does a cached one."""
+    import time
+
+    from dgx_monarch import mesh_liveness, mesh_teardown
+
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_PREDECESSOR", None)
+    monkeypatch.setattr(mesh_teardown, "_RELEASED_ADDRESSES", None)
+    proc_mesh = _PublishedProcMesh()
+
+    def spawn(_config, _cluster, _gph, _attach, _bootstrap, handoff):
+        handoff.fleet = SimpleNamespace(), proc_mesh, SimpleNamespace(), False
+        return handoff.fleet
+
+    mesh = _mesh_publication_fakes(monkeypatch, spawn, lambda: True)
+    stranded = _strand(
+        mesh, replacement_blocked="TimeoutError('proc stop did not finish within 100 s')",
+        _block_cause=mesh_teardown.TAG_STOP_TIMEOUT_AFTER_DEATH,
+        _supervision_death_report="{'SupervisionError'} peer closed",
+        _supervision_reconcile_thread=None)
+    monkeypatch.setattr(mesh_liveness, "probe_fleet", lambda _handle, **_kwargs: (
+        mesh_liveness.LivenessEvidence(
+            mesh_liveness.GONE, (("local", mesh_liveness.GONE),), time.monotonic())))
+
+    fresh = mesh.get_mesh(mode="local", gpus_per_host=1)
+
+    assert stranded.teardown_complete is True
+    assert fresh is not stranded and fresh.procs is proc_mesh

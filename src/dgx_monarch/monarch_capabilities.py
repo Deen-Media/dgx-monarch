@@ -113,28 +113,160 @@ def cached_capabilities() -> dict[str, Any]:
     return copy.deepcopy(_process_capabilities())
 
 
-def assert_supported_runtime() -> None:
-    """Admit already imported Monarch bindings without importing Torch.
+def assert_supported_runtime() -> str:
+    """Admit already imported Monarch bindings without importing Torch; return their version.
 
     Call after Monarch's bootstrap loaded its root extension, before GPU setup.
+    The version is the one this process loaded (``loaded_version``), so a pin
+    installed under a running process does not admit it: only a restart does.
     Distribution ownership proves import placement, not payload byte integrity.
     """
-    import sys
-
     from . import TORCHMONARCH_PIN
 
+    version, owned, cause, replaced = _loaded_identity()
+    if replaced:
+        raise RuntimeError(_REPLACED)
+    if version is not None and version != TORCHMONARCH_PIN:
+        raise RuntimeError(
+            f"Monarch version does not match the supported pin: this process loaded "
+            f"torchmonarch {version} and this dgx-monarch pins {TORCHMONARCH_PIN}. If "
+            "dgx-monarch was updated since this process started, restart it before anything "
+            "else; otherwise install the pin if it is missing, then restart the process, since "
+            f"an install does not change what a running process loaded: {_RESTART}")
+    return _identity_or_refuse(version, owned, cause, "pinned")
+
+
+def loaded_version() -> str:
+    """The torchmonarch version this process loaded.
+
+    That is the installed distribution's version, read once per process: at
+    the first call made after ``monarch`` is imported, which is the admission
+    right after the import (``prepare_driver``, the Worker loop, a spawned
+    proc's bootstrap), or ``note_loaded_version`` when ``prepare_driver``
+    refuses before its admission. Later calls return that reading, and its
+    ownership verdict for the loaded ``monarch`` package and native bindings,
+    whatever the disk holds by then: an install under a running process
+    changes the files, not the code it runs. Something else may import
+    ``monarch`` first and torchmonarch be reinstalled before that reading, so
+    the reading also checks that the native binding the process mapped is
+    still the file on disk (``_binding_replaced``) and refuses when it is not.
+    A read that failed is kept too, since a later read of the disk says
+    nothing about what was loaded. A Worker loop records this version for the
+    driver's attach gate, which compares it with the same reading in the
+    driver (``worker_proc_id.read_values``).
+    """
+    version, owned, cause, replaced = _loaded_identity()
+    if replaced:
+        raise RuntimeError(_REPLACED)
+    return _identity_or_refuse(version, owned, cause, "installed")
+
+
+def note_loaded_version() -> None:
+    """Keep the loaded identity now if ``monarch`` is imported and none is kept; never raises."""
+    _loaded_identity()
+
+
+_RESTART = ("restart ComfyUI on the driver, or run `dgxm restart` for the Workers "
+            "(docs/TROUBLESHOOTING.md #8)")
+_REPLACED = ("Monarch's native binding in this process is no longer the file on disk: "
+             "torchmonarch was reinstalled after this process loaded it, so the file it runs "
+             f"is no longer the one installed. Restart the process: {_RESTART}")
+_KEPT = ("; this process keeps that reading, so restart it once torchmonarch is installed "
+         f"as the pin says: {_RESTART}")
+# Where the kernel lists this process's mapped files (Linux).
+_MAPS = "/proc/self/maps"
+
+# The torchmonarch identity this process loaded: its version (None when it
+# could not be read), whether that distribution owns the loaded modules, the
+# read's error, and whether the mapped native binding is no longer the file
+# on disk. Set once, by the first reading taken after ``monarch`` is
+# imported, and never read again from disk.
+_LOADED: tuple[str | None, bool, BaseException | None, bool] | None = None
+
+
+def _loaded_identity() -> tuple[str | None, bool, BaseException | None, bool]:
+    import sys
+
+    global _LOADED
+    if _LOADED is not None:
+        return _LOADED
+    version: str | None = None
     try:
         distribution = importlib.metadata.distribution("torchmonarch")
-        if distribution.version != TORCHMONARCH_PIN:
-            raise RuntimeError("Monarch version does not match the supported pin")
-        for name in ("monarch", "monarch._rust_bindings"):
-            module = sys.modules.get(name)
-            if module is None or not _origin(module, distribution)["distribution_owned"]:
-                raise RuntimeError("Monarch imported bindings are not owned by the pinned distribution")
-    except RuntimeError:
-        raise
+        version = str(distribution.version)
+        owned = all(
+            sys.modules.get(name) is not None
+            and bool(_origin(sys.modules[name], distribution)["distribution_owned"])
+            for name in ("monarch", "monarch._rust_bindings"))
+        replaced = owned and _binding_replaced(sys.modules["monarch._rust_bindings"]) is True
+        reading: tuple[str | None, bool, BaseException | None, bool] = (version, owned, None, replaced)
     except Exception as exc:
-        raise RuntimeError("Monarch runtime identity is unavailable") from exc
+        reading = (version, False, exc, False)
+    # A reading taken before the import describes no loaded code, so only a
+    # reading taken after it is kept, refusing or not.
+    if "monarch" in sys.modules:
+        _LOADED = reading
+    return reading
+
+
+def _binding_replaced(module: Any) -> bool | None:
+    """Whether the native binding this process mapped is no longer the file on disk.
+
+    The loaded module's file is the one torchmonarch's RECORD names, which
+    the ownership check has just shown. Linux lists each mapped file in
+    ``/proc/self/maps`` with its device and inode, under its current path,
+    and marks one removed since it was mapped. A reinstall writes a new
+    file there: pip first moves the old one aside or unlinks it, and removes
+    it when the install ends. So a mapping of that path on the same device
+    with another inode, or, with no live mapping of that path, a removed
+    file of the binding's name, means the binding was replaced: True. A live
+    mapping of that path with its inode is False. With neither, as when
+    the list cannot be read, the result is None. On False and None the
+    caller keeps the installed version it read, as before this check.
+    """
+    import os
+
+    filename = getattr(module, "__file__", None)
+    if not filename:
+        return None
+    try:
+        located = Path(filename).resolve()
+        status = located.stat()
+        with open(_MAPS, encoding="utf-8", errors="replace") as maps:
+            lines = maps.read().splitlines()
+    except OSError:
+        return None
+    live: list[tuple[int, int]] = []
+    removed = False
+    for line in lines:
+        fields = line.split(None, 5)
+        if len(fields) < 6:
+            continue
+        mapped = fields[5]
+        gone = mapped.endswith(" (deleted)")
+        mapped = mapped.removesuffix(" (deleted)")
+        if os.path.basename(mapped) != located.name:
+            continue
+        if gone:
+            removed = True
+        elif mapped == str(located):
+            try:
+                major, minor = (int(part, 16) for part in fields[3].split(":"))
+                live.append((os.makedev(major, minor), int(fields[4])))
+            except ValueError:
+                return None
+    if live:
+        return any(device == status.st_dev and inode != status.st_ino for device, inode in live)
+    return True if removed else None
+
+
+def _identity_or_refuse(version: str | None, owned: bool, cause: BaseException | None,
+                        which: str) -> str:
+    if version is None or cause is not None:
+        raise RuntimeError(f"Monarch runtime identity is unavailable{_KEPT}") from cause
+    if not owned:
+        raise RuntimeError(f"Monarch imported bindings are not owned by the {which} distribution{_KEPT}")
+    return version
 
 
 @lru_cache(maxsize=1)

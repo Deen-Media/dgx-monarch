@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import driver_exit
 from ..log import get_logger
 from ..refusal import RefusalClass, RefusalTag, escape_body_tags, refusal
 from ..transfer_utils import safe_call
@@ -268,9 +269,13 @@ def log_aborted_proof(logger: Any, tag: RefusalTag | None, retracted: bool,
     """Report the aborted proof's outcome and remaining denial state.
 
     Only a successfully withdrawn provisional denial allows the next queue to
-    reach the original guard again.
+    reach the original guard again. An untyped abort once the driver is exiting
+    is the exit's (its refusal, or a call Monarch's exit step cut), so it logs
+    nothing (driver_exit); a settled refusal is still reported.
     """
     if tag is None:
+        if driver_exit.exiting():
+            return
         safe_call(logger.error,
                   "FSDP clean-reload Gate aborted (%r); denying the exact FSDP "
                   "capability without residency quarantine", exc)

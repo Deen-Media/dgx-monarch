@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { InspectWorkflow, OperationCapability, WorkflowEntry } from '../contracts';
-  import { navigation } from '../navigation';
+  import { destinations } from '../navigation';
   import { loadWorkflow, paletteWorkflows, workflowTitle } from '../workflowChoice';
   let {
     operations,
@@ -18,8 +18,11 @@
   let paletteDialog: HTMLDialogElement,
     paletteInput: HTMLInputElement,
     paletteQuery = $state('');
+  // Each utility tab is listed by name under its group, so Grids, Fleet and Operations stay one search away.
   let commands = $derived(
-    navigation.filter((n) => n.label.toLowerCase().includes(paletteQuery.toLowerCase())),
+    destinations.filter((n) =>
+      `${n.group ?? ''} ${n.label}`.toLowerCase().includes(paletteQuery.toLowerCase()),
+    ),
   );
   let operationCommands = $derived(
     operations.filter((o) =>
@@ -54,7 +57,9 @@
   </div>
   <p class="eyebrow">NAVIGATION</p>
   {#each commands as command}<button class="command-row" onclick={() => navigate(command.id)}
-      ><span>{command.icon} {command.label}</span><span>↵</span></button
+      ><span>{command.icon} {command.group ? `${command.group}: ` : ''}{command.label}</span><span
+        >↵</span
+      ></button
     >{/each}{#if !commands.length && !operationCommands.length && !workflowCommands.length}<p
       class="muted"
     >

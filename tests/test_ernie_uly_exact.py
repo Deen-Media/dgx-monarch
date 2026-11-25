@@ -20,6 +20,7 @@ import torch
 from dgx_monarch.adapters import base
 from dgx_monarch.adapters.base import InjectionContext
 from dgx_monarch.adapters.ernie import ErnieAdapter
+from pad_rows_comfy_helpers import assert_ring_pad_refusal, grant_ring_pad_waiver
 from test_flux_pad_exclusion import (
     _CONTEXT,
     _LOCAL,
@@ -252,10 +253,11 @@ def _drive(harness, image, text, grid, *, pure_ulysses, blocks=2, forward_kwargs
     return outputs
 
 
-def _run(monkeypatch, image, text, grid, *, world, pure_ulysses, strict=False, **drive):
+def _run(monkeypatch, image, text, grid, *, world, pure_ulysses, strict=False, ring_world=1,
+         **drive):
     harness = _Harness(world, strict=strict)
     harness.expected_tags = [float(tag) for tag in range(1, image.shape[1] + text.shape[1] + 1)]
-    _install_stubs(monkeypatch, harness)
+    _install_stubs(monkeypatch, harness, ring_world=ring_world)
     return _drive(harness, image, text, grid, pure_ulysses=pure_ulysses, **drive), harness
 
 
@@ -333,13 +335,22 @@ def test_drop_rows_name_the_joint_tail_pad(monkeypatch, grid, text_rows, drop):
 
 
 @pytest.mark.parametrize("grid,text_rows", SHAPES)
-def test_ring_and_hybrid_keep_attended_pads_and_never_refuse(monkeypatch, grid, text_rows):
-    """Without pure Ulysses no row is named, so the ring pad guard (which
-    refuses named rows) cannot fire, and any pad key reaches the kernel."""
+def test_ring_and_hybrid_name_the_pad_row_and_refuse_unless_waived(monkeypatch, grid, text_rows):
+    """Ring and hybrid name the same pad row as pure Ulysses but cannot drop it,
+    so a padded render refuses class K by default; under the ring_pad waiver
+    the pad key reaches the kernel through xfuser's own call, and an even
+    stream names no row and needs no waiver."""
     image, text = _streams(grid, text_rows)
-    _outputs, harness = _run(monkeypatch, image, text, grid, world=WORLD, pure_ulysses=False)
-    assert harness.dispatch and all(rows is None for rows in harness.dispatch)
     joint = image.shape[1] + text_rows
+    drop = [joint] if joint % WORLD else []
+    if drop:
+        with pytest.raises(base.UnsupportedModelError) as caught:
+            _run(monkeypatch, image, text, grid, world=WORLD, pure_ulysses=False, ring_world=2)
+        assert_ring_pad_refusal(caught.value)
+        grant_ring_pad_waiver(monkeypatch)
+    _outputs, harness = _run(monkeypatch, image, text, grid, world=WORLD, pure_ulysses=False,
+                             ring_world=2)
+    assert harness.dispatch and all(rows == drop for rows in harness.dispatch)
     stock = [float(tag) for tag in range(1, joint + 1)]
     expected = stock + [0.0] * ((-joint) % WORLD)
     assert all(entry == "xfuser" and tags == expected
@@ -348,11 +359,14 @@ def test_ring_and_hybrid_keep_attended_pads_and_never_refuse(monkeypatch, grid, 
 
 def test_without_the_drop_the_pad_row_changes_the_answer(monkeypatch):
     """The negative control: an attended pad is material, not a rounding flip,
-    so the exact match above is evidence of the exclusion."""
+    so the exact match above is evidence of the exclusion. A waived ring render
+    is the one path that still attends it."""
     grid, text_rows = (2, 4), 5
     image, text = _streams(grid, text_rows)
     reference, _ = _run(monkeypatch, image, text, grid, world=1, pure_ulysses=False)
-    outputs, harness = _run(monkeypatch, image, text, grid, world=WORLD, pure_ulysses=False)
+    grant_ring_pad_waiver(monkeypatch)
+    outputs, harness = _run(monkeypatch, image, text, grid, world=WORLD, pure_ulysses=False,
+                            ring_world=2)
     assert any(0.0 in tags for *_head, tags in harness.calls)
     assert (outputs[0] - reference[0]).norm() / reference[0].norm() > 1e-4
 
@@ -416,8 +430,10 @@ def test_pure_ulysses_builds_q_and_k_on_stocks_fused_branch(
 
 @pytest.mark.parametrize("grid,text_rows", [((2, 4), 4), ((2, 4), 5)])
 def test_ring_and_hybrid_keep_the_unfused_branch(monkeypatch, comfy_rope_stub, grid, text_rows):
+    # The padded shape renders on ring only under the ring_pad waiver.
+    grant_ring_pad_waiver(monkeypatch)
     image, text = _streams(grid, text_rows)
-    _run(monkeypatch, image, text, grid, world=WORLD, pure_ulysses=False)
+    _run(monkeypatch, image, text, grid, world=WORLD, pure_ulysses=False, ring_world=2)
     assert len(_named(comfy_rope_stub, "apply_rope_split_half")) == WORLD * 2
     assert not _named(comfy_rope_stub, "rms_rope_split_half")
     assert not _named(comfy_rope_stub, "cast_bias_weight")

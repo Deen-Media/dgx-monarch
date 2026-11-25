@@ -75,12 +75,23 @@ def _read_bytes(path: str) -> bytes | None:
         return None
 
 
+class ProcListingError(OSError):
+    """The proc root could not be listed, so no process was counted.
+
+    An empty list would read as a host with no processes, and a liveness
+    answer built on it would say gone.
+    """
+
+
 def iter_pids(proc_root: str = PROC_ROOT) -> list[int]:
-    """Every numeric entry under the proc root, ascending."""
+    """Every numeric entry under the proc root, ascending.
+
+    Raises ``ProcListingError`` when the root cannot be listed.
+    """
     try:
         names = os.listdir(proc_root)
-    except OSError:
-        return []
+    except OSError as exc:
+        raise ProcListingError(exc.errno, exc.strerror, proc_root) from exc
     return sorted(int(name) for name in names if name.isdigit())
 
 
@@ -242,13 +253,8 @@ def alive(pid: int, starttime: int, proc_root: str = PROC_ROOT) -> bool:
 
 
 def read_state(pid: int, proc_root: str = PROC_ROOT) -> str | None:
-    """The state letter from ``/proc/<pid>/stat``, or None when it will not read.
-
-    Index 0 of the same tail ``read_stat`` already parses. ``Z`` is a process
-    that exited and waits for its parent to reap it: it holds no memory and
-    answers nothing. ``T`` is a stopped process that still holds every page it
-    had, so it is alive for every question this module answers.
-    """
+    """The state letter from ``/proc/<pid>/stat``, or None. ``Z``: the leader exited and awaits its
+    reap (``zombie_group`` says whether its threads hold memory); ``T``: stopped, holding every page."""
     text = _read_text(f"{proc_root}/{pid}/stat")
     if not text:
         return None
@@ -257,14 +263,27 @@ def read_state(pid: int, proc_root: str = PROC_ROOT) -> str | None:
     return fields[0] if fields else None
 
 
-def alive_and_not_zombie(pid: int, starttime: int, proc_root: str = PROC_ROOT) -> bool:
-    """Identity-checked liveness that a zombie fails.
+def zombie_group(pid: int, proc_root: str = PROC_ROOT) -> str | None:
+    """None, or ``gone`` (lone leader), ``threads`` (others run, pages held) or ``unknown``."""
+    if read_state(pid, proc_root) != "Z":
+        return None
+    counts = [line.split()[1:2] for line in (_read_text(f"{proc_root}/{pid}/status") or "").splitlines()
+              if line.startswith("Threads:")]
+    if counts and counts[0] and counts[0][0].isdigit():
+        return "gone" if int(counts[0][0]) <= 1 else "threads"
+    try:
+        tasks = os.listdir(f"{proc_root}/{pid}/task")
+    except OSError:
+        return "unknown"
+    return "threads" if any(t != str(pid) for t in tasks) else ("gone" if tasks else "unknown")
 
-    ``alive`` keeps its own answer: the kill ladder still has a pid to confirm
-    and a signal to send. A liveness question about a worker actor is a
-    question about held memory, and a zombie holds none.
+
+def alive_and_not_zombie(pid: int, starttime: int, proc_root: str = PROC_ROOT) -> bool:
+    """Identity-checked liveness about held memory, so a zombie with an empty thread group fails it.
+
+    ``alive`` keeps its own answer: the kill ladder still has a pid to confirm and a signal to send.
     """
-    return alive(pid, starttime, proc_root) and read_state(pid, proc_root) != "Z"
+    return alive(pid, starttime, proc_root) and zombie_group(pid, proc_root) != "gone"
 
 
 def reads_empty(pid: int, proc_root: str = PROC_ROOT) -> bool:

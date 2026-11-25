@@ -10,8 +10,17 @@ export interface ReviewText {
   draft?: string;
 }
 
+/** A warning the backend reports for one job, and the words of the box that accepts it. */
+export interface ReviewWarning {
+  text: string;
+  accept: string;
+}
+
+/** How the status line reads: ready to generate, waiting for a decision, or blocked. */
+export type ReviewTone = 'ready' | 'decide' | 'blocked';
+
 export interface ReviewSummary {
-  ready: boolean;
+  tone: ReviewTone;
   status: string;
   workflow: string;
   models: string[];
@@ -20,11 +29,46 @@ export interface ReviewSummary {
   texts: ReviewText[];
   styles: string;
   topology: string[];
-  warnings: string[];
+  warnings: ReviewWarning[];
   expiry: string;
 }
 
+/** What Studio checked before the job, and what the backend checks only when the job runs. */
+export const CHECKS =
+  "Studio checked these values against the driver's inputs. The backend checks memory, topology, identity and consent when the job runs.";
+
 const clockTime = (seconds: number) => new Date(seconds * 1000).toLocaleTimeString();
+
+/**
+ * The warnings a person must decide on before the job runs, each with its own box. A warning
+ * that brings an `acknowledgement` sentence uses it; any other is accepted in its own words.
+ */
+export function reviewWarnings(preview: Pick<JobPreview, 'warnings'>): ReviewWarning[] {
+  return (preview.warnings ?? []).map((warning) => {
+    const fields = (warning ?? {}) as { message?: unknown; acknowledgement?: unknown };
+    const text =
+      typeof warning === 'string'
+        ? warning
+        : typeof fields.message === 'string' && fields.message
+          ? fields.message
+          : JSON.stringify(warning);
+    const own = typeof fields.acknowledgement === 'string' ? fields.acknowledgement : '';
+    return { text, accept: own ? `${text} ${own}` : `Generate anyway: ${text}` };
+  });
+}
+
+/** How many warnings still wait for their box. */
+function undecided(preview: Pick<JobPreview, 'warnings'>, acknowledged: boolean[]): number {
+  return (preview.warnings ?? []).filter((_, index) => !acknowledged[index]).length;
+}
+
+/** Whether nothing in the review needs a person: no error to fix and no warning left open. */
+export function reviewDecided(
+  preview: Pick<JobPreview, 'errors' | 'warnings'>,
+  acknowledged: boolean[] = [],
+): boolean {
+  return !preview.errors?.length && !undecided(preview, acknowledged);
+}
 
 /**
  * Whether the companion's clock `now` has reached the review's expiry. A clock not yet read is
@@ -34,45 +78,56 @@ export function reviewExpired(preview: JobPreview, now: number | null): boolean 
   return now !== null && typeof preview.expires_at === 'number' && now >= preview.expires_at;
 }
 
-/** Whether the review can be submitted, in the words the dialog shows above the record. */
+/** Whether the review can start the job, in the words the dialog shows above the summary. */
 export function reviewStatus(
   preview: JobPreview,
   pending: boolean,
   busy: boolean,
   now: number | null = null,
-) {
+  acknowledged: boolean[] = [],
+): { tone: ReviewTone; status: string } {
   if (preview.errors?.length)
-    return { ready: false, status: `Blocked: ${preview.errors.join(' ')}` };
+    return { tone: 'blocked', status: `Blocked: ${preview.errors.join(' ')}` };
   if (pending)
     return {
-      ready: false,
+      tone: 'blocked',
       status: busy
         ? 'Submitting. Wait for the outcome.'
         : 'Blocked: an earlier submission is unresolved.',
     };
   if (reviewExpired(preview, now))
     return {
-      ready: false,
-      status: `Blocked: this review expired at ${clockTime(preview.expires_at!)}.`,
+      tone: 'blocked',
+      status: `This review expired at ${clockTime(preview.expires_at!)}. Close it and generate again for a fresh one.`,
     };
-  return { ready: true, status: 'Ready to submit. Confirm below.' };
+  const open = undecided(preview, acknowledged);
+  if (open)
+    return {
+      tone: 'decide',
+      status:
+        open === 1
+          ? 'One warning needs your decision before this job runs.'
+          : `${open} warnings need your decision before this job runs.`,
+    };
+  return { tone: 'ready', status: 'Ready to generate.' };
 }
 
-/** Why Submit is off, or '' when it is on. The most basic block comes first. */
+/** Why Generate is off, or '' when it is on. The most basic block comes first. */
 export function submitBlock(
   preview: JobPreview,
-  state: { confirmed: boolean; busy: boolean; pending: boolean; now?: number | null },
+  state: { acknowledged?: boolean[]; busy: boolean; pending: boolean; now?: number | null },
 ): string {
   if (preview.errors?.length)
-    return 'Submit is off until the problems above are fixed. Return to the draft, correct them and review again.';
+    return 'Generate is off until the problems above are fixed. Return to the draft and correct them.';
   if (state.pending)
     return state.busy
-      ? 'Submit is off while this submission is sent.'
-      : 'Submit is off until the earlier submission is reconciled. Use Reconcile request in the banner.';
+      ? 'Generate is off while this submission is sent.'
+      : 'Generate is off until the earlier submission is reconciled. Use Reconcile request in the banner.';
   if (reviewExpired(preview, state.now ?? null))
-    return `This review expired at ${clockTime(preview.expires_at!)}. Return to the draft and review again.`;
-  if (state.busy) return 'Submit is off while Studio finishes the current request.';
-  if (!state.confirmed) return 'Submit is off until you check the box above.';
+    return 'Generate is off for an expired review. Close it and generate again.';
+  if (state.busy) return 'Generate is off while Studio finishes the current request.';
+  if (undecided(preview, state.acknowledged ?? []))
+    return 'Generate is off until you tick each warning above, or adjust the draft.';
   return '';
 }
 
@@ -147,6 +202,7 @@ export function reviewSummary(
   pending: boolean,
   busy: boolean,
   now: number | null = null,
+  acknowledged: boolean[] = [],
 ): ReviewSummary {
   const requested = preview.requested ?? ({} as Partial<JobPreview['requested']>);
   const seeds = preview.effective?.seeds ?? {};
@@ -163,7 +219,7 @@ export function reviewSummary(
       ? Math.round((preview.expires_at - preview.created_at) / 60)
       : null;
   return {
-    ...reviewStatus(preview, pending, busy, now),
+    ...reviewStatus(preview, pending, busy, now, acknowledged),
     workflow: [requested.workflowName || 'Unnamed workflow', requested.operation]
       .filter(Boolean)
       .join(' · '),
@@ -174,7 +230,7 @@ export function reviewSummary(
     seedSource: !Object.keys(seeds).length
       ? ''
       : random
-        ? 'Chosen at review by the Random policy. Your seed fields keep their values.'
+        ? 'Chosen for this job by the Random policy. Your seed fields keep their values.'
         : 'Taken from your seed fields by the Fixed policy.',
     texts: reviewTexts(preview, bindings),
     styles: order?.length
@@ -191,14 +247,10 @@ export function reviewSummary(
             )
             .join(', ')}`,
       ),
-    warnings: (preview.warnings ?? []).map((warning) =>
-      typeof warning === 'string' ? warning : JSON.stringify(warning),
-    ),
+    warnings: reviewWarnings(preview),
     expiry:
       minutes === null
         ? ''
-        : reviewExpired(preview, now)
-          ? `This review expired at ${clockTime(preview.expires_at!)}, ${minutes} minutes after it was made.`
-          : `This review expires at ${clockTime(preview.expires_at!)}, ${minutes} minutes after it was made. After that, review again.`,
+        : `This review ${reviewExpired(preview, now) ? 'expired' : 'expires'} at ${clockTime(preview.expires_at!)}, ${minutes} minutes after Studio made it, because it records the driver's runtime as it was then.`,
   };
 }

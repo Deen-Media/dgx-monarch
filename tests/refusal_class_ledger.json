@@ -34,7 +34,9 @@
     "adapters/krea2.py": 2,
     "adapters/lens.py": 2,
     "adapters/ltx.py": 1,
-    "adapters/minimax_h3.py": 4,
+    "adapters/minimax_h3.py": 1,
+    "adapters/minimax_h3_features.py": 3,
+    "adapters/minimax_h3_image.py": 1,
     "adapters/minimax_h3_packing.py": 2,
     "adapters/omnigen2.py": 3,
     "adapters/pixeldit_comfy.py": 4,
@@ -54,6 +56,18 @@
       "site": "actor/attention_dispatch.py::_AttentionDispatch._assert_cudnn_ring_prepared::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/backup_agreement.py::_refuse_room::PairBackupRoomError#0",
+      "class": "C",
+      "guard": "pair_backup_room",
+      "waivable": false
+    },
+    {
+      "site": "actor/backup_agreement.py::settle::OffloadedInputQuantError#0",
+      "class": "C",
+      "guard": "partial_load_divergence",
       "waivable": false
     },
     {
@@ -105,6 +119,24 @@
       "waivable": false
     },
     {
+      "site": "actor/context_room.py::refuse_unmade_context::ContextMemoryError#0",
+      "class": "C",
+      "guard": "gpu_context_memory",
+      "waivable": false
+    },
+    {
+      "site": "actor/context_windows_render.py::apply::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/context_windows_render.py::assert_supported::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "actor/dm_cfg2_residency.py::ready_or_raise::DualModelLoadDivergenceError#0",
       "class": "P",
       "guard": null,
@@ -112,6 +144,30 @@
     },
     {
       "site": "actor/dual_model_cfg.py::build_dual_model_guider::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/fsdp_lora.py::_refuse_quantized::UnbakeRefused#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/fsdp_lora_file.py::_file_tensor::UnbakeRefused#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/fsdp_lora_file.py::_file_tensor::UnbakeRefused#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/fsdp_lora_file.py::_file_tensor::UnbakeRefused#2",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -129,6 +185,24 @@
       "waivable": false
     },
     {
+      "site": "actor/lora_partial_load.py::check::OffloadedInputQuantError#0",
+      "class": "C",
+      "guard": "partial_load_divergence",
+      "waivable": false
+    },
+    {
+      "site": "actor/lora_partial_load.py::check::OffloadedInputQuantError#1",
+      "class": "C",
+      "guard": "partial_load_divergence",
+      "waivable": false
+    },
+    {
+      "site": "actor/lora_partial_load.py::check::OffloadedInputQuantError#2",
+      "class": "C",
+      "guard": "partial_load_divergence",
+      "waivable": false
+    },
+    {
       "site": "actor/lora_shape_guard.py::assert_patch_shapes_fit::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -138,6 +212,18 @@
       "site": "actor/partial_load_guard.py::check::PartialLoadDivergenceError#0",
       "class": "C",
       "guard": "partial_load_divergence",
+      "waivable": false
+    },
+    {
+      "site": "actor/rank_readiness.py::_agree_on_shared_scale::SharedScaleDisagreementError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/rank_readiness.py::peer_failed::PeerLoadFailureError#0",
+      "class": "P",
+      "guard": null,
       "waivable": false
     },
     {
@@ -261,6 +347,12 @@
       "waivable": false
     },
     {
+      "site": "actor/xfuser_setup.py::refuse_unsupported_xfuser::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/__init__.py::_forced_adapter::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -279,6 +371,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/__init__.py::_forced_adapter::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/attention_capability.py::assert_kernel_capability::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -286,6 +384,12 @@
     },
     {
       "site": "adapters/attention_capability.py::assert_static_capability::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/attention_capability.py::raise_if_unbuilt::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -315,18 +419,6 @@
       "waivable": false
     },
     {
-      "site": "adapters/base.py::assert_ulysses_only_padding::UnsupportedModelError#0",
-      "class": "K",
-      "guard": "ring_pad",
-      "waivable": true
-    },
-    {
-      "site": "adapters/base.py::assert_ulysses_only_query_bias::UnsupportedModelError#0",
-      "class": "P",
-      "guard": null,
-      "waivable": false
-    },
-    {
       "site": "adapters/base.py::shard_seq::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -351,6 +443,30 @@
       "waivable": false
     },
     {
+      "site": "adapters/cfg_dispatch.py::_refuse_split_hook_groups::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cfg_pad_rows.py::_refuse::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cfg_pad_rows.py::assert_not_lost::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cfg_pad_rows.py::assert_read::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/cfg_parallel.py::assert_cfg_parallel_supported::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -370,6 +486,12 @@
     },
     {
       "site": "adapters/cfg_parallel.py::refuse_pixel_space_pad_mask::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/chroma_cfg_pad.py::_chroma_cfg_pad_trim::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -471,6 +593,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/flux3.py::refuse_unroutable_blocks::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/flux3.py::require_sample_sigmas::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -489,7 +617,13 @@
       "waivable": false
     },
     {
-      "site": "adapters/flux_family.py::_chroma_cfg_pad_trim::UnsupportedModelError#0",
+      "site": "adapters/flux_views.py::refuse_auto_views::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/flux_views.py::refuse_unproven_views::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -591,6 +725,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/lens.py::_refuse_trim_under_shared_scale::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/ltx.py::_make_usp_cross_attention.usp_cross_attention::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -615,6 +755,18 @@
       "waivable": false
     },
     {
+      "site": "adapters/ltx_parity.py::refuse_unplanned_call::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/ltx_parity.py::refuse_unroutable::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/mage_flow.py::MageFlowAdapter.inject_usp.usp_forward::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -633,25 +785,67 @@
       "waivable": false
     },
     {
-      "site": "adapters/minimax_h3.py::_reject_latent_noise_masks::UnsupportedModelError#0",
-      "class": "P",
-      "guard": null,
-      "waivable": false
-    },
-    {
       "site": "adapters/minimax_h3.py::_reject_padded_ring::UnsupportedModelError#0",
       "class": "K",
       "guard": "ring_pad:minimax_h3",
       "waivable": true
     },
     {
-      "site": "adapters/minimax_h3.py::_reject_unsupported_h3_features::UnsupportedModelError#1",
+      "site": "adapters/minimax_h3_features.py::_reject_latent_noise_masks::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_features.py::_reject_unsupported_h3_features::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_image.py::_reject_padded_ring::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_image.py::_reject_unsupported_image_features::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_image.py::_reject_unsupported_image_features::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_image.py::_reject_unsupported_image_features::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_packing.py::assert_image_grid::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_packing.py::h3_image_modulation_plan::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
     },
     {
       "site": "adapters/minimax_h3_packing.py::h3_modulation_plan::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_packing.py::head_form::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -717,6 +911,18 @@
       "waivable": false
     },
     {
+      "site": "adapters/pixeldit.py::masked_text_rows::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/pixeldit.py::masked_text_rows::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/pixeldit_comfy.py::_raise_exact_gather_unsupported::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -765,31 +971,55 @@
       "waivable": false
     },
     {
-      "site": "adapters/qwen_image21.py::distributed_prefix_cache_key::UnsupportedModelError#0",
+      "site": "adapters/qwen_image21_prefix.py::distributed_prefix_cache_key::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
     },
     {
-      "site": "adapters/qwen_image21.py::distributed_prefix_cache_key::UnsupportedModelError#1",
+      "site": "adapters/qwen_image21_prefix.py::distributed_prefix_cache_key::UnsupportedModelError#1",
       "class": "P",
       "guard": null,
       "waivable": false
     },
     {
-      "site": "adapters/qwen_image21.py::prefix_cache_is_exact::UnsupportedModelError#0",
+      "site": "adapters/qwen_image21_prefix.py::prefix_cache_is_exact::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
     },
     {
-      "site": "adapters/qwen_image21.py::refuse_writable_prefix_cache::UnsupportedModelError#0",
+      "site": "adapters/qwen_image21_prefix.py::refuse_writable_prefix_cache::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
     },
     {
-      "site": "adapters/qwen_image21.py::validate_reference_count::UnsupportedModelError#0",
+      "site": "adapters/qwen_image21_prefix.py::validate_reference_count::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/ring_refusals.py::assert_ulysses_only_padding::UnsupportedModelError#0",
+      "class": "K",
+      "guard": "ring_pad",
+      "waivable": true
+    },
+    {
+      "site": "adapters/ring_refusals.py::assert_ulysses_only_query_bias::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/scale_rows.py::_refuse::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/scale_rows.py::check_streams_read::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -957,6 +1187,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/usp_pad_exclusion.py::attend_without_pads::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/usp_pad_exclusion.py::keep_index::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1035,6 +1271,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/wan_variants.py::refuse_ungrouped_audio_tokens::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/zimage.py::_reject_ming_image::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1077,6 +1319,12 @@
       "waivable": false
     },
     {
+      "site": "driver_spend_price.py::check.step::DriverSpendCapacityError#0",
+      "class": "C",
+      "guard": "driver_footprint_preflight",
+      "waivable": false
+    },
+    {
       "site": "family_select.py::assert_override_admits_checkpoint::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1095,7 +1343,19 @@
       "waivable": false
     },
     {
+      "site": "mesh_builds.py::refuse_two_builds::FleetTwoBuildsError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "mesh_residency.py::assert_normal_render_residency_mode::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/adaptive_steps.py::_refuse::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -1107,7 +1367,37 @@
       "waivable": false
     },
     {
+      "site": "nodes/expander_prompt.py::refuse_dead_expander::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/expander_prompt.py::refuse_dead_expander::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "nodes/fleet_policy.py::_fleet_worker_policy::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/h3_ring_pad.py::preflight::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/h3_ring_pad.py::preflight::UnsupportedModelError#1",
+      "class": "K",
+      "guard": "ring_pad:minimax_h3",
+      "waivable": true
+    },
+    {
+      "site": "nodes/h3_ring_pad.py::refuse_scail_ring::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -1149,6 +1439,24 @@
       "waivable": true
     },
     {
+      "site": "nodes/model_patch_preflight.py::preflight_context_windows::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/model_patch_preflight.py::preflight_h3_sigma_shift::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/model_patch_preflight.py::preflight_h3_sigma_shift::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "nodes/model_patch_preflight.py::preflight_moss_image_attention_bias::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1179,13 +1487,19 @@
       "waivable": false
     },
     {
-      "site": "nodes/render_preflight.py::preflight_krea2_reference_latents::UnsupportedModelError#0",
+      "site": "nodes/reference_preflight.py::preflight_krea2_reference_latents::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
     },
     {
       "site": "nodes/render_preflight.py::preflight_minimax_h3_topology::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/render_preflight.py::preflight_minimax_h3_topology::UnsupportedModelError#1",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -1215,6 +1529,18 @@
       "waivable": false
     },
     {
+      "site": "old_model.py::raise_fleet_refusal::OldModelRefusal#0",
+      "class": "C",
+      "guard": "cross_rank_capacity",
+      "waivable": false
+    },
+    {
+      "site": "old_model.py::raise_loader_refusal::LoaderOldModelError#0",
+      "class": "C",
+      "guard": "loader_footprint_preflight",
+      "waivable": false
+    },
+    {
       "site": "render_memory_price.py::refuse_render_memory::RenderMemoryPriceError#0",
       "class": "C",
       "guard": "activation_footprint_preflight",
@@ -1222,6 +1548,12 @@
     },
     {
       "site": "restart_reattach.py::_refuse::WorkerDeliveryError#0",
+      "class": "C",
+      "guard": "cross_rank_capacity",
+      "waivable": false
+    },
+    {
+      "site": "restart_reattach.py::refuse_if_restarted::WorkerDeliveryError#0",
       "class": "C",
       "guard": "cross_rank_capacity",
       "waivable": false
@@ -1240,6 +1572,30 @@
     },
     {
       "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#4",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "worker_runtime.py::cohort_runtime::WorkerRuntimeMismatch#0",
       "class": "P",
       "guard": null,
       "waivable": false

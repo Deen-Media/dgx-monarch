@@ -5,7 +5,8 @@ two transition functions at the end; it reloads from disk when neither applies
 or the lazy swap fails recoverably. Each reaches the store's methods through
 the store it is handed, and model_store's module names through a call-time
 import, so both resolve when the transition runs rather than when this module
-loads.
+loads. The classic hot swap lives in ``store_hot_swap`` and a slab resident's
+settlement in ``store_slab_settle``; their public names are importable here.
 """
 from __future__ import annotations
 
@@ -22,6 +23,19 @@ from ..transfer_utils import (
     safe_note,
 )
 from . import slab_lifetime, store_identity
+from .store_hot_swap import (
+    _placed_bytes,
+    copies_off_the_gpu,
+    hot_swap_transition,
+    invalidate_gpu_weights,
+    swaps_in_place,
+    unpatch_in_place,
+)
+from .store_slab_settle import SwapSettle, slab_misfits
+
+__all__ = ["SwapSettle", "_placed_bytes", "audit_swap_dtypes", "bake_key", "copies_off_the_gpu",
+           "hot_swap_transition", "invalidate_gpu_weights", "lazy_swap", "lazy_swap_transition",
+           "slab_misfits", "swaps_in_place", "unpatch_in_place", "verify_key"]
 
 log = get_logger(__name__)
 
@@ -73,11 +87,18 @@ def lazy_swap(store, stored, active, unet_name: str):
     Stream pristine keys from disk while each restored key bakes on the GPU.
     The swap avoids ComfyUI's load manager so it cannot unpatch, evict, or
     double-count during the bake. Reuse verified record entries and capture
-    only new keys before baking. Return the new un-bake record, or ``None``
-    when the new stack patches no key (nothing to un-bake). Also return ``None``
-    when complete coverage cannot be proven; the next stack change then reloads
-    from disk.
+    only new keys before baking. Each key goes back to the resident's own
+    storage as the swap finishes with it (``store_slab_settle.SwapSettle``).
+    Return the new un-bake record, or ``None`` when complete coverage cannot be
+    proven; the next stack change then reloads from disk.
     """
+    settle = SwapSettle(stored)
+    record = _restore_and_bake(store, stored, active, unet_name, settle)
+    settle.finish()
+    return record
+
+
+def _restore_and_bake(store, stored, active, unet_name: str, settle: SwapSettle):
     import random
 
     from .unbake import UnbakeRecord, capture_unbake_record, restore_pristine
@@ -95,6 +116,7 @@ def lazy_swap(store, stored, active, unet_name: str):
             else:
                 store._bake_key(active, key)
             baked.add(key)
+        settle(key)
 
     if old is not None:
         restore_pristine(stored.base_patcher.model, old, after_key=bake_one)
@@ -221,12 +243,13 @@ def verify_key(store, active, key: str) -> None:
 def bake_key(active, key: str) -> None:
     """Bake one key without invoking ComfyUI's load or backup manager.
 
-    The caller supplies a pristine weight. This path uses one compute tensor,
-    follows the patcher's public conversion and set functions, calculates in
-    its LoRA compute dtype, and applies key-seeded rounding. Plain weights update
-    in place to preserve tensor identity; quantized setters replace their wrapper
-    parameter. Ambient verification (verify_key) checks a sample of keys per
-    swap, two by default, against the reference bake.
+    The caller supplies a pristine weight. A key stock patches at cast time
+    takes stock's cast-time weight (actor/lora_cast_time.py, #145); any other
+    key takes ComfyUI's classic bake: the patcher's public conversion and set
+    functions, its LoRA compute dtype, and key-seeded rounding. Plain weights
+    update in place to preserve tensor identity; quantized weights replace
+    their wrapper parameter. Ambient verification (verify_key) checks a sample
+    of keys per swap, two by default, against the reference bake.
     """
     import comfy.float
     import comfy.lora
@@ -234,11 +257,17 @@ def bake_key(active, key: str) -> None:
     import comfy.model_patcher as comfy_mp
     import comfy.utils
 
+    from . import lora_cast_time
+
     patches = active.patches[key]
     weight, set_func, convert_func = comfy_mp.get_key_weight(active.model, key)
     # Pin bake math to ``load_device``. Using a temporarily offloaded weight's
     # device changes the compute dtype and caused deterministic image drift.
     bake_device = getattr(active, "load_device", None) or weight.device
+    cast = lora_cast_time.cast_time_weight(active, key, bake_device)
+    if cast is not None:
+        lora_cast_time.store(active.model, key, cast, in_place=True)
+        return
     temp = mm.cast_to_device(
         weight, bake_device, mm.lora_compute_dtype(bake_device), copy=True)
     if convert_func is not None:
@@ -253,15 +282,6 @@ def bake_key(active, key: str) -> None:
     del temp, out
 
 
-def invalidate_gpu_weights(old_active) -> None:
-    """Unload every model so the next load rebuilds patched quantized GPU weights from CPU."""
-    import comfy.model_management as mm
-
-    del old_active
-    mm.unload_all_models()
-    mm.soft_empty_cache()
-
-
 def _adopt_patch_uuid(stored, active) -> None:
     """Record the active patch UUID after an in-place stock LoRA swap.
 
@@ -274,6 +294,35 @@ def _adopt_patch_uuid(stored, active) -> None:
     model, uuid = getattr(active, "model", None), getattr(active, "patches_uuid", None)
     if model is not None and uuid is not None and hasattr(model, "current_weight_patches_uuid"):
         model.current_weight_patches_uuid = uuid
+
+
+def _empty_record(previous, unet_name: str):
+    """An un-bake record with no keys, bound to the checkpoint the resident came from.
+
+    The bound is the previous record's file identity when there is one, else
+    the file's own header identity now; restore checks it before it restores
+    nothing, so a changed file still reloads. ``None`` when the file cannot be
+    read, which keeps the reload contract.
+    """
+    from .unbake import UnbakeRecord, read_safetensors_header
+
+    if previous is not None:
+        return UnbakeRecord(path=previous.path, file_size=previous.file_size,
+                            file_mtime_ns=previous.file_mtime_ns, file_dev=previous.file_dev,
+                            file_ino=previous.file_ino, file_ctime_ns=previous.file_ctime_ns)
+    from . import model_store as _ms
+
+    try:
+        path = _ms.resolve_model_path("diffusion_models", unet_name)
+        _header, _metadata, parsed = read_safetensors_header(
+            path, want_metadata=True, want_identity=True)
+    except Exception as exc:
+        safe_call(log.info, "no un-bake record for a stack that patches nothing (%s); "
+                  "the next stack change reloads from disk", failure_summary(exc))
+        return None
+    return UnbakeRecord(path=path, file_size=parsed.file_size, file_mtime_ns=parsed.file_mtime_ns,
+                        file_dev=parsed.file_dev, file_ino=parsed.file_ino,
+                        file_ctime_ns=parsed.file_ctime_ns)
 
 
 def lazy_swap_transition(
@@ -297,6 +346,7 @@ def lazy_swap_transition(
     """
     from ..adapters.base import UnsupportedModelError
     from .model_store import _best_effort, lora_signature
+    from .unbake import UnbakeRefused
 
     stored = store._stored(slot)
     t0 = time.perf_counter()
@@ -308,15 +358,35 @@ def lazy_swap_transition(
         t1 = time.perf_counter()
         active = store._build_active(stored.base_patcher, lora_stack)
         t_build = time.perf_counter() - t1
+        misfits = slab_misfits(stored, active)
+        if misfits:
+            # Nothing is written yet: the resident is intact, and the fresh
+            # load that follows drops it and prices its own bake.
+            store._drop_failed.discard(slot)
+            _best_effort(
+                logger.info, "model store [%s]: %d key(s) of this stack would bake to a payload "
+                "their slab regions cannot hold (%s), so %s loads fresh and its bake is priced "
+                "whole", slot, len(misfits), ", ".join(misfits[:4]), unet_name)
+            return None
         t1 = time.perf_counter()
+        previous = stored.unbake
+        patched = len(getattr(active, "patches", None) or ())  # the swap clears them
         record = store._lazy_swap(stored, active, unet_name)
+        if record is None and lora_stack and not patched:
+            # A stack that patches no weight (its keys match nothing in this
+            # model) leaves the base pristine. An empty record keeps the next
+            # change lazy; without one that change would reload from disk.
+            record = _empty_record(previous, unet_name)
         t_swap = time.perf_counter() - t1
         store_identity.assert_stable_identity(
             request_artifact_identity(unet_name, lora_stack), requested_identity,
             "applying a lazy hot-swap")
-    except UnsupportedModelError:
+    except (UnsupportedModelError, UnbakeRefused):
+        # A typed launch refusal, or a stack refused before any weight was
+        # written: the resident still holds its old stack intact, and a fresh
+        # load would only meet the same refusal after dropping it.
         store._drop_failed.discard(slot)
-        raise  # typed launch refusal, not a recoverable bake failure
+        raise
     except BaseException as exc:
         stored = None
         active = None
@@ -327,7 +397,7 @@ def lazy_swap_transition(
         _adopt_patch_uuid(stored, active)
         # The swap re-baked into these weights, or restored them
         # pristine when the new stack is empty.
-        stored.base_baked = bool(lora_stack)
+        stored.base_baked = stored.baked_in_place = bool(lora_stack)
         stored.lora_sig = lora_signature(lora_stack)
         stored.request_key = (*base_key, stored.lora_sig, stored.quant_kind)
         stored.artifact_identity = requested_identity
@@ -373,45 +443,3 @@ def lazy_swap_transition(
         if not isinstance(lazy_failed, Exception):
             raise lazy_failed from None
     return None
-
-
-def hot_swap_transition(
-    store,
-    stored,
-    slot: str,
-    unet_name: str,
-    lora_stack: list[dict] | None,
-    base_key: tuple,
-    requested_identity: dict,
-    *,
-    request_artifact_identity,
-    logger,
-) -> tuple[Any, str]:
-    """Clone the pristine base, re-apply the lora stack, and adopt the result."""
-    from .model_store import _is_quantized_kind, lora_signature
-
-    t0 = time.perf_counter()
-    active = store._build_active(stored.base_patcher, lora_stack)
-    store_identity.assert_stable_identity(
-        request_artifact_identity(unet_name, lora_stack), requested_identity,
-        "applying a hot-swap")
-    # `stored.quant_kind` is the detected kind, not the one the request's
-    # options imply: a scaled-fp8 checkpoint loads under default options and
-    # still pays the conversion spike. FP16/FP32 are distinct full-precision
-    # kinds for the FSDP safety gate, not quantized formats, so they keep the
-    # ordinary hot-swap path.
-    effective_quant = stored.quant_kind
-    if _is_quantized_kind(effective_quant):
-        store._invalidate_gpu_weights(stored.active_patcher)
-        store._mark_other_slot_evicted(slot)  # the global unload hit the other slot
-    stored.active_patcher = active
-    stored.lora_sig = lora_signature(lora_stack)
-    stored.request_key = (*base_key, stored.lora_sig, effective_quant)
-    stored.artifact_identity = requested_identity
-    logger.info(
-        "model store [%s]: %s -- %s loras=%s in %.1fs%s",
-        slot, TRANSITION_HOT_SWAP, unet_name, stored.lora_sig,
-        time.perf_counter() - t0,
-        " (quant: GPU weights invalidated)" if _is_quantized_kind(effective_quant) else "",
-    )
-    return active, TRANSITION_HOT_SWAP

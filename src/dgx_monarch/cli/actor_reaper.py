@@ -22,11 +22,13 @@ import json
 import os
 import re
 import signal
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from .. import worker_proc_id
 from . import actor_ledger
 from . import proc_identity as pi
 
@@ -426,17 +428,24 @@ def liveness(
     uid = os.getuid() if uid is None else uid
     self_pid = os.getpid() if self_pid is None else self_pid
     # One scan gives both `actors` and `actors_marked`; a second scan would
-    # double every procfs read on a starved host. A zombie is not an actor here:
-    # it has already released every page, so counting one would answer alive.
+    # double every procfs read on a starved host. A zombie whose thread group
+    # is empty is not an actor here: it has released every page, so counting
+    # one would answer alive. A zombie leader whose other threads still run
+    # holds every page, so it stays (proc_identity.zombie_group).
     actors = [proc for proc in scan(
         proc_root=proc_root, ledger_file=ledger_file, uid=uid,
         self_pid=self_pid, loop_addresses=loop_addresses,
         require_marker=False, sizes=False)
-        if pi.read_state(proc.pid, proc_root) != "Z"]
+        if pi.zombie_group(proc.pid, proc_root) in (None, "threads")]
     marked = sum(1 for proc in actors if proc.strictly_marked)
+    actor_pids = {proc.pid for proc in actors}
 
     excluded = {self_pid, 1, 0, *pi.ancestry(self_pid, proc_root)}
     zombies = unreadable = 0
+    boot = pi.boot_id(proc_root)
+    # Each live Worker loop's listener generation (worker_proc_id.derive's first 12 digits),
+    # for failed_bring_up; None whenever one cannot be named, so a list is never short.
+    loops: list[str] | None = [] if boot else None
     for pid in pi.iter_pids(proc_root):
         if pid in excluded:
             continue
@@ -444,11 +453,20 @@ def liveness(
         if stat is None or pi.read_uid(pid, proc_root) != uid:
             continue
         empty = pi.reads_empty(pid, proc_root)
-        if pi.read_state(pid, proc_root) == "Z":
+        group = pi.zombie_group(pid, proc_root)
+        if group is not None:
             info = pi.proc_info(pid, proc_root)
-            if empty or (info is not None and info.marked):
-                zombies += 1
+            ours = empty or (info is not None and info.marked)
+            if group == "gone":
+                zombies += int(ours)
+            elif ours and pid not in actor_pids:
+                # A leader that exited while its other threads run (its reads
+                # come back empty), or a group that will not read: it may still
+                # hold every page, so the host answers unknown, never gone.
+                unreadable += 1
             continue
+        if loops is not None and pi.loop_argv_address(pi.read_argv(pid, proc_root)) is not None:
+            loops = [*loops, worker_proc_id.derive(boot, pid, stat[1])[:12]] if stat[1] > 0 else None
         if pi.unreadable_to_us(pid, stat[1], empty, proc_root):
             unreadable += 1
 
@@ -456,23 +474,26 @@ def liveness(
     rows_alive = sum(
         1 for row in ledger.get("actors") or []
         if pi.alive_and_not_zombie(row["pid"], row["starttime"], proc_root))
-    boot = pi.boot_id(proc_root)
     written = float(ledger.get("written_at") or 0.0)
     loop = ledger.get("loop")
     loop_alive: bool | None = None
     if isinstance(loop, dict):
-        try:
-            loop_alive = pi.alive_and_not_zombie(
-                int(loop.get("pid") or 0), int(loop.get("starttime") or 0), proc_root)
-        except (TypeError, ValueError):
-            loop_alive = None
+        # The loop record passes through unvalidated; Infinity reads as None here.
+        loop_pid = actor_ledger.ledger_int(loop.get("pid") or 0)
+        loop_start = actor_ledger.ledger_int(loop.get("starttime") or 0)
+        if loop_pid is not None and loop_start is not None:
+            loop_alive = pi.alive_and_not_zombie(loop_pid, loop_start, proc_root)
+            named = loop_alive and boot and loop_start > 0 and worker_proc_id.derive(boot, loop_pid, loop_start)[:12]
+            loops = loops if not loop_alive or named in (loops or ()) else None  # a live loop argv missed
     return {
         "schema": LIVENESS_SCHEMA,
         "actors": len(actors),
         "actors_marked": marked,
-        # Every own-uid zombie, not only actor zombies: the kernel frees a
-        # zombie's mm, so both reads come back empty and nothing identifies it
-        # any more. A stray zombie from an unrelated command raises this count.
+        # Every own-uid zombie whose thread group is empty, not only actor
+        # zombies: the kernel frees its mm, so both reads come back empty and
+        # nothing identifies it any more. A stray zombie from an unrelated
+        # command raises this count. A zombie leader with live threads counts
+        # in `unreadable` (or `actors`) instead.
         "zombies": zombies,
         "unreadable": unreadable,
         "ledger_rows_alive": rows_alive,
@@ -482,6 +503,7 @@ def liveness(
         "ledger_age_s": (round(max(time.time() - written, 0.0), 1)
                          if written > 0 else -1.0),
         "loop_alive": loop_alive,
+        "loop_gens": loops,
         "pids": [
             {"pid": proc.pid, "provenance": proc.provenance,
              "argv_tail": proc.argv_tail}
@@ -550,6 +572,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     addresses = tuple(args.loop_address)
+    try:
+        return _run_mode(args, addresses)
+    except pi.ProcListingError as exc:
+        # No line and a failed exit: the liveness probe reads unknown and the
+        # sweep reports its host unaccounted for, never an empty host.
+        print(f"actor_reaper: cannot list the process table ({exc}); nothing was counted",
+              file=sys.stderr)
+        return 1
+
+
+def _run_mode(args: Any, addresses: tuple[str, ...]) -> int:
     if args.liveness:
         # Read only, on the same rule as --report: a liveness question must
         # never be able to change what it is measuring.

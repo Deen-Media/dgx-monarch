@@ -58,7 +58,16 @@ export function paletteWorkflows(
   return query.trim() ? byTitle(entries).filter((entry) => matchesWorkflow(entry, query)) : [];
 }
 
-/** Load a packaged workflow into the draft; the select and the command palette both use this. */
-export function loadWorkflow(entry: WorkflowEntry, inspect: InspectWorkflow): Promise<void> {
-  return inspect(entry.workflow, entry.name, false, entry.id);
+/**
+ * Load a packaged workflow into the draft; the select, the command palette and Fleet use this. It
+ * resolves with the notice the load set, if any. Fleet passes its operation, so the workflow and
+ * the Fleet label are one draft change, which one Undo takes back.
+ */
+export function loadWorkflow(
+  entry: WorkflowEntry,
+  inspect: InspectWorkflow,
+  operation?: string,
+): Promise<string | void> {
+  const load = [entry.workflow, entry.name, false, entry.id] as const;
+  return operation ? inspect(...load, operation) : inspect(...load);
 }

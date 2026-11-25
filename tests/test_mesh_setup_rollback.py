@@ -467,3 +467,77 @@ def test_policy_retirement_uses_non_shortenable_large_resident_budget():
     assert handle.worker_args_key == MeshHandle._worker_args_key(target)
     assert handle.active_worker_args == target
     assert handle.setup_cleanup_state is None
+
+
+class _AnsweringProcs:
+    """A ProcMesh whose stop answers with ``error``."""
+
+    def __init__(self, error: BaseException):
+        self.error = error
+        self.reasons: list[str] = []
+
+    def stop(self, reason):
+        self.reasons.append(reason)
+        return _Future(error=self.error)
+
+
+def _rollback_handle(error: BaseException, death_report: str | None):
+    handle = SimpleNamespace(
+        lock=threading.RLock(), procs=_AnsweringProcs(error), teardown_complete=False,
+        replacement_blocked=None, _replacement_retryable=False, _block_cause=None,
+        defunct=True)
+    if death_report is not None:
+        handle._supervision_death_report = death_report
+    return handle
+
+
+def test_a_rollback_stop_that_times_out_after_a_worker_death_heals_like_any_other(monkeypatch):
+    """The rollback's own timeout keeps the after-death cause the liveness release reads."""
+    from dgx_monarch import mesh_teardown
+
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    handle = _rollback_handle(TimeoutError("proc stop timed out"),
+                              "{'SupervisionError'} peer closed")
+
+    error = mesh_teardown.stop_failed_setup_procs(handle, lambda fn, _t, _n: fn())
+
+    assert isinstance(error, TimeoutError)
+    assert mesh_teardown.block_cause(handle) == mesh_teardown.TAG_STOP_TIMEOUT_AFTER_DEATH
+    assert handle._replacement_retryable is False
+    assert "timed out" in handle.replacement_blocked
+    assert "interrupted" not in handle.replacement_blocked
+    assert "restart ComfyUI" not in mesh_teardown.block_cause_sentence(handle)
+
+
+def test_a_rollback_stop_that_reports_a_failure_names_the_reset_that_retries_it(monkeypatch):
+    from dgx_monarch import mesh_teardown
+
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    handle = _rollback_handle(RuntimeError("positive stop failure"), None)
+
+    error = mesh_teardown.stop_failed_setup_procs(handle, lambda fn, _t, _n: fn())
+
+    assert isinstance(error, RuntimeError)
+    assert handle._replacement_retryable is True
+    assert mesh_teardown.block_cause(handle) == mesh_teardown.TAG_STOP_REPORTED_FAILURE
+    assert "failed" in handle.replacement_blocked
+    assert "interrupted" not in handle.replacement_blocked
+    outcome = mesh_teardown.prepare_stop_attempt(handle, "recycle")
+    assert outcome is True  # the Reset the sentence names may retry it
+
+
+def test_a_rollback_stop_cut_short_by_an_interrupt_still_names_the_interruption(monkeypatch):
+    from dgx_monarch import mesh_teardown
+
+    class StopNow(BaseException):
+        pass
+
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    handle = _rollback_handle(StopNow("interrupt during proc stop"), "{'SupervisionError'} x")
+
+    error = mesh_teardown.stop_failed_setup_procs(handle, lambda fn, _t, _n: fn())
+
+    assert isinstance(error, StopNow)
+    assert mesh_teardown.block_cause(handle) == mesh_teardown.TAG_SETUP_ROLLBACK_INTERRUPTED
+    assert handle._replacement_retryable is False
+    assert "interrupted during execution" in handle.replacement_blocked

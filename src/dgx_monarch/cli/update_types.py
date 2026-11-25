@@ -18,6 +18,12 @@ class Certainty(StrEnum):
 @dataclass(frozen=True)
 class OperationResult:
     certainty: Certainty
+    # For a FAILED result that no check decided: a lowercase identifier the
+    # update names in its result code (``update_transaction.FAILURE_CAUSES``).
+    cause: str = ""
+    # Counts the receipt step records beside the outcome, such as how many
+    # hosts an activation switched; names are lowercase identifiers.
+    counts: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -135,4 +141,6 @@ class UpdateOps(Protocol):
     def commit_driver(self, staged: StagedRelease) -> OperationResult: ...
     def prior_driver_readback(self, staged: StagedRelease) -> OperationResult: ...
     def finalize(self, staged: StagedRelease) -> OperationResult: ...
+    # Housekeeping after finalize; update_retirement.retire_after_finalize reads any error as unknown.
+    def retire_releases(self, staged: StagedRelease) -> OperationResult: ...
     def cleanup_stage(self, staged: StagedRelease) -> OperationResult: ...

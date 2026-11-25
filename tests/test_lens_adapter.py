@@ -272,10 +272,14 @@ class _FakeLensCfg:
         return context
 
 
-def _cfg_call(model, context, attention_mask=None):
+def _cfg_call(model, context, attention_mask=None, rows=None):
+    """One cfg-rank call; ``rows`` is the pad's stamp (adapters/cfg_pad_rows.py)."""
+    from dgx_monarch.adapters import cfg_pad_rows
+
     bs = context.shape[0]
+    stamp = {} if rows is None else {cfg_pad_rows.TEXT_ROWS: torch.tensor(rows)}
     model._forward(torch.zeros(bs, 4, 2, 2), torch.zeros(bs), context,
-                   attention_mask=attention_mask)
+                   attention_mask=attention_mask, **stamp)
     return model.recorded[-1]
 
 
@@ -283,8 +287,8 @@ def test_cfg_pad_trims_uniform_pad_maskfree():
     model = _FakeLensCfg()
     LensAdapter().inject_cfg_pad_forward(model)
     ctx = torch.ones(1, 6, 8)
-    ctx[:, 4:] = 0.0  # driver-appended rows
-    rec = _cfg_call(model, ctx)
+    ctx[:, 4:] = 0.0  # Worker-appended rows, whose count the pad stamped
+    rec = _cfg_call(model, ctx, rows=[4])
     assert rec["context"].shape[1] == 4       # trailing pad trimmed
     assert rec["attention_mask"] is None      # uniform pad, so no mask
 
@@ -295,7 +299,7 @@ def test_cfg_pad_ragged_keeps_bool_keep_mask():
     ctx = torch.ones(2, 6, 8)
     ctx[0, 4:] = 0.0
     ctx[1, 5:] = 0.0  # different real lengths in one call
-    rec = _cfg_call(model, ctx)
+    rec = _cfg_call(model, ctx, rows=[4, 5])
     assert rec["context"].shape[1] == 5       # trimmed to the longest real length
     mask = rec["attention_mask"]
     # A (B, trim) text-length bool keep-mask (True = attend): Lens polarity,
@@ -338,7 +342,7 @@ def test_cfg_pad_bind_is_idempotent():
     adapter.inject_cfg_pad_forward(model)
     ctx = torch.ones(1, 6, 8)
     ctx[:, 4:] = 0.0
-    rec = _cfg_call(model, ctx)
+    rec = _cfg_call(model, ctx, rows=[4])
     assert rec["context"].shape[1] == 4 and rec["attention_mask"] is None
 
 

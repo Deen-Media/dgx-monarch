@@ -14,6 +14,11 @@ export interface Presentation {
   units: Record<string, { precision: number }>;
   memory: Record<string, { hex: string }>;
   freshness: { minimum_stale_s: number; stale_after_intervals: number; default_interval_s: number };
+  /** Display-only thresholds, such as available memory above 20 GiB; never an admission guard. */
+  thresholds?: Record<
+    string,
+    { operator: string; value: number; above: string; otherwise: string; authority?: string }
+  >;
   /** Status tokens: ready, idle, rendering and busy green, degraded yellow, blocked red. */
   status?: Record<string, { hex: string; icon?: string; label?: string }>;
   /** The status token each job state displays with. */
@@ -33,11 +38,13 @@ const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 const number = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
-function read(value: unknown, path: string): number | null {
+/** The finite number at a dotted path such as `gpu.power_w`, or null. */
+export function readPath(value: unknown, path: string): number | null {
   let node = value;
   for (const key of path.split('.')) node = record(node)[key];
   return number(node);
 }
+const read = readPath;
 /**
  * Slab GiB a host's chart records under the presentation contract's slab rule, the rule
  * `slab_reading` in studio/presentation.py applies for `dgxm top` and the sidebar. A Worker
@@ -74,7 +81,7 @@ export function appendTelemetry(
     sourceTime = number(sample.t);
   // Bound sample times by the companion's clock at fetch, not the browser's: a remote browser
   // behind the host would drop every sample. The bound keeps one far-future time from blocking
-  // every later point at the order check below.
+  // every later point at the order check below, so each host and rail time takes it too.
   const latest = (number(telemetry.observed_at) ?? Date.now() / 1000) + SAMPLE_CLOCK_MARGIN_S;
   if (sourceTime === null || sourceTime > latest) return history;
   const hosts: Record<string, unknown>[] = [
@@ -97,15 +104,19 @@ export function appendTelemetry(
         time = number(scope.t) ?? sourceTime;
       if (metric.aggregation === 'per_host_per_rail_rate') {
         const rails = record(scope.rails),
-          stamp = number(scope.rails_t);
+          stamp = number(scope.rails_t) ?? time;
+        // A rail clock ahead of the companion is as unknown as a sample from the future.
+        if (stamp > latest) continue;
         for (const [rail, counters] of Object.entries(rails))
           updates.push({
             host: `${host}/${rail}`,
             metric,
-            time: stamp ?? time,
+            time: stamp,
             value: read(counters, metric.source.split('.').at(-1)!),
           });
       } else {
+        // So is a host clock: a future point would hold back every corrected point after it.
+        if (time > latest) continue;
         let value = read(scope, metric.source);
         if (metric.missing === 'slab_rule') {
           // The driver's own box takes its Worker's report when a Worker runs there.

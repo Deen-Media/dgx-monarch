@@ -19,7 +19,9 @@ equality with comfy's own ``patch_weight_to_device`` where comfy imports.
 from __future__ import annotations
 
 import copy
+import json
 import os
+import struct
 import sys
 from types import SimpleNamespace
 
@@ -215,6 +217,142 @@ def test_a_quantized_key_on_a_census_module_still_refuses_class_p(tmp_path, monk
         refusal_class=RefusalClass.PHYSICS, guard=None, waivable=False)
 
 
+# The wrap leaves two more kinds of parameter whole beside the census: the
+# fp32 islands a family keeps at full precision (ChromaRadiance's nerf
+# embedder) and every zero-dimensional parameter. The bake reads the set the
+# wrap passes as ignored_params, so a LoRA key on either bakes whole.
+
+ISLAND = "diffusion_model.nerf_embedder.weight"
+SCALAR = "diffusion_model.log_alpha"
+
+
+class _IslandModel(torch.nn.Module):
+    """One sharded block, an fp32 island Linear and a bf16 scalar parameter."""
+
+    def __init__(self):
+        super().__init__()
+        dm = torch.nn.Module()
+        dm.blocks = torch.nn.ModuleList([_Block()])
+        dm.nerf_embedder = torch.nn.Linear(4, 4, bias=False, dtype=torch.float32)
+        dm.log_alpha = torch.nn.Parameter(torch.tensor(0.75, dtype=torch.bfloat16))
+        self.diffusion_model = dm
+
+
+def _island_file(tmp_path, tensors: dict[str, torch.Tensor]) -> str:
+    """The test file writer, with the flat view a zero-dimensional tensor needs."""
+    header, blob = {}, b""
+    for name, tensor in tensors.items():
+        raw = tensor.reshape(-1).contiguous().view(torch.uint8).numpy().tobytes()
+        dtype = {torch.bfloat16: "BF16", torch.float32: "F32"}[tensor.dtype]
+        header[name[len("diffusion_model."):]] = {
+            "dtype": dtype, "shape": list(tensor.shape), "data_offsets": [len(blob), len(blob) + len(raw)]}
+        blob += raw
+    encoded = json.dumps(header).encode()
+    path = tmp_path / "radiance.safetensors"
+    path.write_bytes(struct.pack("<Q", len(encoded)) + encoded + blob)
+    return str(path)
+
+
+def _island_pristine(model: _IslandModel) -> dict[str, torch.Tensor]:
+    weights = {
+        SHARDED: torch.arange(16, dtype=torch.float32).reshape(4, 4).to(torch.bfloat16),
+        ISLAND: torch.arange(16, 32, dtype=torch.float32).reshape(4, 4) / 8,
+        SCALAR: torch.tensor(0.75, dtype=torch.bfloat16),
+    }
+    with torch.no_grad():
+        for key, value in weights.items():
+            fsdp_lora.live_tensor(model, key).copy_(value)
+    return weights
+
+
+def test_the_bake_reads_the_set_the_wrap_leaves_whole():
+    model = _IslandModel()
+    dm = model.diffusion_model
+    from dgx_monarch.adapters.fsdp_islands import replicated_parameters
+
+    assert fsdp_lora.replicated_parameter_ids(model) == frozenset(
+        id(p) for p in replicated_parameters(dm, model))
+    assert fsdp_lora.replicated_parameter_ids(model) == {id(dm.nerf_embedder.weight), id(dm.log_alpha)}
+
+
+def test_a_lora_key_on_a_retained_fp32_island_bakes_whole_under_the_real_wrap(tmp_path, monkeypatch):
+    """The pack's own records call a checkpoint whose island stays live fp32 safe to bake.
+
+    It failed with a bare "parameter is not FSDP-sharded" on every +fsdp
+    topology. Now it captures, bakes, verifies and restores whole, beside a
+    sharded key, under real FSDP2 on a one-rank gloo group.
+    """
+    import torch.distributed.fsdp
+    from torch.distributed.device_mesh import init_device_mesh
+
+    from dgx_monarch.adapters.fsdp_islands import island_parameters
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    _install_comfy_stub(monkeypatch)
+    model = _IslandModel()
+    pristine = _island_pristine(model)
+    path = _island_file(tmp_path, pristine)
+    patches = {SHARDED: ["patch"], ISLAND: ["patch"]}
+    torch.distributed.init_process_group(
+        backend="gloo", init_method=f"file://{tmp_path / 'pg'}", rank=0, world_size=1)
+    try:
+        mesh = init_device_mesh("cpu", (1,))
+        dm = model.diffusion_model
+        for p in dm.parameters():
+            p.requires_grad = False
+        # The three sets adapters/fsdp.py passes as ignored_params.
+        ignored = (island_parameters(dm) | auxiliary_module_parameters(dm, model)
+                   | {p for p in dm.parameters() if p.ndim == 0})
+        for block in dm.blocks:
+            torch.distributed.fsdp.fully_shard(block, mesh=mesh, ignored_params=ignored)
+        torch.distributed.fsdp.fully_shard(dm, mesh=mesh, reshard_after_forward=True,
+                                           ignored_params=ignored)
+        island = dm.nerf_embedder.weight
+        assert type(island) is torch.nn.Parameter        # the wrap left it whole
+        store = SimpleNamespace(swap_verify=-1)
+        record = fsdp_lora.apply_stack(store, _Active(model, patches), path, None)
+        assert set(record.mapped) == {SHARDED, ISLAND}
+        assert dm.nerf_embedder.weight is island and island.dtype == torch.float32
+        assert torch.equal(island, pristine[ISLAND] * 2)
+        assert torch.equal(fsdp_lora.local_shard(dm.blocks[0].lin.weight), pristine[SHARDED] * 2)
+        fsdp_lora.apply_stack(store, _Active(model, {}), path, record)
+        assert torch.equal(island, pristine[ISLAND])
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_an_island_the_load_cast_still_refuses_class_p(tmp_path, monkeypatch):
+    """An island the file stores at another dtype was cast live: the file is no pristine copy."""
+    from dgx_monarch.actor.unbake import UnbakeRefused
+
+    _install_comfy_stub(monkeypatch)
+    model = _IslandModel()
+    pristine = _island_pristine(model)
+    path = _island_file(tmp_path, {**pristine, ISLAND: pristine[ISLAND].to(torch.bfloat16)})
+    with pytest.raises(UnbakeRefused, match="needs the file's own dtype") as raised:
+        fsdp_lora.apply_stack(SimpleNamespace(swap_verify=0),
+                              _Active(model, {ISLAND: ["patch"]}), path, None)
+    assert parse_leading_refusal_tag(str(raised.value)) == RefusalTag(
+        refusal_class=RefusalClass.PHYSICS, guard=None, waivable=False)
+    assert torch.equal(model.diffusion_model.nerf_embedder.weight, pristine[ISLAND])
+
+
+def test_a_zero_dimensional_parameter_bakes_verifies_and_restores_whole(tmp_path, monkeypatch):
+    """A scalar has no rows: the bake writes it whole and the restore reads it whole."""
+    _install_comfy_stub(monkeypatch)
+    model = _IslandModel()
+    pristine = _island_pristine(model)
+    path = _island_file(tmp_path, pristine)
+    store = SimpleNamespace(swap_verify=-1)
+    record = fsdp_lora.apply_stack(store, _Active(model, {SCALAR: ["patch"]}), path, None)
+    assert set(record.mapped) == {SCALAR}
+    scalar = model.diffusion_model.log_alpha
+    assert scalar.ndim == 0 and torch.equal(scalar, pristine[SCALAR] * 2)
+    fsdp_lora.apply_stack(store, _Active(model, {}), path, record)
+    assert torch.equal(scalar, pristine[SCALAR])
+
+
 # Real comfy, CPU only. Keep it last in the file: the conftest comfy guard
 # checks the namespace once this module's fixtures are torn down.
 def _is_comfy_module(name: str) -> bool:
@@ -299,3 +437,158 @@ def test_the_replicated_bake_equals_comfys_own_merge(real_comfy, tmp_path):
         assert torch.equal(sharded, expected[SHARDED])
     finally:
         torch.distributed.destroy_process_group()
+
+
+def test_the_fsdp_bake_of_a_comfy_cast_layer_equals_stocks_cast_time_weight(real_comfy, tmp_path):
+    """With the Worker's cast-time bake installed (#145), both keys on ComfyUI's own
+    cast Linear bake under FSDP to the weight comfy.ops' post_cast gives the
+    resident layer, and the ambient verify on every key agrees."""
+    import comfy.ops
+    import torch.distributed.fsdp
+
+    from dgx_monarch.actor import lora_cast_time
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "canary"))
+    try:
+        import bake_equivalence_canary as canary
+    finally:
+        sys.path.pop(0)
+    ops = comfy.ops.disable_weight_init
+    dim = 128  # 32 KiB of bf16: above the size stock force-loads
+
+    class _CastBlock(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = ops.Linear(dim, dim, bias=False, dtype=torch.bfloat16)
+
+    class _CastDiffusionModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = torch.nn.ModuleList([_CastBlock()])
+            self.token_refiner = ops.Linear(dim, dim, bias=False, dtype=torch.bfloat16)
+
+    cast_model = type("MiniMaxH3", (torch.nn.Module,), {})
+    gen = torch.Generator().manual_seed(3)
+    model = cast_model()
+    model.diffusion_model = _CastDiffusionModel()
+    pristine = {}
+    for key in (SHARDED, REPLICATED):
+        value = (torch.randn(dim, dim, generator=gen) * 0.05).to(torch.bfloat16)
+        with torch.no_grad():
+            fsdp_lora.live_tensor(model, key).copy_(value)
+        pristine[key] = value
+    path = _write_file(tmp_path, pristine)
+    lora = {}
+    for unit in ("block", "refiner"):
+        lora[f"{unit}.lora_up.weight"] = torch.randn(dim, 4, generator=gen) * 0.01
+        lora[f"{unit}.lora_down.weight"] = torch.randn(4, dim, generator=gen) * 0.01
+        lora[f"{unit}.alpha"] = torch.tensor(4.0)
+    patches = real_comfy.lora.load_lora(lora, {"block": SHARDED, "refiner": REPLICATED})
+    cpu = torch.device("cpu")
+    twin = copy.deepcopy(model)
+    reference = real_comfy.model_patcher.ModelPatcher(twin, cpu, cpu)
+    reference.add_patches(patches, 0.7)
+    stock = {key: canary.stock_cast_time_weight(twin, reference, key) for key in (SHARDED, REPLICATED)}
+    classic = reference.patch_weight_to_device(REPLICATED, device_to=cpu, return_weight=True)
+    assert not torch.equal(classic, stock[REPLICATED])
+    active = real_comfy.model_patcher.ModelPatcher(model, cpu, cpu)
+    active.add_patches(patches, 0.7)
+    installed = lora_cast_time.install()
+    try:
+        _wrap_one_rank(tmp_path, model)
+        fsdp_lora.apply_stack(SimpleNamespace(swap_verify=-1), active, path, None)
+        assert torch.equal(model.diffusion_model.token_refiner.weight, stock[REPLICATED])
+        assert torch.equal(fsdp_lora.local_shard(model.diffusion_model.blocks[0].lin.weight), stock[SHARDED])
+    finally:
+        torch.distributed.destroy_process_group()
+        if installed:
+            lora_cast_time.uninstall()
+
+
+def test_a_norm_weight_comfy_renames_at_load_bakes_under_fsdp_as_the_resident_layer(real_comfy, tmp_path):
+    """The 2026-11-11 crash's shape on real ComfyUI: ComfyUI's own RMSNorm, 256
+    bytes, inside a sharded block; the file stores its weight as
+    ``<...>_norm.scale``; FLUX.2's real model config renames it; a diff patch at
+    0.5 names the model's key (the distill LoRA's form). Under FSDP the key is
+    found under the file's name and bakes to ComfyUI's classic bake of the
+    resident layer, the bake stock runs for a module this small, while the
+    Linear beside it takes stock's cast-time weight. The ambient verify runs
+    comfy's own reference on both keys."""
+    import comfy.ops
+    import comfy.supported_models
+    import torch.distributed.fsdp
+
+    from dgx_monarch.actor import lora_cast_time
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "canary"))
+    try:
+        import bake_equivalence_canary as canary
+    finally:
+        sys.path.pop(0)
+    ops = comfy.ops.disable_weight_init
+    dim = 128  # the Linear: 32 KiB of bf16, a cast-time key; the norm: 256 bytes, force-loaded
+
+    class _NormBlock(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = ops.Linear(dim, dim, bias=False, dtype=torch.bfloat16)
+            self.query_norm = ops.RMSNorm(dim, dtype=torch.bfloat16)
+
+    class _NormDiffusionModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = torch.nn.ModuleList([_NormBlock()])
+
+    lin_key, norm_key = "diffusion_model.blocks.0.lin.weight", "diffusion_model.blocks.0.query_norm.weight"
+    gen = torch.Generator().manual_seed(9)
+    model = type("RenamedNormModel", (torch.nn.Module,), {})()
+    model.diffusion_model = _NormDiffusionModel()
+    pristine = {lin_key: (torch.randn(dim, dim, generator=gen) * 0.05).to(torch.bfloat16),
+                norm_key: (1.0 + 0.2 * torch.randn(dim, generator=gen)).to(torch.bfloat16)}
+    for key, value in pristine.items():
+        with torch.no_grad():
+            fsdp_lora.live_tensor(model, key).copy_(value)
+    path = tmp_path / "flux.safetensors"
+    _write_safetensors(path, {"blocks.0.lin.weight": pristine[lin_key],
+                              "blocks.0.query_norm.scale": pristine[norm_key]})  # the file's own name
+    lora = {"block.lora_up.weight": torch.randn(dim, 4, generator=gen) * 0.01,
+            "block.lora_down.weight": torch.randn(4, dim, generator=gen) * 0.01,
+            "block.alpha": torch.tensor(4.0),
+            "norm.diff": (torch.randn(dim, generator=gen) * 0.02).to(torch.bfloat16)}
+    patches = real_comfy.lora.load_lora(lora, {"block": lin_key, "norm": norm_key})
+    assert set(patches) == {lin_key, norm_key}
+    cpu = torch.device("cpu")
+    twin = copy.deepcopy(model)
+    # ComfyUI's own config for this family, as the loaded model carries it (a
+    # config object does not deep-copy, so the twin is taken first).
+    model.model_config = comfy.supported_models.Flux2({"hidden_size": dim})
+    reference = real_comfy.model_patcher.ModelPatcher(twin, cpu, cpu)
+    reference.add_patches(patches, 0.5)
+    # Before the cast-time route is installed: comfy's classic bake of the resident norm.
+    resident_norm = reference.patch_weight_to_device(norm_key, device_to=cpu, return_weight=True)
+    stock_lin = canary.stock_cast_time_weight(twin, reference, lin_key)
+    assert not torch.equal(resident_norm, pristine[norm_key])
+    assert not lora_cast_time.stock_patches_at_cast_time(reference, norm_key)
+    active = real_comfy.model_patcher.ModelPatcher(model, cpu, cpu)
+    active.add_patches(patches, 0.5)
+    installed = lora_cast_time.install()
+    try:
+        _wrap_one_rank(tmp_path, model)
+        record = fsdp_lora.apply_stack(SimpleNamespace(swap_verify=-1), active, str(path), None)
+        assert set(record.mapped) == {lin_key, norm_key}
+        norm = model.diffusion_model.blocks[0].query_norm.weight
+        assert type(norm).__name__ == "DTensor"
+        assert torch.equal(fsdp_lora.local_shard(norm), resident_norm)
+        assert torch.equal(fsdp_lora.local_shard(model.diffusion_model.blocks[0].lin.weight), stock_lin)
+        # Dropping the stack restores the norm's rows from the file's ".scale" tensor.
+        empty = real_comfy.model_patcher.ModelPatcher(model, cpu, cpu)
+        fsdp_lora.apply_stack(SimpleNamespace(swap_verify=-1), empty, str(path), record)
+        assert torch.equal(fsdp_lora.local_shard(norm), pristine[norm_key])
+    finally:
+        torch.distributed.destroy_process_group()
+        if installed:
+            lora_cast_time.uninstall()

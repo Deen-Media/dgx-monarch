@@ -41,6 +41,7 @@ from .fleet_policy import (
 from .fleet_policy import (
     _FleetAuthorization as _FleetAuthorization,
 )
+from .refusal_lead import lead_with_refusal
 from .render_preflight import (
     latent_without_topology_metadata as _latent_without_topology_metadata,
 )
@@ -248,6 +249,7 @@ class DGXMonarchFleetKSampler:
     FUNCTION = "fleet"
     CATEGORY = NODE_CATEGORY
 
+    @lead_with_refusal
     def fleet(self, model, clip, negative, latent_image, prompts, noise_seed,
               steps, cfg, sampler_name, scheduler, positive=None, unique_id=None):
         # INPUT_IS_LIST: every arg arrives as a list; widgets are 1-element.
@@ -261,6 +263,7 @@ class DGXMonarchFleetKSampler:
         source_latent = dict(latent_image[0])
         consent_waiver.validate_inherited_stamps(source_latent)
         latent = _latent_without_topology_metadata(source_latent)
+        model_patch_preflight.preflight_h3_sigma_shift(spec, {}, latent)  # and the H3 shift (#144)
         prompts_text = prompts[0]
         base_seed, steps_n = int(noise_seed[0]), int(steps[0])
         cfg_v = float(cfg[0])
@@ -396,8 +399,9 @@ class DGXMonarchFleetKSampler:
                         authorization.residency_grant)
                 render_id = request["_dgxm_render_id"]
                 consent_waiver.stamp_request(request, spec, Topology(world=1), 1, render_id)
+                # A world-one job has one result leader, so its done ends the stream.
                 progress = ProgressReceiver(
-                    steps_n, on_step=on_step(i), track_render=True,
+                    steps_n, on_step=on_step(i), track_render=True, leaders=1,
                     on_cancel=lambda rid=render_id: handle.cancel_sample(rid, wait=False))
                 progress.__enter__()
                 future = mesh_setup.prepare_sample(handle, setup_token)

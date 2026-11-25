@@ -469,6 +469,8 @@ async function refreshOnce(root, zones) {
                 actionState.recycle.label = "mesh outcome unknown; inspect";
             } else if (r.ok && body.status === "no_live_mesh") {
                 actionState.recycle.label = "no attached mesh";
+            } else if (r.ok && body.status === "poisoned") {
+                actionState.recycle.label = "session poisoned; see the mesh row";
             } else if (r.status === 429 && body.status === "rate_limited") {
                 actionState.recycle.label = "reset already active; wait";
             } else if (r.ok) {

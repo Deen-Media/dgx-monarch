@@ -49,11 +49,12 @@ def reserve(store: Store, job_id: str, key: str, request: dict[str, Any], *, sco
     return intent, dispatch
 
 
-def release(store: Store, job_id: str, key: str, intent: dict[str, Any]) -> None:
-    """Undo a reservation the driver never received, so the key and the job's one intent stay unspent."""
+def release(store: Store, job_id: str, intent: dict[str, Any]) -> None:
+    """Undo a reservation the driver never received, so every key that joined it and the job's one intent stay unspent."""
     with store.lock, store.transaction():
         job = store.get("jobs", job_id)
-        store.db.execute("DELETE FROM requests WHERE key=? AND kind='job_cancellations' AND entity_id=?", (key, intent["id"]))
+        # A key that joined while the dispatch was in flight names the same intent; none may outlive it.
+        store.db.execute("DELETE FROM requests WHERE kind='job_cancellations' AND entity_id=?", (intent["id"],))
         store.db.execute("DELETE FROM objects WHERE kind='job_cancellations' AND id=?", (intent["id"],))
         if job.get("cancellation_intent_id") == intent["id"]:
             value = {name: item for name, item in job.items() if name not in _RESERVED_FIELDS}
@@ -63,7 +64,7 @@ def release(store: Store, job_id: str, key: str, intent: dict[str, Any]) -> None
             store._event("jobs.updated", job_id, {"state": value["state"]})
 
 
-async def _scoped_or_queue_delete(owner: Jobs, scoped_cancel: Any, job_id: str, key: str,
+async def _scoped_or_queue_delete(owner: Jobs, scoped_cancel: Any, job_id: str,
                                   intent: dict[str, Any]) -> dict[str, Any]:
     try:
         receipt: dict[str, Any] = await scoped_cancel(intent["prompt_id"])
@@ -72,10 +73,10 @@ async def _scoped_or_queue_delete(owner: Jobs, scoped_cancel: Any, job_id: str, 
         if getattr(exc, "upstream_status", None) != 404:
             raise
     # An older driver has no prompt-specific route. Queue deletion is safe only
-    # for a queued prompt; a running one keeps its unspent intent and key.
+    # for a queued prompt; a running one keeps its intent and every key unspent.
     owner.scoped_cancel_unavailable = True
     if intent.get("reserved_state") != "queued":
-        release(owner.store, job_id, key, intent)
+        release(owner.store, job_id, intent)
         raise StudioError("cancellation_scope", "This driver has no prompt-specific cancellation route; "
                           "only queued graph tasks can be cancelled.", 409)
     await owner.client.request("POST", "/queue", {"delete": [intent["prompt_id"]]})
@@ -108,7 +109,7 @@ async def cancel_job(owner: Jobs, job_id: str, request: dict[str, Any]) -> dict[
         flights.add(job_id)
     try:
         if callable(scoped_cancel):
-            receipt = await _scoped_or_queue_delete(owner, scoped_cancel, job_id, key, intent)
+            receipt = await _scoped_or_queue_delete(owner, scoped_cancel, job_id, intent)
         else:
             await owner.client.request("POST", "/queue", {"delete": [intent["prompt_id"]]})
             receipt = {"deletion_requested": True}

@@ -18,6 +18,7 @@ import torch
 from dgx_monarch.adapters import base, chroma_text, qwen_image
 from dgx_monarch.adapters.base import InjectionContext
 from dgx_monarch.adapters.qwen_image import QwenImageAdapter
+from pad_rows_comfy_helpers import grant_ring_pad_waiver
 from test_flux_pad_exclusion import (
     _LOCAL,
     _TAG,
@@ -182,14 +183,15 @@ def _drive(harness, text, image, grid, *, pure_ulysses, blocks=2, block_cls=_Qwe
     return outputs
 
 
-def _run(monkeypatch, text, image, grid, *, world, pure_ulysses, strict=False, refs=(), **drive):
+def _run(monkeypatch, text, image, grid, *, world, pure_ulysses, strict=False, refs=(),
+         ring_world=1, **drive):
     monkeypatch.setattr(qwen_image, "sp_rank", _rank)
     monkeypatch.setattr(chroma_text, "sp_rank", _rank)
     monkeypatch.setattr(chroma_text, "sp_world", lambda: world)
     harness = _Harness(world, strict=strict)
     rows = text.shape[1] + image.shape[1] + sum(ref.shape[1] for ref in refs)
     harness.expected_tags = [float(tag) for tag in range(1, rows + 1)]
-    _install_stubs(monkeypatch, harness)
+    _install_stubs(monkeypatch, harness, ring_world=ring_world)
     return _drive(harness, text, image, grid, pure_ulysses=pure_ulysses, refs=refs, **drive), harness
 
 
@@ -249,9 +251,16 @@ def test_an_evenly_sharded_render_takes_the_full_axis_path_and_matches_one_rank(
 
 @pytest.mark.parametrize("text_rows,grid", SHAPES)
 def test_without_pure_ulysses_the_keys_stay_rank_major(monkeypatch, text_rows, grid):
-    """A ring or hybrid worker context never receives the descriptor."""
+    """A ring or hybrid worker context never receives the descriptor.
+
+    A padded ring render refuses by default (tests/test_qwen_image_pad_exclusion.py);
+    the ring_pad waiver is granted here so the padded shapes render too, as
+    an accepted waiver lets them, with their pad rows attended.
+    """
+    grant_ring_pad_waiver(monkeypatch)
     text, image = _streams(text_rows, grid)
-    _outputs, harness = _run(monkeypatch, text, image, grid, world=WORLD, pure_ulysses=False)
+    _outputs, harness = _run(monkeypatch, text, image, grid, world=WORLD, pure_ulysses=False,
+                             ring_world=2)
     expected = _rank_major_tags(text_rows, image.shape[1])
     assert all(order is None for order in harness.orders)
     # The negative control: rank-major differs from stock, so the test above

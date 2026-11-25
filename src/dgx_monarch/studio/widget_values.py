@@ -15,6 +15,7 @@ import copy
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from .. import stock_widget_drift
 from .workflows import SCALAR_TYPES, WorkflowError
 
 DYNAMIC_COMBO = "COMFY_DYNAMICCOMBO_V3"
@@ -248,12 +249,32 @@ def layout_values(node: Mapping[str, Any], info: Mapping[str, Any], *, api: bool
                 position = walk(_option_inputs(name, spec, result[name]), position, depth + 1)
         return position
 
-    position = walk(declared_specs(info), 0, 0)
+    fields = declared_specs(info)
+    position = walk(fields, 0, 0)
+    node_class = str(node.get("type", ""))
+    absent = stock_widget_drift.missing(node_class, [name for name, spec, _ in fields if _is_widget(spec)])
+    if position < len(serialized) and absent:
+        # Master-shaped values on a ComfyUI without a newer stock widget: read
+        # them in master's order and drop that widget at its template value
+        # (dgx_monarch/stock_widget_drift.py).
+        result.clear()
+        position = walk(_with_newer(fields, node_class, absent), 0, 0)
+        for name, value in absent.items():
+            held = result.pop(name, value)
+            if held != value:
+                raise WorkflowError(f"{name} holds {held!r}, and this ComfyUI's {node_class} has no such widget")
     # The frontend appends upload helper widgets after every declared widget; their
     # slots carry any value or none and never reach the prompt.
     if position != len(serialized) and not _has_upload(info):
         raise WorkflowError("Widget serialization has unsupported extra values; explicit widget adapter required")
     return result
+
+
+def _with_newer(fields: list[Field], node_class: str, absent: Mapping[str, Any]) -> list[Field]:
+    """``fields`` with a one-choice combo slot for each absent newer widget, after its anchor."""
+    by_name = {field[0]: field for field in fields}
+    order = stock_widget_drift.with_newer(node_class, list(by_name))
+    return [by_name.get(name) or (name, [[absent[name]], {"default": absent[name]}], False) for name in order]
 
 
 def is_link(value: Any) -> bool:

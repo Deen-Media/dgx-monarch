@@ -146,6 +146,46 @@ def test_two_gpus_on_one_box_put_both_of_its_ranks_under_one_label():
     ]
 
 
+def _handle(names, *, world, gpus_per_host=1, owns_hosts=True):
+    import types
+
+    return types.SimpleNamespace(world=world, gpus_per_host=gpus_per_host, owns_hosts=owns_hosts,
+                                 config=None if names is None else _Config(names))
+
+
+def test_a_wave_names_each_box_the_way_a_refusal_does(monkeypatch):
+    """A Fleet user reads the row beside the refusal, so both say the head and
+    the sibling; the row keeps the answering host after it, which ties the
+    plain name to the memory card's host."""
+    from dgx_monarch import driver_footprint
+
+    looked_up = []
+
+    def is_head(name):
+        looked_up.append(name)
+        return name == "worker-a"
+
+    monkeypatch.setattr(driver_footprint, "host_is_local", is_head)
+    monkeypatch.setattr(telemetry_fleet, "fleet_jobs", telemetry_fleet.FleetJobs())
+    telemetry_fleet.open_wave_for([{"seed": 0}, {"seed": 1}, {"seed": 2}],
+                                  _handle(["worker-a", "worker-b"], world=2))
+    names_resolved = len(looked_up)
+    for job in range(3):
+        telemetry_fleet.fleet_jobs.start_job(job, job % 2)
+    telemetry_fleet.fleet_jobs.record_job(1, 1, {"host": "worker-b", "sample_s": 1.0})
+    jobs = telemetry_fleet.fleet_jobs.snapshot()["jobs"]
+    assert [row["box"] for row in jobs] == ["the head", "the sibling", "the head"]
+    assert jobs[1]["host"] == "worker-b"
+    assert len(looked_up) == names_resolved, "the names are worked out once per wave, never per job"
+
+
+def test_a_local_fleet_wave_reads_this_box(monkeypatch):
+    monkeypatch.setattr(telemetry_fleet, "fleet_jobs", telemetry_fleet.FleetJobs())
+    telemetry_fleet.open_wave_for([{"seed": 0}], _handle(None, world=1, owns_hosts=False))
+    telemetry_fleet.fleet_jobs.start_job(0, 0)
+    assert telemetry_fleet.fleet_jobs.snapshot()["jobs"][0]["box"] == "this box"
+
+
 def test_a_box_label_falls_back_to_a_short_name_and_never_an_address():
     # With no usable rank or gpus_per_host there is no arithmetic to do, so the
     # host's own first label stands in. Nothing on either path prints a full address.

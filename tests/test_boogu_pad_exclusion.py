@@ -1,12 +1,14 @@
-"""Boogu divisibility pad rows are not attended (pure Ulysses).
+"""Boogu divisibility pad rows: not attended (pure Ulysses), refused on ring.
 
 ``shard_seq`` zero-pads an odd stream, and after RMSNorm and the modulation
 scale a zero row is still a real key at its RoPE position. Stock one-GPU
 attention has no such key. Boogu shards five streams (noise, reference,
 instruct, the joined [reference, noise] image stream, and the re-joined single
-stream), and each loop names its own pad rows. The harness is the one in
-tests/test_boogu_ulysses_order.py; in any stage, its strict recorder fails a
-test when a pad row (tag 0) reaches attention or a real row is missing.
+stream), and each loop names its own pad rows on every topology; ring and
+hybrid, which cannot drop them, refuse class K unless the ring_pad waiver is
+granted. The harness is the one in tests/test_boogu_ulysses_order.py; in any
+stage, its strict recorder fails a test when a pad row (tag 0) reaches
+attention or a real row is missing.
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import torch
 
 from dgx_monarch.adapters import base
 from dgx_monarch.adapters.usp_pad_exclusion import keep_index
+from pad_rows_comfy_helpers import assert_ring_pad_refusal, grant_ring_pad_waiver
 from test_boogu_ulysses_order import (  # noqa: F401  (fixture re-exported)
     SHAPES,
     WORLD,
@@ -78,13 +81,26 @@ def test_each_call_names_its_own_pad_set(monkeypatch, text_rows, grid, refs):
 
 
 @pytest.mark.parametrize("text_rows,grid,refs", SHAPES)
-def test_ring_and_hybrid_name_no_pad_rows_and_never_refuse(
+def test_ring_and_hybrid_name_the_pad_rows_and_refuse_unless_waived(
     monkeypatch, text_rows, grid, refs
 ):
-    """The ring pad guard refuses named rows; without pure Ulysses none are named."""
+    """Ring and hybrid name every loop's pad rows as pure Ulysses does but cannot
+    drop them, so a padded render refuses class K by default; under the
+    ring_pad waiver it renders with the pads attended, and with nothing padded
+    no row is named and no waiver is asked."""
+    _u, ulysses = drive(monkeypatch, text_rows, grid, refs, world=WORLD, pure_ulysses=True,
+                        strict=False)
+    named = [drops for _s, _o, drops in ulysses.records]
+    if any(named):
+        with pytest.raises(base.UnsupportedModelError) as caught:
+            drive(monkeypatch, text_rows, grid, refs, world=WORLD, pure_ulysses=False,
+                  strict=False, ring_world=2)
+        assert_ring_pad_refusal(caught.value)
+        grant_ring_pad_waiver(monkeypatch)
     _outputs, harness = drive(monkeypatch, text_rows, grid, refs, world=WORLD,
-                              pure_ulysses=False, strict=False)
-    assert harness.records and all(drops is None for _s, _o, drops in harness.records)
+                              pure_ulysses=False, strict=False, ring_world=2)
+    assert harness.records and [drops for _s, _o, drops in harness.records] == named
+    assert all(order is None for _s, order, _d in harness.records)
 
 
 def test_the_template_shapes_worked_by_hand(monkeypatch):
@@ -102,9 +118,3 @@ def test_the_template_shapes_worked_by_hand(monkeypatch):
     assert base.padded_row_indices([(4096, 2048)]) == []
     assert base.padded_row_indices([(109 + 4096, 2103)]) == [4205]
     assert base.padded_row_indices([(66 + 4096, 2081)]) == []
-
-
-def test_the_ring_pad_guard_the_gate_avoids_still_refuses():
-    """The ring pad guard refuses a named pad row."""
-    with pytest.raises(base.UnsupportedModelError):
-        base.assert_ulysses_only_padding(2, 1)

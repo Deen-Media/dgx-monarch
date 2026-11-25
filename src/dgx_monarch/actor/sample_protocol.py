@@ -12,7 +12,16 @@ from types import ModuleType
 from typing import Any
 
 from ..model_sampling import normalize_model_sampling
-from . import dm_cfg2_residency, guidance_render, latent_outputs, rank_readiness, store_fsdp, worker_env
+from . import (
+    context_windows_render,
+    dm_cfg2_residency,
+    guidance_render,
+    latent_outputs,
+    model_sampling_render,
+    rank_readiness,
+    store_fsdp,
+    worker_env,
+)
 from .cancellation import raise_if_sample_cancelled
 
 
@@ -240,7 +249,7 @@ def run_sample(
             patcher, transition = store_fsdp.ensure(
                 worker, uspec["unet_name"], uspec.get("options"),
                 uspec.get("loras"), slot="uncond", on_base_loaded=worker._inject_for_topology,
-                rescue_consent=worker_env.sample_rescue_consent(request))
+                rescue_consent=worker_env.sample_rescue_consent(request), sample_request=request)
             worker_env.assert_resident_artifact_identity(
                 worker, "uncond", expected_artifacts[1])
             # The driver keys every grant of a dual-model render on the
@@ -257,7 +266,7 @@ def run_sample(
             patcher, transition = store_fsdp.ensure(
                 worker, model_spec["unet_name"], model_spec.get("options"),
                 model_spec.get("loras"), slot="cond", on_base_loaded=worker._inject_for_topology,
-                rescue_consent=worker_env.sample_rescue_consent(request))
+                rescue_consent=worker_env.sample_rescue_consent(request), sample_request=request)
             worker_env.assert_resident_artifact_identity(
                 worker, "cond", expected_artifacts[0])
             raise_if_sample_cancelled(cancel_event)
@@ -272,7 +281,8 @@ def run_sample(
                 uspec = request["uncond_model"]
                 uncond_patcher, _uncond_transition = store_fsdp.ensure(
                     worker, uspec["unet_name"], uspec.get("options"),
-                    uspec.get("loras"), slot="uncond", on_base_loaded=worker._inject_for_topology)
+                    uspec.get("loras"), slot="uncond", on_base_loaded=worker._inject_for_topology,
+                    sample_request=request)
                 worker_env.assert_resident_artifact_identity(
                     worker, "uncond", expected_artifacts[1])
         # Class K, and the driver retires the sample lease consumed: the bar
@@ -296,6 +306,9 @@ def run_sample(
             pins, worker.topology, family=getattr(resident, "family", None),
             alone=int(getattr(worker, "world", 0) or 0) < 2,
             pinned_by=request["uncond_model"]["unet_name"] if dm2_slot == "uncond" else None)
+        # Class P, inside the guard: whether this ComfyUI has the stock node is a host fact.
+        context_windows_render.assert_supported(request, getattr(resident, "family", None))
+        model_sampling_render.assert_supported(request, getattr(resident, "family", None))
         if worker.topology.get("ring", 1) > 1:
             # cuDNN Ring prepares here, inside the load guard, before the exchange.
             worker._attn.prepare_native_attention()
@@ -308,7 +321,10 @@ def run_sample(
         readiness.not_ready(exc)
     if readiness is not None:
         # This rank loaded and matched; release the fleet or refuse if a peer did
-        # not. Outside the try so its own refusal is never re-caught above.
+        # not. Outside the try so its own refusal is never re-caught above. The
+        # same exchange crosses each rank's count of shared-scale Linears.
+        rank_readiness.note_shared_scale(
+            quant_activation_scale.wrapped_linears(patcher, uncond_patcher))
         readiness.ready_or_raise()
     raise_if_sample_cancelled(cancel_event)
     # Class P on the resident the load guard read (#135). Every rank holds the
@@ -317,6 +333,9 @@ def run_sample(
     # first collective; a readiness exchange, where one runs, every rank has
     # already crossed alike.
     refuse_moss_image_attention_bias(worker, request, getattr(resident, "family", None))
+    # The same rule for UltraTex views on the Flux family (#148), on this rank's topology.
+    from ..adapters.flux_views import refuse_unproven_views
+    refuse_unproven_views(getattr(resident, "family", None), getattr(worker, "topology", {}) or {}, request)
 
     # Opt-in proof only: full-content file identities are stable-read after
     # ModelStore has adopted and checked every requested resident, but before
@@ -346,14 +365,16 @@ def run_sample(
     # under comfy's own repeat rule where it allows; otherwise they take the
     # per-cond dispatch (adapters/cfg_dispatch.py), and they reach the cfg
     # wrapper's typed error only where that dispatch also declines.
-    from ..adapters import adapter_for, cfg_dispatch
+    from ..adapters import adapter_for, cfg_dispatch, cfg_pad_rows
     from ..adapters.cfg_parallel import cfg_dispatches_per_cond
     from ..family_select import override_for_worker
 
-    # Fold is this render's default. Where equalize_cond_lengths runs, it records
-    # the real lengths in its place only for a family whose cfg pad restores the
-    # stock call (cfg_pad_restores_stock_call).
+    # Fold, and no stamp, are this render's defaults. Where equalize_cond_lengths
+    # runs, it records the real lengths in its place only for a family whose cfg
+    # pad restores the stock call (cfg_pad_restores_stock_call), and notes a pair
+    # it stamped.
     cfg_dispatch.record_cfg_pair_lengths([])
+    cfg_pad_rows.record_render(None)
     family_override = override_for_worker(worker)
     sp_degree = int(worker.topology.get("ulysses", 1)) * int(worker.topology.get("ring", 1))
     adapter = (adapter_for(patcher.model, family_override)
@@ -383,6 +404,7 @@ def run_sample(
 
     render_patcher = model_sampling_render_clone(patcher, primary_sampling)
     render_patcher = guidance_render.apply_skip_layer_guidance(render_patcher, request, worker)
+    render_patcher = context_windows_render.apply(render_patcher, request)
     render_uncond_patcher = (
         model_sampling_render_clone(uncond_patcher, uncond_sampling)
         if uncond_patcher is not None else None

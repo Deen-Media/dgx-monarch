@@ -4,9 +4,10 @@
 #   bash scripts/setup_env.sh --comfy             # + the ComfyUI and xFuser layer
 #   bash scripts/setup_env.sh --comfy --worker    # same on both boxes
 set -euo pipefail
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-XFUSER_BUILDER="$SCRIPT_DIR/../tools/build_xfuser_compat_wheel.py"
-MONARCH_PIN="torchmonarch==0.7.0"   # the 0.x API changes between releases; bump on purpose
+MONARCH_PIN="torchmonarch==0.8.0"   # the 0.x API changes between releases; bump on purpose
+# Stock xFuser from the package index; src/dgx_monarch/xfuser_build.py lists
+# the builds Worker setup accepts.
+XFUSER_PIN="xfuser==0.8.0"
 # --worker needs DGXM_SIBLING, the other box's fabric IP. It has no default
 # because the address is your rig's. DGXM_SSH_KEY names an ssh key the sibling
 # accepts; empty uses your ssh config or agent.
@@ -25,7 +26,11 @@ setup_base() {
   "$P" install -q --upgrade pip
   "$P" install -q "$MONARCH_PIN" numpy
   "$P" install -q torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132
-  "$PY" -c "import monarch.actor, monarch.rdma, torch; import monarch.rdma as r; print('monarch+torch OK on', __import__('socket').gethostname(), '| ibverbs:', r.is_ibverbs_available())"
+  # This import applies no dgx-monarch policy: keep any OTLP endpoint in the
+  # installer's shell from starting Monarch's export from this one process.
+  env -u OTEL_EXPORTER_OTLP_ENDPOINT -u OTEL_EXPORTER_OTLP_LOGS_ENDPOINT \
+    -u OTEL_EXPORTER_OTLP_METRICS_ENDPOINT -u OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
+    "$PY" -c "import monarch.actor, monarch.rdma, torch; import monarch.rdma as r; print('monarch+torch OK on', __import__('socket').gethostname(), '| ibverbs:', r.is_ibverbs_available())"
 }
 
 setup_comfy_layer() {
@@ -37,18 +42,16 @@ setup_comfy_layer() {
   # a compatible torchaudio build, so copy one from DGXM_TORCHAUDIO_DONOR (the
   # tested donor build is 2.11.0+cu132 with torch 2.12), and refuse a missing
   # donor rather than leave that ComfyUI unable to start. A newer ComfyUI only
-  # gets a warning when torchaudio is missing.
+  # gets a warning when torchaudio is missing. A torchaudio that is installed
+  # but does not import is never treated as missing: Transformers imports an
+  # installed torchaudio, so the helper stops with the repair instead.
   local PY="$HOME/monarch-env/bin/python"
   local P="$HOME/monarch-env/bin/pip"
-  local SP XFUSER_WHEELS TORCH_CONSTRAINT TORCH_DIST_VERSION
-  if [ ! -r "$XFUSER_BUILDER" ]; then
-    echo "FAIL: cannot read tools/build_xfuser_compat_wheel.py; run setup_env.sh from a full dgx-monarch checkout" >&2
-    return 1
-  fi
+  local SP CONSTRAINT_DIR TORCH_CONSTRAINT TORCH_DIST_VERSION
   SP="$("$PY" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
   # Install xFuser's declared dependencies (distvae, peft, av and others) while
   # a constraint holds pip to the installed torch distribution version. Do not
-  # use --no-deps here: xFuser 0.7 adds required runtime distributions.
+  # use --no-deps here: xFuser adds required runtime distributions.
   # Runtime torch.__version__ can include a CUDA suffix absent from pip's
   # distribution metadata. Probe before any Comfy dependency resolution and
   # refuse missing metadata; never guess a version or remove the constraint.
@@ -56,19 +59,14 @@ setup_comfy_layer() {
     echo "FAIL: cannot read installed torch distribution metadata; repair the dedicated bootstrap environment before installing ComfyUI dependencies" >&2
     return 1
   fi
-  XFUSER_WHEELS="$(mktemp -d)"
-  TORCH_CONSTRAINT="$XFUSER_WHEELS/torch-constraint.txt"
+  CONSTRAINT_DIR="$(mktemp -d)"
+  TORCH_CONSTRAINT="$CONSTRAINT_DIR/torch-constraint.txt"
   printf 'torch==%s\n' "$TORCH_DIST_VERSION" > "$TORCH_CONSTRAINT"
-  if ! "$PY" "$XFUSER_BUILDER" --output-dir "$XFUSER_WHEELS"; then
-    rm -rf "$XFUSER_WHEELS"
-    return 1
-  fi
   "$P" install -q --constraint "$TORCH_CONSTRAINT" -r "$HOME/ComfyUI/requirements.txt"
   "$P" install -q --constraint "$TORCH_CONSTRAINT" diffusers==0.38.0 accelerate
   "$P" install -q --upgrade-strategy only-if-needed \
-    --constraint "$TORCH_CONSTRAINT" --find-links "$XFUSER_WHEELS" \
-    xfuser==0.7.0+dgxm.npuimport1 yunchang==0.6.4
-  rm -rf "$XFUSER_WHEELS"
+    --constraint "$TORCH_CONSTRAINT" "$XFUSER_PIN" yunchang==0.6.4
+  rm -rf "$CONSTRAINT_DIR"
   "$P" install -q --no-deps torchvision --index-url https://download.pytorch.org/whl/cu132
   local NEEDS_TORCHAUDIO=0
   if grep -Eiq '^[[:space:]]*torchaudio([^A-Za-z0-9_.-]|$)' "$HOME/ComfyUI/requirements.txt"; then
@@ -80,9 +78,30 @@ m = re.search(r"__version__\s*=\s*[\x27\x22](\d+)\.(\d+)", text)
 sys.exit(0 if m and (int(m[1]), int(m[2])) < (0, 38) else 1)' "$HOME/ComfyUI/comfyui_version.py"; then
     NEEDS_TORCHAUDIO=1
   fi
-  if [ "$NEEDS_TORCHAUDIO" = 0 ] && ! "$PY" -c "import torchaudio" 2>/dev/null; then
+  local AUDIO
+  AUDIO="$(torchaudio_state "$PY")"
+  if [ "$AUDIO" = unknown ]; then
+    echo "FAIL: the torchaudio check did not run in ~/monarch-env; repair that interpreter first" >&2
+    return 1
+  fi
+  if [ "${AUDIO%% *}" = broken ]; then
+    # Read the state word, the installed version and the import error class.
+    # shellcheck disable=SC2086
+    set -- $AUDIO
+    if [ "$NEEDS_TORCHAUDIO" = 0 ] || [ -z "$TORCHAUDIO_DONOR" ]; then
+      local AUDIO_NAME="torchaudio $2"
+      [ "$2" != unknown ] || AUDIO_NAME="a torchaudio package with no pip metadata"
+      echo "FAIL: $AUDIO_NAME is installed but does not import ($3) against torch $TORCH_DIST_VERSION." >&2
+      echo "      Transformers imports an installed torchaudio, so ComfyUI's import chain breaks." >&2
+      echo "      Remove it with ~/monarch-env/bin/pip uninstall torchaudio, or install a build" >&2
+      echo "      that loads against this torch; a ComfyUI before v0.38.0 can take one from" >&2
+      echo "      DGXM_TORCHAUDIO_DONOR instead" >&2
+      return 1
+    fi
+  fi
+  if [ "$AUDIO" = absent ] && [ "$NEEDS_TORCHAUDIO" = 0 ]; then
     echo "WARNING: no working torchaudio; this ComfyUI does not list it (v0.38.0 and later need none), so the donor step is skipped" >&2
-  elif ! "$PY" -c "import torchaudio" 2>/dev/null; then
+  elif [ "$AUDIO" != working ]; then
     local DONOR_PY="$TORCHAUDIO_DONOR/bin/python"
     local DONOR_SP=""
     if [ -n "$TORCHAUDIO_DONOR" ] && [ -x "$DONOR_PY" ]; then
@@ -92,6 +111,12 @@ sys.exit(0 if m and (int(m[1]), int(m[2])) < (0, 38) else 1)' "$HOME/ComfyUI/com
       "$P" uninstall -q -y torchaudio 2>/dev/null || true
       cp -r "$DONOR_SP/torchaudio" "$DONOR_SP"/torchaudio-*.dist-info "$SP/"
       echo "torchaudio copied from $TORCHAUDIO_DONOR"
+      AUDIO="$(torchaudio_state "$PY")"
+      if [ "$AUDIO" != working ]; then
+        echo "FAIL: torchaudio from DGXM_TORCHAUDIO_DONOR does not import after the copy ($AUDIO);" >&2
+        echo "      choose a donor whose torchaudio loads against torch $TORCH_DIST_VERSION" >&2
+        return 1
+      fi
     else
       echo "FAIL: no working torchaudio (as of 2026-07-02, the cu132 index served only torchaudio 2.2.0 for aarch64)" >&2
       echo "      set DGXM_TORCHAUDIO_DONOR to a venv with a torch-2.12-compatible" >&2
@@ -100,6 +125,29 @@ sys.exit(0 if m and (int(m[1]), int(m[2])) < (0, 38) else 1)' "$HOME/ComfyUI/com
     fi
   fi
   echo "comfy layer done on $(hostname)"
+}
+
+torchaudio_state() {
+  # Print `working`, `absent`, `broken <version> <error class>` (the import
+  # failed while the import system still finds the package, which is what
+  # Transformers checks before it imports one), or `unknown` when the check
+  # itself could not run. pip's metadata gives only the version: a leftover
+  # dist-info with no module is absent. Only the last line counts, in case an
+  # import writes to stdout.
+  { "$1" -c 'import importlib.metadata as md, importlib.util as iu
+try:
+    import torchaudio  # noqa: F401
+except Exception as exc:
+    if iu.find_spec("torchaudio") is None:
+        print("absent")
+    else:
+        try:
+            version = md.version("torchaudio")
+        except md.PackageNotFoundError:
+            version = "unknown"
+        print(f"broken {version} {type(exc).__name__}")
+else:
+    print("working")' 2>/dev/null || echo unknown; } | tail -n 1
 }
 
 WANT_COMFY=0
@@ -136,20 +184,10 @@ if [ "$WANT_WORKER" = 1 ]; then
   {
     printf '%s\n' 'set -euo pipefail'
     printf 'MONARCH_PIN=%q\n' "$MONARCH_PIN"
+    printf 'XFUSER_PIN=%q\n' "$XFUSER_PIN"
     printf 'TORCHAUDIO_DONOR=%q\n' "$TORCHAUDIO_DONOR"
     printf 'WANT_COMFY=%q\n' "$WANT_COMFY"
-    # The peer may not have this checkout: stream the stdlib-only builder with
-    # the two functions, not a second copy or a prebuilt wheel.
-    # Expand these variables on the peer after SSH reads this script.
-    # shellcheck disable=SC2016
-    printf '%s\n' 'XFUSER_BUILDER="$(mktemp)"'
-    # shellcheck disable=SC2016
-    printf '%s\n' 'trap '\''rm -f "$XFUSER_BUILDER"'\'' EXIT'
-    # shellcheck disable=SC2016
-    printf '%s\n' 'cat > "$XFUSER_BUILDER" <<'\''PY'\'''
-    cat -- "$XFUSER_BUILDER"
-    printf '%s\n' 'PY'
-    declare -f setup_base setup_comfy_layer
+    declare -f setup_base setup_comfy_layer torchaudio_state
     printf '%s\n' 'setup_base' \
       "if [ \"\$WANT_COMFY\" = 1 ]; then setup_comfy_layer; fi"
   } | ssh "${SSH_ARGS[@]}" -- "$SIB" bash -s

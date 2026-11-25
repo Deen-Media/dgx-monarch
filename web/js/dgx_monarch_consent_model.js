@@ -131,6 +131,38 @@ export function consentPanelModel(state = {}, ui = {}) {
         // so the checkbox shows the effective state and says who set it.
         autoRescueEnv: Boolean(payload.auto_rescue_env),
         autoRescueBusy: Boolean(plainObject(own(busy, "#auto_rescue")).busy),
+        // Always clear and retry, with DGXM_ALLOW_CLEAR_RETRY as its headless form.
+        autoClear: Boolean(payload.auto_clear) || Boolean(payload.auto_clear_env),
+        autoClearEnv: Boolean(payload.auto_clear_env),
+        autoClearBusy: Boolean(plainObject(own(busy, "#auto_clear")).busy),
         hasPayload: Boolean(state.payload),
     };
+}
+
+function localText(busy, key) {
+    const state = plainObject(own(busy, key));
+    return [typeof state.label === "string" ? state.label : "",
+        typeof state.error === "string" ? state.error : ""];
+}
+
+// What the panel draws for a model, as one string. Each row's click handlers
+// capture the server's ids, so a card or grant replaced under the same key and
+// count must change this: the whole server card, every mapped active field and
+// the local labels go in. `seen_at`, `numbers` and `detail` change only when
+// the driver raises a card again, which bumps `occurrences` as well, so an
+// idle poll leaves it unchanged and the live buttons keep their nodes.
+export function consentSignature(model, busy = {}) {
+    const state = plainObject(model);
+    const local = plainObject(busy);
+    const rows = Array.isArray(state.rows) ? state.rows : [];
+    const active = Array.isArray(state.active) ? state.active : [];
+    return JSON.stringify([
+        rows.map((row) => [row.type, row.key || "", row.detail || "", row.label || "",
+            row.error || "", row.busy ? 1 : 0, row.message || "", row.card || null]),
+        active.map((row) => [row, ...localText(local, row.key)]),
+        state.autoRescue, state.autoRescueBusy, state.autoRescueEnv,
+        ...localText(local, "#auto_rescue"),
+        state.autoClear, state.autoClearBusy, state.autoClearEnv,
+        ...localText(local, "#auto_clear"),
+    ]);
 }

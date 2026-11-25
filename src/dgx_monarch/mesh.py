@@ -1,7 +1,6 @@
 """Driver mesh lifecycle: cache actors, reap procs, surface failed attach/retry."""
 from __future__ import annotations
 
-import atexit
 import os
 import sys
 import threading
@@ -12,6 +11,8 @@ from . import (
     TORCHMONARCH_PIN,
     __version__,
     client_lease,
+    driver_exit,
+    failed_bring_up,
     mesh_attach,
     mesh_creation,
     mesh_factory,
@@ -24,10 +25,14 @@ from . import (
     mesh_setup,
     mesh_setup_transition,
     mesh_teardown,
+    residency_doors,
+    retired_meshes,
 )
 from .config import ClusterConfig, find_config_path, load_cluster_config, local_config
+from .config_schema import actor_worker_args
 from .log import get_logger
 from .mesh_factory import FleetHandoff, WorkerSpawnError, spawn_worker_fleet
+from .mesh_runtime import pinned_cluster_config
 from .topology import Topology
 
 _attach_once = mesh_helpers.attach_once
@@ -88,8 +93,8 @@ def install_fault_hook() -> None:
     global _FAULT_HOOK_INSTALLED
     if _FAULT_HOOK_INSTALLED:
         return
-    _FAULT_HOOK_INSTALLED = mesh_helpers.install_unhandled_fault_hook(
-        _fault_correlation_state)
+    _FAULT_HOOK_INSTALLED = mesh_helpers.install_unhandled_fault_hook(_fault_correlation_state, lambda: (
+        retired_meshes.held_names((_MESHES, _MESH_PENDING), _MESH_LOCK)))
 
 
 @dataclass
@@ -122,8 +127,7 @@ class MeshHandle:
     deferred_supervision_error: BaseException | None = None
     # Unforgeable capability for supervision-only dead-proc reconciliation.
     _supervision_reconcile_token: object | None = field(default=None, repr=False)
-    _supervision_reconcile_thread: threading.Thread | None = field(
-        default=None, repr=False)
+    _supervision_reconcile_thread: threading.Thread | None = field(default=None, repr=False)
     _creation_phase: str = field(default="building", init=False, repr=False)
     _selection_claim: object | None = field(default=None, repr=False, compare=False)
     # RLock, not Lock: apply_worker_args is reachable from inside ensure_setup
@@ -133,7 +137,7 @@ class MeshHandle:
     lock: threading.RLock = field(default_factory=threading.RLock)
 
     def effective_worker_args(self, worker_args: dict | None = None) -> dict:
-        return {**dict(self.config.worker_args), **dict(worker_args or {})}
+        return {**actor_worker_args(self.config.worker_args), **dict(worker_args or {})}
 
     @staticmethod
     def _worker_args_key(worker_args: dict) -> tuple:
@@ -181,21 +185,12 @@ class MeshHandle:
             raise
     def call_all(self, endpoint_name: str, *args, timeout_s: float = 900.0,
                  setup_token: mesh_setup.SetupToken | None = None, **kwargs) -> list:
-        return mesh_rpc.call_all(
-            self, endpoint_name, *args, timeout_s=timeout_s,
-            setup_token=setup_token, **kwargs)
-    def _call_all_bound(self, endpoint_name: str, *args,
-                        timeout_s: float = 900.0,
-                        setup_token: mesh_setup.SetupToken | None = None,
-                        **kwargs) -> list:
-        return mesh_rpc.call_all_bound(
-            self, endpoint_name, *args, timeout_s=timeout_s,
-            setup_token=setup_token, **kwargs)
-    def _latch_ambiguous_mutation(
-        self, endpoint_name: str, timeout_s: float, exc: BaseException
-    ) -> None:
-        mesh_rpc.latch_ambiguous_mutation(
-            self, endpoint_name, timeout_s, exc, logger=log)
+        return mesh_rpc.call_all(self, endpoint_name, *args, timeout_s=timeout_s, setup_token=setup_token, **kwargs)
+    def _call_all_bound(self, endpoint_name: str, *args, timeout_s: float = 900.0,
+                        setup_token: mesh_setup.SetupToken | None = None, **kwargs) -> list:
+        return mesh_rpc.call_all_bound(self, endpoint_name, *args, timeout_s=timeout_s, setup_token=setup_token, **kwargs)
+    def _latch_ambiguous_mutation(self, endpoint_name: str, timeout_s: float, exc: BaseException) -> None:
+        mesh_rpc.latch_ambiguous_mutation(self, endpoint_name, timeout_s, exc, logger=log)
     def _verify_request_artifacts(self, request: dict, worker_index: int | None = None) -> None:
         mesh_rpc.verify_request_artifacts(self, request, worker_index)
 
@@ -273,7 +268,8 @@ class MeshHandle:
         return mesh_rpc.cancel_sample(self, render_id, timeout_s, wait, log)
 
     def shutdown(
-        self, timeout_s: float = 60.0, *, _reconcile_token: object | None = None
+        self, timeout_s: float = 60.0, *, stop_timeout_s: float | None = None, _reconcile_token: object | None = None,
+        _refuse_at_exit: bool = False,
     ) -> None:
         """Stop client-owned mesh processes while leaving Worker services available.
 
@@ -284,19 +280,24 @@ class MeshHandle:
 
         Local meshes also require an explicit process stop during eviction.
         ``owns_hosts`` controls only external Worker coordinators; this handle owns
-        its ProcMesh in every mode.
+        its ProcMesh in every mode. ``_refuse_at_exit``: the stop for a config
+        change (``get_mesh``) and the restart detour's stop of the stale fleet
+        (``restart_reattach``), which send nothing once the driver is exiting,
+        even after they waited for the lifecycle lock (driver_exit); every other
+        stop runs.
         """
         if getattr(self, "teardown_complete", False):
             # A recycle (or an earlier clean detach) already stopped these
             # procs; a second stop can only fail and must not re-block a
             # handle whose teardown succeeded.
             return
-        # Two phases of at most 60 s plus 30 s margin stay under mesh_safety.TOKEN_AUTHORITY_S.
-        phase = min(timeout_s, 60)
+        # The group teardown, the actor and proc stops and 30 s stay under TOKEN_AUTHORITY_S.
+        envelope = mesh_teardown.shutdown_envelope_s(timeout_s, stop_timeout_s)
         try:
             mesh_helpers.run_blocking_off_loop(
-                lambda: self._shutdown_impl(timeout_s, _reconcile_token=_reconcile_token),
-                2 * phase + 30, "dgxm-shutdown")
+                lambda: self._shutdown_impl(timeout_s, stop_timeout_s=stop_timeout_s, _reconcile_token=_reconcile_token,
+                                            refuse_at_exit=_refuse_at_exit),
+                envelope, "dgxm-shutdown")
         except TimeoutError as exc:
             raise mesh_safety.PriorTeardownUnknownError(
                 "worker ProcMesh stop did not complete within the caller deadline; "
@@ -304,15 +305,16 @@ class MeshHandle:
                 "replacement is unsafe until that thread finishes"
             ) from exc
 
-    def _shutdown_impl(self, timeout_s: float = 60.0, *,
+    def _shutdown_impl(self, timeout_s: float = 60.0, *, stop_timeout_s: float | None = None,
                        _reconcile_token: object | None = None,
-                       lock_timeout_s: float = 10.0) -> None:
-        phase = min(timeout_s, 60)
+                       lock_timeout_s: float = 10.0, refuse_at_exit: bool = False) -> None:
+        phase, stop_phase = mesh_teardown.shutdown_phases(timeout_s, stop_timeout_s)
         with mesh_setup.lifecycle_lock(self, "shutdown", lock_timeout_s):
+            if refuse_at_exit:
+                driver_exit.refuse_new_call()  # it waited for the lock: no teardown, no stop
             if getattr(self, "teardown_complete", False):
                 return
-            expected_reconcile = getattr(
-                self, "_supervision_reconcile_token", None)
+            expected_reconcile = getattr(self, "_supervision_reconcile_token", None)
             force_reconcile = (
                 _reconcile_token is not None
                 and _reconcile_token is expected_reconcile
@@ -352,7 +354,7 @@ class MeshHandle:
                 try:
                     stop_attempted = True
                     mesh_teardown.enter_stop_boundary(self, retrying_blocked)
-                    self.procs.stop("dgx-monarch client detach").get(timeout=phase)
+                    mesh_teardown.stop_with_reason(self, "dgx-monarch client detach", stop_phase)
                 except TimeoutError as exc:
                     log.error("proc stop on detach timed out: %r", exc)
                     mesh_teardown.publish_stop_failure(
@@ -390,8 +392,9 @@ def get_mesh(
     """Get/create a mesh; a private claim marks only same-call creation."""
     global _TRANSPORT_MODE, _TRANSPORT_POISON
     global _TRANSPORT_CLAIM_GENERATION, _TRANSPORT_COMMITTED_GENERATION
+    driver_exit.hold_at_entry()  # at exit: waits for the process to end, before anything
     install_fault_hook()
-    mesh_creation.reap_abandoned_attempts(globals())
+    failed_bring_up.settle(globals())  # reaps abandoned creations, lifts a proven bring-up's poison
     resolved = find_config_path(config_path or None)
     use_cluster = mode == "cluster" or (mode == "auto" and resolved is not None)
     if use_cluster and resolved is None:
@@ -401,20 +404,18 @@ def get_mesh(
         )
     wanted_transport = "cluster" if use_cluster else "local"
     if _TRANSPORT_POISON is not None:
-        raise MeshAttachError(
-            "this ComfyUI session's Monarch transport is not reusable after a "
-            f"partial bring-up failure ({_TRANSPORT_POISON}); restart ComfyUI before retrying")
+        raise MeshAttachError(failed_bring_up.refusal(_TRANSPORT_POISON, globals()))
     if _TRANSPORT_MODE is not None and _TRANSPORT_MODE != wanted_transport:
         raise MeshAttachError(
             f"this ComfyUI session already brought up a {_TRANSPORT_MODE} mesh; monarch allows "
             f"one transport per process, so switching to {wanted_transport} mode needs a "
             "ComfyUI restart."
         )
-    if use_cluster:
+    if use_cluster:  # the digest is the parsed bytes' own (pinned_cluster_config)
         assert resolved is not None  # noqa: S101  # Narrowed for mypy; guarded above.
-        config = load_cluster_config(resolved)
+        config, cluster_digest = pinned_cluster_config(resolved, load_cluster_config, config_fingerprint, MeshAttachError)
     else:
-        config = local_config(resolved)
+        config, cluster_digest = local_config(resolved), ""
     comfy = _detect_comfy_dir(comfy_dir or config.comfy_dir)
     if use_cluster:
         n_hosts = len(config.hosts)
@@ -438,9 +439,8 @@ def get_mesh(
             config_mtime = os.path.getmtime(resolved)
         except OSError:
             pass
-        # A local mesh consumes [worker_args], so it needs a digest of its own.
-        config_digest = (config_fingerprint(resolved) if use_cluster
-                         else mesh_helpers.local_worker_args_fingerprint(config.worker_args, config.monarch))
+        # A local mesh consumes the [worker_args] its actors read, so it needs a digest of its own.
+        config_digest = cluster_digest or mesh_helpers.local_worker_args_fingerprint(actor_worker_args(config.worker_args), config.monarch)
     key = _mesh_cache_key(config.source, comfy, use_cluster)
     # The provisional claim is releasable until the fail-closed publication
     # immediately before the first native transport/fleet call below.
@@ -452,7 +452,7 @@ def get_mesh(
     primary_error: BaseException | None = None
     try:
         try:
-            mesh_liveness.try_release(_MESHES.get(key))
+            mesh_creation.try_release_all(globals())  # every key's cached and stranded fleet, which admission reads
             with _MESH_CONDITION:
                 mesh_helpers.wait_for_mesh_creation(
                     _MESH_CONDITION, _MESH_CREATING, key, MeshAttachError)
@@ -478,11 +478,7 @@ def get_mesh(
                 elif verdict == "blocked":
                     raise MeshAttachError(mesh_teardown.blocked_refusal(old, "get_mesh"))
                 elif verdict == "unresolved":
-                    raise MeshAttachError(
-                        "the previous fleet's group or process teardown is unconfirmed "
-                        "(dirty, in flight, or its outcome was lost); replacement is unsafe. "
-                        "Reset the Attached mesh; if that reset cannot confirm the stop, restart "
-                        "ComfyUI only after confirming the old workers are gone")
+                    raise MeshAttachError(mesh_teardown.unresolved_refusal(old))
                 changed = old is not None and (
                     (config_digest != getattr(old, "config_fingerprint", ""))
                     or getattr(old, "n_hosts", n_hosts) != n_hosts
@@ -519,17 +515,22 @@ def get_mesh(
             # Admit before recycling: a config edit the driver refuses keeps the working fleet.
             previous_admission = prepare_driver(config)
             if old is not None:
+                driver_exit.refuse_new_call()  # no new stop once the driver is exiting
                 log.info("mesh source/config changed; recycling the previous fleet")
                 try:
-                    old.shutdown(timeout_s=30)  # never under _MESH_LOCK
+                    old.shutdown(timeout_s=30, stop_timeout_s=mesh_teardown.proc_stop_bound_s(),  # never under _MESH_LOCK
+                                 _refuse_at_exit=True)
                 except Exception as exc:
                     restore_driver(previous_admission)  # old stays registered and reusable on a revert
+                    if isinstance(exc, driver_exit.DriverExitingError):
+                        raise  # the stop waited for the lock and the exit began: nothing was stopped
                     raise MeshAttachError(
                         "configuration changed, but old workers could not be stopped safely; reset "
                         "the Attached mesh, or restart ComfyUI once they are confirmed gone") from exc
                 with _MESH_LOCK:
                     if _MESHES.get(key) is old:
                         _MESHES.pop(key, None)
+            residency_doors.announce(residency_doors.REPLACED if old is not None else residency_doors.UNLOADED)
             src = _src_pythonpath()
             os.environ["DGXM_PYTHONPATH"] = src
             client_lease.plant_driver_marker()  # so the CLI sweep can see the owner
@@ -550,9 +551,10 @@ def get_mesh(
                 if _TRANSPORT_POISON is None:
                     _TRANSPORT_POISON = spawn_poison
                 transport_releasable = not use_cluster and not exc.local_transport_initialized
-                if transport_releasable and _TRANSPORT_POISON is spawn_poison:
+                settled = use_cluster and mesh_factory.left_nothing_running(fleet_handoff, exc)
+                if (transport_releasable or settled) and _TRANSPORT_POISON is spawn_poison:
                     _TRANSPORT_POISON = None
-                elif not transport_releasable:
+                elif not (transport_releasable or settled):
                     _TRANSPORT_POISON = f"actor spawn failed: {exc.original_text}" + (f"; rollback failed: {exc.cleanup_text}" if exc.cleanup is not None else "")
                 exc.raise_cancellation()
                 raise MeshAttachError(
@@ -582,9 +584,8 @@ def get_mesh(
             unsafe_attach = (fleet_handoff.attach_in_progress
                              and not fleet_handoff.transport_failure_safe)
             if _TRANSPORT_POISON is None and (unsafe_attach or fleet_handoff.spawn_in_progress):
-                _TRANSPORT_POISON = ("cluster attach result handoff interrupted"
-                                     if unsafe_attach else
-                                     "actor spawn failed; cleanup state unavailable")
+                _TRANSPORT_POISON = ("cluster attach result handoff interrupted" if unsafe_attach
+                                     else failed_bring_up.spawn_failure_poison(fleet_handoff, primary))
             blocked = handle.replacement_blocked if handle is not None and not handle.teardown_complete else None
             fleet = fleet if fleet is not None else fleet_handoff.fleet
             owned_procs = (
@@ -602,8 +603,7 @@ def get_mesh(
             blocked = blocked or ("ProcMesh spawn callback cleanup is unconfirmed" if fleet_handoff.callback_cleanup_unconfirmed else None)
             if blocked:
                 _TRANSPORT_POISON = "mesh creation failed; owned ProcMesh cleanup unconfirmed"
-                blocked_text = mesh_factory.safe_failure_evidence(blocked)
-                mesh_teardown.publish_creation_block(handle, blocked_text)
+                blocked_text = mesh_teardown.publish_creation_block(handle, mesh_factory.safe_failure_evidence(blocked))
                 primary_text = mesh_factory.safe_failure_evidence(primary)
                 mesh_factory.safe_note(primary, f"owned ProcMesh cleanup after mesh creation failed: {blocked_text}")
                 _TRANSPORT_POISON = (f"mesh creation failed ({primary_text}); owned "
@@ -632,11 +632,10 @@ def ensure_live(
     handle: MeshHandle, *,
     mesh_preflight: mesh_helpers.MeshPreflight | None = None,
 ) -> MeshHandle:
-    """Swap a defunct handle for a fresh mesh on the same config.
-
-    ComfyUI caches node outputs, so a MeshSpec built before a worker death
-    keeps referencing the evicted handle; routing through here lets a
-    re-queue heal instead of wedging until a ComfyUI restart."""
+    """Swap a defunct handle for a fresh mesh on the same config: ComfyUI caches
+    node outputs, so a MeshSpec built before a worker death keeps referencing the
+    evicted handle, and routing through here heals a re-queue without a restart."""
+    driver_exit.hold_at_entry(handle)  # at exit: before the liveness probe and any lock
     mesh_liveness.try_release(handle)
     verdict = _coherent_lifecycle_verdict(handle)
     if verdict in ("blocked", "unresolved"):
@@ -682,9 +681,8 @@ def _raise_released_attach(addresses, exc, *, auto_heal: bool, restarted=None, *
         MeshAttachError, addresses, exc, auto_heal=auto_heal, restarted=restarted, **detail)
 
 
-@atexit.register
-def _shutdown_all() -> None:
-    handles = {**_MESH_PENDING, **_MESHES}
-    mesh_helpers.shutdown_all(handles, log)
-    _MESH_PENDING.clear()
-    _MESHES.clear()
+# No exit hook of its own: at a normal interpreter exit, Monarch's own hook,
+# registered when its client starts and so run first, stops every mesh the
+# driver owns, Workers' actors included (meta-pytorch/monarch#5152, #5070). A
+# stop of ours after it could only fail against the closed client
+# (tests/test_exit_clean.py).

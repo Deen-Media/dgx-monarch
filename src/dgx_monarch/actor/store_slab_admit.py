@@ -50,13 +50,16 @@ def _floor_phrase(fit: SlabFit, reserve_bytes: int | None) -> str:
         # A reserve the absolute floor charged over is still a figure the
         # operator set, and a card that never mentions it reads as a host that
         # never read the setting. Either the arena cap clipped a large reserve
-        # under the floor or the floor outranked a small one; both name it.
+        # under the floor or the floor outranked a small one; both name it,
+        # each in words true of its own order of the two figures.
         clipped = ""
-        if reserve and reserve != fit.floor_bytes:
-            became = ("which the arena cap clipped under it"
-                      if reserve > fit.floor_bytes else "which it outranks")
-            clipped = (f", above the {capacity_fit.gib(reserve)} GiB this host "
-                       f"reserves (uma_reserve_gb), {became}")
+        reserve_gib = capacity_fit.gib(reserve)
+        if reserve and reserve > fit.floor_bytes:
+            clipped = (f", charged because the arena cap clipped the {reserve_gib} GiB "
+                       "this host reserves (uma_reserve_gb) under it")
+        elif reserve and reserve < fit.floor_bytes:
+            clipped = (f", above the {reserve_gib} GiB this host reserves "
+                       "(uma_reserve_gb), which it outranks")
         return (f"plus a {fit.floor_gib} GiB floor for the rest of the box{clipped}, "
                 "below which ComfyUI stops keeping a model whole and offloads "
                 "part of the weights mid-render")
@@ -108,9 +111,12 @@ def _stock_comparison(fit: SlabFit) -> str:
             "stack's bake is what pushes this slab price above it. ")
 
 
-def card(fit: SlabFit, unet_name: str, host: str, *,
+def card(fit: SlabFit, unet_name: str, *,
          reserve_bytes: int | None = None, fsdp_lever: bool = False) -> str:
-    """Explain why this host cannot fit the slab load and what would fit.
+    """Explain why this box cannot fit the slab load and what would fit.
+
+    The sentence says "here", never a host: the driver puts the box ahead of
+    it (``worker_box.py``).
 
     Compare the stock requirement too: switching slab off must not look like a
     remedy when it would require more memory.
@@ -118,7 +124,7 @@ def card(fit: SlabFit, unet_name: str, host: str, *,
     options = [_FREE_MEMORY, _PRUNE]
     tail = (", " + _FSDP_LEVER) if fsdp_lever else ""
     return (
-        f"slab residency cannot load {unet_name} on {host}: the zero-copy slab "
+        f"slab residency cannot load {unet_name} here: the zero-copy slab "
         "holds the checkpoint's own bytes in shared memory, so this load needs "
         f"{fit.required_gib} GiB (a {fit.size_gib} GiB file "
         f"{_floor_phrase(fit, reserve_bytes)}{_lora_phrase(fit)}) and only "
@@ -147,20 +153,23 @@ def rescue_blocker(fit: SlabFit, *, fsdp_lever: bool = False) -> tuple[str, str]
     )
 
 
-def admit(fit: SlabFit, unet_name: str, host: str, *,
-          reserve_bytes: int | None = None, fsdp_lever: bool = False) -> None:
+def admit(fit: SlabFit, unet_name: str, *,
+          reserve_bytes: int | None = None, fsdp_lever: bool = False,
+          tail: str = "") -> None:
     """Admit a fitting or skipped slab probe; otherwise raise its capacity refusal.
 
     A skipped probe has no evidence of insufficient capacity and follows the
     same admission rule as ``store_residency.preload_capacity_check``. Both slab
-    load checks share this function, guard, and error text.
+    load checks share this function, guard, and error text. ``tail`` is the
+    ladder's sentence about memory an earlier load left in this Worker
+    (``actor_footprint.ladder_clause``).
     """
     if not fit.applies or fit.fits:
         return
     raise StockLoadCapacityError(
         refusal(RefusalClass.CAPACITY,
-                card(fit, unet_name, host, reserve_bytes=reserve_bytes,
-                     fsdp_lever=fsdp_lever),
+                card(fit, unet_name, reserve_bytes=reserve_bytes,
+                     fsdp_lever=fsdp_lever) + tail,
                 guard=GUARD, waivable=False, troubleshooting=_TROUBLESHOOTING)
         + _measured_tail(fit))
 
@@ -191,7 +200,7 @@ def _patched_live_bytes(active) -> int:
     return total
 
 
-def admit_bake(active, unet_name: str, host: str, floor_bytes: int | None = None) -> None:
+def admit_bake(active, unet_name: str, floor_bytes: int | None = None) -> None:
     """The exact backstop before a slab-resident bake, ``_build_active``'s own
     patch set against the floor the slab price charged (``capacity_fit.slab_floor_bytes``,
     so a configured ``uma_reserve_gb`` holds here too), one moment before
@@ -214,7 +223,7 @@ def admit_bake(active, unet_name: str, host: str, floor_bytes: int | None = None
         return
     raise StockLoadCapacityError(refusal(
         RefusalClass.CAPACITY,
-        f"the LoRA bake for {unet_name} cannot proceed on {host}: comfy's "
+        f"the LoRA bake for {unet_name} cannot proceed here: comfy's "
         "merge-and-free leaves a device-side duplicate of every patched key "
         f"until the slab reabsorbs it, and the exact patched set needs "
         f"{capacity_fit.gib(required)} GiB (a {capacity_fit.gib(patched)} GiB "

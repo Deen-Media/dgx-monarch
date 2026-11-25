@@ -2,8 +2,16 @@
 
 Platform operations are injected through UpdateOps. A timeout during stop,
 activation or driver-pin promotion leaves the outcome unknown; do not roll
-back, restart or clean up after it. One containment stop is allowed only if
-target startup was confirmed and the recorded generation still matches.
+back, restart or clean up after it. (An unanswered activation is first read
+back under its own locks: ReleaseManager.activate_workers.) One containment
+stop is allowed only if target startup was confirmed and the recorded
+generation still matches.
+
+A definite failure after target start restores the prior release, and only
+after the stop of every new Worker is confirmed. Besides a failed check, two
+smoke outcomes count as such a failure (FAILURE_CAUSES): checks that passed
+with an unconfirmed cleanup of the smoke's own ProcMesh, and a smoke killed by
+a signal. A smoke that lost its evidence stays unknown.
 """
 from __future__ import annotations
 
@@ -12,7 +20,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from .update_end_state import end_sentence
 from .update_receipt import UpdateReceipt, attach_interrupted_receipt
+from .update_retirement import retire_after_finalize, retirement_status
 from .update_stage_failure import StageFailure, interrupted_stage_cleanup
 from .update_types import (
     DEFAULT_TARGET as DEFAULT_TARGET,
@@ -33,11 +43,34 @@ from .update_types import (
 _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}")
+_COUNT_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 GATE_NOTE = (
     "Gate results tied to the old source lapse. A FAIL stays quarantined within one package version; "
     "a new version expires context-scoped FAILs, so auto_gate=first_use retests them and "
     "auto_gate=off treats them as untested."
 )
+# A FAILED check that no check decided names its cause in the result code
+# (``<check>_<cause>``) and the message. Any other cause reads as plain failed.
+FAILURE_CAUSES = {
+    "cleanup_unconfirmed": "passed its checks but could not confirm the stop of its own ProcMesh",
+    "killed": "was killed by a signal before it reported",
+    "timed_out": "did not report within its time limit and was stopped",
+}
+
+
+def _failure_cause(result: OperationResult) -> str:
+    cause = getattr(result, "cause", "")
+    return cause if isinstance(cause, str) and cause in FAILURE_CAUSES else ""
+
+
+def _result_counts(result: OperationResult) -> Mapping[str, int] | None:
+    counts = getattr(result, "counts", None)
+    if not isinstance(counts, Mapping) or not all(
+        isinstance(name, str) and _COUNT_NAME.fullmatch(name) and type(value) is int and 0 <= value < 2**63
+        for name, value in counts.items()
+    ):
+        return None
+    return dict(counts)
 
 
 @dataclass(frozen=True)
@@ -238,14 +271,16 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
         steps.append(_Step("worker_stop", "succeeded"))
 
         activation = ops.activate(staged)
+        activation_counts = _result_counts(activation)
         if activation.certainty == Certainty.UNKNOWN:
-            steps.append(_Step("activation", "unknown"))
+            steps.append(_Step("activation", "unknown", counts=activation_counts))
             raise _Abort(
                 "activation_unknown",
-                "activation outcome is unknown; the update did not roll back or start workers",
+                "activation could not be read back on one host and no later host was switched; "
+                "the update did not roll back or start workers",
             )
         if activation.certainty == Certainty.FAILED:
-            steps.append(_Step("activation", "failed"))
+            steps.append(_Step("activation", "failed", counts=activation_counts))
             compensation = ops.compensate(staged)
             steps.append(_Step("compensation", _operation_status(compensation)))
             if compensation.certainty == Certainty.SUCCEEDED:
@@ -256,13 +291,10 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
                 if restored.certainty == Certainty.FAILED:
                     stopped_again = _attempt(lambda: ops.stop_started_workers(staged))
                     steps.append(_Step("fail_closed_stop", _operation_status(stopped_again)))
-            compensation_note = (
-                "activation failed; definite changes were compensated"
-                if compensation.certainty == Certainty.SUCCEEDED
-                else "activation failed and compensation was not confirmed"
-            )
-            raise _Abort("activation_failed", compensation_note)
-        steps.append(_Step("activation", "succeeded"))
+            raise _Abort("activation_failed", "activation failed" + (
+                "; the hosts it reached were compensated" if compensation.certainty == Certainty.SUCCEEDED
+                else " and compensation was not confirmed"))
+        steps.append(_Step("activation", "succeeded", counts=activation_counts))
 
         started = ops.start_target_workers(staged)
         if started.certainty == Certainty.UNKNOWN:
@@ -293,10 +325,16 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
                     f"{name} outcome is unknown; the update did not roll back",
                 )
             if check.certainty == Certainty.FAILED:
-                steps.append(_Step(name, "failed"))
+                cause = _failure_cause(check)
+                steps.append(_Step(name, "failed", notes=(cause,) if cause else ()))
                 target_settlement_attempted = True
                 settled = _restore_prior_release(ops, staged, steps)
                 cleanup_allowed = settled
+                if cause:
+                    raise _Abort(
+                        f"{name}_{cause}",
+                        f"{name} {FAILURE_CAUSES[cause]}, so it did not verify the activated release",
+                    )
                 raise _Abort(f"{name}_failed", f"{name} did not verify the activated release")
             steps.append(_Step(name, "succeeded"))
 
@@ -345,6 +383,8 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
         steps.append(_Step("finalize", "succeeded"))
         cleanup_allowed = True
         code, message, exit_code, terminal = "updated", "verified update completed", 0, "succeeded"
+        retired = retire_after_finalize(ops, staged)  # housekeeping: it never changes the outcome
+        steps.append(_Step("release_retirement", retirement_status(retired), counts=_result_counts(retired)))
     except _Abort as exc:
         code, message, exit_code = exc.code, exc.message, exc.exit_code
         terminal = "planned" if exc.code == "cancelled" else (
@@ -430,6 +470,8 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
             "succeeded",
             notes=("recovery artifacts retained for inspection",),
         ))
+    # Where the hosts were left: its own receipt note, so neither note is cut short.
+    ending = (end_sentence(steps),) if mutation_started and code != "updated" else ()
 
     source = (
         staged.source_manifest
@@ -443,7 +485,7 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
     try:
         receipt = receipt_builder.finish(
             steps, terminal, target=target, source=source,
-            notes=((code if code == "driver_pin_drift" else message), GATE_NOTE) + (
+            notes=((code if code == "driver_pin_drift" else message), *ending, GATE_NOTE) + (
                 ("Privileged process inspection was required for activity guards.",)
                 if getattr(ops, "privileged_process_inspection", False) is True else ())
         )
@@ -454,4 +496,4 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
     if pending_base is not None:
         attach_interrupted_receipt(pending_base, receipt)
         raise pending_base
-    return UpdateResult(exit_code=exit_code, code=code, message=message, receipt=receipt)
+    return UpdateResult(exit_code=exit_code, code=code, message=". ".join((message, *ending)), receipt=receipt)

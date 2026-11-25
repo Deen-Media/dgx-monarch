@@ -35,7 +35,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from . import mesh_safety
+from . import box_names, mesh_safety
 from .adapters.fsdp import fsdp_required_bytes
 from .loader_options import weight_dtype_from_options
 from .log import get_logger
@@ -85,6 +85,8 @@ class ReloadPrice:
     # The leanest rank's resident shard pool, which the proof drops before
     # this load. Last, so the positional constructors keep their meaning.
     credit_bytes: int = 0
+    # The leanest rank in plain words (box_names.py), for the refusal's sentence.
+    box: str = ""
 
     @staticmethod
     def no_claim(reason: str) -> ReloadPrice:
@@ -181,9 +183,14 @@ def _rank_credit_bytes(row: Any, share_bytes: int) -> int:
     """The resident shard pool this rank's next unload drops, in bytes.
 
     Torch reserved less the rounding margin, capped at one share. A missing,
-    None, boolean, negative or non-numeric reading credits 0.
+    None, boolean, negative or non-numeric reading credits 0, and so does a
+    stale one: a Worker whose GPU thread was busy answers with the figures of
+    an earlier moment (actor/worker_status.device_figures), which may name a
+    pool it has since given back.
     """
     vram = row.get("vram") if isinstance(row, Mapping) else None
+    if isinstance(vram, Mapping) and vram.get("stale"):
+        return 0
     value = vram.get("reserved_gib") if isinstance(vram, Mapping) else None
     if share_bytes <= 0 or isinstance(value, bool) or not isinstance(value, int | float):
         return 0
@@ -261,8 +268,10 @@ def price_fsdp_clean_reload(handle: Any, model_request: Mapping[str, Any]) -> Re
     rank, available, credit = leanest
     kind = checkpoint_kind(str(model_request.get("unet_name") or ""))
     required = fsdp_required_bytes(size, world, kind)
+    labels = box_names.fleet_labels(handle, int(world)) if isinstance(world, int) else []
     price = ReloadPrice(True, required <= available + credit, size, required,
-                        available, rank, credit_bytes=credit)
+                        available, rank, credit_bytes=credit,
+                        box=labels[rank] if 0 <= rank < len(labels) else "")
     # Log both outcomes. If the price logged only on a refusal, a price that
     # fits would look like one that made no claim, and the per-rank numbers
     # would exist only for proofs that failed. Keep the text up to "leaving"
@@ -294,6 +303,19 @@ def capacity_classification(exc: BaseException) -> str:
     if tag is None:
         return f"{name}/untagged"
     return f"{name}/class-{tag.refusal_class.value} guard={tag.guard or 'none'}"
+
+
+def classification_class(detail: object) -> str | None:
+    """The refusal class one :func:`capacity_classification` value names.
+
+    None for an untagged, malformed or missing value, so a reader that needs a
+    typed refusal fails closed on anything this module did not write.
+    """
+    if not isinstance(detail, str):
+        return None
+    _name, marker, rest = detail.partition("/class-")
+    named = rest.split(" ", 1)[0] if marker else ""
+    return named if named in {member.value for member in RefusalClass} else None
 
 
 def operator_sentence(
@@ -329,7 +351,7 @@ def operator_sentence(
         RefusalClass.CAPACITY,
         f"the FSDP clean-reload proof for {unet_name} needs one more load of "
         f"the {price.checkpoint_gib:.1f} GiB checkpoint, about "
-        f"{price.required_gib:.1f} GiB, but rank {price.rank} reports only "
+        f"{price.required_gib:.1f} GiB, but {price.box or 'the leanest box'} reports only "
         f"{price.mem_available_gib:.1f} GiB of unified memory available plus "
         f"{price.credit_gib:.1f} GiB of resident shards the proof drops first. "
         f"{middle}{counted}"

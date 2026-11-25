@@ -63,7 +63,11 @@ def _free_driver_models(level: str) -> dict:
     before = psutil.virtual_memory().available
     unloaded = False
     if level == "hard":
-        mm.unload_all_models()
+        # The driver's own unload, ComfyUI's /free sequence: where a model left, no
+        # earlier loader charge stands for it, so it also empties that memo.
+        from ..driver_unload import held_models, unload
+
+        unload(mm, held_models(mm))
         unloaded = True
     mm.soft_empty_cache()
     after = psutil.virtual_memory().available
@@ -140,6 +144,10 @@ class DGXMonarchClearVRAM:
                         f"({outcome.status.value}: {outcome.detail})")
         else:
             results = {"workers": handle.call_all("clear_vram", level, timeout_s=300)}
+            if level == "hard":  # an operator's drop: every resident model went, and the
+                from . import recycle_drain  # loader node's placement with it
+
+                recycle_drain.note_dropped()
         if include_driver and (level != "recycle" or outcome.ok):
             results["driver"] = _free_driver_models("hard" if level == "recycle" else level)
         elif include_driver:

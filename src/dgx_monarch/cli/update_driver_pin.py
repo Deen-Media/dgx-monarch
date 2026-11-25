@@ -1,8 +1,8 @@
 """Exact torchmonarch pin change for the driver interpreter.
 
-The prior and target wheels are downloaded and each installed into its own
-private site before the live interpreter is touched; the live install then
-runs offline from those wheels. Metadata and payload checks never import torchmonarch.
+The prior and target wheels (one wheel for an unchanged pin) are downloaded and installed into private sites
+before the live interpreter is touched; the live install then runs offline from them, and is skipped for an
+unchanged pin, whose live install was just proved exact. Metadata and payload checks never import torchmonarch.
 """
 from __future__ import annotations
 
@@ -240,9 +240,10 @@ def _scan_tree(site: Path, expected: Mapping[str, str]) -> Mapping[str, str]:
             if current.name.endswith(".pyc"):
                 continue
             found[relative.as_posix()] = _hash_file(current)
-    for name in foreign_namespace_files(site, expected, found):
+    shared: dict[str, str] = {}  # vouched shared paths, counted at the pinned hash
+    for name in foreign_namespace_files(site, expected, found, shared=shared):
         del found[name]
-    return found
+    return found | shared
 
 
 def _dependency_contract(payload: bytes, pin: str) -> dict:
@@ -321,7 +322,7 @@ class DriverPinTransition:
         self._root = stage
         try:
             prior = self._prepare_artifact(stage / "prior", prior_pin)
-            target = self._prepare_artifact(stage / "target", target_pin)
+            target = prior if target_pin == prior_pin else self._prepare_artifact(stage / "target", target_pin)
             self._prior, self._target = prior, target
         except BaseException as error:
             self._root = None
@@ -428,11 +429,11 @@ class DriverPinTransition:
         try:
             if prior is None or target is None or not self._artifact_ready_pair() or not self._live_matches(prior):
                 return OperationResult(Certainty.UNKNOWN)
-            result = self._install_live(target.wheel)
+            result = None if target is prior else self._install_live(target.wheel)
             target_matches = self._live_matches(target)
-            if result.returncode == 0 and target_matches:
+            if (result is None or result.returncode == 0) and target_matches:
                 return OperationResult(Certainty.SUCCEEDED)
-            if result.returncode != 0 and not target_matches and self._live_matches(prior):
+            if result is not None and result.returncode != 0 and not target_matches and self._live_matches(prior):
                 return OperationResult(Certainty.FAILED)
         except Exception:
             pass

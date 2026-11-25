@@ -19,6 +19,7 @@ from dgx_monarch.adapters.qwen_image21 import (
     prefix_cache_is_exact,
     validate_reference_count,
 )
+from rank_exit_helpers import leave
 
 
 def test_native_attention_container_is_taken_but_tensor_path_is_unchanged(monkeypatch):
@@ -361,6 +362,7 @@ def _gloo_qwen21_worker(rank, init_file, result_file):
     if rank == 0:
         Path(result_file).write_text(repr(answers))
     dist.destroy_process_group()
+    leave()
 
 
 def test_tiny_pinned_comfy_qwen21_injected_two_rank_gloo_cpu():
@@ -485,6 +487,7 @@ def _gloo_qwen21_cache_worker(rank, init_file, result_file, cache_dtype, agreeme
             tuple(row.tolist()) for row in cohort_trace))
         Path(result_file).write_text(repr(result))
     dist.destroy_process_group()
+    leave()
 
 
 @pytest.mark.parametrize("cache_dtype", ["default", "int8", "int4"])

@@ -147,6 +147,10 @@ class FakeOps:
         self._event("finalize")
         return self.finalize_result
 
+    def retire_releases(self, staged: StagedRelease) -> OperationResult:
+        self._event("retire")
+        return OK
+
     def cleanup_stage(self, staged: StagedRelease) -> OperationResult:
         self._event("cleanup")
         return self.cleanup_result
@@ -178,6 +182,7 @@ def test_success_obeys_exact_order_and_rechecks_immediately_before_stop():
         "readback",
         "commit_driver",
         "finalize",
+        "retire",
         "cleanup",
     ]
     assert result.receipt["status"] == "succeeded"
@@ -512,6 +517,201 @@ def test_failed_smoke_quarantines_without_readback():
     assert result.receipt["status"] == "failed"
     assert ops.events.count("stop") == 2
     assert "readback" not in ops.events
+
+
+def test_an_unknown_activation_records_each_hosts_count_and_names_the_repair():
+    ops = FakeOps()
+    ops.activation = OperationResult(
+        Certainty.UNKNOWN, counts={"hosts_switched": 0, "hosts_unknown": 1, "hosts_not_reached": 1})
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == "activation_unknown"
+    assert "different releases" in result.message and "TROUBLESHOOTING entry 118" in result.message
+    step = next(item for item in result.receipt["steps"] if item["name"] == "activation")
+    assert step["status"] == "unknown"
+    assert step["counts"] == {"hosts_not_reached": 1, "hosts_switched": 0, "hosts_unknown": 1}
+    assert "compensate" not in ops.events and ops.events.count("start_no_sync") == 0
+
+
+def test_an_unknown_activation_after_a_switched_host_names_only_the_forward_repair():
+    """A host already on the new release rules out `dgxm up` as the repair."""
+    ops = FakeOps()
+    ops.activation = OperationResult(
+        Certainty.UNKNOWN, counts={"hosts_switched": 1, "hosts_unknown": 1, "hosts_not_reached": 0})
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    end = _end(result)
+    assert result.code == "activation_unknown"
+    assert end.startswith("At least one host runs the new release") and "TROUBLESHOOTING entry 118" in end
+    assert "`dgxm up`" not in end
+
+
+def _end(result) -> str:
+    return result.message.split(". ", 1)[1]
+
+
+def test_a_failed_activation_whose_compensation_is_unconfirmed_says_the_pair_may_be_split():
+    ops = FakeOps()
+    ops.activation = OperationResult(
+        Certainty.FAILED, counts={"hosts_switched": 1, "hosts_failed": 1, "hosts_not_reached": 0})
+    ops.compensation = UNKNOWN
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == "activation_failed" and result.receipt["status"] == "partial"
+    end = _end(result)
+    assert "may run different releases" in end and "every Worker stopped" in end
+    assert "`dgxm up`" in end and "TROUBLESHOOTING entry 118" in end
+
+
+def test_a_restored_release_whose_workers_did_not_all_start_names_dgxm_up():
+    ops = FakeOps()
+    ops.activation = FAIL
+    ops.start_results = [UNKNOWN]
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == "activation_failed"
+    end = _end(result)
+    assert "back on the old release" in end and "not every Worker runs" in end and "`dgxm up`" in end
+    assert "compensated" in result.message.split(". ", 1)[0]
+
+
+@pytest.mark.parametrize(("configure", "code", "words"), [
+    (lambda ops: (setattr(ops, "start_results", [FAIL]), setattr(ops, "compensation", UNKNOWN)),
+     "start_failed", "may run different releases"),
+    (lambda ops: (setattr(ops, "smoke_result", OperationResult(Certainty.FAILED, "killed")),
+                  setattr(ops, "start_results", [OK, UNKNOWN])),
+     "cluster_smoke_killed", "not every Worker runs"),
+    (lambda ops: (setattr(ops, "doctor_result", FAIL), setattr(ops, "stop_results", [OK, UNKNOWN])),
+     "doctor_failed", "its Worker may still run"),
+    (lambda ops: setattr(ops, "smoke_result", FAIL), "cluster_smoke_failed", "runs the old release again"),
+    (lambda ops: setattr(ops, "stop_results", [UNKNOWN]), "stop_unknown", "Nothing was activated"),
+    (lambda ops: setattr(ops, "activation", UNKNOWN), "activation_unknown", "may run different releases"),
+    (lambda ops: setattr(ops, "start_results", [UNKNOWN]), "start_unknown", "its Worker may still run"),
+    (lambda ops: setattr(ops, "doctor_result", UNKNOWN), "doctor_unknown", "its Worker stopped"),
+    (lambda ops: setattr(ops, "finalize_result", UNKNOWN), "finalize_unknown", "every Worker run the new release"),
+])
+def test_every_end_state_says_where_the_hosts_are_and_the_repair(configure, code, words):
+    """The last sentence names each host's release, whether its Worker runs, and the repair."""
+    ops = FakeOps()
+    configure(ops)
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == code
+    end = _end(result)
+    assert words in end, end
+    # The sentence is its own receipt note and survives the 240-character note limit whole.
+    assert result.receipt["notes"][1] == end and len(end) <= 240
+    assert ("`dgxm up`" in end or "TROUBLESHOOTING entry 118" in end or "rerun the update" in end
+            or "new release" in end)
+
+
+def test_the_longest_end_sentence_fits_one_receipt_note():
+    from dgx_monarch.cli.receipt_sanitize import sanitize_note
+    from dgx_monarch.cli.update_end_state import END_STATES
+
+    for text in END_STATES.values():
+        sentence = "The restore was not confirmed. " + text
+        assert sanitize_note(sentence) == sentence, sentence
+
+
+def test_a_restore_that_fell_short_says_so_before_where_the_hosts_are():
+    unconfirmed = FakeOps()
+    unconfirmed.start_results = [FAIL]
+    unconfirmed.compensation = UNKNOWN
+    smoke = FakeOps()
+    smoke.smoke_result = OperationResult(Certainty.FAILED, "killed")
+    smoke.start_results = [OK, UNKNOWN]
+    restored = FakeOps()
+    restored.smoke_result = FAIL
+
+    for ops, code in ((unconfirmed, "start_failed"), (smoke, "cluster_smoke_killed")):
+        result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+        assert result.code == code
+        assert _end(result).startswith("The restore was not confirmed. ")
+    result = execute_verified_update(UpdateRequest(assume_yes=True), restored)
+    assert "was not confirmed" not in result.message and "runs the old release again" in result.message
+
+
+@pytest.mark.parametrize(("answer", "status"), [
+    (OperationResult(Certainty.SUCCEEDED, counts={"releases_retired": 2, "releases_not_retired": 0}), "succeeded"),
+    (OperationResult(Certainty.SUCCEEDED, counts={"releases_retired": 1, "releases_not_retired": 1}), "partial"),
+    (OperationResult(Certainty.UNKNOWN, counts={"releases_retired": 0, "hosts_retire_unconfirmed": 1}), "unknown"),
+    (KeyboardInterrupt(), "unknown"),
+    (RuntimeError("host=worker-01"), "unknown"),
+])
+def test_retirement_is_its_own_step_after_finalize_and_never_changes_the_outcome(answer, status):
+    ops = FakeOps()
+    events = []
+
+    def retire_releases(staged):
+        events.append("retire")
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    ops.retire_releases = retire_releases  # type: ignore[attr-defined]
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == "updated" and result.exit_code == 0 and result.receipt["status"] == "succeeded"
+    names = _step_names(result)
+    assert names.index("release_retirement") == names.index("finalize") + 1
+    step = next(item for item in result.receipt["steps"] if item["name"] == "release_retirement")
+    assert step["status"] == status and events == ["retire"]
+    assert "cleanup" in ops.events
+
+
+def test_activation_counts_that_are_not_plain_counts_are_left_out():
+    ops = FakeOps()
+    ops.activation = OperationResult(Certainty.SUCCEEDED, counts={"host worker-01": 1})
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    step = next(item for item in result.receipt["steps"] if item["name"] == "activation")
+    assert result.code == "updated" and step["counts"] == {}
+
+
+@pytest.mark.parametrize(("check", "cause", "words"), [
+    ("cluster_smoke", "cleanup_unconfirmed", "could not confirm the stop of its own ProcMesh"),
+    ("cluster_smoke", "killed", "killed by a signal"),
+    ("cluster_smoke", "timed_out", "did not report within its time limit"),
+    ("doctor", "killed", "killed by a signal"),
+    ("doctor", "timed_out", "did not report within its time limit"),
+])
+def test_a_named_check_failure_restores_the_prior_release_and_says_why(check: str, cause: str, words: str):
+    ops = FakeOps()
+    setattr(ops, "smoke_result" if check == "cluster_smoke" else "doctor_result",
+            OperationResult(Certainty.FAILED, cause))
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == f"{check}_{cause}"
+    assert words in result.message and words in result.receipt["notes"][0]
+    assert "runs the old release again" in result.message
+    assert result.receipt["status"] == "failed"
+    assert ops.events.count("stop") == 2
+    assert ops.events.count("start_no_sync") == 2
+    assert "compensate" in ops.events and "readback" not in ops.events
+    step = next(item for item in result.receipt["steps"] if item["name"] == check)
+    assert step["status"] == "failed" and step["notes"] == [cause]
+    restored = next(item for item in result.receipt["steps"] if item["name"] == "prior_release_start")
+    assert restored["status"] == "succeeded"
+
+
+def test_an_unrecognized_failure_cause_reads_as_a_plain_failure():
+    ops = FakeOps()
+    ops.smoke_result = OperationResult(Certainty.FAILED, "host worker-01 at /private")
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == "cluster_smoke_failed"
+    step = next(item for item in result.receipt["steps"] if item["name"] == "cluster_smoke")
+    assert step["notes"] == []
 
 
 @pytest.mark.parametrize("check", ["doctor", "cluster_smoke"])
@@ -915,3 +1115,87 @@ def test_privileged_inspection_receipt_records_selection_without_claiming_succes
     assert result.succeeded is clear
     if not clear:
         assert "stop" not in ops.events
+
+
+# The receipts TROUBLESHOOTING entry 118 reads for operation_exception and
+# operation_interrupted: the last step before the ones the update adds as it
+# settles, and those closing steps, for each place a failure can land after the
+# Worker stop began.
+_CLOSING = {"fail_closed_stop", "stage_cleanup", "stage_retention"}
+
+
+def _tail(receipt: dict) -> tuple[tuple[str, str], list[str]]:
+    steps = [(step["name"], step["status"]) for step in receipt["steps"]]
+    end = len(steps)
+    while end and steps[end - 1][0] in _CLOSING:
+        end -= 1
+    return steps[end - 1], [name for name, _status in steps[end:]]
+
+
+@pytest.mark.parametrize(("setup", "raise_at", "last", "closing"), [
+    ({}, "stop", ("pre_stop_recheck", "succeeded"), ["stage_retention"]),
+    ({}, "activate", ("worker_stop", "succeeded"), ["stage_retention"]),
+    ({"activation": FAIL}, "compensate", ("activation", "failed"), ["stage_retention"]),
+    ({"activation": FAIL}, "start_no_sync", ("compensation", "succeeded"), ["stage_retention"]),
+    ({}, "start_no_sync", ("activation", "succeeded"), ["stage_retention"]),
+    ({}, "doctor", ("worker_start", "succeeded"), ["fail_closed_stop", "stage_retention"]),
+    ({}, "cluster_smoke", ("doctor", "succeeded"), ["fail_closed_stop", "stage_retention"]),
+    ({}, "readback", ("cluster_smoke", "succeeded"), ["fail_closed_stop", "stage_retention"]),
+])
+def test_an_exception_after_the_stop_began_leaves_the_steps_the_partial_section_reads(
+        setup, raise_at, last, closing):
+    """An exception inside the stop leaves pre_stop_recheck last and no
+    worker_stop; inside the compensation after a failed activation it leaves
+    the failed activation last. The settling steps always close the list."""
+    ops = FakeOps()
+    for name, value in setup.items():
+        setattr(ops, name, value)
+    ops.raise_at = raise_at
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert (result.code, result.receipt["status"]) == ("operation_exception", "partial")
+    assert _tail(result.receipt) == (last, closing)
+    if raise_at == "stop":
+        assert "worker_stop" not in _step_names(result) and "activate" not in ops.events
+
+
+def _interrupt_at(ops: FakeOps, name: str, occurrence: int = 1) -> KeyboardInterrupt:
+    interrupt = KeyboardInterrupt()
+    record = ops._event
+    seen = []
+
+    def event(event_name: str) -> None:
+        record(event_name)
+        if event_name == name:
+            seen.append(event_name)
+            if len(seen) == occurrence:
+                raise interrupt
+
+    ops._event = event  # type: ignore[method-assign]
+    return interrupt
+
+
+@pytest.mark.parametrize(("setup", "at", "occurrence", "last", "closing"), [
+    ({}, "stop", 1, ("pre_stop_recheck", "succeeded"), ["stage_retention"]),
+    ({"activation": FAIL}, "compensate", 1, ("activation", "failed"), ["stage_retention"]),
+    ({"doctor_result": UNKNOWN}, "stop", 2, ("doctor", "unknown"), ["stage_retention"]),
+    ({}, "commit_driver", 1, ("exact_readback", "succeeded"), ["fail_closed_stop", "stage_retention"]),
+    ({}, "finalize", 1, ("driver_commit", "succeeded"), ["stage_retention"]),
+])
+def test_an_interruption_after_the_stop_began_leaves_the_steps_the_partial_section_reads(
+        setup, at, occurrence, last, closing):
+    ops = FakeOps()
+    for name, value in setup.items():
+        setattr(ops, name, value)
+    interrupt = _interrupt_at(ops, at, occurrence)
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert raised.value is interrupt
+    receipt = interrupted_receipt(interrupt)
+    assert receipt is not None and receipt["status"] == "partial"
+    assert _tail(receipt) == (last, closing)
+    if (at, occurrence) == ("stop", 1):
+        assert "worker_stop" not in [step["name"] for step in receipt["steps"]]

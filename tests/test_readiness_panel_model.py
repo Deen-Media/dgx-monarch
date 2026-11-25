@@ -260,6 +260,20 @@ def test_coherent_legacy_mesh_states_keep_their_conservative_meaning():
         "ready", "degraded", "degraded", "ready"]
 
 
+def test_legacy_view_reads_abandoned_samples_as_the_driver_does():
+    """A stopped fleet and the cleanup's own stop do not block; any other abandoned sample does."""
+    base = {"workers": [{"healthy": True}], "render": {"active": False}}
+    stopped, stopping, live = _run_model([
+        {**base, "mesh": {"state": "idle", "verdict": "completed", "abandoned_samples": 1}},
+        {**base, "mesh": {"state": "busy", "verdict": "unresolved", "abandoned_samples": 1,
+                           "busy_phase": "the stop of the previous Worker fleet"}},
+        {**base, "mesh": {"state": "ok", "verdict": "live", "abandoned_samples": 1}},
+    ])
+    assert stopped["rows"][1]["state"] == "idle"
+    assert stopping["rows"][1]["state"] == "active"
+    assert live["rows"][1]["state"] == "blocked"
+
+
 # --- topology and rail lines (web/js/dgx_monarch_fabric_model.js) ----------
 
 FABRIC = Path(__file__).parents[1] / "web/js/dgx_monarch_fabric_model.js"
@@ -596,16 +610,16 @@ def test_the_last_render_line_names_pinned_attention_as_the_driver_describes_it(
     ]
     out = _run_fabric(f"out = {json.dumps(records)}.map(fabric.pinnedAttention);")
     assert out == [describe(record) for record in records]
-    assert out[0] == "pinned: comfy_kitchen_sol tau=0.7 x 40 modules, ran"
+    assert out[0] == "pinned: comfy_kitchen_sol tau=0.7 x 40 modules, kept"
     assert out[3] == ""
-    assert out[4] == ("pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; "
+    assert out[4] == ("pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, kept; "
                       "uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped "
                       "(kernel unavailable on this host)")
-    assert out[5] == "pinned: comfy_kitchen_int8 x 3 modules, ran"
+    assert out[5] == "pinned: comfy_kitchen_int8 x 3 modules, kept"
     line = _run_fabric(
         "out = fabric.lastRenderFacts({topology: 'cfg2', auto_row: 4, sec_per_step: 1.5, "
         f"...{json.dumps(records[0])}}});")
-    assert line == "cfg2 · auto row 4 · 1.5s/it · pinned: comfy_kitchen_sol tau=0.7 x 40 modules, ran"
+    assert line == "cfg2 · auto row 4 · 1.5s/it · pinned: comfy_kitchen_sol tau=0.7 x 40 modules, kept"
 
 
 def test_the_panel_rates_equal_dgxm_tops_for_the_same_two_readings():

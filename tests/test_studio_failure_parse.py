@@ -24,7 +24,9 @@ from dgx_monarch.studio import job_observations
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "studio/src/jobFailure.ts"
-HEADLINE = ("capacity rescue available for flux/dev.safetensors on spark-a: stock residency needs 52.1 GiB "
+# A Worker's own offer as the driver names its box (worker_box.py): the headline
+# Studio shows opens with the box, and the Worker's sentence says "here".
+HEADLINE = ("On the sibling, capacity rescue available for flux/dev.safetensors here: stock residency needs 52.1 GiB "
             "of unified memory and only 40.2 GiB is available.")
 
 

@@ -31,9 +31,10 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from . import scale_rows
 from .attention_patches import assert_usp_attention_patches_safe
 from .base import Adapter, InjectionContext, UnsupportedModelError, sp_gather, usp_options
-from .flux3_adaln_parity import bind_adaln_parity
+from .flux3_adaln_parity import bind_adaln_parity, loads_norm_global
 from .flux3_packing import (
     assert_joint_layout,
     joint_pad_count,
@@ -45,6 +46,13 @@ from .flux3_packing import (
 from .stock_attention import bind_stock_attention
 
 log = get_logger(__name__)
+
+# The sharded blocks' Linears: the image blocks on the image window, the single
+# blocks on the joint window. Their modulation runs before the loops.
+_SCALE_ROLES = scale_rows.by_pattern([
+    (r"content_mode_blocks\.image\.\d+\.\w+", "image"),
+    (r"single_blocks\.\d+\.\w+", "joint"),
+])
 
 # Exact ComfyUI model class; detect.py owns checkpoint discrimination.
 _FLUX3_EXACT = ("Flux3",)
@@ -71,6 +79,30 @@ def _normal(value):
     if isinstance(value, list):
         return [_normal(item) for item in value]
     return value
+
+
+def refuse_unroutable_blocks(blocks) -> None:
+    """Refuse a sharded render whose blocks the fused-norm parity route cannot bind.
+
+    The route is what makes each rank's piece of a span round as stock's call
+    for the whole span does. A stock ``Block.forward`` that no longer reads
+    its ``modulated_norm`` global is a block ComfyUI changed, and nobody has
+    measured what the sharded forward computes on it, so the render refuses
+    at inject on every rank, before any block is bound, as MOSS-Image refuses
+    a tree it does not recognize.
+    """
+    changed = sorted({type(block).__name__ for block in blocks
+                      if not loads_norm_global(type(block).forward)})
+    if changed:
+        raise UnsupportedModelError(refusal(
+            RefusalClass.PHYSICS,
+            f"flux3: this ComfyUI's {', '.join(changed)}.forward no longer reads its "
+            "modulated_norm global, so the fused-norm parity route cannot bind and the "
+            "sharded forward cannot show that it computes what one GPU computes. Use a "
+            "topology without sequence parallelism, such as 'single' (mode=local with "
+            "gpus_per_host=1), or a dgx-monarch release that supports this ComfyUI "
+            "(docs/TROUBLESHOOTING.md #121).",
+        ))
 
 
 class Flux3Adapter(Adapter):
@@ -134,6 +166,8 @@ class Flux3Adapter(Adapter):
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         attn = ctx.usp_attention
         refuse_indivisible_heads(diffusion_model.single_blocks[0].num_heads, ulysses_degree())
+        sharded = [*diffusion_model.content_mode_blocks["image"], *diffusion_model.single_blocks]
+        refuse_unroutable_blocks(sharded)
 
         def usp_forward(self, x, timestep, context=None, ref_latents=None,
                         transformer_options={}, txt_states=None, ref_states=None,
@@ -185,10 +219,13 @@ class Flux3Adapter(Adapter):
             # Stock's image blocks get the options before the block keys are set.
             opts = usp_options(transformer_options, attn, drop_rows=image.drop_rows)
             h = image.tokens
-            for block in self.content_mode_blocks["image"]:
-                comfy.model_prefetch.prefetch_queue_pop(queue, device, block, dtype,
-                                                        malloc_scope="block")
-                h = block(h, image.spans, image.pe, opts, stock_norm_rows=image.norm_rows)
+            # Each window's pad rows stay out of the shared nvfp4 activation scale.
+            with scale_rows.real_rows(_SCALE_ROLES, {
+                    "image": scale_rows.stream((image.orig, h.shape[1]))}):
+                for block in self.content_mode_blocks["image"]:
+                    comfy.model_prefetch.prefetch_queue_pop(queue, device, block, dtype,
+                                                            malloc_scope="block")
+                    h = block(h, image.spans, image.pe, opts, stock_norm_rows=image.norm_rows)
             img = sp_gather(h, image.orig, dim=1)
             # C. The single blocks on a contiguous window of the joint stream.
             joint = shard_stream(torch.cat([img] + [t for t, _m, _i in parts[1:]], dim=1),
@@ -197,11 +234,13 @@ class Flux3Adapter(Adapter):
             opts = usp_options(transformer_options, attn, drop_rows=joint.drop_rows)
             opts["total_blocks"], opts["block_type"] = len(self.single_blocks), "single"
             h = joint.tokens
-            for index, block in enumerate(self.single_blocks):
-                comfy.model_prefetch.prefetch_queue_pop(queue, device, block, dtype,
-                                                        malloc_scope="block")
-                opts["block_index"] = index
-                h = block(h, joint.spans, joint.pe, opts, stock_norm_rows=joint.norm_rows)
+            with scale_rows.real_rows(_SCALE_ROLES, {
+                    "joint": scale_rows.stream((joint.orig, h.shape[1]))}):
+                for index, block in enumerate(self.single_blocks):
+                    comfy.model_prefetch.prefetch_queue_pop(queue, device, block, dtype,
+                                                            malloc_scope="block")
+                    opts["block_index"] = index
+                    h = block(h, joint.spans, joint.pe, opts, stock_norm_rows=joint.norm_rows)
             comfy.model_prefetch.prefetch_queue_pop(queue, device, None, malloc_scope="block")
             # D. Stock's final layer on the gathered image rows.
             h = sp_gather(h, joint.orig, dim=1)
@@ -214,13 +253,8 @@ class Flux3Adapter(Adapter):
             bind_stock_attention(block, "flux3 text early block attention")
         for block in diffusion_model.content_mode_blocks["image_cond"]:
             bind_stock_attention(block, "flux3 reference early block attention")
-        # Bind every block first; all() over a generator would stop at the first miss.
-        sharded = [*diffusion_model.content_mode_blocks["image"], *diffusion_model.single_blocks]
-        routable = [bind_adaln_parity(block) for block in sharded]
-        if not all(routable):
-            log.warning("flux3: stock Block.forward reads no modulated_norm global, so "
-                        "the fused-norm parity route is off and a sharded render can "
-                        "differ from one GPU by a few bf16 steps (docs/ADAPTERS.md)")
+        for block in sharded:  # refuse_unroutable_blocks has proven each one routable
+            bind_adaln_parity(block)
         self.bind(diffusion_model, "_forward", usp_forward)
         log.info("flux3 USP injected: %d image blocks, %d single blocks, sp=%d",
                  len(diffusion_model.content_mode_blocks["image"]),

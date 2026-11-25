@@ -9,6 +9,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .compare import audio_line
 from .matrix import FULL_RENDER_BAR, WAIVED_BAR, load_config, run_matrix_module
 
 COLUMNS = ("cell", "template", "label", "observed", "legs", "cold", "warm", "nrms",
@@ -60,6 +61,11 @@ def build(records: list[dict], session: str) -> dict:
     fault and a full-render number at once, and routing the whole record would
     file the fault here.
 
+    An audio compare is listed apart from the pixel columns: envelope
+    correlation has no calibrated threshold, so it is reported and never
+    scored, and a compare the harness could not make is in the findings list
+    as well, as the CHECK it is.
+
     A waived-render number never reaches the findings list: the class K waiver
     admits that deviation, whether the matrix names the kernel as approximate
     or the leg rendered under a granted class K card, so the runner files it as
@@ -78,8 +84,14 @@ def build(records: list[dict], session: str) -> dict:
     waived = [f"- `{record['cell']['id']}` {row['template']}: {record['waived_render']}"
               for record, row in zip(records, rows, strict=True)
               if record.get("waived_render")]
+    # The nrms and max_abs columns are pixels only. An audio leg's compare is
+    # listed on its own, because no threshold scores it.
+    audio = [f"- `{record['cell']['id']}` {row['template']}: "
+             f"{audio_line((record.get('fidelity') or {})['audio'])}"
+             for record, row in zip(records, rows, strict=True)
+             if isinstance((record.get("fidelity") or {}).get("audio"), dict)]
     return {"session": session, "rows": rows, "findings": findings,
-            "full_render": full_render, "waived": waived,
+            "full_render": full_render, "waived": waived, "audio": audio,
             "pin": records[0].get("pin") if records else {}}
 
 
@@ -105,6 +117,12 @@ def render(payload: dict) -> str:
               "number is the deviation the waiver admits, measured against no floor. None of "
               "them is a check: the render is the PASS and the number is the result.", ""]
     lines += payload.get("waived") or ["- none"]
+    lines += ["", "## audio comparisons", "",
+              "Each audio leg against its reference, apart from the pixel columns above. "
+              "A different file count, sample rate, channel count or length is not "
+              "compared and reads CHECK. Envelope correlation is not a calibrated fidelity "
+              "threshold, so no number here changes a verdict.", ""]
+    lines += payload.get("audio") or ["- none"]
     return "\n".join(lines) + "\n"
 
 

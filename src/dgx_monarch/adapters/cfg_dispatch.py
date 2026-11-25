@@ -22,7 +22,9 @@ from collections.abc import Iterator
 import torch
 
 from ..log import get_logger
-from .base import Adapter, cfg_rank, cfg_world
+from ..refusal import RefusalClass, refusal
+from .attention_patches import assert_cfg_attention_output_patches_safe
+from .base import Adapter, UnsupportedModelError, cfg_rank, cfg_world
 
 log = get_logger(__name__)
 
@@ -220,8 +222,36 @@ def _gather_cond_outputs(local: list, count: int, world: int,
     return [gathered[index] for index in range(count)]
 
 
-def make_cond_dispatch_wrapper(adapter: Adapter):
-    """Build the keyed CALC_COND_BATCH wrapper for `adapter`'s family."""
+def _refuse_split_hook_groups(conds: list, family: str) -> None:
+    """Refuse, class P, a dispatch that runs different hook groups on ranks sharing shards.
+
+    Stock patches each conditioning's hook group (a hook LoRA, say) into the
+    weights before that call (comfy/samplers.py, ``apply_hooks``). Under fsdp
+    the cfg ranks hold one set of weights between them, each rank a shard, so
+    a rank patching its own conditioning's group would leave the gathered
+    weights holding two groups' patches. Read from the cond list every rank
+    holds, before any collective. comfy keys hook groups by identity.
+    """
+    groups = [item.get("hooks") for item in _present_conds(conds)]
+    if all(group is None for group in groups) or all(group is groups[0] for group in groups):
+        return
+    raise UnsupportedModelError(refusal(
+        RefusalClass.PHYSICS,
+        f"{family}: cfg-parallel with fsdp would run conditionings that carry different "
+        "conditioning hook groups (weight-patching hooks such as a hook LoRA) on different "
+        "ranks. Under fsdp the ranks share one set of sharded weights, so each rank patching "
+        "its own group would mix the two patches in every rank's weights. Run this workflow "
+        "on cfg2 without fsdp, on a uly* topology, or on topology 'single' (mode=local with "
+        "gpus_per_host=1).",
+    ))
+
+
+def make_cond_dispatch_wrapper(adapter: Adapter, *, sharded_weights: bool = False):
+    """Build the keyed CALC_COND_BATCH wrapper for `adapter`'s family.
+
+    ``sharded_weights`` is true under fsdp, where the cfg ranks share one set
+    of weight shards (``_refuse_split_hook_groups``).
+    """
     key = getattr(adapter, "cfg_batch_constant", None)
 
     def cond_dispatch_wrapper(executor, *args, **kwargs):
@@ -238,6 +268,19 @@ def make_cond_dispatch_wrapper(adapter: Adapter):
             return executor(*bound.args, **bound.kwargs)
 
         _record_path("dispatch")
+        if sharded_weights:
+            _refuse_split_hook_groups(conds, getattr(adapter, "family", "model"))
+        if any(len(entry) > 1 for entry in conds if entry):
+            # One entry per slot is stock's own split: each rank runs one of
+            # the calls stock runs, so an output hook sees what it sees on one
+            # GPU. A slot of several entries lets stock batch one of them with
+            # the other slot's entry while a third forces separate calls; the
+            # contiguous groups below would split that batch, so a hook that
+            # compares conditions refuses, as on the slice path.
+            transformer_options = (bound.arguments.get("model_options") or {}).get(
+                "transformer_options") or {}
+            assert_cfg_attention_output_patches_safe(
+                transformer_options, getattr(adapter, "family", "model"))
         count = len(conds)
         start, stop = cond_group_bounds(count, world, cfg_rank())
         bound.arguments["conds"] = [
@@ -251,12 +294,14 @@ def make_cond_dispatch_wrapper(adapter: Adapter):
     return cond_dispatch_wrapper
 
 
-def install_cond_dispatch_wrapper(adapter: Adapter, model_options: dict) -> str:
+def install_cond_dispatch_wrapper(adapter: Adapter, model_options: dict, *,
+                                  sharded_weights: bool = False) -> str:
     """Install per-condition dispatch for every family on a CFG topology.
 
     ComfyUI's concatenation rule decides eligibility without a family opt-in.
     Pairs that concatenate pass through to batch slicing. Check the existing
     key first because ``add_wrapper_with_key`` appends rather than replaces.
+    ``sharded_weights`` is the topology's fsdp switch.
     """
     import comfy.patcher_extension as pe
 
@@ -267,5 +312,6 @@ def install_cond_dispatch_wrapper(adapter: Adapter, model_options: dict) -> str:
             model_options, is_model_options=True):
         pe.add_wrapper_with_key(
             pe.WrappersMP.CALC_COND_BATCH, CFG_DISPATCH_WRAPPER_KEY,
-            make_cond_dispatch_wrapper(adapter), model_options, is_model_options=True)
+            make_cond_dispatch_wrapper(adapter, sharded_weights=sharded_weights),
+            model_options, is_model_options=True)
     return pe.WrappersMP.CALC_COND_BATCH

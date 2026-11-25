@@ -211,7 +211,8 @@ def refuse_pixel_space_pad_mask(family: str) -> None:
 
 
 def assert_sp_quant_supported(adapter: Adapter, sp: int, quant_kind: str, *,
-                              cfg: int = 1, dual_model_cfg: bool = False) -> None:
+                              cfg: int = 1, dual_model_cfg: bool = False,
+                              read_from: str = "the loaded file", kind_note: str = "") -> None:
     """Refuse a quantization a family has measured wrong under sharding.
 
     ``sp_validated_quants`` is opt-in: families without it keep the default
@@ -230,10 +231,17 @@ def assert_sp_quant_supported(adapter: Adapter, sp: int, quant_kind: str, *,
         return
     family = getattr(adapter, "family", "model")
     reason = getattr(adapter, "sp_quant_refusal_reason", None) or (
-        f"{family} has no sharded-fidelity evidence for quant={quant_kind}; "
-        f"validated: {sorted(validated)}.")
+        f"{family} has no sharded-fidelity evidence for quant={quant_kind}.")
+    # The kind that was read comes first, whatever the family's reason says,
+    # with where it was read: a Worker reads the loaded file, and the driver,
+    # which refuses before dispatch where it can (nodes/model_patch_preflight.py),
+    # reads the header or the file's layer records. The two can differ: a
+    # block-scaled file's header reads fp8. ``kind_note`` is the driver's
+    # word, after the kind, that the reading covers more than one kind.
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
+        f"{family}: {read_from} reads as quant={quant_kind}{kind_note}, and on a layout that shards "
+        f"the tokens or the cfg batch this family admits only {', '.join(sorted(validated))}. "
         f"{reason} Use dp2 with an even batch, or mode=local with gpus_per_host=1, where "
         "ComfyUI's own forward runs.",
     ))
@@ -307,8 +315,16 @@ def make_cfg_parallel_wrapper(adapter: Adapter):
     assert_cfg_parallel_supported(adapter, 2)
 
     def cfg_parallel_wrapper(executor, *args, **kwargs):
+        from . import cfg_pad_rows
         from .cfg_dispatch import dispatch_in_progress
 
+        if cfg_pad_rows.TEXT_ROWS in kwargs:
+            # Every stamped call, sliced or dispatched, meets a forward that reads it.
+            cfg_pad_rows.assert_read(executor.class_obj, family)
+        else:
+            # And no call of a stamped render arrives with text but without its count.
+            given = inspect.signature(executor.original).bind_partial(*args, **kwargs).arguments
+            cfg_pad_rows.assert_not_lost(given.get("context", given.get("c_crossattn")), family)
         world = cfg_world()
         # A rank inside its own per-cond call owns every row of it.
         if world <= 1 or dispatch_in_progress():

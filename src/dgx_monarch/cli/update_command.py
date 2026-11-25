@@ -16,12 +16,13 @@ from . import comfy_ports
 from .cluster_smoke import exact_pass_evidence
 from .update_activity import activity_snapshot, privileged_actor_count
 from .update_cancellation import run_finalizer_pair
+from .update_check_outcome import TIMED_OUT, doctor_outcome, smoke_outcome
 from .update_dependency_contract import require_candidate_dependencies
 from .update_doctor_diagnostics import report_doctor_result
 from .update_driver_pin import DriverPinError, DriverPinTransition
 from .update_entrypoint import run_serialized_update
 from .update_inspect import inspect_checkout as _inspect_checkout
-from .update_pin_diagnostic import pin_refusal_message
+from .update_pin_diagnostic import pin_refusal_message, prior_drift_message
 from .update_release import CommandRunner, ReleaseLayoutError, ReleaseManager, ReleaseMetadata
 from .update_repository import git_command, repository_snapshot
 from .update_site_probe import site_matches
@@ -47,7 +48,6 @@ from .update_transaction import (
     UpdateRequest,
 )
 from .update_worker_lifecycle import (
-    LIFECYCLE_UNKNOWN_EXIT,
     active_generation,
     operation_from_exit,
     prior_generation,
@@ -150,7 +150,11 @@ class SystemUpdateOps(UpdateOps):
                 raise RuntimeError("prior driver commit was not captured")
             prior_metadata, _prior_dependencies = _inspect_checkout(self.repo, self._prior_sha)
             if not _dependencies_available(self.config, dependencies, self._run):
-                raise RuntimeError("target dependency contract is not satisfied")
+                raise UpdatePreconditionError(
+                    "target_dependencies_unsatisfied",
+                    "the target's own dependencies are not satisfied on every interpreter; the lines "
+                    "above name each requirement and the interpreter that failed it, and neither "
+                    "update mode installs them")
             release_started = True
             slot = self._releases.prepare(checkout, metadata)
             try:
@@ -165,7 +169,7 @@ class SystemUpdateOps(UpdateOps):
                 )
             prior_payload = self._pins.prior_payload_digest
             if prior_payload is None or not self._releases.attest_prior(prior_metadata, prior_payload):
-                raise UpdatePreconditionError("prior_worker_drift", "worker hosts do not exactly match the current driver release")
+                raise UpdatePreconditionError("prior_worker_drift", prior_drift_message(self._releases))
             if not self._pins.target_matches_site(slot.site):
                 raise RuntimeError("worker and driver target pin artifacts do not match")
             self._dependency_roots = dependencies
@@ -283,12 +287,14 @@ class SystemUpdateOps(UpdateOps):
                 args, cwd=self.repo, capture_output=True, text=True, timeout=180,
                 env=_runtime_env(site),
             )
-        except (OSError, ReleaseLayoutError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            return TIMED_OUT
+        except (OSError, ReleaseLayoutError):
             return _UNKNOWN
         # Doctor exits 75 when no row failed but a critical probe never answered.
         # That is no reason to restore the prior release over a started target.
         report_doctor_result(result.returncode, result.stdout, tuple(host.name for host in self.config.hosts))
-        return operation_from_exit(result.returncode)
+        return doctor_outcome(result.returncode)
 
     def cluster_smoke(self, staged: StagedRelease) -> OperationResult:
         if not self._config_current():
@@ -303,14 +309,16 @@ class SystemUpdateOps(UpdateOps):
                 [sys.executable, "-c", script, str(self._config_path)], cwd=self.repo,
                 capture_output=True, text=True, timeout=600, env=_runtime_env(site),
             )
-            # Transport loss or RPC timeout exits 75: the smoke result is unknown.
-            if result.returncode == LIFECYCLE_UNKNOWN_EXIT:
-                return _UNKNOWN
-            if result.returncode != 0:
-                return _FAILED
+        except subprocess.TimeoutExpired:
+            return TIMED_OUT
+        except (OSError, ReleaseLayoutError):
+            return _UNKNOWN
+        ended = smoke_outcome(result.returncode, result.stdout)
+        if ended is not None:
+            return ended
+        try:
             payload = json.loads(result.stdout.splitlines()[-1])
-        except (IndexError, json.JSONDecodeError, OSError, ReleaseLayoutError,
-                subprocess.TimeoutExpired):
+        except (IndexError, json.JSONDecodeError):
             return _UNKNOWN
         if not isinstance(payload, dict) or payload.get("result") != "PASS":
             return _FAILED
@@ -384,6 +392,9 @@ class SystemUpdateOps(UpdateOps):
         if not self._driver_target_matches(staged):
             return _UNKNOWN
         return self._releases.finalize()
+
+    def retire_releases(self, staged: StagedRelease) -> OperationResult:
+        return self._releases.retire_releases()
 
     def prior_driver_readback(self, staged: StagedRelease) -> OperationResult:
         return _OK if self._driver_prior_matches(staged) else _UNKNOWN

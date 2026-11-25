@@ -15,6 +15,7 @@ from typing import Any
 from . import absorb_fire as _absorb
 from . import delivery_faults as _delivery_faults
 from . import mesh_residency as _mesh_residency
+from . import swap_credit as _swap_credit
 from .config import ClusterConfig
 from .error_utils import failure_summary
 
@@ -41,11 +42,13 @@ _TEARDOWN_FAULT_MARKERS = ("undeliverable", "delivery failure:",
 _TEARDOWN_GRACE_S = 30.0
 # Token absorption authority is time-bounded. An interrupt after
 # procs.stop().get() returns but before outcome publication can strand a token.
-# The 240 s bound is the 180 s recycle deadline in
-# `mesh_recycle.recycle_detailed`, which contains its 60 s group teardown and
-# 60 s proc stop, plus scheduling margin. A plain `MeshHandle.shutdown` waits
-# at most 2 x 60 + 30 s. An outcome-less token never authorizes reuse or
-# another stop at any age.
+# The 240 s bound holds the longest `MeshHandle.shutdown`: its group teardown
+# (at most 60 s), the 5 s actor stop, the proc stop at its bound
+# (mesh_stop.PROC_STOP_DEFAULT_S, 100 s, never more) and 30 s, 195 s. The 180 s
+# recycle deadline in `mesh_recycle.recycle_detailed` holds its 10 s lock wait,
+# 60 s group teardown, the actor stop and that proc stop, 175 s.
+# tests/test_stop_bounds.py checks every sum. An outcome-less token never
+# authorizes reuse or another stop at any age.
 TOKEN_AUTHORITY_S = 240.0
 _TEARDOWN_STATE_LOCK = threading.Lock()
 # One atomic snapshot: (token-to-issued-at mapping, grace-opened, version).
@@ -53,6 +56,7 @@ _TEARDOWN_STATE_LOCK = threading.Lock()
 # asynchronous readers cannot see a partial transition. The lock serializes
 # writers; readers consume the immutable binding lock-free.
 _TEARDOWN_STATE: tuple[dict[int, float], float, int] = ({}, float("-inf"), 0)
+_PROOF_ENDED: set[int] = set()  # in-flight tokens whose stop the liveness proof ended
 
 
 class PriorTeardownUnknownError(RuntimeError):
@@ -60,10 +64,9 @@ class PriorTeardownUnknownError(RuntimeError):
 
 
 def begin_deliberate_teardown(token: int) -> None:
-    """Mark one handle's proc stop in flight.
+    """Mark one handle's proc stop in flight; the token scopes suppression to this teardown.
 
-    Call inside the try whose ``finally`` publishes the outcome and then calls
-    ``end_deliberate_teardown``. The token scopes suppression to this teardown.
+    Call inside the try whose ``finally`` publishes the outcome, then ``end_deliberate_teardown``.
     """
     global _TEARDOWN_STATE
     with _TEARDOWN_STATE_LOCK:
@@ -72,24 +75,30 @@ def begin_deliberate_teardown(token: int) -> None:
 
 
 def end_deliberate_teardown(token: int, stop_confirmed: bool) -> None:
-    """Close the mark and open grace only after a confirmed stop.
+    """Close the mark and open grace only after a stop Monarch confirmed.
 
-    A failed stop leaves process state unknown, so later faults remain visible.
-    Calling without a published begin mark is safe.
+    A failed stop leaves process state unknown, so later faults remain visible. A stop
+    the liveness proof ended (``stop_ended_on_proof``) confirmed nothing either, so like
+    the liveness release it opens none. Calling without a published begin mark is safe.
     """
     global _TEARDOWN_STATE
     with _TEARDOWN_STATE_LOCK:
         tokens, grace, version = _TEARDOWN_STATE
+        opens = stop_confirmed and token not in _PROOF_ENDED
+        _PROOF_ENDED.discard(token)
         _TEARDOWN_STATE = ({k: v for k, v in tokens.items() if k != token},
-                           time.monotonic() if stop_confirmed else grace,
-                           version + 1)
+                           time.monotonic() if opens else grace, version + 1)
+
+
+def stop_ended_on_proof(token: int) -> None:
+    """Withhold grace from this in-flight teardown: the liveness proof ended its stop."""
+    with _TEARDOWN_STATE_LOCK:
+        if token in _TEARDOWN_STATE[0]:
+            _PROOF_ENDED.add(token)
 
 
 def clear_stale_token(token: int) -> None:
-    """Clear a stranded token after the handle outcome is already published.
-
-    Never open grace retroactively when the stop-success instant was lost.
-    """
+    """Clear a stranded token once its handle's outcome is published; never opens grace late."""
     end_deliberate_teardown(token, stop_confirmed=False)
 
 
@@ -118,10 +127,7 @@ def token_within_authority(token: int) -> bool:
 
 
 def token_present(token: int) -> bool:
-    """Return whether a token exists at any age.
-
-    Presence alone blocks reuse; age limits only fault absorption.
-    """
+    """Return whether a token exists at any age: presence alone blocks reuse, age limits absorption."""
     return token in _TEARDOWN_STATE[0]
 
 
@@ -297,7 +303,8 @@ def stock_load_preflight(path: str, unet_name: str, model_options: dict) -> None
     Stock weights consume roughly file size in the shared UMA pool; exceeding
     MemAvailable can invoke the OS OOM killer before Python can classify an
     exception. Discrete devices and dtype casts are excluded because file size
-    does not bound their resident allocation.
+    does not bound their resident allocation. The ladder calls this only where
+    ``capacity_fit.stock_load_fit`` made no claim, and that probe prices a cast.
     """
     import os
 
@@ -362,6 +369,14 @@ def _token_count_5d(shape: Iterable[int]) -> int:
     return max(b, 1) * t * -(-h // 2) * -(-w // 2)
 
 
+def ref_pose_token_counts(video_shape: Iterable[int], ref_shapes: Iterable[Iterable[int]] = (),
+                          pose_shape: Iterable[int] | None = None) -> tuple[int, int]:
+    """(video plus reference tokens, pose tokens): the rows the preflight below
+    prices and the sample deadline (sample_deadline.py) scales with."""
+    video_tokens = _token_count_5d(video_shape) + sum(_token_count_5d(s) for s in ref_shapes)
+    return video_tokens, (_token_count_5d(pose_shape) if pose_shape is not None else 0)
+
+
 def activation_footprint_preflight(
     family: str,
     path: str,
@@ -391,15 +406,15 @@ def activation_footprint_preflight(
     # double-charge every warm render.
     weight_bytes = 0 if weights_resident else (
         os.path.getsize(path) if os.path.exists(path) else 0)
-    video_tokens = _token_count_5d(video_shape) + sum(
-        _token_count_5d(s) for s in ref_shapes)
-    pose_tokens = _token_count_5d(pose_shape) if pose_shape is not None else 0
+    video_tokens, pose_tokens = ref_pose_token_counts(
+        video_shape, ref_shapes, pose_shape)
     total_tokens = video_tokens + pose_tokens
     tokens_per_rank = -(-total_tokens // max(int(sp_degree), 1))
     bytes_per_token = hidden_dim * _ACTIVATION_BF16_BYTES * _ACTIVATION_BLOCK_FACTOR
     activation_bytes = tokens_per_rank * bytes_per_token
     estimate = weight_bytes + activation_bytes
-    avail = mem_available_bytes()
+    # A charged load: the copy the Worker drops before it counts while a swap credit is in force.
+    avail = _swap_credit.credited(mem_available_bytes()) if weight_bytes else mem_available_bytes()
     if avail is None or estimate <= avail:
         return
     max_tokens_per_rank = max((avail - weight_bytes) // max(bytes_per_token, 1), 0)

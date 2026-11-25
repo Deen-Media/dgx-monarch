@@ -24,15 +24,14 @@ branch as stock on both trees.
 """
 from __future__ import annotations
 
-import inspect
-from collections.abc import Mapping
 from typing import Any
 
 import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
-from . import base
+from . import base, scale_rows
+from .adaln_parity_blocks import bind_blocks, bind_qwen21_norm_parity, with_norm_rows
 from .attention_inputs import note_preferred_attention
 from .attention_patches import assert_no_foreign_attention_override
 from .base import (
@@ -42,8 +41,22 @@ from .base import (
     shard_seq,
     sp_gather,
 )
+from .qwen_image21_prefix import (  # noqa: F401  (the prefix rules, reached here too)
+    WRITABLE_PREFIX_CACHE_REFUSAL,
+    distributed_prefix_cache_key,
+    prefix_cache_is_exact,
+    refuse_writable_prefix_cache,
+    stock_forward_takes_prefix_cache,
+    validate_reference_count,
+)
 
 log = get_logger(__name__)
+
+# The block Linears read [replicated prefix rows, this rank's target rows];
+# the modulation runs on the time embedding before the loop.
+_SCALE_ROLES = scale_rows.by_pattern([
+    (r"transformer_blocks\.\d+\.(attn\.(to_q|to_k|to_v|to_out\.\d+)|img_mlp\.\w+)", "states"),
+])
 
 # Each site gets one debug line from note_preferred_attention.
 _ATTENTION_SITE = "qwen_image21 attention"
@@ -63,73 +76,6 @@ def _take_native_attention_tensor(value: Any) -> torch.Tensor:
     raise TypeError("qwen_image21 attention callback received an unsupported attention input")
 
 
-def validate_reference_count(ref_latents) -> tuple:
-    """Normalize the stock optional reference list and enforce its public bound."""
-    refs = tuple(ref_latents or ())
-    if len(refs) > 10:
-        raise UnsupportedModelError(
-            refusal(
-                RefusalClass.PHYSICS,
-                f"qwen_image21 accepts at most 10 reference images, got {len(refs)}. "
-                "Use at most 10 ordered reference images.",
-            )
-        )
-    return refs
-
-
-def prefix_cache_is_exact(*, enabled: bool, hooks_present: bool,
-                          refs, image_slots, cache_owner: str | None) -> bool:
-    """Return whether an explicitly scoped prefix cache can be reused.
-
-    The cache entries are replicated on every sequence-parallel rank: each rank
-    needs the full prefix K/V while it owns only target-query rows.
-    ``cache_owner`` names that cohort, not a process-local cache; the key
-    (``distributed_prefix_cache_key``) adds the sequence-parallel degree, world
-    and rank to comfy's native prefix key. This guards reuse identity only:
-    comfy's optional int8 and int4 cache storage is lossy by design. Raises on
-    more than 10 references, or more image slots than references.
-    """
-    validate_reference_count(refs)
-    if image_slots is not None and len(image_slots) > len(tuple(refs or ())):
-        raise UnsupportedModelError(
-            refusal(
-                RefusalClass.PHYSICS,
-                "qwen_image21 image_slots has more entries than reference images. "
-                "Use one slot per reference image.",
-            )
-        )
-    return bool(enabled and not hooks_present and cache_owner == "distributed")
-
-
-def distributed_prefix_cache_key(native_key: torch.Tensor, *, topology_sp: int,
-                                 world: int, rank: int) -> torch.Tensor:
-    """Bind a native full-prefix key to the exact sequence-parallel cohort.
-
-    Comfy's native key carries every prefix-affecting value (text embeddings,
-    reference latent bytes, their slots, and target geometry). It omits target
-    *values*, because denoising changes them on every step. A replicated K/V
-    entry cannot cross a topology or rank assignment boundary, so append that
-    identity without replacing native equality semantics.
-    """
-    if native_key.ndim != 2:
-        raise UnsupportedModelError(refusal(
-            RefusalClass.PHYSICS,
-            "qwen_image21 native prefix key must be rank two. "
-            "Use the supported native Qwen Image 2.1 conditioning path.",
-        ))
-    if topology_sp < 1 or world != topology_sp or not 0 <= rank < world:
-        raise UnsupportedModelError(
-            refusal(
-                RefusalClass.PHYSICS,
-                "qwen_image21 prefix cache requires the live sequence-parallel cohort "
-                "to match the adapter topology. Use a fresh topology whose sequence-"
-                "parallel degree matches the active worker cohort.",
-            )
-        )
-    cohort = native_key.new_tensor((topology_sp, world, rank)).expand(native_key.shape[0], -1)
-    return torch.cat((native_key, cohort), dim=1)
-
-
 def agree_prefix_cache(cache: Any, cached: bool, device: torch.device) -> tuple[Any, bool]:
     """Choose one cache structure for the complete sequence-parallel cohort.
 
@@ -145,56 +91,6 @@ def agree_prefix_cache(cache: Any, cached: bool, device: torch.device) -> tuple[
     if not bool(cohort[:, 0].all()):
         return None, False
     return cache, bool(cohort[:, 1].all())
-
-
-# The sharded forward raises this on every rank alike; TROUBLESHOOTING #134.
-WRITABLE_PREFIX_CACHE_REFUSAL = refusal(
-    RefusalClass.PHYSICS,
-    "qwen_image21: the Qwen Image 2.1 cache device is 'auto' on a ComfyUI whose forward takes "
-    "a writable prefix K/V cache (prefix_cache, ComfyUI 503d785f0), under dynamic VRAM. There "
-    "stock keeps the prefix keys and values in that cache, or recomputes them when it admits "
-    "none, where the sequence-parallel forward fills its own cache; no hardware test has "
-    "compared the two on a cluster. "
-    "Set the Qwen Image 2.1 Cache (DGX Monarch) node's device to 'gpu', 'cpu' or 'off', or run "
-    "on topology 'single' (mode=local with gpus_per_host=1), which runs ComfyUI's own forward.",
-    troubleshooting=134,
-)
-
-
-def stock_forward_takes_prefix_cache(model_class: Any) -> bool:
-    """Whether a model class's stock ``_forward`` takes ``prefix_cache`` (503d785f0 on)."""
-    try:
-        return "prefix_cache" in inspect.signature(model_class._forward).parameters
-    except (AttributeError, TypeError, ValueError):
-        return False
-
-
-def _patcher_is_dynamic(model: Any) -> bool:
-    """Whether the attached patcher is dynamic. One that cannot say counts as dynamic,
-    where stock's own ``is_dynamic()`` call would raise."""
-    is_dynamic = getattr(getattr(model, "current_patcher", None), "is_dynamic", None)
-    return True if not callable(is_dynamic) else bool(is_dynamic())
-
-
-def refuse_writable_prefix_cache(model: Any, prefix_cache: Any, cache_options: Any,
-                                 writable_seam: bool) -> None:
-    """Refuse stock's writable prefix cache on every rank alike, before any collective (#134).
-
-    The rule reads facts every rank shares: the cache policy the actor sets
-    on every load (absent reads ``off``, as in the sharded forward), the
-    tree's forward and the patcher class. Stock's admission of the cache is a
-    local memory check, so a rank can hold one where its peer holds none;
-    ``auto`` refuses whether or not it was admitted, because stock without one
-    recomputes the prefix where ``select_prefix_cache`` would fill a cache. A
-    ``prefix_cache`` that still arrives refuses too; no ComfyUI path sends one
-    for another device. ``off``, ``gpu``, ``cpu`` and a static patcher pass:
-    stock takes ``select_prefix_cache`` there as the sharded forward does.
-    """
-    device = cache_options.get("device", "off") if isinstance(cache_options, Mapping) else None
-    if prefix_cache is None and not (
-            writable_seam and device == "auto" and _patcher_is_dynamic(model)):
-        return
-    raise UnsupportedModelError(WRITABLE_PREFIX_CACHE_REFUSAL)
 
 
 def _optimized_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, heads: int,
@@ -433,6 +329,13 @@ class QwenImage21Adapter(Adapter):
             else:
                 active_prefix_len = prefix_len
 
+            # Target blocks fill their first fused norm to stock's rows (issue #54).
+            block_options = with_norm_rows(dict(transformer_options),
+                                           joint=active_prefix_len + target_len)
+            target_local = states.shape[1] - active_prefix_len
+            states_rows = scale_rows.Stream((
+                (active_prefix_len, active_prefix_len),
+                (target_local, scale_rows.real_count(target_len, target_local))))
             for index, block in enumerate(self.transformer_blocks):
                 if cache is not None:
                     if not cached:
@@ -479,9 +382,14 @@ class QwenImage21Adapter(Adapter):
                             preferred_attention=_attn_kwargs.get("preferred_attention"),
                         )
                         return torch.cat((p_out, t_out), dim=1).flatten(2)
-                states = block(states, mod, pe, attn, active_prefix_len, transformer_options)
+                # The target's pad tail stays out of the shared nvfp4 activation
+                # scale; the replicated prefix rows are all real, and the
+                # cache-miss prefix call above reads whole prefix rows unscoped.
+                with scale_rows.real_rows(_SCALE_ROLES, {"states": states_rows}):
+                    states = block(states, mod, pe, attn, active_prefix_len, block_options)
             target = sp_gather(states[:, active_prefix_len:], target_len, dim=1)
             target = self.proj_out(self.norm_out(target, temb[:-1]))
             return target.transpose(1, 2).reshape(B, self.out_channels, H, W)
 
         self.bind(diffusion_model, "_forward", usp_forward)
+        bind_blocks(diffusion_model.transformer_blocks, bind_qwen21_norm_parity, self.family)

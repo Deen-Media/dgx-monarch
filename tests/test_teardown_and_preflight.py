@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dgx_monarch import mesh_safety, mesh_setup
+from dgx_monarch import mesh_safety, mesh_setup, mesh_stop
 
 _TRANSPORT_FAULT = ("undeliverable message for dgxm_worker.status(): "
                     "broken link: channel closed with reason server closed")
@@ -100,6 +100,83 @@ def test_relocated_lifecycle_verdict_preserves_precedence(
     assert mesh_mod._coherent_lifecycle_verdict(handle) == expected
     assert mesh_safety.coherent_lifecycle_verdict(
         handle, mesh_mod.MeshAttachError) == expected
+
+
+def test_a_fleet_handle_built_where_a_freed_one_lived_starts_with_no_teardown_token(monkeypatch):
+    """Tokens are keyed by a handle's address, and a freed handle's address is reused.
+
+    A token stranded by an interrupted stop outlives its handle only in that
+    key; the next fleet built at the same address must not read it as its own
+    stop in flight, which would refuse its publication, renewal and shutdown.
+    get_mesh publishes every new handle as pending right after building it.
+    """
+    from dgx_monarch import mesh_creation
+
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    handle = _bare_handle()
+    mesh_safety.begin_deliberate_teardown(id(handle))  # what the freed handle left behind
+    runtime = {"_MESH_LOCK": threading.Lock(), "_MESH_PENDING": {}}
+
+    mesh_creation.publish_pending_handle(runtime, ("key",), handle)
+
+    assert runtime["_MESH_PENDING"] == {("key",): handle}
+    assert not mesh_safety.token_present(id(handle))
+    assert mesh_safety.coherent_lifecycle_verdict(handle, RuntimeError) == "live"
+
+
+def test_a_caller_that_adopts_another_callers_cleanup_thread_does_not_wait_on_it(monkeypatch):
+    """Its own thread's start was interrupted, and another caller published one meanwhile.
+
+    A render thread waits only for a cleanup it started itself; the adopted
+    thread is its own starter's to wait on.
+    """
+    from dgx_monarch import driver_exit, mesh_helpers
+
+    real_thread = threading.Thread
+    gate, joined = threading.Event(), []
+
+    class Theirs(real_thread):
+        def join(self, timeout=None):
+            joined.append(timeout)
+            return super().join(0)
+
+    theirs = Theirs(target=gate.wait, daemon=True)
+    theirs.start()
+    handle = SimpleNamespace(lock=threading.RLock(), replacement_blocked=None,
+                             _supervision_reconcile_thread=None)
+
+    class StartInterrupted(real_thread):
+        def start(self):
+            if (self.name == driver_exit.RECONCILE_THREAD
+                    and handle._supervision_reconcile_thread is self):
+                handle._supervision_reconcile_thread = theirs
+                raise RuntimeError("thread start interrupted")
+            return super().start()
+
+    monkeypatch.setattr(threading, "Thread", StartInterrupted)
+    try:
+        mesh_helpers._launch_reconcile_thread(
+            handle, RuntimeError("Supervision event: peer closed"), object(), wait=True)
+    finally:
+        monkeypatch.setattr(threading, "Thread", real_thread)
+        gate.set()
+
+    assert handle._supervision_reconcile_thread is theirs
+    assert joined == []
+
+
+def test_a_new_fleet_leaves_another_handles_teardown_token_alone(monkeypatch):
+    from dgx_monarch import mesh_creation
+
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    stopping = _bare_handle()
+    mesh_safety.begin_deliberate_teardown(id(stopping))
+    try:
+        mesh_creation.publish_pending_handle(
+            {"_MESH_LOCK": threading.Lock(), "_MESH_PENDING": {}}, ("key",), _bare_handle())
+        assert mesh_safety.token_present(id(stopping))
+    finally:
+        mesh_safety.end_deliberate_teardown(id(stopping), stop_confirmed=False)
 
 
 def test_relocated_lifecycle_verdict_preserves_typed_churn_refusal(monkeypatch):
@@ -728,10 +805,11 @@ def test_only_verified_supervision_capability_bypasses_owned_session(monkeypatch
 
 
 def test_shutdown_outer_budget_covers_the_sequential_envelope(monkeypatch):
-    """The off-loop budget covers group teardown and proc stop run in sequence
-    (each capped at 60 s), or a legal second-phase stop reads as a failure.
-    Caller timeouts are capped per phase, so every envelope stays inside
-    TOKEN_AUTHORITY_S."""
+    """The off-loop budget covers group teardown, the actor stop and proc stop
+    run in sequence (the group teardown capped at 60 s, the proc stop at its
+    bound, 100 s at Monarch's defaults), or a legal second-phase stop reads as
+    a failure. Caller timeouts are capped per phase, so every envelope stays
+    inside TOKEN_AUTHORITY_S."""
     import dgx_monarch.mesh as mesh_mod
 
     budgets = []
@@ -743,9 +821,10 @@ def test_shutdown_outer_budget_covers_the_sequential_envelope(monkeypatch):
     handle = _bare_handle()
     handle.shutdown(timeout_s=60)
     handle.shutdown(timeout_s=300)
-    assert budgets[0] >= 120          # covers 60 (group) + 60 (stop)
-    assert budgets[1] == budgets[0]   # phases capped at 60 whatever timeout_s
-    assert budgets[1] + 60 <= mesh_safety.TOKEN_AUTHORITY_S  # inside authority
+    assert budgets[0] >= 120 + mesh_stop.ACTOR_STOP_S  # 60 (group) + actor stop + 60 (stop)
+    # Phases capped whatever timeout_s; the envelope stays inside authority.
+    assert budgets[1] == 60 + mesh_stop.ACTOR_STOP_S + mesh_stop.PROC_STOP_DEFAULT_S + 30
+    assert budgets[1] <= mesh_safety.TOKEN_AUTHORITY_S
     # The inner phases honor the same cap.
     monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
     waits = []
@@ -758,7 +837,7 @@ def test_shutdown_outer_budget_covers_the_sequential_envelope(monkeypatch):
 
     inner = _bare_handle(procs=Procs())
     inner._shutdown_impl(timeout_s=300)
-    assert waits == [60]
+    assert waits == [mesh_stop.PROC_STOP_DEFAULT_S]
 
 
 def test_shutdown_outer_timeout_leaves_outcome_publication_to_scratch(monkeypatch):

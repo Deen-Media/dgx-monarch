@@ -10,6 +10,8 @@ import types
 import pytest
 import torch
 
+from dgx_monarch.gate_runtime import runtime_build_identity
+
 
 def test_gate_ledger_recovers_matching_identity_after_other_artifact(tmp_path):
     from dgx_monarch.gate_ledger import GateLedger
@@ -775,6 +777,8 @@ def test_worker_binds_loaded_model_to_grant_after_execution_recheck(monkeypatch)
         "capability": FLEET_RESIDENCY_CAPABILITY,
         "rank_world": 1,
         "worker_args": dict(policy),
+        # The Worker checks the grant's build against its own last.
+        "runtime": runtime_build_identity(),
     }
     request = {
         "model": model,
@@ -943,6 +947,7 @@ def test_worker_provenance_baseline_is_rank_source_and_generation_bound(monkeypa
         "topology": {"ulysses": 2},
         "setup_generation": 4,
         "source_manifest_sha256": "b" * 64,
+        "runtime": runtime_build_identity(),
         "setup_provenance": setup_snapshot,
         "post_provenance": post_snapshot,
         "event_seq": 19,
@@ -977,6 +982,7 @@ def test_worker_provenance_legacy_baseline_does_not_require_strict_comfy(
         "topology": {"ulysses": 1},
         "setup_generation": 5,
         "source_manifest_sha256": "c" * 64,
+        "runtime": runtime_build_identity(),
         "event_seq": 23,
     }
     with pytest.raises(RuntimeError, match="requires custom nodes disabled"):
@@ -1194,14 +1200,14 @@ def test_render_progress_finish_retry_heals_interrupted_commit(monkeypatch):
 def test_progress_receiver_defers_channel_open_until_guarded_enter(monkeypatch):
     from monarch.actor import Channel
 
-    from dgx_monarch.progress import ProgressReceiver
+    from dgx_monarch.progress import _CLOSE, ProgressReceiver
 
     opened = []
     sent = []
 
     class Future:
         def get(self, timeout=None):
-            return {"done": True}
+            return {_CLOSE: True}
 
     class Receiver:
         def recv(self):
@@ -1221,7 +1227,7 @@ def test_progress_receiver_defers_channel_open_until_guarded_enter(monkeypatch):
     progress.__enter__()
     assert opened == [True]
     progress.__exit__(None, None, None)
-    assert sent == [{"done": True}]
+    assert sent == [{_CLOSE: True}]
 
 
 def test_gpu_telemetry_uses_cuda_visible_device(monkeypatch):
@@ -1462,11 +1468,13 @@ def _no_generation_probe(monkeypatch):
     canned and no test here reaches the network.
     """
     from dgx_monarch.cli import listener_generation
+    from dgx_monarch.monarch_capabilities import loaded_version
 
     monkeypatch.setattr(
         listener_generation, "fleet",
         lambda config, **_kwargs: {host.address: {"gen": "aaaaaaaaaaaa",
-                                                  "proc_id": "aaaaaaaaaaaa0001"}
+                                                  "proc_id": "aaaaaaaaaaaa0001",
+                                                  "monarch": loaded_version()}
                                    for host in config.hosts})
 
 
@@ -1620,12 +1628,20 @@ def test_artifact_preflight_marker_hit_skips_identity_io(monkeypatch):
     assert identity_calls == [1]
 
 
-def test_unbake_stat_ok_survives_metadata_only_changes(tmp_path):
-    """chmod and chown change ctime, not bytes; the record must stay valid, or
-    a permission fix costs a full reload."""
-    import os
+def test_unbake_stat_ok_refuses_a_metadata_only_change(tmp_path):
+    """The record binds the change time, so a chmod costs one reload and nothing worse.
 
-    from dgx_monarch.actor.unbake import UnbakeRecord
+    chmod and chown move the change time and not the bytes, but an in-place
+    rewrite that puts the old size and modification time back moves only the
+    change time too, and no tool can set it back. A record must never vouch for
+    bytes that could have changed, so after a metadata-only change the record
+    no longer matches, and the restore refuses typed (the store then reloads)
+    instead of reading the file. An untouched file still matches.
+    """
+    import os
+    import time
+
+    from dgx_monarch.actor.unbake import UnbakeError, UnbakeRecord, restore_pristine
 
     path = tmp_path / "model.safetensors"
     path.write_bytes(b"AAAA")
@@ -1638,8 +1654,15 @@ def test_unbake_stat_ok_survives_metadata_only_changes(tmp_path):
         file_ino=captured.st_ino,
         file_ctime_ns=captured.st_ctime_ns,
     )
-    os.chmod(path, 0o600)
     assert record.stat_ok()
+    time.sleep(0.05)    # past a coarse timestamp tick, so the change time moves
+    os.chmod(path, 0o600)
+    after = os.stat(path)
+    assert (after.st_size, after.st_mtime_ns, after.st_ino) == (
+        captured.st_size, captured.st_mtime_ns, captured.st_ino)
+    assert not record.stat_ok()
+    with pytest.raises(UnbakeError, match="changed since capture"):
+        restore_pristine(object(), record)
 
 
 @pytest.mark.parametrize(
@@ -1777,4 +1800,81 @@ def test_normal_grant_rejects_driver_worker_source_manifest_mismatch(monkeypatch
 
     source[0] = "b" * 64
     with pytest.raises(RuntimeError, match="grant token does not match"):
+        worker_mod.GPUWorker._sample_impl.__wrapped__(worker, request)
+
+
+_PROVEN = {"torch": "0.0.1+proven", "cuda": "1.1"}
+
+
+def _reproven(grant, context):
+    """Re-sign a grant whose context gained the build it was proven under."""
+    from dgx_monarch.gate_ledger import gate_verdict_token
+
+    grant["capability_context"] = context
+    grant["gate_token"] = list(gate_verdict_token(
+        grant["combo_key"], grant["artifact_digest"], grant["comfy"], context))
+    return grant
+
+
+@pytest.mark.parametrize("worker_build,message", [
+    ({"torch": "0.0.2+moved", "cuda": "1.1"}, r"this Worker runs torch 0\.0\.2"),
+    (_PROVEN, None),
+])
+def test_normal_grant_rejects_a_worker_whose_torch_alone_moved(
+    monkeypatch, worker_build, message,
+):
+    """The review's case on a Worker: driver, source, config and model are
+    unchanged and the grant is genuine; only this Worker's torch moved."""
+    from dgx_monarch import gate_runtime
+    from dgx_monarch.actor.worker_authorization import verify_sample_artifact_authorization
+
+    request, identity, worker_args, context, _setup_key, _wa_key, topology = (
+        _normal_grant_request())
+    _reproven(request["_dgxm_normal_residency_grant"], {**context, "runtime": dict(_PROVEN)})
+    request["_dgxm_artifact_sets"] = [identity]
+    worker = types.SimpleNamespace(
+        rank=0, world=2, topology=dict(topology), _setup_generation=7,
+        _active_worker_args=dict(worker_args))
+    monkeypatch.setattr(gate_runtime, "runtime_build_identity", lambda: dict(worker_build))
+
+    if message is None:
+        assert verify_sample_artifact_authorization(
+            worker, request, lambda *_args: identity) == [identity]
+    else:
+        with pytest.raises(RuntimeError, match=message):
+            verify_sample_artifact_authorization(worker, request, lambda *_args: identity)
+
+
+@pytest.mark.parametrize("granted_build", [{"torch": "0.0.2+moved", "cuda": "1.2"}, None])
+def test_fleet_grant_rejects_a_worker_on_another_build_or_a_grant_without_one(
+    monkeypatch, granted_build,
+):
+    """A Fleet job checks the same: a moved build, or a grant naming none."""
+    from dgx_monarch import gate_runtime
+    from dgx_monarch.actor import worker as worker_mod
+    from dgx_monarch.mesh_safety import FLEET_RESIDENCY_CAPABILITY
+
+    identity = {"digest": "granted", "comfy": "c", "artifacts": []}
+    policy = {"slab_weights": True, "lora_low_rss": True}
+    model = {"unet_name": "m", "options": {}, "loras": []}
+    context = {"capability": FLEET_RESIDENCY_CAPABILITY, "rank_world": 1,
+               "worker_args": dict(policy)}
+    if granted_build is not None:
+        context["runtime"] = granted_build
+    request = {
+        "model": model,
+        "_dgxm_fleet_job": True,
+        "_dgxm_artifact_sets": [identity],
+        "_dgxm_fleet_residency_grant": _fleet_gate_grant(model, [identity], context),
+    }
+    worker = worker_mod.GPUWorker.__new__(worker_mod.GPUWorker)
+    worker._setup_key = ("fleet",)
+    worker.rank, worker.world = 0, 1
+    worker._active_worker_args = dict(policy)
+    worker.store = types.SimpleNamespace(
+        ensure=lambda *_args, **_kwargs: pytest.fail("another build reached model load"))
+    monkeypatch.setattr(worker_mod, "request_artifact_identity", lambda *_args: identity)
+    monkeypatch.setattr(gate_runtime, "runtime_build_identity", lambda: dict(_PROVEN))
+
+    with pytest.raises(RuntimeError, match=r"this Worker runs torch 0\.0\.1"):
         worker_mod.GPUWorker._sample_impl.__wrapped__(worker, request)

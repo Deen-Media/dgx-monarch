@@ -14,6 +14,13 @@ def remove_worktree(
     root: Path,
     git: Callable[..., subprocess.CompletedProcess[str]],
 ) -> OperationResult:
+    """Remove the update's own detached checkout and only its registration.
+
+    After a failed ``git worktree remove`` the folder is deleted and git is
+    asked to remove that one registration again, which it does for a folder
+    that is gone. No other worktree is pruned: one on a disk that is not
+    mounted keeps its registration, index and detached HEAD.
+    """
     if checkout is None:
         return OperationResult(Certainty.SUCCEEDED)
     if checkout.parent != root or not checkout.name.startswith("update-"):
@@ -34,12 +41,15 @@ def remove_worktree(
         except OSError:
             return OperationResult(Certainty.FAILED)
         if not checkout.exists():
-            pruned = git("worktree", "prune", "--expire", "now")
-            listed = git("worktree", "list", "--porcelain")
-            if (
-                pruned.returncode == 0
-                and listed.returncode == 0
-                and f"worktree {checkout}" not in listed.stdout
-            ):
+            # git records the real path, so a symlinked root lists another
+            # spelling: ask for the one registration whatever the listing says,
+            # then accept no spelling of it in the listing.
+            spellings = {f"worktree {checkout}\n", f"worktree {checkout.resolve()}\n"}
+            try:
+                git("worktree", "remove", "--force", str(checkout), timeout=60)
+                listed = git("worktree", "list", "--porcelain")
+            except (OSError, subprocess.TimeoutExpired):
+                return OperationResult(Certainty.UNKNOWN)
+            if listed.returncode == 0 and not any(spelling in listed.stdout + "\n" for spelling in spellings):
                 return OperationResult(Certainty.SUCCEEDED)
     return OperationResult(Certainty.FAILED)

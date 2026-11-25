@@ -48,6 +48,15 @@ HELPER_LEAF_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.ldm.wan.model", "sinusoidal_embedding_1d", positional=("dim", "position")),
     _call("comfy.ldm.cogvideo.model", "get_timestep_embedding", positional=("timesteps", "dim", "flip_sin_to_cos", "downscale_freq_shift")),
     _call("comfy.ldm.lightricks.model", "apply_rotary_emb", positional=("input_tensor", "freqs_cis")),
+    # LTX's stock-row parity (adapters/ltx_parity.py): the patched self-attention pairs rope
+    # as stock does, and each block's fused AdaLN, its own and the text cross attention's,
+    # launches at its stream's stock rows.
+    _call("comfy.ldm.lightricks.model", "apply_rotary_emb_qk", positional=("q", "k", "freqs_cis")),
+    _call("comfy.ldm.lightricks.model", "apply_cross_attention_adaln",
+          positional=("x", "context", "attn", "q_shift", "q_scale", "q_gate",
+                      "prompt_scale_shift_table", "prompt_timestep", "attention_mask",
+                      "transformer_options")),
+    _call("comfy.quant_ops", "ck.rms_adaln", positional=("x", "scale", "shift", "eps")),
     # LTX guide attenuation. The adapter reads this object's two rectangles and
     # re-expresses them as query groups, so its identity is a live dependency.
     _attr("comfy.ldm.lightricks.model", "GuideAttentionMask"),
@@ -124,6 +133,10 @@ HELPER_LEAF_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.ldm.moss_image.model", "attention",
           positional=("q", "k", "v", "q_norm", "k_norm", "pe", "heads", "comfy_attention",
                       "transformer_options")),
+    # The cfg2 pad stamps each entry's pre-pad row count as a model cond of this
+    # class (adapters/cfg_pad_rows.py); the seam suite's "cfg pad row stamp"
+    # holds how comfy carries it to the forward.
+    _call("comfy.conds", "CONDRegular", positional=("cond",)),
 )
 
 REBOUND_FORWARD_TOUCHPOINTS: tuple[Touchpoint, ...] = tuple(
@@ -147,6 +160,14 @@ REBOUND_CALLER_TOUCHPOINTS: tuple[Touchpoint, ...] = (
         "minimax_payload",
         positional=("self", "x", "timestep", "context", "transformer_options"),
     ),
+    # MiniMax-H3-Image (ComfyUI 0.45.0): the bound forward keeps stock's outer
+    # forward. The build from pdd_sigmas and pdd_steps is a canary seam.
+    _call(
+        "comfy.ldm.minimax.model",
+        "MiniMaxH3ImageModel.forward",
+        "minimax_payload",
+        positional=("self", "x", "timestep", "context", "transformer_options"),
+    ),
 )
 
 
@@ -164,15 +185,16 @@ REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS: tuple[Touchpoint, ...] = (
         "transformer_options",
         positional=("self", "x", "t_emb", "mod_segments", "rope_freqs"),
     ),
-    # comfy 2504e68d made sigma, sample_sigmas and shifts required: a PDD LoRA
-    # stacks head row blocks, and the head blends the blocks the current step
-    # spans. The three values are the sampler's, not the head's, so the rebound
-    # forward has to hand them down.
+    # comfy 2504e68d made the step's sigma and the sampler's table required: a
+    # PDD LoRA stacks head row blocks, and the head blends the blocks the current
+    # step spans. ComfyUI ede4e5f (v0.45.0, this build's floor) replaced the two
+    # flow shifts after them with one sigma grid per stream. The rebound forward
+    # hands all three down and reads this name at inject (head_form).
     _call(
         "comfy.ldm.minimax.model",
         "FinalLayer.forward",
         positional=("self", "x", "t_emb", "video_seg", "audio_seg",
-                    "sigma", "sample_sigmas", "shifts"),
+                    "sigma", "sample_sigmas", "grids"),
     ),
     _call(
         "comfy.ldm.minimax.model",
@@ -195,6 +217,19 @@ REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS: tuple[Touchpoint, ...] = (
         "transformer_options",
         positional=("self", "x"),
     ),
+    # The MiniMax-H3-Image forward runs stock's own packing and timestep rows
+    # on every rank before the shard.
+    _call(
+        "comfy.ldm.minimax.model",
+        "MiniMaxH3Model._embed_and_pack",
+        positional=("self", "video_x", "audio_x", "context", "layout", "payload",
+                    "transformer_options"),
+    ),
+    _call(
+        "comfy.ldm.minimax.model",
+        "MiniMaxH3Model._time_embedding",
+        positional=("self", "unique_t", "device", "dtype"),
+    ),
     # FLUX.3's sharded forward calls stock's own methods for its prelude and
     # runs stock's Block code on each rank's rows and clipped spans, with each
     # fused-norm call launched at stock's row count for its span.
@@ -206,6 +241,16 @@ REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.ldm.flux3.model", "Flux3.rope", positional=("self", "ids")),
     _call("comfy.ldm.flux3.model", "Block.forward",
           positional=("self", "x", "spans", "pe", "transformer_options")),
+    # LTX's sharded block loop runs stock's block code with the fused AdaLN routed to
+    # stock's rows; the text cross attention names its stream by the attention it gets.
+    _call("comfy.ldm.lightricks.av_model", "BasicAVTransformerBlock.forward",
+          "transformer_options", positional=("self", "x")),
+    _call("comfy.ldm.lightricks.av_model", "BasicAVTransformerBlock._apply_text_cross_attention",
+          positional=("self", "x", "context", "attn", "scale_shift_table",
+                      "prompt_scale_shift_table", "timestep", "prompt_timestep",
+                      "attention_mask", "transformer_options")),
+    _call("comfy.ldm.lightricks.model", "BasicTransformerBlock.forward",
+          "transformer_options", positional=("self", "x")),
     # MOSS-Image's sharded forward checks the stock tree at inject, calls
     # stock's rope in each of its three forms (five names are the prefix all
     # three share; the seam picks the call by the exact names), and runs
@@ -231,6 +276,14 @@ MODEL_PATCH_TOUCHPOINTS: tuple[Touchpoint, ...] = (
           "double_layers", "single_layers", positional=("model", "start_percent", "end_percent")),
     _call("comfy.lora", "calculate_shape", positional=("patches", "weight", "key")),
     _call("comfy.utils", "get_attr", positional=("obj", "attr")),
+    # The sample-time estimate actor/held_rows_price.py reads and re-prices, and
+    # the mask rule it counts kept tokens with (UltraTex, ComfyUI 0.45.0, the
+    # oldest this release runs on). A rename of the rule would leave an UltraTex
+    # render on stock's whole-token estimate, so the canary names it here.
+    _call("comfy.ldm.flux.model", "foreground_tokens", positional=("mask", "h", "w")),
+    _call("comfy.sampler_helpers", "estimate_memory", positional=("model", "noise_shape", "conds")),
+    _call("comfy.model_base", "BaseModel.memory_required", "cond_shapes", positional=("self", "input_shape")),
+    _call("comfy.model_base", "BaseModel.extra_conds_shapes", positional=("self",)),
 )
 
 

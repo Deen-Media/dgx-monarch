@@ -269,17 +269,43 @@ def _detect_live_precision(patcher, option_kind: str) -> LivePrecisionEvidence:
             return evidence("unknown")
         # Operation metadata is authoritative because wrapper dtypes can still
         # report the original BF16 storage kind.
+        # The first quantized module names the kind, except that one grouped
+        # layer names the whole file w4a8: p-h3-image's W4A8 release
+        # keeps its most sensitive layers int8_tensorwise, and the token
+        # refiner, which comes first, is one of them. The header agrees
+        # (adapters/detect.py detect_quant_from_header): it reads w4a8 off the
+        # group scales, which ComfyUI's 3, 5 and 6 bit grouped formats store
+        # too, so those read w4a8 here as well. This reading goes before the
+        # header's (_combine_checkpoint_and_live_kinds), so a grouped format
+        # missing here would turn its file into an fp8 or an int8 one.
+        # ConvRot W4A4 has a kind of its own, w4a4, and one such layer names
+        # the whole file too. Its header reads int8 (I8 weights beside a
+        # ``weight_scale``, no group scales; no header key tells the two
+        # apart), but it runs comfy-kitchen's int4 GEMM with 4-bit
+        # activations, and no render here has measured it. Read as int8 it
+        # would take the sharded evidence MOSS-Image holds for INT8 ConvRot
+        # (adapters/moss_image.py sp_validated_quants); read as an unknown
+        # format it was called fp8, which it is not.
         _FMT_KIND = {"float8_e4m3fn": "fp8", "float8_e5m2": "fp8",
                      "int8_tensorwise": "int8", "mxfp8": "mxfp8",
-                     "nvfp4": "nvfp4"}
+                     "nvfp4": "nvfp4", "asym_w4a8_int8": "w4a8",
+                     "w3a8_int8": "w4a8", "w5a8_int8": "w4a8", "w6a8_int8": "w4a8",
+                     "convrot_w4a4": "w4a4"}
+        first_kind = None
         for m in modules():
             fmt = getattr(m, "quant_format", None)
-            if fmt:
-                kind = _FMT_KIND.get(fmt)
-                if kind is None:
+            if not fmt:
+                continue
+            kind = _FMT_KIND.get(fmt)
+            if kind is None:
+                if first_kind is None:
                     log.warning("unknown quant_format %r; reporting as fp8", fmt)
-                    kind = "fp8"
+                kind = "fp8"
+            if kind in ("w4a8", "w4a4"):
                 return evidence(kind, quantized_shards=True)
+            first_kind = first_kind or kind
+        if first_kind is not None:
+            return evidence(first_kind, quantized_shards=True)
         fp8_dtypes = (torch.float8_e4m3fn, torch.float8_e5m2)
         for name, p in named_parameters():
             total_parameter_bytes += p.numel() * p.element_size()

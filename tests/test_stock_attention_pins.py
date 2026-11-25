@@ -32,6 +32,7 @@ from dgx_monarch.adapters import (
     krea2,
     ltx,
     minimax_h3,
+    minimax_h3_image,
     omnigen2,
     stock_attention,
     wan_animate2,
@@ -267,6 +268,11 @@ class _FakeWan(torch.nn.Module):
 _WAN_X = _seeded(1, DIM, 1, 2, 3, seed=5)
 _WAN_CONTEXT = _seeded(1, 5, DIM, seed=6)
 _WAN_FREQS = torch.zeros(1, 6, 2)
+# WanDancer's audio covers eight frame groups per latent frame, which must
+# divide the image tokens, as stock's audio injector requires: one frame of
+# 2 x 4 tokens.
+_DANCER_X = _seeded(1, DIM, 1, 2, 4, seed=5)
+_DANCER_FREQS = torch.zeros(1, 8, 2)
 
 
 @pytest.mark.parametrize("adapter_cls, module", [
@@ -294,8 +300,8 @@ def test_wandancer_music_encoder_drops_the_pin(stubs):
         pins = []
         model = _FakeWan(pins, pinned, music=True)
         wan_variants.WanDancerAdapter().inject_usp(model, _ctx())
-        return model.forward_orig(_WAN_X, torch.tensor([0.5]), _WAN_CONTEXT,
-                                  freqs=_WAN_FREQS, audio_embed=audio,
+        return model.forward_orig(_DANCER_X, torch.tensor([0.5]), _WAN_CONTEXT,
+                                  freqs=_DANCER_FREQS, audio_embed=audio,
                                   transformer_options={}), pins
 
     def stock_music_forward(patch):
@@ -315,7 +321,7 @@ def test_wandancer_music_encoder_notes_that_the_default_backend_runs_it(stubs):
     model = _FakeWan([], True, music=True)
     wan_variants.WanDancerAdapter().inject_usp(model, _ctx())
     for _ in range(2):
-        model.forward_orig(_WAN_X, torch.tensor([0.5]), _WAN_CONTEXT, freqs=_WAN_FREQS,
+        model.forward_orig(_DANCER_X, torch.tensor([0.5]), _WAN_CONTEXT, freqs=_DANCER_FREQS,
                            audio_embed=_seeded(1, 3, DIM, seed=7), transformer_options={})
     music = [line for line in lines if line[1] == wan_variants._MUSIC_ATTENTION_SITE]
     assert len(music) == 1 and music[0][3] is True
@@ -419,6 +425,9 @@ class _FakeLtx(torch.nn.Module):
 def test_ltx_text_cross_attention_and_connectors_drop_the_pin(stubs, av):
     stubs.setitem(sys.modules, "comfy.ldm.lightricks.av_model", types.SimpleNamespace(
         CompressedTimestep=type("CompressedTimestep", (), {})))
+    # The fake blocks carry no ComfyUI block code for the stock-row parity route to read;
+    # tests/test_ltx_comfy_exactness.py runs the route on real blocks.
+    stubs.setattr(ltx, "bind_stock_row_parity", lambda model, rows: 0)
     video, audio = _seeded(1, 6, DIM, seed=8), _seeded(1, 3, DIM, seed=9)
     context = _seeded(1, 4, DIM, seed=10)
     pe = (torch.zeros(1, 6, 1, 1, 2, 2), "split")
@@ -751,10 +760,21 @@ class _H3RefinerBlock(torch.nn.Module):
         return self.attn(x, transformer_options=transformer_options)
 
 
+class _H3Head:
+    """ComfyUI 0.45.0's output head form, which the adapter reads at inject."""
+
+    video_dim = 4
+    video_out = types.SimpleNamespace(weight=torch.zeros(4, 1))
+
+    def forward(self, x, t_emb, video_seg, audio_seg, sigma, sample_sigmas, grids):
+        raise AssertionError("the fake head never runs")
+
+
 class _FakeH3(torch.nn.Module):
     def __init__(self, pins, pinned):
         super().__init__()
         self.blocks = []
+        self.final_layer = _H3Head()
         self.token_refiner = types.SimpleNamespace(blocks=[
             _H3RefinerBlock(pins, pinned) for _ in range(2)])
 
@@ -778,6 +798,24 @@ def test_minimax_h3_token_refiner_drops_the_pin(stubs):
         return torch.cat([model.refine(text), model.refine(text, {})], dim=1), pins
 
     assert_pins_dropped(stubs, run, minimax_h3)
+
+
+class _FakeH3Image(_FakeH3):
+    """MiniMax-H3-Image: H3's token refiner and head, with the checkpoint's grid."""
+
+    pdd_sigmas = [1.0, 0.0]
+
+
+def test_minimax_h3_image_token_refiner_drops_the_pin(stubs):
+    text = _seeded(1, 5, DIM, seed=29)
+
+    def run(pinned):
+        pins = []
+        model = _FakeH3Image(pins, pinned)
+        minimax_h3_image.MiniMaxH3ImageAdapter().inject_usp(model, _ctx())
+        return torch.cat([model.refine(text), model.refine(text, {})], dim=1), pins
+
+    assert_pins_dropped(stubs, run, minimax_h3_image)
 
 
 # --- Krea2 and Kroma -----------------------------------------------------------------------

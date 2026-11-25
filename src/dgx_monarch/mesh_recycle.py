@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Any, cast
 
 from . import (
+    driver_exit,
     mesh_factory,
     mesh_helpers,
     mesh_liveness,
@@ -64,8 +65,9 @@ def recycle_detailed(
     """Run the recycle transaction, bounded at 180 s only on an event-loop thread.
 
     With no running loop (the HTTP route's executor, cli/cluster_smoke) it runs inline.
+    A reset that starts once the driver is exiting sends nothing (driver_exit).
     """
-
+    driver_exit.refuse_new_call()
     try:
         return cast(
             RecycleOutcome,
@@ -115,6 +117,7 @@ def recycle_detailed_impl(
     try:
         lock_scope.__enter__()
         entered = True
+        driver_exit.refuse_new_call()  # a reset that waited for the lock: no teardown, no stop
         mesh_setup.require_no_sample_leases(
             handle, "reset the Attached mesh", allow_abandoned=True)
         require_mutation_authority(handle, "reset the Attached mesh")
@@ -131,6 +134,10 @@ def recycle_detailed_impl(
         try:
             retrying_blocked = mesh_teardown.prepare_stop_attempt(handle, "recycle")
         except mesh_safety.PriorTeardownUnknownError as exc:
+            if mesh_teardown.cleanup_running(handle):
+                log.warning("recycle waits for the running cleanup: %s", exc)
+                return RecycleOutcome(RecycleStatus.PRIOR_TEARDOWN_UNKNOWN,
+                                      f"recycle is blocked: {mesh_teardown.cleanup_running_sentence()}")
             log.error("recycle remains blocked: %s", exc)
             return RecycleOutcome(
                 RecycleStatus.PRIOR_TEARDOWN_UNKNOWN,
@@ -173,7 +180,8 @@ def recycle_detailed_impl(
             try:
                 stop_attempted = True
                 mesh_teardown.enter_stop_boundary(handle, retrying_blocked)
-                handle.procs.stop("dgx-monarch recycle").get(timeout=60)
+                mesh_teardown.stop_with_reason(
+                    handle, "dgx-monarch recycle", mesh_teardown.proc_stop_bound_s())
                 stopped = True
             except TimeoutError as exc:
                 log.error("proc stop on recycle timed out: %r", exc)
@@ -220,6 +228,11 @@ def recycle_detailed_impl(
             retryable=True,
         )
     except mesh_setup.LifecycleBusyError as exc:
+        if mesh_teardown.cleanup_running(handle):  # the reconcile holds the lock across its stop
+            log.warning("recycle waits for the running cleanup: %s", exc)
+            return RecycleOutcome(RecycleStatus.LIFECYCLE_BUSY,
+                                  f"recycle is blocked: {mesh_teardown.cleanup_running_sentence()}",
+                                  retryable=True)
         log.error("recycle refused: %s", exc)
         return RecycleOutcome(
             RecycleStatus.LIFECYCLE_BUSY,

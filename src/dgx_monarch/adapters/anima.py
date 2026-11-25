@@ -1,10 +1,11 @@
 """Anima adapter for the MiniTrainDIT image denoiser.
 
 The block grid is `(B, T, H, W, D)`. Sequence parallelism shards H and applies
-the identical H-row shard to the 3D RoPE table; zero-padding is whole H rows
-followed by gather-time trim, with fidelity inside the documented benchmark
-noise floor. Per-`(B, T)` time and adaLN tensors stay replicated because they
-broadcast over H and W.
+the identical H-row shard to the 3D RoPE table; zero-padding is whole H rows,
+which the block loop names, so pure Ulysses leaves them out of every softmax
+exactly and ring or hybrid refuses them class K (ring_pad waiver), and the
+gather trims them. Per-`(B, T)` time and adaLN tensors stay replicated because
+they broadcast over H and W.
 
 Only `blocks[i].self_attn.attn_op` routes through USP. Cross-attention keeps local
 image q against replicated text k/v through cosmos' stock `torch_attention_op`,
@@ -12,21 +13,46 @@ which runs with no per-block kernel pin (adapters/stock_attention.py).
 `llm_adapter` runs before this denoise path and must remain unbound,
 unsharded, and outside any FSDP collective; under FSDP its parameters go in
 ``ignored_params`` (adapters/fsdp_islands.py).
+
+``prepare_base_model`` makes every Worker take stock's text branch: stock
+``Anima.extra_conds`` runs ``llm_adapter`` and the 512-row pad once per
+conditioning only under ``torch.inference_mode()``, which ComfyUI enters
+around a prompt and a Worker's sampling thread does not. Off that branch the
+forward reruns them on every call, and a prompt pair whose raw rows differ
+splits into two batch-1 calls where stock makes one batch-2 call.
+docs/ADAPTERS.md has the paragraph.
 """
 from __future__ import annotations
 
 import torch
 
 from ..log import get_logger
+from . import scale_rows
 from .attention_inputs import (
     note_preferred_attention,
     refuse_unadopted_keywords,
     take_qkv,
 )
-from .base import Adapter, InjectionContext, UnsupportedModelError, shard_seq, sp_gather
+from .base import (
+    Adapter,
+    InjectionContext,
+    UnsupportedModelError,
+    padded_row_indices,
+    shard_seq,
+    sp_gather,
+)
+from .flux3 import _normal
 from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
+
+# Which block Linears see the H-sharded grid, and in which layout. The
+# cross-attention keys and values read the replicated text; the adaLN
+# modulation reads the per-(B, T) time embedding.
+_SCALE_ROLES = scale_rows.by_pattern([
+    (r"blocks\.\d+\.(self_attn\.\w+|cross_attn\.(q_proj|output_proj))", "tokens"),
+    (r"blocks\.\d+\.mlp\.\w+", "grid"),
+])
 
 
 def _shard_rope_h(rope, t: int, h: int, w: int):
@@ -42,7 +68,17 @@ def _shard_rope_h(rope, t: int, h: int, w: int):
     return rope_thw.reshape(-1, *rest)
 
 
-def _make_usp_attn_op(attn):
+def _pad_rows(t: int, h_orig: int, h_local: int, w: int) -> list[int]:
+    """The gathered Ulysses coordinates of the zero H rows ``shard_seq`` added.
+
+    Each rank flattens its ``(T, h_local, W)`` chunk t-major, so its tokens are
+    T segments of ``h_local * W`` rows, each ending in that frame's padded H
+    rows on the last rank or ranks.
+    """
+    return padded_row_indices([(h_orig * w, h_local * w)] * t)
+
+
+def _make_usp_attn_op(attn, pads: list | None = None):
     """Adapt `(B, S, H, D)` q/k/v to USP and return `(B, S, H*D)`.
 
     The returned plain function is assigned to an instance attribute directly;
@@ -54,7 +90,9 @@ def _make_usp_attn_op(attn):
     (adapters/attention_inputs.py). Any other keyword refuses with a typed
     class P refusal before a container is taken: the dispatcher drops an
     unknown keyword for an ordinary kernel, so forwarding it would let a
-    ComfyUI change pass unapplied.
+    ComfyUI change pass unapplied. ``pads[0]``, when set, holds the running
+    forward's pad rows, which the attention excludes under pure Ulysses and
+    refuses on ring.
     """
 
     def usp_attn_op(q, k, v, transformer_options={}, preferred_attention=None,
@@ -66,7 +104,9 @@ def _make_usp_attn_op(attn):
         q = q.transpose(1, 2)  # (B, S, H, D) -> (B, H, S, D)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
-        return attn(q, k, v, heads=heads, skip_reshape=True)  # -> (B, S, H*D)
+        rows = pads[0] if pads is not None else None
+        named = {"drop_rows": rows} if rows else {}
+        return attn(q, k, v, heads=heads, skip_reshape=True, **named)  # -> (B, S, H*D)
 
     return usp_attn_op
 
@@ -74,11 +114,11 @@ def _make_usp_attn_op(attn):
 class AnimaAdapter(Adapter):
     family = "anima"
     model_base_classes = ("Anima",)
-    # This family pads no conditioning of its own. Comfy's own 512-token pad
-    # lands inside the forward, after comfy has decided whether the two
-    # conditionings batch, so it equalizes nothing the cfg wrapper can see: a
-    # prompt pair of different encoded length never shares a model call, and
-    # cfg-parallel runs it through the per-cond dispatch (adapters/cfg_dispatch.py).
+    # The driver pads no conditioning for this family. Comfy's own 512-row pad
+    # runs in extra_conds (prepare_base_model), before comfy decides whether
+    # the two conditionings batch: a pair of at most 512 T5 ids folds into one
+    # call, as on one GPU, and cfg-parallel slices it; only a pair whose padded
+    # rows differ dispatches one cond per rank (adapters/cfg_dispatch.py).
     cfg_cond_padding = "none"
     # These raw tensors have shape `(num_t5_tokens,)`, not a batch dimension.
     # extra_conds expands them to `(1, L)` on every rank; DP slicing them would
@@ -101,8 +141,37 @@ class AnimaAdapter(Adapter):
             "forward, set family_adapter='anima' on the Init node (docs/MODELS.md)."
         )
 
+    def prepare_base_model(self, base_model) -> None:
+        """Run stock Anima.extra_conds under inference mode, as stock ComfyUI does.
+
+        FLUX.3's bind (adapters/flux3.py), on this family's method, on every
+        topology and every load path. Stock's own predicate still picks the
+        branch, so the text leaves here at stock's 512 rows and folds as
+        stock's does. Every inference tensor in the output is cloned out, and
+        the first text call per load logs the branch.
+        """
+        stock = type(base_model).extra_conds
+        reported: list[bool] = []
+
+        def extra_conds(self, **kwargs):
+            with torch.inference_mode():
+                out = stock(self, **kwargs)
+            for cond in out.values():
+                if hasattr(cond, "cond"):
+                    cond.cond = _normal(cond.cond)
+            if not reported and "c_crossattn" in out:
+                reported.append(True)
+                log.info("anima text branch: %s", "computed in the forward"
+                         if "t5xxl_ids" in out else "preprocessed once (extra_conds)")
+            return out
+
+        self.bind(base_model, "extra_conds", extra_conds)
+
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         attn = ctx.usp_attention
+        # This forward's pad rows, set around its block loop and read by the
+        # rebound self-attention op (one cell per bound model).
+        pads: list[list[int] | None] = [None]
 
         def usp_forward(self, x, timesteps, context, fps=None, padding_mask=None, **kwargs):
             # Patchify, RoPE construction, and the output head use the full grid;
@@ -145,8 +214,27 @@ class AnimaAdapter(Adapter):
             if x_B_T_H_W_D.dtype == torch.float16:
                 x_B_T_H_W_D = x_B_T_H_W_D.float()
 
-            for block in self.blocks:
-                x_B_T_H_W_D = block(x_B_T_H_W_D, t_emb_B_T_D, context, **block_kwargs)
+            # The zero H rows an odd patched height took to divide the shard are
+            # real keys after the block's adaLN. Named on every topology, pure
+            # Ulysses drops them and ring or hybrid refuses them (class K,
+            # ring_pad waiver).
+            # The same rows stay out of the shared nvfp4 activation scale: the
+            # attention projections read the grid flattened t-major, one
+            # segment per frame, and the MLP reads it as a grid, split on H.
+            h_local = x_B_T_H_W_D.shape[2]
+            h_real = scale_rows.real_count(h_orig, h_local)
+            streams = {
+                "tokens": scale_rows.Stream(((h_local * W, h_real * W),) * T),
+                "grid": scale_rows.Stream(((h_local, h_real),), axis=-3),
+            }
+            # Restored after, so a forward re-entered from a patch keeps this one's rows named.
+            saved_pads, pads[0] = pads[0], _pad_rows(T, h_orig, h_local, W) or None
+            try:
+                with scale_rows.real_rows(_SCALE_ROLES, streams):
+                    for block in self.blocks:
+                        x_B_T_H_W_D = block(x_B_T_H_W_D, t_emb_B_T_D, context, **block_kwargs)
+            finally:
+                pads[0] = saved_pads
 
             # The output head requires the full `(B, T, H, W, D)` grid.
             x_B_T_H_W_D = sp_gather(x_B_T_H_W_D, h_orig, dim=2)
@@ -155,7 +243,7 @@ class AnimaAdapter(Adapter):
                 x_B_T_H_W_D.to(context.dtype), t_emb_B_T_D, adaln_lora_B_T_3D=adaln_lora_B_T_3D)
             return self.unpatchify(x_B_T_H_W_O)[:, :, :orig_shape[-3], :orig_shape[-2], :orig_shape[-1]]
 
-        usp_attn_op = _make_usp_attn_op(attn)
+        usp_attn_op = _make_usp_attn_op(attn, pads)
         for block in diffusion_model.blocks:
             # Cross-attention and llm_adapter stay stock and replicated.
             block.self_attn.attn_op = usp_attn_op

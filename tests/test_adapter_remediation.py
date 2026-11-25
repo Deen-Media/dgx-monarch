@@ -47,18 +47,31 @@ def test_adapter_can_explicitly_require_exact_divisibility(monkeypatch):
     assert "topology 'single'" not in message
 
 
-def test_ideogram_warns_and_drops_meaningful_text_padding_mask(monkeypatch):
-    warnings = []
-    monkeypatch.setattr(pixeldit._segment_mask_dropped, "warn", warnings.append)
+def test_ideogram_leaves_masked_text_out_of_attention_or_refuses():
+    """A padded text mask is never dropped: pure Ulysses names the masked rows
+    so attention leaves them out, as stock's segment mask does, and where one
+    row set cannot carry the mask (ring or hybrid, or a batch whose prompts mask
+    different positions) the render refuses class P before any collective."""
     indicator = torch.full((1, 6), 9, dtype=torch.long)
-
-    pixeldit._drop_padded_text_segment_mask(
-        indicator, torch.tensor([[1, 1, 0, 0]]), l_text=4
-    )
-
+    rows = pixeldit.masked_text_rows(
+        indicator, torch.tensor([[1, 1, 0, 0]]), l_text=4, pure_ulysses=True)
+    assert rows == [2, 3]
     assert torch.equal(indicator, torch.tensor([[9, 9, 0, 0, 9, 9]]))
-    assert len(warnings) == 1
-    assert "segment mask" in warnings[0]
+
+    untouched = torch.full((1, 6), 9, dtype=torch.long)
+    assert pixeldit.masked_text_rows(
+        untouched, torch.ones(1, 4), l_text=4, pure_ulysses=False) == []
+    assert torch.equal(untouched, torch.full((1, 6), 9, dtype=torch.long))
+    assert pixeldit.masked_text_rows(untouched, None, l_text=4, pure_ulysses=False) == []
+
+    for mask, pure in ((torch.tensor([[1, 1, 0, 0]]), False),
+                       (torch.tensor([[1, 1, 0, 0], [1, 1, 1, 0]]), True)):
+        with pytest.raises(UnsupportedModelError) as caught:
+            pixeldit.masked_text_rows(torch.full((mask.shape[0], 6), 9), mask,
+                                      l_text=4, pure_ulysses=pure)
+        tag = parse_refusal_tag(str(caught.value))
+        assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+        assert "topology 'single'" in str(caught.value)
 
 
 def _finish(results, dp, monkeypatch):
@@ -477,10 +490,10 @@ def test_cluster_world_drift_refuses_inside_mesh_resolution_before_side_effects(
         "spawn_worker_fleet",
         lambda *_args: pytest.fail("unsafe config spawned a replacement mesh"),
     )
-    monkeypatch.setattr(
-        mesh_mod,
-        "config_fingerprint",
-        lambda *_args: pytest.fail("preflight ran after cache transition began"),
+    monkeypatch.setattr(mesh_mod, "config_fingerprint", lambda *_args: "new")  # read with the file
+    monkeypatch.setattr(  # the cache key is the first step past the preflight
+        mesh_mod, "_mesh_cache_key",
+        lambda *_args, **_kwargs: pytest.fail("preflight ran after cache transition began"),
     )
 
     with pytest.raises(
@@ -1067,13 +1080,21 @@ class _FakeZImageCfg:
 
 
 def test_zimage_cfg_trim_rederives_num_tokens():
+    """The cut follows the row count the Worker's pad stamped, and num_tokens
+    follows the cut; an unstamped call keeps its zero rows as its own."""
+    from dgx_monarch.adapters import cfg_pad_rows
+
     model = _FakeZImageCfg()
     ZImageAdapter().inject_cfg_pad_forward(model)
     context = torch.ones(1, 10, 4)
     context[:, 6:] = 0
-    model._forward(torch.zeros(1, 1, 2, 2), torch.zeros(1), context, 10)
+    model._forward(torch.zeros(1, 1, 2, 2), torch.zeros(1), context, 10,
+                   **{cfg_pad_rows.TEXT_ROWS: torch.tensor([6])})
     assert model.recorded["context"].shape[1] == 6
     assert model.recorded["num_tokens"] == 6
+    model._forward(torch.zeros(1, 1, 2, 2), torch.zeros(1), context, 10)
+    assert model.recorded["context"].shape[1] == 10
+    assert model.recorded["num_tokens"] == 10
 
 
 def _run_cfg_patch_probe(monkeypatch, hook, patch):

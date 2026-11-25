@@ -5,7 +5,8 @@ stage represents each patch as `(B*L, P^2, pixel_dim)`, compresses its pixels fo
 global attention across L, then expands them. Both stages carry the same
 contiguous L shard: folded tensors are viewed as `(B, L, ...)`, sharded, and
 refolded. One gather after `final_layer` restores L before `F.fold`. L padding
-uses zero-pad plus trim and remains within the documented fidelity noise floor.
+adds zero rows that each attention call's gather trims before stock attention
+runs, so no softmax meets a pad key, and the final gather drops them.
 
 Text takes a separate shard for maskless joint attention and is discarded before
 the pixel stage. Projections and MLPs stay sequence-sharded, but each attention

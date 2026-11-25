@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Wan-Animate 2 Base motion transfer: one 81-frame chunk. The visible ImageScale (Upscale Image) node alone sets the output size; it defaults to portrait 480x832 for portrait reference and driving media. For a landscape character and driving clip, set it to 832x480 and use a landscape reference. Load Video is the driving motion and Load Image is the reference character; the reference prompt describes appearance and the pose prompt describes the driving action. Animate2 conditioning requires both CLIP Vision encodes and both prompt paths. The native conditioner resizes the raw driving frames to this canvas, and the export uses that loaded video's FPS, so playback speed does not change. To extend a clip, copy the Animate2 conditioning and sampling tail, then wire this chunk's decoded frames to its continue_motion input and this node's video_frame_offset output to its video_frame_offset input; each Queue press renders one 81-frame chunk. This is the current ComfyUI Base blueprint recipe: the supplied LightX2V LoRA at 1.0, LCM, six steps, and the serialized DGX SD3 shift 5.0. The sampler needs cfg=1.0, which here applies no CFG guidance. The template defaults to the official INT8 ConvRot DiT to lower model memory; the Base-quality and Distilled templates keep their BF16 defaults. The distributed model stays resident after decode, so later renders reuse it. This recipe uses ordinary weight and LoRA residency, with slab and low-RSS off; the warm tests do not cover them. With slab, low-RSS and FSDP disabled, there is nothing for the first-use gate to prove, so the first render skips it. Stock WanAnimate2Cache and stock model-patch nodes take MODEL, not DGXM_MODEL, so cache stays off here. See docs/MODELS.md for the measured Base and Distilled BF16 recipes and the accelerated BF16/INT8+LightX2V six-step recipes. The separate Wan-Animate 2 memory-saver template recycles actors before decode, for when lower memory use is worth reloading the model later. Unlisted settings, broader continuation, cache, first-use LoRA, slab/low-RSS, FSDP, ring, and background replacement have no passing reference comparison. Expects wan_animate_2_int8_convrot.safetensors in models/diffusion_models, lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors in models/loras, umt5_xxl_fp8_e4m3fn_scaled.safetensors in models/text_encoders, clip_vision_h.safetensors in models/clip_vision, and Wan2_1_VAE_bf16.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+    "Wan-Animate 2 Base motion transfer: one 81-frame chunk. The visible ImageScale (Upscale Image) node alone sets the output size; it defaults to portrait 480x832 for portrait reference and driving media. For a landscape character and driving clip, set it to 832x480 and use a landscape reference. Load Video is the driving motion and Load Image is the reference character; the reference prompt describes appearance and the pose prompt describes the driving action. Animate2 conditioning requires both CLIP Vision encodes and both prompt paths. The native conditioner resizes the raw driving frames to this canvas, and the export uses that loaded video's FPS, so playback speed does not change. To extend a clip, copy the Animate2 conditioning and sampling tail, then wire this chunk's decoded frames to its continue_motion input and this node's video_frame_offset output to its video_frame_offset input; each Queue press renders one 81-frame chunk. This is the current ComfyUI Base blueprint recipe: the supplied LightX2V LoRA at 1.0, LCM, six steps, and the serialized DGX SD3 shift 5.0. The sampler needs cfg=1.0, which here applies no CFG guidance. The template defaults to the official INT8 ConvRot DiT to lower model memory; the Base-quality and Distilled templates keep their BF16 defaults. The distributed model stays resident after decode, so later renders reuse it. This recipe uses ordinary weight and LoRA residency, with slab and low-RSS off; the warm tests do not cover them. With slab, low-RSS and FSDP disabled, there is nothing for the first-use gate to prove, so the first render skips it. Stock WanAnimate2Cache and stock model-patch nodes take MODEL, not DGXM_MODEL, so cache stays off here. See docs/MODELS.md for the measured Base and Distilled BF16 recipes and the accelerated BF16/INT8+LightX2V six-step recipes. The separate Wan-Animate 2 memory-saver template recycles actors before decode, for when lower memory use is worth reloading the model later. Unlisted settings, broader continuation, cache, first-use LoRA, slab/low-RSS, FSDP, ring, and background replacement have no passing reference comparison. Expects wan_animate_2_int8_convrot.safetensors in models/diffusion_models, lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors in models/loras, umt5_xxl_fp8_e4m3fn_scaled.safetensors in models/text_encoders, clip_vision_h.safetensors in models/clip_vision, and Wan2_1_VAE_bf16.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it. The pack places a demo file drawn from code under each name this graph loads that ComfyUI's input folder lacks; one you delete comes back at the next start unless DGXM_DEMO_INPUTS=off is set. Load your own for real work."
    ],
    "title": "DGX Monarch | Wan-Animate 2 motion transfer"
   },
@@ -1093,7 +1093,7 @@
    ],
    "size": [
     315,
-    206
+    228
    ],
    "flags": {},
    "order": 23,
@@ -1132,8 +1132,16 @@
     "",
     8,
     "sRGB",
+    "auto",
     "none"
-   ]
+   ],
+   "dgxm_widgets": {
+    "fps": "",
+    "bit_depth": 8,
+    "color_space": "sRGB",
+    "chroma_subsampling": "auto",
+    "codec": "none"
+   }
   },
   {
    "id": 25,

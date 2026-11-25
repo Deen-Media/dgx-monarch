@@ -70,6 +70,9 @@ class ReleaseSlot:
     prior_metadata: ReleaseMetadata | None = None
     prior_pin_payload_digest: str = ""
     remote_staged: int = 0
+    # Hosts, in configured order, that were sent an activation. The hosts after
+    # them were never changed, so compensation leaves them alone.
+    activation_attempted: int = 0
     remote_activated: bool = False
     activation_ambiguous: bool = False
     finalized: bool = False

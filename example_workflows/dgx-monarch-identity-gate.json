@@ -312,7 +312,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "The Identity Gate renders your workflow twice, once through swap-produced weights and once through a fresh stock load, and reports PASS or FAIL with the bit-level latent difference. 2 steps are as conclusive as 20. You rarely need this node: the first render of a new combination runs the gate on its own. This node is the on-demand and CI form; strict=true raises on any verdict but PASS."
+    "The Identity Gate renders your workflow from a fresh load, nudges the first LoRA's strength and swaps it back, renders again on the same mesh and topology, and reports PASS or FAIL with the largest latent difference; with slab residency on, it also renders once with slab off. Each proof render runs the steps widget's count, 2 here, as the automatic gate does. A PASS means these renders matched bit for bit: a finite check of what ran, not a proof for every prompt, size or step count. You rarely need this node, because the first render of a new combination runs the gate on its own, through any DGX Monarch sampler. It is the CI form: strict=true raises on any verdict but PASS."
    ],
    "title": "DGX Monarch | Identity Gate: prove your stack swaps exactly"
   },

@@ -360,6 +360,44 @@ def test_a_delivery_failure_abort_takes_the_levers_and_pushes_nothing(monkeypatc
     assert model.mesh.worker_args == {"slab_weights": False, "lora_low_rss": False}
 
 
+@pytest.mark.parametrize("abort", ["refused_at_exit", "cut_at_exit", "not_exiting"])
+def test_an_abort_once_the_driver_is_exiting_takes_no_lever_and_pushes_nothing(
+        monkeypatch, caplog, abort):
+    """A ceremony in flight when the driver begins to exit aborts on the exit's
+    refusal (driver_exit.DriverExitingError) or on a call Monarch's exit step
+    cut. Neither says anything about the combination: no lever goes off, no
+    record is kept, no policy is pushed and no line names the abort. Not
+    exiting, the same untyped abort quarantines and pushes, as before."""
+    from dgx_monarch import driver_exit
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    monkeypatch.setattr(gate_quarantine_scope, "_RECORDS", [])
+    pushes = []
+    monkeypatch.setattr(gate_identity, "apply_worker_policy",
+                        lambda *args, **kwargs: pushes.append(args) or [])
+    model = _graph(slab_weights=True, lora_low_rss=True)
+    handle = SimpleNamespace(setup_key=("ready",), config=None)
+    cause = (driver_exit.DriverExitingError(driver_exit.SENT_NOTHING)
+             if abort == "refused_at_exit" else RuntimeError("actor died"))
+    if abort != "not_exiting":
+        flag.set()
+
+    with caplog.at_level(logging.INFO):
+        gate_identity.force_stock_quarantine(model, handle, cause=cause)
+
+    if abort == "not_exiting":
+        assert model.mesh.worker_args == {"slab_weights": False, "lora_low_rss": False}
+        assert len(gate_quarantine_scope._RECORDS) == 1 and len(pushes) == 1
+        assert any("could not complete" in record.getMessage() for record in caplog.records)
+        return
+    # The render-time callers (pipeline, common) quarantine without a push; the same holds.
+    gate_identity.quarantine_unproven_paths(model, cause)
+    assert model.mesh.worker_args == {"slab_weights": True, "lora_low_rss": True}
+    assert gate_quarantine_scope._RECORDS == [] and pushes == []
+    assert [record.getMessage() for record in caplog.records] == []
+
+
 def _patch_auto_state(monkeypatch, token):
     lock = threading.Lock()
     monkeypatch.setattr(
@@ -522,7 +560,7 @@ def test_every_render_path_restores_before_it_reads_the_risk():
         ("samplers.py", "if auto_gate_required("),
     ):
         source = (SRC / "nodes" / module).read_text()
-        assert (source.index("_restore_requested_levers(model)")
+        assert (source.index("_restore_requested_levers(model")
                 < source.index(marker)), module
 
 
@@ -532,6 +570,10 @@ def test_every_no_quarantine_verdict_is_a_verdict_the_render_path_can_see():
         None, "PASS", "DUAL_MODEL_STOCK",
         gate_inconclusive.NO_MATERIAL_VERDICT,
         gate_inconclusive.KNOWN_WRONG_ABORT_VERDICT,
+        # A ceremony the request's capacity stopped before its proof render.
+        gate_inconclusive.CAPACITY_STOP_DISPATCH_VERDICT,
+        # A ceremony stock cannot reference, settled by an active rescue consent.
+        gate_inconclusive.CAPACITY_RESCUE_DISPATCH_VERDICT,
         # FAIL quarantines each dispatch of its own combination, never the graph.
         "FAIL",
     })
@@ -1077,3 +1119,71 @@ def test_an_interrupted_early_collection_aborts_before_the_settings_change(
     contender = RenderSession(timeout_s=0)
     contender.bind(handle)
     contender.close()
+
+
+# A dual-model dispatch reads two FAIL keys: the pair's own, with its digest over
+# both artifact sets, and the conditional model's single key, because a FAIL on
+# that model alone is the same model on the same residency path.
+
+_UNCOND = {"unet_name": "u.safetensors", "options": {}, "loras": []}
+
+
+def _dual_rig(monkeypatch, tmp_path):
+    from dgx_monarch.nodes import gate as gate_mod
+
+    handle, a, b, artifacts = _two_checkpoints(monkeypatch, tmp_path)
+    pair = gate_ledger.artifact_set_signature(["a.safetensors-sig", "u.safetensors-sig"])
+    monkeypatch.setattr(gate_mod, "_dual_combo_of", lambda model, uncond: (
+        gate_quarantine_scope.combination(model, uncond), pair))
+    return handle, a, b, artifacts, pair
+
+
+def _enforce_dual(model, handle, topology):
+    from dgx_monarch.nodes import render_quarantine
+
+    return render_quarantine._enforce_persisted_quarantine(
+        model, handle, resolved_topology=topology, resolved_attention="TORCH_FLASH",
+        uncond=_UNCOND)
+
+
+def _quarantine_line(caplog) -> str:
+    return next(record.getMessage() for record in caplog.records
+                if "previously FAILED" in record.getMessage())
+
+
+def test_a_persisted_dual_fail_quarantines_the_pair_and_not_its_conditional_model(
+        monkeypatch, tmp_path, caplog):
+    from dgx_monarch.topology import Topology
+
+    handle, a, _b, _artifacts, pair = _dual_rig(monkeypatch, tmp_path)
+    topology = Topology(world=1)
+    gate_ledger.GateLedger(str(tmp_path)).record(
+        gate_quarantine_scope.combination(a, _UNCOND), pair, "commit", "FAIL",
+        {"quarantine_levers": ["slab_weights", "lora_low_rss"]},
+        _dispatch_context(a, handle, topology))
+
+    with caplog.at_level(logging.ERROR):
+        quarantined = _enforce_dual(a, handle, topology)
+    assert quarantined.mesh.worker_args == _OFF
+    assert gate_quarantine_scope.combination_label(a, _UNCOND) in _quarantine_line(caplog)
+    assert _enforce(a, handle, topology) is None  # the conditional model alone keeps its levers
+
+
+@pytest.mark.parametrize(("failed", "quarantines"), [("a", True), ("b", False)])
+def test_a_single_fail_quarantines_a_pair_only_when_it_is_the_conditional_model(
+        monkeypatch, tmp_path, caplog, failed, quarantines):
+    from dgx_monarch.topology import Topology
+
+    handle, a, b, artifacts, _pair = _dual_rig(monkeypatch, tmp_path)
+    topology = Topology(world=1)
+    _persist_fail(tmp_path, a if failed == "a" else b, handle, artifacts, topology)
+
+    with caplog.at_level(logging.ERROR):
+        quarantined = _enforce_dual(a, handle, topology)
+    if quarantines:
+        assert quarantined.mesh.worker_args == _OFF
+        line = _quarantine_line(caplog)
+        assert gate_quarantine_scope.combination_label(a) in line
+        assert gate_quarantine_scope.combination(a, _UNCOND) not in line
+    else:
+        assert quarantined is None

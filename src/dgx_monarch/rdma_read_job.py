@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import rdma_job_registry as _registry
-from . import rdma_read_token
+from . import rdma_read_token, reconcile_running
 from .execution_events import bind_operation
 from .rdma_read_attempt import NOT_ENTERED
 from .rdma_read_attempt import Claim as _Claim
@@ -188,8 +188,18 @@ class LatentReadJob:
                         self._phase = (RESULT_READY, outcome)
                         self._condition.notify_all()
                 return outcome
+            if self._unclaimable() and not self.outcome_owner:  # a runner may settle between the reads
+                raise RuntimeError(
+                    "no runner could claim this RDMA read job, so it has no outcome; "
+                    "its descriptor stays rooted")
             with self._condition:
                 self._condition.wait(timeout=0.05)
+
+    def _unclaimable(self) -> bool:
+        """Still unclaimed, with no other runner alive to claim it: no outcome will come."""
+        current = threading.current_thread()
+        return self._phase[0] == PENDING and not any(
+            runner is not current and runner.is_alive() for runner in self.runners)
 
     def _finish_winner(
         self, result: Any, primary: BaseException | None
@@ -197,7 +207,10 @@ class LatentReadJob:
         if self.token_owner:
             for attempt in range(2):
                 try:
-                    evidence = _retire_token(self.guard, self.token_owner[0])
+                    # A deferred fleet cleanup this retirement resumes runs on: this job's
+                    # root retires only after it, and the cleanup waits for that.
+                    with reconcile_running.caller_does_not_wait():
+                        evidence = _retire_token(self.guard, self.token_owner[0])
                 except BaseException as cleanup:
                     primary = _prefer(
                         primary, cleanup,
@@ -291,6 +304,14 @@ class LatentReadJob:
                 owns = self._resolve_claim(claim)
             else:
                 raise
+        if not owns and self._phase[0] == PENDING:
+            # Nobody won: this runner's claim attempts were interrupted while the
+            # job was unclaimed. A loser waits for a winner, and there is none,
+            # so it claims once more and otherwise gives up with its own error.
+            owns = self._resolve_claim(claim)
+            if not owns and self._phase[0] == PENDING:
+                raise claim.primary if claim.primary is not None else RuntimeError(
+                    "the RDMA read job could not be claimed")
         if not owns:
             waited_result, error = self._wait_outcome()
             if error is not None:

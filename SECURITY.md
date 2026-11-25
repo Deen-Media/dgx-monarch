@@ -130,7 +130,7 @@ certificate/CA plumbing, so peer authentication is unavailable through
 dgx-monarch. This limitation applies to the APIs dgx-monarch uses.
 Torchmonarch also has environment-configured TLS support in its channel layer,
 but dgx-monarch does not use or manage it. The two call sites are
-[`mesh_runtime.py:168-169`](src/dgx_monarch/mesh_runtime.py#L168-L169 "anchor:attach_once")
+[`mesh_runtime.py:192-193`](src/dgx_monarch/mesh_runtime.py#L192-L193 "anchor:attach_once")
 and
 [`worker_loop.py:83-94`](src/dgx_monarch/cli/worker_loop.py#L83-L94 "anchor:main").
 `docs/VALIDATION.md` records the dependency versions tested for this limitation.

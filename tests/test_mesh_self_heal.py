@@ -35,10 +35,13 @@ def _stub(monkeypatch, probe_results, attach_results, restart_calls):
 
     monkeypatch.setattr(mesh_mod, "_attach_once", fake_attach_once)
     # Each loop's id reading, which the attach dials; no ssh runs.
+    from dgx_monarch.monarch_capabilities import loaded_version
+
     monkeypatch.setattr(
         listener_generation, "fleet",
         lambda config, **_kwargs: {host.address: {"gen": "aaaaaaaaaaaa",
-                                                  "proc_id": "aaaaaaaaaaaa0001"}
+                                                  "proc_id": "aaaaaaaaaaaa0001",
+                                                  "monarch": loaded_version()}
                                    for host in config.hosts})
     monkeypatch.setattr(mesh_mod, "_TRANSPORT_POISON", None)
     monkeypatch.setattr(mesh_mod, "_TRANSPORT_BIND", None)
@@ -230,7 +233,7 @@ def test_concurrent_supervision_failures_share_one_reconcile_stop():
         _supervision_reconcile_started=False,
     )
 
-    def shutdown(*, timeout_s, _reconcile_token):
+    def shutdown(*, timeout_s, stop_timeout_s=None, _reconcile_token):
         calls.append(_reconcile_token)
         assert _reconcile_token is handle._supervision_reconcile_token
         entered.set()

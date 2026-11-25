@@ -270,6 +270,31 @@ def test_cleanup_preserves_unverified_studio_payload(tmp_path: Path, tamper: str
         assert external.read_text() == "must remain"
 
 
+@pytest.mark.parametrize("sibling", ["file", "directory"])
+def test_cleanup_keeps_a_slot_whose_site_holds_a_foreign_sibling_beside_the_package(
+    tmp_path: Path, sibling: str
+) -> None:
+    """The private site holds only the package, so anything beside it is foreign.
+
+    Cleanup used to validate the package and then remove the whole slot,
+    sibling included. It must answer unknown and leave the slot in place.
+    """
+    env, digest, _address, _candidate = _stage(tmp_path, start=False, local=False)
+    compensated = _run(scripts.build_compensate_script(sys.executable, TOKEN, 1, digest), env)
+    assert compensated.returncode == 0 and compensated.stdout.strip() == "COMPENSATED"
+    site = Path(env["HOME"]) / scripts.release_rel(TOKEN, 1) / "site"
+    foreign = site / "user-notes"
+    if sibling == "file":
+        foreign.write_text("must remain")
+    else:
+        foreign.mkdir(mode=0o700)
+        (foreign / "kept.txt").write_text("must remain")
+    cleaned = _run(scripts.build_cleanup_script(sys.executable, TOKEN, 1, digest), env)
+    assert cleaned.returncode == 0 and cleaned.stdout.strip() == "UNKNOWN"
+    assert (site / "dgx_monarch").is_dir()
+    assert (foreign if sibling == "file" else foreign / "kept.txt").read_text() == "must remain"
+
+
 def test_verify_stage_refuses_altered_studio_resources(tmp_path: Path) -> None:
     env, digest, _address, _candidate = _prepare(tmp_path, local=False)
     package = Path(env["HOME"]) / scripts.release_rel(TOKEN, 1) / "site/dgx_monarch"

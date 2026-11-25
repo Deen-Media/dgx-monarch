@@ -81,12 +81,14 @@ def status_payload(
     mesh_detail: str,
     *,
     mesh_block: object = None,
+    fp8_matrix_mult: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """The per-host rows and mesh row `dgxm status` prints, plus readiness.
 
     Status keeps only the `mesh` block of the driver's telemetry and passes no
     render state, so its overall readiness reads `unknown` at best
-    (docs/CONCEPTS.md, Readiness).
+    (docs/CONCEPTS.md, Readiness). ``fp8_matrix_mult`` is the actors' FP8
+    matmul setting as cluster.toml states it (cli/fp8_matmul_row.py).
     """
     host_rows = [
         {field: str(row.get(field, "")) for field in _HOST_FIELDS}
@@ -97,7 +99,7 @@ def status_payload(
         if mesh_block is not None
         else {"state": mesh_state if mesh_state in {"ok", "idle", "busy", "dirty", "unknown"} else "unknown"}
     )
-    return {
+    payload: dict[str, object] = {
         "hosts": host_rows,
         "mesh": {"state": mesh_state, "detail": mesh_detail},
         "readiness": operator_readiness.readiness_from_telemetry(
@@ -107,3 +109,6 @@ def status_payload(
             },
         ),
     }
+    if fp8_matrix_mult is not None:
+        payload["fp8_matrix_mult"] = dict(fp8_matrix_mult)
+    return payload

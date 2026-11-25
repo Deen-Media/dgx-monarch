@@ -163,14 +163,21 @@ class _FakeMageCfg:
 
 
 def test_cfg_padding_restores_stock_text_input():
+    from dgx_monarch.adapters import cfg_pad_rows
+
     model = _FakeMageCfg()
     MageFlowAdapter().inject_cfg_pad_forward(model)
     context = torch.ones(1, 6, 8)
     context[:, 4:] = 0
-    model._forward(torch.zeros(1, 128, 1, 1), torch.zeros(1), context)
+    # The Worker's pad stamped the entry's own four rows (adapters/cfg_pad_rows.py).
+    model._forward(torch.zeros(1, 128, 1, 1), torch.zeros(1), context,
+                   **{cfg_pad_rows.TEXT_ROWS: torch.tensor([4])})
     trimmed, mask = model.calls[-1]
     assert trimmed.shape[1] == 4
     assert mask is None
+    # Unstamped, the call was not padded: its zero tail is its own.
+    model._forward(torch.zeros(1, 128, 1, 1), torch.zeros(1), context)
+    assert model.calls[-1][0].shape[1] == 6
 
 
 def test_cfg_padding_keeps_a_real_mask():

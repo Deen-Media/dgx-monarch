@@ -9,7 +9,7 @@ import os
 import re
 import stat
 import sys
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from email.parser import BytesParser
 from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path, PurePosixPath
@@ -22,6 +22,17 @@ _COLOR_MATCHER_DATA: dict[str, tuple[str, str]] = {
     "scotland_house.png": ("sha256=7nKDHIIwtWkoW1JU2yNz6I4L7650rLYCLUKgyOka19E", "298652"),
     "scotland_pitie.png": ("sha256=5aor6EphGdWqn9_rS76CTXuP6juqccIXcyXcg0O8YZM", "304007"),
     "scotland_plain.png": ("sha256=RZuXuvsUifnqLxw3aYilcbN8tW1G6gilrZGpjLAswXc", "280371"),
+}
+
+
+# Official xfuser 0.8.0 wheel: it ships tests/conftest.py, which torchmonarch's
+# wheels ship too, with other bytes, so whichever installs last wins the file.
+# Only this record of only this path may share a pinned path, which lies
+# outside torchmonarch's runtime packages (monarch, monarch_supervisor).
+_SHARED_PINNED: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
+    ("xfuser", "0.8.0"): {
+        "tests/conftest.py": ("sha256=utFLTVnq1Ypbjm9HNO0sKd_8Z4_jZXUgH-Pqg3zLboQ", "376"),
+    },
 }
 
 
@@ -65,41 +76,86 @@ def _safe_path(value: str) -> bool:
     )
 
 
+def prefix_bytecode(path: str, digest: str, size: str, sources: Collection[str]) -> bool:
+    """Whether a RECORD row outside site-packages is bytecode pip compiled for an in-site source.
+
+    pip records each ``.pyc`` it compiles with no hash and no size. Under
+    ``PYTHONPYCACHEPREFIX`` that file lands under the prefix, outside
+    site-packages, so its row starts with ``..``. Accept exactly that shape:
+    no hash and no size; one or more leading ``..`` segments, then plain ones;
+    a last segment ``<stem>.<cache tag>.pyc``, or ``.opt-1`` / ``.opt-2``
+    before ``.pyc``, which no import statement can name; and a tail that, with
+    that last segment read as ``<stem>.py``, is the path of one of ``sources``:
+    ``<package path>/<stem>.py`` for a module in a package, or ``<stem>.py``
+    alone for a top-level module, as pip writes both, with at least one plain
+    segment before it. Python reads such a file only as the cache of its own
+    source under that prefix. Nothing here opens it.
+    """
+    tag = sys.implementation.cache_tag
+    if digest or size or not tag or "\\" in path or ":" in path:
+        return False
+    if any(ord(character) < 32 or ord(character) == 127 for character in path):
+        return False
+    parts = path.split("/")
+    ups = 0
+    while ups < len(parts) and parts[ups] == "..":
+        ups += 1
+    rest = parts[ups:]
+    if not ups or not rest or any(part in ("", ".", "..") for part in rest):
+        return False
+    match = re.fullmatch(r"(.+)\." + re.escape(tag) + r"(?:\.opt-[12])?\.pyc", rest[-1])
+    if match is None:
+        return False
+    for depth in range(len(rest) - 1):
+        directory = rest[len(rest) - 1 - depth:len(rest) - 1]
+        if "/".join([*directory, match[1] + ".py"]) in sources:
+            return True
+    return False
+
+
 def _records(
     payload: bytes, *, color_matcher: bool = False,
-) -> tuple[dict[str, tuple[str, str]], bool]:
+) -> tuple[dict[str, tuple[str, str]], str | None]:
     """Parse owned site files; recognize ancillary external spellings lexically.
 
-    External entries are never resolved, read, or returned as owned payload.
-    The color-matcher data exception also requires verified in-site copies.
+    Returns the in-site rows and the reason the RECORD cannot vouch for its
+    distribution, or None: ``record_malformed`` for a row of the wrong shape or
+    a repeated path, ``record_outside_site`` for an external row that is not a
+    console script, pip's prefix bytecode (``prefix_bytecode``) or the
+    color-matcher data. External entries are never resolved, read, or returned
+    as owned payload. The color-matcher data exception also requires verified
+    in-site copies.
     """
     records: dict[str, tuple[str, str]] = {}
-    invalid = False
+    malformed = outside = False
     seen: set[str] = set()
     external = {
         "../../../tests/data/" + name: record for name, record in _COLOR_MATCHER_DATA.items()
     } if color_matcher else {}
     if color_matcher and sys.implementation.cache_tag:
         external["../../../bin/__pycache__/cli." + sys.implementation.cache_tag + ".pyc"] = ("", "")
-    for row in csv.reader(io.StringIO(payload.decode("utf-8"))):
+    rows = list(csv.reader(io.StringIO(payload.decode("utf-8"))))
+    sources = {row[0] for row in rows if len(row) == 3 and _safe_path(row[0]) and row[0].endswith(".py")}
+    for row in rows:
         if len(row) != 3:
-            invalid = True
+            malformed = True
             continue
         path, digest, size = row
         if path in seen:
-            invalid = True
+            malformed = True
         seen.add(path)
         if not _safe_path(path):
             if path in external and (digest, size) == external[path]:
                 continue
             # Installer-created console scripts live outside site-packages.
-            if not re.fullmatch(r"(?:\.\./)+bin/[^/\\:]+", path):
-                invalid = True
+            if not (re.fullmatch(r"(?:\.\./)+bin/[^/\\:]+", path)
+                    or prefix_bytecode(path, digest, size, sources)):
+                outside = True
             continue
         if path in records:
-            invalid = True
+            malformed = True
         records[path] = digest, size
-    return records, invalid
+    return records, "record_malformed" if malformed else "record_outside_site" if outside else None
 
 
 def _verified_record(data: bytes, record: tuple[str, str]) -> bool:
@@ -164,17 +220,59 @@ def _empty_color_test_initializer(
     )
 
 
+def _record_hex(record: tuple[str, str] | None) -> str | None:
+    """The hex SHA-256 a ``sha256=<urlsafe base64>`` RECORD digest names, or None."""
+    if record is None or not record[0].startswith("sha256="):
+        return None
+    raw = record[0].removeprefix("sha256=")
+    try:
+        value = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+    except ValueError:
+        return None
+    return value.hex() if len(value) == 32 else None
+
+
+def _shared_hash(site: Path, path: str, name: str, pinned: str | None,
+                 found: Mapping[str, str], record: tuple[str, str]) -> str:
+    """The pinned hash a shared path counts at, once its bytes are one of the two vouched files."""
+    if path not in found:
+        raise PayloadOwnershipError(
+            "a file torchmonarch shares with another distribution is missing",
+            reason="shared_payload_missing", distribution="torchmonarch", relative_path=path,
+        )
+    data = _read(site / path)
+    if pinned is None or (hashlib.sha256(data).hexdigest() != pinned and not _verified_record(data, record)):
+        raise PayloadOwnershipError(
+            "a shared file matches neither distribution's record", reason="record_mismatch",
+            distribution=name, relative_path=path,
+        )
+    return pinned
+
+
 def foreign_namespace_files(
-    site: Path, expected: Mapping[str, str], found: Mapping[str, str],
+    site: Path, expected: Mapping[str, str], found: Mapping[str, str], *,
+    shared: dict[str, str],
 ) -> set[str]:
     """Exclude only independently recorded, intact foreign namespace files.
 
     Installed records establish local ownership, not publisher authenticity.
-    The pinned wheel remains authoritative for every expected payload path.
+    The pinned wheel remains authoritative for every expected payload path,
+    with one named exception (``_SHARED_PINNED``): a path that one official
+    foreign wheel also ships, outside torchmonarch's runtime packages, may
+    hold either distribution's bytes when that distribution's record of it is
+    the official one. ``shared`` receives each such path with the pinned hash
+    to count it at, so the payload digest is the same whichever install wrote
+    last. A named shared path that is gone still refuses.
+
+    The folders above the site are resolved first: a symlink there, such as a
+    home mounted elsewhere, says nothing about who owns the payload. A symlink
+    at the site itself or below it still refuses.
     """
+    site = site.parent.resolve(strict=True) / site.name
     owners: dict[str, list[str]] = {}
     identities: dict[str, int] = {}
-    candidates: list[tuple[Path, str, bytes, dict[str, tuple[str, str]], bool, bool]] = []
+    pinned_records: dict[str, tuple[str, str]] = {}
+    candidates: list[tuple[Path, str, str, bytes, dict[str, tuple[str, str]], str | None, bool]] = []
     for info in sorted(site.iterdir()):
         if not info.name.lower().endswith(".dist-info"):
             continue
@@ -187,23 +285,38 @@ def foreign_namespace_files(
             raise PayloadOwnershipError("distribution identity is ambiguous")
         name = re.sub(r"[-_.]+", "-", names[0]).lower()
         identities[name] = identities.get(name, 0) + 1
-        if name == "torchmonarch":
-            continue
         record_path = info / "RECORD"
+        if name == "torchmonarch":
+            if record_path.exists():
+                pinned_records = _records(_read(record_path))[0]
+            continue
         if not record_path.exists():
             continue
         color_matcher = name == "color-matcher" and versions[0] == "0.6.0"
         records, invalid = _records(_read(record_path), color_matcher=color_matcher)
         relevant = records.keys() & (expected.keys() | found.keys())
         if relevant:
-            candidates.append((info, name, metadata, records, invalid, color_matcher))
+            candidates.append((info, name, str(versions[0]), metadata, records, invalid, color_matcher))
     if identities.get("torchmonarch", 0) > 1:
         raise PayloadOwnershipError("pinned distribution identity is ambiguous")
+    # torchmonarch's own RECORD counts too: importlib.metadata leaves a missing
+    # file out of the inventory site_payload_digest passes as ``expected``.
+    shared_paths = {path for table in _SHARED_PINNED.values() for path in table}
+    for path in sorted((shared_paths & (expected.keys() | pinned_records.keys())) - found.keys()):
+        raise PayloadOwnershipError(
+            "a file torchmonarch shares with another distribution is missing",
+            reason="shared_payload_missing", distribution="torchmonarch", relative_path=path,
+        )
     excluded: set[str] = set()
-    for info, name, metadata, records, invalid, color_matcher in candidates:
-        if invalid or identities[name] != 1:
+    for info, name, version, metadata, records, invalid, color_matcher in candidates:
+        if identities[name] != 1:
             raise PayloadOwnershipError(
-                "foreign distribution inventory is ambiguous", reason="inventory_ambiguous",
+                "foreign distribution is installed more than once", reason="distribution_duplicated",
+                distribution=name, relative_path=f"{info.name}/RECORD",
+            )
+        if invalid is not None:
+            raise PayloadOwnershipError(
+                "foreign distribution RECORD cannot vouch for its files", reason=invalid,
                 distribution=name, relative_path=f"{info.name}/RECORD",
             )
         metadata_record = records.get(f"{info.name}/METADATA")
@@ -212,14 +325,20 @@ def foreign_namespace_files(
                 "foreign distribution metadata does not match its record", reason="metadata_mismatch",
                 distribution=name, relative_path=f"{info.name}/METADATA",
             )
-        if records.keys() & expected.keys():
+        allowed = _SHARED_PINNED.get((name, version), {})
+        claimed = records.keys() & expected.keys()
+        vouched = {path for path in claimed if allowed.get(path) == records[path]}
+        if claimed - vouched:
             raise PayloadOwnershipError(
                 "foreign distribution claims pinned payload", reason="pinned_payload_claim",
-                distribution=name, relative_path=min(records.keys() & expected.keys()),
+                distribution=name, relative_path=min(claimed - vouched),
             )
+        for path in sorted(vouched):
+            pinned = expected[path] or _record_hex(pinned_records.get(path))
+            shared[path] = _shared_hash(site, path, name, pinned, found, records[path])
         if color_matcher:
             _color_matcher_assets(site, records)
-        for path in sorted(records.keys() & found.keys()):
+        for path in sorted((records.keys() & found.keys()) - vouched):
             owners.setdefault(path, []).append(name)
             data = _read(site / path)
             if len(owners[path]) != 1 or not (

@@ -376,6 +376,25 @@ def card_tail(guard: str, *, family_hint: str | None = None,
         return ""
 
 
+def card_tail_for(guard: str, *, unet_name: str, options: Mapping[str, Any] | None,
+                  lora_stack: Sequence[Any] | None, topology: Mapping[str, Any] | None,
+                  world: object, family_hint: str | None = None) -> str:
+    """``card_tail`` for a checkpoint the caller names, on a thread with no binding.
+
+    A driver check that refuses before dispatch, as a Worker's guard would
+    after it, binds what the Worker binds (``bind_model`` from the sample
+    path), so its card keys the same memo the next dispatch resolves. This
+    thread's own binding is put back afterwards.
+    """
+    scope = _scope()
+    saved = scope.bound
+    try:
+        bind_model(unet_name, options, lora_stack, topology, world, dispatch=True)
+        return card_tail(guard, family_hint=family_hint)
+    finally:
+        scope.bound = saved
+
+
 def _descriptor(guard: str, *, family_hint: str | None, detail: str | None = None
                 ) -> consent_descriptor.ConsentDescriptor | None:
     kind = KNOWN_WRONG_GUARDS.get(guard)

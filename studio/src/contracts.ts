@@ -254,13 +254,16 @@ export interface Catalog {
   loras?: CatalogLora[];
   object_info?: Record<string, { input?: { required?: Record<string, [unknown, NumberSchema?]> } }>;
 }
+/** Inspect a workflow into the draft; resolves with the notice a newly loaded one set, if any. */
 export type InspectWorkflow = (
   workflow: Workflow,
   name: string,
   preserveValues?: boolean,
   /** The bundled workflow id the select shows once this inspection applies. */
   templateId?: string,
-) => Promise<void>;
+  /** The operation a newly loaded workflow takes when it supports it, in place of the draft's. */
+  operation?: string,
+) => Promise<string | void>;
 export type ChangeDraft = (changes: Partial<Draft>) => void;
 export type ReuseArtifact = (artifact: Artifact, operation?: string) => Promise<void>;
 export type SaveRecord = (

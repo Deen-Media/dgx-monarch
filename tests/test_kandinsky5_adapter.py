@@ -1,7 +1,7 @@
 """CPU contracts for Kandinsky5 padding, RoPE sharding, binding, and detection.
 
-CFG padding trims uniform trailing rows and refuses ragged batches because
-this adapter has no text mask. USP binds forward_orig and visual
+CFG padding cuts the rows the Worker's pad stamped and refuses ragged batches
+because this adapter has no text mask. USP binds forward_orig and visual
 self-attention directly: decoder cross-attention shares transformer_options
 and must stay stock, as must the text blocks. CFG padding binds _forward.
 """
@@ -15,10 +15,12 @@ from dgx_monarch.adapters.kandinsky5 import Kandinsky5Adapter, _trim_context_or_
 
 def test_trim_uniform_pad_is_exact():
     ctx = torch.ones(1, 6, 8)
-    ctx[:, 4:] = 0.0  # driver-appended rows
-    out = _trim_context_or_raise(ctx)
+    ctx[:, 4:] = 0.0  # Worker-appended rows, whose count the pad stamped
+    out = _trim_context_or_raise(ctx, torch.tensor([4]))
     assert out.shape[1] == 4
     assert torch.equal(out, ctx[:, :4])
+    # Unstamped, the same zero tail is the conditioning's own and stays.
+    assert torch.equal(_trim_context_or_raise(ctx), ctx)
 
 
 def test_trim_noop_without_padding():
@@ -42,7 +44,7 @@ def test_trim_ragged_batch_raises_typed():
     ctx[0, 5:] = 0.0
     ctx[1, 3:] = 0.0
     with pytest.raises(UnsupportedModelError, match="maskless"):
-        _trim_context_or_raise(ctx)
+        _trim_context_or_raise(ctx, torch.tensor([5, 3]))
 
 
 def test_zero_pad_rows_are_not_neutral_through_text_embeddings():

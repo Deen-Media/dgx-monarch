@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import importlib.metadata
+import re
 import shutil
 import subprocess
 import sys
@@ -371,7 +372,8 @@ def test_browser_listener_carries_both_driver_events_and_the_toast_opt_out():
 def test_module_line_limit_exception_ledger():
     # The ledger is the numbers in tests/line_limit_helpers.py, which
     # tests/test_comfy_managed_pricing.py reads through ceiling_for. The
-    # DESIGN.md section 7 table mirrors it by hand; no test reads that table.
+    # DESIGN.md section 7 table mirrors it by hand; the next test holds the
+    # table to it.
     ceilings = CEILINGS
     src = REPO / "src" / "dgx_monarch"
     over = {}
@@ -386,6 +388,14 @@ def test_module_line_limit_exception_ledger():
     assert all(over[name] <= ceiling for name, ceiling in ceilings.items()), (
         f"line-limit ceiling exceeded: actual={over}, ceilings={ceilings}"
     )
+
+
+def test_design_ceiling_table_matches_the_ledger():
+    # A ceiling raised in the ledger alone left DESIGN.md naming the old one.
+    design = (REPO / "docs" / "DESIGN.md").read_text(encoding="utf-8")
+    table = {name: int(ceiling)
+             for name, ceiling in re.findall(r"^\| `([^`]+\.py)` \| (\d+) \|", design, flags=re.MULTILINE)}
+    assert table == CEILINGS
 
 
 def test_mesh_safety_remains_a_leaf_without_mesh_imports():

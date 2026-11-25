@@ -6,9 +6,17 @@
 // precedence on load. Older saves use the Init node's widget-order history:
 // array length identifies each layout except disable_mmap (see INIT_ORDERS).
 //
+// The stock nodes in NAMED_STOCK save and restore the same map. Each gained a
+// widget that an older ComfyUI this project supports lacks, and the templates
+// follow master, so that ComfyUI reads their later values one slot off; the
+// map puts each back by name (src/dgx_monarch/stock_widget_drift.py).
+//
 // tests/test_init_widget_order.py pins the latest layout to INPUT_TYPES and
 // requires append-only widget additions.
 import { app } from "../../scripts/app.js";
+
+// tests/test_stock_widget_drift.py keeps this list equal to stock_widget_drift.NEWER.
+const NAMED_STOCK = ["CreateVideo"];
 
 // Saved Init widget orders. Append new layouts by
 // copying the last row and appending the new widget; keep arrays literal for
@@ -100,7 +108,8 @@ function notifyMigration(node, detail) {
 app.registerExtension({
     name: "dgx_monarch.widget_drift",
     beforeRegisterNodeDef(nodeType, nodeData) {
-        if (!String(nodeData?.category ?? "").startsWith("DGX Monarch")) return;
+        if (!String(nodeData?.category ?? "").startsWith("DGX Monarch")
+            && !NAMED_STOCK.includes(nodeData?.name)) return;
         const defaults = widgetDefaults(nodeData);
 
         const onSerialize = nodeType.prototype.onSerialize;

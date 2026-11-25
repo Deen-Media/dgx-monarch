@@ -20,7 +20,6 @@ from dgx_monarch.adapters.base import InjectionContext, UnsupportedModelError
 from dgx_monarch.adapters.boogu import (
     BooguAdapter,
     _assert_uniform_seq_lengths,
-    _content_caption_lengths,
     _keep_mask_caption_lengths,
     _split_joint_rope,
     _text_pad_key_bias,
@@ -269,7 +268,10 @@ class _FakeBoogu:
 @pytest.fixture
 def comfy_stubs(monkeypatch):
     """Stub the two comfy leaves the forward imports (pad_to_patch_size,
-    cast_to), plus identity shard/gather so the sp=1 structure is observable."""
+    cast_to), plus identity shard/gather so the sp=1 structure is observable.
+
+    The pad rows are named on every topology, which reads the sequence-parallel
+    degree; it answers 1 here, so the identity shards pad nothing."""
     comfy = types.ModuleType("comfy")
     ldm = types.ModuleType("comfy.ldm")
     common_dit = types.ModuleType("comfy.ldm.common_dit")
@@ -285,6 +287,7 @@ def comfy_stubs(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
     monkeypatch.setattr(bg, "shard_seq", lambda t, dim=1: (t, t.shape[dim]))
     monkeypatch.setattr(bg, "sp_gather", lambda t, orig, dim=1: t)
+    monkeypatch.setattr(base, "sp_world", lambda: 1)
 
 
 def _run_forward(with_ref):
@@ -391,21 +394,6 @@ def test_ragged_batch_rejects_typed(comfy_stubs):
                       3, transformer_options={})
 
 
-def test_caption_lengths_from_content_uniform_ragged_zeroout():
-    # With no mask, a row's real length runs to its last non-zero token.
-    uni = torch.ones(1, 6, 4)
-    uni[:, 4:] = 0.0
-    assert _content_caption_lengths(uni) == [4]
-
-    rag = torch.ones(2, 6, 4)
-    rag[0, 4:] = 0.0
-    rag[1, 5:] = 0.0
-    assert _content_caption_lengths(rag) == [4, 5]
-
-    # ConditioningZeroOut is real input, so it keeps its full length.
-    assert _content_caption_lengths(torch.zeros(1, 5, 4)) == [5]
-
-
 def test_caption_lengths_from_keep_mask():
     mask = torch.zeros(2, 6)
     mask[0, :4] = 1.0
@@ -480,14 +468,22 @@ def _cfg_call(model, context, attention_mask=None):
     return model.recorded[-1]
 
 
-def test_cfg_pad_trims_uniform_and_fixes_num_tokens():
+def test_cfg_pad_maskless_call_keeps_its_zero_rows():
+    # The Worker never pads this family (it dispatches per cond), so a maskless
+    # call's trailing zero rows are the conditioning's own (a concatenated
+    # zeroed prompt, say), and stock runs them all; so does this forward.
     model = _FakeBooguCfg()
     BooguAdapter().inject_cfg_pad_forward(model)
     ctx = torch.ones(1, 6, 4)
-    ctx[:, 4:] = 0.0                                        # driver-appended pad
+    ctx[:, 4:] = 0.0
     rec = _cfg_call(model, ctx)
-    assert rec["context"].shape[1] == 4                    # trimmed to real length
-    assert rec["num_tokens"] == 4                          # num_tokens re-derived
+    assert torch.equal(rec["context"], ctx) and rec["num_tokens"] == 6
+    assert rec["attention_mask"] is None
+    ragged = torch.ones(2, 6, 4)
+    ragged[0, 4:] = 0.0
+    ragged[1, 5:] = 0.0
+    rec = _cfg_call(model, ragged)
+    assert torch.equal(rec["context"], ragged) and rec["num_tokens"] == 6
     assert rec["attention_mask"] is None
 
 
@@ -526,9 +522,9 @@ def test_cfg_pad_bind_is_idempotent():
     adapter = BooguAdapter()
     adapter.inject_cfg_pad_forward(model)
     adapter.inject_cfg_pad_forward(model)
-    ctx = torch.ones(1, 6, 4)
-    ctx[:, 4:] = 0.0
-    rec = _cfg_call(model, ctx)
+    mask = torch.zeros(1, 6)
+    mask[:, :4] = 1.0                                       # the encoder's keep-mask
+    rec = _cfg_call(model, torch.ones(1, 6, 4), attention_mask=mask)
     assert rec["context"].shape[1] == 4 and rec["num_tokens"] == 4
 
 

@@ -27,8 +27,14 @@ from pathlib import Path
 
 import pytest
 
-from dgx_monarch import capacity_fit, capacity_floor, driver_footprint, mesh_safety
-from dgx_monarch.nodes import gate_cross_mode, render_preflight
+from dgx_monarch import (
+    capacity_fit,
+    capacity_floor,
+    driver_footprint,
+    h3_calibration,
+    mesh_safety,
+)
+from dgx_monarch.nodes import gate_cross_mode, recycle_drain, render_preflight
 
 REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src" / "dgx_monarch"
@@ -237,7 +243,7 @@ def test_remote_rank0_is_charged_no_weight_term():
     estimate = _estimate(DIT_REF2VA_BF16, MEM_AUTO_DISPATCH, co_resident=False)
     if estimate.weight_bytes != 0:
         pytest.fail("a remote rank 0 must contribute no weight term")
-    if "not on the driver host" not in estimate.notes["weights"]:
+    if "the first Worker is on another box" not in estimate.notes["weights"]:
         pytest.fail(f"the omission must be stated: {estimate.notes['weights']}")
 
 
@@ -741,6 +747,8 @@ def _h3_rig(monkeypatch, tmp_path, *, size: int, mem: int, preset="auto",
     mesh = types.SimpleNamespace(
         topology_preset=preset, worker_args=dict(worker_args or {}),
         handle=handle or types.SimpleNamespace(owns_hosts=False))
+    if preset != "auto":
+        recycle_drain.note_loader_ran(unet_name)  # an explicit preset's loader node ran for it
     model = types.SimpleNamespace(unet_name=unet_name, mesh=mesh, options={})
     latent = {"samples": types.SimpleNamespace(shape=(1, 24, 2, 20, 32))}
     return model, latent
@@ -777,7 +785,9 @@ def test_a_retry_after_a_failed_render_is_not_charged_twice(monkeypatch, tmp_pat
 
     Driven through the shipped entry point twice under `auto`, with the render
     failing in between, at a MemAvailable that fits the load exactly once."""
-    mem = DIT_REF2VA_INT8 + 6 * _GIB
+    # The render's activations pay the H3 fixed floor too, so the reading
+    # holds it beside the load and the reserve.
+    mem = DIT_REF2VA_INT8 + 6 * _GIB + h3_calibration.H3_ACTIVATION_FLOOR_BYTES
     model, latent = _h3_rig(monkeypatch, tmp_path, size=DIT_REF2VA_INT8, mem=mem)
     request = {"positive": [[object(), {"minimax_refs": CONFIG_A_REFS}]]}
     charged: list = []

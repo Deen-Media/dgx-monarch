@@ -1,0 +1,161 @@
+name: Report from a cluster larger than two Sparks
+description: A render or a refusal on three to eight Sparks, or on other hardware in the community-validation tier
+labels: ["community-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The project runs two DGX Sparks. A larger cluster stays in the
+        "designed for, needs community validation" tier whatever a report
+        shows. What a report must carry, and what the project does with it,
+        is in [CONTRIBUTING.md](../blob/HEAD/CONTRIBUTING.md#reports-from-clusters-larger-than-ours).
+        The docs record what a report shows and name no one. The identity
+        gate on your own cluster compares renders on your own mesh and layout
+        only, so the two hashes below are the only test of your layout
+        against a validated one.
+
+        Security vulnerabilities do not belong here. Use the private advisory
+        flow in [SECURITY.md](../blob/HEAD/SECURITY.md) instead.
+
+        Do not upload diagnostic bundles to a public issue. Paste only the
+        smallest relevant excerpts. Replace hostnames, private addresses,
+        usernames, absolute paths, GPU UUIDs, model or LoRA names, command
+        lines, environment values, and tokens with clear placeholders before
+        submitting.
+
+  - type: textarea
+    id: cluster
+    attributes:
+      label: Cluster
+      description: >-
+        How many boxes and which hardware, memory per box (say if it is
+        unified), the fabric class and link speed, the `fabric_profile` you
+        configured, and the GPU clock state (capped and at what, or uncapped).
+        Do not include hostnames, addresses, interface names, serials, or GPU
+        UUIDs.
+      placeholder: |
+        4x DGX Spark (GB10), 128 GB unified memory per box, switched RoCE,
+        about 200 Gb/s per box, fabric_profile = "dgx-spark-pair" with an
+        override, GPU clock uncapped
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: dgx-monarch version and commit, ComfyUI, torch, NCCL, torchmonarch and xFuser.
+      placeholder: "dgx-monarch 0.0.0 (commit abc1234), ComfyUI 0.0.0, torch 0.0.0+cuXXX, NCCL 0.0.0, torchmonarch 0.0.0, xfuser 0.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: graph
+    attributes:
+      label: Graph shape
+      description: >-
+        Model family and quantization, canvas, frame count, steps, cfg, the
+        LoRA count and strengths, and every Init node switch that differs from
+        its default. Never include checkpoint, encoder, VAE, or LoRA filenames.
+      placeholder: |
+        - family=example, quant=int8, 1024x576, 121 frames, 8 steps, cfg 1.0
+        - two LoRAs at 0.8 and 0.5, names redacted
+        - Init switches changed: auto_gate=off
+    validations:
+      required: true
+
+  - type: textarea
+    id: topology
+    attributes:
+      label: Topology lines and refusal
+      description: >-
+        For each layout you ran, the driver's own line, which reads
+        `render topology: <topology> (preset|auto: <reason>)`, and the full
+        text of the refusal if there was one, from its `[dgxm:` tag on.
+      render: text
+      placeholder: |
+        render topology: uly4 (preset: uly4)
+        render topology: uly2+ring2 (auto: ...)
+        [dgxm:K guard=... waivable=1] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: hashes
+    attributes:
+      label: Latent sha256 on your layout and on a validated layout
+      description: >-
+        The latent's sha256 from the rank stats on the layout under report, and
+        on a layout this project has validated for the same graph and seed: a
+        two-Spark pair on its `auto` layout, or one GPU with `mode=local`.
+        Name which validated layout you used.
+      render: text
+      placeholder: |
+        four Sparks, uly4: 0123abcd...
+        two-Spark pair, auto (uly2): 0123abcd...
+    validations:
+      required: true
+
+  - type: input
+    id: identity
+    attributes:
+      label: Rank identity line
+      description: >-
+        The driver's line that reads `cross-rank latent identity: ...` for the
+        layout under report.
+      placeholder: "cross-rank latent identity: 6 comparisons across 1 DP groups bit-identical"
+    validations:
+      required: true
+
+  - type: textarea
+    id: shapes
+    attributes:
+      label: A second shape or length
+      description: >-
+        The same report for at least one more shape or length, with its hashes.
+        Where the family has a divisibility-pad guard, one of the shapes must
+        need a pad row; a ring layout's refusal text gives the count.
+      placeholder: |
+        Same graph at 768x1024, 89 frames: needs 2 pad rows at degree 4.
+        four Sparks, uly4: ...
+        two-Spark pair, auto (uly2): ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: timings
+    attributes:
+      label: Timings
+      description: >-
+        Optional. Sampling and prompt times from the driver's log, each marked
+        cold or warm, with the clock state from above. The project records
+        them as reported and never chooses a default on speed alone.
+      placeholder: |
+        four Sparks, uly4: sampling 210 s cold, 205 s warm
+        two-Spark pair, uly2: sampling 390 s
+    validations:
+      required: false
+
+  - type: textarea
+    id: ask
+    attributes:
+      label: What you would like changed
+      description: Optional. An `auto` choice, a refusal that should come earlier, or a doc entry.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: attestations
+    attributes:
+      label: Before you file
+      options:
+        - label: I ran the same graph and seed on a layout this project has validated and gave both hashes.
+          required: true
+        - label: >-
+            I replaced private hosts, addresses, usernames, paths, UUIDs, model
+            names, commands, environment values, and tokens with placeholders.
+          required: true
+        - label: >-
+            I pasted only narrow excerpts, not complete logs or a diagnostic
+            bundle.
+          required: true

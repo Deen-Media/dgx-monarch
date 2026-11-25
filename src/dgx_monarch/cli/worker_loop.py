@@ -41,12 +41,17 @@ def main() -> None:
     # Keep this before the first Monarch import. Native launcher diagnostics
     # may render LaunchOptions, including every inherited env value, so the
     # worker loop keeps only the names worker_process_env allows.
-    from .worker_process_env import prepare_worker_process_environment
+    from .worker_process_env import INDUCTOR_CACHE_ENV, prepare_worker_process_environment
 
     prepare_worker_process_environment(Path(__file__).resolve().parents[2])
 
     import os
     import sys
+
+    if not os.environ.get(INDUCTOR_CACHE_ENV):
+        print("[dgx-monarch] torch inductor cache: no private directory under "
+              "~/.cache/dgx-monarch/inductor, so torch keeps it under TMPDIR, which a "
+              "reboot may clear (docs/TROUBLESHOOTING.md #14)", file=sys.stderr, flush=True)
 
     from ..monarch_diagnostics import configure_policy_logged
     from ..monarch_launch import NATIVE_ENV
@@ -57,29 +62,30 @@ def main() -> None:
     os.environ[NATIVE_ENV] = "1" if args.native_rdma else "0"
     configure_policy_logged(policy.diagnostics, "worker")  # an ERROR; the loop still serves
 
-    # Serve a new Monarch ProcId on every start (worker_proc_id.py), and
-    # publish it in the loop record before the listener exists, so the probe
-    # the driver runs before each attach reads the id this process serves. A
-    # daemon thread then keeps the record and the actor identities current
-    # for later loops and lifecycle sweeps: run_worker_loop_forever blocks
-    # in native code.
-    from .. import worker_proc_id
-    from .actor_ledger import publish_loop, start_tracker
-
-    proc_id = worker_proc_id.current()
-    if not publish_loop(args.address, proc_id=proc_id):
-        print("[dgx-monarch] worker service could not publish its id in the actor "
-              "ledger; driver attaches refuse until it can "
-              f"({worker_proc_id.ENTRY})", file=sys.stderr, flush=True)
-    start_tracker(args.address, proc_id=proc_id)
-
     from monarch.actor import enable_transport, run_worker_loop_forever
 
     from ..monarch_capabilities import assert_supported_runtime
     from ..monarch_policy import activate_native_policy
 
-    assert_supported_runtime()
+    monarch_version = assert_supported_runtime()
     activate_native_policy()
+
+    # Serve a new Monarch ProcId on every start (worker_proc_id.py), and
+    # publish it in the loop record before the listener exists, with the
+    # torchmonarch version this process imported, so the probe the driver
+    # runs before each attach reads the id this process serves and the
+    # version it speaks. A daemon thread then keeps the record and the actor
+    # identities current for later loops and lifecycle sweeps:
+    # run_worker_loop_forever blocks in native code.
+    from .. import worker_proc_id
+    from .actor_ledger import publish_loop, start_tracker
+
+    proc_id = worker_proc_id.current()
+    if not publish_loop(args.address, proc_id=proc_id, monarch=monarch_version):
+        print("[dgx-monarch] worker service could not publish its id in the actor "
+              "ledger; driver attaches refuse until it can "
+              f"({worker_proc_id.ENTRY})", file=sys.stderr, flush=True)
+    start_tracker(args.address, proc_id=proc_id, monarch=monarch_version)
     served = worker_proc_id.proc_addr(args.address, proc_id)
 
     # Secondary channels must advertise the same fabric IP as the loop bind, and

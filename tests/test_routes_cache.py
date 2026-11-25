@@ -6,6 +6,8 @@ import threading
 import time
 import types
 
+import pytest
+
 
 def test_telemetry_derives_readiness_from_each_existing_snapshot_once(monkeypatch):
     from dgx_monarch import gate_ledger, mesh_health, telemetry
@@ -57,6 +59,56 @@ def test_telemetry_derives_readiness_from_each_existing_snapshot_once(monkeypatc
     from dgx_monarch import monarch_diagnostics
     assert payload["monarch_diagnostics"] == monarch_diagnostics.status()
     assert "monarch_policy" in payload
+    # The driver's rules are read live for each answer and are not part of the cached snapshot.
+    assert "driver_rules" not in payload
+
+
+def _failing_or_slow_refresh(routes, monkeypatch, how):
+    """Put a good snapshot in the route's cache, then make the next refresh fail, hang or not be due."""
+    cached = {"t": 1.0, "workers": ["cached"]}
+    monkeypatch.setattr(routes, "_TELEMETRY_CACHE", {
+        "t": time.monotonic() if how == "the snapshot is young" else 0.0,
+        "data": cached, "inflight": how == "a refresh is still running", "generation": 0})
+
+    def refresh():
+        if how == "the refresh fails":
+            raise OSError("refresh stand-in")
+        raise AssertionError("no refresh is due")
+
+    monkeypatch.setattr(routes, "_telemetry_uncached", refresh)
+
+
+@pytest.mark.parametrize("how", ["the snapshot is young", "a refresh is still running", "the refresh fails"])
+def test_the_route_answers_with_the_rules_as_they_are_now_whatever_the_cache_holds(monkeypatch, how):
+    """Doctor is another process and repeats what the driver says of its encode rule.
+
+    The route keeps its last good snapshot while a refresh fails or runs. If
+    the rule's state sat in that snapshot, a rule that has since stepped aside
+    would still read as on. So the state is read for each answer.
+    """
+    from dgx_monarch import vae_decode_relief, vae_encode_item
+    from dgx_monarch.nodes import routes
+
+    monkeypatch.setitem(vae_encode_item._STATE, "state", vae_encode_item.INSTALLED)
+    monkeypatch.setitem(vae_decode_relief._STATE, "state", vae_decode_relief.INSTALLED)
+    _failing_or_slow_refresh(routes, monkeypatch, how)
+    assert routes._telemetry_payload()["driver_rules"] == {"vae_encode_item": "installed",
+                                                           "vae_decode_relief": "installed"}
+    # The rule steps aside after the snapshot was taken, and the decode relief is switched to off.
+    monkeypatch.setitem(vae_encode_item._STATE, "state", vae_encode_item.STEPPED_ASIDE)
+    monkeypatch.setitem(vae_decode_relief._STATE, "state", vae_decode_relief.OFF)
+    answer = routes._telemetry_payload()
+    assert answer["driver_rules"] == {"vae_encode_item": "stepped_aside", "vae_decode_relief": "off"}
+    assert answer["workers"] == ["cached"]  # the rest is still the snapshot
+    if how == "the snapshot is young":
+        assert "telemetry_error" not in answer
+    else:
+        assert answer["telemetry_error"] in ("RefreshInFlight", "OSError")
+    # The snapshot the cache holds, and the one other readers get, carry no copy that could go stale.
+    assert "driver_rules" not in routes._TELEMETRY_CACHE["data"]
+    # The route's own timeout answer says it too.
+    assert routes._with_driver_rules({"workers": [], "telemetry_error": "TimeoutError"})["driver_rules"] == {
+        "vae_encode_item": "stepped_aside", "vae_decode_relief": "off"}
 
 
 def _fresh_routes(monkeypatch, call_all):
@@ -701,3 +753,50 @@ def test_worker_status_ttl_ignores_wall_clock_steps(monkeypatch):
     clocks[:] = [8600.0, 201.9]  # wall forward two hours, 0.4 s passed: cached
     assert routes._worker_snapshot() == second
     assert len(calls) == 2
+
+
+def test_a_status_poll_that_meets_a_dead_fleet_answers_while_its_cleanup_still_stops_it(monkeypatch):
+    """The poll sets the cleanup off and returns; it never waits for the stop.
+
+    Waiting held the telemetry route for the whole stop, so `dgxm status` and
+    `dgxm doctor` read a driver that was busy stopping a lost fleet as one that
+    gave no readable answer.
+    """
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import mesh_health, mesh_safety
+    from dgx_monarch.nodes import routes
+    from topology_transition_helpers import _acks, _Endpoint, _Future, _handle, _Workers
+
+    class SupervisionError(RuntimeError):
+        pass
+
+    stopping, release = threading.Event(), threading.Event()
+
+    class SlowProcs:
+        def stop(self, _reason):
+            stopping.set()
+            return types.SimpleNamespace(get=lambda timeout=None: release.wait(10.0))
+
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    workers = _Workers([_Future(_acks())])
+    workers.status = _Endpoint(_Future(error=SupervisionError("peer closed")))
+    handle, _old, _new = _handle(workers)
+    handle.procs = SlowProcs()
+    monkeypatch.setattr(mesh_mod, "_MESHES", {("key",): handle})
+    monkeypatch.setattr(routes, "_CACHE", {"t": 0.0, "workers": [], "inflight": False,
+                                           "busy_note": None, "generation": 0, "fresh": False})
+    answered: list = []
+    poll = threading.Thread(target=lambda: answered.append(routes._workers()), daemon=True)
+    try:
+        poll.start()
+        poll.join(5.0)
+        assert not poll.is_alive(), "the poll waited for the cleanup's stop"
+        assert answered[0] == [{"status_error": "SupervisionError"}]
+        assert stopping.wait(5.0)
+        block = mesh_health.health_of([handle]).as_dict()
+        assert block["state"] == "busy", block  # what status and doctor now read
+    finally:
+        release.set()
+        thread = handle._supervision_reconcile_thread
+        if thread is not None:
+            thread.join(10.0)

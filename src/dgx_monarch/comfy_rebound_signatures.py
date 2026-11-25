@@ -95,6 +95,11 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         "comfy.ldm.anima.model", "Anima._forward", ("anima",), ("usp",),
         "self x timesteps context fps padding_mask", 4, variadic_keyword="kwargs",
     ),
+    # Anima's text bind wraps this one as FLUX.3's wraps Flux3.extra_conds.
+    _rebound(
+        "comfy.model_base", "Anima.extra_conds", ("anima",), ("conds",),
+        "self", 1, variadic_keyword="kwargs",
+    ),
     _rebound(
         "comfy.ldm.boogu.model", "BooguTransformer2DModel.forward", ("boogu",),
         ("usp", "cfg-pad"),
@@ -230,6 +235,13 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         variadic_keyword="kwargs",
         optional_trailing=("denoise_mask", "audio_denoise_mask"),
     ),
+    # MiniMax-H3-Image (ComfyUI 0.45.0) takes no mask parameter; a mask lands
+    # in **kwargs and stock ignores it, as the bound forward does.
+    _rebound(
+        "comfy.ldm.minimax.model", "MiniMaxH3ImageModel._forward", ("minimax_h3_image",),
+        ("usp",), "self x timestep context transformer_options minimax_payload", 4,
+        variadic_keyword="kwargs",
+    ),
     _rebound(
         "comfy.ldm.omnigen.omnigen2", "OmniGen2Transformer2DModel.forward", ("omnigen2",),
         ("usp",),
@@ -289,6 +301,27 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         "comfy.ldm.wan.model", "WanSelfAttention.forward",
         ("wan", "wan_scail", "wan_dancer"), ("usp-self-attention",),
         "self x freqs transformer_options", 3,
+    ),
+    # The video's own latent frame count is read where _forward receives the
+    # latent, before time_dim_concat joins it (adapters/wan_family.video_frames).
+    _rebound(
+        "comfy.ldm.wan.model", "WanModel._forward", ("wan",), ("usp:video-frames",),
+        "self x timestep context clip_fea time_dim_concat transformer_options", 4,
+        variadic_keyword="kwargs",
+    ),
+    _rebound(
+        "comfy.ldm.wan.model", "SCAILWanModel._forward", ("wan_scail",),
+        ("usp:video-frames",),
+        "self x timestep context clip_fea time_dim_concat transformer_options pose_latents "
+        "ref_mask_latents sam_latents",
+        4, variadic_keyword="kwargs",
+    ),
+    _rebound(
+        "comfy.ldm.wan.model", "SCAIL2WanModel._forward", ("wan_scail",),
+        ("usp:video-frames-inherited",),
+        "self x timestep context clip_fea time_dim_concat transformer_options pose_latents "
+        "ref_mask_latents sam_latents",
+        4, variadic_keyword="kwargs",
     ),
     _rebound(
         "comfy.ldm.wan.model", "SCAILWanModel.forward_orig", ("wan_scail",),

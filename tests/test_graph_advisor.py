@@ -219,6 +219,22 @@ def test_stock_skip_layer_guidance_is_advised_as_the_monarch_carrier():
             in advisories[0].message)
 
 
+def test_stock_h3_context_windows_are_advised_as_the_monarch_carrier():
+    """The carrier keeps stock's widget names and order, so the swap keeps every value."""
+    assert graph_advisor.SWAPS["MiniMaxH3ContextWindows"] == "DGXMonarchMiniMaxH3ContextWindows"
+    assert graph_advisor.DISPLAY_NAMES["DGXMonarchMiniMaxH3ContextWindows"] == (
+        "MiniMax H3 Context Windows (DGX Monarch)")
+    advisories = graph_advisor.analyze(graph(
+        ("1", "DGXMonarchInit"),
+        ("2", "DGXMonarchUNETLoader"),
+        ("3", "MiniMaxH3ContextWindows"),
+        ("4", "DGXMonarchKSampler"),
+    ))
+    assert kinds(advisories) == ["leftover_stock"]
+    assert ("#3 MiniMaxH3ContextWindows -> MiniMax H3 Context Windows (DGX Monarch)"
+            in advisories[0].message)
+
+
 def test_a_complete_monarch_graph_says_nothing():
     assert graph_advisor.analyze(graph(
         ("1", "DGXMonarchInit"),

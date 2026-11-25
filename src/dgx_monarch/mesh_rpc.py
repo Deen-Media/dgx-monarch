@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import mesh_safety, mesh_setup
+from . import driver_exit, mesh_safety, mesh_setup
 from .log import get_logger
 from .transfer_utils import (
     raise_with_distinct_cause,
@@ -24,6 +24,8 @@ def cancel_sample(handle: Any, render_id: str, timeout_s: float, wait: bool, log
     """Time cancellation dispatch without waiting for the GPU queue."""
     from .runtime_diagnostics import phase
 
+    if driver_exit.exiting():  # Monarch's exit step stops the actors; no cancel is sent
+        return []
     try:
         with phase("cancel"):
             if not wait:
@@ -44,6 +46,7 @@ def call_all(
     **kwargs: Any,
 ) -> list[Any]:
     """Dispatch an all-rank endpoint under any required session capability."""
+    driver_exit.refuse_new_call()  # before the session's lock
     if endpoint_name in mesh_setup.SESSION_SCOPED_ENDPOINTS:
         from .mesh_session import mutation_render_session
 
@@ -62,6 +65,30 @@ def call_all(
         setup_token=setup_token,
         **kwargs,
     )
+
+
+def read_values(value_mesh: Any, endpoint_name: str) -> list[Any]:
+    """Each rank's reply, in rank order; a reply the driver cannot read names its rank.
+
+    torchmonarch decodes a reply only when ``items()`` reaches it, on 0.7.0 and
+    0.8.0 alike, so a reply whose bytes the driver cannot unpickle raises here,
+    after the call itself returned. The rank mark lets ``worker_box`` put the
+    box ahead of the words, as for any rank whose call failed.
+    """
+    from .refusal import mark_rank
+
+    values: list[Any] = []
+    replies = iter(value_mesh.items())
+    while True:
+        try:
+            _point, value = next(replies)
+        except StopIteration:
+            return values
+        except Exception as exc:
+            raise RuntimeError(mark_rank(
+                f"the {endpoint_name} reply could not be read on the driver "
+                f"({type(exc).__name__}: {exc})", len(values))) from exc
+        values.append(value)
 
 
 def call_all_bound(
@@ -104,14 +131,21 @@ def call_all_bound(
         future = mesh_setup.dispatch_endpoint(
             handle, endpoint_name, send, setup_token=setup_token)
         value_mesh = handle._await_or_evict(future, timeout_s)
+        # Read inside this handler: a reply is decoded only here (read_values).
+        values = read_values(value_mesh, endpoint_name)
     except BaseException as exc:
+        # The box the Worker's error came from, ahead of its own words, before
+        # any reader below sees them (worker_box.py).
+        from . import worker_box
+
+        worker_box.name(exc, handle)
         # A worker-raised consent offer becomes a panel card here, on the one
         # driver frame that holds every load, gate-leg and sigma refusal.
         # Local import: only this exception branch reaches the observer.
         from .consent_observe import observe_refusal
 
         try:
-            observe_refusal(exc)
+            observe_refusal(exc, getattr(handle, "active_worker_args", None))
         except BaseException as observe_exc:
             safe_note(exc, "worker refusal observation failed", observe_exc)
         ambiguous = (
@@ -181,7 +215,6 @@ def call_all_bound(
         if not clear_succeeded and first_clear_error is not None:
             # Both attempts failed: raise the first ordinary failure.
             raise_with_distinct_cause(first_clear_error, clear_cause)
-    values = [value for _point, value in value_mesh.items()]
     if endpoint_name in ("load_model", "load_uncond_model"):
         from .actor.model_store import request_artifact_identity
 
@@ -250,9 +283,12 @@ def verify_request_artifacts(
     normal_grant = request.get("_dgxm_normal_residency_grant")
     artifact_binding = request.get("_dgxm_artifact_binding")
     marker = request.get("_dgxm_artifact_preflight")
+    # Read once: the marker names the generation this proof ran under, so a
+    # setup that lands during the proof leaves the next dispatch to prove again.
+    proved_generation = handle.setup_generation
     if (residency_grant is None and normal_grant is None
             and artifact_binding is None and marker == {
-        "generation": handle.setup_generation,
+        "generation": proved_generation,
         "worker_index": worker_index,
     }):
         return
@@ -270,7 +306,9 @@ def verify_request_artifacts(
     mesh_safety.assert_normal_render_residency_mode(
         request, active_worker_args)
     if request.get("_dgxm_fleet_job") or residency_grant is not None:
-        expected_context = {
+        # A stock job carries no grant, so it needs no Gate context: a pair on
+        # two builds loses Gate authority, not stock residency (worker_runtime.py).
+        expected_context = None if residency_grant is None else {
             "capability": mesh_safety.FLEET_RESIDENCY_CAPABILITY,
             "rank_world": 1,
             "worker_args": active_worker_args,
@@ -309,6 +347,7 @@ def verify_request_artifacts(
             "world": physical["physical_world"],
             "hosts": physical["hosts"],
             "gpus_per_host": physical["gpus_per_host"],
+            "runtime": physical["runtime"],
             "topology_preset": policy.get("topology_preset"),
             "attention": policy.get("attention"),
             "sync_ulysses": policy.get("sync_ulysses"),
@@ -330,11 +369,12 @@ def verify_request_artifacts(
             effective_worker_args=active_worker_args,
             expected_context=expected_context,
             rank_world=int(getattr(handle, "world", 0) or 0),
-            setup_generation=int(getattr(handle, "setup_generation", -1)),
+            setup_generation=int(proved_generation),
             setup_key=tuple(setup_key),
             worker_args_key=tuple(getattr(handle, "worker_args_key", ()) or ()),
             worker_topology=driver_topology,
         )
+    driver_exit.refuse_new_call()  # the per-actor proof below sends directly
     if worker_index is None:
         # Collective render: every participant proves parity before collectives.
         results = handle.call_all("artifact_identity", specs, timeout_s=120)
@@ -344,12 +384,18 @@ def verify_request_artifacts(
         if "hosts" in list(handle.workers.extent.labels):
             coords["hosts"] = worker_index // handle.gpus_per_host
         worker = handle.workers.slice(**coords)
-        result = handle._await_or_evict(
-            worker.artifact_identity.call_one(specs), timeout_s=120)
+        try:
+            result = handle._await_or_evict(
+                worker.artifact_identity.call_one(specs), timeout_s=120)
+        except BaseException as exc:
+            from . import worker_box
+
+            worker_box.name(exc, handle, worker_index)
+            raise
         results = [result]
     mesh_safety.assert_artifact_parity(results, expected)
     request["_dgxm_artifact_sets"] = expected
     request["_dgxm_artifact_preflight"] = {
-        "generation": handle.setup_generation,
+        "generation": proved_generation,
         "worker_index": worker_index,
     }

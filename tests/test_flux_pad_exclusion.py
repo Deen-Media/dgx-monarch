@@ -148,12 +148,15 @@ class _Harness:
         return (torch.softmax(scores, dim=-1) @ v_h).transpose(1, 2)
 
 
-def _install_stubs(monkeypatch, harness: _Harness) -> None:
+def _install_stubs(monkeypatch, harness: _Harness, *, ring_world: int = 1) -> None:
     """Rank accessors and the xfuser/yunchang leaves, bound to this harness.
 
     The real xfuser probes for an accelerator at import, so it is stubbed in
     sys.modules. Only three leaves are fake: the all-to-all, the sequence-parallel
     all-gather, and the kernel. Everything between them is the shipped code.
+    ``ring_world`` is what the ring-degree accessor answers. At 2 the same
+    fabric stands in for pure ring2: xfuser's own call attends this rank's
+    queries against every rank's keys, the pads included.
     """
     global _ACTIVE
     _ACTIVE = harness
@@ -196,7 +199,7 @@ def _install_stubs(monkeypatch, harness: _Harness) -> None:
         "xfuser", "xfuser.core", "xfuser.core.distributed",
         "xfuser.core.long_ctx_attention", "yunchang", "yunchang.kernels",
         "yunchang.comm", "yunchang.comm.all_to_all")}
-    modules["xfuser.core.distributed"].get_ring_parallel_world_size = lambda: 1
+    modules["xfuser.core.distributed"].get_ring_parallel_world_size = lambda: ring_world
     modules["xfuser.core.distributed"].get_sp_group = lambda: _StubSpGroup()
     modules["xfuser.core.long_ctx_attention"].xFuserLongContextAttention = _StubUSP
     modules["yunchang.kernels"].AttnType = {"TORCH_FLASH": "TORCH_FLASH"}
@@ -484,6 +487,31 @@ def test_the_sharded_render_reproduces_the_unsharded_one_row_for_row(
     assert double_drop and single_drop
     joint = txt_len + img_len
     assert single_drop == list(range(joint, math.ceil(joint / world) * world))
+
+
+@pytest.mark.parametrize("adapter_cls", ADAPTERS)
+@pytest.mark.parametrize("txt_len,img_len", [(5, 8), (4, 9)])
+def test_every_block_is_handed_stocks_row_count_for_each_stream(
+    monkeypatch, comfy_layers_stub, adapter_cls, txt_len, img_len
+):
+    """Issue #54: a bound block fills each fused-norm call to stock's rows for
+    its stream (adapters/adaln_parity_blocks.py), so the forward hands every
+    double block the unpadded text and image rows and every single block the
+    joint rows, on every rank, whatever its window holds."""
+    from dgx_monarch.adapters.adaln_parity_blocks import NORM_ROWS
+
+    seen: list = []
+    for cls in (_ToyDoubleBlock, _ToySingleBlock):
+        def record(self, *args, _call=cls.__call__, **kwargs):
+            seen.append((type(self).__name__, dict(kwargs["transformer_options"][NORM_ROWS])))
+            return _call(self, *args, **kwargs)
+        monkeypatch.setattr(cls, "__call__", record)
+    model = _model_for(adapter_cls)
+    _sharded(monkeypatch, adapter_cls, model, _streams(txt_len, img_len), txt_len, img_len)
+    doubles = [rows for name, rows in seen if name == "_ToyDoubleBlock"]
+    singles = [rows for name, rows in seen if name == "_ToySingleBlock"]
+    assert doubles == [{"txt": txt_len, "img": img_len}] * (2 * len(model.double_blocks))
+    assert singles == [{"joint": txt_len + img_len}] * (2 * len(model.single_blocks))
 
 
 @pytest.mark.parametrize("adapter_cls", ADAPTERS)

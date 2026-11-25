@@ -24,23 +24,71 @@ may wait for the group timeout. See docs/TROUBLESHOOTING.md #86.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any, NoReturn
 
 from ..log import get_logger
-from ..refusal import RefusalClass, refusal
+from ..refusal import RefusalClass, mark_rank, refusal
 from . import partial_load_guard
 
 log = get_logger(__name__)
+
+# This rank's count of Linears under the shared NVFP4 activation scale, noted
+# by the sample path just before the exchange and consumed by it: render
+# lifetime, per thread.
+_NOTED = threading.local()
+
+
+class SharedScaleDisagreementError(RuntimeError):
+    """Typed cross-rank refusal: the ranks wrap different counts of NVFP4 Linears."""
+
+
+def note_shared_scale(wrapped: int) -> None:
+    """Note this rank's count of Linears under the shared scale for the next exchange.
+
+    Each wrapped Linear issues one max all-reduce per call
+    (adapters/quant_activation_scale.py), so two ranks with different counts
+    would issue different collectives and the render would stall at the first
+    one the other never issues. The driver sends every rank the same switch;
+    this check is the second line behind it.
+    """
+    _NOTED.wrapped = int(wrapped)
+
+
+def _agree_on_shared_scale(wrapped: int) -> None:
+    """Refuse, class P, on every rank alike when the ranks' counts differ."""
+    low, negative_high = partial_load_guard.all_ranks_min([wrapped, -wrapped])
+    if low == -negative_high:
+        return
+    raise SharedScaleDisagreementError(refusal(
+        RefusalClass.PHYSICS,
+        f"the ranks hold different counts of nvfp4 Linears under the shared activation "
+        f"scale ({low} on one rank, {-negative_high} on another), so they would issue "
+        "different max all-reduces and the render would stall at the first. This is a "
+        "dgx-monarch fault, not a workflow setting: the driver sends every Worker the same "
+        "shared_act_scale. Reset the attached mesh so the model loads again and report both "
+        "Workers' journals. Use topology 'single' (mode=local with gpus_per_host=1) until "
+        "it is fixed.",
+    ))
 
 
 def exchange_ready(local_ready: bool) -> bool:
     """Cross this rank's post-load readiness, and answer whether every rank is.
 
     One primitive for every topology's exchange, so the two shapes cannot drift
-    into two different collectives. Off-group (world 1, no process group) it
-    answers the local flag and issues nothing.
+    into two different collectives. When every rank is ready, every rank then
+    crosses its shared-scale count (``note_shared_scale``) in one more small
+    exchange and refuses on disagreement; a rank that was not ready issues
+    neither, and neither does any peer, since all read the same flag.
+    Off-group (world 1, no process group) it answers the local flag and issues
+    nothing.
     """
-    return partial_load_guard.all_ranks_true(local_ready)
+    wrapped = int(getattr(_NOTED, "wrapped", 0))
+    _NOTED.wrapped = 0
+    ready = partial_load_guard.all_ranks_true(local_ready)
+    if ready:
+        _agree_on_shared_scale(wrapped)
+    return ready
 
 
 def whole_model_topology(worker: Any) -> bool:
@@ -70,9 +118,11 @@ class PeerLoadFailureError(RuntimeError):
 
 # Same wording rule as partial_load_guard.REFUSAL_TEXT: no host and no rank
 # inside, because MIN carries agreement and not identity, and each worker
-# journal names its own box's cause. Class P on this rank: it cannot know the
-# peer's cause, and no consent it could be offered would change the answer
-# here; the failing box keeps its own class and its own card.
+# journal names its own box's cause. Class P on this rank: no consent it could
+# be offered would change the answer here; the failing box keeps its own class
+# and its own card. Where the ranks crossed their own words after the MIN
+# (``peer_failed``), the failing rank's cause and ``PEER_CAUSE_TAIL`` stand in
+# place of this text.
 PEER_LOAD_TEXT = (
     "a peer rank could not load or verify the model for this render. Every rank "
     "of this topology holds the whole model, so a per-box memory shortfall, a "
@@ -121,3 +171,32 @@ def not_ready(local_error: Exception) -> NoReturn:
             "readiness flag not crossed (%r); the peer will wait on the group "
             "timeout", exc)
     raise local_error
+
+
+# The close of the peer refusal where the failing rank's own cause leads it
+# (``peer_failed``): the remedy that rank's own refusal gives. PEER_LOAD_TEXT
+# speaks of a box it cannot name, which reads wrong after a cause that names it.
+PEER_CAUSE_TAIL = (
+    "Nothing was sampled and no rank went on. Reset the attached mesh so the "
+    "model loads again, and turn lora_low_rss on (the default on a DGX Spark), "
+    "which bakes at load time, or run the same graph on a single box instead."
+)
+
+
+def peer_failed(cause: str = "", rank: int | None = None, own: int | None = None) -> NoReturn:
+    """Raise the healthy rank's refusal about a peer, for an exchange made outside this module.
+
+    The pair's backup agreement crosses each rank's model after a free on the
+    partial-load guard's exchange (``backup_agreement.settle``); a rank whose
+    own model is right raises this where a peer's is not. Where the ranks also
+    crossed their own words, ``cause`` is the failing rank's, in its words, and
+    leads the text, then this rank's sentence and the failing rank's remedy
+    (``PEER_CAUSE_TAIL``); ``rank`` marks the error with the failing rank, so
+    the driver names that box, whichever rank's error it receives
+    (``worker_box``).
+    """
+    who = "this rank" if own is None else f"rank {own}"
+    lead = f"{cause.rstrip('.')}. The model on {who} was right. " if cause else ""
+    mark = "" if not cause or rank is None else mark_rank("", int(rank))
+    raise PeerLoadFailureError(refusal(
+        RefusalClass.PHYSICS, lead + (PEER_CAUSE_TAIL if cause else PEER_LOAD_TEXT)) + mark)

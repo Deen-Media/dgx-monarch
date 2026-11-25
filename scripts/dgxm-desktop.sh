@@ -53,12 +53,17 @@ resolve_executable() {
     printf '%s/%s\n' "$parent" "$base"
 }
 
+# A Desktop Entry Exec value goes through two escape layers, in this order on
+# read: the string value type's escapes (\\ is one backslash), then the Exec
+# quoting rules (inside quotes, \" \` \$ \\ are literal). So escape for Exec
+# first, then double every backslash: a literal backslash is written as four.
 desktop_quote() {
     local value=$1
     value=${value//\\/\\\\}
     value=${value//\"/\\\"}
     value=${value//\`/\\\`}
     value=${value//\$/\\\$}
+    value=${value//\\/\\\\}
     value=${value//%/%%}
     printf '"%s"' "$value"
 }
@@ -192,6 +197,9 @@ if [ -e "$DESKTOP_FILE" ] || [ -L "$DESKTOP_FILE" ]; then
     grep -qx 'X-DGX-Monarch-Managed=true' "$DESKTOP_FILE" || fail "refusing to replace an unmanaged desktop entry (no X-DGX-Monarch-Managed=true line)"
 fi
 
+# Icon is a string-typed key, so only the string layer applies: double each backslash.
+ICON_VALUE=${ICON//\\/\\\\}
+
 umask 077
 TEMP_FILE=$(mktemp "$APPLICATIONS_DIR/.dgx-monarch.desktop.XXXXXX")
 cleanup() {
@@ -205,7 +213,7 @@ Version=1.0
 Name=DGX Monarch
 Comment=Launch the supervised DGX Monarch ComfyUI driver
 Exec=$EXEC_LINE
-Icon=$ICON
+Icon=$ICON_VALUE
 Terminal=true
 Categories=Graphics;Utility;
 StartupNotify=true

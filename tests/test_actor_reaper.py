@@ -8,6 +8,7 @@ procfs contents.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import signal
@@ -15,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from dgx_monarch import worker_proc_id
 from dgx_monarch.cli import actor_ledger, actor_reaper
 from dgx_monarch.cli import proc_identity as pi
 
@@ -71,7 +73,9 @@ def make_proc(
     (directory / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
     if env is not None:
         (directory / "environ").write_bytes(b"\0".join(e.encode() for e in env) + b"\0")
-    (directory / "status").write_text(f"Name:\tpython\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n")
+    # A real kernel always writes Threads:; a lone zombie reads 1, as any process does.
+    (directory / "status").write_text(
+        f"Name:\tpython\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\nThreads:\t1\n")
     pages = int((anon_gib + file_gib) * 2**30 / pi._PAGE_SIZE)
     (directory / "statm").write_text(f"{pages} {pages} 0 0 0 0 0\n")
     anon_kb, file_kb = int(anon_gib * 2**20), int(file_gib * 2**20)
@@ -793,8 +797,9 @@ def test_the_liveness_line_carries_schema_one_and_every_named_field(tmp_path):
     assert set(answer) == {
         "schema", "actors", "actors_marked", "zombies", "unreadable",
         "ledger_rows_alive", "ledger_boot_ok", "ledger_age_s", "loop_alive",
-        "pids"}
+        "loop_gens", "pids"}
     assert answer["schema"] == 1
+    assert answer["loop_gens"] == [worker_proc_id.derive("boot-abc", 4100, 900)[:12]]
     assert (answer["actors"], answer["actors_marked"]) == (1, 1)
     assert (answer["ledger_rows_alive"], answer["loop_alive"]) == (1, True)
     assert answer["ledger_boot_ok"] is True
@@ -835,6 +840,151 @@ def test_a_ledger_row_for_a_zombie_does_not_count_as_alive(tmp_path):
     make_proc(root, 4500, state="Z")
     ledger = write_ledger(tmp_path, [{"pid": 4500, "starttime": 1000}])
     assert liveness(root, ledger_file=ledger)["ledger_rows_alive"] == 0
+
+
+def _zombie_leader(root: Path, pid: int, *, threads: str | None = "2",
+                   tasks: tuple[int, ...] | None = None, **proc) -> None:
+    """A thread-group leader that exited: state Z, and what status and task still say."""
+    make_proc(root, pid, state="Z", **proc)
+    lines = f"Name:\tpython\nUid:\t{UID}\t{UID}\t{UID}\t{UID}\n"
+    (root / str(pid) / "status").write_text(
+        lines + (f"Threads:\t{threads}\n" if threads is not None else ""))
+    for tid in tasks or ():
+        (root / str(pid) / "task" / str(tid)).mkdir(parents=True)
+
+
+def test_a_zombie_leader_whose_threads_still_run_is_never_read_as_gone(tmp_path):
+    """The leader exited; another thread still holds every page. Its reads come back empty."""
+    root = make_proc_root(tmp_path)
+    _zombie_leader(root, 5100, argv=(), env=(), tasks=(5100, 5107))
+    ledger = write_ledger(tmp_path, [{"pid": 5100, "starttime": 1000}])
+
+    answer = liveness(root, ledger_file=ledger)
+
+    assert (answer["actors"], answer["zombies"]) == (0, 0)
+    assert answer["unreadable"] == 1 and answer["ledger_rows_alive"] == 1
+    assert pi.zombie_group(5100, str(root)) == "threads"
+    assert pi.alive_and_not_zombie(5100, 1000, str(root)) is True
+
+
+def test_a_marked_zombie_leader_with_live_threads_still_counts_as_an_actor(tmp_path):
+    root = make_proc_root(tmp_path)
+    _zombie_leader(root, 5200)
+    answer = liveness(root)
+    assert (answer["actors"], answer["zombies"], answer["unreadable"]) == (1, 0, 0)
+
+
+@pytest.mark.parametrize(("threads", "tasks", "expected"), [
+    (None, (5300, 5301), "threads"),  # no Threads: line, the task directory decides
+    (None, (5300,), "gone"),
+    (None, None, "unknown"),          # neither reads: unknown, never gone
+    ("x", None, "unknown"),
+], ids=["task_threads", "task_alone", "unreadable", "malformed"])
+def test_a_zombie_whose_group_will_not_read_is_unknown_never_gone(tmp_path, threads, tasks, expected):
+    root = make_proc_root(tmp_path)
+    _zombie_leader(root, 5300, argv=(), env=(), threads=threads, tasks=tasks)
+    ledger = write_ledger(tmp_path, [{"pid": 5300, "starttime": 1000}])
+
+    answer = liveness(root, ledger_file=ledger)
+
+    assert pi.zombie_group(5300, str(root)) == expected
+    gone = expected == "gone"
+    assert (answer["zombies"], answer["unreadable"]) == ((1, 0) if gone else (0, 1))
+    assert answer["ledger_rows_alive"] == (0 if gone else 1)
+
+
+def test_a_real_process_whose_leader_exited_while_a_thread_runs_reads_as_threads():
+    """What the kernel shows: Z, an empty cmdline and environ, and the pages still held."""
+    import platform
+    import subprocess
+    import sys
+    import time
+
+    if platform.system() != "Linux":
+        pytest.skip("procfs is Linux only")
+    # The raw exit syscall ends only the calling thread; its number differs by architecture.
+    exit_thread = {"aarch64": 93, "arm64": 93, "x86_64": 60, "amd64": 60}.get(platform.machine())
+    if exit_thread is None:
+        pytest.skip(f"the thread-exit syscall number is known for aarch64 and x86_64 only, "
+                    f"not {platform.machine()}")
+    child_code = (
+        "import ctypes, threading, time\n"
+        "threading.Thread(target=time.sleep, args=(30,), daemon=False).start()\n"
+        "time.sleep(0.3)\n"
+        f"ctypes.CDLL(None, use_errno=True).syscall({exit_thread}, 0)\n")
+    child = subprocess.Popen([sys.executable, "-I", "-c", child_code], env={"PATH": "/usr/bin:/bin"},
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and pi.read_state(child.pid) != "Z":
+            time.sleep(0.05)
+        starttime = pi.read_stat(child.pid)[1]
+        assert child.poll() is None and pi.read_state(child.pid) == "Z"
+        assert pi.zombie_group(child.pid) == "threads"
+        assert pi.alive_and_not_zombie(child.pid, starttime) is True
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+
+
+def test_the_liveness_line_names_every_live_worker_loop_a_frozen_one_included(tmp_path):
+    """A queued spawn waits in its loop: a stopped (frozen) loop runs as far as it goes."""
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100, starttime=900, argv=LOOP_ARGV, env=SPAWNER_ENV)
+    make_proc(root, 4200, starttime=950, state="T", argv=LOOP_ARGV, env=SPAWNER_ENV)
+    make_proc(root, 4300, starttime=990, state="Z", argv=LOOP_ARGV, env=SPAWNER_ENV)  # its group is gone
+    ledger = write_ledger(tmp_path, [])
+
+    answer = liveness(root, ledger_file=ledger)
+
+    assert answer["loop_gens"] == [worker_proc_id.derive("boot-abc", 4100, 900)[:12],
+                                   worker_proc_id.derive("boot-abc", 4200, 950)[:12]]
+
+
+def test_a_loop_whose_leader_exited_while_its_threads_run_leaves_the_host_unknown(tmp_path):
+    """Its reads come back empty, so nothing names it: the host cannot say gone at all."""
+    root = make_proc_root(tmp_path)
+    _zombie_leader(root, 4400, argv=(), env=(), starttime=900)
+    answer = liveness(root, ledger_file=write_ledger(tmp_path, []))
+    assert answer["unreadable"] == 1 and answer["loop_gens"] == []
+
+
+def test_a_live_recorded_loop_the_argv_match_misses_leaves_the_list_unknown(tmp_path):
+    """The attach names a loop by its listener, the scan by its argv: a miss must not read as gone."""
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100, starttime=900, argv=("/usr/bin/python3", "worker.py"), env=SPAWNER_ENV)
+    ledger = write_ledger(tmp_path, [], loop={"pid": 4100, "starttime": 900, "address": LOOP_ADDRESS})
+
+    answer = liveness(root, ledger_file=ledger)
+
+    assert answer["loop_alive"] is True and answer["loop_gens"] is None
+
+
+def test_a_host_whose_boot_id_will_not_read_cannot_name_its_loops(tmp_path):
+    root = make_proc_root(tmp_path)
+    (root / "sys/kernel/random/boot_id").unlink()
+    make_proc(root, 4100, starttime=900, argv=LOOP_ARGV, env=SPAWNER_ENV)
+    assert liveness(root, ledger_file=write_ledger(tmp_path, []))["loop_gens"] is None
+
+
+def test_the_scan_and_the_listener_probe_hash_one_loop_alike(tmp_path):
+    """The attach records the probe's generation and the scan lists its own: one formula.
+
+    A difference in form would read every loop as replaced and lift a poison
+    wrongly, so this runs the probe body's own line against the scan's answer.
+    """
+    import hashlib
+
+    from dgx_monarch.cli import listener_generation
+
+    line = next(text.strip() for text in listener_generation._BODY.splitlines()
+                if text.strip().startswith("_gen = _gh.sha256("))
+    scope = {"_gh": hashlib, "_boot": "boot-abc", "_pid": "4100", "_born": "900"}
+    exec(line, scope)  # noqa: S102 - the probe's own hashing line, on fixed test values
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100, starttime=900, argv=LOOP_ARGV, env=SPAWNER_ENV)
+
+    assert liveness(root, ledger_file=write_ledger(tmp_path, []))["loop_gens"] == [scope["_gen"]]
 
 
 def test_a_stopped_actor_is_alive_because_it_still_holds_its_memory(tmp_path):
@@ -967,3 +1117,117 @@ def test_the_liveness_flag_signals_nothing_and_prints_one_line(monkeypatch, caps
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0]) == {"schema": 1, "asked": [LOOP_ADDRESS]}
+
+
+def _refuse_listing(monkeypatch, root: Path, code: int) -> None:
+    """Fail every listing of this proc root the way a denied or failing procfs does."""
+    real_listdir = os.listdir
+
+    def listdir(path="."):
+        if os.fspath(path) == str(root):
+            raise OSError(code, os.strerror(code))
+        return real_listdir(path)
+
+    monkeypatch.setattr(pi.os, "listdir", listdir)
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EIO])
+def test_a_proc_root_that_cannot_be_listed_is_never_an_empty_host(tmp_path, monkeypatch, code):
+    """An unlisted process table counted nothing, so no caller may read it as zero.
+
+    The live actor below would have answered alive. A liveness scan, a sweep
+    and the doctor's orphan scan must each fail instead of reporting none.
+    """
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100)
+    missing = str(tmp_path / "no-ledger.json")
+    _refuse_listing(monkeypatch, root, code)
+
+    with pytest.raises(pi.ProcListingError):
+        liveness(root, ledger_file=missing)
+    with pytest.raises(pi.ProcListingError):
+        sweep(root, ledger_file=missing)
+    with pytest.raises(pi.ProcListingError):
+        actor_reaper.orphan_report(proc_root=str(root), ledger_file=missing,
+                                   uid=UID, self_pid=SELF_PID)
+
+
+def test_the_liveness_command_exits_nonzero_with_no_line_when_procfs_is_unlisted(
+    monkeypatch, capsys,
+):
+    def unlisted(**_kwargs):
+        raise pi.ProcListingError(errno.EACCES, "Permission denied", "/proc")
+
+    monkeypatch.setattr(actor_reaper, "liveness", unlisted)
+    assert actor_reaper.main(["--liveness"]) != 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "process table" in captured.err
+
+
+def test_the_tracker_keeps_its_rows_when_procfs_is_unlisted(tmp_path, monkeypatch):
+    """The tracker only adds rows from what it sees, so an unlisted tick adds none.
+
+    It still publishes the loop record and keeps the live rows it had.
+    """
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100, ppid=4000, starttime=900, argv=LOOP_ARGV, env=SPAWNER_ENV)
+    make_proc(root, 4101, ppid=4100)
+    path = str(tmp_path / "actor-procs.json")
+    first = actor_ledger.tick(LOOP_ADDRESS, loop_pid=4100, proc_root=str(root), path=path, now=10.0)
+    assert [row["pid"] for row in first["actors"]] == [4101]
+    _refuse_listing(monkeypatch, root, errno.EIO)
+    second = actor_ledger.tick(LOOP_ADDRESS, loop_pid=4100, proc_root=str(root), path=path, now=20.0)
+    assert [row["pid"] for row in second["actors"]] == [4101]
+    assert second["loop"]["pid"] == 4100
+
+
+@pytest.mark.parametrize("actors", [1, "rows", {"pid": 4101}, True])
+def test_a_ledger_whose_actor_list_is_not_a_list_reads_as_corrupt(tmp_path, actors):
+    """Valid JSON with the wrong shape is corrupt state: read it as empty, never raise."""
+    root = make_proc_root(tmp_path)
+    path = tmp_path / "actor-procs.json"
+    path.write_text(json.dumps({"version": 1, "boot_id": "boot-abc", "written_at": 5.0,
+                                "loop": None, "actors": actors}))
+    ledger = actor_ledger.read_ledger(str(path), proc_root=str(root))
+    assert ledger == actor_ledger.empty_ledger("boot-abc")
+    assert liveness(root, ledger_file=str(path))["ledger_rows_alive"] == 0
+
+
+def test_infinite_or_fractional_ledger_numbers_drop_the_row_and_never_overflow(tmp_path):
+    """json reads Infinity and NaN, and int(inf) raises OverflowError, which the
+    corrupt-row fallback used to miss. A non-integral pid names no process."""
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4101, ppid=4100)
+    inf, nan = float("inf"), float("nan")
+    path = write_ledger(tmp_path, [
+        {"pid": inf, "starttime": 1000},
+        {"pid": 4101, "starttime": -inf},
+        {"pid": 4101.5, "starttime": 1000},
+        {"pid": 4101, "starttime": nan},
+        {"pid": 4101, "starttime": 1000, "loop_pid": inf, "loop_starttime": nan,
+         "first_seen": inf, "last_seen": -inf, "orphan_since": inf},
+    ], loop={"pid": inf, "starttime": 900}, written_at=inf)
+    ledger = actor_ledger.read_ledger(path, proc_root=str(root))
+    assert [(row["pid"], row["starttime"]) for row in ledger["actors"]] == [(4101, 1000)]
+    row = ledger["actors"][0]
+    assert (row["loop_pid"], row["loop_starttime"]) == (0, 0)
+    assert (row["first_seen"], row["last_seen"], row["orphan_since"]) == (0.0, 0.0, None)
+    assert ledger["written_at"] == 0.0
+    answer = liveness(root, ledger_file=path)
+    assert answer["ledger_rows_alive"] == 1
+    assert answer["loop_alive"] is None
+    assert answer["ledger_age_s"] == -1.0
+
+
+def test_reap_reports_a_local_box_whose_process_table_cannot_be_listed(monkeypatch, capsys):
+    from dgx_monarch.cli import actor_sweep
+
+    def unlisted(**_kwargs):
+        raise pi.ProcListingError(errno.EIO, "Input/output error", "/proc")
+
+    monkeypatch.setattr(actor_reaper, "run_sweep", unlisted)
+    assert actor_sweep.reap_command(None) is False
+    out = capsys.readouterr().out
+    assert "local: actor sweep FAILED (cannot list the process table" in out
+    assert "unaccounted for" in out

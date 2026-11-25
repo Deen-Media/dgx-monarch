@@ -7,6 +7,7 @@ reconciliation.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import math
 import os
@@ -145,6 +146,15 @@ def bootstrap_proc() -> None:
     configure_policy_logged(policy.diagnostics, "actor")  # an ERROR, never a spawn failure
     activate_native_policy()
 
+    # Register the INT8 GEMM import hook before anything imports comfy-kitchen:
+    # setup sets the mode from [worker_args] int8_gemm before ensure_comfy
+    # imports ComfyUI, and the hook applies it as comfy-kitchen loads. Standard
+    # library only, so no torch ahead of CUDA init, and it never raises
+    # (kernels/int8_gemm.py).
+    from .kernels import int8_gemm
+
+    int8_gemm.install_actor()
+
     # Arm the actor-side reaper here, the one piece of dgx-monarch that already
     # runs inside every spawned proc. Imported function-locally and after the
     # path insertion above so the driver-advertised source wins, and from a
@@ -153,6 +163,29 @@ def bootstrap_proc() -> None:
     from . import actor_lifetime
 
     actor_lifetime.install()
+
+
+@contextlib.contextmanager
+def kept_root_log_level():
+    """Put the root Python logger's level back after a Monarch client-creating call.
+
+    The pinned Monarch sets the root logger to INFO when it creates this
+    process's client (monarch/_src/actor/logging.py, initialize_local_log_level);
+    Monarch 0.7.0 left it alone. Inside ComfyUI that changed the host's verbosity at the
+    first ``this_host()`` or ``attach_to_workers()``, the two calls in the pack
+    that can be the first to create the client; the prime's ``context()`` only
+    ever runs after one of them (tests/test_spawn_contract.py). The level goes
+    back only when it reads INFO, so a level another thread set meanwhile stays.
+    """
+    import logging
+
+    root = logging.getLogger()
+    level = root.level
+    try:
+        yield
+    finally:
+        if root.level == logging.INFO and level != logging.INFO:
+            root.setLevel(level)
 
 
 def attach_once(addresses: list[str]):
@@ -165,9 +198,15 @@ def attach_once(addresses: list[str]):
     log = get_logger(__name__)
     from .runtime_diagnostics import phase
 
-    with phase("attach"), attach_trace.half(log, "attach_to_workers", hosts=len(addresses)):
+    with (phase("attach"), attach_trace.half(log, "attach_to_workers", hosts=len(addresses)),
+          kept_root_log_level()):
         hosts = attach_to_workers(
             ca="trust_all_connections", workers=addresses, name="dgxm")
+    # Monarch's client, and so its exit hook, exists now; the exit flag's hook,
+    # registered after it, runs first, so an exit during this attach stands it down.
+    from . import driver_exit
+
+    driver_exit.install()
     with phase("readiness"), attach_trace.half(log, "initialized_get", bound_s=ATTACH_INIT_WAIT_S):
         get_off_loop(hosts.initialized, ATTACH_INIT_WAIT_S, "dgxm-attach-init")
     return hosts
@@ -260,3 +299,22 @@ def get_off_loop(future, timeout_s: float, thread_name: str = "dgxm-await"):
     return run_blocking_off_loop(
         lambda: future.get(timeout=timeout_s), timeout_s + FUTURE_GET_JOIN_MARGIN_S,
         thread_name)
+
+
+def pinned_cluster_config(path, load, fingerprint, error_type: type[Exception]):
+    """cluster.toml's settings from ``load`` and the digest of the very bytes they came from.
+
+    The file is hashed before and after it is parsed, and parsed again until the
+    two agree, so a save that lands during the read cannot stamp a fleet built
+    from the old settings with the new file's digest, which every later attach
+    would then reuse as matching the file. ``load`` and ``fingerprint`` are the
+    caller's, so its seams stay where they were.
+    """
+    digest = fingerprint(path)
+    for _attempt in range(4):
+        config = load(path)
+        after = fingerprint(path)
+        if after == digest:
+            return config, digest
+        digest = after
+    raise error_type(f"{path} kept changing while the driver read it; retry once the edit is saved")

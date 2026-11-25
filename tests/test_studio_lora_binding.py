@@ -64,3 +64,37 @@ def test_http_preview_returns_400_lora_binding_for_each_case(tmp_path, monkeypat
                 assert (await response.json())["error"] == {"code": "lora_binding", "message": message}, case
             assert system.store.all("previews") == []
     asyncio.run(scenario())
+
+
+SLOTLESS = {
+    "1": {"class_type": "Model", "inputs": {}},
+    "6": {"class_type": "Output", "inputs": {"model": ["1", 0]}},
+}
+STACK = [{"id": "a.safetensors", "model_strength": 1, "source_node": "LoraLoaderModelOnly"}]
+
+
+def test_stack_on_a_graph_without_lora_slots_and_no_boundary_asks_for_the_loader():
+    """A freshly loaded workflow has no insertion boundary, so a kept stack asks for one."""
+    with pytest.raises(StudioError) as error:
+        apply_loras(copy.deepcopy(SLOTLESS), SCHEMA, STACK, None)
+    assert (error.value.code, error.value.status, str(error.value)) == (
+        "lora_binding", 400, "Choose an explicit LoRA loader type.")
+    boundary = {"loader": "LoraLoaderModelOnly", "model_targets": [{"node_id": "6", "input_name": "model"}],
+                "clip_targets": []}
+    prompt, effective = apply_loras(copy.deepcopy(SLOTLESS), SCHEMA, STACK, boundary)
+    assert prompt["6"]["inputs"]["model"] == ["__studio_lora__0", 0]
+    assert effective["lora_insertion"]["inserted_nodes"] == ["__studio_lora__0"]
+
+
+def test_http_preview_without_a_boundary_refuses_as_lora_binding(tmp_path, monkeypatch):
+    async def scenario():
+        async with companion(tmp_path, monkeypatch) as system:
+            system.protocol.schema = copy.deepcopy(SCHEMA)
+            for extra in ({}, {"lora_insertion": None}):
+                body = {"workflow": copy.deepcopy(SLOTLESS), "values": {}, "lora_stack": STACK, **extra}
+                response = await system.browser.post("/api/v1/jobs/preview", headers=system.headers, json=body)
+                assert response.status == 400, extra
+                assert (await response.json())["error"] == {
+                    "code": "lora_binding", "message": "Choose an explicit LoRA loader type."}, extra
+            assert system.store.all("previews") == []
+    asyncio.run(scenario())

@@ -1034,3 +1034,120 @@ def test_receiver_handoff_entry_boundaries_settle_and_ack_once(seam):
     assert registry.get(generation, token)["_registry_state"] == "RELEASED"
     assert registry.live_count == 0 and registry.tombstone_count == 1
     assert rdma_read_job.pending_job_count() == baseline
+
+
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_a_latent_read_that_starts_at_exit_reads_nothing_and_drops_nothing(monkeypatch, exiting):
+    """A sample ends as the driver begins to exit, with the RDMA latent return
+    on: the read of the Worker's buffer is not started (driver_exit.refuse_new_call)
+    and its release is skipped, as the cancel is; Monarch's exit step stops the
+    actor that holds the buffer. The refused read is no fault of the native
+    return: it latches nothing and logs nothing (native_return_latch). Not
+    exiting, the read and the drop run as before."""
+    import logging
+
+    from dgx_monarch import driver_exit, native_return_latch
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    events = []
+    lines: list[logging.LogRecord] = []
+    keep = logging.Handler()
+    keep.emit = lines.append  # type: ignore[method-assign]
+    latch_log = logging.getLogger("dgx_monarch.native_return_latch")
+    monkeypatch.setattr(latch_log, "handlers", [*latch_log.handlers, keep])
+
+    class Buffer(_FakeRDMABuffer):
+        def read_into(self, dst, timeout=None):
+            events.append("read")
+            return super().read_into(dst, timeout=timeout)
+
+        def drop(self):
+            events.append("drop")
+            return super().drop()
+
+    class Authority:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, *_args):
+            events.append("exit")
+
+    class Guard:
+        def read_authority(self):
+            return Authority()
+
+        def ack_latent(self, generation, owner_token):
+            events.append("ack")
+
+    source = torch.arange(8, dtype=torch.uint8)
+    desc = {"kind": "rdma", "dtype": "uint8", "shape": [8],
+            "parts": [{"buffer": Buffer(source), "offset": 0, "nbytes": 8}],
+            "owner_token": "a" * 32, "setup_generation": 7}
+    if not exiting:
+        assert torch.equal(read_latent_result(desc, Guard()), source)
+        assert events[:4] == ["enter", "read", "drop", "exit"]
+        return
+    flag.set()
+    with pytest.raises(driver_exit.DriverExitingError):
+        read_latent_result(desc, Guard())
+    assert "read" not in events and "drop" not in events, events
+    state = native_return_latch.snapshot()
+    assert state["latched"] is False and state["fault_count"] == 0
+    assert [record.getMessage() for record in lines] == []
+
+
+@pytest.mark.parametrize("exiting", [True, False], ids=["exiting", "not_exiting"])
+def test_a_latent_read_cut_at_exit_keeps_its_owner_and_reports_no_poison(monkeypatch, exiting):
+    """A native read is under way when the driver begins to exit, and Monarch's
+    exit step cuts it. The failed read keeps its destination owned for the
+    process's life, as any failed read does (its poison owner), but the ERROR
+    that reports the poisoned ownership stands down: at exit its drops are left
+    unconfirmed on purpose, and no later latent return will run. The native
+    return is not latched either. Not exiting, the same failure reports that
+    ERROR once and latches."""
+    import logging
+
+    from dgx_monarch import driver_exit, native_return_latch
+
+    flag = threading.Event()
+    monkeypatch.setattr(driver_exit, "_EXITING", flag)
+    lines: list[logging.LogRecord] = []
+    keep = logging.Handler()
+    keep.emit = lines.append  # type: ignore[method-assign]
+    for name in ("dgx_monarch.transfer", "dgx_monarch.native_return_latch"):
+        logger = logging.getLogger(name)
+        monkeypatch.setattr(logger, "handlers", [*logger.handlers, keep])
+
+    class Buffer(_FakeRDMABuffer):
+        def read_into(self, dst, timeout=None):
+            if exiting:
+                flag.set()  # the exit begins while the read runs
+            raise RuntimeError("the read was cut")
+
+    class Authority:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *_args):
+            return None
+
+    class Guard:
+        def read_authority(self):
+            return Authority()
+
+        def ack_latent(self, generation, owner_token):
+            return None
+
+    source = torch.arange(8, dtype=torch.uint8)
+    desc = {"kind": "rdma", "dtype": "uint8", "shape": [8],
+            "parts": [{"buffer": Buffer(source), "offset": 0, "nbytes": 8}],
+            "owner_token": "a" * 32, "setup_generation": 7}
+    with pytest.raises(RuntimeError, match="the read was cut"):
+        read_latent_result(desc, Guard())
+    assert [owner.phase for owner in transfer._RDMA_POISONED_OWNERS] == ["failed latent read cleanup"]
+    poisoned = [record.getMessage() for record in lines if "POISONED" in record.getMessage()]
+    if exiting:
+        assert poisoned == [] and not native_return_latch.latched()
+        return
+    assert len(poisoned) == 1 and native_return_latch.latched()
