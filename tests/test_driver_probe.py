@@ -270,6 +270,9 @@ def test_top_uses_discovered_custom_port(monkeypatch):
     assert called["driver"] == "127.0.0.1:8195"
 
 
+_PROBED = "http://127.0.0.1:8188/object_info/DGXMonarchInit"  # the address _confirm_raising probes
+
+
 def _confirm_raising(monkeypatch, error):
     import urllib.request
 
@@ -294,7 +297,7 @@ def test_a_refused_port_is_a_definite_answer_and_a_timeout_is_not(monkeypatch):
     refused = urllib.error.URLError(ConnectionRefusedError(111, "refused"))
     assert _confirm_raising(monkeypatch, refused) is False
     assert _confirm_raising(monkeypatch, urllib.error.HTTPError(
-        "http://x", 404, "Not Found", {}, None)) is False
+        _PROBED, 404, "Not Found", {}, None)) is False
     assert _confirm_raising(monkeypatch, ValueError("not json")) is False
 
     assert _confirm_raising(monkeypatch, TimeoutError("slow")) is None
@@ -311,11 +314,14 @@ def test_a_denied_or_failing_answer_is_unknown_and_only_a_missing_route_is_absen
     import urllib.error
 
     for status in (400, 401, 403, 405, 407, 408, 429, 500, 502, 503, 504):
-        error = urllib.error.HTTPError("http://x", status, "error", {}, None)
+        error = urllib.error.HTTPError(_PROBED, status, "error", {}, None)
         assert _confirm_raising(monkeypatch, error) is None, status
     for status in (404, 410):
-        error = urllib.error.HTTPError("http://x", status, "gone", {}, None)
+        error = urllib.error.HTTPError(_PROBED, status, "gone", {}, None)
         assert _confirm_raising(monkeypatch, error) is False, status
+        # The same answer from a page a redirect reached is not the route answering.
+        error = urllib.error.HTTPError("http://127.0.0.1:8188/login", status, "gone", {}, None)
+        assert _confirm_raising(monkeypatch, error) is None, status
 
 
 def test_an_answer_from_another_address_is_unknown(monkeypatch):
@@ -373,6 +379,11 @@ def test_the_pack_check_reads_a_real_loopback_server(monkeypatch):
         routes[route] = (302, {"Location": "/login"}, b"")
         routes["/login"] = (200, {"Content-Type": "application/json"}, json.dumps(_INIT_INFO).encode())
         assert comfy_ports._confirmed_driver(candidate) is None
+        # A login layer that redirects to a page answering a missing route says
+        # nothing about this route: only the probed address itself can.
+        for status in (404, 410):
+            routes["/login"] = (status, {}, b"")
+            assert comfy_ports._confirmed_driver(candidate) is None, status
     finally:
         server.shutdown()
         server.server_close()

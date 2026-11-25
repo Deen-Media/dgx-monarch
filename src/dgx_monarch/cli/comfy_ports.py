@@ -143,9 +143,10 @@ def _confirmed_driver(candidate: str) -> bool | None:
     Return ``None`` when the answer proves nothing about the pack: a timeout or
     transport error, an HTTP error other than a missing route (a 401 or 403
     from a login layer, a 429, a 5xx from a busy server), or an answer from
-    another address after a redirect. Connection refusal, a missing route
-    (404, 410) and a schema mismatch return ``False``. Callers publishing
-    activity or lease state must preserve this distinction.
+    another address after a redirect, an error page included. Connection
+    refusal, a missing route (404, 410) answered by the probed address itself,
+    and a schema mismatch return ``False``. Callers publishing activity or
+    lease state must preserve this distinction.
     """
     import json
     import urllib.error
@@ -158,7 +159,9 @@ def _confirmed_driver(candidate: str) -> bool | None:
                 return None
             payload = json.load(response)
     except urllib.error.HTTPError as exc:
-        return False if exc.code in _ABSENT_ROUTE else None
+        # urllib follows redirects and raises the last page's error with that
+        # page's address; a login layer's missing page proves nothing here.
+        return False if exc.code in _ABSENT_ROUTE and exc.geturl() == url else None
     except urllib.error.URLError as exc:
         return False if isinstance(exc.reason, ConnectionRefusedError) else None
     except (TimeoutError, OSError):
