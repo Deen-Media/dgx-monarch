@@ -457,6 +457,43 @@ class WeightSlab:
             self._strays.pop(prefix + name, None)
         return moved
 
+    def baked_payload_fits(self, module: torch.nn.Module, name: str, prefix: str = "") -> bool:
+        """Whether a bake of this quantized weight leaves a payload its own region can take back.
+
+        A requantize stores the payload at the layout's storage shape
+        (``get_storage_shape``, the padded shape on NVFP4 and MXFP8; the live
+        shape for a layout that does not pad). A file that stored it unpadded
+        has a smaller region, and the baked payload would stay in cudaMalloc.
+        Scales are not asked: ComfyUI's loader gives the kernel the file's own
+        scale bytes, so a scale the file carries has the requantize's layout.
+        A plain tensor always fits; a quantized one with no wrapper never does.
+        """
+        live = live_tensor(module, name)
+        if type(getattr(live, "data", live)) is torch.Tensor:
+            return True
+        wrapper = self._wrapper(live)
+        module_key, _, param_name = name.rpartition(".")
+        if wrapper is None or param_name != "weight" or not module_key:
+            return False
+        qdata = wrapper._qdata
+        shape = tuple(qdata.shape)
+        try:
+            import comfy.quant_ops as quant_ops
+
+            storage = getattr(quant_ops.get_layout_class(wrapper._layout_cls), "get_storage_shape", None)
+            if callable(storage):
+                shape = tuple(storage(tuple(wrapper._params.orig_shape)))
+        except Exception:
+            pass
+        nbytes = qdata.element_size()
+        for dim in shape:
+            nbytes *= int(dim)
+        return self._region_for(f"{prefix}{name}", nbytes) is not None
+
+    def strays(self, name: str, prefix: str = "") -> bool:
+        """Whether this weight already holds bytes outside the slab (counted in ``stray_bytes``)."""
+        return bool(self._strays.get(prefix + name))
+
     def reabsorb_key(self, module: torch.nn.Module, name: str, prefix: str = "") -> int:
         """Return one parameter a lazy swap just restored or re-baked to its slab region.
 

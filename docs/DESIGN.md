@@ -1038,7 +1038,17 @@ uncertain-arena rules live in `actor/slab_arena.py`,
   lazy. On a slab resident each key goes back to its own slab region as the
   swap finishes with it: ComfyUI bakes a quantized weight into a new tensor,
   and the swap keeps one copy of every weight, with at most the key in hand
-  doubled (`store_bake._SwapSettle`). Under FSDP every check that can refuse a
+  doubled (`store_bake._SwapSettle`). A key the new stack newly patches whose
+  baked payload would not fit its region (the layout's storage shape, padded
+  on NVFP4 and MXFP8, against the region the file gave it) stops the swap
+  before any write, and the store loads fresh, so the load's own walls price
+  that copy (`store_bake.slab_misfits`). A key that has strayed since the fresh
+  load's bake, which priced it, keeps one copy in cudaMalloc beside its idle
+  region while it stays in the stack, replaced at each swap and back in its
+  region when it leaves; so does a scale with no region of its size. Each
+  such key holds one copy at once, and `slab_quant_stray_gib` and the swap's
+  log line count them. No shipped checkpoint on record has such a key. Under
+  FSDP every check that can refuse a
   stack runs before the first write, and a refused stack keeps the resident
   and the stack it held; the bake reads through one descriptor bound to the
   header it read and to the file the load pinned (`actor/fsdp_lora.py`).
@@ -1066,13 +1076,22 @@ uncertain-arena rules live in `actor/slab_arena.py`,
   first moves the held backup back onto the GPU. Both are speed, not memory, and
   a test by bytes waits for a measured change from one LoRA to another.
 - Quantized models (every detected kind except bf16, fp16 and fp32): a
-  hot-swap outside `lora_low_rss` (the clone path) also unloads every model, so
-  the patched GPU weights rebuild from the CPU state dict and the other slot
-  reloads on its next use. This is the measured fp8/int8 conversion-spike
-  workaround (`store_detect._is_quantized_kind`). A change between two stacks
-  that patch no weight keeps the placed weights, which are already right: the
-  unload copies the whole model to the host, 93 s on the pair for such a
-  change.
+  hot-swap outside `lora_low_rss` (the clone path) takes ComfyUI's patches off
+  the model before the next load, so the patched GPU weights rebuild from
+  ComfyUI's host backup. This is the measured fp8/int8 conversion-spike
+  workaround (`store_detect._is_quantized_kind`). On unified memory, for a
+  stock resident ComfyUI holds whole whose model the other slot does not
+  share, the unpatch runs in place: the model's clones point their offload
+  device at their load device for ComfyUI's own unload, as a copy-free drop
+  does, so only the backed-up keys move (`store_bake.unpatch_in_place`). The
+  swap itself leaves the other slot alone; with smart memory off, as on a
+  Worker, ComfyUI's next load that does not use that slot still unloads it to
+  the host. Everywhere else every model is unloaded, the other slot reloads on
+  its next use, and the whole model is copied to the host and back: 83 to 100 s
+  per
+  Worker on the pair for 40 patched keys of a 12 GiB model, where the fresh
+  load took 4.4 s. A change between two stacks that patch no weight keeps the
+  placed weights, which are already right.
 - A miss is a full load. Every transition logs its class (`reuse`, `hot-swap`
   or `load`), so the log line names the source of a slowdown.
 

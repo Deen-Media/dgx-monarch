@@ -1390,6 +1390,7 @@
     },
     "tests/test_fsdp_lora.py": {
       "test_a_checkpoint_replaced_after_its_header_is_read_bakes_nothing": "55b6e55101a342e2",
+      "test_a_checkpoint_rewritten_while_the_bake_reads_it_refuses_after_the_reads": "9fcf01d2234770b7",
       "test_a_key_the_file_holds_under_both_names_binds_the_one_whose_bytes_match": "d21486de80849b8d",
       "test_a_quantized_setter_refuses_before_a_leaving_key_is_restored": "d568b9bb0bca279d",
       "test_a_rank_whose_rows_cannot_choose_between_two_names_refuses": "594e8190730ea501",
@@ -1405,6 +1406,8 @@
       "test_read_full_and_rows_reproduce_the_file": "ec4db1a07005774a",
       "test_shard_rows_match_torch_chunk": "c9194d2cc8775f28",
       "test_the_bake_drops_the_checkpoint_pages_it_read": "eaa1548be1350fff",
+      "test_the_bake_refuses_a_checkpoint_that_changed_since_the_load_pinned_it": "add6389ddc7a84a9",
+      "test_the_fresh_bake_and_the_lazy_swap_hand_the_load_pin_to_the_bake": "d1996c3c830362cf",
       "test_two_candidates_that_agree_in_the_sampled_windows_bind_by_every_byte": "92049b4510a36f1b",
       "test_verify_restores_the_identical_parameter_object": "4ceab8eeb1652782"
     },
@@ -2830,11 +2833,13 @@
     },
     "tests/test_slab.py": {
       "test_a_lora_change_on_a_slab_resident_keeps_one_copy_of_every_weight": "333da6dbfaad2b40",
+      "test_a_payload_that_cannot_fit_its_region_stays_one_counted_copy_across_swaps": "978753fb7fdeaa3f",
       "test_a_quantized_weight_that_fails_to_move_is_still_counted": "5e1e9c465e5854ab",
       "test_a_reserve_smaller_than_the_absolute_floor_is_named_as_outranked": "b57e038e9811017e",
       "test_a_reserve_the_absolute_floor_outranks_is_still_named": "8864b8a787e7fd0a",
       "test_a_second_pass_skips_a_stray_the_aligned_annex_cannot_hold": "170903e1fc225ea5",
       "test_a_slab_quote_with_a_stack_under_low_rss_adds_the_lora_term": "c1d5c2ac64a0d20a",
+      "test_a_swap_that_would_leave_an_unpriced_copy_loads_fresh_instead": "e197ca20960de1a6",
       "test_an_empty_stack_leaves_the_slab_price_unchanged": "63349eb0260c0525",
       "test_annex_cache_drain_failure_is_not_hidden": "81b048abe8861fd1",
       "test_annex_cache_drain_leaves_cpu_and_nonannex_paths_alone": "fc53501125729575",

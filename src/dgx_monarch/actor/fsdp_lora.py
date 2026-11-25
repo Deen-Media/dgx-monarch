@@ -437,8 +437,9 @@ def _bound_checkpoint(base_path: str, expected: Any = None) -> Iterator[_BoundCh
                 "reload contract applies")
         if expected is not None and _identity(expected) != want:
             raise UnbakeError(
-                f"checkpoint {base_path} is not the file this model was loaded from; "
-                "reload contract applies")
+                f"checkpoint {base_path} changed since this model was loaded from it (its "
+                "device, inode, size, modification time or change time differ); reload "
+                "contract applies")
         yield _BoundCheckpoint(fd, header, parsed)
         if not _bound_to(fd, base_path, want):
             raise UnbakeError(

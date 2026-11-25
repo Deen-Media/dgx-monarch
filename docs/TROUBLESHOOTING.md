@@ -6823,7 +6823,13 @@ every patched key's own live byte count immediately before the bake runs, and
 refuses typed instead of letting the kernel OOM-kill the worker. A later LoRA
 change on the same slab resident (the lazy swap) returns each key to its slab
 region as the swap finishes with it, so it holds a second copy of one key at a
-time, never of the stack, and this check does not run for it.
+time, not of the stack, and this check does not run for it. A newly patched key
+whose baked payload would not fit its slab region turns that change into a
+fresh load, where this check prices it. A key that has stayed outside its
+region since the fresh load's bake, which this check priced, or a scale with no
+region of its size, keeps one copy in cudaMalloc while it stays in the stack,
+replaced at each swap; the Worker's `slab_quant_stray_gib` figure and the
+swap's "quant strays" log line count those bytes.
 
 **What the message says.** It names the exact duplicate size, the host floor
 charged beside it, MemAvailable and the shortfall, under guard

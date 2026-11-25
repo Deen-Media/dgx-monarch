@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import struct
 import sys
+import time
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -577,6 +578,111 @@ def test_a_checkpoint_replaced_after_its_header_is_read_bakes_nothing(tmp_path, 
         assert torch.equal(fsdp_lora.local_shard(model.blocks[0].lin.weight), weight)
     finally:
         torch.distributed.destroy_process_group()
+
+
+def test_a_checkpoint_rewritten_while_the_bake_reads_it_refuses_after_the_reads(tmp_path, monkeypatch):
+    """The same inode, its times moved after the first read: the after-read check catches it.
+
+    The bake reads each patched key whole, key after key, through the bound
+    descriptor; a file rewritten in place between two reads mixes old and new
+    bytes, so the identity is checked again after the last read and the store
+    then drops the model and reloads.
+    """
+    import os
+
+    import torch.distributed.fsdp
+
+    if torch.distributed.is_initialized():
+        pytest.skip("a process group is already initialized in this session")
+    _install_comfy_stub(monkeypatch)
+    model = _Root()
+    pristine = torch.ones(4, 4, dtype=torch.bfloat16)
+    with torch.no_grad():
+        model.blocks[0].lin.weight.copy_(pristine)
+    path = tmp_path / "m.safetensors"
+    _write_safetensors(path, {"blocks.0.lin.weight": pristine})
+    real_read_full = fsdp_lora.read_full
+    inode = os.stat(path).st_ino
+
+    def read_then_touch(fd, ft):
+        out = real_read_full(fd, ft)
+        st = os.stat(path)
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1))   # in place: the same inode
+        return out
+
+    monkeypatch.setattr(fsdp_lora, "read_full", read_then_touch)
+    try:
+        model = _one_rank_fsdp(tmp_path, model)
+        with pytest.raises(UnbakeError, match="changed while LoRA bake reads were in progress"):
+            fsdp_lora.apply_stack(SimpleNamespace(swap_verify=0),
+                                  _Active(model, {"blocks.0.lin.weight": ["patch"]}), str(path), None)
+        assert os.stat(path).st_ino == inode
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def _pinned_identity(path):
+    import os
+
+    from dgx_monarch.safetensors_header import SafetensorsFileIdentity
+
+    return SafetensorsFileIdentity.from_stat(os.stat(path))
+
+
+@pytest.mark.parametrize("change", ["another file", "a metadata change"])
+def test_the_bake_refuses_a_checkpoint_that_changed_since_the_load_pinned_it(tmp_path, monkeypatch, change):
+    """The load pinned the file it built the model from; the bake reads that file or none.
+
+    Another inode at the path, or the same inode after a chmod, no longer
+    matches the pin. The refusal says what was seen, and nothing is written.
+    """
+    import os
+
+    from dgx_monarch.safetensors_header import SafetensorsFileIdentity
+
+    _install_comfy_stub(monkeypatch)
+    model = _BigRoot()
+    weight = _big_weight()
+    with torch.no_grad():
+        model.blocks[0].lin.weight.copy_(weight)
+    path = tmp_path / "m.safetensors"
+    _write_safetensors(path, {_BIG_KEY: weight})
+    pinned = _pinned_identity(path)
+    if change == "another file":
+        expected = SafetensorsFileIdentity(pinned.file_dev, pinned.file_ino + 1, pinned.file_size,
+                                           pinned.file_mtime_ns, pinned.file_ctime_ns)
+    else:
+        expected = pinned
+        time.sleep(0.05)    # past a coarse timestamp tick, so the change time moves
+        os.chmod(path, (os.stat(path).st_mode & 0o777) ^ 0o100)
+    monkeypatch.setattr(fsdp_lora, "replicated_parameter_ids",
+                        lambda _model: frozenset({id(model.blocks[0].lin.weight)}))
+    with pytest.raises(UnbakeError, match="changed since this model was loaded from it"):
+        fsdp_lora.apply_stack(SimpleNamespace(swap_verify=0),
+                              _Active(model, {_BIG_KEY: ["patch"]}), str(path), None, expected)
+    assert torch.equal(model.blocks[0].lin.weight, weight)
+    # The pin of the file as it is now admits the same bake.
+    fsdp_lora.apply_stack(SimpleNamespace(swap_verify=0), _Active(model, {_BIG_KEY: ["patch"]}),
+                          str(path), None, _pinned_identity(path))
+    assert torch.equal(model.blocks[0].lin.weight, weight * 2)
+
+
+def test_the_fresh_bake_and_the_lazy_swap_hand_the_load_pin_to_the_bake(monkeypatch):
+    """Both entries pass the pinned file's identity through to apply_stack."""
+    from dgx_monarch.actor import model_store as ms
+
+    seen = []
+    monkeypatch.setattr(fsdp_lora, "apply_stack",
+                        lambda store, active, base_path, previous, expected=None: (
+                            seen.append((base_path, previous, expected))
+                            or fsdp_lora.UnbakeRecord(path=base_path, file_size=1, file_mtime_ns=1)))
+    monkeypatch.setattr(ms, "resolve_model_path", lambda kind, name: f"/models/{name}")
+    pin = SimpleNamespace(file_identity="IDENTITY_OF_THE_PINNED_INODE")
+    fsdp_lora.bake_stack(SimpleNamespace(), SimpleNamespace(), "/models/m.safetensors", pin)
+    stored = SimpleNamespace(unbake="PREVIOUS", fsdp_checkpoint_pin=pin)
+    fsdp_lora.lazy_swap(SimpleNamespace(), stored, SimpleNamespace(), "m.safetensors")
+    assert seen == [("/models/m.safetensors", None, "IDENTITY_OF_THE_PINNED_INODE"),
+                    ("/models/m.safetensors", "PREVIOUS", "IDENTITY_OF_THE_PINNED_INODE")]
 
 
 def test_the_bake_drops_the_checkpoint_pages_it_read(tmp_path, monkeypatch):

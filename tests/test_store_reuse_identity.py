@@ -207,6 +207,147 @@ def test_a_quantized_swap_between_stacks_that_patch_nothing_keeps_the_gpu_weight
     assert invalidated == [old]
 
 
+def test_a_quantized_change_on_a_whole_stock_resident_unpatches_without_a_host_copy(
+        rig, monkeypatch):
+    """On unified memory the strength change moves only the patched weights.
+
+    The global unload copied the whole quantized model to the host and back to
+    change the keys the stack patches (83 to 91 s per Worker on the pair for 40
+    keys of a 12 GiB model). Now this model's clones point their offload device
+    at their load device for ComfyUI's own unload, so the unpatch restores the
+    backed-up keys in place; the offload devices come back, the other slot is
+    not touched, and ComfyUI's next load applies the new stack.
+    """
+    store, _calls = rig
+    swap = _classic_fp8(store, monkeypatch)
+    unrelated = SimpleNamespace(model=SimpleNamespace(model="ANOTHER_MODEL"))
+    swap.mm.current_loaded_models.insert(0, unrelated)
+    assert _change_strength(store, swap) == "hot-swap"
+    assert swap.invalidated == []
+    assert swap.unloads == [("cuda:0", "cuda:0")]         # ComfyUI's unload ran with nothing to copy
+    assert (swap.base.offload_device, swap.old.offload_device) == ("cpu", "cpu")
+    assert swap.mm.current_loaded_models == [unrelated]
+    assert "uncond" not in store._gpu_evicted
+
+
+def _classic_fp8(store, monkeypatch):
+    """A quantized stock resident in classic mode on unified memory, held whole by a ComfyUI entry."""
+    store.lora_low_rss = False
+    monkeypatch.setattr("dgx_monarch.mesh_safety.gpu_is_integrated", lambda: True)
+    monkeypatch.setattr(ms, "_detect_checkpoint_kind", lambda _path, _kind: "fp8")
+    monkeypatch.setattr(
+        ms, "_detect_live_precision",
+        lambda _patcher, _kind: LivePrecisionEvidence("fp8", "uniform_or_quantized_fp8"))
+    invalidated = []
+    monkeypatch.setattr(
+        store, "_invalidate_gpu_weights", lambda patcher: invalidated.append(patcher))
+    monkeypatch.setattr(
+        ms.ModelStore, "_build_active",
+        lambda self, base, stack: SimpleNamespace(
+            tag="ACTIVE", model=base.model, load_device="cuda:0", offload_device="cpu",
+            patches={"k.weight": ["delta"]}))
+    stack = [{"name": "real.safetensors", "strength": 1.0}]
+    _active, transition = store.ensure("m.safetensors", None, stack)
+    assert transition == TRANSITION_LOAD
+    stored = store.current
+    base, old = stored.base_patcher, stored.active_patcher
+    base.load_device = "cuda:0"
+    unloads = []
+
+    class _Entry:
+        model = old
+
+        def model_unload(self):
+            unloads.append((old.offload_device, base.offload_device))
+            return True
+
+    mm = sys.modules["comfy.model_management"]
+    mm.current_loaded_models[:] = [_Entry()]
+    return SimpleNamespace(stack=stack, stored=stored, base=base, old=old, unloads=unloads,
+                           invalidated=invalidated, mm=mm)
+
+
+def _change_strength(store, swap) -> str:
+    _active, transition = store.ensure("m.safetensors", None, [{**swap.stack[0], "strength": 0.6}])
+    return transition
+
+
+def _held_whole(model_name: str) -> SimpleNamespace:
+    """Another slot's stock resident that ComfyUI holds whole."""
+    model = SimpleNamespace(diffusion_model=model_name)
+    return SimpleNamespace(
+        base_patcher=SimpleNamespace(model=model, load_device="cuda:0", offload_device="cpu"),
+        active_patcher=SimpleNamespace(model=model, load_device="cuda:0", offload_device="cpu"),
+        slab=None, residency_rung="")
+
+
+@pytest.mark.parametrize("gate", ["partly loaded", "not stock", "model shared with the other slot"])
+def test_a_quantized_change_outside_the_in_place_gates_keeps_the_global_unload(rig, monkeypatch, gate):
+    """Each gate of the in-place unpatch holds on its own.
+
+    A partly loaded model is the memory one: with its offload device pinned,
+    ComfyUI's unpatch would move its host part onto the device. A
+    comfy-managed resident is ComfyUI's to move, and a model the other slot
+    shares would be unpatched under that slot too.
+    """
+    from dgx_monarch.actor import store_residency
+
+    store, _calls = rig
+    swap = _classic_fp8(store, monkeypatch)
+    if gate == "partly loaded":
+        swap.base.model.model_lowvram = True
+    elif gate == "not stock":
+        swap.stored.residency_rung = store_residency.RUNG_COMFY_MANAGED
+    else:
+        store.uncond = SimpleNamespace(base_patcher=SimpleNamespace(model=swap.base.model),
+                                       active_patcher=None, slab=None, residency_rung="")
+    assert _change_strength(store, swap) == "hot-swap"
+    assert swap.invalidated == [swap.old]
+    assert swap.unloads == []                             # no unload ran with the offload pinned
+    assert (swap.base.offload_device, swap.old.offload_device) == ("cpu", "cpu")
+
+
+def test_the_in_place_unpatch_leaves_the_other_slot_alone(rig, monkeypatch):
+    """The swap unloads only its own model: the other slot's patchers and records are untouched.
+
+    It makes no claim past the swap: with smart memory off, ComfyUI's next load
+    that does not use that slot still unloads it.
+    """
+    store, _calls = rig
+    swap = _classic_fp8(store, monkeypatch)
+    store.uncond = other = _held_whole("UNCOND_DIT")
+    kept = SimpleNamespace(model=other.active_patcher)
+    swap.mm.current_loaded_models.append(kept)
+    assert _change_strength(store, swap) == "hot-swap"
+    assert swap.invalidated == []
+    assert kept in swap.mm.current_loaded_models
+    assert (other.base_patcher.offload_device, other.active_patcher.offload_device) == ("cpu", "cpu")
+    assert "uncond" not in store._gpu_evicted
+
+
+def test_a_quantized_change_off_unified_memory_keeps_the_global_unload(rig, monkeypatch):
+    store, _calls = rig
+    store.lora_low_rss = False
+    monkeypatch.setattr("dgx_monarch.mesh_safety.gpu_is_integrated", lambda: False)
+    monkeypatch.setattr(ms, "_detect_checkpoint_kind", lambda _path, _kind: "fp8")
+    monkeypatch.setattr(
+        ms, "_detect_live_precision",
+        lambda _patcher, _kind: LivePrecisionEvidence("fp8", "uniform_or_quantized_fp8"))
+    invalidated = []
+    monkeypatch.setattr(
+        store, "_invalidate_gpu_weights", lambda patcher: invalidated.append(patcher))
+    monkeypatch.setattr(
+        ms.ModelStore, "_build_active",
+        lambda self, base, stack: SimpleNamespace(tag="ACTIVE", model=base.model,
+                                                  patches={"k.weight": ["delta"]}))
+    stack = [{"name": "real.safetensors", "strength": 1.0}]
+    store.ensure("m.safetensors", None, stack)
+    old = store.current.active_patcher
+    _active, transition = store.ensure("m.safetensors", None, [{**stack[0], "strength": 0.6}])
+    assert transition == "hot-swap"
+    assert invalidated == [old]
+
+
 def test_reuse_routes_without_reload(rig):
     store, calls = rig
     store.ensure("m.safetensors", None, STACK)

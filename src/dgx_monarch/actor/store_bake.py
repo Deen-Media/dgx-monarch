@@ -118,6 +118,31 @@ class _SwapSettle:
                 if self.slab.stray_bytes else "")
 
 
+def slab_misfits(stored, active) -> list[str]:
+    """Keys this stack newly patches whose baked payload no slab region can take back.
+
+    Such a key would stay in cudaMalloc beside its idle region, a second copy no
+    price saw made, so the swap does not run: the store loads fresh, and the
+    load's own walls price the bake whole (``store_slab_admit.admit_bake``). A
+    key that already holds bytes outside the slab is not new: the fresh load
+    priced that copy, and each swap replaces it with one of the same size.
+    """
+    slab = getattr(stored, "slab", None)
+    patches = getattr(active, "patches", None)
+    dm = getattr(getattr(getattr(stored, "base_patcher", None), "model", None), "diffusion_model", None)
+    if (slab is None or dm is None or not isinstance(patches, dict)
+            or not callable(getattr(slab, "baked_payload_fits", None))):
+        return []
+    misfits = []
+    for key in patches:
+        if not key.startswith(_DIFFUSION_PREFIX):
+            continue
+        name = key[len(_DIFFUSION_PREFIX):]
+        if not slab.strays(name) and not slab.baked_payload_fits(dm, name):
+            misfits.append(key)
+    return misfits
+
+
 def lazy_swap(store, stored, active, unet_name: str):
     """Fused restore + re-bake for a low_rss stack change.
 
@@ -328,6 +353,77 @@ def invalidate_gpu_weights(old_active) -> None:
     mm.soft_empty_cache()
 
 
+def unpatch_in_place(mm, patchers: tuple) -> bool:
+    """Take ComfyUI's weight patches off a model it holds whole, moving no other weight.
+
+    ComfyUI's own unload restores each patched key from its host backup and then
+    moves the whole model to the offload device, the host: on unified memory a
+    copy of every weight through pageable memory, 83 to 100 s for a 12 GiB
+    quantized model on the pair, to change 40 weights. Here each clone of the
+    model points its offload device at its load device for the unload, as a
+    copy-free drop does (``resident_ledger.unload_dropped``), so the unpatch
+    puts the backed-up keys back on the device and leaves every other weight
+    where it is; the offload devices are restored after, so the next patch
+    keeps its backup on the host as before. The model stays, pristine, and
+    ComfyUI's next load applies the new stack to the patched keys only.
+    Returns False when ComfyUI holds no entry for the model (nothing ran).
+    """
+    model = getattr(patchers[0], "model", None)
+    loaded = getattr(mm, "current_loaded_models", None)
+    if model is None or not isinstance(loaded, list):
+        return False
+    entries = [entry for entry in list(loaded)
+               if getattr(getattr(entry, "model", None), "model", None) is model]
+    if not entries:
+        return False
+    clones: dict[int, Any] = {}
+    for patcher in (*patchers, *(entry.model for entry in entries)):
+        if patcher is not None and getattr(patcher, "load_device", None) is not None:
+            clones.setdefault(id(patcher), patcher)
+    saved = [(patcher, patcher.offload_device) for patcher in clones.values()]
+    try:
+        for patcher, _device in saved:
+            patcher.offload_device = patcher.load_device
+        for entry in entries:
+            if entry.model_unload():
+                for index in range(len(loaded) - 1, -1, -1):
+                    if loaded[index] is entry:
+                        loaded.pop(index)
+    finally:
+        for patcher, device in saved:
+            patcher.offload_device = device
+    mm.soft_empty_cache()
+    return True
+
+
+def _unpatch_quantized_in_place(store, stored, slot: str) -> bool:
+    """The quantized hot swap's unpatch without a host copy, where that is proven safe.
+
+    The gates are the copy-free drop's (``resident_ledger.detaches_alone``): a
+    plain stock resident on unified memory, which ComfyUI holds whole, and
+    whose model the other slot does not share. Anything else keeps the global
+    unload. A model ComfyUI no longer holds needs nothing when it names no
+    patch uuid; when it still names one, the global unload runs. The swap
+    itself leaves the other slot alone; with smart memory off, as on a Worker,
+    ComfyUI's next load that does not use that slot still unloads it.
+    """
+    import comfy.model_management as mm
+
+    from . import resident_ledger, store_residency
+
+    base = stored.base_patcher
+    model = getattr(base, "model", None)
+    other = store._stored("cond" if slot == "uncond" else "uncond")
+    if (model is None or getattr(model, "model_lowvram", False)
+            or not resident_ledger.detaches_alone(stored)
+            or store_residency.describe(stored)["residency"] != "stock"
+            or (other is not None and getattr(getattr(other, "base_patcher", None), "model", None) is model)):
+        return False
+    if unpatch_in_place(mm, (base, stored.active_patcher)):
+        return True
+    return getattr(model, "current_weight_patches_uuid", None) is None
+
+
 def _adopt_patch_uuid(stored, active) -> None:
     """Record the active patch UUID after an in-place stock LoRA swap.
 
@@ -404,6 +500,16 @@ def lazy_swap_transition(
         t1 = time.perf_counter()
         active = store._build_active(stored.base_patcher, lora_stack)
         t_build = time.perf_counter() - t1
+        misfits = slab_misfits(stored, active)
+        if misfits:
+            # Nothing is written yet: the resident is intact, and the fresh
+            # load that follows drops it and prices its own bake.
+            store._drop_failed.discard(slot)
+            _best_effort(
+                logger.info, "model store [%s]: %d key(s) of this stack would bake to a payload "
+                "their slab regions cannot hold (%s), so %s loads fresh and its bake is priced "
+                "whole", slot, len(misfits), ", ".join(misfits[:4]), unet_name)
+            return None
         t1 = time.perf_counter()
         previous = stored.unbake
         patched = len(getattr(active, "patches", None) or ())  # the swap clears them
@@ -565,6 +671,7 @@ def hot_swap_transition(
 
     t0 = time.perf_counter()
     active = store._build_active(stored.base_patcher, lora_stack)
+    t_build = time.perf_counter() - t0
     uncovered, patched = copies_off_the_gpu(store, stored, slot, active)
     if uncovered:
         logger.info(
@@ -587,10 +694,22 @@ def hot_swap_transition(
     # nothing in this model) leaves the placed weights exactly right, so the
     # global unload, which copies the whole model to the host, is skipped.
     weights_change = not (_patches_nothing(active) and _patches_nothing(stored.active_patcher))
-    invalidates = _is_quantized_kind(effective_quant) and weights_change
-    if invalidates:
-        store._invalidate_gpu_weights(stored.active_patcher)
-        store._mark_other_slot_evicted(slot)  # the global unload hit the other slot
+    note = ""
+    if _is_quantized_kind(effective_quant) and not weights_change:
+        note = " (quant: no weight changes, GPU weights kept)"
+    elif _is_quantized_kind(effective_quant):
+        # The patched quantized weights rebuild from ComfyUI's host backup at
+        # the next load. Where the resident detaches alone, only those keys
+        # move; elsewhere every model is unloaded, the other slot included.
+        t1 = time.perf_counter()
+        if _unpatch_quantized_in_place(store, stored, slot):
+            note = (f" (quant: patched weights restored in place, no host copy; build {t_build:.1f}s, "
+                    f"unpatch {time.perf_counter() - t1:.1f}s)")
+        else:
+            store._invalidate_gpu_weights(stored.active_patcher)
+            store._mark_other_slot_evicted(slot)  # the global unload hit the other slot
+            note = (f" (quant: GPU weights invalidated; build {t_build:.1f}s, "
+                    f"unload {time.perf_counter() - t1:.1f}s)")
     stored.active_patcher = active
     stored.lora_sig = lora_signature(lora_stack)
     stored.request_key = (*base_key, stored.lora_sig, effective_quant)
@@ -598,10 +717,7 @@ def hot_swap_transition(
     logger.info(
         "model store [%s]: %s -- %s loras=%s in %.1fs%s",
         slot, TRANSITION_HOT_SWAP, unet_name, stored.lora_sig,
-        time.perf_counter() - t0,
-        " (quant: GPU weights invalidated)" if invalidates
-        else " (quant: no weight changes, GPU weights kept)" if _is_quantized_kind(effective_quant)
-        else "",
+        time.perf_counter() - t0, note,
     )
     return active, TRANSITION_HOT_SWAP
 

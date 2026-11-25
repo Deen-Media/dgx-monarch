@@ -1118,7 +1118,7 @@ copied from historical evidence.
   [`slab_arena.py:182-306`](../src/dgx_monarch/actor/slab_arena.py#L182-L306 "anchor:_Arena"),
   [`slab.py:88-157`](../src/dgx_monarch/actor/slab.py#L88-L157 "anchor:__init__"),
   [`slab.py:166-232`](../src/dgx_monarch/actor/slab.py#L166-L232 "anchor:_read_all"),
-  [`slab.py:566-610`](../src/dgx_monarch/actor/slab.py#L566-L610 "anchor:close"),
+  [`slab.py:603-647`](../src/dgx_monarch/actor/slab.py#L603-L647 "anchor:close"),
   [`slab_lifetime.py:203-252`](../src/dgx_monarch/actor/slab_lifetime.py#L203-L252 "anchor:release_after_explicit_unload"),
   [`slab_lifetime.py:255-378`](../src/dgx_monarch/actor/slab_lifetime.py#L255-L378 "anchor:cleanup_failed_load"),
   [`model_store.py:419-462`](../src/dgx_monarch/actor/model_store.py#L419-L462 "anchor:_drop"),
@@ -1127,10 +1127,10 @@ copied from historical evidence.
   [`model_store.py:494-509`](../src/dgx_monarch/actor/model_store.py#L494-L509 "anchor:snapshot").
   Retention, refusal, and recovery are covered by
   [`test_slab.py:258-281`](../tests/test_slab.py#L258-L281 "anchor:test_close_attempts_annex_after_primary_arena_failure"),
-  [`test_slab.py:983-994`](../tests/test_slab.py#L983-L994 "anchor:test_close_retains_live_export_until_retry"),
-  [`test_slab.py:997-1032`](../tests/test_slab.py#L997-L1032 "anchor:test_arena_fd_close_uncertainty_is_terminal_and_never_retried"),
-  [`test_slab.py:1035-1078`](../tests/test_slab.py#L1035-L1078 "anchor:test_partial_weight_slab_preserves_primary_and_retains_uncertain_arena"),
-  [`test_slab.py:1233-1271`](../tests/test_slab.py#L1233-L1271 "anchor:test_slab_load_exposed_baseexception_has_durable_owner"),
+  [`test_slab.py:1077-1088`](../tests/test_slab.py#L1077-L1088 "anchor:test_close_retains_live_export_until_retry"),
+  [`test_slab.py:1091-1126`](../tests/test_slab.py#L1091-L1126 "anchor:test_arena_fd_close_uncertainty_is_terminal_and_never_retried"),
+  [`test_slab.py:1129-1172`](../tests/test_slab.py#L1129-L1172 "anchor:test_partial_weight_slab_preserves_primary_and_retains_uncertain_arena"),
+  [`test_slab.py:1327-1365`](../tests/test_slab.py#L1327-L1365 "anchor:test_slab_load_exposed_baseexception_has_durable_owner"),
   [`test_slab_instruction_handoffs.py:524-631`](../tests/test_slab_instruction_handoffs.py#L524-L631 "anchor:test_failed_hook_restore_guards_slab_until_later_confirmed_restore"),
   [`test_store_ensure.py:505-551`](../tests/test_store_ensure.py#L505-L551 "anchor:test_fsdp_pin_close_failure_blocks_reuse_until_exact_resource_retry"),
   [`test_store_ensure.py:554-608`](../tests/test_store_ensure.py#L554-L608 "anchor:test_fsdp_pin_fd_close_is_never_retried_after_release_then_raise"),

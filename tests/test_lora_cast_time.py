@@ -148,6 +148,48 @@ def test_a_quantized_weight_written_out_of_place_records_an_out_of_place_backup(
         assert lora_cast_time.uninstall() is True
 
 
+def test_an_in_place_unpatch_restores_the_patched_keys_and_the_next_load_applies_the_new_stack(comfy_cpu):
+    """ComfyUI's own unload and load around the quantized hot swap, with nothing offloaded.
+
+    Stack A patches both keys through a real LoadedModel. The store's in-place
+    unpatch (store_bake.unpatch_in_place) puts both back to the file's weight
+    and leaves the model loaded nowhere; ComfyUI's next load of stack B, which
+    patches only the INT8 key, gives it stock's weight for B and leaves the
+    BF16 key pristine.
+    """
+    import comfy.model_management as mm
+    import comfy.model_patcher
+    import comfy.utils
+    import torch
+
+    from dgx_monarch.actor import lora_cast_time, store_bake
+
+    root, patches = comfy_cpu.tiny_cast_time_model()
+    cpu = torch.device("cpu")
+    base = comfy.model_patcher.ModelPatcher(root, cpu, cpu)
+    pristine = {key: comfy.utils.get_attr(root, key) for key in KEYS}
+    stack_a = base.clone()
+    stack_a.add_patches(patches, 0.8)
+    assert lora_cast_time.install() is True
+    try:
+        mm.load_models_gpu([stack_a], force_full_load=True)
+        assert not comfy_cpu.same_weight(comfy.utils.get_attr(root, KEYS[0]), pristine[KEYS[0]])
+        assert store_bake.unpatch_in_place(mm, (base, stack_a)) is True
+        assert all(getattr(entry.model, "model", None) is not root for entry in mm.current_loaded_models)
+        assert (base.offload_device, stack_a.offload_device) == (cpu, cpu)
+        for key in KEYS:
+            assert comfy_cpu.same_weight(comfy.utils.get_attr(root, key), pristine[key]), key
+        stack_b = base.clone()
+        stack_b.add_patches({KEYS[0]: patches[KEYS[0]]}, 0.5)
+        expected = comfy_cpu.stock_cast_time_weight(root, stack_b, KEYS[0])
+        mm.load_models_gpu([stack_b], force_full_load=True)
+        assert comfy_cpu.same_weight(comfy.utils.get_attr(root, KEYS[0]), expected)
+        assert comfy_cpu.same_weight(comfy.utils.get_attr(root, KEYS[1]), pristine[KEYS[1]])
+    finally:
+        mm.unload_all_models()
+        assert lora_cast_time.uninstall() is True
+
+
 _SLAB_LAYOUTS = {
     "float8_e4m3fn": ("TensorCoreFP8E4M3Layout", {}),
     "nvfp4": ("TensorCoreNVFP4Layout", {}),
@@ -203,6 +245,7 @@ def test_a_real_quantized_weight_goes_back_to_its_slab_regions_with_its_scales(c
     try:
         for name, region in ws.regions.items():      # what the load hook records
             ws.key_map[name] = region
+        assert ws.baked_payload_fits(dm, "q.weight")   # the layout's storage shape fits the file's region
         moved = ws.reabsorb_key(dm, "q.weight")
         live = dm.q.weight
         held = get_layout_class(layout).state_dict_tensors(live._qdata, live._params)

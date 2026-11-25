@@ -2285,6 +2285,9 @@ sections after them list every change.
   slab regions: ComfyUI's loader leaves a copy of each scale in cudaMalloc
   beside the slab, an eighth of the payload on NVFP4. The quantized stray
   figure counts the payload and scales a weight still holds outside the slab.
+  A stack change whose newly patched key would bake to a payload larger than
+  its slab region loads fresh, where the bake is priced, instead of leaving an
+  unpriced copy in cudaMalloc.
 - A LoRA whose keys match no weight of the model (one that carries only
   attention settings, a text-encoder LoRA, or one built for another family)
   stays a lazy swap across strength changes. It used to leave no un-bake
@@ -2293,6 +2296,15 @@ sections after them list every change.
   session. With both levers off, a quantized model on stock residency no
   longer unloads every model for such a change, which copied the whole model
   to the host (93 s on the pair for a change that alters no weight).
+- With `lora_low_rss` off, a LoRA change on a quantized model on stock
+  residency takes ComfyUI's patches off in place on unified memory: the
+  patched weights come back from ComfyUI's host backup and no other weight
+  moves. It used to unload every model, copying the whole model to the host
+  and back, 83 to 100 s per Worker on the pair for 40 patched weights of a
+  12 GiB model, and the other slot's model went to the host with it. The swap
+  itself no longer unloads the other slot. That is the state a session is in
+  after an automatic Gate that does not pass. The hot-swap line now shows its
+  build and unpatch times.
 - Under any `+fsdp` preset a LoRA that patches a parameter the FSDP wrap keeps
   whole, an fp32 island such as ChromaRadiance's nerf embedder or a
   zero-dimensional parameter, bakes and restores whole on each rank. It
