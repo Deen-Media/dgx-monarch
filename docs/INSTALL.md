@@ -1885,7 +1885,8 @@ removed, their bytes, the slots kept back for now and the hosts that did not
 confirm. Its status is `partial` when slots were kept back and `unknown` when
 a host did not confirm or you stopped the step; some slots may then remain,
 and the next update tries again. This step never changes the update's
-outcome. Earlier releases kept every slot.
+outcome: a Ctrl+C during it is recorded as an `unknown` step, and the update
+still ends `updated` with exit 0. Earlier releases kept every slot.
 
 Migrated units include the canonical generation-invalidating `ExecStartPre`.
 Compensation restores the captured unit bytes, mode and source layout before

@@ -664,6 +664,19 @@ def test_retire_reads_the_running_workers_own_source_path(layout, monkeypatch, c
             worker.wait()
 
 
+@pytest.mark.parametrize("mark", ["finalized", "compensated"])
+@pytest.mark.parametrize("content", [b"", b"FINALIZED", b"COMPENSATED", b"FINALIZED\nCOMPENSATED\n", b"done\n"])
+def test_a_journal_mark_with_other_bytes_keeps_its_slot(layout, capsys, mark, content):
+    """Only a mark holding exactly FINALIZED or COMPENSATED and a newline proves an update's slot dead."""
+    base, request = _releases_with_a_prior_slot(layout)
+    slot = _old_slot(base, "u-cccccccccccc-dddddddddddddddd", journal="")
+    (base / "transactions" / slot.name / mark).write_bytes(content)
+    (base / "transactions" / slot.name / mark).chmod(0o600)
+    _finalized(request, capsys)
+    assert _retire(request, capsys) == ["RETIRED 0 0 0"]
+    assert slot.is_dir()
+
+
 def test_a_closing_mark_that_is_not_this_setups_keeps_the_slot(layout, capsys):
     base, request = _releases_with_a_prior_slot(layout)
     setup = Path.home() / ".local/state/dgx-monarch/setup"
