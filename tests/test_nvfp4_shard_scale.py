@@ -336,6 +336,46 @@ def test_the_off_switch_under_the_trace_knob_keeps_the_before_leg_readable(
     assert calls[0] == 0
 
 
+@pytest.mark.parametrize("sharded", [True, False])
+def test_the_trace_changes_no_result_where_a_pad_row_holds_the_largest_value(
+        monkeypatch, caplog, sharded):
+    """The trace with the shared scale off (sharded) or on one GPU reads comfy's
+    whole input and sets nothing: inside a block loop whose stream pads this
+    rank, with a pad row holding the largest value, the layer quantizes as it
+    does with the trace off, input scale and output bit for bit."""
+    from dgx_monarch.adapters import scale_rows
+
+    x = torch.randn(1, 4, 4, dtype=torch.bfloat16)
+    x[0, 3] *= 50.0  # the pad row: 7 real rows over 2 ranks of 4, rank 1's last
+    seen: list = []
+
+    class _Seeing(_Linear):
+        def forward(self, value):
+            seen.append(getattr(self, "input_scale", None))
+            return super().forward(value)
+
+    def run(trace):
+        monkeypatch.setenv(qas.ENABLE_ENV, "0" if sharded else "1")
+        if trace:
+            monkeypatch.setenv(qas.LOG_ENV, "1")
+        else:
+            monkeypatch.delenv(qas.LOG_ENV, raising=False)
+        tree = _Tree(nvfp4=_Seeing(NVFP4))
+        qas.install(tree, {"ulysses": 2} if sharded else {}, family="test")
+        role = scale_rows.by_pattern([(r"nvfp4", "x")])
+        with caplog.at_level("INFO", logger="dgx_monarch.adapters.quant_activation_scale"), \
+                scale_rows.real_rows(role, {"x": scale_rows.stream((7, 4), rank=1, world=2)}):
+            return tree.nvfp4(x)
+
+    stock = run(trace=False)
+    traced = run(trace=True)
+    assert seen == [None, None]  # neither run handed comfy a scale
+    assert torch.equal(traced, stock)
+    assert torch.equal(stock, _Linear(NVFP4)(x))
+    line = next(r.getMessage() for r in caplog.records if "local_amax" in r.getMessage())
+    assert f"local_amax={float(x.abs().amax()):.6g}" in line  # the pad row's value
+
+
 def test_an_unsharded_install_declines_nothing_because_nothing_was_needed():
     tree = _mixed_tree()
     coverage = qas.install(tree, {}, family="chroma")

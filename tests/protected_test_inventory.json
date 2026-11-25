@@ -2544,6 +2544,7 @@
       "test_the_shared_scale_is_bitwise_the_scale_one_gpu_computes": "43ba0acdaeffccec",
       "test_the_shared_scale_makes_each_ranks_rows_bit_identical_to_one_gpu": "aca2c34985c8905b",
       "test_the_sp_quant_check_now_sees_cfg": "401a67a27e3e2c0d",
+      "test_the_trace_changes_no_result_where_a_pad_row_holds_the_largest_value": "991d16743cc41355",
       "test_the_trace_names_no_reducers_when_the_original_pair_does_not_fold": "be104a24b72bd104",
       "test_the_trace_names_the_reducers_the_call_ran": "f09eecb4ef66089b",
       "test_the_trace_reads_the_local_amax_when_the_collective_reduces_in_place": "8ea85f7a45c7fbb0",

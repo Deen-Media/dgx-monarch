@@ -28,6 +28,7 @@ from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from . import cfg_dispatch
 from .base import UnsupportedModelError
+from .quant_scale_trace import trace_line
 from .shared_scale_switch import (  # noqa: F401  (the switch, reached here too)
     ENABLE_ARG,
     ENABLE_ENV,
@@ -297,6 +298,12 @@ def _wrap(module: Any, path: str, plan: SharedScalePlan, divisor: float,
         if not comfy_would_quantize(self, input):
             return original(input, *args, **kwargs)
         record: list[torch.Tensor] | None = None if logged[0] else []
+        if not plan:  # trace only (switch off, or one GPU): read comfy's whole input
+            if record is not None:  # and set nothing, so logging changes no result
+                logged[0] = True
+                scale = shared_activation_scale(input, plan, divisor, record)
+                trace_line(log, path, record, scale, plan)
+            return original(input, *args, **kwargs)
         active = plan_for_call(plan)  # per call, so the trace names what ran
         from . import mage_nvfp4_scale, scale_rows
         scale_rows.check_streams_read(model_paths)  # a renamed module refuses here
@@ -305,7 +312,7 @@ def _wrap(module: Any, path: str, plan: SharedScalePlan, divisor: float,
                                         spans=scale_rows.spans(path, real))
         if record is not None:
             logged[0] = True
-            _trace(path, record, scale, active)
+            trace_line(log, path, record, scale, active)
         self.input_scale = scale
         try:
             return original(input, *args, **kwargs)
@@ -324,18 +331,6 @@ def _wrap(module: Any, path: str, plan: SharedScalePlan, divisor: float,
     # The reducer names rather than a bare flag, so a second install can tell a
     # shared-scale wrapper from one the off switch left with no reducer.
     setattr(module, WRAPPED_ATTR, plan.names)
-
-
-@torch.compiler.disable
-def _trace(path, record, scale, plan) -> None:
-    """One line per wrapped Linear per rank, for the first step only.
-
-    The only host sync in this module, and it runs under the knob alone.
-    """
-    local, reduced = record
-    log.info("shared activation scale: %s local_amax=%.6g reduced_amax=%.6g "
-             "scale=%.6g reducers=%s", path, float(local), float(reduced),
-             float(scale), ",".join(plan.names) or "none")
 
 
 def install(
