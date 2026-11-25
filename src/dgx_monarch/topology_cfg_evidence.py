@@ -191,11 +191,16 @@ CFG2_EVIDENCE: dict[int, CfgEvidence] = {
               "differ; fp8_scaled and mxfp8 files were not measured in this band, nvfp4 shares the "
               "fp8 kind and stays class K, and Radiance shares the bf16 kind and was not measured in "
               "this band; a BF16 pair of equal text rows read NRMS 0.034 on cfg2 at 1024, so since "
-              "2026-11-07 this record grants BF16, FP8 storage and INT8 only a pair whose text rows "
-              "differ; an MXFP8, NVFP4 or cast file has no bytes-equal reading on the fallback, so "
-              "since 2026-11-24 its equal pair keeps cfg2",
+              "2026-11-07 this record grants only a pair whose text rows differ. Since 2026-11-24 "
+              "that holds only where the equal pair's fallback reads bytes equal to one GPU: BF16 "
+              "falls to row 22, uly2 on the Init kernel, which read Chroma1-HD BF16 exact against "
+              "a same-build one-GPU render at 1024 and 1536 on 2026-10-02, a pair of equal rows "
+              "included, and INT8 to row 22 too, read bit-identical in Campaign K against row 0 "
+              "of a same-build dp2 render, the one-GPU reference; FP8 falls to row 21's SAGE "
+              "route, 1-step NRMS 0.057 to 0.078 against that reference, further than cfg2's "
+              "equal pair, so an FP8 file, block-scaled or cast ones included, keeps every pair",
         pairs="unequal",
-        pair_quants=("bf16", "fp8", "int8"),
+        pair_quants=("bf16", "int8"),
     ),
     68: CfgEvidence(
         row=68,

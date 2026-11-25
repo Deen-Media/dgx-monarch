@@ -64,10 +64,12 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "cfg2 below 1.2 MP for a prompt pair whose text rows differ; on the shipped graph "
              "at 1024 square on 2026-10-01 it read bit-identical to one GPU and ran faster than "
              "uly2 on bf16, fp8 and int8, and a BF16 pair of equal rows read NRMS 0.034, so "
-             "such a pair takes the uly2 fallback"),
+             "such a pair takes the uly2 fallback, except on an MXFP8, NVFP4 or cast file"),
     AutoRule(19, "chroma", (), 1.2, 1.64, 2, {"cfg": 2}, False,
              "cfg2 from 1.2 to 1.64 MP on BF16, FP8 and INT8 for a prompt pair whose text rows "
-             "differ (a pair of equal rows takes rows 21 and 22): Campaign K (2026-10-14, "
+             "differ, and on FP8 for every pair (a BF16 or INT8 pair of equal rows takes row "
+             "22; on FP8 it would take row 21's SAGE route, further from the one-GPU "
+             "reference than cfg2, since 2026-11-24): Campaign K (2026-10-14, "
              "ComfyUI e8665ca8, head capped at 2100 MHz) read Chroma1-HD BF16, FP8-mixed "
              "and INT8 ConvRot bit-identical to one GPU at 1152, 1216 and 1280 square, "
              "1.30x to 1.31x faster than uly2 on BF16, 1.26x to 1.30x faster than uly2 "
@@ -78,7 +80,9 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "square at 1-step NRMS 0.057 to 0.078 against one GPU and 3 to 5 percent "
              "faster than TORCH_FLASH uly2; row 19 takes cfg2 below 1.64 MP"),
     AutoRule(22, "chroma", (), 1.2, _INF, 2, {"ulysses": 2}, False,
-             "uly2 >= 1.5 MP; sage off on bf16"),
+             "uly2 >= 1.5 MP; sage off on bf16; on 2026-10-02 Chroma1-HD BF16 uly2 read "
+             "exact pixels against a same-build one-GPU render at 1024 and 1536, on a pair "
+             "of equal text rows (44/44) and on the shipped one (100/28)"),
     # --- flux family (12B double/single DiT; rows seeded from chroma 20-22,
     # same architecture; scoped hardware evidence recorded per row) ----------
     AutoRule(24, "flux", ("fp8",), 1.2, _INF, 2, {"ulysses": 2}, True,

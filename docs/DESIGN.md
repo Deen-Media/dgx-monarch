@@ -763,9 +763,13 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   GPU running each entry alone matched cfg2 to about 1e-7: at equal rows cfg2
   equals stock's own separate calls, not its batched one. The scope applies
   only where the row an equal pair falls to reads bytes equal to one GPU
-  (`CfgEvidence.pair_quants`): Krea2 BF16 falls to row 12 and Qwen-Image FP8 to
-  row 71, both uly2 on the Init kernel, while Krea2 FP8 would fall to row 11's
-  SAGE route, further from one GPU than cfg2, and keeps every pair. The scope
+  (`CfgEvidence.pair_quants`): Krea2 BF16 falls to row 12, Qwen-Image FP8 to
+  row 71, Chroma BF16 and INT8 from 1.2 MP to row 22 and Boogu FP8 to row 78,
+  all uly2 on the Init kernel, while Krea2 FP8 would fall to row 11's SAGE
+  route and Chroma FP8 from 1.2 to 1.64 MP to row 21's, both further from the
+  one-GPU reference than cfg2, and keep every pair. A reading against row 0 of
+  a same-build dp2 render counts as a reading against one GPU: each dp2 rank
+  renders its latent alone, with one GPU's cond and uncond batching. The scope
   reads a finer kind than the row (`topology_cfg_evidence.pair_kind`): an MXFP8
   or NVFP4 file reads fp8 like an FP8 one, but no sharded render of it is bytes
   equal, so its equal pair keeps cfg2 on every pair-scoped row, as does that

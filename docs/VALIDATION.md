@@ -1043,6 +1043,10 @@ BF16 cfg2 read NRMS 0.034 because stock batches both conditions together.
 Since 2026-11-07 rows 20 and 19 grant only a pair whose text rows differ, so
 auto keeps Ulysses for an equal pair ([equal pairs](#campaign-k-equal-pairs)).
 
+**Addition, 2026-11-24.** On FP8 from 1.2 to 1.64 MP, and on an MXFP8, NVFP4
+or cast file at any size, an equal pair now keeps cfg2
+([equal pairs](#campaign-k-equal-pairs)).
+
 BF16 pure Ulysses matched same-build local references at 1024 and
 1536 for 100/28 and 44/44 prompts, and across 26-step controls including
 45/45 and 101/29 prompts. FP8-scaled and INT8 ConvRot tests
@@ -3190,6 +3194,24 @@ has no CFG field, so the Krea2 record covers every CFG other than 1, and CFG 1
 under a CFG++ sampler that a DGX Monarch KSampler node names, on the strength
 of the two regimes measured. A Sampler Custom graph names no sampler, so at
 CFG 1 it keeps Ulysses.
+
+**Addition, 2026-11-24.** By the rule the Krea2 and Qwen-Image record below
+sets, an equal pair leaves cfg2 only where the row it falls to reads bytes
+equal to one GPU; a reading against row 0 of a same-build dp2 render, the
+one-GPU reference, counts. Chroma FP8 from 1.2 to 1.64 MP would fall to row
+21's SAGE route, which Campaign K read at one-step NRMS 0.057 to 0.078 against
+row 0 of a same-build dp2 render, the one-GPU reference, further than cfg2's
+equal pair (0.034 on BF16), so row 19 keeps every FP8 pair, block-scaled and
+cast files included. Chroma BF16 still falls to row 22, which read Chroma1-HD
+BF16 in exact decoded pixels against a same-build one-GPU render at 1024 and
+1536 on 2026-10-02, on a pair of 44 and 44 text rows as well as the shipped
+one, with tensor bytes equal in the instrumented 1024 run. Chroma INT8 still
+falls to row 22, which Campaign K read bit-identical against row 0 of a
+same-build dp2 render, the one-GPU reference. Boogu FP8 still falls to row 78,
+read bit-identical on 2026-10-06 against row 0 of a same-build dp2 render, the
+one-GPU reference. Below 1.2 MP row 20 sends a BF16, FP8 or INT8 equal pair to
+the uly2 fallback as before; on every scoped row an MXFP8, NVFP4 or cast
+file's equal pair keeps cfg2.
 
 <a id="equal-pairs-krea2-qwen-2026-11-24"></a>
 

@@ -6,8 +6,9 @@ bit, and stock's batched call reads apart from them on the families measured
 (docs/VALIDATION.md, the equal-pair records). `auto` leaves cfg2 for such a
 pair only where the row it falls to is bytes equal to one GPU
 (topology_cfg_evidence), so a render still on cfg2 with an equal pair either
-chose cfg2 by hand or holds a file with no such row (Krea2 FP8, any MXFP8 or
-NVFP4 file, a full-precision file cast to fp8 at load). Nothing refuses: the notice says what differs, that cfg2 there equals
+chose cfg2 by hand or holds a file with no such row (Krea2 FP8, Chroma FP8 from
+1.2 to 1.64 MP, any MXFP8 or NVFP4 file, a full-precision file cast to fp8 at
+load). Nothing refuses: the notice says what differs, that cfg2 there equals
 stock's separate calls, and which layout is bytes equal for the file where one
 is recorded. A hand-chosen cfg2 shows it as a browser notice, once
 per queued prompt (a Pipeline sweep is one prompt), and every render logs it;

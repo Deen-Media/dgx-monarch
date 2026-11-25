@@ -197,7 +197,8 @@ sections after them list every change.
   ([TROUBLESHOOTING #151](docs/TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
 - `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP only
   when the prompt and the negative encode to different text rows, and Ulysses
-  for an equal pair
+  for an equal pair, except on Chroma FP8 from 1.2 to 1.64 MP, where every
+  pair keeps cfg2
   ([VALIDATION](docs/VALIDATION.md#campaign-k-equal-pairs)).
 - uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1, and LTX
   renders under sequence parallelism, now run comfy-kitchen's fused AdaLN, and
@@ -2028,8 +2029,12 @@ sections after them list every change.
   ([VALIDATION](docs/VALIDATION.md#ltx-2-3-latent-reread)).
 - `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP
   only when the prompt and the negative encode to different text rows, as on
-  the shipped graphs, and Ulysses for an equal pair; Anima's row had the same
-  scope until its withdrawal (the Anima entry above). One GPU folds
+  the shipped graphs, and Ulysses for an equal pair, except on Chroma FP8 from
+  1.2 to 1.64 MP, where Ulysses runs SAGE and reads further from the one-GPU
+  reference than cfg2 (one-step NRMS 0.057 to 0.078 against row 0 of a
+  same-build dp2 render, the one-GPU reference), so every pair keeps cfg2
+  there; Anima's row had the same scope until its withdrawal (the Anima entry
+  above). One GPU folds
   an equal pair into one batch-2 call, which cfg2's two calls do not
   reproduce: on 2026-11-07 such pairs read one-step NRMS 0.014 to 0.042
   against one GPU on Anima and Boogu, and no full schedule matched, while the

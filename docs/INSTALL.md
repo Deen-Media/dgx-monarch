@@ -1371,7 +1371,9 @@ Read this before the first update from 1.4.0, in this order. An install on
     ([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
     `auto` takes cfg2 on Boogu FP8 below 1.2 MP and on Chroma below 1.64 MP
     only when the prompt and the negative encode to different text rows, and
-    Ulysses for an equal pair
+    Ulysses for an equal pair, except on Chroma FP8 from 1.2 to 1.64 MP, where
+    every pair keeps cfg2 as on 1.4.0, since Ulysses there runs SAGE, further
+    from one GPU than cfg2
     ([VALIDATION](VALIDATION.md#campaign-k-equal-pairs)). uly2 renders of
     Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1, and LTX renders
     under sequence parallelism, run comfy-kitchen's fused AdaLN, and LTX's

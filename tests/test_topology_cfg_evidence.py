@@ -152,19 +152,21 @@ def test_campaign_k_rows_grant_their_measured_kinds(family, quant, megapixels, c
     assert "whose text rows differ, and this pair's rows are equal or unread" in equal.reason
 
 
-# Issue #52, 2026-11-07: row 79 was measured on the template's pair, whose
-# text rows differ, so one GPU runs it as two calls; two pairs of equal rows
-# read off one GPU (check 10), so the record grants only a pair the sampler
-# tagged as differing.
-# Chroma's rows 20 and 19 take the same scope on their own equal-pair reading
-# (BF16 NRMS 0.034); below 1.2 MP Chroma has no Ulysses row, so the fallback
-# (row 99) catches an equal pair, and from 1.2 MP rows 21 (FP8) and 22 do.
-# Anima's row 47 had the same scope until 2026-11-10, when the text branch fix
-# made one GPU fold every Anima pair, as stock does (TROUBLESHOOTING #151).
+# Issue #52, 2026-11-07: Chroma's rows 20 and 19 were measured on the
+# template's pair, whose text rows differ, so one GPU runs it as two calls; a
+# BF16 pair of equal rows read NRMS 0.034, so the records grant only a pair the
+# sampler tagged as differing. Below 1.2 MP Chroma has no Ulysses row, so the
+# fallback (row 99) catches an equal pair, and from 1.2 MP row 22 does. Since
+# 2026-11-24 the scope holds only where that fallback reads bytes equal to one
+# GPU: row 19 keeps an FP8 equal pair (row 21's SAGE route reads further from
+# the one-GPU reference than cfg2). Boogu's row 79 has the same scope on its own
+# equal-pair reading; its fallback, row 78, read bit-identical against row 0 of
+# a same-build dp2 render, the one-GPU reference. Anima's row 47 had the scope
+# until 2026-11-10, when the text branch fix made one GPU fold every Anima pair
+# (TROUBLESHOOTING #151).
 PAIR_SCOPED = (("boogu", "fp8", 79, 78),
                ("chroma", "bf16", 20, 99), ("chroma", "int8", 20, 99))
-CHROMA_BAND = (("chroma", "bf16", 1.5, 19, 22), ("chroma", "fp8", 1.63, 19, 21),
-               ("chroma", "int8", 1.5, 19, 22))
+CHROMA_BAND = (("chroma", "bf16", 1.5, 19, 22), ("chroma", "int8", 1.5, 19, 22))
 
 
 def test_every_campaign_k_row_is_scoped_to_pairs_of_different_text_rows() -> None:
@@ -173,19 +175,67 @@ def test_every_campaign_k_row_is_scoped_to_pairs_of_different_text_rows() -> Non
     scoped = {row for row, record in CFG2_EVIDENCE.items() if record.pairs != "any"}
     assert scoped == {15, 19, 20, 68, 79}
     assert {CFG2_EVIDENCE[row].pairs for row in scoped} == {"unequal"}
-    # Row 15 scopes BF16 alone: an FP8 equal pair has no bytes-equal fallback.
-    assert CFG2_EVIDENCE[15].pair_quants == ("bf16",)
-    assert CFG2_EVIDENCE[15].scopes_pairs("bf16") and not CFG2_EVIDENCE[15].scopes_pairs("fp8")
-    # Row 68 scopes FP8 storage: a block-scaled file's fallback is not bytes equal.
-    assert CFG2_EVIDENCE[68].pair_quants == ("fp8",)
-    assert CFG2_EVIDENCE[68].scopes_pairs("fp8")
     # Every scope names its kinds, so a block-scaled or cast file, which no
     # record measured on a fallback, keeps every pair on cfg2.
-    assert {row: CFG2_EVIDENCE[row].pair_quants for row in scoped - {15, 68}} == {
-        19: ("bf16", "fp8", "int8"), 20: ("bf16", "fp8", "int8"), 79: ("fp8",)}
+    assert {row: CFG2_EVIDENCE[row].pair_quants for row in scoped} == {
+        15: ("bf16",), 19: ("bf16", "int8"), 20: ("bf16", "fp8", "int8"), 68: ("fp8",),
+        79: ("fp8",)}
     for row in scoped:
         assert not CFG2_EVIDENCE[row].scopes_pairs(BLOCK_SCALED_FP8)
         assert not CFG2_EVIDENCE[row].scopes_pairs(CAST_FP8)
+
+
+# Where an equal (untagged) pair lands, row by row and kind by kind: a pair
+# leaves cfg2 only for a fallback with a dated bytes-equal reading against one
+# GPU. Each case: (family, megapixels, cfg, quant kind, pair kind, route, row).
+EQUAL_PAIR_ROUTES = (
+    ("krea2", 1.5, 3.5, "bf16", None, "uly2", 12),
+    ("krea2", 1.5, 3.5, "fp8", None, "cfg2", 15),
+    ("krea2", 1.5, 3.5, "fp8", BLOCK_SCALED_FP8, "cfg2", 15),
+    ("krea2", 1.5, 3.5, "fp8", CAST_FP8, "cfg2", 15),
+    ("chroma", 1.5, 3.5, "bf16", None, "uly2", 22),
+    ("chroma", 1.5, 3.5, "int8", None, "uly2", 22),
+    ("chroma", 1.5, 3.5, "fp8", None, "cfg2", 19),
+    ("chroma", 1.5, 3.5, "fp8", BLOCK_SCALED_FP8, "cfg2", 19),
+    ("chroma", 1.5, 3.5, "fp8", CAST_FP8, "cfg2", 19),
+    ("chroma", 1.05, 3.5, "bf16", None, "uly2", 99),
+    ("chroma", 1.05, 3.5, "fp8", None, "uly2", 99),
+    ("chroma", 1.05, 3.5, "int8", None, "uly2", 99),
+    ("chroma", 1.05, 3.5, "fp8", BLOCK_SCALED_FP8, "cfg2", 20),
+    ("chroma", 1.05, 3.5, "fp8", CAST_FP8, "cfg2", 20),
+    ("qwen_image", 1.5, 4.0, "fp8", None, "uly2", 71),
+    ("qwen_image", 1.5, 4.0, "fp8", BLOCK_SCALED_FP8, "cfg2", 68),
+    ("qwen_image", 1.5, 4.0, "fp8", CAST_FP8, "cfg2", 68),
+    ("boogu", 1.05, 4.0, "fp8", None, "uly2", 78),
+    ("boogu", 1.05, 4.0, "fp8", BLOCK_SCALED_FP8, "cfg2", 79),
+    ("boogu", 1.05, 4.0, "fp8", CAST_FP8, "cfg2", 79),
+)
+
+
+@pytest.mark.parametrize(("family", "megapixels", "cfg", "quant", "kind", "route", "row"),
+                         EQUAL_PAIR_ROUTES)
+def test_an_equal_pair_lands_where_the_records_say(family, megapixels, cfg, quant, kind,
+                                                   route, row) -> None:
+    tags = {} if kind is None else {"pair_kind": kind}
+    decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=cfg, **tags)
+    assert (decision.topology.describe(), decision.rule.row) == (route, row)
+    # A pair whose rows differ takes the cfg2 row whatever the kind.
+    differing = choose_auto_topology(family, quant, megapixels, 2, cfg_value=cfg,
+                                     pair_differs=True, **tags)
+    assert differing.topology.describe() == "cfg2"
+
+
+@pytest.mark.parametrize("kind", [BLOCK_SCALED_FP8, CAST_FP8])
+@pytest.mark.parametrize(("family", "megapixels", "cfg", "row"), [
+    ("krea2", 1.5, 3.5, 15), ("chroma", 1.5, 3.5, 19), ("chroma", 1.05, 3.5, 20),
+    ("qwen_image", 1.5, 4.0, 68), ("boogu", 1.05, 4.0, 79)])
+def test_a_block_scaled_or_cast_equal_pair_keeps_every_cfg2_row(family, megapixels, cfg, row,
+                                                                kind) -> None:
+    """No record measured an MXFP8, NVFP4 or cast file on a fallback, so no
+    scope names those kinds and their equal pair keeps the cfg2 row."""
+    decision = choose_auto_topology(family, "fp8", megapixels, 2, cfg_value=cfg, pair_kind=kind)
+    assert (decision.topology.describe(), decision.rule.row) == ("cfg2", row)
+    assert decision.skipped_cfg is None
 
 
 @pytest.mark.parametrize(("family", "quant", "row", "fallback"), PAIR_SCOPED)
@@ -224,19 +274,6 @@ def test_an_equal_or_unread_pair_takes_the_ulysses_row(family, quant, row, fallb
     rule = next(rule for rule in AUTO_TABLE if rule.row == row)
     assert cfg_row_is_eligible(rule, quant, None, True)
     assert not cfg_row_is_eligible(rule, quant)
-
-
-@pytest.mark.parametrize("kind", [BLOCK_SCALED_FP8, CAST_FP8])
-@pytest.mark.parametrize(("family", "megapixels", "cfg", "row"), [
-    ("krea2", 1.5, 3.5, 15), ("chroma", 1.5, 3.5, 19), ("chroma", 1.05, 3.5, 20),
-    ("qwen_image", 1.5, 4.0, 68), ("boogu", 1.05, 4.0, 79)])
-def test_a_block_scaled_or_cast_equal_pair_keeps_every_cfg2_row(family, megapixels, cfg, row,
-                                                                kind) -> None:
-    """No record measured an MXFP8, NVFP4 or cast file on a fallback, so no
-    scope names those kinds and their equal pair keeps the cfg2 row."""
-    decision = choose_auto_topology(family, "fp8", megapixels, 2, cfg_value=cfg, pair_kind=kind)
-    assert (decision.topology.describe(), decision.rule.row) == ("cfg2", row)
-    assert decision.skipped_cfg is None
 
 
 def test_the_pair_clause_names_only_a_row_the_pair_alone_kept(monkeypatch) -> None:

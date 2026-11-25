@@ -482,8 +482,9 @@ def auto_pair_differs(facts: dict, cell: dict | None = None) -> bool:
     reads, the counts decide, so two texts of equal rows read as equal.
     Otherwise two different texts stand in for different rows, which holds on
     every shipped template; two texts of equal rows would then read true here
-    and false at render time, where the pair-scoped cfg rows (Krea2 15,
-    Chroma 20 and 19, Qwen-Image 68, Boogu 79) give way to Ulysses.
+    and false at render time, where the pair-scoped cfg rows (Krea2 15 on
+    BF16, Chroma 20, Chroma 19 on BF16 and INT8, Qwen-Image 68 and Boogu 79 on
+    FP8 storage) give way to Ulysses.
     """
     counts = (cell or {}).get("text_tokens") or {}
     if len(counts) > 1 and (cell or {}).get("family") not in _COUNT_IS_NOT_THE_TAGGED_ROWS:

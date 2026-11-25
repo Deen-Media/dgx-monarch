@@ -10,9 +10,9 @@ two batch-1 calls on one GPU too, and cfg2's per-cond dispatch
 (adapters/cfg_dispatch.py) reproduces them.
 
 The records that carry the scope, as the table stands, each for the kinds in
-its ``pair_quants``: Chroma rows 19 and 20 (BF16, FP8 storage and INT8), Krea2
-row 15 (BF16), Qwen-Image row 68 (FP8 storage) and Boogu row 79 (FP8
-storage). Each of those families wraps its text as
+its ``pair_quants``: Chroma row 20 (BF16, FP8 storage and INT8), Chroma row 19
+(BF16 and INT8), Krea2 row 15 (BF16), Qwen-Image row 68 (FP8 storage) and Boogu
+row 79 (FP8 storage). Each of those families wraps its text as
 ``CONDRegular``, which concatenates only at equal shape: Chroma's T5 rows
 through Flux's ``extra_conds`` (its cfg2 pads the pair to one length and trims
 each row back to stock's unpadded call), Krea2's and Qwen-Image's rows through

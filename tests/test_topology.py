@@ -474,9 +474,11 @@ def test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy():
     is a reviewed digest edit."""
     # 2026-11-24: an equal pair leaves cfg2 only where its fallback is bytes
     # equal, so the four untagged cfg 3.5 cells at 1.5 MP for Krea2 BF16 and
-    # Qwen-Image FP8 moved to rows 12 and 71; Krea2 FP8 stays on row 15.
+    # Qwen-Image FP8 moved to rows 12 and 71; Krea2 FP8 stays on row 15. Then
+    # by the same rule the two untagged cfg 3.5 Chroma FP8 cells at 1.5 MP moved
+    # from row 21's SAGE route back to row 19.
     digest = hashlib.sha256("\n".join(_auto_rows(2)).encode()).hexdigest()
-    assert digest == "ac9224681614321940efd67994a6fdbf2c200336e4af81ad2750675dd419a140"
+    assert digest == "b4308e14e612eddcb674fe80d1e640677ac69dd0eea5ea87a04489e8a5fd60b9"
 
 
 def test_auto_never_resolves_cfg_plus_sequence():

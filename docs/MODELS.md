@@ -63,8 +63,9 @@ Chroma (Radiance included) and LongCat have cfg2 rows below 1.2 MP, and
 Chroma has a second one from 1.2 to 1.64 MP. Krea 2 has a cfg2 row from 1.2
 to 2.36 MP and Qwen-Image one from 1.2 to 1.77 MP. Boogu has a cfg2 row below
 1.2 MP. Chroma's and Boogu's cfg2 rows take only a prompt and a negative that
-encode to different text rows; an equal pair takes Ulysses, except on an
-MXFP8, NVFP4 or cast file, which keeps every pair on cfg2. Anima's cfg2 row
+encode to different text rows; an equal pair takes Ulysses, except on Chroma
+FP8 from 1.2 to 1.64 MP and on an MXFP8, NVFP4 or cast file, which keep every
+pair on cfg2. Anima's cfg2 row
 was withdrawn on 2026-11-10, so `auto` keeps Ulysses for Anima at every size.
 Each family's Ulysses rows cover the rest. Auto takes a
 cfg2 row at any CFG other than 1, and at CFG 1 under a CFG++ sampler chosen
@@ -94,7 +95,7 @@ that match the tested configurations in its model details. See
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
 | Krea2 (RAW+Turbo) | ✓ | ★ | ★ | 🔒 | ✓ | **HW** | Auto cfg2 covers FP8 and BF16 from 1.2 to 2.36 MP; padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
 | Kroma | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. cfg2 is measured, not the same math: on the shipped zeroed negative it read one-step NRMS 0.009 to 0.011 against one GPU at 1152 and 1536 and full renders diverged (2026-10-16), so `auto` keeps Ulysses. Padded ring needs a waiver. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
-| Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. Auto cfg2 covers a prompt and a negative of different text rows, as on the shipped graph; an equal pair is measured, not the same math (BF16 NRMS 0.034 on cfg2), so `auto` keeps Ulysses for it, except on an MXFP8, NVFP4 or cast file, which stays on cfg2. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
+| Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. Auto cfg2 covers a prompt and a negative of different text rows, as on the shipped graph; an equal pair is measured, not the same math (BF16 NRMS 0.034 on cfg2), so `auto` keeps Ulysses for it, except on FP8 from 1.2 to 1.64 MP, where Ulysses runs SAGE, further from the one-GPU reference, and on an MXFP8, NVFP4 or cast file, where the pair stays on cfg2. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
 | Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts, while `auto` takes Chroma's cfg2 rows only for a pair of different text rows, so the shipped zeroed negative takes Ulysses and a pair of different rows under `auto` refuses on cfg2; pick uly2 for it. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
 | Ideogram4 | ✓ | ✓ | ★ | 🔒 | ✓ | **HW** | Explicit cfg2 splits the two checkpoints; sharded attention uses Torch Flash. The fp8_scaled pair is measured, not the same math as the BF16 pair: one-step NRMS 0.161 against it on one GPU, past the 0.10 floor, from the file's quantization, not the parallel method. [Details](#model-ideogram4) · [Workflow](../example_workflows/dgx-monarch-ideogram4-t2i.json) |
 | Flux 1 Dev | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Padded ring is guarded; distilled checkpoints use CFG 1. Use converted LoRAs. [Details](#model-flux-1-dev) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
@@ -339,8 +340,14 @@ Detail status (`Chroma`): **HW**.
 Below 1.64 MP auto selects cfg2 for BF16, FP8 and INT8 checkpoints when the
 prompt and the negative encode to different text rows, at any CFG other than
 1 and at CFG 1 under a CFG++ sampler that a DGX Monarch KSampler node names.
-An equal pair takes Ulysses: the uly2 fallback below 1.2 MP, rows 21 and 22
-from 1.2 MP; on an MXFP8, NVFP4 or cast file it keeps cfg2, which logs a
+An equal pair takes Ulysses on BF16 and INT8: the uly2 fallback below 1.2 MP
+and row 22 from 1.2 MP. Row 22 read BF16 in exact decoded pixels against a
+same-build one-GPU render at 1024 and 1536 on 2026-10-02, a pair of equal rows
+included, and INT8 bit-identical in Campaign K against row 0 of a same-build
+dp2 render, the one-GPU reference. On FP8 an equal pair takes the uly2
+fallback below 1.2 MP and keeps cfg2 from 1.2 to 1.64 MP, where Ulysses would
+run SAGE (one-step NRMS 0.057 to 0.078 against that reference, further than
+cfg2). An MXFP8, NVFP4 or cast file keeps cfg2 at every size, which logs a
 notice. Above 1.64 MP it selects Ulysses, with SAGE on FP8,
 which needs sageattention on each worker. The mask and NVFP4
 guards still apply.
