@@ -197,6 +197,33 @@ def test_a_host_without_the_flag_answers_unknown_and_names_the_remedy(caplog):
     assert "unrecognized arguments" in caplog.text
 
 
+@pytest.mark.parametrize(("gens", "expected"), [
+    (["0123456789ab", "ba9876543210"], ("0123456789ab", "ba9876543210")),
+    ([], ()),
+    ("missing", None),          # an older package on the host prints no list
+    (None, None), ("0123456789ab", None), (["0123456789ab", 7], None), (["0123456789AB"], None),
+], ids=["two", "none_running", "missing", "null", "not_a_list", "not_text", "upper_case"])
+def test_each_hosts_loop_list_is_named_exactly_or_reads_as_cannot_tell(gens, expected):
+    payload = json.loads(_line())
+    if gens != "missing":
+        payload["loop_gens"] = gens
+    runner = Runner(answers={ADDRESS_B: (json.dumps(payload), "", 0)},
+                    default=(_line(loop_gens=["0123456789ab"]), "", 0))
+
+    evidence = mesh_liveness.probe_fleet(SimpleNamespace(config=_config(ADDRESS_A, ADDRESS_B)),
+                                         runner=runner)
+
+    assert evidence.answer == mesh_liveness.GONE  # the list never changes the fold
+    assert evidence.loops == ((ADDRESS_A, ("0123456789ab",)), (ADDRESS_B, expected))
+
+
+def test_a_host_that_did_not_answer_cannot_name_its_loops():
+    runner = Runner(answers={ADDRESS_B: ("", "boom", 1)}, default=(_line(loop_gens=[]), "", 0))
+    evidence = mesh_liveness.probe_fleet(SimpleNamespace(config=_config(ADDRESS_A, ADDRESS_B)),
+                                         runner=runner)
+    assert evidence.loops == ((ADDRESS_A, ()), (ADDRESS_B, None))
+
+
 def test_the_host_script_asks_for_every_configured_address():
     config = _config(ADDRESS_A, ADDRESS_B)
     runner = Runner()

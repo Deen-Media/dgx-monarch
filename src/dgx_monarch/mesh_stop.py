@@ -207,9 +207,11 @@ def stop_with_reason(handle: Any, reason: str, timeout_s: float) -> None:
                      reason, failure_summary(exc))
     if stop_procs(handle.procs, reason, timeout_s, proof=_death_proof(handle)) is PROVEN_GONE:
         # The same Monarch state the liveness release leaves: the replacement's
-        # attach takes the released fleet's rules (mesh_teardown.note_liveness_release).
-        from . import mesh_teardown
+        # attach takes the released fleet's rules (mesh_teardown.note_liveness_release),
+        # and, as there, no stop succeeded, so its end opens no absorption grace.
+        from . import mesh_safety, mesh_teardown
 
+        mesh_safety.stop_ended_on_proof(id(handle))
         mesh_teardown.note_liveness_release(addresses=[
             host.address for host in getattr(getattr(handle, "config", None), "hosts", ()) or ()])
 
@@ -231,7 +233,9 @@ def _death_proof(handle: Any) -> Any:
     release covers (mesh_teardown.timeout_cause): the lost host's processes are
     gone and the live host's actors were just stopped, so every host can show
     no actor at all while Monarch still waits on the lost host. A Reset of a
-    live fleet has no death behind it and keeps its stop's own outcome.
+    live fleet has no death behind it and keeps its stop's own outcome. No
+    loop rule is needed (failed_bring_up): a handle exists only after every
+    rank's proc started, so no spawn of it can still be queued.
     """
     report = getattr(handle, "_supervision_death_report", None)
     if (not isinstance(report, str) or not report

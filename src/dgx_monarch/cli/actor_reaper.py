@@ -28,6 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from .. import worker_proc_id
 from . import actor_ledger
 from . import proc_identity as pi
 
@@ -441,6 +442,10 @@ def liveness(
 
     excluded = {self_pid, 1, 0, *pi.ancestry(self_pid, proc_root)}
     zombies = unreadable = 0
+    boot = pi.boot_id(proc_root)
+    # Each live Worker loop's listener generation (worker_proc_id.derive's first 12 digits),
+    # for failed_bring_up; None whenever one cannot be named, so a list is never short.
+    loops: list[str] | None = [] if boot else None
     for pid in pi.iter_pids(proc_root):
         if pid in excluded:
             continue
@@ -460,6 +465,8 @@ def liveness(
                 # hold every page, so the host answers unknown, never gone.
                 unreadable += 1
             continue
+        if loops is not None and pi.loop_argv_address(pi.read_argv(pid, proc_root)) is not None:
+            loops = [*loops, worker_proc_id.derive(boot, pid, stat[1])[:12]] if stat[1] > 0 else None
         if pi.unreadable_to_us(pid, stat[1], empty, proc_root):
             unreadable += 1
 
@@ -467,7 +474,6 @@ def liveness(
     rows_alive = sum(
         1 for row in ledger.get("actors") or []
         if pi.alive_and_not_zombie(row["pid"], row["starttime"], proc_root))
-    boot = pi.boot_id(proc_root)
     written = float(ledger.get("written_at") or 0.0)
     loop = ledger.get("loop")
     loop_alive: bool | None = None
@@ -477,6 +483,8 @@ def liveness(
         loop_start = actor_ledger.ledger_int(loop.get("starttime") or 0)
         if loop_pid is not None and loop_start is not None:
             loop_alive = pi.alive_and_not_zombie(loop_pid, loop_start, proc_root)
+            named = loop_alive and boot and loop_start > 0 and worker_proc_id.derive(boot, loop_pid, loop_start)[:12]
+            loops = loops if not loop_alive or named in (loops or ()) else None  # a live loop argv missed
     return {
         "schema": LIVENESS_SCHEMA,
         "actors": len(actors),
@@ -495,6 +503,7 @@ def liveness(
         "ledger_age_s": (round(max(time.time() - written, 0.0), 1)
                          if written > 0 else -1.0),
         "loop_alive": loop_alive,
+        "loop_gens": loops,
         "pids": [
             {"pid": proc.pid, "provenance": proc.provenance,
              "argv_tail": proc.argv_tail}

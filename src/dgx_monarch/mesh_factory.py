@@ -34,15 +34,16 @@ class FleetHandoff:
         self.spawn_in_progress = False
         self.bootstrap_refusal: BaseException | None = None
         self.config: Any | None = None  # the hosts the spawn ran on, for a liveness proof
+        self.spawn_settled = False  # every rank's proc started: no spawn can still be queued
+        self.loop_gens: dict[str, str] = {}  # the listener generation of each loop dialed (mesh_attach)
 
 
 def recording_bootstrap_refusal(command: Any, handoff: FleetHandoff) -> Any:
     """Wrap the per-rank launch command so its own refusal can be recognized.
 
-    The pinned Monarch runs the callable once per rank on the calling thread
-    before spawning begins, and its error raises from ``spawn_procs`` itself
-    (tests/test_spawn_contract.py). That exception therefore proves no
-    process started; Monarch 0.7.0 called it inside the native spawn.
+    The pinned Monarch runs it once per rank on the calling thread before any spawn,
+    raising from ``spawn_procs`` (tests/test_spawn_contract.py), so its error proves no
+    process started and no spawn was queued; Monarch 0.7.0 called it inside the native spawn.
     """
     def command_for(point: Any) -> Any:
         try:
@@ -334,15 +335,15 @@ class WorkerSpawnError(RuntimeError):
 
 
 def left_nothing_running(handoff: FleetHandoff, exc: WorkerSpawnError) -> bool:
-    """Whether a failed cluster spawn left nothing unknown (no process started, or
-    Monarch confirmed the rollback stop); if so, it closes the spawn.
+    """Whether a failed cluster spawn left nothing unknown; if so, it closes the spawn.
 
-    A bring-up's only processes are its one ProcMesh's ranks on every host; it
-    never starts or stops the attached Worker loops. The ProcMesh it stops is the
-    object Monarch built, returned or raised after its spawn callback (the build's
-    last step), and that stop returns only once the controller saw every rank stop
-    (mesh_stop.stop_procs), the signal a normal teardown trusts before it attaches
-    a replacement. A spawn callback whose removal is unconfirmed is still open.
+    True when no spawn was issued, or Monarch confirmed the rollback stop. A bring-up's
+    only processes are its one ProcMesh's ranks on every host (it never starts or stops
+    a Worker loop), and that ProcMesh is the object Monarch built, returned or raised
+    after its spawn callback (the build's last step). Its stop first awaits the spawn
+    (ProcMesh._stop) and completes without error only once every rank stopped
+    (mesh_stop.stop_procs): nothing is left queued, and a normal teardown trusts the
+    same signal before it attaches a replacement. An unremoved spawn callback is open.
     """
     if not exc.rollback_confirmed or exc.cleanup is not None or handoff.callback_cleanup_unconfirmed:
         return False
@@ -360,9 +361,7 @@ def _mesh_name(workers: Any) -> str | None:
 
 def _record_mesh(workers: Any, config: Any, use_cluster: bool, gpus_per_host: int) -> None:
     """Record the new mesh for the fault hook: its name, and its ranks' boxes in plain words.
-
-    The first build also registers the exit flag's hook, after Monarch's own (driver_exit).
-    """
+    The first build also registers the exit flag's hook, after Monarch's own (driver_exit)."""
     driver_exit.install()
     name = _mesh_name(workers)
     retired_meshes.remember(workers, name)
@@ -460,6 +459,7 @@ def spawn_worker_fleet(config, use_cluster: bool, gpus_per_host: int,
         procs = owned_procs
         proc_stops.remember(procs, proc_name)
         wait_initialized(procs, deadline, "dgxm-procs-ready")
+        handoff.spawn_settled = True  # an error from the wait above names one rank only
         with phase("spawn"):
             workers = procs.spawn("dgxm_worker", GPUWorker)
         wait_worker_ready(workers, deadline)

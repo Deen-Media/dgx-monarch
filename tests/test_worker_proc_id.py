@@ -390,6 +390,33 @@ def test_the_attach_dials_a_loop_on_the_driver_s_own_torchmonarch(held, monkeypa
     assert _gate(held, monkeypatch)() == ["a" * 16]
 
 
+def test_the_attach_keeps_each_dialed_loop_s_generation_in_the_scan_s_own_form(
+        held, monkeypatch, driver_monarch):
+    """A spawn the fleet then queues is named by the loop that holds it (failed_bring_up).
+
+    The real probe runs through bash against a listener this process holds. The
+    generation it reads must be the one the liveness scan computes for the same
+    process (actor_reaper.liveness), or every loop would read as replaced.
+    """
+    import sys
+
+    from dgx_monarch import mesh_attach
+    from dgx_monarch.monarch_capabilities import loaded_version
+
+    _record(held, driver_monarch)
+    _gate(held, monkeypatch)  # installs the bash runner
+    config = SimpleNamespace(hosts=(_host("h1", held.address),), python_bin=sys.executable)
+    trace = SimpleNamespace(generation=lambda *_a, **_k: "", emit=lambda *_a, **_k: "")
+    handoff = SimpleNamespace(loop_gens={})
+
+    assert mesh_attach.read_dial(config, trace, attempt=1, monarch=loaded_version(),
+                                 handoff=handoff) == ["a" * 16]
+
+    pid, starttime = _own_identity()
+    assert handoff.loop_gens == {
+        held.address: worker_proc_id.derive(proc_identity.boot_id(), pid, starttime)[:12]}
+
+
 @pytest.mark.parametrize("recorded", ["0.0.1", None])
 def test_the_attach_refuses_a_loop_on_another_torchmonarch_before_dialing(
         held, monkeypatch, driver_monarch, recorded):

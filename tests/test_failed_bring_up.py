@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dgx_monarch import failed_bring_up, mesh_factory, mesh_liveness
+from dgx_monarch import failed_bring_up, mesh_factory, mesh_liveness, worker_proc_id
 
 ADDRESS_A = "box-a"
 ADDRESS_B = "box-b"
@@ -51,11 +51,15 @@ def _config(*addresses):
 
 
 def _failed_spawn(config=None, **state):
-    """The handoff a bring-up leaves when its rollback stop could not confirm."""
+    """The handoff a bring-up leaves when its rollback stop could not confirm.
+
+    By default every rank's proc had started (a Worker lost while the Workers
+    came up, the hardware case), so no spawn can still be queued.
+    """
     handoff = mesh_factory.FleetHandoff()
     handoff.config = _config(ADDRESS_A, ADDRESS_B) if config is None else config
     handoff.failure_latched = handoff.spawn_in_progress = True
-    handoff.proc_spawn_called = handoff.cleanup_started = True
+    handoff.proc_spawn_called = handoff.cleanup_started = handoff.spawn_settled = True
     for name, value in state.items():
         setattr(handoff, name, value)
     claim = mesh_factory.begin_creation_cleanup(object(), handoff)
@@ -70,7 +74,7 @@ def _runtime(poison=POISON, creating=None):
 @pytest.fixture(autouse=True)
 def _fresh_claims_and_proof(monkeypatch):
     monkeypatch.setattr(mesh_factory, "_CREATION_CLEANUP_CLAIMS", {})
-    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", [])
+    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", None)
 
 
 def test_a_bring_up_whose_processes_are_gone_on_every_host_lifts_the_poison():
@@ -148,6 +152,66 @@ def test_an_attach_poison_is_not_a_bring_up_poison():
     assert "not reusable" in failed_bring_up.refusal(poison)
 
 
+def test_a_proof_another_check_stores_or_clears_mid_decision_neither_raises_nor_lifts(monkeypatch):
+    """A render and a Reset at once: one read of the stored proof, so its keys and evidence agree.
+
+    Between this check's read and its use, another check stores a gone taken
+    for other claims and then clears the store. This check must probe for its
+    own claims, keep the poison on what its probe says, and raise nothing.
+    """
+    import time
+
+    _failed_spawn()
+    keys = frozenset(claim for claim, _handoff in failed_bring_up._claims_to_prove())
+    now = time.monotonic()
+    alive = mesh_liveness.LivenessEvidence(mesh_liveness.ALIVE, ((ADDRESS_B, "alive"),), now)
+    gone = mesh_liveness.LivenessEvidence(mesh_liveness.GONE, ((ADDRESS_A, "gone"), (ADDRESS_B, "gone")), now)
+    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", (keys, alive, ()))
+
+    def another_check_lands(_evidence):
+        failed_bring_up._store((frozenset({object()}), gone, ()))
+        failed_bring_up._store(None)
+        return None  # this check's own stored answer is too old to reuse
+
+    monkeypatch.setattr(mesh_liveness, "_still_answers", another_check_lands)
+    runtime, runner = _runtime(), Runner(**{ADDRESS_B: _line(actors=1)})
+
+    assert failed_bring_up.release(runtime, runner=runner) is False
+    assert runtime["_TRANSPORT_POISON"] == POISON and sorted(runner.asked) == [ADDRESS_A, ADDRESS_B]
+    assert "cannot yet prove gone" in failed_bring_up.refusal(POISON)
+
+
+def test_a_check_whose_probe_outlives_another_checks_lift_returns_quietly(monkeypatch):
+    """The slower check finds the poison already lifted: no lift of its own, no exception."""
+    import time
+
+    from dgx_monarch.cli import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
+    _failed_spawn()
+    entered, let_go, results = threading.Event(), threading.Event(), []
+    real_probe = mesh_liveness.probe_fleet
+
+    def probe(handle, **_kwargs):
+        if not entered.is_set():
+            entered.set()
+            assert let_go.wait(10)
+            return mesh_liveness.LivenessEvidence(mesh_liveness.ALIVE, ((ADDRESS_B, "alive"),), time.monotonic())
+        return real_probe(handle, runner=Runner())
+
+    monkeypatch.setattr(mesh_liveness, "probe_fleet", probe)
+    runtime = _runtime()
+    slow = threading.Thread(target=lambda: results.append(failed_bring_up.release(runtime)))
+    slow.start()
+    assert entered.wait(10)
+
+    assert failed_bring_up.release(runtime) is True
+    let_go.set()
+    slow.join(10)
+    assert results == [False] and runtime["_TRANSPORT_POISON"] is None
+    assert failed_bring_up.held_hosts() == ()
+
+
 def test_no_release_while_another_creation_runs():
     _failed_spawn()
     runtime, runner = _runtime(creating={("key",): object()}), Runner()
@@ -214,28 +278,41 @@ class _AttachedHosts:
         pytest.fail("attached worker loops are never shut down")
 
 
-def _cluster_session(monkeypatch, hosts, refuse_rank=None):
+def _cluster_session(monkeypatch, hosts, refuse_rank=None, *, dialed=None, scans=None,
+                     init_error=None):
     """get_mesh in cluster mode on two hosts. Its first bring-up runs the real factory on ``hosts``.
 
     The second hands back a fresh fleet. Returns the mesh module, that fresh
-    ProcMesh, the spawn calls and the liveness probes asked.
+    ProcMesh, the spawn calls and the liveness probes asked. ``dialed`` is what
+    the attach records of each loop it dialed (mesh_attach.read_dial does it in
+    production); ``scans`` answers each host with the real scan (_HostScans) in
+    place of a fleet-wide gone; ``init_error`` is what waiting for every rank's
+    proc raises.
     """
     import sys
     import types
 
     import dgx_monarch
     from dgx_monarch import mesh_teardown, monarch_launch, proc_stops
+    from dgx_monarch.cli import lifecycle
     from test_mesh_publication_ownership import _mesh_publication_fakes, _PublishedProcMesh
 
     fresh, calls, probes = _PublishedProcMesh(), [], []
 
+    def attach(_config, handoff):
+        handoff.loop_gens = dict(dialed or {})
+        return hosts
+
     def spawn(config, use_cluster, gph, _attach, bootstrap, handoff):
         calls.append(handoff)
         if len(calls) == 1:
-            return mesh_factory.spawn_worker_fleet(
-                config, use_cluster, gph, lambda _config, _handoff: hosts, bootstrap, handoff)
+            return mesh_factory.spawn_worker_fleet(config, use_cluster, gph, attach, bootstrap, handoff)
         handoff.fleet = SimpleNamespace(), fresh, SimpleNamespace(), True
         return handoff.fleet
+
+    def wait_initialized(*_args):
+        if init_error is not None:
+            raise init_error
 
     def command_for(_config, _use_cluster):
         def command(point):
@@ -249,7 +326,7 @@ def _cluster_session(monkeypatch, hosts, refuse_rank=None):
         hosts=tuple(SimpleNamespace(address=address, name=address, gpus=1)
                     for address in (ADDRESS_A, ADDRESS_B)),
         source="/cluster.toml", comfy_dir="", worker_args={}, client_bind=None,
-        monarch=SimpleNamespace(startup_timeout_s=180))
+        python_bin="~/venv/bin/python", monarch=SimpleNamespace(startup_timeout_s=180))
     monkeypatch.setattr(mesh, "find_config_path", lambda _path: "/cluster.toml")
     monkeypatch.setattr(mesh, "load_cluster_config", lambda _path: config)
     monkeypatch.setattr(mesh, "config_fingerprint", lambda _path: "digest")
@@ -259,10 +336,14 @@ def _cluster_session(monkeypatch, hosts, refuse_rank=None):
     monkeypatch.setitem(sys.modules, "dgx_monarch.actor", actor)
     monkeypatch.setattr(dgx_monarch, "actor", actor, raising=False)
     monkeypatch.setattr(monarch_launch, "actor_bootstrap_command", command_for)
-    monkeypatch.setattr(monarch_launch, "wait_initialized", lambda *_args: None)
+    monkeypatch.setattr(monarch_launch, "wait_initialized", wait_initialized)
     monkeypatch.setattr(monarch_launch, "wait_worker_ready", lambda *_args: None)
     monkeypatch.setattr(proc_stops, "_STOPS", [])
     monkeypatch.setattr(mesh_teardown, "_RELEASED_ADDRESSES", None)
+    if scans is not None:
+        monkeypatch.setattr(lifecycle, "run_on_host", scans)
+        monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
+        return mesh, fresh, calls, scans.asked
     _gone_probe(monkeypatch)
     probe = mesh_liveness.probe_fleet
     monkeypatch.setattr(mesh_liveness, "probe_fleet",
@@ -351,3 +432,155 @@ def test_the_mesh_row_names_the_remedy_that_lifts_a_provable_poison():
     assert health.remedy.startswith("start the next render or press Reset attached mesh")
     unprovable = mesh_health.health_of([], poison="cluster attach failed: x")
     assert unprovable.remedy.startswith("restart ComfyUI")
+
+
+class _HostScans:
+    """Each host's real liveness scan over a synthetic /proc, run when the probe asks.
+
+    Stands in for cli.lifecycle.run_on_host: the line is what actor_reaper.liveness
+    prints for that host's processes at that moment, so a test can restart a
+    host's loop between two checks. ``loops`` holds (pid, starttime, state) per
+    host; ``zombie_leaders`` puts a leader that exited, with its Threads count.
+    """
+
+    def __init__(self, tmp_path):
+        self.tmp_path, self.asked = tmp_path, []
+        self.loops: dict[str, list[tuple[int, int, str]]] = {}
+        self.zombie_leaders: dict[str, str] = {}
+
+    def __call__(self, _config, host, _script, timeout=None):
+        from dgx_monarch.cli import actor_reaper
+        from test_actor_reaper import (
+            LOOP_ARGV,
+            SELF_PID,
+            SPAWNER_ENV,
+            UID,
+            _zombie_leader,
+            make_proc,
+            make_proc_root,
+            write_ledger,
+        )
+
+        self.asked.append(host.address)
+        base, boot = self.tmp_path / f"{host.address}-{len(self.asked)}", f"boot-{host.address}"
+        root = make_proc_root(base, boot=boot)
+        for pid, starttime, state in self.loops.get(host.address, ()):
+            make_proc(root, pid, starttime=starttime, state=state, argv=LOOP_ARGV, env=SPAWNER_ENV)
+        rows = []
+        if host.address in self.zombie_leaders:
+            _zombie_leader(root, 5100, threads=self.zombie_leaders[host.address], argv=(), env=())
+            rows = [{"pid": 5100, "starttime": 1000}]
+        line = actor_reaper.liveness(proc_root=str(root), uid=UID, self_pid=SELF_PID,
+                                     ledger_file=write_ledger(base, rows, boot=boot))
+        return SimpleNamespace(returncode=0, stdout=json.dumps(line), stderr="")
+
+
+def _generation(address: str, pid: int, starttime: int) -> str:
+    """What the attach's probe reads for the loop with this pid and start time on that host."""
+    return worker_proc_id.derive(f"boot-{address}", pid, starttime)[:12]
+
+
+DIALED = {ADDRESS_A: _generation(ADDRESS_A, 6001, 4000), ADDRESS_B: _generation(ADDRESS_B, 6002, 4000)}
+
+
+def _queued_spawn_session(monkeypatch, tmp_path, *, settled=False):
+    """A bring-up whose wait for every rank's proc failed (unless ``settled``) and whose stop timed out."""
+    scans = _HostScans(tmp_path)
+    procs = _InitFails(TimeoutError("proc stop did not finish"))
+    session = _cluster_session(monkeypatch, _AttachedHosts(procs), dialed=DIALED, scans=scans,
+                               init_error=None if settled else TimeoutError("procs not ready"))
+    mesh, _fresh, calls, _asked = session
+    with pytest.raises(mesh.MeshAttachError, match="not safely stopped"):
+        mesh.get_mesh(mode="cluster")
+    assert calls[0].spawn_settled is settled and failed_bring_up.liftable(mesh._TRANSPORT_POISON)
+    return scans, session
+
+
+def test_a_queued_spawn_whose_loops_were_replaced_lifts(monkeypatch, tmp_path):
+    """The spawn died with the loops that held it and no actor runs: the next render builds afresh."""
+    scans, (mesh, fresh, calls, asked) = _queued_spawn_session(monkeypatch, tmp_path)
+    scans.loops = {ADDRESS_A: [(7001, 5000, "S")]}  # box-a's loop restarted, box-b's is down
+
+    assert mesh.get_mesh(mode="cluster").procs is fresh
+    assert len(calls) == 2 and sorted(asked) == [ADDRESS_A, ADDRESS_B]
+
+
+def test_a_queued_spawn_whose_loop_still_runs_holds_and_names_the_host(monkeypatch, tmp_path):
+    """A frozen loop may still hold the spawn: no actor yet, and it lands when the loop resumes."""
+    from dgx_monarch import mesh_health
+    from dgx_monarch.nodes import recycle_drain
+
+    scans, (mesh, fresh, calls, _asked) = _queued_spawn_session(monkeypatch, tmp_path)
+    scans.loops = {ADDRESS_A: [(6001, 4000, "T")], ADDRESS_B: [(7002, 5000, "S")]}
+
+    with pytest.raises(mesh.MeshAttachError, match="the Worker loop it attached to still runs on box-a,") as held:
+        mesh.get_mesh(mode="cluster")
+    assert "restart the Worker service on box-a (dgxm restart)" in str(held.value)
+    assert failed_bring_up.held_hosts() == ((ADDRESS_A, "running"),)
+    row = mesh_health.health_of([], poison=mesh._TRANSPORT_POISON)
+    assert "still runs on box-a" in row.reason and row.remedy.startswith("restart the Worker service on box-a")
+    payload, _status = recycle_drain.recycle_attached_mesh()
+    assert payload["status"] == "poisoned" and "still runs on box-a" in payload["detail"]
+    assert len(calls) == 1
+
+    # The remedy the refusal names: a Worker restart on box-a ends the spawn with its loop.
+    scans.loops[ADDRESS_A] = [(7001, 5000, "S")]
+    monkeypatch.setattr(mesh_liveness, "PROBE_MIN_INTERVAL_S", 0.0)
+    assert mesh.get_mesh(mode="cluster").procs is fresh
+
+
+def test_a_spawn_that_settled_lifts_on_no_actor_while_the_same_loops_run(monkeypatch, tmp_path):
+    """Every rank's proc had started before the failure, so nothing can still be queued."""
+    scans, (mesh, fresh, calls, _asked) = _queued_spawn_session(monkeypatch, tmp_path, settled=True)
+    scans.loops = {ADDRESS_A: [(6001, 4000, "S")], ADDRESS_B: [(6002, 4000, "S")]}
+
+    assert mesh.get_mesh(mode="cluster").procs is fresh
+    assert len(calls) == 2
+
+
+def test_a_queued_spawn_the_attach_kept_no_loop_for_holds_and_asks_for_a_restart(monkeypatch):
+    """Nothing on the hosts can show that spawn gone: only a new ComfyUI process clears it."""
+    from dgx_monarch.cli import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
+    _failed_spawn(spawn_settled=False, loop_gens={})
+    runtime, line = _runtime(), _line(loop_gens=[])
+
+    assert failed_bring_up.release(runtime, runner=Runner(**{ADDRESS_A: line, ADDRESS_B: line})) is False
+    assert failed_bring_up.held_hosts() == ((ADDRESS_A, "unrecorded"), (ADDRESS_B, "unrecorded"))
+    text = failed_bring_up.refusal(POISON)
+    assert "recorded no loop for box-a, box-b, so restart ComfyUI" in text and "dgxm restart" not in text
+
+
+def test_a_host_on_an_older_package_holds_until_it_can_list_its_loops(monkeypatch):
+    """A Worker restart cannot help a host that prints no loop list; deploying the package does."""
+    from dgx_monarch.cli import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
+    monkeypatch.setattr(mesh_liveness, "PROBE_MIN_INTERVAL_S", 0.0)
+    _failed_spawn(spawn_settled=False, loop_gens=dict(DIALED))
+    runtime = _runtime()
+
+    assert failed_bring_up.release(runtime, runner=Runner(**{ADDRESS_B: _line(loop_gens=[])})) is False
+    assert failed_bring_up.held_hosts() == ((ADDRESS_A, "unlisted"),)
+    text = failed_bring_up.refusal(POISON)
+    assert "deploy the current package on box-a (dgxm up)" in text and "dgxm restart" not in text
+
+    listed = Runner(**{ADDRESS_A: _line(loop_gens=["0123456789ab"]), ADDRESS_B: _line(loop_gens=[])})
+    assert failed_bring_up.release(runtime, runner=listed) is True  # the package now lists its loops
+    assert runtime["_TRANSPORT_POISON"] is None
+
+
+@pytest.mark.parametrize(("threads", "lifts"), [("2", False), ("1", True)], ids=["threads_run", "lone_zombie"])
+def test_a_zombie_leader_whose_threads_run_keeps_the_bring_up_poison(monkeypatch, tmp_path, threads, lifts):
+    """The decision, not only the scan: the real scan's line through the fold and the lift."""
+    from dgx_monarch.cli import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
+    _failed_spawn()
+    scans = _HostScans(tmp_path)
+    scans.zombie_leaders = {ADDRESS_B: threads}
+    runtime = _runtime()
+
+    assert failed_bring_up.release(runtime, runner=scans) is lifts
+    assert (runtime["_TRANSPORT_POISON"] is None) is lifts

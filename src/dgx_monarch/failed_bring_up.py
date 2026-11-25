@@ -23,9 +23,26 @@ while every unresolved claim leaves nothing but its spawned processes unknown
 (``_claims_to_prove``): an attach whose result handoff was interrupted
 or a spawn callback whose removal is unconfirmed is a state no proof settles.
 A local fleet's poison is left as it was.
+
+A spawn that may still be queued needs more. Monarch's spawn_procs does not
+block, so a bring-up that failed before Monarch reported every rank's proc
+started (FleetHandoff.spawn_settled) may have left a spawn waiting in a Worker
+loop that is frozen or stalled rather than dead: no actor exists yet, and the
+spawn lands when the loop resumes. No actor now proves nothing about it. So
+for such a bring-up every host must also show that the loop it attached to no
+longer runs, since a queued spawn dies with its loop: the attach keeps each
+dialed loop's listener generation (mesh_attach.read_dial), and the scan lists
+the generation of every live Worker loop (actor_reaper.liveness). Where that
+loop still runs, or the host cannot list its loops, the poison stays and the
+refusal names the host with the remedy for its reason (_HOLD_WORDS): a Worker
+service restart ends a spawn its loop still holds, and the next check lifts. A
+published fleet needs no such rule: its handle exists only after every rank's
+proc started.
 """
 from __future__ import annotations
 
+import re
+import threading
 from types import SimpleNamespace
 from typing import Any
 
@@ -37,9 +54,14 @@ log = get_logger("dgx_monarch.mesh")
 # The poisons get_mesh and the creation finalizer record for a failed
 # bring-up, as against an attach or transport failure (mesh_attach).
 _BRING_UP_POISONS = ("actor spawn failed", "mesh creation failed")
-# The last proof and the claims it was taken for, reused for those claims
-# within the liveness probe's own interval; empty once a proof lifted them.
-_LAST_PROOF: list[Any] = []
+_GENERATION = re.compile(r"[0-9a-f]{12}")  # a listener generation (cli/listener_generation)
+# The last proof as one immutable triple: the claims it was taken for, its
+# evidence, and the hosts a spawn that may be queued held it on. Every reader
+# takes it in one read, so keys and evidence always come from the same call; it
+# is replaced, and cleared only while it is still the triple the clearing call
+# stored, under _PROOF_LOCK.
+_LAST_PROOF: tuple[frozenset[object], Any, tuple[tuple[str, str], ...]] | None = None
+_PROOF_LOCK = threading.Lock()
 
 
 def provable(poison: object) -> bool:
@@ -94,6 +116,55 @@ def _retire_claims(claims: list[tuple[object, mesh_factory.FleetHandoff]]) -> bo
         return True
 
 
+def _queued_spawn(handoff: mesh_factory.FleetHandoff) -> bool:
+    """Whether this bring-up issued a spawn Monarch never reported settled, so it may still be queued."""
+    return handoff.proc_spawn_called and not handoff.spawn_settled
+
+
+def _loops_holding(claims: list[tuple[object, mesh_factory.FleetHandoff]],
+                   evidence: Any) -> tuple[tuple[str, str], ...]:
+    """The hosts where a spawn that may still be queued could land, each with its reason.
+
+    Such a host passes only when its scan listed every live Worker loop and none
+    is the loop the bring-up dialed there. Otherwise it holds: ``running`` (that
+    loop still runs), ``unlisted`` (the host answered without a complete list:
+    an older package, a malformed list, a live loop the scan could not name) or
+    ``unrecorded`` (the attach kept no generation for it).
+    """
+    listed = dict(getattr(evidence, "loops", ()) or ())
+    held: dict[str, str] = {}
+    for _claim, handoff in claims:
+        for address in _addresses(handoff.config) if _queued_spawn(handoff) else ():
+            dialed = handoff.loop_gens.get(address, "")
+            if not _GENERATION.fullmatch(dialed):
+                held.setdefault(address, "unrecorded")
+            elif listed.get(address) is None:
+                held.setdefault(address, "unlisted")
+            elif dialed in listed[address]:
+                held.setdefault(address, "running")
+    return tuple(sorted(held.items()))
+
+
+# Per hold reason: what holds, and the remedy a test shows lifts it.
+_HOLD_WORDS = {
+    "running": ("the Worker loop it attached to still runs on {hosts}",
+                "restart the Worker service on {hosts} (dgxm restart), which ends the queued spawn "
+                "with its loop"),
+    "unlisted": ("{hosts} could not list its Worker loops",
+                 "deploy the current package on {hosts} (dgxm up) so the check can list them"),
+    "unrecorded": ("the attach recorded no loop for {hosts}", "restart ComfyUI"),
+}
+
+
+def _store(proof: tuple[frozenset[object], Any, tuple[tuple[str, str], ...]] | None,
+           *, only_if: object = None) -> None:
+    """Replace the last proof, or with ``only_if`` clear it only while it is still that triple."""
+    global _LAST_PROOF
+    with _PROOF_LOCK:
+        if only_if is None or _LAST_PROOF is only_if:
+            _LAST_PROOF = proof
+
+
 def release(runtime: dict[str, Any], *, runner: Any = None) -> bool:
     """Lift the poison when every host shows the failed bring-up's processes gone."""
     from . import driver_exit, mesh_liveness
@@ -108,26 +179,36 @@ def release(runtime: dict[str, Any], *, runner: Any = None) -> bool:
     if claims is None:
         return False
     # A proof answers only for the claims it was taken for: a later bring-up's
-    # processes are newer than any earlier answer.
+    # processes are newer than any earlier answer. One read of the triple.
     keys = frozenset(claim for claim, _handoff in claims)
-    evidence = (mesh_liveness._still_answers(_LAST_PROOF[1])
-                if _LAST_PROOF and _LAST_PROOF[0] == keys else None)
+    last = _LAST_PROOF
+    seen_keys, seen_evidence, seen_held = last if last is not None else (None, None, ())
+    evidence = mesh_liveness._still_answers(seen_evidence) if seen_keys == keys else None
+    if evidence is not None and seen_held and evidence.age_s > mesh_liveness.PROBE_MIN_INTERVAL_S:
+        evidence = None  # a loop hold is asked again, so a Worker restart there counts at once
     if evidence is None:
         config = claims[0][1].config
         evidence = mesh_liveness.probe_fleet(SimpleNamespace(config=config), runner=runner)
         if driver_exit.exiting():
             return False
-        _LAST_PROOF[:] = [keys, evidence]
+    held = _loops_holding(claims, evidence) if evidence.answer == mesh_liveness.GONE else ()
+    proof = (keys, evidence, held)
+    _store(proof)
     if evidence.answer != mesh_liveness.GONE:
         log.warning("a failed bring-up's processes are not proven gone (answer=%s hosts=%s); "
                     "this session still refuses a new fleet", evidence.answer, _hosts_text(evidence))
+        return False
+    if held:
+        log.warning("a failed bring-up's spawn may still be queued in a Worker loop (held=%s); "
+                    "this session still refuses a new fleet",
+                    ",".join(f"{address}={reason}" for address, reason in held))
         return False
     with runtime["_MESH_LOCK"]:
         if (runtime["_TRANSPORT_POISON"] is not poison or runtime["_MESH_CREATING"]
                 or not _retire_claims(claims)):
             return False
         runtime["_TRANSPORT_POISON"] = None
-        _LAST_PROOF.clear()
+    _store(None, only_if=proof)
     # The Monarch state a liveness release leaves (a stop it never confirmed), so
     # the next attach takes the released fleet's rules (mesh_attach).
     from . import mesh_teardown
@@ -151,12 +232,37 @@ def liftable(poison: object) -> bool:
     return provable(poison) and _claims_to_prove() is not None
 
 
+def held_hosts() -> tuple[tuple[str, str], ...]:
+    """The (host, reason) pairs the last check of the current claims held on for a queued spawn."""
+    last, claims = _LAST_PROOF, _claims_to_prove()
+    if last is None or claims is None or last[0] != frozenset(claim for claim, _handoff in claims):
+        return ()
+    return last[2]
+
+
+def hold_parts() -> list[tuple[str, str]]:
+    """What holds and the remedy that lifts it, one pair per reason the last check held on."""
+    held, parts = held_hosts(), []
+    for reason, (what, remedy) in _HOLD_WORDS.items():
+        hosts = ", ".join(address for address, why in held if why == reason)
+        if hosts:
+            parts.append((what.format(hosts=hosts), remedy.format(hosts=hosts)))
+    return parts
+
+
 def refusal(poison: str) -> str:
     """get_mesh's refusal while the session's transport is poisoned, with the remedy that works."""
     if not liftable(poison):
         return ("this ComfyUI session's Monarch transport is not reusable after a partial "
                 f"bring-up failure ({poison}); restart ComfyUI before retrying")
-    last = f"; the last check read {_hosts_text(_LAST_PROOF[1])}" if _LAST_PROOF else ""
-    return (f"a failed bring-up left processes the driver cannot yet prove gone ({poison}){last}. "
+    parts = hold_parts()
+    if parts:
+        return (f"a failed bring-up may still have a spawn queued in a Worker loop ({poison}): "
+                + "; ".join(f"{what}, so {remedy}" for what, remedy in parts)
+                + ". The next render and Reset attached mesh check again and build a fresh fleet "
+                "once no such loop can hold it")
+    last = _LAST_PROOF
+    tail = f"; the last check read {_hosts_text(last[1])}" if last is not None else ""
+    return (f"a failed bring-up left processes the driver cannot yet prove gone ({poison}){tail}. "
             "It checks every host again at the next render and at Reset attached mesh, and "
             "builds a fresh fleet once they are gone; restart ComfyUI if a host keeps them")

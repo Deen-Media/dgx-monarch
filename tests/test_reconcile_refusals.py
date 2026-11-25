@@ -309,6 +309,7 @@ def test_a_lost_workers_fleet_proven_gone_is_stopped_without_waiting_out_monarch
         mesh_liveness.LivenessEvidence(mesh_liveness.GONE, (("local", "gone"),), time.monotonic())))
     handle, _old, _new = _handle(_Workers([_Future(_acks())]))
     handle.procs = _NeverStops()
+    grace_before = mesh_safety._TEARDOWN_STATE[1]
     started = time.monotonic()
     try:
         mark_defunct_on_supervision_failure(handle, SupervisionError("peer closed"))  # waits, as a render does
@@ -320,8 +321,25 @@ def test_a_lost_workers_fleet_proven_gone_is_stopped_without_waiting_out_monarch
     assert handle.teardown_complete is True and handle.replacement_blocked is None
     assert handle.procs.reasons == ["dgx-monarch client detach"] and probes
     assert mesh_teardown.block_cause(handle) is None
-    # Monarch never confirmed that stop: the replacement attaches as after a release.
+    # Monarch never confirmed that stop: the replacement attaches as after a release,
+    # and, as after a release, no absorption grace opens.
     assert mesh_teardown.released_predecessor_recently() is True
+    assert mesh_safety._TEARDOWN_STATE[1] == grace_before and not mesh_safety._PROOF_ENDED
+
+
+def test_only_a_stop_monarch_confirmed_opens_the_absorption_grace(monkeypatch):
+    """A stop the proof ended confirmed nothing, like the liveness release: no grace."""
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    monkeypatch.setattr(mesh_safety, "_PROOF_ENDED", set())
+    mesh_safety.begin_deliberate_teardown(11)
+    mesh_safety.stop_ended_on_proof(11)
+    mesh_safety.end_deliberate_teardown(11, stop_confirmed=True)
+    assert mesh_safety._TEARDOWN_STATE[1] == float("-inf") and not mesh_safety._PROOF_ENDED
+
+    mesh_safety.stop_ended_on_proof(12)  # no stop in flight under this token: nothing to mark
+    mesh_safety.begin_deliberate_teardown(12)
+    mesh_safety.end_deliberate_teardown(12, stop_confirmed=True)
+    assert mesh_safety._TEARDOWN_STATE[1] > float("-inf")
 
 
 class _GatedFuture(_Future):

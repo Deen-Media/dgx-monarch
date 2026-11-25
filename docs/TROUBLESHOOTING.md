@@ -4358,7 +4358,10 @@ mesh**, ask every host whether they are gone, and when every host says so the
 poison lifts and the render attaches a fresh fleet; while a host still shows
 them, the refusal names it, and a ComfyUI restart clears it (since 1.5.0;
 before, every such session needed a restart, and the Reset answered
-`no_live_mesh`). A `DIRTY` row
+`no_live_mesh`). When the row instead says a spawn may still be queued in a
+host's Worker loop, restart the Worker service on that host and render again
+([#69](#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)).
+A `DIRTY` row
 naming a fleet that was created and never published is the other one. The reset
 route reads the published cache only, so it answers `no_live_mesh` there and
 changes nothing. Start the next render instead: it drops an interrupted fleet
@@ -4716,7 +4719,15 @@ the same session (since 1.5.0; before, it needed a ComfyUI restart). When the
 rollback stop did not confirm (`not safely stopped`), the poison lifts once
 every host shows the processes the bring-up spawned gone: the next render and
 **Reset attached mesh** ask, as [#65](#65-dgxm-status-and-dgxm-doctor-are-green-and-every-attach-still-fails)
-says. An attach whose result handoff was interrupted, or a spawn callback
+says. A bring-up that failed before every rank's process had started needs
+one thing more: Monarch queues a spawn without waiting for it, so a Worker
+loop that stalled rather than died may still hold the spawn, and no actor
+shows until it resumes. Every host must then also show that the loop the
+bring-up attached to no longer runs. Where it still runs, the refusal and the
+mesh row name the host: restart the Worker service there (`dgxm restart`),
+which ends the queued spawn with its loop, and the next render or **Reset
+attached mesh** builds a fresh fleet. A host whose package is too old to list
+its loops is named too, with `dgxm up` as its remedy. An attach whose result handoff was interrupted, or a spawn callback
 whose removal is unconfirmed, keeps the poison until ComfyUI restarts, even
 after a confirmed rollback. A local fleet's `WorkerSpawnError` after
 transport initialization needs a restart even when its rollback was

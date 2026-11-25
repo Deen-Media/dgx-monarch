@@ -2497,7 +2497,12 @@ sections after them list every change.
   render, and Reset attached mesh, ask every host whether the processes that
   bring-up spawned are gone, and once every host says so a fresh fleet
   attaches in the same session; while a host still shows them, the refusal
-  names it. Before, the Reset answered `no_live_mesh` and only a restart helped
+  names it. A bring-up that failed before every rank's process started also
+  needs the Worker loop it attached to gone on every host, since a stalled
+  loop may still hold its spawn; the refusal names such a host, and a Worker
+  service restart there clears it (`dgxm up` on a host whose package cannot
+  list its loops). Before, the Reset answered `no_live_mesh`
+  and only a restart helped
   ([TROUBLESHOOTING #69](docs/TROUBLESHOOTING.md#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)).
 - Fix: a cluster bring-up that fails with its spawned processes rolled back,
   or before it starts any process, no longer leaves the session refusing

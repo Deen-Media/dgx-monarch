@@ -1142,7 +1142,7 @@ def test_the_next_render_after_a_failed_bring_up_proven_gone_builds_a_fresh_flee
         return handoff.fleet
 
     mesh = _mesh_publication_fakes(monkeypatch, spawn, lambda: True)
-    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", [])
+    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", None)
     failed = mesh_factory.FleetHandoff()
     failed.config = SimpleNamespace(hosts=(SimpleNamespace(address="box-b"),))
     failed.failure_latched = failed.spawn_in_progress = failed.cleanup_started = True
@@ -1158,7 +1158,7 @@ def test_the_next_render_after_a_failed_bring_up_proven_gone_builds_a_fresh_flee
     with pytest.raises(mesh.MeshAttachError, match="cannot yet prove gone"):
         mesh.get_mesh(mode="local", gpus_per_host=1)
     answers.pop(0)
-    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", [])  # the alive answer's interval passed
+    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", None)  # the alive answer's interval passed
     fresh = mesh.get_mesh(mode="local", gpus_per_host=1)
 
     assert fresh.procs is proc_mesh and mesh._TRANSPORT_POISON is None

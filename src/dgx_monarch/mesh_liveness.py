@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import shlex
 import threading
 import time
@@ -55,6 +56,7 @@ PROBE_MIN_INTERVAL_S = 2.0
 _SCHEMA = 1
 _RECONCILE_THREAD = "dgxm-reconcile-stop"
 _STALE_HOST_MARKERS = ("unrecognized arguments", "No module named")
+_GENERATION = re.compile(r"[0-9a-f]{12}")  # a listener generation (cli/listener_generation)
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,9 @@ class LivenessEvidence:
     per_host: tuple[tuple[str, str], ...]
     at: float
     detail: str = ""
+    # Each host's live Worker loops by listener generation, None where that host
+    # could not name them all (failed_bring_up reads it for a spawn that may be queued).
+    loops: tuple[tuple[str, tuple[str, ...] | None], ...] = ()
 
     @property
     def age_s(self) -> float:
@@ -116,6 +121,10 @@ def _counts(payload: Any) -> dict[str, Any] | None:
         fields[name] = value
     loop = payload.get("loop_alive")
     fields["loop_alive"] = loop if isinstance(loop, bool) else None
+    # Missing (an older package on the host) or malformed reads as None: cannot tell.
+    gens = payload.get("loop_gens")
+    fields["loop_gens"] = (tuple(gens) if isinstance(gens, list) and all(
+        isinstance(gen, str) and _GENERATION.fullmatch(gen) for gen in gens) else None)
     return fields
 
 
@@ -150,6 +159,12 @@ def _log_probe(address: str, answer: str, fields: dict[str, Any] | None) -> None
 def probe_host(config: Any, host: Any, runner: Callable[..., Any],
                timeout_s: float = PROBE_HOST_BUDGET_S) -> str:
     """One host's answer. Every failure answers unknown."""
+    return _ask_host(config, host, runner, timeout_s)[0]
+
+
+def _ask_host(config: Any, host: Any, runner: Callable[..., Any],
+              timeout_s: float) -> tuple[str, dict[str, Any] | None]:
+    """One host's answer and the fields it rests on (None when it did not answer)."""
     address = str(getattr(host, "address", "") or getattr(host, "name", ""))
     addresses = tuple(str(entry.address)
                       for entry in (getattr(config, "hosts", ()) or ()))
@@ -161,7 +176,7 @@ def probe_host(config: Any, host: Any, runner: Callable[..., Any],
     except Exception as exc:
         log.warning("liveness probe host=%s did not run: %r", address, exc)
         _log_probe(address, UNKNOWN, None)
-        return UNKNOWN
+        return UNKNOWN, None
     # Do not write `returncode or 0`: it reads a missing code as exit 0 and
     # parses an unfinished result.
     raw = getattr(result, "returncode", None)
@@ -190,7 +205,7 @@ def probe_host(config: Any, host: Any, runner: Callable[..., Any],
                     address, code, stderr)
     answer = UNKNOWN if fields is None else _verdict(fields)
     _log_probe(address, answer, fields)
-    return answer
+    return answer, fields
 
 
 _SCAN_NAME = "dgxm-liveness"
@@ -287,13 +302,16 @@ def probe_fleet(handle: Any, *, now: Callable[[], float] = time.monotonic,
 
         runner = lifecycle.run_on_host
     per_host: list[tuple[str, str]] = []
+    loops: list[tuple[str, tuple[str, ...] | None]] = []
     for host in hosts:
         remaining = PROBE_FLEET_BUDGET_S - (now() - started)
+        fields = None
         if remaining <= 0.0:
             per_host.append((str(host.address), UNKNOWN))
-            continue
-        per_host.append((str(host.address), probe_host(
-            config, host, runner, min(PROBE_HOST_BUDGET_S, remaining))))
+        else:
+            host_answer, fields = _ask_host(config, host, runner, min(PROBE_HOST_BUDGET_S, remaining))
+            per_host.append((str(host.address), host_answer))
+        loops.append((str(host.address), None if fields is None else fields["loop_gens"]))
     answers = [answer for _address, answer in per_host]
     if ALIVE in answers:
         answer = ALIVE
@@ -301,7 +319,7 @@ def probe_fleet(handle: Any, *, now: Callable[[], float] = time.monotonic,
         answer = GONE
     else:
         answer = UNKNOWN
-    return LivenessEvidence(answer, tuple(per_host), stamp)
+    return LivenessEvidence(answer, tuple(per_host), stamp, loops=tuple(loops))
 
 
 def _still_answers(evidence: Any) -> LivenessEvidence | None:

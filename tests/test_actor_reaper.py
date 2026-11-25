@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from dgx_monarch import worker_proc_id
 from dgx_monarch.cli import actor_ledger, actor_reaper
 from dgx_monarch.cli import proc_identity as pi
 
@@ -796,8 +797,9 @@ def test_the_liveness_line_carries_schema_one_and_every_named_field(tmp_path):
     assert set(answer) == {
         "schema", "actors", "actors_marked", "zombies", "unreadable",
         "ledger_rows_alive", "ledger_boot_ok", "ledger_age_s", "loop_alive",
-        "pids"}
+        "loop_gens", "pids"}
     assert answer["schema"] == 1
+    assert answer["loop_gens"] == [worker_proc_id.derive("boot-abc", 4100, 900)[:12]]
     assert (answer["actors"], answer["actors_marked"]) == (1, 1)
     assert (answer["ledger_rows_alive"], answer["loop_alive"]) == (1, True)
     assert answer["ledger_boot_ok"] is True
@@ -900,7 +902,11 @@ def test_a_real_process_whose_leader_exited_while_a_thread_runs_reads_as_threads
 
     if platform.system() != "Linux":
         pytest.skip("procfs is Linux only")
-    exit_thread = 93 if platform.machine() in ("aarch64", "arm64") else 60
+    # The raw exit syscall ends only the calling thread; its number differs by architecture.
+    exit_thread = {"aarch64": 93, "arm64": 93, "x86_64": 60, "amd64": 60}.get(platform.machine())
+    if exit_thread is None:
+        pytest.skip(f"the thread-exit syscall number is known for aarch64 and x86_64 only, "
+                    f"not {platform.machine()}")
     child_code = (
         "import ctypes, threading, time\n"
         "threading.Thread(target=time.sleep, args=(30,), daemon=False).start()\n"
@@ -919,6 +925,66 @@ def test_a_real_process_whose_leader_exited_while_a_thread_runs_reads_as_threads
     finally:
         child.kill()
         child.wait(timeout=10)
+
+
+def test_the_liveness_line_names_every_live_worker_loop_a_frozen_one_included(tmp_path):
+    """A queued spawn waits in its loop: a stopped (frozen) loop runs as far as it goes."""
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100, starttime=900, argv=LOOP_ARGV, env=SPAWNER_ENV)
+    make_proc(root, 4200, starttime=950, state="T", argv=LOOP_ARGV, env=SPAWNER_ENV)
+    make_proc(root, 4300, starttime=990, state="Z", argv=LOOP_ARGV, env=SPAWNER_ENV)  # its group is gone
+    ledger = write_ledger(tmp_path, [])
+
+    answer = liveness(root, ledger_file=ledger)
+
+    assert answer["loop_gens"] == [worker_proc_id.derive("boot-abc", 4100, 900)[:12],
+                                   worker_proc_id.derive("boot-abc", 4200, 950)[:12]]
+
+
+def test_a_loop_whose_leader_exited_while_its_threads_run_leaves_the_host_unknown(tmp_path):
+    """Its reads come back empty, so nothing names it: the host cannot say gone at all."""
+    root = make_proc_root(tmp_path)
+    _zombie_leader(root, 4400, argv=(), env=(), starttime=900)
+    answer = liveness(root, ledger_file=write_ledger(tmp_path, []))
+    assert answer["unreadable"] == 1 and answer["loop_gens"] == []
+
+
+def test_a_live_recorded_loop_the_argv_match_misses_leaves_the_list_unknown(tmp_path):
+    """The attach names a loop by its listener, the scan by its argv: a miss must not read as gone."""
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100, starttime=900, argv=("/usr/bin/python3", "worker.py"), env=SPAWNER_ENV)
+    ledger = write_ledger(tmp_path, [], loop={"pid": 4100, "starttime": 900, "address": LOOP_ADDRESS})
+
+    answer = liveness(root, ledger_file=ledger)
+
+    assert answer["loop_alive"] is True and answer["loop_gens"] is None
+
+
+def test_a_host_whose_boot_id_will_not_read_cannot_name_its_loops(tmp_path):
+    root = make_proc_root(tmp_path)
+    (root / "sys/kernel/random/boot_id").unlink()
+    make_proc(root, 4100, starttime=900, argv=LOOP_ARGV, env=SPAWNER_ENV)
+    assert liveness(root, ledger_file=write_ledger(tmp_path, []))["loop_gens"] is None
+
+
+def test_the_scan_and_the_listener_probe_hash_one_loop_alike(tmp_path):
+    """The attach records the probe's generation and the scan lists its own: one formula.
+
+    A difference in form would read every loop as replaced and lift a poison
+    wrongly, so this runs the probe body's own line against the scan's answer.
+    """
+    import hashlib
+
+    from dgx_monarch.cli import listener_generation
+
+    line = next(text.strip() for text in listener_generation._BODY.splitlines()
+                if text.strip().startswith("_gen = _gh.sha256("))
+    scope = {"_gh": hashlib, "_boot": "boot-abc", "_pid": "4100", "_born": "900"}
+    exec(line, scope)  # noqa: S102 - the probe's own hashing line, on fixed test values
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100, starttime=900, argv=LOOP_ARGV, env=SPAWNER_ENV)
+
+    assert liveness(root, ledger_file=write_ledger(tmp_path, []))["loop_gens"] == [scope["_gen"]]
 
 
 def test_a_stopped_actor_is_alive_because_it_still_holds_its_memory(tmp_path):

@@ -386,8 +386,8 @@ copied from historical evidence.
    `INCONCLUSIVE`. Neither a certificate nor a consent
    can convert an INCONCLUSIVE into a PASS.
    Classification and verdict logic are
-   [`mesh_safety.py:263-264`](../src/dgx_monarch/mesh_safety.py#L263-L264 "anchor:StockLoadCapacityError"),
-   [`mesh_safety.py:267-271`](../src/dgx_monarch/mesh_safety.py#L267-L271 "anchor:is_stock_load_capacity_error"),
+   [`mesh_safety.py:266-267`](../src/dgx_monarch/mesh_safety.py#L266-L267 "anchor:StockLoadCapacityError"),
+   [`mesh_safety.py:270-274`](../src/dgx_monarch/mesh_safety.py#L270-L274 "anchor:is_stock_load_capacity_error"),
    [`driver_footprint.py:104-104`](../src/dgx_monarch/driver_footprint.py#L104-L104 "anchor:DriverFootprintCapacityError"), and
    [`gate_verdict.py:74-102`](../src/dgx_monarch/nodes/gate_verdict.py#L74-L102 "anchor:publish_ceremony_verdict"). A driver-side
    refusal raised inside a first-use leg is covered by

@@ -130,7 +130,12 @@ class MeshHealth:
         if not self.dirty:
             return ""
         parts = []
-        if self.poison and failed_bring_up.liftable(self.poison):
+        holds = failed_bring_up.hold_parts() if self.poison and failed_bring_up.liftable(self.poison) else []
+        if holds:
+            parts.append(
+                "a failed bring-up may still have a spawn queued in a Worker loop ("
+                + "; ".join(what for what, _remedy in holds) + f") ({self.poison})")
+        elif self.poison and failed_bring_up.liftable(self.poison):
             parts.append(
                 "a failed bring-up left processes the driver cannot yet prove gone "
                 f"({self.poison})")
@@ -171,6 +176,10 @@ class MeshHealth:
         """Return the recovery action for a dirty fleet, or empty."""
         if not self.dirty:
             return ""
+        holds = failed_bring_up.hold_parts() if self.poison and failed_bring_up.liftable(self.poison) else []
+        if holds:
+            return "; ".join(remedy for _what, remedy in holds) + (
+                "; then start the next render or press Reset attached mesh")
         if self.poison and failed_bring_up.liftable(self.poison):
             return ("start the next render or press Reset attached mesh: once every host shows "
                     "the failed bring-up's processes gone, a fresh fleet attaches; restart "

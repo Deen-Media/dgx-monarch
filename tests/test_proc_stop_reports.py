@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from dgx_monarch import mesh_stop, proc_stops, retired_meshes
+from dgx_monarch.mesh_liveness import fleet_gone as REAL_FLEET_GONE  # conftest makes it inert
 
 NAME = "dgxm-procs-testmesh"
 OWN_REPORT = (
@@ -189,6 +190,41 @@ def test_a_stop_with_no_proof_or_a_proof_that_never_says_gone_keeps_its_bound(mo
         mesh_stop.stop_procs(_Procs(), "dgx-monarch client detach", 0.3,
                              proof=lambda: asked.append(1) or False)
     assert asked == [1, 1]
+
+
+@pytest.mark.parametrize(("threads", "ends_early"), [("2", False), ("1", True)],
+                         ids=["threads_run", "lone_zombie"])
+def test_a_zombie_leader_whose_threads_run_keeps_the_stops_bound(monkeypatch, tmp_path, threads, ends_early):
+    """The decision, not only the scan: the real scan's line through the real fleet-wide proof.
+
+    A host holds a leader that exited while another thread still holds every
+    page. The stop keeps its bound; a zombie whose group is empty ends it early.
+    """
+    from dgx_monarch.cli import lifecycle
+    from test_failed_bring_up import _HostScans
+
+    monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
+    monkeypatch.setattr(mesh_stop, "PROOF_AT_S", (0.05, 0.1))
+    monkeypatch.setattr(mesh_stop, "PROOF_BUDGET_S", 0.01)
+    scans = _HostScans(tmp_path)
+    scans.zombie_leaders = {"box-b": threads}
+    hosts = tuple(SimpleNamespace(address=name, name=name) for name in ("box-a", "box-b"))
+    handle = SimpleNamespace(config=SimpleNamespace(hosts=hosts, python_bin="~/venv/bin/python"))
+    procs = _Procs()
+
+    def ask():
+        return REAL_FLEET_GONE(handle, runner=scans)
+
+    try:
+        if ends_early:
+            assert mesh_stop.stop_procs(procs, "dgx-monarch client detach", 0.4,
+                                        proof=ask) is mesh_stop.PROVEN_GONE
+        else:
+            with pytest.raises(TimeoutError, match="did not finish"):
+                mesh_stop.stop_procs(procs, "dgx-monarch client detach", 0.4, proof=ask)
+    finally:
+        procs.finish.set()
+    assert scans.asked and set(scans.asked) <= {"box-a", "box-b"}
 
 
 def test_only_a_stop_after_a_reported_worker_death_asks_for_the_proof(monkeypatch):
