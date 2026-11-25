@@ -30,8 +30,11 @@ import time
 from dgx_monarch.cli import proc_identity as pi
 from dgx_monarch.monarch_policy import MonarchPolicy, activate_native_policy, apply_policy
 
+# The phases (with the 5 s freeze wait) add up to 260 s, inside the test's 300 s
+# bound on the whole probe, which leaves room for the interpreter and policy start.
+READY_S = 45.0     # each of: every rank's proc started; every rank answered its pid
 WATCH_S = 40.0     # how long the frozen rank's stop is watched
-FINISH_S = 120.0   # how long the stop may take once the rank resumes
+FINISH_S = 90.0    # how long the stop may take once the rank resumes
 GONE_S = 30.0      # how long every rank may take to leave once the stop ended
 
 
@@ -59,8 +62,8 @@ def main(ranks_file: str) -> None:
             return os.getpid()
 
     procs = monarch_actor.this_host().spawn_procs(per_host={"procs": 2})
-    procs.initialized.get(timeout=60)
-    pids = sorted(procs.spawn("ident", Ident).pid.call().get(timeout=60).values())
+    procs.initialized.get(timeout=READY_S)
+    pids = sorted(procs.spawn("ident", Ident).pid.call().get(timeout=READY_S).values())
     ranks = [(pid, (pi.read_stat(pid) or (0, 0))[1]) for pid in pids]
     children = [(pid, stat[1]) for pid in pi.iter_pids()
                 if (stat := pi.read_stat(pid)) is not None and stat[0] == os.getpid()]
