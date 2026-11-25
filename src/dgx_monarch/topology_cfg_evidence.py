@@ -42,7 +42,8 @@ class CfgEvidence:
     # lands on reads bytes equal to one GPU, so a kind whose fallback is an
     # approximate route keeps every pair on cfg2 (row 15: Krea2 FP8 lands on
     # row 11's SAGE route; a block-scaled file, or a full-precision file cast
-    # to fp8 at load, on any fp8 row).
+    # to fp8 at load, on any fp8 row), wherever the cfg2 row runs
+    # (topology.cfg_row_strands).
     pair_quants: tuple[str, ...] = ()
 
     def scopes_pairs(self, pair_kind: str) -> bool:

@@ -64,7 +64,8 @@ _BYTES_EQUAL_ULYSSES = {
     ("chroma", "bf16"): ("2026-10-02", ONE_GPU),
     # Campaign K, 2026-10-14: Chroma1-HD FP8-mixed and INT8 ConvRot at 1152 to
     # 1280 square, uly2 on Torch Flash bit-identical in every cell. auto keeps an
-    # FP8 pair on cfg2 all the same, since its uly2 there runs SAGE (row 21).
+    # FP8 pair on cfg2 all the same where cfg2 runs, since its uly2 there runs
+    # SAGE (row 21).
     ("chroma", "fp8"): ("2026-10-14", DP2_ROW_0),
     ("chroma", "int8"): ("2026-10-14", DP2_ROW_0),
     # 2026-11-24 BF16 at 1024 under auto (uly2), with a zeroed negative.

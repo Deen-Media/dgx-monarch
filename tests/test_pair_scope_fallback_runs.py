@@ -41,13 +41,16 @@ from dgx_monarch.nodes.common import MeshSpec, ModelSpec
 from dgx_monarch.nodes.reference_preflight import sequence_split_refused
 from dgx_monarch.nodes.render_preflight import sampler_latent
 
-_BYTES = {"BF16": 2, "F8_E4M3": 1}
+_BYTES = {"BF16": 2, "F8_E4M3": 1, "U8": 1}
 
 
 def _checkpoint(path, dtype, *extra_keys):
-    """A small header: one weight of ``dtype`` and any marker keys, as BF16."""
+    """A small header: one weight of ``dtype`` and any marker keys, as BF16
+    unless a key names its dtype (``name=U8``)."""
     layers = {"blocks.0.attn.to_q.weight": (dtype, [8, 8])}
-    layers.update({key: ("BF16", [1]) for key in extra_keys})
+    for key in extra_keys:
+        name, _, kind = key.partition("=")
+        layers[name] = (kind or "BF16", [1])
     tensors: dict = {"__metadata__": {}}
     data = bytearray()
     for name, (kind, shape) in layers.items():
@@ -76,12 +79,12 @@ def files(monkeypatch, tmp_path):
     return make
 
 
-def _model(family):
+def _model(family, weight_dtype="default"):
     return ModelSpec(
         mesh=MeshSpec(handle=SimpleNamespace(world=2), topology_preset="auto",
                       attention="TORCH_FLASH", sync_ulysses=True,
                       worker_args={family_select.WORKER_ARG_KEY: family}),
-        unet_name="model.safetensors", options={"weight_dtype": "default"})
+        unet_name="model.safetensors", options={"weight_dtype": weight_dtype})
 
 
 def _pair(extra_positive=None, extra_negative=None, rows=8):
@@ -92,12 +95,12 @@ def _pair(extra_positive=None, extra_negative=None, rows=8):
     return positive, negative
 
 
-def _route(model, positive, negative, px, cfg=4.0):
+def _route(model, positive, negative, px, cfg=4.0, world=2, batch=1):
     """The tags a sampler node writes, then the driver's own route choice."""
     assert not text_rows_differ(positive, negative)
-    latent = sampler_latent({"samples": torch.zeros(1, 16, px // 8, px // 8)}, "euler", False,
-                            False, sequence_split_refused(model, positive, negative))
-    topology, _sage, reason = common._resolve_topology_for_latent(model, latent, cfg, 2)
+    latent = sampler_latent({"samples": torch.zeros(batch, 16, px // 8, px // 8)}, "euler",
+                            False, False, sequence_split_refused(model, positive, negative))
+    topology, _sage, reason = common._resolve_topology_for_latent(model, latent, cfg, world)
     return topology.describe(), reason
 
 
@@ -202,6 +205,67 @@ def test_row_15_has_nothing_ulysses_refuses_that_cfg2_runs(files):
     cfg2 = SimpleNamespace(sequence_parallel=1, cfg=2)
     with pytest.raises(UnsupportedModelError):
         preflight_krea2_reference_latents(model, (True, "index"), cfg2)
+
+
+@pytest.mark.parametrize(("family", "dtype", "markers", "weight", "px", "row4", "row2"), [
+    # Chroma FP8 from 1.2 to 1.64 MP: row 19 keeps the pair, since row 21's
+    # Ulysses there runs SAGE.
+    ("chroma", "F8_E4M3", (), "default", 1216, 21, 19),
+    # A BF16 Chroma the loader casts to fp8 (fp8_cast), below 1.2 MP.
+    ("chroma", "BF16", (), "fp8_e4m3fn", 1024, 99, 20),
+    # A block-scaled Boogu file: an F8 weight with a U8 block scale.
+    ("boogu", "F8_E4M3", ("blocks.0.attn.to_q.weight_scale=U8",), "default", 1024, 78, 79),
+])
+def test_a_lift_keeps_an_equal_pair_on_cfg2_only_where_the_row_runs(files, family, dtype,
+                                                                    markers, weight, px,
+                                                                    row4, row2):
+    """At world 4 the cfg2 row leaves two data-parallel ranks that batch 1
+    cannot split, where auto refuses the row, so the equal pair takes the row
+    its scope sends it to, as before the lift; at world 2, and at world 4 with
+    batch 2, the lift keeps cfg2."""
+    files(dtype, *markers)
+    model = _model(family, weight)
+    pair = _pair()
+    route, reason = _route(model, *pair, px, cfg=3.5, world=4)
+    assert route == "uly2+ring2" and f"table row {row4}" in reason
+    assert (f"cfg2 table row {row2} would keep this equal pair, but at world 4 it leaves 2 "
+            "data-parallel ranks that batch 1 cannot split") in reason
+    route, reason = _route(model, *pair, px, cfg=3.5, world=2)
+    assert route == "cfg2" and f"table row {row2}" in reason
+    route, reason = _route(model, *pair, px, cfg=3.5, world=4, batch=2)
+    assert route == "cfg2+dp2" and f"table row {row2}" in reason
+
+
+def test_a_refused_equal_pair_at_world_4_falls_back_and_says_what_runs_it(files):
+    """The sequence tag lifts too: at world 4, batch 1, the pair takes the
+    scope's row as before, whose forward refuses what it carries. The tag
+    fails closed (an unreadable header answers True), so auto does not refuse
+    on it; the reason names what runs the pair."""
+    files("BF16")
+    refs = _refs("index_timestep_zero")
+    route, reason = _route(_model("chroma"), *_pair(refs, refs), 1216, cfg=3.5, world=4)
+    assert route == "uly2+ring2" and "table row 22" in reason
+    assert ("that row's sharded forward refuses what the pair carries, so cfg2 runs it at "
+            "world 2 or here with a batch size that is a multiple of 2, and one GPU runs "
+            "it as stock does") in reason
+
+
+def test_class_k_names_no_sequence_preset_for_a_refused_pair():
+    """A differing pair keeps the cfg2 row and meets class K at world 4, batch
+    1. Every preset that tiles world 4 splits the sequence, so for a pair the
+    sequence forward refuses, the refusal names what does run it."""
+    from dgx_monarch.topology import choose_auto_topology
+
+    for refused in (False, True):
+        with pytest.raises(UnsupportedModelError) as caught:
+            choose_auto_topology("chroma", "fp8", 1.5, 4, cfg_value=3.5, pair_differs=True,
+                                 sequence_refused=refused)
+        message = str(caught.value)
+        assert "send a batch size that is a multiple of 2" in message
+        assert ("uly4, ring4, uly2+cfg2" in message) is not refused
+        if refused:
+            assert ("render at world 2 or on one GPU: every preset that tiles world 4 "
+                    "splits the sequence") in message
 
 
 def test_an_unreadable_header_keeps_a_masked_equal_pair_on_cfg2(files, monkeypatch):

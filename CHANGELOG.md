@@ -1524,7 +1524,12 @@ sections after them list every change.
   which no record has measured. So does an equal pair whose Ulysses route
   would refuse what it carries, which cfg2 runs: a Qwen-Image text mask or
   index_timestep_zero references (a Qwen-Image-Edit 2511 file's default), and
-  a Chroma or Boogu mask that masks a row. Every cfg2 render of an equal pair now says
+  a Chroma or Boogu mask that masks a row. None of these keeps a pair on a
+  cfg2 row that this render cannot run: at world 4 with an odd batch, where
+  auto refuses a cfg2 row for its spare ranks, the pair takes the Ulysses and
+  ring row as before, and a pair that meets that refusal with a mask or
+  references the sequence forward refuses is no longer offered presets that
+  split the sequence. Every cfg2 render of an equal pair now says
   so, from the KSampler nodes and from Sampler Custom behind a CFG guider: a log
   line for every render, and a browser notice once per queued prompt when cfg2
   was chosen by hand (a Pipeline sweep is one prompt).

@@ -779,7 +779,13 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   pair carries and cfg2's stock forward runs it (Qwen-Image's text masks and
   index_timestep_zero references, Edit 2511's by default; Chroma's and Boogu's
   masks that mask a row), the sampler tags the latent
-  (`nodes/reference_preflight.py`) and the pair keeps cfg2. A cfg2
+  (`nodes/reference_preflight.py`) and the pair keeps cfg2. Each of these
+  lifts keeps the pair only on a cfg2 row this render can run: at world 4
+  with an odd batch the row leaves two data-parallel ranks the batch cannot
+  split, where auto refuses it (`topology.cfg_row_strands`), so there the pair
+  takes the row its scope sends it to, as it did before the lift, and the
+  reason names what would run a pair that row's forward refuses. A lift never
+  turns a route into a refusal (`tests/test_pair_scope_grid.py`). A cfg2
   render of an equal pair says so (`nodes/cfg_pair_notice.py`), from every
   KSampler node and from Sampler Custom behind a CFG guider: a log line per
   render, and for a hand-chosen cfg2 a browser notice per queued prompt, never

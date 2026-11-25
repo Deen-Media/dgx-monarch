@@ -176,6 +176,35 @@ def _presets_tiling(world: int) -> list[str]:
     return names
 
 
+def _strands_ranks(topo: Topology, batch_size: int) -> bool:
+    """Whether ``topo`` leaves data-parallel ranks that this batch cannot split."""
+    return topo.dp > 1 and batch_size % topo.dp != 0
+
+
+def cfg_row_strands(rule: AutoRule, world: int, batch_size: int) -> int:
+    """The data-parallel ranks a cfg row leaves at this world that this batch
+    cannot split, where auto refuses the row; 0 where the row runs (an odd
+    world runs it as pure ring)."""
+    topo = Topology(world=world, **rule.topology)  # type: ignore[arg-type]
+    if world % topo.model_parallel:
+        return 0
+    topo = topo.with_derived_dp()
+    return topo.dp if _strands_ranks(topo, batch_size) else 0
+
+
+def _stranded_clause(rule: AutoRule, world: int, batch_size: int, spare: int,
+                     sequence_refused: bool) -> str:
+    """Why a lift could not keep an equal pair on ``rule``, and the remedies that hold."""
+    text = (f"cfg2 table row {rule.row} would keep this equal pair, but at world {world} it "
+            f"leaves {spare} data-parallel ranks that batch {batch_size} cannot split, so "
+            "the pair takes the row its scope sends an equal pair to")
+    if sequence_refused:
+        text = (f"{text}; that row's sharded forward refuses what the pair carries, so "
+                f"cfg2 runs it at world 2 or here with a batch size that is a multiple of "
+                f"{spare}, and one GPU runs it as stock does")
+    return text
+
+
 @dataclass(frozen=True)
 class AutoDecision:
     topology: Topology
@@ -183,7 +212,9 @@ class AutoDecision:
     reason: str
     rule: AutoRule = field(repr=False, default=_FALLBACK_RULE)
     # The cfg row that matched the render's shape but lacked evidence for its
-    # quant or band, so the walk went on to a later row; None when none did.
+    # quant or band, or that only a lift kept for an equal pair where it does
+    # not tile the world at this batch, so the walk went on to a later row;
+    # None when none did.
     skipped_cfg: AutoRule | None = field(repr=False, default=None)
 
 
@@ -233,7 +264,10 @@ def choose_auto_topology(
     caller names none). ``sequence_refused`` says the family's sharded forward
     refuses what this pair carries (reference_preflight.sequence_split_refused),
     so an equal pair keeps the cfg2 row rather than fall to a Ulysses row that
-    would refuse it. ``fits_resident=False``
+    would refuse it. Such a lift (a kind the scope leaves out, or
+    ``sequence_refused``) never keeps an equal pair on a row whose spare ranks
+    this batch cannot split (``cfg_row_strands``): the pair falls back as the
+    scope sends it, so a lift never turns a route into a refusal. ``fits_resident=False``
     adds FSDP for capacity. Spare ranks use data parallel only when the batch
     divides evenly; otherwise a pure sequence-parallel row folds them in, and
     a cfg row raises UnsupportedModelError. ``views`` says the conditioning
@@ -253,6 +287,7 @@ def choose_auto_topology(
     chosen: AutoRule | None = None
     skipped_cfg: AutoRule | None = None
     skipped_views: AutoRule | None = None
+    untiled: str | None = None  # why a lift could not keep this pair on its cfg row
     for rule in AUTO_TABLE:
         if rule.family != family:
             continue
@@ -272,6 +307,14 @@ def choose_auto_topology(
                 rule, quant_kind, variant, pair_differs or sequence_refused, pair_kind):
             skipped_cfg = rule
             continue
+        spare = cfg_row_strands(rule, world, batch_size) if rule.topology.get("cfg", 1) != 1 else 0
+        if (spare and not pair_differs
+                and getattr(cfg_evidence_for(rule), "pairs", None) == "unequal"):
+            # Only a lift kept this equal pair here, and auto would refuse the
+            # row for its spare ranks, so the pair falls back as the scope sends it.
+            skipped_cfg = rule
+            untiled = _stranded_clause(rule, world, batch_size, spare, sequence_refused)
+            continue
         chosen = rule
         break
     note = None
@@ -290,6 +333,8 @@ def choose_auto_topology(
         if skipped_views is not None:
             note = (f"cfg2 table row {skipped_views.row} would split the batch that holds each "
                     "UltraTex sample's views; uly2 is the proven topology for view conditioning")
+        elif untiled is not None:
+            note = f"{untiled}; uly2 is the conservative supported fallback"
         elif skipped_cfg is not None:
             record = cfg_evidence_for(skipped_cfg)
             if record is None:
@@ -333,7 +378,9 @@ def choose_auto_topology(
     if note is None:
         note = chosen.note
         excluded = cfg_evidence_for(skipped_cfg) if skipped_cfg is not None else None
-        if excluded is not None and variant in excluded.excludes:
+        if untiled is not None:
+            note = f"{note}; {untiled}"
+        elif excluded is not None and variant in excluded.excludes:
             note = (f"{note}; cfg2 table row {excluded.row} was measured on this "
                     f"{variant} checkpoint and does not grant it")
         elif excluded is not None and excluded.permits(skipped_cfg, quant_kind, variant, True,
@@ -343,7 +390,8 @@ def choose_auto_topology(
                     "whose text rows differ, and this pair's rows are equal or unread")
         held = cfg_evidence_for(chosen) if chosen.topology.get("cfg", 1) != 1 else None
         if (held is not None and sequence_refused and not pair_differs
-                and held.scopes_pairs(pair_kind or quant_kind)):
+                and held.scopes_pairs(pair_kind or quant_kind)
+                and world % chosen.topology["cfg"] == 0):  # an odd world runs pure ring
             note = (f"{note}; this pair's rows are equal or unread, but the family's "
                     "sequence-parallel forward refuses what the pair carries, so it keeps cfg2")
 
@@ -359,7 +407,7 @@ def choose_auto_topology(
         note = f"{note}; world {world} does not tile the row's degrees; pure ring{world}"
 
     topo = topo.with_derived_dp()
-    if topo.dp > 1 and batch_size % topo.dp != 0:
+    if _strands_ranks(topo, batch_size):
         # Fold unusable DP ranks into sequence parallelism. Prefer Ulysses when
         # every head count tiles the validated target because Ring cannot exclude
         # divisibility pads; otherwise Ring is the head-count-free fallback.
@@ -382,12 +430,16 @@ def choose_auto_topology(
             # this: a cfg2 row leaves no spare rank there.
             from .adapters.base import UnsupportedModelError
 
-            choices = ", ".join(_presets_tiling(world))
-            clause = (
-                f"pick an explicit preset that tiles world {world}: {choices}"
-                if choices else
-                f"no shipped preset tiles world {world} exactly, so render this "
-                "at a world size one of them tiles")
+            choices = "" if sequence_refused else ", ".join(_presets_tiling(world))
+            if sequence_refused:  # every preset that tiles the world splits the sequence
+                clause = (f"render at world 2 or on one GPU: every preset that tiles world "
+                          f"{world} splits the sequence, and {family}'s sharded forward "
+                          "refuses what this pair carries")
+            elif choices:
+                clause = f"pick an explicit preset that tiles world {world}: {choices}"
+            else:
+                clause = (f"no shipped preset tiles world {world} exactly, so render this "
+                          "at a world size one of them tiles")
             # DESIGN 5.9: a waiver is an expert choice about a typed topology,
             # so this auto refusal is class K with no guard.
             owned = (
