@@ -12,8 +12,10 @@ What each fallback row refuses that cfg2 admits:
 - Qwen-Image (row 68 to 71): any text attention mask, and references whose
   method is index_timestep_zero, named or, with none named, Edit 2511's
   default. Plain Qwen-Image, Edit 2509 (index) and 2512 carry neither.
-- Chroma (rows 19 and 20 to 22 and the uly2 fallback): a mask that masks a
-  row, and index_timestep_zero references.
+- Chroma (rows 19 and 20 to 22 and the uly2 fallback): a regional mask that
+  hides a key (ComfyUI passes the flux family a mask only beside
+  attention_mask_img_shape; a text keep-mask never reaches the forward), and
+  index_timestep_zero references.
 - Boogu (row 79 to 78): a caption mask that masks a row (num_tokens then
   differs from the caption rows).
 - Krea2 (row 15 to 12): nothing a driver can see. Its references refuse cfg2
@@ -65,6 +67,10 @@ def _checkpoint(path, dtype, *extra_keys):
 
 @pytest.fixture
 def files(monkeypatch, tmp_path):
+    return checkpoint_files(monkeypatch, tmp_path)
+
+
+def checkpoint_files(monkeypatch, tmp_path):
     """Name a checkpoint for the next model; every reader finds it."""
     chosen: dict = {}
     folder_paths = types.ModuleType("folder_paths")
@@ -157,16 +163,24 @@ def test_row_68_sends_an_equal_pair_only_where_ulysses_runs_it(files, case, mark
     assert resolved == route and f"table row {row}" in reason, case
 
 
-@pytest.mark.parametrize(("px", "mask", "route", "row"), [
-    (1216, torch.tensor([[1, 1, 1, 1, 1, 1, 0, 0]]), "cfg2", 19),
-    (1216, torch.ones(1, 8), "uly2", 22),       # a mask that masks nothing runs on Ulysses
-    (1024, torch.tensor([[1, 1, 1, 1, 1, 1, 0, 0]]), "cfg2", 20),
-    (1024, torch.ones(1, 8), "uly2", 99),
+_REGIONAL = torch.tensor([[0.0, 0.0, float("-inf"), 0.0]])  # hides one key
+_KEEP = torch.tensor([[1, 1, 1, 1, 1, 1, 0, 0]])  # a text encoder's keep-mask
+
+
+@pytest.mark.parametrize(("px", "extra", "route", "row"), [
+    # A regional mask ComfyUI passes the forward (it carries the image shape).
+    (1216, {"attention_mask": _REGIONAL, "attention_mask_img_shape": (1, 2)}, "cfg2", 19),
+    (1024, {"attention_mask": _REGIONAL, "attention_mask_img_shape": (1, 2)}, "cfg2", 20),
+    # One that hides nothing runs on Ulysses.
+    (1216, {"attention_mask": torch.zeros(1, 4), "attention_mask_img_shape": (1, 2)},
+     "uly2", 22),
+    # A keep-mask with no image shape never reaches Chroma's forward.
+    (1216, {"attention_mask": _KEEP}, "uly2", 22),
+    (1024, {"attention_mask": _KEEP}, "uly2", 99),
 ])
-def test_chromas_rows_send_an_equal_pair_only_where_ulysses_runs_it(files, px, mask, route,
+def test_chromas_rows_send_an_equal_pair_only_where_ulysses_runs_it(files, px, extra, route,
                                                                      row):
     files("BF16")
-    extra = {"attention_mask": mask}
     resolved, reason = _route(_model("chroma"), *_pair(extra, extra), px, cfg=3.5)
     assert resolved == route and f"table row {row}" in reason
 

@@ -14,10 +14,17 @@ from typing import Any
 from .. import family_select
 
 # The families with a pair-scoped cfg2 row, and the flux family Chroma's
-# forward comes from, whose sharded forwards refuse a masked row or
+# forward comes from, whose sharded forwards refuse a mask or
 # index_timestep_zero references (adapters/qwen_image.py, flux_family.py,
-# boogu.py). Krea2's references refuse cfg2 too, so they keep no pair on cfg2.
-_REFUSES_A_MASKED_ROW = frozenset({"chroma", "flux", "flux2", "longcat", "boogu"})
+# boogu.py), each read as ComfyUI hands it to the forward (comfy/model_base.py
+# extra_conds). Qwen-Image passes on any mask. The flux family passes a mask
+# only beside ``attention_mask_img_shape`` (a regional mask, resized to the
+# latent's tokens), and its forward refuses one that is not a no-op; a plain
+# text keep-mask never reaches it. Boogu passes a mask with a zero, and its
+# forward refuses where the kept rows (num_tokens) differ from the caption's.
+# Krea2's references refuse cfg2 too, so they keep no pair on cfg2.
+_REFUSES_A_PUBLISHED_MASK = frozenset({"chroma", "flux", "flux2", "longcat"})
+_REFUSES_A_MASKED_ROW = frozenset({"boogu"})
 _REFUSES_ANY_MASK = frozenset({"qwen_image"})
 _REFUSES_TIMESTEP_ZERO_REFERENCES = frozenset({"qwen_image", "chroma", "flux", "flux2",
                                                "longcat"})
@@ -90,6 +97,22 @@ def _masks_a_row(mask: Any) -> bool:
         return True  # unreadable: assume it masks, which keeps cfg2
 
 
+def _published_and_effective(entry: dict) -> bool:
+    """Whether the flux family's forward receives this entry's mask and refuses it.
+
+    Resizing to the latent's tokens keeps an all-visible mask all visible, so
+    the mask as the conditioning holds it answers for the resized one.
+    """
+    if entry.get("attention_mask_img_shape") is None:
+        return False
+    try:
+        from ..adapters.base import _mask_is_noop
+
+        return not _mask_is_noop(entry["attention_mask"])
+    except Exception:
+        return True  # unreadable: assume it masks, which keeps cfg2
+
+
 def _default_ref_method(path: str) -> str | None:
     """The method a Qwen-Image file defaults to, as comfy's model detection
     reads it: Edit 2511 carries an ``__index_timestep_zero__`` key."""
@@ -103,17 +126,17 @@ def sequence_split_refused(model: Any, positive: object, negative: object) -> bo
     """Whether this family's sharded forward refuses what the pair carries,
     where cfg2's stock forward runs it.
 
-    Qwen-Image refuses any text attention mask; Chroma and the flux family, and
-    Boogu (whose num_tokens then differs from its caption rows), refuse a mask
-    that masks a row. Qwen-Image and the flux family refuse references whose
+    Qwen-Image refuses any text attention mask; Chroma and the flux family a
+    regional mask ComfyUI passes them that hides a key; Boogu a mask that masks
+    a row, whose num_tokens then differs from its caption rows. Qwen-Image and
+    the flux family refuse references whose
     method is index_timestep_zero, named in the conditioning or, with none
     named, the default an Edit 2511 file carries. A header that cannot be read
     answers True where the pair carries a mask or references: cfg2 runs every
     one of these, so keeping it costs a notice, never a render.
     """
     entries = list(_entries(positive, negative))
-    masks = [entry["attention_mask"] for entry in entries
-             if entry.get("attention_mask") is not None]
+    masks = [entry for entry in entries if entry.get("attention_mask") is not None]
     refs = [entry for entry in entries if entry.get("reference_latents")]
     if not masks and not refs:
         return False
@@ -125,8 +148,12 @@ def sequence_split_refused(model: Any, positive: object, negative: object) -> bo
         path = folder_paths.get_full_path("diffusion_models", model.unet_name)
         family = family_select.effective_family(
             sniff_checkpoint(path)[0], family_select.override_for_model(model))
-        if masks and (family in _REFUSES_ANY_MASK
-                      or (family in _REFUSES_A_MASKED_ROW and any(map(_masks_a_row, masks)))):
+        if masks and (
+                family in _REFUSES_ANY_MASK
+                or (family in _REFUSES_A_PUBLISHED_MASK
+                    and any(map(_published_and_effective, masks)))
+                or (family in _REFUSES_A_MASKED_ROW
+                    and any(_masks_a_row(entry["attention_mask"]) for entry in masks))):
             return True
         if refs and family in _REFUSES_TIMESTEP_ZERO_REFERENCES:
             methods = {entry.get("reference_latents_method") for entry in refs}

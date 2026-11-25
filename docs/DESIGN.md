@@ -777,9 +777,13 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   each scope names the kinds it covers. The Ulysses row must also be one this
   very render can run: where the family's sharded forward refuses what the
   pair carries and cfg2's stock forward runs it (Qwen-Image's text masks and
-  index_timestep_zero references, Edit 2511's by default; Chroma's and Boogu's
-  masks that mask a row), the sampler tags the latent
-  (`nodes/reference_preflight.py`) and the pair keeps cfg2. Each of these
+  index_timestep_zero references, Edit 2511's by default; a regional mask
+  that hides a key on Chroma, which ComfyUI hands the flux family only beside
+  `attention_mask_img_shape`, so a text keep-mask never reaches it; Boogu's
+  caption masks that mask a row), the sampler tags the latent
+  (`nodes/reference_preflight.py`) and the pair keeps cfg2. The tag reads
+  each mask as ComfyUI's `extra_conds` hands it on, and a test drives each
+  branch through the real sharded forward (`tests/test_sequence_tag_forwards.py`). Each of these
   lifts keeps the pair only on a cfg2 row this render can run: at world 4
   with an odd batch the row leaves two data-parallel ranks the batch cannot
   split, where auto refuses it (`topology.cfg_row_strands`), so there the pair

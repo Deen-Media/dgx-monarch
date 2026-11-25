@@ -1524,7 +1524,9 @@ sections after them list every change.
   which no record has measured. So does an equal pair whose Ulysses route
   would refuse what it carries, which cfg2 runs: a Qwen-Image text mask or
   index_timestep_zero references (a Qwen-Image-Edit 2511 file's default), and
-  a Chroma or Boogu mask that masks a row. None of these keeps a pair on a
+  a Chroma regional mask that hides a key, or a Boogu caption mask that
+  masks a row; a Chroma text keep-mask, which ComfyUI never hands the
+  forward, leaves the pair on Ulysses. None of these keeps a pair on a
   cfg2 row that this render cannot run: at world 4 with an odd batch, where
   auto refuses a cfg2 row for its spare ranks, the pair takes the Ulysses and
   ring row as before, and a pair that meets that refusal with a mask or
