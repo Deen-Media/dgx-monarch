@@ -180,6 +180,11 @@ class MeshHealth:
         if holds:
             return "; ".join(remedy for _what, remedy in holds) + (
                 "; then start the next render or press Reset attached mesh")
+        if self.poison and failed_bring_up.liftable(self.poison) and self.cached and self.verdict == "live":
+            # A live attached fleet's own processes keep every host busy for the proof.
+            return ("press Reset attached mesh: it resets the attached fleet first, whose processes "
+                    "keep every host busy, then lifts the poison once every host shows the failed "
+                    "bring-up's processes gone; restart ComfyUI if a host keeps them")
         if self.poison and failed_bring_up.liftable(self.poison):
             return ("start the next render or press Reset attached mesh: once every host shows "
                     "the failed bring-up's processes gone, a fresh fleet attaches; restart "

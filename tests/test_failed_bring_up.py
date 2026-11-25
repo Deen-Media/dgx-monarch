@@ -494,6 +494,89 @@ def test_a_confirmed_rollback_whose_spawn_callback_stays_registered_keeps_the_re
     assert len(calls) == 1 and probes == []
 
 
+@pytest.mark.parametrize("box_b", [mesh_liveness.GONE, mesh_liveness.ALIVE],
+                         ids=["every_host_gone", "a_host_keeps_them"])
+def test_one_reset_stops_the_attached_fleet_then_settles_the_failed_bring_up(monkeypatch, box_b):
+    """Fleet A attached; a bring-up under another cluster.toml path failed, its rollback unconfirmed.
+
+    The proof counts every actor process on a host, so A's own ranks read as
+    alive until A stops. One Reset resets A first, then asks every host afresh,
+    though a render's answer from a moment ago still sits in the cache.
+    """
+    import time
+
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import mesh_safety
+    from dgx_monarch.nodes import recycle_drain
+    from topology_transition_helpers import _acks, _Future, _handle, _Workers
+
+    monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", ({}, float("-inf"), 0))
+    attached, _old, _new = _handle(_Workers([_Future(_acks())]))
+    monkeypatch.setattr(mesh_mod, "_MESHES", {("cluster", "/a.toml"): attached})
+    monkeypatch.setattr(mesh_mod, "_MESH_CREATING", {})
+    monkeypatch.setattr(mesh_mod, "_TRANSPORT_POISON", POISON)
+    claim, _handoff = _failed_spawn()
+    stale = mesh_liveness.LivenessEvidence(
+        mesh_liveness.ALIVE, ((ADDRESS_A, "alive"), (ADDRESS_B, "alive")), time.monotonic())
+    monkeypatch.setattr(failed_bring_up, "_LAST_PROOF", (frozenset({claim}), stale, ()))
+    asked: list = []
+
+    def probe(_handle, **_kwargs):
+        stopped = attached.teardown_complete is True
+        asked.append(stopped)
+        a = mesh_liveness.GONE if stopped else mesh_liveness.ALIVE
+        b = box_b if stopped else mesh_liveness.ALIVE
+        answer = mesh_liveness.ALIVE if mesh_liveness.ALIVE in (a, b) else mesh_liveness.GONE
+        return mesh_liveness.LivenessEvidence(answer, ((ADDRESS_A, a), (ADDRESS_B, b)), time.monotonic())
+
+    monkeypatch.setattr(mesh_liveness, "probe_fleet", probe)
+
+    payload, status = recycle_drain.recycle_attached_mesh()
+
+    assert attached.procs.reasons == ["dgx-monarch recycle"] and attached.teardown_complete is True
+    assert asked == [True]  # one fresh probe, taken after the stop
+    assert status == 200 and payload["detail"].startswith("the attached mesh was reset")
+    if box_b == mesh_liveness.GONE:
+        assert (payload["ok"], payload["status"]) == (True, "poison_released")
+        assert mesh_mod._TRANSPORT_POISON is None
+    else:
+        assert (payload["ok"], payload["status"]) == (False, "poisoned")
+        assert f"{ADDRESS_B}=alive" in payload["detail"] and mesh_mod._TRANSPORT_POISON == POISON
+
+
+def test_a_reset_whose_recycle_fails_says_it_left_the_poison_unchecked(monkeypatch):
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import mesh_recycle
+    from dgx_monarch.nodes import recycle_drain
+
+    refused = mesh_recycle.RecycleOutcome(mesh_recycle.RecycleStatus.ACTIVE_WORK,
+                                          "a render session owns the mesh", retryable=True)
+    attached = SimpleNamespace(recycle_detailed=lambda: refused, defunct=False, teardown_complete=False)
+    monkeypatch.setattr(mesh_mod, "_MESHES", {("cluster", "/a.toml"): attached})
+    monkeypatch.setattr(mesh_mod, "_TRANSPORT_POISON", POISON)
+    _failed_spawn()
+    monkeypatch.setattr(mesh_liveness, "probe_fleet", lambda *_a, **_k: pytest.fail("a host was asked"))
+
+    payload, status = recycle_drain.recycle_attached_mesh()
+
+    assert payload["ok"] is False and status == 409
+    assert payload["detail"].endswith("its processes keep every host busy")
+    assert mesh_mod._TRANSPORT_POISON == POISON
+
+
+def test_with_a_live_fleet_attached_the_refusal_and_the_row_name_the_reset_that_lifts_it():
+    """A render cannot lift the poison while that fleet runs; the words say what can."""
+    from dgx_monarch import mesh_health
+
+    _failed_spawn()
+    text = failed_bring_up.refusal(POISON, {"_MESHES": {("cluster", "/a.toml"): SimpleNamespace(
+        teardown_complete=False)}})
+    assert "a render cannot lift it: press Reset attached mesh" in text
+    assert "a render cannot lift" not in failed_bring_up.refusal(POISON, {"_MESHES": {}})
+    row = mesh_health.health_of([mesh_health.MeshHealth(cached=True, verdict="live")], poison=POISON)
+    assert row.remedy.startswith("press Reset attached mesh: it resets the attached fleet first")
+
+
 def test_the_mesh_row_names_the_remedy_that_lifts_a_provable_poison():
     from dgx_monarch import mesh_health
 

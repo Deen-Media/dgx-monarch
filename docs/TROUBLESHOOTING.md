@@ -4360,7 +4360,11 @@ mesh**, ask every host whether they are gone, and when every host says so the
 poison lifts and the render attaches a fresh fleet; while a host still shows
 them, the refusal names it, and a ComfyUI restart clears it (since 1.5.0;
 before, every such session needed a restart, and the Reset answered
-`no_live_mesh`). When the row instead says a spawn may still be queued in a
+`no_live_mesh`). While another fleet is attached (one built from another
+`cluster.toml` path, say), its own processes keep every host busy, so a
+render cannot lift the poison: press **Reset attached mesh**, which resets
+that fleet first and then asks every host afresh, and says what it did for
+each. When the row instead says a spawn may still be queued in a
 host's Worker loop, restart the Worker service on that host and render again
 ([#69](#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)).
 A `DIRTY` row

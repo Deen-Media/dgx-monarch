@@ -188,8 +188,13 @@ def _store(proof: tuple[frozenset[object], Any, tuple[tuple[str, str], ...]] | N
             _LAST_PROOF = proof
 
 
-def release(runtime: dict[str, Any], *, runner: Any = None) -> bool:
-    """Lift the poison when every host shows the failed bring-up's processes gone."""
+def release(runtime: dict[str, Any], *, runner: Any = None, fresh: bool = False) -> bool:
+    """Lift the poison when every host shows the failed bring-up's processes gone.
+
+    ``fresh`` asks every host again whatever the last answer was: the Reset
+    passes it after stopping an attached fleet, whose own processes made any
+    earlier answer alive.
+    """
     from . import driver_exit, mesh_liveness
 
     poison = runtime["_TRANSPORT_POISON"]
@@ -206,7 +211,7 @@ def release(runtime: dict[str, Any], *, runner: Any = None) -> bool:
     keys = frozenset(claim for claim, _handoff in claims)
     last = _LAST_PROOF
     seen_keys, seen_evidence, seen_held = last if last is not None else (None, None, ())
-    evidence = mesh_liveness._still_answers(seen_evidence) if seen_keys == keys else None
+    evidence = mesh_liveness._still_answers(seen_evidence) if seen_keys == keys and not fresh else None
     if evidence is not None and seen_held and evidence.age_s > mesh_liveness.PROBE_MIN_INTERVAL_S:
         evidence = None  # a loop hold is asked again, so a Worker restart there counts at once
     if evidence is None:
@@ -273,7 +278,19 @@ def hold_parts() -> list[tuple[str, str]]:
     return parts
 
 
-def refusal(poison: str) -> str:
+def fleet_attached(runtime: dict[str, Any] | None) -> bool:
+    """Whether a fleet not yet stopped is cached: its processes keep every host busy for the proof.
+
+    The liveness proof counts every actor process on a host, so while such a
+    fleet runs no host can show the failed bring-up's processes gone. Only a
+    Reset, which stops it first (nodes/recycle_drain), lets the proof lift.
+    """
+    return runtime is not None and any(
+        not getattr(handle, "teardown_complete", False)
+        for handle in list(dict(runtime.get("_MESHES") or {}).values()))
+
+
+def refusal(poison: str, runtime: dict[str, Any] | None = None) -> str:
     """get_mesh's refusal while the session's transport is poisoned, with the remedy that works."""
     if poison.startswith(_BEFORE_ANY_PROCESS):
         return (f"the last bring-up could not start the Worker fleet: {poison}. Nothing of it "
@@ -291,6 +308,11 @@ def refusal(poison: str) -> str:
                 "once no such loop can hold it")
     last = _LAST_PROOF
     tail = f"; the last check read {_hosts_text(last[1])}" if last is not None else ""
+    if fleet_attached(runtime):
+        return (f"a failed bring-up left processes the driver cannot yet prove gone ({poison}){tail}. "
+                "The attached Worker fleet's own processes keep every host busy, so a render "
+                "cannot lift it: press Reset attached mesh, which resets that fleet and then "
+                "checks every host; restart ComfyUI if a host keeps them")
     return (f"a failed bring-up left processes the driver cannot yet prove gone ({poison}){tail}. "
             "It checks every host again at the next render and at Reset attached mesh, and "
             "builds a fresh fleet once they are gone; restart ComfyUI if a host keeps them")

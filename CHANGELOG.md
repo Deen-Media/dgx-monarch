@@ -2498,7 +2498,10 @@ sections after them list every change.
   render, and Reset attached mesh, ask every host whether the processes that
   bring-up spawned are gone, and once every host says so a fresh fleet
   attaches in the same session; while a host still shows them, the refusal
-  names it. A bring-up that failed before every rank's process started also
+  names it. With another fleet attached, whose processes keep every host
+  busy, Reset attached mesh resets that fleet first and then asks every host,
+  where it reset that fleet and reported success while the session stayed
+  poisoned. A bring-up that failed before every rank's process started also
   needs the Worker loop it attached to gone on every host, since a stalled
   loop may still hold its spawn; the refusal names such a host, and a Worker
   service restart there clears it (`dgxm up` on a host that cannot list its

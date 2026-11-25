@@ -192,7 +192,41 @@ def recycle_attached_mesh(only: Any = None) -> tuple[dict[str, Any], int]:
         handle = only
     outcome = recycle_and_drain(handle)
     status = 200 if outcome.ok else (409 if outcome.retryable else 503)
+    if only is None and mesh_mod._TRANSPORT_POISON is not None:
+        return _reset_beside_poison(mesh_mod, outcome, status)
     return outcome.as_dict(), status
+
+
+def _reset_beside_poison(mesh_mod: Any, outcome: Any, status: int) -> tuple[dict[str, Any], int]:
+    """The panel's Reset of an attached fleet while a failed bring-up poisoned the session.
+
+    One Reset does both, in the safe order. The poison's proof counts every
+    actor process on a host, so the attached fleet's own ranks read as alive
+    until that fleet stops: it is reset first, then every host is asked afresh
+    (failed_bring_up.release), and the answer says what each step did.
+    """
+    from .. import failed_bring_up
+
+    if not outcome.ok:
+        answer = outcome.as_dict()
+        answer["detail"] = (f"{outcome.detail}. The failed bring-up's poison was not checked: the "
+                            "attached fleet is not stopped, and its processes keep every host busy")
+        return answer, status
+    reset = "the attached mesh was reset"
+    if failed_bring_up.release(mesh_mod.__dict__, fresh=True) or mesh_mod._TRANSPORT_POISON is None:
+        return ({
+            "ok": True,
+            "status": "poison_released",
+            "retryable": False,
+            "detail": f"{reset}, and then the processes the failed bring-up spawned were gone on "
+                      "every host; the next render attaches a fresh fleet",
+        }, 200)
+    return ({
+        "ok": False,
+        "status": "poisoned",
+        "retryable": False,
+        "detail": f"{reset}, but {failed_bring_up.refusal(mesh_mod._TRANSPORT_POISON, mesh_mod.__dict__)}",
+    }, 200)
 
 
 def evict_render_fleet(handle: Any, exc: Exception, *,

@@ -404,7 +404,7 @@ def get_mesh(
         )
     wanted_transport = "cluster" if use_cluster else "local"
     if _TRANSPORT_POISON is not None:
-        raise MeshAttachError(failed_bring_up.refusal(_TRANSPORT_POISON))
+        raise MeshAttachError(failed_bring_up.refusal(_TRANSPORT_POISON, globals()))
     if _TRANSPORT_MODE is not None and _TRANSPORT_MODE != wanted_transport:
         raise MeshAttachError(
             f"this ComfyUI session already brought up a {_TRANSPORT_MODE} mesh; monarch allows "
