@@ -233,6 +233,32 @@ def test_an_exit_during_the_lifts_probe_keeps_the_poison_and_the_claims(monkeypa
     assert runtime["_TRANSPORT_POISON"] == POISON and mesh_factory.creation_cleanup_pending() is True
 
 
+def test_a_proof_another_check_stores_right_after_a_lift_is_kept(monkeypatch):
+    """The lift clears only the proof it stored: another check's later answer stays."""
+    import time
+
+    from dgx_monarch.cli import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
+    _failed_spawn()
+    gone = mesh_liveness.LivenessEvidence(
+        mesh_liveness.GONE, ((ADDRESS_A, "gone"), (ADDRESS_B, "gone")), time.monotonic())
+    later = (frozenset({object()}), gone, ())
+    real_retire = failed_bring_up._retire_claims
+
+    def retire_then_another_store(claims):
+        retired = real_retire(claims)
+        failed_bring_up._store(later)  # another check stores between this lift and its clear
+        return retired
+
+    monkeypatch.setattr(failed_bring_up, "_retire_claims", retire_then_another_store)
+    runtime = _runtime()
+
+    assert failed_bring_up.release(runtime, runner=Runner()) is True
+    assert failed_bring_up._LAST_PROOF is later
+    assert failed_bring_up.held_hosts() == ()  # no claims now: an orphan proof says nothing
+
+
 def test_no_release_while_another_creation_runs():
     _failed_spawn()
     runtime, runner = _runtime(creating={("key",): object()}), Runner()
@@ -423,6 +449,28 @@ def test_a_cluster_rollback_stop_that_did_not_confirm_is_proven_by_asking_every_
     assert len(calls) == 2 and len(probes) == 1
 
 
+def test_a_spawn_host_that_cannot_be_isolated_names_its_cause_in_the_restart_refusal(monkeypatch):
+    """Nothing started, but this process would meet the fault again: the refusal says what it is."""
+    procs = _InitFails()
+    mesh, _fresh, calls, probes = _cluster_session(monkeypatch, _AttachedHosts(procs))
+
+    def not_isolated(_hosts):
+        raise RuntimeError("the attached host object cannot be isolated by exact identity")
+
+    monkeypatch.setattr(mesh_factory, "_isolated_spawn_host", not_isolated)
+
+    with pytest.raises(RuntimeError, match="cannot be isolated"):
+        mesh.get_mesh(mode="cluster")
+    with pytest.raises(mesh.MeshAttachError) as refused:
+        mesh.get_mesh(mode="cluster")
+
+    text = str(refused.value)
+    assert "before any process started" in text and "cannot be isolated by exact identity" in text
+    assert "torchmonarch other than the pin" in text and "restart ComfyUI" in text
+    assert "not reusable after a partial bring-up failure" not in text
+    assert procs.stop_reasons == [] and len(calls) == 1 and probes == []
+
+
 def test_a_confirmed_rollback_whose_spawn_callback_stays_registered_keeps_the_restart(monkeypatch):
     """The rollback stopped every process, but Monarch may still call this bring-up's callback."""
     from monarch._src.actor import proc_mesh as monarch_proc_mesh
@@ -591,7 +639,8 @@ def test_a_queued_spawn_the_attach_kept_no_loop_for_holds_and_asks_for_a_restart
 
 
 def test_a_host_on_an_older_package_holds_until_it_can_list_its_loops(monkeypatch):
-    """A Worker restart cannot help a host that prints no loop list; deploying the package does."""
+    """A host that prints no loop list: a Worker restart first (a loop the scan could not name),
+    then the current package (one too old to list loops)."""
     from dgx_monarch.cli import lifecycle
 
     monkeypatch.setattr(lifecycle, "_is_local", lambda _host: False)
@@ -602,7 +651,8 @@ def test_a_host_on_an_older_package_holds_until_it_can_list_its_loops(monkeypatc
     assert failed_bring_up.release(runtime, runner=Runner(**{ADDRESS_B: _line(loop_gens=[])})) is False
     assert failed_bring_up.held_hosts() == ((ADDRESS_A, "unlisted"),)
     text = failed_bring_up.refusal(POISON)
-    assert "deploy the current package on box-a (dgxm up)" in text and "dgxm restart" not in text
+    restart = text.index("restart the Worker service on box-a (dgxm restart)")
+    assert restart < text.index("deploy the current package there (dgxm up)")
 
     listed = Runner(**{ADDRESS_A: _line(loop_gens=["0123456789ab"]), ADDRESS_B: _line(loop_gens=[])})
     assert failed_bring_up.release(runtime, runner=listed) is True  # the package now lists its loops

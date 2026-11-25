@@ -584,9 +584,8 @@ def get_mesh(
             unsafe_attach = (fleet_handoff.attach_in_progress
                              and not fleet_handoff.transport_failure_safe)
             if _TRANSPORT_POISON is None and (unsafe_attach or fleet_handoff.spawn_in_progress):
-                _TRANSPORT_POISON = ("cluster attach result handoff interrupted"
-                                     if unsafe_attach else
-                                     "actor spawn failed; cleanup state unavailable")
+                _TRANSPORT_POISON = ("cluster attach result handoff interrupted" if unsafe_attach
+                                     else failed_bring_up.spawn_failure_poison(fleet_handoff, primary))
             blocked = handle.replacement_blocked if handle is not None and not handle.teardown_complete else None
             fleet = fleet if fleet is not None else fleet_handoff.fleet
             owned_procs = (

@@ -2501,8 +2501,11 @@ sections after them list every change.
   names it. A bring-up that failed before every rank's process started also
   needs the Worker loop it attached to gone on every host, since a stalled
   loop may still hold its spawn; the refusal names such a host, and a Worker
-  service restart there clears it (`dgxm up` on a host whose package cannot
-  list its loops). Before, the Reset answered `no_live_mesh`
+  service restart there clears it (then `dgxm up`, on a host that still cannot
+  list its loops). A bring-up that failed before it called Monarch now names
+  its cause (a spawn host that cannot be isolated, a Worker module that will
+  not import) where it read "cleanup state unavailable". Before, the Reset
+  answered `no_live_mesh`
   and only a restart helped
   ([TROUBLESHOOTING #69](docs/TROUBLESHOOTING.md#69-worker-bring-up-is-interrupted-during-spawn-rollback-or-client-lease-startup)).
 - Fix: a render under another Init folder or cluster.toml path no longer

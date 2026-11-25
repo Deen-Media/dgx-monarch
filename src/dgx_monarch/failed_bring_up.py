@@ -64,6 +64,20 @@ _LAST_PROOF: tuple[frozenset[object], Any, tuple[tuple[str, str], ...]] | None =
 _PROOF_LOCK = threading.Lock()
 
 
+# A spawn that failed before it called Monarch, outside the factory's own
+# rollback: a spawn host that cannot be isolated (another torchmonarch than the
+# pin) or a Worker module that will not import. Nothing started, and a retry in
+# this process meets the same fault, so the refusal names it, not the generic poison.
+_BEFORE_ANY_PROCESS = "actor spawn failed before any process started"
+
+
+def spawn_failure_poison(handoff: mesh_factory.FleetHandoff, primary: BaseException) -> str:
+    """The poison get_mesh records for a spawn that failed outside the factory's rollback."""
+    if handoff.proc_spawn_called:
+        return "actor spawn failed; cleanup state unavailable"
+    return f"{_BEFORE_ANY_PROCESS} ({mesh_factory.safe_failure_evidence(primary)})"
+
+
 def provable(poison: object) -> bool:
     """Whether this poison is a failed bring-up's, which a liveness proof may lift."""
     return isinstance(poison, str) and poison.startswith(_BRING_UP_POISONS)
@@ -150,8 +164,11 @@ _HOLD_WORDS = {
     "running": ("the Worker loop it attached to still runs on {hosts}",
                 "restart the Worker service on {hosts} (dgxm restart), which ends the queued spawn "
                 "with its loop"),
+    # A live loop the scan could not name ends with its loop; a package too old
+    # to list loops needs the current one. Try the cheaper first.
     "unlisted": ("{hosts} could not list its Worker loops",
-                 "deploy the current package on {hosts} (dgxm up) so the check can list them"),
+                 "restart the Worker service on {hosts} (dgxm restart), and if the next check "
+                 "still cannot list them, deploy the current package there (dgxm up)"),
     "unrecorded": ("the attach recorded no loop for {hosts}", "restart ComfyUI"),
 }
 
@@ -252,6 +269,11 @@ def hold_parts() -> list[tuple[str, str]]:
 
 def refusal(poison: str) -> str:
     """get_mesh's refusal while the session's transport is poisoned, with the remedy that works."""
+    if poison.startswith(_BEFORE_ANY_PROCESS):
+        return (f"the last bring-up could not start the Worker fleet: {poison}. Nothing of it "
+                "runs, but a retry in this ComfyUI process meets the same fault: fix its cause (a "
+                "torchmonarch other than the pin, or a dgx-monarch install that will not import; "
+                "docs/INSTALL.md), then restart ComfyUI")
     if not liftable(poison):
         return ("this ComfyUI session's Monarch transport is not reusable after a partial "
                 f"bring-up failure ({poison}); restart ComfyUI before retrying")

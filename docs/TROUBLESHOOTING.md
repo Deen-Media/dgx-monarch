@@ -4730,8 +4730,14 @@ shows until it resumes. Every host must then also show that the loop the
 bring-up attached to no longer runs. Where it still runs, the refusal and the
 mesh row name the host: restart the Worker service there (`dgxm restart`),
 which ends the queued spawn with its loop, and the next render or **Reset
-attached mesh** builds a fresh fleet. A host whose package is too old to list
-its loops is named too, with `dgxm up` as its remedy. An attach whose result handoff was interrupted, or a spawn callback
+attached mesh** builds a fresh fleet. A host that cannot list its loops is
+named too: restart its Worker service first (a loop the check could not name
+ends with it), then, if it still cannot, deploy the current package there
+(`dgxm up`). A bring-up that failed before it called Monarch at all, on a
+spawn host that cannot be isolated (a torchmonarch other than the pin) or a
+Worker module that will not import, says so and names the cause: nothing of
+it runs, but the same process meets the fault again, so fix the cause and
+restart ComfyUI. An attach whose result handoff was interrupted, or a spawn callback
 whose removal is unconfirmed, keeps the poison until ComfyUI restarts, even
 after a confirmed rollback. A local fleet's `WorkerSpawnError` after
 transport initialization needs a restart even when its rollback was
