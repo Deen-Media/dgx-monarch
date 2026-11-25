@@ -52,6 +52,8 @@ dgx-monarch:
   (docs/VALIDATION.md, "INT8 GEMM kernel comparison").
 - A failed Triton build or launch reports through a callback instead of
   printing a traceback; the import hook calls back instead of applying a mode.
+- The compile-safe ``int8_linear`` wrapper hands on, by name, any keyword
+  comfy-kitchen adds after ``residual_scale`` (0.2.42 adds ``weight_tiled``).
 - The proxy refuses only Python's protocol names and its own fields. Upstream
   refused every name with a leading underscore, which hid the extension's
   private functions, and with them comfy-kitchen's INT8 decode cache.
@@ -224,14 +226,19 @@ def compile_safe_int8_linear(top: ModuleType) -> bool:
 
     def int8_linear(x, weight, weight_scale, bias=None, out_dtype=None, convrot=False,
                     convrot_groupsize=256, input_act=None, input_act_weight=None,
-                    input_act_eps=0.0, residual=None, residual_scale=None):
+                    input_act_eps=0.0, residual=None, residual_scale=None, **later):
+        # ``later`` holds the keywords a newer comfy-kitchen adds after
+        # residual_scale, such as weight_tiled, which its INT8 layout passes
+        # on every linear_input_act call: a wrapper without it raised
+        # TypeError. Each goes on by name, to the custom op as well, which
+        # takes the same.
         if torch.compiler.is_compiling():
             return torch.ops.comfy_kitchen.int8_linear(
                 x, weight, weight_scale, bias, code_of[out_dtype or torch.bfloat16],
                 convrot, convrot_groupsize, input_act, input_act_weight, input_act_eps,
-                residual, residual_scale)
+                residual, residual_scale, **later)
         return eager(x, weight, weight_scale, bias, out_dtype, convrot, convrot_groupsize,
-                     input_act, input_act_weight, input_act_eps, residual, residual_scale)
+                     input_act, input_act_weight, input_act_eps, residual, residual_scale, **later)
 
     cast(Any, int8_linear)._ck_compile_safe = True
     cast(Any, int8_linear).__wrapped__ = eager

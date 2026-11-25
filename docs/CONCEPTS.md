@@ -296,7 +296,18 @@ Cluster Status node.
 
 **Quantization (quant).** Storing weights in fewer bits to save memory and
 often gain speed: `bf16` and `fp16` are the full-size 16-bit kinds, `fp8`,
-`int8` and `mxfp8` store 8-bit weights, and `nvfp4` stores 4-bit weights. FP16
+`int8` and `mxfp8` store 8-bit weights, and `nvfp4` stores 4-bit weights.
+`w4a8` names ComfyUI's grouped INT8 files, which store 3, 4, 5 or 6 bit
+weights with a scale for each group of inputs (`w3a8_int8`, `asym_w4a8_int8`,
+`w5a8_int8`, `w6a8_int8`); the hardware records here hold a 4-bit file and
+none of the other widths, and the 3 and 5 bit formats, which ComfyUI added
+after 0.46.3, are checked on CPU only. `w4a4` names a ConvRot W4A4 file once
+a Worker has loaded it; none has rendered here. No header key tells such a
+file from an INT8 one, so the driver reads `int8` and lays it out and prices
+it as INT8. The layout it chose can then be refused by kind: MOSS-Image on
+sequence parallelism or cfg2, by the driver before dispatch, which reads the
+file's layer records for this, and any family on FSDP, by the Worker. One
+GPU, where ComfyUI's own forward runs, is not refused. FP16
 is named separately because BF16 validation does not establish FP16 support
 (FSDP, for example, admits fp32 islands inside a bf16 core but only a uniform
 fp16 core). Model loading uses stock ComfyUI; each memory feature is gated

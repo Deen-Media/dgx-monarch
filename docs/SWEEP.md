@@ -251,7 +251,7 @@ on a sampler's or guider's model chain with the runtime's own test, so every
 cfg cell of a graph whose skip on that chain names a layer is predicted
 `refuse:P`. A node no sampler or guider reads its model from claims nothing.
 A cell that puts a LoRA on a MOSS-Image INT8 file is predicted `refuse:P`
-in both sessions ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)),
+in both sessions ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-grouped-int8-or-convrot-w4a4-render-with-a-lora-refuses-on-every-topology)),
 except where a guard that answers first predicts its own class:
 `ring2+fsdp` refuses class K. On 2026-10-21 at `9caa6aae660b`, the release
 that added that label, 19 INT8 + LoRA cells moved to `refuse:P` across the

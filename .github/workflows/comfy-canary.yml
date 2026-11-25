@@ -140,6 +140,11 @@ jobs:
     # Pin the runner image; review Ubuntu upgrades explicitly.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      # Which ComfyUI this entry tests, for every step. The weight-only linear
+      # dispatch seam reads it: on the release entry a format still on the
+      # pack's ahead-of-a-release list fails once the release lists it.
+      DGXM_COMFY_CANARY_TARGET: ${{ matrix.comfy }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0

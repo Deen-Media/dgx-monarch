@@ -341,6 +341,29 @@ def test_an_unknown_value_runs_stock_cutlass_with_one_warning(option, lines):
 # --- the version guard and the fallbacks ---------------------------------------------
 
 
+def test_the_wrapper_hands_on_a_keyword_comfy_kitchen_adds_later(option, monkeypatch):
+    """comfy-kitchen 0.2.42 passes ``weight_tiled`` after ``residual_scale``; the
+    wrapper hands a later keyword on by name, eager and to the custom op, and
+    adds none of its own when the caller passes none."""
+    top, _cuda, _real, _calls, _ = _stub_kitchen()
+    seen: list[tuple] = []
+    top.int8_linear = lambda *args, **kwargs: seen.append(("eager", args, kwargs))
+    op_namespace = types.SimpleNamespace(
+        int8_linear=lambda *args, **kwargs: seen.append(("op", args, kwargs)))
+    monkeypatch.setattr(torch.ops, "comfy_kitchen", op_namespace, raising=False)
+    assert vendored.compile_safe_int8_linear(top) is True
+    top.int8_linear("x", "w", "s", residual_scale="r", weight_tiled=False)
+    top.int8_linear("x", "w", "s")
+    monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True)
+    top.int8_linear("x", "w", "s", out_dtype=torch.float16, weight_tiled=True)
+    head = ("x", "w", "s", None)
+    assert seen == [
+        ("eager", (*head, None, False, 256, None, None, 0.0, None, "r"), {"weight_tiled": False}),
+        ("eager", (*head, None, False, 256, None, None, 0.0, None, None), {}),
+        ("op", (*head, 1, False, 256, None, None, 0.0, None, None), {"weight_tiled": True}),
+    ]
+
+
 def test_the_validated_set_is_the_recorded_one():
     assert vendored.VALIDATED_KITCHEN == ("0.2.37", "0.2.40", "0.2.41")
     assert int8_gemm.VALIDATED_KITCHEN is vendored.VALIDATED_KITCHEN

@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,71 @@ def test_the_installed_comfy_kitchen_is_validated():
         f"comfy-kitchen {version} is installed here, outside the INT8 GEMM kernel's validated set "
         f"({', '.join(VALIDATED_KITCHEN)}), so this environment runs stock CUTLASS. Re-validate the "
         "kernel on that release (docs/MODELS.md, INT8 GEMM kernel) before adding it")
+
+
+def _kitchen_module(name: str) -> bool:
+    return name == "comfy_kitchen" or name.startswith("comfy_kitchen.")
+
+
+@pytest.fixture
+def kitchen_modules_put_back():
+    """Take out of sys.modules whatever comfy-kitchen module the test imported."""
+    before = {name for name in sys.modules if _kitchen_module(name)}
+    try:
+        yield
+    finally:
+        for name in [name for name in sys.modules if _kitchen_module(name) and name not in before]:
+            del sys.modules[name]
+
+
+@pytest.mark.parametrize("compiling", [False, True])
+def test_the_compile_safe_wrapper_takes_the_installed_comfy_kitchens_own_calls(
+        monkeypatch, kitchen_modules_put_back, compiling):
+    """The installed comfy-kitchen's INT8 layout through the pack's ``int8_linear`` wrapper, on CPU.
+
+    The wrapper stands in for ``comfy_kitchen.int8_linear`` wherever the Triton
+    kernel is on, which is on a GPU only, so no CPU run ever met it. 0.2.42's
+    layout began to pass ``weight_tiled`` on every ``linear_input_act`` call,
+    and the wrapper of the day would have raised TypeError on each one, in
+    every INT8 family with a fused activation. Here comfy-kitchen's own layout
+    makes its own call through the wrapper, eager and as the custom op the
+    wrapper takes while torch.compile traces, and the result must be stock's.
+    The comfy canary installs each ComfyUI's comfy-kitchen and runs this file,
+    so a release that changes the call fails here before any GPU sees it.
+    """
+    import torch
+
+    comfy_kitchen = pytest.importorskip("comfy_kitchen", reason="comfy-kitchen is not installed here")
+    from comfy_kitchen.tensor import QuantizedTensor
+
+    from dgx_monarch.kernels import int8_gemm_triton as vendored
+
+    stock_function = comfy_kitchen.int8_linear
+    if getattr(stock_function, "_ck_compile_safe", False):
+        pytest.skip("another test left the wrapper in place")
+    generator = torch.Generator().manual_seed(42)
+    weight = QuantizedTensor.from_float(
+        (torch.randn(64, 256, generator=generator) * 0.02).to(torch.bfloat16),
+        "TensorWiseINT8Layout", is_weight=True, per_channel=True, convrot=True, convrot_groupsize=256)
+    x = torch.randn(130, 256, generator=generator).to(torch.bfloat16)
+    residual = torch.randn(130, 64, generator=generator).to(torch.bfloat16)
+    scale = torch.ones(64, dtype=torch.bfloat16)
+    cases = ({}, {"input_act": "swiglu"}, {"residual": residual, "residual_scale": scale})
+    wide = torch.randn(130, 512, generator=generator).to(torch.bfloat16)
+
+    def run(kwargs):
+        return weight.linear_input_act(wide if kwargs.get("input_act") == "swiglu" else x, **kwargs)
+
+    stock = [run(kwargs) for kwargs in cases]
+    # The wrapper goes on for a validated release only; this checks the call, not the set.
+    monkeypatch.setattr(vendored, "kitchen_version", lambda: vendored.VALIDATED_KITCHEN[-1])
+    monkeypatch.setattr(comfy_kitchen, "int8_linear", stock_function)  # restored after the test
+    assert vendored.compile_safe_int8_linear(comfy_kitchen) is True
+    assert comfy_kitchen.int8_linear.__wrapped__ is stock_function
+    if compiling:
+        monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True)
+    for kwargs, expected in zip(cases, stock, strict=True):
+        assert torch.equal(run(kwargs), expected), sorted(kwargs)
 
 
 def test_the_docs_name_the_validated_set():

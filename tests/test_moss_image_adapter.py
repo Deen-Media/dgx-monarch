@@ -65,7 +65,8 @@ def test_declarations_match_the_spec():
     assert adapter.sp_honours_block_replace is True
     reason = adapter.sp_quant_refusal_reason
     for phrase in ("divisibility pad rows", "NVFP4", "adapters/mage_nvfp4_scale.py",
-                   "fp8 weight_dtype cast", "unrecognized quantization format as fp8",
+                   "fp8 weight_dtype cast", "a format this release does not know reads as fp8",
+                   "grouped INT8 formats (w4a8) and ConvRot W4A4 (w4a4) have no MOSS-Image file",
                    "INT8 ConvRot, which takes no statistic across rows",
                    "every INT8 linear reaches that GEMM", "adapters/int8_linear_layout.py"):
         assert phrase in reason, phrase
@@ -399,14 +400,22 @@ def test_an_unrouted_attention_refuses_class_p_after_the_loop(monkeypatch, one_r
     assert _tag(caught.value).refusal_class is RefusalClass.PHYSICS
 
 
-@pytest.mark.parametrize("quant", ["nvfp4", "fp8", "mxfp8", "unknown"])
+@pytest.mark.parametrize("quant", ["nvfp4", "fp8", "mxfp8", "w4a8", "w4a4", "unknown"])
 def test_the_quant_gate(quant):
+    """The family's own reason, never a stand-in: the refusal names the kind
+    the Worker read ahead of it. The driver can show another kind off the
+    header (a ConvRot W4A4 file reads int8 there), so the kind refused has to
+    be in the words."""
     adapter = MOSSImageAdapter()
+    assert adapter.sp_quant_refusal_reason
     for kwargs in ({"sp": 2}, {"sp": 1, "cfg": 2}):
         sp = kwargs.pop("sp")
         with pytest.raises(UnsupportedModelError, match="moss_image shards its joint stream") as caught:
             assert_sp_quant_supported(adapter, sp, quant, **kwargs)
         assert _tag(caught.value).refusal_class is RefusalClass.PHYSICS
+        assert str(caught.value).startswith(
+            f"[dgxm:P] moss_image: the loaded file reads as quant={quant}, and on a layout that "
+            "shards the tokens or the cfg batch this family admits only bf16, int8. "), str(caught.value)
         # The cfg2 cause is named too, and the remedy offers both stock-forward paths.
         assert "the split of each step's [cond, uncond] batch" in str(caught.value)
         assert "Use dp2 with an even batch, or mode=local with gpus_per_host=1" in str(caught.value)

@@ -1343,6 +1343,85 @@ sections after them list every change.
   one only when it changes the INT8 path. The comfy canary's comfy-kitchen check, red against ComfyUI
   master, passes again ([Models](docs/MODELS.md#int8-gemm-kernel),
   [VALIDATION](docs/VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).
+- ComfyUI master gained two grouped INT8 formats on 2026-11-23, `w3a8_int8`
+  and `w5a8_int8`: 3 and 5 bit weights on the layout `asym_w4a8_int8` and
+  `w6a8_int8` use (ComfyUI commit a88593173). The pack's list of the formats
+  that quantize no activation lacked them, so it left a Linear of either
+  unwrapped. Outside inference mode, where a Worker samples, a 3-D input whose
+  strides do not chain then took the route that dequantizes the weight: on
+  CPU about four in five outputs of such a Linear differed from stock's. Both
+  formats are listed now, and each gives stock's bits through the wrapper.
+  The comfy canary's weight-only linear dispatch seam, red against ComfyUI
+  master since that day, passes again. It now runs a row for every format by
+  name: comfy-kitchen packs the weight at the format's own width, ComfyUI's
+  loader loads it under the format's name, and three views through the
+  wrapper must equal stock's result bit for bit. The newest release, 0.46.3,
+  lacks the two formats, and the same code passes there: every format ComfyUI
+  lists must be in the pack's list with ComfyUI's layout, and a format the
+  pack lists that a ComfyUI does not know must name the ComfyUI commit that
+  adds it. That allowance ends by itself: the canary's release entry fails,
+  naming the entry to drop, as soon as the newest release lists the format.
+  The two new formats are proven on CPU against ComfyUI master only:
+  no file in either format has rendered on hardware here. The canary's
+  comfy-kitchen check is still red against master, which pins comfy-kitchen
+  0.2.42: that release is outside the INT8 GEMM kernel's validated set, so an
+  install on it runs every INT8 linear on CUTLASS with a WARNING until the
+  kernel is checked on it ([CONCEPTS](docs/CONCEPTS.md#model-words),
+  [Models](docs/MODELS.md#int8-gemm-kernel)).
+- A Worker now reads the right kind off a loaded file of four formats it took
+  for another. A file of ComfyUI's 3, 5 or 6 bit grouped formats
+  (`w3a8_int8`, `w5a8_int8`, `w6a8_int8`) reads `w4a8` once loaded, as its
+  header already did and as a 4-bit file does. A `convrot_w4a4` file reads a
+  kind of its own, `w4a4`; its header still reads `int8`, because no header
+  key tells it from an INT8 file. Until now the loaded reading, which a
+  Worker puts before the header's, was `fp8` with an "unknown quant_format"
+  warning when such a layer came first, and `int8` with no warning when an
+  `int8_tensorwise` layer did. So on a Worker such a file could pass for an
+  INT8 file where MOSS-Image admits INT8 to sequence parallelism and cfg2,
+  and for an FP8 or INT8 file in the model key, the status row and the load
+  record. Now MOSS-Image refuses both kinds on a sharded layout, class P, as
+  it does a 4-bit grouped file. That refusal now opens with the kind that was
+  read and where ("the loaded file reads as quant=w4a4"), for every kind and
+  family it refuses, and the driver makes it before dispatch wherever it can
+  name the kind without a load: `w4a8` off the header, an fp8
+  `weight_dtype` cast off the loader, and the rest off the file's own layer
+  records, a few dozen bytes a layer (3.7 ms for the 168 records of a 5 GiB
+  MOSS-Image INT8 file, read warm). The records name `w4a4` behind an `int8`
+  header, and `fp8`, `mxfp8` or `nvfp4` behind an `fp8` header, which all
+  three kinds share; where they do not name one kind, the refusal says the
+  header reads `fp8` as all three do. Before, every rank loaded the whole
+  file and then refused. The Worker's check stays, for a file the driver
+  cannot read. A LoRA on a MOSS-Image file of either kind
+  refuses on every topology, one GPU included, as it did whenever such a file
+  read `int8`; the refusal now says that no render has measured the pair and
+  that the family's INT8 file with a LoRA rendered wrong, and it covers a
+  4-bit grouped file too. The driver's words for it follow the file: the INT8
+  words for an INT8 file, the W4A4 words for a ConvRot W4A4 file by its layer
+  records, and for an int8 header with no readable record words that describe
+  both
+  ([TROUBLESHOOTING #129](docs/TROUBLESHOOTING.md#129-a-moss-image-int8-grouped-int8-or-convrot-w4a4-render-with-a-lora-refuses-on-every-topology)).
+  FSDP refused all of them before and refuses them now. A grouped file is
+  refused at launch, off its header, as before. A ConvRot W4A4 file was
+  refused in one of two places: read as `fp8`, at the check of the loaded
+  model, as a precision mismatch; read as `int8`, behind an
+  `int8_tensorwise` layer, it passed both checks and was refused when its
+  layers were wrapped, for having no registered shard layout. Now it is
+  refused by kind, before any layer is wrapped, in words that name the
+  grouped INT8 layouts and ConvRot W4A4. A LoRA change still reloads
+  such a file, the driver's header reading, prices and automatic layout do
+  not change, and no warning is logged. The driver therefore still lays a
+  `convrot_w4a4` file out and prices it as INT8, and then refuses a sharded
+  layout for it on MOSS-Image by its layer records; one GPU is not refused.
+  On other
+  families a LoRA on a layer of these formats bakes as it does on an INT8
+  ConvRot layer: the bake-equivalence canary now holds the bake of each
+  grouped width and of ConvRot W4A4 bit-equal to stock's cast-time weight on
+  five paths, and stock's own choice of path on both sides of its 16 KiB
+  cut-off. No file of any of the four formats is on the rig, so this is held
+  by CPU tests only ([CONCEPTS](docs/CONCEPTS.md#model-words)).
+- The `int8_linear` wrapper the INT8 GEMM kernel puts in place now hands on
+  any keyword a newer comfy-kitchen release passes; it changes nothing on the
+  validated releases ([Models](docs/MODELS.md#int8-gemm-kernel)).
 - The video templates follow ComfyUI 0.44.0's Create Video, which gained
   `chroma_subsampling` before `codec` (ComfyUI #17463); they hold its default,
   `auto`. On ComfyUI 0.43 and older, which lack the widget, this pack's
@@ -2805,7 +2884,7 @@ then `dgxm restart`, with no failure event ([Studio acceptance](docs/STUDIO_ACCE
   against stock on uly2.
   dgx-monarch bakes as stock's classic loader does, which with DynamicVRAM off
   renders the pair about 1.0 NRMS from stock's default, so the message names
-  that default loader ([TROUBLESHOOTING #129](docs/TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)). The quantization refusal says why
+  that default loader ([TROUBLESHOOTING #129](docs/TROUBLESHOOTING.md#129-a-moss-image-int8-grouped-int8-or-convrot-w4a4-render-with-a-lora-refuses-on-every-topology)). The quantization refusal says why
   INT8 ConvRot is admitted under sequence parallelism.
 - The `moss_image` adapter follows ComfyUI master's MOSS-Image forward of
   2026-10-22 (commit 60aade0bb) and keeps d52a7a5ef supported; in CPU tests the
